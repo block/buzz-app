@@ -22,6 +22,7 @@ export type FollowUpMessage = {
   attachments: readonly UploadedAttachment[];
   references: readonly string[];
   picks: MentionPicks;
+  candidates?: readonly string[];
   /** The message's chips; publication signs them. */
   tokens?: readonly ComposerToken[];
 };
@@ -217,6 +218,7 @@ function valid(value: unknown): value is SavedFollowUp {
         v.explicitRecipientIds.length <= 32 &&
         v.explicitRecipientIds.every((id) => v.recipients.includes(id)))) &&
     strings(v.references) &&
+    (v.candidates === undefined || strings(v.candidates)) &&
     Array.isArray(v.attachments) &&
     v.attachments.every(isUploadedAttachment) &&
     !!v.picks &&

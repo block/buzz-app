@@ -24,6 +24,7 @@ import { reactionTarget as reactionTargetId } from "./reaction-target";
 import { safeMessageUrl } from "./message-content";
 import type { EventData } from "./events";
 import type { Outbox, OutboxRecovery } from "./outbox";
+import { agentCandidateTags } from "./agent-candidates";
 import { signedMessageTokenTags } from "../messages/message-tokens";
 import type { AgentInvocationIntent } from "../agents/session-admission";
 import type { RelaySession } from "./session";
@@ -488,6 +489,7 @@ export function createMessages(
       recovery?: OutboxRecovery,
       references: readonly string[] = [],
       picks: MentionPicks = {},
+      candidates: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
@@ -499,6 +501,7 @@ export function createMessages(
             ["h", channelId],
             ...mentionTags(channelId, withDmAgents(channelId, mentions)),
             ...referenceTags(references),
+            ...agentCandidateTags(candidates, mentions),
             ...pickTags(channelId, mentions, picks),
             ...emojiTags(content),
             ...message.tags,

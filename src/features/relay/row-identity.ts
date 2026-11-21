@@ -47,6 +47,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.attachmentSourceId === right.attachmentSourceId &&
     sameArray(left.attachmentSeams, right.attachmentSeams) &&
     sameArray(left.mentions, right.mentions) &&
+    sameArray(left.agentCandidates, right.agentCandidates) &&
     sameArray(left.mentionReferences ?? [], right.mentionReferences ?? []) &&
     sameArray(
       left.attachments,

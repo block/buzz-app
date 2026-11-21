@@ -388,6 +388,7 @@ function ImportShared({
       {open && (
         <SharedImportDialog
           {...props}
+          catalog={props.shared.id}
           onClose={() => setOpen(false)}
           finalFocus={trigger}
         />
@@ -498,8 +499,10 @@ export function SharedImportDialog({
   openSettings,
   onClose,
   finalFocus,
+  catalog,
 }: Importing & {
   shared: SharedDefinition;
+  catalog?: string;
   onClose(): void;
   finalFocus: React.RefObject<HTMLButtonElement | null>;
 }) {
@@ -563,6 +566,7 @@ export function SharedImportDialog({
     try {
       const { agent } = await agents.port({
         source: "shared",
+        ...(catalog ? { catalog } : {}),
         type: chosen.key,
         name: shared.name,
         ...(shared.picture ? { picture: shared.picture } : {}),

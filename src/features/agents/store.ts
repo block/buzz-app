@@ -1,3 +1,4 @@
+import type { PublicInstructions } from "./public-instructions";
 import { sourceCompleted, sourceSignature } from "./attention";
 // Device-local settings for agents: the attention objects of each agent's
 // membership in a community, in the `agent-attention/v1` shape, with its
@@ -151,6 +152,8 @@ export type AgentRecord = Readonly<{
   /** Plugin-owned config, shared by all its communities, so only the home
    * record keeps it. The host never reads it. */
   config: unknown;
+  /** Device-local evidence of verified community Marketplace instructions. */
+  publicInstructions?: PublicInstructions;
   /** True when the owner turned attention on. Off, its watches and timers
    * stay stored but wake nothing, and the agent is not offered attention
    * tools. Absent means off, so an agent has no attention until its owner
@@ -310,6 +313,13 @@ function readRecord(
     attention,
     skipped,
     config: record.config,
+    ...(record.publicInstructions &&
+    typeof record.publicInstructions.community === "string" &&
+    /^https?:\/\//.test(record.publicInstructions.community) &&
+    /^[0-9a-f]{64}$/.test(record.publicInstructions.event) &&
+    /^[0-9a-f]{64}$/.test(record.publicInstructions.sha256)
+      ? { publicInstructions: record.publicInstructions }
+      : {}),
     ...(record.sourceRuns
       ? {
           sourceRuns: Object.fromEntries(

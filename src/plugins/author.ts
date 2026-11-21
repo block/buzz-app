@@ -82,6 +82,11 @@ export type {
 } from "../bundled/channels/ChannelGeneralAccess";
 export type { MemberChange } from "../features/channel-members/administration-protocol";
 export type {
+  AgentRouter,
+  AgentRoutingRequest,
+  RoutingAgent,
+} from "../features/conversation/agent-routing";
+export type {
   DocumentEditorProps,
   DocumentEditorHandle,
   DocumentEditorSelection,

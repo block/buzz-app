@@ -618,6 +618,9 @@ out.command = await auth.read("c").catch((error) => error.message);
 process.env.BUZZ_PI_TEST_KEY = "secret";
 await auth.modify("e", async () => ({ type: "api_key", key: "$BUZZ_PI_TEST_KEY" }));
 out.environment = await auth.read("e").catch((error) => error.message);
+// Removing one provider's entry leaves the others.
+await auth.delete("c");
+out.afterDelete = Object.keys(await auth.all());
 // A read waits out a write \`pi\` makes in place under the same lock, rather
 // than seeing it half done; the pause gives a read that didn't wait its chance.
 const writing = await lockfile.lock(data + "/auth.json", { realpath: false });
@@ -1112,6 +1115,7 @@ describe.skipIf(!DEPS)("the Pi host on Pi durable", () => {
     );
     expect(out.environment).toBe(out.command);
     expect(out.whileWritten).toEqual(signIn);
+    expect(out.afterDelete).toEqual(["p", "e"]);
   }, 90_000);
 
   it("loads the Pi packages in Pi's settings, leaving out each that fails", async () => {

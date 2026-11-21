@@ -37,10 +37,12 @@ const gitRun = (...args) => spawnSync("git", args, { encoding: "utf8" });
 const bases = [gitRun("merge-base", "HEAD", "refs/remotes/origin/main")]
   .filter((result) => result.status === 0)
   .map((result) => result.stdout.trim());
-for (const [, sha, , remote] of updates)
+// One destination only: another ref's first push needs the full branch diff.
+const pushed = updates.filter(([, sha]) => sha === head);
+for (const [, , , remote] of pushed)
   if (
     !clippy &&
-    sha === head &&
+    pushed.length === 1 &&
     !/^0+$/.test(remote) &&
     gitRun("merge-base", "--is-ancestor", remote, "HEAD").status === 0
   )
@@ -90,41 +92,41 @@ if (base) {
       process.exit(0);
     }
   }
-  // tsc checks these; the unit suite depends only on what they install.
-  const installs = {
-    "package.json": (text) => {
-      try {
-        const { scripts, ...rest } = JSON.parse(text);
-        return JSON.stringify(rest);
-      } catch {
-        return text;
-      }
-    },
-    "pnpm-lock.yaml": (text) =>
-      text.slice(Math.max(0, text.search(/^packages:/m))),
+  // tsc checks package.json; the unit suite depends only on what it installs.
+  const installs = (rev) => {
+    const text = gitRun("show", `${rev}:package.json`).stdout;
+    try {
+      const { scripts, ...rest } = JSON.parse(text);
+      return JSON.stringify(rest);
+    } catch {
+      return text;
+    }
   };
-  const at = (rev, file) => gitRun("show", `${rev}:${file}`).stdout;
   const suite =
-    /^(?:vitest\.config\.[cm]?[jt]s|tests\/relay-config\.ts|bin\/(?:node|\.node-[^/]*))$/;
-  const full = files.some(
-    (file) =>
-      suite.test(file) ||
-      (Object.hasOwn(installs, file) &&
-        installs[file](at(base, file)) !== installs[file](at("HEAD", file))),
-  );
+    /^(?:vitest\.config\.[cm]?[jt]s|tests\/relay-config\.ts|pnpm-(?:lock|workspace)\.yaml|patches\/|bin\/(?:node|\.node-[^/]*|packages\/node\.hcl)$)/;
+  const full =
+    files.some((file) => suite.test(file)) ||
+    (files.includes("package.json") && installs(base) !== installs("HEAD"));
   const deleted = changed("D").filter((file) => source.test(file));
   const related = new Set(
     files.filter((file) => source.test(file) && !deleted.includes(file)),
   );
   // tsc fails on dangling imports it checks. Test the files that named a
   // deleted module at the base and still exist, which covers the references it
-  // does not check (mocks, .mjs).
+  // does not check (mocks, .mjs, Vite queries such as ?raw).
   for (const file of importers(deleted)) related.add(file);
   // These tests read files or load app composition outside Vitest's import graph.
   if (files.includes("src/shared/styles/tokens.css"))
     related.add("src/shared/theme/tokens.test.ts");
   if (files.includes("public/appearance-init.js"))
     related.add("src/shared/theme/service.test.ts");
+  // The author package builds with its own tsconfig and the pinned pnpm.
+  if (
+    files.some((file) =>
+      /^(?:tsconfig\.author\.json|bin\/(?:pnpm|\.pnpm-[^/]*))$/.test(file),
+    )
+  )
+    related.add("src/plugins/author.test.mjs");
   if (files.includes("vite.config.ts"))
     related.add("browser-host/vite-config.test.mjs");
   if (files.some((file) => file.startsWith("src/")))
@@ -174,7 +176,7 @@ function importers(deleted) {
     const [name, text = ""] = line.split("\0");
     const file = name.slice(base.length + 1);
     if (found.has(file) || deleted.includes(file)) continue;
-    for (const [, spec] of text.matchAll(/["'`]([./][^"'`\s]*)["'`]/g))
+    for (const [, spec] of text.matchAll(/["'`]([./][^"'`\s?]*)/g))
       if (
         targets.has(
           module(

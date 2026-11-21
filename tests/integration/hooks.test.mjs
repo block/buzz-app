@@ -651,6 +651,7 @@ test("source deletion tests the unchanged files that imported it", (t) => {
   const f = pushFixture(t, {
     "src/deleted/index.ts": "export const value = 1;\n",
     "browser-host/deleted.test.mjs": 'import "../src/deleted";\n',
+    "browser-host/raw.test.mjs": 'import "../src/deleted/index.ts?raw";\n',
     "browser-host/unrelated.test.mjs": 'import "../src/undeleted";\n',
   });
   f.git("update-ref", "refs/remotes/origin/main", "HEAD");
@@ -663,13 +664,14 @@ test("source deletion tests the unchanged files that imported it", (t) => {
     "--run",
     "--passWithNoTests",
     path.join(top, "browser-host/deleted.test.mjs"),
+    path.join(top, "browser-host/raw.test.mjs"),
     path.join(top, "src/app/pages.integration.test.mjs"),
   ]);
 });
 
-test("tsconfig, scripts and lockfile-metadata edits run types without the full suite", (t) => {
-  const lock = (packages) =>
-    `lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n\npackages:\n${packages}`;
+test("tsconfig and scripts edits skip the full suite; dependency inputs run it", (t) => {
+  const lock = (packages, importers = "  .: {}\n") =>
+    `lockfileVersion: '9.0'\n\nimporters:\n${importers}\npackages:\n${packages}`;
   const f = pushFixture(t, { "pnpm-lock.yaml": lock("  a@1.0.0: {}\n") });
   const manifest = JSON.parse(f.read("package.json"));
   const step = (changes, ref) => {
@@ -689,9 +691,18 @@ test("tsconfig, scripts and lockfile-metadata edits run types without the full s
     }
   };
   assert.equal(
-    step({ "tsconfig.author.json": "{}\n" }, "tsconfig"),
+    step({ "tsconfig.node.json": "{}\n" }, "tsconfig"),
     "types only",
   );
+  assert.deepEqual(step({ "tsconfig.author.json": "{}\n" }, "author"), [
+    "related",
+    "--run",
+    "--passWithNoTests",
+    path.join(
+      f.git("rev-parse", "--show-toplevel").trim(),
+      "src/plugins/author.test.mjs",
+    ),
+  ]);
   const scripts = {
     ...manifest,
     scripts: { ...manifest.scripts, probe: "true" },
@@ -703,12 +714,22 @@ test("tsconfig, scripts and lockfile-metadata edits run types without the full s
     ),
     "types only",
   );
-  assert.equal(
+  // Same packages, but the root resolves another of them.
+  assert.deepEqual(
     step(
-      { "pnpm-lock.yaml": `# settings\n${lock("  a@1.0.0: {}\n")}` },
-      "metadata",
+      {
+        "pnpm-lock.yaml": lock(
+          "  a@1.0.0: {}\n",
+          "  .:\n    dependencies:\n      a: 1.0.0\n",
+        ),
+      },
+      "importers",
     ),
-    "types only",
+    ["run"],
+  );
+  assert.deepEqual(
+    step({ "pnpm-workspace.yaml": "overrides:\n  a: 1.0.0\n" }, "workspace"),
+    ["run"],
   );
   assert.deepEqual(
     step({ "pnpm-lock.yaml": lock("  a@1.0.1: {}\n") }, "lock"),
@@ -744,6 +765,18 @@ test("a fast-forward push diffs from the pushed tip, not a stale origin/main", (
     path.join(top, "src/later.ts"),
     path.join(top, "src/app/pages.integration.test.mjs"),
   ]);
+  // A second, new destination needs the whole branch's selection.
+  f.write("src/last.ts", "export const last = 1;\n");
+  f.git("add", "src/last.ts");
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "last");
+  const both = f.run("git", [
+    "push",
+    "./remote.git",
+    "HEAD:refs/heads/probe",
+    "HEAD:refs/heads/fresh",
+  ]);
+  assert.equal(both.status, 0, both.stdout + both.stderr);
+  assert.deepEqual(f.args(), ["run"]);
 });
 
 test("a type error blocks the actual Git push before unit tests", (t) => {

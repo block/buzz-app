@@ -18,6 +18,7 @@ import {
 import { accentButtonStyle } from "../../shared/theme/accent";
 import { restoreChatLinks } from "./composer-chat-cards";
 import { pastedFiles } from "./composer-clipboard";
+import { readUnexposedClipboardImage } from "./native-clipboard-image";
 import { chatLinkIds } from "./chat-cards";
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { TypingPresentation } from "../conversation/typing-presentation";
@@ -1429,6 +1430,7 @@ function Composer({
   }
   const [error, setError] = useState<string>();
   const [pasteTooLong, setPasteTooLong] = useState(false);
+  const [pendingImagePastes, setPendingImagePastes] = useState(0);
   const [attachmentError, setAttachmentError] =
     useState<Readonly<{ title: string; description: string }>>();
   /** Nothing was attached, for this one reason. */
@@ -1761,6 +1763,8 @@ function Composer({
       );
     }
   }
+  const attachCurrentFiles = useRef(attachFiles);
+  attachCurrentFiles.current = attachFiles;
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -3012,6 +3016,7 @@ function Composer({
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
       attachments.blocked ||
+      pendingImagePastes > 0 ||
       sendPending ||
       sendAttempt.current ||
       !outbox
@@ -4007,7 +4012,43 @@ function Composer({
         }}
         onPasteCapture={(event) => {
           const files = pastedFiles(event.clipboardData);
-          if (!files.length) return;
+          if (!files.length) {
+            if (
+              !canAttach ||
+              !permitted.current ||
+              editingDisabled ||
+              editing.target ||
+              voice.isCapturing()
+            )
+              return;
+            const read = readUnexposedClipboardImage(event.nativeEvent);
+            if (!read) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const owner = event.currentTarget;
+            setPendingImagePastes((count) => count + 1);
+            const stillHere = () =>
+              live.current &&
+              permitted.current &&
+              form.current === owner &&
+              !owner.hasAttribute("data-editing");
+            void read
+              .then((file) => {
+                if (file && stillHere()) attachCurrentFiles.current([file]);
+              })
+              .catch((error: unknown) => {
+                if (stillHere())
+                  refuseAttachment(
+                    typeof error === "string"
+                      ? error
+                      : "Could not read the clipboard image.",
+                  );
+              })
+              .finally(() => {
+                if (live.current) setPendingImagePastes((count) => count - 1);
+              });
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           attachFiles(files);
@@ -4525,7 +4566,8 @@ function Composer({
                 sending ||
                 submission?.disabled ||
                 (!editing.target && forwarded.blocked) ||
-                (!editing.target && attachments.blocked) ||
+                (!editing.target &&
+                  (attachments.blocked || pendingImagePastes > 0)) ||
                 (!draft.trim() &&
                   !value.forward &&
                   !chatCards?.length &&

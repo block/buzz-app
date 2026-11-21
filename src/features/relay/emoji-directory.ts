@@ -13,6 +13,7 @@ import {
   type CustomEmoji,
 } from "./emoji";
 import { eventDto, newer, type RelayEvent } from "./events";
+import { PublishRejected } from "./outbox";
 import type { Priority, RelayReader } from "./reader";
 import type { RelayWriter } from "./transport";
 
@@ -31,6 +32,30 @@ export type EmojiAuthoring = Readonly<{
 }>;
 const LIMIT = 500;
 const MAX_BYTES = 2 * 1024 * 1024;
+/** The largest complete signed own set: one 1 MiB `POST /events` body that
+ * every member's 1 MiB live socket can receive back inside its `["EVENT",…]`
+ * wrapper. Mirrors `EMOJI_SET_MAX_EVENT_BYTES` in `src-tauri/src/relay.rs`. */
+export const EMOJI_SET_MAX_EVENT_BYTES = 1024 * 1024 - 512;
+/** The host signer's size refusal (`relay_sign`/`sign_bounded` in `src-tauri`),
+ * which Tauri delivers as this plain string. */
+const SIGNER_TOO_LARGE = "Relay event is too large";
+/** Quotes the measured size only when it is the reason; a host or relay with a
+ * lower cap must not read as "≈3 KB, limit 1023 KB". */
+const tooLarge = (bytes: number) => {
+  const limit = `limit ${Math.floor(EMOJI_SET_MAX_EVENT_BYTES / 1024)} KB`;
+  const size =
+    bytes > EMOJI_SET_MAX_EVENT_BYTES
+      ? `≈${Math.ceil(bytes / 1024)} KB, ${limit}`
+      : limit;
+  return `Your emoji set is too large to save (${size}). Remove some emoji first.`;
+};
+/** The specific text behind a failed edit: the relay's refusal, an `Error`'s
+ * message, or a host string rejection (Tauri rejects `invoke` with strings). */
+function failureText(error: unknown): string | undefined {
+  if (error instanceof PublishRejected) return error.reason ?? error.message;
+  if (error instanceof Error) return error.message || undefined;
+  return typeof error === "string" && error ? error : undefined;
+}
 /** Community-owned latest complete member sets, including empty replacement evidence.
  * No LRU eviction: forgetting a replacement can resurrect a removed shortcode. */
 export function createEmojiDirectory(
@@ -188,6 +213,7 @@ export function createEmojiDirectory(
     if (!viewer) throw new Error(failure);
     const timeout = AbortSignal.timeout(12_000);
     const signal = AbortSignal.any([lifetime.signal, timeout]);
+    let size = 0;
     try {
       const own = await reader.read(
         [
@@ -230,6 +256,15 @@ export function createEmojiDirectory(
           ...entries.map((entry) => ["emoji", entry.shortcode, entry.url]),
         ],
       };
+      // The signed event is the template plus fixed-width id, pubkey and sig,
+      // so this is its exact size: refuse before signing or any network call.
+      size = byteSize({
+        ...template,
+        id: "0".repeat(64),
+        pubkey: viewer,
+        sig: "0".repeat(128),
+      });
+      if (size > EMOJI_SET_MAX_EVENT_BYTES) throw new Error(tooLarge(size));
       const event = eventDto(await writer.sign(template, signal));
       if (
         event.pubkey !== viewer ||
@@ -244,14 +279,25 @@ export function createEmojiDirectory(
       signal.throwIfAborted();
       accept([event]);
       return shortcode;
-    } catch {
-      throw new Error(
-        timeout.aborted
-          ? url === undefined
+    } catch (error) {
+      if (timeout.aborted)
+        throw new Error(
+          url === undefined
             ? "Timed out while removing emoji."
-            : "Timed out while adding emoji."
-          : failure,
-      );
+            : "Timed out while adding emoji.",
+        );
+      // Disposal is not a failure the user can act on; keep the reference copy.
+      if (signal.aborted) throw new Error(failure);
+      const text = failureText(error);
+      // The host signer and the relay's 1 MiB body limit refuse oversize sets
+      // with their own text; both mean the too-large message.
+      if (
+        text === SIGNER_TOO_LARGE ||
+        (error instanceof PublishRejected &&
+          error.message === "Relay rejected the message (413)")
+      )
+        throw new Error(tooLarge(size));
+      throw new Error(text ?? failure);
     }
   }
   const queries = Object.freeze({

@@ -29,8 +29,13 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { CustomEmoji } from "./CustomEmoji";
 import styles from "./Emoji.module.css";
 
+// Host commands reject with plain strings; show them rather than the fallback.
 const message = (reason: unknown, fallback: string) =>
-  reason instanceof Error && reason.message ? reason.message : fallback;
+  reason instanceof Error
+    ? reason.message || fallback
+    : typeof reason === "string" && reason
+      ? reason
+      : fallback;
 
 /** Desktop's custom emoji card: each member adds to their own kind-30030 set. */
 export function CustomEmojiSettings({

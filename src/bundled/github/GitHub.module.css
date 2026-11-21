@@ -374,9 +374,10 @@
 /* The sidebar's icon and a message link's icon take one colour per state, as
    the panel's chip above does; a link's text stays a link. Open, merged and
    an issue completed use the icon-tier roles: the chip's step-12 text inks are
-   indistinguishable from a bubble's own ink. Draft, closed, an issue not
-   planned and not yet read are quiet: closed is not red here. Only the
-   sidebar shows an open one's checks and conflicts.
+   indistinguishable from a bubble's own ink. Draft, an issue not planned and
+   not yet read are quiet. A closed pull request is red in the sidebar, as on
+   GitHub, and quiet in a message, where a bubble hands its icons no danger
+   ink.
    The sidebar's quiet icon is the row's subtle ink, which a hovered or
    selected row rebinds; a message's icons take the pair the bubble hands
    them, if any. */
@@ -386,20 +387,47 @@
 .pullState {
   color: var(--message-icon-subtle, var(--icon-subtle));
 }
-.soloPull[data-tone="open"],
+.soloPull:is([data-tone="open"], [data-tone="failure"], [data-tone="pending"]),
 .pullState[data-pr-state="open"] {
   color: var(--message-icon-success, var(--icon-success));
 }
-.soloPull[data-tone="failure"] {
-  color: var(--text-danger);
-}
-.soloPull[data-tone="pending"] {
-  color: var(--text-warning);
+.soloPull[data-tone="closed"] {
+  color: var(--icon-status-failure);
 }
 .soloPull[data-tone="merged"],
 .pullState[data-pr-state="merged"],
 .pullState[data-pr-state="completed"] {
   color: var(--message-icon-categorical-purple, var(--icon-categorical-purple));
+}
+/* Only the sidebar shows an open one's checks and conflicts: a dot on the
+   still-green icon, red when they need attention and amber while checks run,
+   so an open pull request never reads as closed. The icon is cut away around
+   the dot, as an avatar is around its status, so no row fill is assumed.
+   The glyph is the svg's own box, so the dot and the cutout share a centre
+   whatever the row's height. */
+.soloPullGlyph {
+  position: relative;
+  display: inline-flex;
+}
+.soloPull:is([data-tone="failure"], [data-tone="pending"]) svg {
+  mask-image: radial-gradient(
+    circle at 87.5% 87.5%,
+    transparent 0.3125rem,
+    black calc(0.3125rem + 0.5px)
+  );
+}
+.soloPullBadge {
+  position: absolute;
+  top: 87.5%;
+  left: 87.5%;
+  width: 0.375rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--icon-status-failure);
+}
+.soloPull[data-tone="pending"] .soloPullBadge {
+  background: var(--icon-status-progress);
 }
 .soloLink {
   display: flex;

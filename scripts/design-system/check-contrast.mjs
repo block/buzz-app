@@ -280,6 +280,8 @@ const BOUNDARY_ROLES = [
   "--status-avatar-online-border",
   "--status-away",
   "--status-offline",
+  // A failed or closed state's icon or dot stands alone on a surface.
+  "--icon-status-failure",
   // Chart marks need 3:1 against the surfaces a chart sits on.
   "--chart-series-1",
   "--chart-series-2",

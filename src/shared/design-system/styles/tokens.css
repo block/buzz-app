@@ -1157,6 +1157,7 @@
   --text-success: var(--green-text);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
+  --icon-status-failure: var(--red-10);
   --icon-subtle: var(--text-subtle);
   --icon-subtle-own: var(--icon-subtle);
   --text-metadata-own: var(--text-metadata);
@@ -1336,6 +1337,7 @@
   --text-success: var(--green-12);
   --icon-status-progress: var(--amber-10);
   --icon-status-complete: var(--green-10);
+  --icon-status-failure: var(--red-10);
   --icon-subtle: var(--text-subtle);
   --icon-subtle-own: var(--icon-subtle);
   --text-metadata-own: var(--text-metadata);

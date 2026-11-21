@@ -709,6 +709,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "icon-status-failure",
+        variable: "--icon-status-failure",
+        pointsAt: "red-10 light / red-10 dark",
+        use: "Failed or closed state icons and dots, such as a pull request's failing checks, paired with a distinct shape and accessible status label. Not text.",
+        status: "core",
+      },
+      {
         token: "icon-subtle",
         variable: "--icon-subtle",
         pointsAt: "text-subtle",

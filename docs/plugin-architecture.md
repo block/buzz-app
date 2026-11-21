@@ -1126,6 +1126,21 @@ agent, as the rest of a trusted plugin's code acts as its owner. Names are
 lowercase and cannot be a Buzz tool's. The tool is removed when its plugin's
 scope ends, so safe mode removes installed plugins' tools.
 
+While a call the app ran for one of its agents is addressed to a channel, `call`
+also gets a fifth `host` argument: `{ destination, reviewAndInvokeOnce }`. The
+fourth argument stays the [operation proof](#agent-operation-proofs), so it is
+`undefined` here; an operation's checked call gets a proof and no `host`. The
+review sends as the calling agent, only to that call's community, owner,
+channel and root (absent root stays absent), and starts only until the call
+settles or rejects; a review already started stays approvable afterwards until
+the agent's handle, plugin, page, session or membership ends. Native fences the
+membership's incarnation, so a deleted and re-imported agent cannot approve an
+older review; the review names the agent. The app attests which agent invoked
+the tool, not the tool's code. A call with no addressed channel, a client the app
+did not make, or no reachable host gets no `host`, and the tool is called with
+its other arguments as before. `host` bypasses no approval: it only starts the
+same reviewed card a plugin's own `reviewAndInvokeOnce` does.
+
 `call(client, context, args)` can read `client.signal`, a host-owned
 `AbortSignal` captured for that call. Native Claude, Codex and Goose cancel it on
 Stop. Goose captures the current ACP work burst: steers share its signal, and
@@ -2103,6 +2118,217 @@ also searches standard Homebrew binary directories when a macOS GUI launch has a
 limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry
 or credential store.
+
+### Experimental operation-local synthetic review
+
+On macOS, `host.reviewAndInvokeOnce?.({operation, body, destination}, {callId})`
+uses a current installed revision's `host.reviewedInvocations` declaration. Each
+entry has a unique `id` and a complete `artifact` descriptor (absolute executable
+path, SHA-256 and optional flat hashed siblings), using the existing process
+artifact snapshot owner. At most four entries are permitted. Runtime callers
+cannot choose executable, arguments, environment, URL/script or private input.
+This checkpoint is **synthetic only**, not real credential custody, enrollment,
+persistence, reusable connections, provider execution or a general HTTP proxy.
+
+A message renderer may supply `reviewedInvocation(message)` as a call-ID locator.
+It grants no authority. The conversation host renders the native-frozen request
+and sole Approve and run action, beside the contribution's draft/status. The host
+binds it to the current caller/revision, actual session and reader target, and
+retires it when the message/mount/session/contribution changes. Same-instance
+React effect replay does not recreate or renew the operation. The internal
+main-renderer bridge signals the existing native invocation owner; no public
+plugin/tool accept API, approval boolean or execution bearer is returned.
+**Installed UI/plugins are trusted**: this is not physical-human attestation
+against compromised same-process renderer code.
+
+The body is at most 32 KiB. Destination contains exact `community`, `viewer`,
+`channel` and optional `root` strings, each 1–256 ASCII routing bytes. Absent root
+is not an empty or present root. The native projection includes the exact body,
+operation, destination, digest, call identity and fixed deadline. Native-created
+synthetic material is used only in the private fake-recipient envelope; there is
+no input field, getter or credential setup. Destination binds this dispatch and
+receipt, not independent publishing authority.
+
+Admission consumes the normal boot/page/activation/call-ID envelope before review.
+One retained invocation owns the pending record and terminal promise; no queue or
+new prepare/accept/execute lifecycle is added. Disposal, plugin change, page load,
+window close and the fixed 120-second deadline retire pending authority. Cordis
+cleanup waits for native retirement acknowledgement or the exact operation's
+validated terminal receipt; an unconfirmed IPC failure holds successor activation.
+The deadline is rechecked at final dispatch. Synchronous retirement, page and
+installed-registry locks fence grant checking, artifact revalidation and spawn.
+Manager admission retains an open descriptor to the validated registry under the
+same lock. Final dispatch compares its device/inode with the current file.
+**Any registry save**, including unrelated changes or identical-byte disable/enable,
+irrevocably cancels pending dispatch. This assumes the verified atomic-replacement
+Manager writers, not arbitrary in-place edits or historical writers. Missing or
+unreadable files fail closed. Native consumes before spawn; UNKNOWN is not renewed.
+
+The existing experimental `host.reviewedInvocations` field is already unreadable
+by the inspected bare-base CLI's strict parser. Use only the manual fixture's
+explicit temporary home/profile, never shared/default desktop storage; there is
+no blanket old-CLI compatibility claim or downgrade-via-recover procedure.
+Consumption precedes
+spawn; even spawn failure or UNKNOWN is not renewable. Up to 128 operation
+IDs/tombstones are retained per app process; exhaustion fails closed until restart.
+
+Private dispatch has empty environment, no arguments, one stdin envelope, discarded
+stderr and a five-second process-group deadline on the supported macOS host. Only
+a bounded successful `{attempt,digest}` acknowledgement matching that invocation
+becomes `submitted`; other outcomes are unknown and remain consumed. No arbitrary
+stdout reaches JS. Receipts contain only call ID, frozen destination, digest and
+`cancelled`/`submitted`/`unknown`. There is no implicit fallback or retry. The
+[manual fixture](../tests/fixtures/reviewed-invocation/README.md) uses actual
+installed-plugin ownership, production MessageRow/card wiring and the same executor; native human evidence remains a
+separate acceptance gate. Future production enrollment must converge with the
+existing secret-slot authority, not turn this operation owner into a second store.
+
+A `credentialHttp` grant uses the version 1 request instead: `version: 1`, an
+`effect` (`credential-http`, `POST`, URL, nonsecret headers, slot) and a
+`disclosure` (`version`, `text`), all frozen and digested with the body. The card
+shows method, URL, slot, body, destination and headers; disclosure text is shown
+only as supplemental plugin notes. After approval native sends one POST and
+reports one correlated `create-response` to `onCreateResponse` in the original
+call options; a mismatched or repeated response retires the call.
+
+While that call stays live, `host.request({ url, parent: { version: 1, callId } })`
+continues it with a bounded text GET (`continuation: true` in support). Native
+keeps the create's grant, exact saved credential, page and viewer, and checks
+them again before sending and before handing back the response. The GET must
+use the create's exact origin, with no method override, body, headers or
+secret; the create's nonsecret headers and credential are applied. The limits
+are one read in flight and 120 admitted reads, including failed ones, within
+600 seconds of the create. Each read follows the 64 KiB JSON and 10 second
+credential transport limits. Responses carry `parent` correlation with a rising
+`sequence` from 2; a mismatch retires the call. A refused read never falls back
+to an ordinary request. Same-origin admission does not prove the URL is the
+created task: the trusted caller derives the task path, keeps its own cadence,
+and validates the status it reads. Native adds no polling. Retirement drops
+any in-flight read before a successor can start.
+
+A refused parent text read rejects with exactly `host-parent-read/v1/<code>`,
+and nothing else: no status number, URL, body or cause. Each code names the
+boundary that observed the refusal, not a guessed reason:
+
+- `js-admission`: the request is not a parent read of a continuing call for this
+  plugin (shape, version, call or owner), so it never reached native.
+- `js-lifecycle`: the call stopped continuing; checked before sending and again
+  after either outcome, so late work is suppressed.
+- `js-correlation`: the response's `parent` did not match; the call is retired.
+- `native-admission`: native did not admit the read: request shape or origin, a
+  missing, retired or disabled parent, the read count, one read in flight, or
+  the 600 second window, including when it closes on a held read.
+- `native-fence`: a live parent's page, viewer, saved credential or grant changed.
+- `native-timeout`: only the per-read wait (at most 10 seconds) ran out.
+- `native-transport`: the request failed before any response status.
+- `native-status`: a non-2xx response, checked before anything else about it.
+- `native-response`: a 2xx response that was refused for any reason: it reflects
+  the credential, or is not UTF-8 JSON within 64 KiB. One code for all of them.
+- `native-retired`: native observed the call's retirement while the read was held.
+- `native-interrupted`: the reply closed without any of the above.
+
+Callers match these strings exactly and treat anything else, including text
+from older hosts, as an unclassified failure. A code is a diagnostic, never a
+reason to retry; an admitted failure still consumes its read.
+
+The same call gets one result-byte read:
+`host.requestBytes({ url, maxBytes, parent: { version: 1, callId } })`. It
+shares the read count, the one-in-flight limit and the deadline, and the
+attempt is consumed even when it fails, so there is no refetch. The URL needs
+an exact declared origin. That is not a check of the provider's output policy.
+The GET carries no credential, cookies, API or caller headers, and it follows no
+redirect and makes no retry. The download is capped at 30 seconds, or the time
+left if that is less, and at 16 MiB of streamed bytes. An empty or failed
+response is an error. Native keeps that one source and its SHA-256 with the
+call and returns a copy with `parent` and `source: { sha256, size }`. Returned
+bytes or hashes are never authority. Byte admission ends once the frame is
+built. The single unfinished reviewed call bounds the retained source, and
+retirement drops it before a successor.
+
+A grant may instead declare `resultUrl: { version: 1, jsonPointer }`: one
+bounded RFC 6901 pointer (non-root, at most 256 bytes and 16 segments). This is
+a separate authority, shown at installation with its pointer and changing the
+grant; support reports `resultUrl: 1` and the review projection carries
+`resultUrl: 1` so the card says one result is downloaded from the service’s
+response. After each successful parent read native reads that pointer from the
+latest authenticated `200` JSON response and keeps the string only when it is a
+canonical public HTTPS URL of at most 2048 bytes, with no userinfo, fragment,
+control characters, local or single-label name, or non-public IP literal. The
+caller then sends `requestBytes({ maxBytes, parent, result: { version: 1,
+sequence } })` naming that response's `sequence`, never a URL; a URL with
+`result`, a missing parent, a stale or foreign sequence, or no selection is
+refused without a request. Any later read clears the selection, and admission
+consumes the one result attempt. Native resolves the host once under a 10
+second bound, refuses an empty set or any non-public address, and pins the
+connection to the vetted addresses with the original name as TLS identity. The
+GET goes through no proxy, follows no redirect (a redirect fails), makes no
+retry, keeps no idle connection and sends no credential, cookie, Referer or
+caller header; the signed path and query are sent exactly as read and are never
+shown or logged. Retirement, a page or scope change, and the deadline are
+checked before and after the lookup. Failures are fixed URL-free errors. The
+retained source, digest and preparation are those of the URL mode.
+
+With `expectedMedia` (`expectedMedia: 1` in support) the request also freezes
+one generic result shape before review: `{ version: 1, kind: "video",
+container: "mp4", codec: "h264", width, height, durationMs, toleranceMs,
+maxBytes }`. Native bounds it, digests it and the card states it as one
+requirement line; there are no vendor defaults. `onCreateResponse` may then
+return, or resolve to, `{ source: { sha256, size } }` naming the source its own
+result read retained. Any other value, a throw or a rejection retires the call;
+returning nothing selects nothing. The selection goes through one private
+native command to the same call, never as a public execute or accept API. An
+admitted selection consumes the source even when it mismatches, so nothing can
+be substituted or retried. Native writes the bytes to a private temporary
+directory, probes them with `ffprobe` (an ISO MP4 brand, exactly one video
+stream, exact width and height, video duration within the tolerance), converts
+them through the existing fixed MOV demuxer with strict decoding, probes the
+output again (H.264, at most one AAC audio track) and fully decodes it. A
+mismatch fails; it is never trimmed, stretched or padded to fit. The strict
+branch needs `ffmpeg` and `ffprobe` on the effective PATH and fails closed when
+either is missing; ordinary media preparation is unchanged. `maxBytes` caps the
+source and the output. Output size is polled, so the file can briefly overshoot
+before the conversion is stopped. Metadata and chapters are removed, and the
+prepared SHA-256 differs from the source's. The prepared file stays with the
+call, internal only: the host gets a `prepared` acknowledgement with only its
+hash and size, never a path or handle. Retirement or the deadline
+stops the conversion, waits for it, and removes its files before a successor
+can start; a crash can leave the temporary directory behind. A plugin's own
+review keeps the prepared file native and the original call pending.
+
+When an agent's tool proposed the review, HostService then advances the same
+call through two more private steps, while that tool call's handle is live.
+Native rehashes the retained file and streams it once to the agent's own
+community as the agent captured at review start. The message is one
+attachment-only kind 9, `video.mp4` with the prepared hash, size and measured
+dimensions, in the original chat and thread. HostService formats it with the
+ordinary attachment helpers; native refuses anything else. Before the upload,
+and again before signing, native rereads the channel as that agent. The
+community-signed roster must list it above guest, the channel must not be
+archived, and any root must belong to that channel. The receipt adds
+`delivery`: `upload` (`uploaded`, `failed` or `unknown`), `status` (`posted`,
+`failed` or `unknown`) and the signed `eventId`. Posted means the community
+accepted that exact event, not that the media plays. Nothing is retried.
+`upload: unknown` with `status: failed` means the upload is uncertain and no
+message was signed. An unconfirmed post keeps its one event ID. The agent
+stopping, unlike its turn ending, retires the review; native then starts no
+upload or signature, and one already sent is still reported.
+The provider outcome stays `unknown`. A real provider's output is not yet
+qualified. Check
+`host.reviewedInvocationSupport?.()` before offering review. It reports which
+pieces this native host implements, fails closed to nothing supported, and is
+availability only: no grant, credential or dispatch check.
+
+An optional synchronous `onStarted()` in the call options runs at most once,
+when native holds this call's validated review card and before anyone
+approves it. Sending the call to native is not starting it: native can still
+refuse. `onStarted()` does not mean approval, execution or delivery, and it
+never runs after a refusal, disposal, agent stop or retirement, including one
+that wins during the card's own update. A throwing callback retires the call.
+In every case the returned promise still settles with how the call ended. An
+agent's tool can wait for it and then return while the card stays open,
+watching that same promise for the outcome. This host adds `reviewStart: 1`
+to a supported `reviewedInvocationSupport()` result; native does not report it,
+and older hosts omit it.
 
 A plugin that gives agents its own rules in the chats it manages declares the
 sections of the base instructions it can replace:

@@ -1,5 +1,5 @@
 // FOUNDATION: Shared conversation UI and plugin-owned tools/renderers; never another data owner.
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentProps, ComponentType, ReactNode } from "react";
 import {
   EmbeddedConversation,
   EmbeddedThread,
@@ -52,6 +52,11 @@ import {
   DocumentEditor,
   type DocumentEditorProps,
 } from "../messages/DocumentEditor";
+import {
+  ReviewedInvocationReview,
+  type ReviewReader,
+} from "./ReviewedInvocationReview";
+import type { HostService } from "../host/service";
 
 /** A Solo chat's sidebar icon: what the plugin knows about the chat, or
  * `fallback` when it has nothing to show. */
@@ -397,7 +402,49 @@ export class ConversationService extends Service implements Conversation {
       typeof value.ownsAttachment !== "function"
     )
       throw new Error("A message renderer's ownsAttachment must be a function");
-    this.messageEntries.register(this.ctx, value);
+    if (
+      value.reviewedInvocation !== undefined &&
+      typeof value.reviewedInvocation !== "function"
+    )
+      throw new Error(
+        "A message renderer's reviewedInvocation must be a locator",
+      );
+    const ctx = this.ctx;
+    const Component = value.component;
+    const locator = value.reviewedInvocation;
+    const owner = ctx.pluginOwner;
+    this.messageEntries.register(
+      ctx,
+      locator && owner
+        ? {
+            ...value,
+            component: ({
+              reviewReader,
+              reviewCurrent,
+              ...props
+            }: ComponentProps<typeof Component> & {
+              reviewReader?: ReviewReader;
+              reviewCurrent?: () => boolean;
+            }) => (
+              <ReviewedInvocationReview
+                host={ctx.host as HostService}
+                owner={owner}
+                locator={locator}
+                message={props.message}
+                reader={reviewReader}
+                current={() =>
+                  ctx.fiber.uid !== null &&
+                  ctx.pluginStatus.isActive(owner.id, owner.revision) &&
+                  reviewCurrent?.() === true &&
+                  ctx.relay.snapshot().session === reviewReader?.session
+                }
+              >
+                <Component {...props} />
+              </ReviewedInvocationReview>
+            ),
+          }
+        : value,
+    );
   }
   registerAccessory(value: ComposerAccessory) {
     validate(value);

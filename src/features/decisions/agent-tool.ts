@@ -5,7 +5,7 @@
 // `Decisions`.
 // Jev's `model`, images, box questions and `usage` are left out: the owner's
 // provider answers, and it takes text.
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import type {
   DecisionAnswer,
   DecisionFailure,
@@ -123,7 +123,7 @@ function answer(given: DecisionAnswer, criteria: unknown) {
 
 export function registerDecideTool(
   agents: Readonly<{
-    addTool(tool: AddedTool): void;
+    addTool(tool: PluginTool): void;
     snapshot(): Readonly<{
       running: readonly Readonly<{ key: string; relay: string }>[];
     }>;

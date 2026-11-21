@@ -1,4 +1,6 @@
 import { expect, it, vi } from "vitest";
+import type { AgentHandle } from "../features/agents/service";
+import { AppInvocation, appClient, appInvocation } from "./app-client";
 import { ATTENTION_TOOLS } from "./attention";
 import { type Listing, respond } from "./rpc";
 import {
@@ -224,4 +226,143 @@ it("checks file-capture errors before exposing them and does not recheck approva
   ).rejects.toThrow("denied action");
   expect(protect).toHaveBeenCalledOnce();
   expect(protect.mock.calls[0]?.[0].kind).toBe("tool");
+});
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((accept) => {
+    resolve = accept;
+  });
+  return { promise, resolve };
+}
+const agentHandle = (live = vi.fn()) =>
+  ({
+    key: "bot",
+    pubkey: "agent",
+    owner: "owner",
+    live,
+  }) as unknown as AgentHandle;
+const options = {
+  read: vi.fn(),
+  memories: async () => ({ entries: [], partial: false }),
+};
+
+it("lends an added tool the sender it was called as, only while the call runs", async () => {
+  const entered = deferred();
+  const approval = deferred();
+  const check = vi.fn(async () => {
+    entered.resolve();
+    await approval.promise;
+  });
+  const client = appClient(
+    { ...agentHandle(), protection: { check } } as unknown as AgentHandle,
+    { ...options, protectionContext: async () => [] },
+  );
+  const context: { channel?: string; root?: string } = {
+    channel: "a",
+    root: "r",
+  };
+  let lent: AppInvocation | undefined;
+  let proof: unknown = "unset";
+  const reply = callSessionTool(client, context, "plugin_write", {}, [
+    {
+      ...tool("plugin_write"),
+      call: async (_client, _context, _args, given, invocation) => {
+        proof = given;
+        lent = invocation;
+        invocation?.initiating();
+        return "done";
+      },
+    },
+  ]);
+  await entered.promise;
+  context.channel = "b";
+  delete context.root;
+  approval.resolve();
+  expect(await reply).toBe("done");
+  // The fourth argument stays an operation's proof; an ordinary call has none.
+  expect(proof).toBeUndefined();
+  expect(AppInvocation.is(lent)).toBe(true);
+  expect({ ...lent }).toEqual({
+    key: "bot",
+    pubkey: "agent",
+    owner: "owner",
+    channel: "a",
+    root: "r",
+  });
+  expect(() => lent?.initiating()).toThrow("The tool call has ended");
+  expect(() => lent?.live()).not.toThrow();
+});
+
+it("lends the invocation alongside a plugin client restricted from settings and Bestie", async () => {
+  const client = appClient(
+    {
+      ...agentHandle(),
+      settings: { list: vi.fn(), get: vi.fn(), set: vi.fn() },
+      bestie: vi.fn(),
+    } as unknown as AgentHandle,
+    options,
+  );
+  expect(client).toHaveProperty("settings");
+  expect(client).toHaveProperty("bestie");
+  const call = vi.fn<AddedTool["call"]>(async () => "done");
+  await callSessionTool(client, { channel: "a" }, "plugin_write", {}, [
+    { ...tool("plugin_write"), call },
+  ]);
+  const [given, , , proof, invocation] = call.mock.calls[0] ?? [];
+  expect(given).not.toHaveProperty("settings");
+  expect(given).not.toHaveProperty("bestie");
+  expect(proof).toBeUndefined();
+  expect(AppInvocation.is(invocation)).toBe(true);
+  // The restricted copy cannot mint an invocation of its own.
+  expect(appInvocation(given as typeof client, {}, () => true)).toBeUndefined();
+});
+
+it.each([
+  ["Goose", undefined],
+  ["Codex", "finished"],
+] as const)(
+  "refuses a new review once a %s call settles or rejects",
+  async (_runtime, finished) => {
+    let ended = false;
+    const client = appClient(agentHandle(), {
+      ...options,
+      check: () => {
+        if (finished && ended) throw new Error(finished);
+      },
+    });
+    for (const fails of [false, true]) {
+      let lent: AppInvocation | undefined;
+      const call = callSessionTool(client, {}, "plugin_write", {}, [
+        {
+          ...tool("plugin_write"),
+          call: async (_client, _context, _args, _proof, invocation) => {
+            lent = invocation;
+            invocation?.initiating();
+            if (finished) {
+              ended = true;
+              expect(() => invocation?.initiating()).toThrow(finished);
+              ended = false;
+            }
+            if (fails) throw new Error("tool failed");
+            return "done";
+          },
+        },
+      ]);
+      await (fails ? expect(call).rejects.toThrow("tool failed") : call);
+      // The call's own end refuses, whether or not its runtime has a finished guard.
+      expect(() => lent?.initiating()).toThrow("The tool call has ended");
+    }
+  },
+);
+
+it("gives a structurally forged client no sender to lend", async () => {
+  const real = appClient(agentHandle(), options);
+  const forged = { ...real };
+  const call = vi.fn(async () => "done");
+  await callSessionTool(forged, { channel: "a" }, "plugin_write", {}, [
+    { ...tool("plugin_write"), call },
+  ]);
+  expect(call.mock.calls[0]).toEqual([forged, { channel: "a" }, {}]);
+  expect(AppInvocation.is({ ...real, key: "bot" })).toBe(false);
 });

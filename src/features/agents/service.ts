@@ -268,7 +268,14 @@ import {
 } from "./catch-up";
 import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
-import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
+import { AppInvocation } from "../../buzz-mcp/app-client";
+import {
+  type AddedTool,
+  type AddedToolHost,
+  BUZZ_SESSION,
+  type PluginTool,
+} from "../../buzz-mcp/session-tools";
+import type { HostService } from "../host/service";
 import { soloChannelMetadata } from "../relay/discovery";
 import { channelIdentity } from "../relay/channel-labels";
 import { regionLabels } from "../solo/region-labels";
@@ -619,6 +626,10 @@ export type AgentHandle = Readonly<{
    * any reconnect. With `gateway`, for a gateway turn, it then waits for
    * the gateway access check a reload started. Says whether it waited. */
   settle?(signal: AbortSignal, gateway?: boolean): Promise<boolean>;
+  /** Throws once this handle no longer works, without acting. */
+  live(): void;
+  /** Aborts once this handle stops for good, not when a turn ends. */
+  lifetime(): AbortSignal;
   /** Installed local types and owner-reviewed creation requests. */
   agentTypes?(): readonly Readonly<{ key: string; title: string }>[];
   createAgent?(
@@ -1641,7 +1652,7 @@ export type Agents = {
    * acts as its owner. A session lists
    * the tools there are when it starts, and one that cannot take a changed
    * list is replaced when it is next used. */
-  addTool(tool: AddedTool): void;
+  addTool(tool: PluginTool): void;
   /** A provider keeps the resolver and shares only its operation descriptor. */
   createToolOperation(id: string): AgentToolProvider;
   /** The tools active plugins add now. A name is only ever one plugin's. */
@@ -3736,7 +3747,7 @@ export class AgentsService extends Service implements Agents {
   }
   /** Whether a plugin that shows Attention is on, so Attention may run. */
   private attentionShown = () => this.attentionControls.snapshot().length > 0;
-  addTool(tool: AddedTool) {
+  addTool(tool: PluginTool) {
     if (
       !/^[a-z][a-z0-9_]{0,63}$/.test(tool.name ?? "") ||
       BUZZ_SESSION.tools.some((core) => core.name === tool.name) ||
@@ -3754,10 +3765,52 @@ export class AgentsService extends Service implements Agents {
     // are not active yet, and the second to take a name must fail.
     if (this.toolNames.has(tool.name))
       throw new Error(`Another plugin adds agent tool ${tool.name}`);
-    this.addedTools.register(this.ctx, { ...tool, id: tool.name });
+    // The app's own host takes an origin no plugin's Host type names. Where
+    // no host is reachable, the plugin's tools are lent no review.
+    let review: HostService["reviewAndInvokeOnce"] | undefined;
+    try {
+      const host = this.ctx.host as Partial<HostService>;
+      review = host.reviewAndInvokeOnce?.bind(host);
+    } catch {}
+    this.addedTools.register(this.ctx, {
+      ...tool,
+      id: tool.name,
+      call: (client, context, args, proof, invocation) => {
+        const host = review && this.lend(review, invocation);
+        if (host) return tool.call(client, context, args, proof, host);
+        // Without a host, the plugin's tool is called as before.
+        return proof
+          ? tool.call(client, context, args, proof)
+          : tool.call(client, context, args);
+      },
+    });
     this.ctx.effect(() => {
       this.toolNames.add(tool.name);
       return () => this.toolNames.delete(tool.name);
+    });
+  }
+  /** The review one call the app ran for its agent may start, sending only
+   * where that call was addressed; none without one, never the open chat. */
+  private lend(
+    review: HostService["reviewAndInvokeOnce"],
+    invocation: AppInvocation | undefined,
+  ): AddedToolHost | undefined {
+    if (!AppInvocation.is(invocation) || invocation.channel === undefined)
+      return;
+    const relay = this.agent(invocation.key)?.relay;
+    const community = relay && originOf(relay);
+    if (!relay || !community) return;
+    const destination = Object.freeze({
+      community,
+      viewer: invocation.owner,
+      channel: invocation.channel,
+      ...(invocation.root === undefined ? {} : { root: invocation.root }),
+    });
+    const origin = Object.freeze({ invocation, relay, destination });
+    return Object.freeze({
+      destination,
+      reviewAndInvokeOnce: (request, options) =>
+        review(request, options, origin),
     });
   }
   createToolOperation(id: string): AgentToolProvider {

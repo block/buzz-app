@@ -4,7 +4,7 @@
 //! asked; it is killed when the plugin asks, when the page reloads, or when the
 //! app exits. A page that reloaded hears nothing of it after. It runs with the
 //! user's own access, with optional native containment for protected workers.
-mod artifact;
+pub(crate) mod artifact;
 mod claude_hooks;
 mod protection;
 use artifact::verify_artifact;

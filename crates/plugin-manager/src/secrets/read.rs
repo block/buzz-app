@@ -1,4 +1,4 @@
-//! Strict structural validators for registry and inventory records; never credential-use authority.
+//! Established, target-only structural evidence; never credential-use authority.
 use super::*;
 use serde::de::{Error as _, MapAccess, Visitor};
 use std::{collections::BTreeSet, marker::PhantomData};
@@ -40,6 +40,13 @@ where
     deserializer.deserialize_map(Entries(PhantomData))
 }
 
+// No guards or borrowed evidence can be carried into the returned value.
+pub(super) struct Structural<'a> {
+    pub(super) registry: &'a Registry,
+    pub(super) installed: &'a BTreeMap<String, Installed>,
+    pub(super) namespace: &'a Namespace,
+    pub(super) state: &'a State,
+}
 fn checked(path: &Path, write: bool) -> Result<File> {
     let mut options = OpenOptions::new();
     options.read(true).write(write);
@@ -59,6 +66,14 @@ fn checked(path: &Path, write: bool) -> Result<File> {
         return Err(UNREADABLE.into());
     }
     Ok(file)
+}
+fn existing_lock(path: &Path) -> Admission<Held> {
+    let file = checked(path, true)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Held(file)),
+        Err(fs::TryLockError::WouldBlock) => Err(Refusal::Busy(UNREADABLE.into())),
+        Err(fs::TryLockError::Error(_)) => Err(UNREADABLE.into()),
+    }
 }
 pub(super) fn bytes(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
@@ -202,4 +217,50 @@ pub(super) fn inspect_retired(namespace: &Namespace) -> Result<()> {
             bundled_overrides: BTreeMap::new(),
         },
     )
+}
+
+pub(super) fn with_structural<T>(
+    manager: &Manager,
+    continuation: impl FnOnce(Structural<'_>) -> T,
+) -> Admission<T> {
+    if cfg!(not(unix)) {
+        return Err(UNSUPPORTED.into());
+    }
+    let inventory = manager.inventory().ok_or(UNAVAILABLE)?;
+    let id = manager.namespace_id()?;
+    let _r = existing_lock(&manager.root.join("registry.lock"))?;
+    let _g = existing_lock(&inventory.root.join("state.lock"))?;
+    let _i = existing_lock(&inventory.root.join(format!("ns-{id}.lock")))?;
+    let registry_bytes = bytes(&manager.root.join("registry.json"), crate::LIMIT as usize)?;
+    let (registry, raw) = registry(&registry_bytes, VARIANT)?;
+    let state: State =
+        serde_json::from_slice(&bytes(&inventory.root.join(STATE), MAX_RECORD_BYTES)?)
+            .map_err(|_| UNREADABLE)?;
+    let namespace: Namespace = serde_json::from_slice(&bytes(
+        &inventory.root.join(format!("ns-{id}.json")),
+        MAX_RECORD_BYTES,
+    )?)
+    .map_err(|_| UNREADABLE)?;
+    let members: BTreeSet<_> = state.namespaces.iter().collect();
+    if !state.valid()
+        || members.len() != state.namespaces.len()
+        || !members.contains(&id)
+        || !namespace.valid()
+        || namespace.home != home_hash(&manager.home)?
+        || namespace.profile != manager.profile
+        || registry.secrets.as_ref().map(|v| &v.lineage) != namespace.lineage.as_ref()
+        || namespace
+            .lineage
+            .as_ref()
+            .is_some_and(|v| valid_uuid(v).is_err())
+    {
+        return Err(UNREADABLE.into());
+    }
+    validate(&namespace, &raw)?;
+    Ok(continuation(Structural {
+        registry: &registry,
+        installed: &raw.installed,
+        namespace: &namespace,
+        state: &state,
+    }))
 }

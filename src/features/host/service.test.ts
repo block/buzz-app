@@ -1,7 +1,17 @@
+import { AppInvocation } from "../../buzz-mcp/app-client";
+import type { AgentHandle } from "../agents/service";
+import type { RelayData } from "../relay/service";
+import type { RelaySession } from "../relay/session";
 import { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HostService, type Host } from "./service";
+import { PluginRuntime } from "../../plugins/runtime";
+import type { PluginInfo } from "../../plugins/types";
+import {
+  HostService,
+  type Host,
+  type ReviewedInvocationReceipt,
+} from "./service";
 import { runtimePerformance } from "../developer/runtime-performance";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -213,6 +223,7 @@ it("routes HTTPS requests with plugin identity and rejects browser requests", as
     method: "POST" as const,
     headers: { Authorization: "Bearer token" },
     body: "{}",
+    secret: "api-key",
   };
   await expect(plugin.host.request(request)).resolves.toEqual(response);
   expect(invoke).toHaveBeenCalledWith("plugin_host_request", {
@@ -228,7 +239,7 @@ it.each(["request", "upload"] as const)(
   "normalizes native %s string failures and preserves existing Errors",
   async (operation) => {
     const { plugin } = pluginContext();
-    const input = { url: "https://api.example.com/" };
+    const input = { url: "https://api.example.com/", secret: "api-key" };
     const call = () =>
       operation === "request"
         ? plugin.host.request(input)
@@ -250,6 +261,7 @@ it.each(["request", "upload"] as const)(
     const error = new Error("Native failure");
     vi.mocked(invoke).mockRejectedValueOnce(error);
     await expect(call()).rejects.toBe(error);
+    expect(invoke).toHaveBeenCalledTimes(2);
   },
 );
 
@@ -769,8 +781,20 @@ const onceInput = {
 const callId = "abcdefab-1234-4234-8234-123456789abc";
 const onceReply = { status: 200, headers: {}, body: "accepted" };
 
-async function oncePlugin() {
+function reviewSession(root: Context, origin = "fixture-community") {
+  const session = {
+    viewer: "fixture-viewer",
+    scope: "fixture-community:fixture-viewer",
+  } as RelaySession;
+  root.provide("relay", {
+    snapshot: () => ({ session, origin }),
+    subscribe: () => () => {},
+  } as unknown as RelayData);
+}
+
+async function oncePlugin(community?: string) {
   const root = new Context();
+  reviewSession(root, community);
   new HostService(root);
   let host!: Host;
   const fiber = root
@@ -983,15 +1007,19 @@ it("fails closed and caches old-native context errors without fallback or author
 });
 
 it("does not retry when newer frontend meets a native request command rejecting once", async () => {
+  const input = { ...onceInput, secret: "api-key" };
   const { host, fiber } = await oncePlugin();
   vi.mocked(invoke)
     .mockResolvedValueOnce(onceContext)
     .mockRejectedValueOnce("Protected request unsupported");
   try {
-    await expect(host.requestOnce?.(onceInput, { callId })).rejects.toThrow(
+    await expect(host.requestOnce?.(input, { callId })).rejects.toThrow(
       "unsupported",
     );
     expect(invoke).toHaveBeenCalledTimes(2);
+    expect((protectedInvokes()[0]?.[1] as { request: unknown })?.request).toBe(
+      input,
+    );
   } finally {
     await fiber.dispose();
   }
@@ -1346,7 +1374,10 @@ it("final eligibility sees true becoming false while native context is pending",
   let eligible = true;
   const isEligible = vi.fn(() => eligible);
   const options = { callId, isEligible };
-  const request = host.requestOnce?.(onceInput, options);
+  const request = host.requestOnce?.(
+    { ...onceInput, secret: "api-key" },
+    options,
+  );
   const refused = expect(request).rejects.toThrow("eligibility");
   try {
     expect(isEligible).not.toHaveBeenCalled();
@@ -1473,7 +1504,10 @@ it.each(["reject", "invalid"])(
     const held = deferredOnceContext();
     const isEligible = vi.fn(() => true);
     const options = { callId, isEligible };
-    const request = host.requestOnce?.(onceInput, options);
+    const request = host.requestOnce?.(
+      { ...onceInput, secret: "api-key" },
+      options,
+    );
     const refused = expect(request).rejects.toThrow(
       kind === "reject" ? "context rejected" : "context is unavailable",
     );
@@ -1841,6 +1875,59 @@ it("requires native acknowledgement for release-after-send saves without retry",
   }
 });
 
+const reviewedRequest = {
+  operation: "synthetic",
+  body: "Original",
+  destination: {
+    community: "fixture-community",
+    viewer: "fixture-viewer",
+    channel: "origin-a",
+  },
+};
+const reviewedReceipt = {
+  callId,
+  destination: {
+    community: "fixture-community",
+    viewer: "fixture-viewer",
+    channel: "origin-a",
+  },
+  digest: "ab".repeat(32),
+  outcome: "submitted",
+};
+
+it("freezes reviewed scalar inputs before authority and exposes no acceptance or private input IPC", async () => {
+  const { host, fiber } = await oncePlugin();
+  const held = deferredOnceContext();
+  const input = {
+    ...reviewedRequest,
+    accepted: true,
+    secret: "must-not-cross",
+  };
+  const request = host.reviewAndInvokeOnce?.(input, { callId });
+  input.body = "Replacement";
+  input.destination = { ...input.destination, channel: "origin-b" };
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "plugin_host_reviewed_invoke" ? reviewedReceipt : undefined,
+  );
+  try {
+    held.resolve(onceContext);
+    expect(await request).toEqual(reviewedReceipt);
+    expect(invoke).toHaveBeenCalledWith("plugin_host_reviewed_invoke", {
+      id: "example.plugin",
+      revision: "abc",
+      request: reviewedRequest,
+      onReview: expect.any(Object),
+      once: { ...onceContext, activation: expect.any(String), callId },
+    });
+    expect(invoke).toHaveBeenCalledWith("plugin_host_reviewed_retire", {
+      callId,
+    });
+  } finally {
+    held.resolve(onceContext);
+    await fiber.dispose();
+  }
+});
+
 it("validates the release flag before IPC and omits false", async () => {
   const { fiber, host } = await oncePlugin();
   try {
@@ -1864,6 +1951,30 @@ it("validates the release flag before IPC and omits false", async () => {
   }
 });
 
+it("retires a disposed reviewed call before delayed native context can dispatch", async () => {
+  const { host, fiber } = await oncePlugin();
+  const held = deferredOnceContext();
+  const request = host.reviewAndInvokeOnce?.(reviewedRequest, { callId });
+  const refused = expect(request).rejects.toThrow("inactive");
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  try {
+    await fiber.dispose();
+    held.resolve(onceContext);
+    await refused;
+    expect(invoke).toHaveBeenCalledWith("plugin_host_reviewed_retire", {
+      callId,
+    });
+    expect(
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([name]) => name === "plugin_host_reviewed_invoke"),
+    ).toHaveLength(0);
+  } finally {
+    held.resolve(onceContext);
+    await fiber.dispose();
+  }
+});
+
 it.each([undefined, false, "true", 1])(
   "rejects %s release acknowledgement without fallback or retry",
   async (ack) => {
@@ -1880,6 +1991,37 @@ it.each([undefined, false, "true", 1])(
         }),
       ).rejects.toThrow("possibly saved");
       expect(invoke).toHaveBeenCalledOnce();
+    } finally {
+      await fiber.dispose();
+    }
+  },
+);
+
+it.each(["unknown", "rejected", "mismatch"])(
+  "never retries or renews reviewed authority after %s",
+  async (mode) => {
+    const { host, fiber } = await oncePlugin();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "plugin_host_call_context") return onceContext;
+      if (command === "plugin_host_reviewed_retire") return undefined;
+      if (mode === "rejected") throw new Error("outcome unknown");
+      return {
+        ...reviewedReceipt,
+        ...(mode === "unknown"
+          ? { outcome: "unknown" }
+          : { destination: "other" }),
+      };
+    });
+    try {
+      const result = host.reviewAndInvokeOnce?.(reviewedRequest, { callId });
+      if (mode === "unknown")
+        await expect(result).resolves.toMatchObject({ outcome: "unknown" });
+      else await expect(result).rejects.toThrow(/unknown/);
+      expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual([
+        "plugin_host_call_context",
+        "plugin_host_reviewed_invoke",
+        "plugin_host_reviewed_retire",
+      ]);
     } finally {
       await fiber.dispose();
     }
@@ -1916,6 +2058,170 @@ function reviewGate<T>() {
   });
   return { promise, resolve };
 }
+
+it.each([false, true])(
+  "keeps actual Cordis disposal pending after admission until confirmed native retirement (IPC failure: %s)",
+  async (failRetirement) => {
+    const { host, fiber } = await oncePlugin();
+    const admitted = reviewGate<void>();
+    const retirementStarted = reviewGate<void>();
+    const deliverRetirement = reviewGate<void>();
+    const retirementResponded = reviewGate<void>();
+    const terminal = reviewGate<ReviewedInvocationReceipt>();
+    let nativeLive = false;
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "plugin_host_call_context") return onceContext;
+      if (command === "plugin_host_reviewed_invoke") {
+        nativeLive = true;
+        admitted.resolve();
+        return terminal.promise;
+      }
+      if (command === "plugin_host_reviewed_retire") {
+        retirementStarted.resolve();
+        await deliverRetirement.promise;
+        if (failRetirement) {
+          retirementResponded.resolve();
+          throw new Error("Retirement transport unavailable");
+        }
+        nativeLive = false;
+        retirementResponded.resolve();
+      }
+      return undefined;
+    });
+    const pending = host.reviewAndInvokeOnce?.(reviewedRequest, { callId });
+    const refused = expect(pending).rejects.toThrow("inactive");
+    await admitted.promise;
+    let completed = false;
+    const disposed = fiber.dispose().then(() => {
+      completed = true;
+    });
+    try {
+      await retirementStarted.promise;
+      // Drain the cleanup continuation queue after an observed IPC-start gate,
+      // not a duration chosen to race the runner or native transport.
+      await new Promise<void>((done) => setImmediate(done));
+      expect(completed).toBe(false);
+      expect(nativeLive).toBe(true);
+      deliverRetirement.resolve();
+      await retirementResponded.promise;
+      await new Promise<void>((done) => setImmediate(done));
+      if (failRetirement) {
+        expect(completed).toBe(false);
+        expect(nativeLive).toBe(true);
+        // A separate, exact native terminal response is affirmative retirement,
+        // unlike transport failure. No IPC retry or authority refresh occurs.
+        nativeLive = false;
+        terminal.resolve({ ...reviewedReceipt, outcome: "cancelled" });
+      }
+      await disposed;
+      expect(nativeLive).toBe(false);
+      terminal.resolve({ ...reviewedReceipt, outcome: "cancelled" });
+      await refused;
+      expect(vi.mocked(invoke).mock.calls.map(([name]) => name)).toEqual([
+        "plugin_host_call_context",
+        "plugin_host_reviewed_invoke",
+        "plugin_host_reviewed_retire",
+      ]);
+    } finally {
+      nativeLive = false;
+      deliverRetirement.resolve();
+      terminal.resolve({ ...reviewedReceipt, outcome: "cancelled" });
+      await disposed;
+    }
+  },
+);
+
+it.each([false, true])(
+  "gates actual PluginRuntime successor activation on native retirement after admission (IPC failure: %s)",
+  async (failRetirement) => {
+    const root = new Context();
+    reviewSession(root);
+    new HostService(root);
+    const admitted = reviewGate<void>();
+    const retireStarted = reviewGate<void>();
+    const deliverRetire = reviewGate<void>();
+    const retireResponded = reviewGate<void>();
+    const terminal = reviewGate<ReviewedInvocationReceipt>();
+    const successor = reviewGate<void>();
+    let nativeLive = false;
+    let starts = 0;
+    let oldResult: Promise<unknown> | undefined;
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "plugin_host_call_context") return onceContext;
+      if (command === "plugin_host_reviewed_invoke") {
+        nativeLive = true;
+        admitted.resolve();
+        return terminal.promise;
+      }
+      if (command === "plugin_host_reviewed_retire") {
+        retireStarted.resolve();
+        await deliverRetire.promise;
+        retireResponded.resolve();
+        if (failRetirement) throw new Error("retirement IPC unavailable");
+        nativeLive = false;
+      }
+      return undefined;
+    });
+    const runtime = new PluginRuntime(root, async () => ({
+      inject: ["host"],
+      apply(ctx) {
+        starts++;
+        if (starts === 1) {
+          oldResult = ctx.host
+            .reviewAndInvokeOnce?.(reviewedRequest, { callId })
+            .catch((error: unknown) => error);
+        } else {
+          expect(nativeLive).toBe(false);
+          successor.resolve();
+        }
+      },
+    }));
+    const plugin: PluginInfo = {
+      manifest: { id: "example.plugin", name: "Review", apiVersion: 1 },
+      source: "external",
+      enabled: true,
+      revision: "abc",
+      previous: null,
+      reloadable: true,
+      error: null,
+    };
+    try {
+      runtime.reconcile([plugin]);
+      await admitted.promise;
+      runtime.reconcile([{ ...plugin, revision: "def" }]);
+      await retireStarted.promise;
+      await new Promise<void>((done) => setImmediate(done));
+      expect(starts).toBe(1);
+      expect(nativeLive).toBe(true);
+      expect(runtime.snapshot()[plugin.manifest.id]?.status).toBe("starting");
+      deliverRetire.resolve();
+      await retireResponded.promise;
+      await new Promise<void>((done) => setImmediate(done));
+      if (failRetirement) {
+        expect(starts).toBe(1);
+        expect(nativeLive).toBe(true);
+        nativeLive = false;
+        terminal.resolve({ ...reviewedReceipt, outcome: "cancelled" });
+      }
+      await successor.promise;
+      expect(starts).toBe(2);
+      expect(nativeLive).toBe(false);
+      terminal.resolve({ ...reviewedReceipt, outcome: "cancelled" });
+      expect(await oldResult).toBeInstanceOf(Error);
+      expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+        "plugin_host_call_context",
+        "plugin_host_reviewed_invoke",
+        "plugin_host_reviewed_retire",
+      ]);
+    } finally {
+      nativeLive = false;
+      deliverRetire.resolve();
+      terminal.resolve({ ...reviewedReceipt, outcome: "cancelled" });
+      await runtime.dispose();
+      await root.fiber.dispose();
+    }
+  },
+);
 
 it("captures nested secrets per real Cordis fiber, retaining A after B", async () => {
   const root = new Context();
@@ -2153,3 +2459,1499 @@ it.each(["outcome unknown", "malformed"])(
     }
   },
 );
+
+const nativeSupport = {
+  version: 1,
+  synthetic: true,
+  credentialHttp: {
+    version: 1,
+    createResponse: true,
+    continuation: false,
+    result: false,
+    delivery: false,
+  },
+};
+const unsupported = { version: 1, synthetic: false, credentialHttp: null };
+
+it("reports native support as read-only availability, failing closed", async () => {
+  const { host, fiber } = await oncePlugin();
+  try {
+    vi.mocked(invoke).mockResolvedValue(nativeSupport);
+    const support = await host.reviewedInvocationSupport?.();
+    // Only this host adds review-start support; native never reports it.
+    expect(support).toEqual({ ...nativeSupport, reviewStart: 1 });
+    expect(Object.isFrozen(support?.credentialHttp)).toBe(true);
+    // Checking support is not an invocation and asks native for nothing else.
+    expect(vi.mocked(invoke).mock.calls).toEqual([
+      ["plugin_host_reviewed_capabilities"],
+    ]);
+    for (const reply of [
+      undefined,
+      null,
+      { ...nativeSupport, version: 2 },
+      { ...nativeSupport, extra: true },
+      { ...nativeSupport, reviewStart: 1 },
+      { ...nativeSupport, synthetic: "yes" },
+      { ...nativeSupport, credentialHttp: { version: 1 } },
+      {
+        ...nativeSupport,
+        credentialHttp: { ...nativeSupport.credentialHttp, result: 1 },
+      },
+    ]) {
+      vi.mocked(invoke).mockResolvedValueOnce(reply);
+      expect(await host.reviewedInvocationSupport?.()).toEqual(unsupported);
+    }
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("unknown command"));
+    expect(await host.reviewedInvocationSupport?.()).toEqual(unsupported);
+    vi.mocked(isTauri).mockReturnValue(false);
+    vi.mocked(invoke).mockClear();
+    expect(await host.reviewedInvocationSupport?.()).toEqual(unsupported);
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+const credentialRequest = {
+  ...reviewedRequest,
+  version: 1 as const,
+  body: '{"prompt":"Original"}',
+  effect: {
+    kind: "credential-http" as const,
+    method: "POST" as const,
+    url: "https://api.example.test/v1/create",
+    headers: { "x-version": "1", accept: "application/json" } as Record<
+      string,
+      string
+    >,
+    slot: "api-key",
+  },
+  disclosure: { version: "example/1", text: "About one credit" },
+};
+const digest = "cd".repeat(32);
+const createResponse = {
+  version: 1,
+  callId,
+  digest,
+  destination: reviewedRequest.destination,
+  sequence: 1,
+  phase: "create-response",
+  status: 200,
+  safeBody: '{"id":"task"}',
+};
+
+type Native = {
+  args: Record<string, unknown>;
+  review(projection: unknown): void;
+  progress(response: unknown): void;
+};
+async function credentialCall(
+  onCreateResponse = vi.fn(),
+  input: Record<string, unknown> = credentialRequest,
+  origin?: ReturnType<typeof agentOrigin>["origin"],
+) {
+  const { root, host, fiber } = await oncePlugin(origin?.destination.community);
+  const terminal = reviewGate<ReviewedInvocationReceipt>();
+  const started = reviewGate<Native>();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_host_call_context") return onceContext;
+    if (command === "plugin_host_reviewed_invoke") {
+      const ipc = args as Record<string, { onmessage(value: unknown): void }>;
+      started.resolve({
+        args: args as Record<string, unknown>,
+        review: (projection) => ipc.onReview?.onmessage(projection),
+        progress: (response) => ipc.onProgress?.onmessage(response),
+      });
+      return terminal.promise;
+    }
+    return undefined;
+  });
+  const result = (host as HostService)
+    .reviewAndInvokeOnce(
+      input as typeof credentialRequest,
+      { callId, onCreateResponse },
+      origin,
+    )
+    .catch((error: unknown) => error);
+  const native = await started.promise;
+  const reviewed = (root.host as HostService).reviewed;
+  const approve = (projected: object = credentialRequest, extra = {}) => {
+    native.review({
+      ...extra,
+      callId,
+      pluginId: "example.plugin",
+      revision: "abc",
+      request: projected,
+      ...(origin && {
+        author: { pubkey: origin.invocation.pubkey, relay: origin.relay },
+      }),
+      digest,
+      expiresAt: Date.now() + 60_000,
+    });
+    const current = reviewed.snapshot();
+    if (current?.projection)
+      reviewed.update({ ...current, status: "dispatching" });
+  };
+  const finish = async (
+    receipt: ReviewedInvocationReceipt = {
+      callId,
+      destination: reviewedRequest.destination,
+      digest,
+      outcome: "unknown",
+    },
+  ) => {
+    terminal.resolve(receipt);
+    await result;
+    await fiber.dispose();
+  };
+  return { host, native, reviewed, approve, finish, onCreateResponse, result };
+}
+
+const retires = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.filter(([name]) => name === "plugin_host_reviewed_retire");
+
+it("freezes versioned effect scalars and delivers one correlated create response", async () => {
+  const input = structuredClone(credentialRequest);
+  const call = await credentialCall(vi.fn(), input);
+  input.effect.headers["x-version"] = "2";
+  input.effect.url = "https://other.example.test";
+  input.disclosure.text = "Free";
+  try {
+    expect(call.native.args.request).toEqual(credentialRequest);
+    expect(call.native.args.onProgress).toBeDefined();
+    // Header order may differ in the native projection.
+    call.approve({
+      ...credentialRequest,
+      effect: {
+        ...credentialRequest.effect,
+        headers: { accept: "application/json", "x-version": "1" },
+      },
+    });
+    expect(call.reviewed.snapshot()?.status).toBe("dispatching");
+    call.native.progress(createResponse);
+    expect(call.onCreateResponse).toHaveBeenCalledExactlyOnceWith(
+      createResponse,
+    );
+    expect(Object.isFrozen(call.onCreateResponse.mock.calls[0]?.[0])).toBe(
+      true,
+    );
+    call.native.progress(createResponse);
+    expect(call.onCreateResponse).toHaveBeenCalledOnce();
+    expect(retires()).toHaveLength(1);
+  } finally {
+    await call.finish();
+  }
+  expect(await call.result).toMatchObject({ outcome: "unknown" });
+  expect(
+    vi
+      .mocked(invoke)
+      .mock.calls.filter(([name]) => name === "plugin_host_reviewed_invoke"),
+  ).toHaveLength(1);
+});
+
+it.each([
+  ["call", { callId: "00000000-1234-4234-8234-123456789abc" }],
+  ["digest", { digest: "ef".repeat(32) }],
+  [
+    "destination",
+    { destination: { ...reviewedRequest.destination, channel: "x" } },
+  ],
+  ["sequence", { sequence: 2 }],
+  ["phase", { phase: "status" }],
+  ["status", { status: 99 }],
+  ["body", { safeBody: 1 }],
+])("refuses a create response with the wrong %s", async (_name, change) => {
+  const call = await credentialCall();
+  try {
+    call.approve();
+    call.native.progress({ ...createResponse, ...change });
+    call.native.progress(createResponse);
+    expect(call.onCreateResponse).not.toHaveBeenCalled();
+    expect(retires()).toHaveLength(1);
+    expect(call.reviewed.snapshot()?.status).toBe("retired");
+  } finally {
+    await call.finish();
+  }
+});
+
+it("suppresses create responses before approval and refuses a changed effect projection", async () => {
+  const call = await credentialCall();
+  try {
+    call.native.progress(createResponse);
+    expect(call.onCreateResponse).not.toHaveBeenCalled();
+    expect(retires()).toHaveLength(0);
+    call.approve({
+      ...credentialRequest,
+      effect: { ...credentialRequest.effect, headers: { accept: "*/*" } },
+    });
+    expect(call.reviewed.snapshot()?.projection).toBeUndefined();
+    expect(retires()).toHaveLength(1);
+  } finally {
+    await call.finish();
+  }
+});
+
+/** An agent's tool call that asked to send to `reviewedRequest`'s destination. */
+function agentOrigin(destination = reviewedRequest.destination) {
+  const state = { open: true, live: true, lifetime: new AbortController() };
+  const agent = {
+    key: "agent-key",
+    pubkey: "agent-pubkey",
+    owner: "fixture-viewer",
+    live: () => {
+      if (!state.live) throw new Error("ask for its handle again");
+    },
+    lifetime: () => state.lifetime.signal,
+  } as unknown as AgentHandle;
+  const invocation = new AppInvocation(agent, { channel: "origin-a" }, () => {
+    if (!state.open) throw new Error("The tool call has ended");
+  });
+  const origin = { invocation, relay: "wss://relay.test", destination };
+  return { state, origin };
+}
+const reviewedInvokes = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.filter(([name]) => name === "plugin_host_reviewed_invoke");
+
+it.each([
+  ["root that was absent", { root: "" }],
+  ["root it was not asked", { root: "thread" }],
+  ["channel", { channel: "origin-b" }],
+  ["community", { community: "other-community" }],
+])("refuses to send an agent's review to another %s", async (_name, change) => {
+  const { host, fiber } = await oncePlugin();
+  const { origin } = agentOrigin();
+  const review = (host as HostService).reviewAndInvokeOnce.bind(host);
+  try {
+    const request = {
+      ...reviewedRequest,
+      destination: { ...reviewedRequest.destination, ...change },
+    };
+    await expect(review(request, { callId }, origin)).rejects.toThrow(
+      "can only send where it was asked",
+    );
+    const forged = { ...origin, invocation: { ...origin.invocation } };
+    await expect(
+      review(reviewedRequest, { callId }, forged as never),
+    ).rejects.toThrow("can only send where it was asked");
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it.each(["at its start", "after the native context wait"])(
+  "starts no agent review once its tool call has ended %s",
+  async (when) => {
+    const { host, fiber } = await oncePlugin();
+    const held = deferredOnceContext();
+    const { state, origin } = agentOrigin();
+    const review = (host as HostService).reviewAndInvokeOnce.bind(host);
+    try {
+      if (when === "at its start") state.open = false;
+      const onStarted = vi.fn();
+      const pending = review(reviewedRequest, { callId, onStarted }, origin);
+      state.open = false;
+      held.resolve(onceContext);
+      await expect(pending).rejects.toThrow(
+        when === "at its start"
+          ? "The tool call has ended"
+          : "caller eligibility refused",
+      );
+      expect(reviewedInvokes()).toHaveLength(0);
+      expect(onStarted).not.toHaveBeenCalled();
+    } finally {
+      held.resolve(onceContext);
+      await fiber.dispose();
+    }
+  },
+);
+
+it("keeps a started agent review approvable after its call ends, until the agent stops", async () => {
+  const { root, host, fiber } = await oncePlugin();
+  const { state, origin } = agentOrigin();
+  const terminal = reviewGate<ReviewedInvocationReceipt>();
+  const started = reviewGate<Native>();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_host_call_context") return onceContext;
+    if (command !== "plugin_host_reviewed_invoke") return undefined;
+    const ipc = args as Record<string, { onmessage(value: unknown): void }>;
+    started.resolve({
+      args: args as Record<string, unknown>,
+      review: (projection) => ipc.onReview?.onmessage(projection),
+      progress: () => {},
+    });
+    return terminal.promise;
+  });
+  const result = (host as HostService)
+    .reviewAndInvokeOnce(reviewedRequest, { callId }, origin)
+    .catch((error: unknown) => error);
+  try {
+    const native = await started.promise;
+    const author = { pubkey: "agent-pubkey", relay: "wss://relay.test" };
+    expect(native.args.author).toEqual(author);
+    state.open = false;
+    native.review({
+      callId,
+      pluginId: "example.plugin",
+      revision: "abc",
+      request: reviewedRequest,
+      author,
+      digest,
+      expiresAt: Date.now() + 60_000,
+    });
+    const reviewed = (root.host as HostService).reviewed;
+    const operation = reviewed.snapshot();
+    expect(operation?.projection?.author).toEqual(author);
+    expect(Object.isFrozen(operation?.projection?.author)).toBe(true);
+    const reader = {
+      session: operation?.session,
+      channel: "origin-a",
+      root: undefined,
+    };
+    const mount = {};
+    expect(reviewed.bind(callId, mount, reader)).toBe(true);
+    const retirements = () =>
+      vi
+        .mocked(invoke)
+        .mock.calls.filter(([name]) => name === "plugin_host_reviewed_retire");
+    // The turn ending above retired nothing; the agent stopping does.
+    expect(retirements()).toEqual([]);
+    state.live = false;
+    expect(reviewed.bind(callId, mount, reader)).toBe(false);
+    state.lifetime.abort();
+    expect(retirements()).toEqual([
+      ["plugin_host_reviewed_retire", { callId }],
+    ]);
+    expect(reviewed.snapshot()?.status).toBe("retired");
+  } finally {
+    terminal.resolve({ ...reviewedReceipt, outcome: "unknown" });
+    await result;
+    await fiber.dispose();
+  }
+});
+
+/** A review whose call context, native projection and terminal the test releases. */
+async function startCall(
+  options: Record<string, unknown> = {},
+  origin?: ReturnType<typeof agentOrigin>["origin"],
+) {
+  const { root, host, fiber } = await oncePlugin();
+  const context = reviewGate<typeof onceContext>();
+  const terminal = reviewGate<ReviewedInvocationReceipt>();
+  const dispatched = reviewGate<Native>();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_host_call_context") return context.promise;
+    if (command !== "plugin_host_reviewed_invoke") return undefined;
+    const ipc = args as Record<string, { onmessage(value: unknown): void }>;
+    dispatched.resolve({
+      args: args as Record<string, unknown>,
+      review: (projection) => ipc.onReview?.onmessage(projection),
+      progress: (response) => ipc.onProgress?.onmessage(response),
+    });
+    return terminal.promise;
+  });
+  const onStarted = vi.fn();
+  const onCreateResponse = vi.fn();
+  const callOptions = { callId, onCreateResponse, onStarted, ...options };
+  const settled = (host as HostService)
+    .reviewAndInvokeOnce(credentialRequest, callOptions, origin)
+    .then(
+      (receipt) => ({ receipt }),
+      (error: unknown) => ({ error }),
+    );
+  const projection = {
+    callId,
+    pluginId: "example.plugin",
+    revision: "abc",
+    request: credentialRequest,
+    ...(origin && {
+      author: { pubkey: origin.invocation.pubkey, relay: origin.relay },
+    }),
+    digest,
+    expiresAt: Date.now() + 60_000,
+  };
+  const native = async () => {
+    context.resolve(onceContext);
+    return dispatched.promise;
+  };
+  const receipt = { ...reviewedReceipt, digest, outcome: "unknown" as const };
+  const end = async () => {
+    context.resolve(onceContext);
+    terminal.resolve(receipt);
+    const outcome = await settled;
+    await fiber.dispose();
+    return outcome;
+  };
+  const reviewed = (root.host as HostService).reviewed;
+  return {
+    fiber,
+    callOptions,
+    reviewed,
+    native,
+    projection,
+    onStarted,
+    onCreateResponse,
+    terminal,
+    receipt,
+    settled,
+    end,
+  };
+}
+
+it("signals an agent's review start once native holds it, while its tool call stays open and before approval", async () => {
+  const { state, origin } = agentOrigin();
+  const call = await startCall({}, origin);
+  try {
+    // The tool call is still open while native authority is pending.
+    expect(call.onStarted).not.toHaveBeenCalled();
+    const native = await call.native();
+    // Dispatching to native is not starting: native may still refuse it.
+    expect(state.open).toBe(true);
+    expect(call.onStarted).not.toHaveBeenCalled();
+    native.review(call.projection);
+    expect(call.onStarted).toHaveBeenCalledExactlyOnceWith();
+    expect(call.reviewed.snapshot()).toMatchObject({
+      status: "pending",
+      projection: { digest },
+    });
+    // The tool call returns on start; the review stays approvable and blocked.
+    state.open = false;
+    native.review(call.projection);
+    native.progress(createResponse);
+    expect(call.onStarted).toHaveBeenCalledOnce();
+    expect(call.onCreateResponse).not.toHaveBeenCalled();
+    expect(call.reviewed.snapshot()?.status).toBe("pending");
+    expect(retires()).toEqual([]);
+    expect(reviewedInvokes()).toHaveLength(1);
+  } finally {
+    expect(await call.end()).toEqual({ receipt: call.receipt });
+  }
+});
+
+it("refuses a non-function start callback before native authority", async () => {
+  const { host, fiber } = await oncePlugin();
+  try {
+    await expect(
+      host.reviewAndInvokeOnce?.(credentialRequest, {
+        callId,
+        onCreateResponse: () => {},
+        onStarted: "yes" as never,
+      }),
+    ).rejects.toThrow("Invalid reviewed invocation");
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it("copies the start callback before the first wait", async () => {
+  const call = await startCall();
+  const later = vi.fn();
+  call.callOptions.onStarted = later;
+  (await call.native()).review(call.projection);
+  expect(call.onStarted).toHaveBeenCalledOnce();
+  expect(later).not.toHaveBeenCalled();
+  await call.end();
+});
+
+it.each([
+  ["context refusal", "context"],
+  ["IPC rejection", "reject"],
+  ["synchronous dispatch failure", "throw"],
+])("settles without starting on %s", async (_name, failure) => {
+  const { host, fiber } = await oncePlugin();
+  const onStarted = vi.fn();
+  vi.mocked(invoke).mockImplementation(((command: string) => {
+    if (command === "plugin_host_call_context")
+      return failure === "context"
+        ? Promise.reject(new Error("no context"))
+        : Promise.resolve(onceContext);
+    if (command !== "plugin_host_reviewed_invoke")
+      return Promise.resolve(undefined);
+    if (failure === "throw") throw new Error("dispatch");
+    return Promise.reject(new Error("refused"));
+  }) as never);
+  try {
+    await expect(
+      host.reviewAndInvokeOnce?.(credentialRequest, {
+        callId,
+        onCreateResponse: () => {},
+        onStarted,
+      }),
+    ).rejects.toThrow();
+    expect(onStarted).not.toHaveBeenCalled();
+    expect(reviewedInvokes()).toHaveLength(failure === "context" ? 0 : 1);
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it("does not start on an invalid projection, and settles", async () => {
+  const call = await startCall();
+  const native = await call.native();
+  native.review({ ...call.projection, digest: "not-a-digest" });
+  native.review(call.projection);
+  expect(call.onStarted).not.toHaveBeenCalled();
+  expect(retires()).toHaveLength(1);
+  expect(call.reviewed.snapshot()?.status).toBe("retired");
+  expect(await call.end()).toEqual({ receipt: call.receipt });
+  expect(reviewedInvokes()).toHaveLength(1);
+});
+
+it("contains a throwing start callback by retiring that exact call", async () => {
+  const call = await startCall({
+    onStarted: vi.fn(() => {
+      throw new Error("plugin bug");
+    }),
+  });
+  const native = await call.native();
+  expect(() => native.review(call.projection)).not.toThrow();
+  expect(retires()).toEqual([["plugin_host_reviewed_retire", { callId }]]);
+  expect(call.reviewed.snapshot()?.status).toBe("retired");
+  // Native still reports how the retired call ended; nothing is recreated.
+  expect(await call.end()).toEqual({ receipt: call.receipt });
+  expect(reviewedInvokes()).toHaveLength(1);
+});
+
+it.each(["agent stop", "retirement", "reentrant retirement", "disposal"])(
+  "suppresses the start signal when %s wins first",
+  async (stop) => {
+    const { state, origin } = agentOrigin();
+    const call = await startCall({}, origin);
+    const native = await call.native();
+    let disposing: Promise<unknown> | undefined;
+    if (stop === "agent stop") state.lifetime.abort();
+    if (stop === "retirement") void call.reviewed.retire(callId);
+    if (stop === "reentrant retirement")
+      call.reviewed.subscribe(() => {
+        if (call.reviewed.snapshot()?.projection)
+          void call.reviewed.retire(callId);
+      });
+    if (stop === "disposal") {
+      disposing = Promise.resolve(call.fiber.dispose());
+      await vi.waitFor(() => expect(retires()).toHaveLength(1));
+    }
+    native.review(call.projection);
+    expect(call.onStarted).not.toHaveBeenCalled();
+    expect(retires()).toHaveLength(1);
+    call.terminal.resolve(call.receipt);
+    await disposing;
+    expect(await call.end()).toMatchObject(
+      stop === "disposal" ? {} : { receipt: call.receipt },
+    );
+    expect(reviewedInvokes()).toHaveLength(1);
+  },
+);
+
+it("ends a started review normally on a later stop, without a second signal", async () => {
+  const { state, origin } = agentOrigin();
+  const call = await startCall({}, origin);
+  const native = await call.native();
+  native.review(call.projection);
+  state.lifetime.abort();
+  native.review(call.projection);
+  expect(call.onStarted).toHaveBeenCalledOnce();
+  expect(retires()).toEqual([["plugin_host_reviewed_retire", { callId }]]);
+  expect(await call.end()).toEqual({ receipt: call.receipt });
+  expect(reviewedInvokes()).toHaveLength(1);
+});
+
+it("settles a review that ends before it starts, and ignores a late projection", async () => {
+  const call = await startCall();
+  const native = await call.native();
+  call.terminal.resolve(call.receipt);
+  expect(await call.settled).toEqual({ receipt: call.receipt });
+  native.review(call.projection);
+  expect(call.onStarted).not.toHaveBeenCalled();
+  await call.end();
+});
+
+it.each([
+  ["another agent", { pubkey: "other", relay: "wss://relay.test" }],
+  ["another community", { pubkey: "agent-pubkey", relay: "wss://other.test" }],
+  ["no agent", undefined],
+])(
+  "retires an agent review whose native projection names %s",
+  async (_name, author) => {
+    const { root, host, fiber } = await oncePlugin();
+    const { origin } = agentOrigin();
+    const terminal = reviewGate<ReviewedInvocationReceipt>();
+    const started = reviewGate<Native>();
+    vi.mocked(invoke).mockImplementation(async (command, args) => {
+      if (command === "plugin_host_call_context") return onceContext;
+      if (command !== "plugin_host_reviewed_invoke") return undefined;
+      const ipc = args as Record<string, { onmessage(value: unknown): void }>;
+      started.resolve({
+        args: args as Record<string, unknown>,
+        review: (projection) => ipc.onReview?.onmessage(projection),
+        progress: () => {},
+      });
+      return terminal.promise;
+    });
+    const result = (host as HostService)
+      .reviewAndInvokeOnce(reviewedRequest, { callId }, origin)
+      .catch((error: unknown) => error);
+    try {
+      const native = await started.promise;
+      native.review({
+        callId,
+        pluginId: "example.plugin",
+        revision: "abc",
+        request: reviewedRequest,
+        ...(author && { author }),
+        digest,
+        expiresAt: Date.now() + 60_000,
+      });
+      const reviewed = (root.host as HostService).reviewed;
+      expect(reviewed.snapshot()?.projection).toBeUndefined();
+      expect(retires()).toHaveLength(1);
+    } finally {
+      terminal.resolve({ ...reviewedReceipt, outcome: "unknown" });
+      await result;
+      await fiber.dispose();
+    }
+  },
+);
+
+it("requires a create-response callback and complete effect before native authority", async () => {
+  const { host, fiber } = await oncePlugin();
+  try {
+    await expect(
+      host.reviewAndInvokeOnce?.(credentialRequest, { callId }),
+    ).rejects.toThrow("Invalid reviewed invocation");
+    const { disclosure: _, ...partial } = credentialRequest;
+    await expect(
+      host.reviewAndInvokeOnce?.(partial, {
+        callId,
+        onCreateResponse: () => {},
+      }),
+    ).rejects.toThrow("Invalid reviewed invocation");
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+const parentUrl = "https://api.example.test/v1/tasks/task";
+const parentReply = (change: Record<string, unknown> = {}) => ({
+  status: 200,
+  headers: {},
+  body: '{"status":"RUNNING"}',
+  parent: {
+    version: 1,
+    callId,
+    digest,
+    destination: reviewedRequest.destination,
+    sequence: 2,
+    ...change,
+  },
+});
+const parentReads = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.filter(([name]) => name === "plugin_host_request");
+async function continued() {
+  const call = await credentialCall();
+  call.approve();
+  call.native.progress(createResponse);
+  return call;
+}
+
+it("continues only the approved create, with frozen scalars and no fallback", async () => {
+  const call = await credentialCall();
+  const read = { url: parentUrl, parent: { version: 1 as const, callId } };
+  const admission = "host-parent-read/v1/js-admission";
+  try {
+    await expect(call.host.request(read)).rejects.toThrow(admission);
+    call.approve();
+    await expect(call.host.request(read)).rejects.toThrow(admission);
+    call.native.progress(createResponse);
+    expect(parentReads()).toHaveLength(0);
+    for (const refused of [
+      { ...read, method: "POST" as const },
+      { ...read, body: "{}" },
+      { ...read, headers: { authorization: "x" } },
+      { ...read, secret: "api-key" },
+      { ...read, parent: { version: 2 as unknown as 1, callId } },
+      { ...read, parent: { version: 1 as const, callId: crypto.randomUUID() } },
+    ])
+      await expect(call.host.request(refused)).rejects.toThrow(admission);
+    expect(parentReads()).toHaveLength(0);
+
+    vi.mocked(invoke).mockImplementationOnce(async () => parentReply());
+    const input = structuredClone(read);
+    const pending = call.host.request(input);
+    input.url = "https://other.example.test";
+    input.parent.callId = crypto.randomUUID();
+    const response = await pending;
+    expect(parentReads()[0]?.[1]).toEqual({
+      id: "example.plugin",
+      revision: "abc",
+      request: { url: parentUrl, method: "GET" },
+      parent: { version: 1, callId },
+    });
+    expect(response).toEqual(parentReply());
+    expect(Object.isFrozen(response.parent)).toBe(true);
+
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Refused"));
+    await expect(call.host.request(read)).rejects.toThrow("Refused");
+    expect(parentReads()).toHaveLength(2);
+    expect(parentReads()[1]?.[1]).toHaveProperty("parent");
+    // A native code is the exact rejected string, and the call continues.
+    vi.mocked(invoke).mockRejectedValueOnce(
+      "host-parent-read/v1/native-status",
+    );
+    const native = await call.host
+      .request(read)
+      .catch((error: unknown) => error);
+    expect(native).toBeInstanceOf(Error);
+    expect((native as Error).message).toBe("host-parent-read/v1/native-status");
+    vi.mocked(invoke).mockImplementationOnce(async () =>
+      parentReply({ sequence: 3 }),
+    );
+    expect((await call.host.request(read)).parent?.sequence).toBe(3);
+    expect(retires()).toHaveLength(0);
+  } finally {
+    await call.finish();
+  }
+  await expect(
+    call.host.request({ url: parentUrl, parent: { version: 1, callId } }),
+  ).rejects.toThrow(admission);
+});
+
+it.each([
+  ["call", { callId: "00000000-1234-4234-8234-123456789abc" }],
+  ["digest", { digest: "ef".repeat(32) }],
+  [
+    "destination",
+    { destination: { ...reviewedRequest.destination, channel: "x" } },
+  ],
+  ["sequence", { sequence: 1 }],
+  ["missing", undefined],
+])(
+  "retires the call on a parent read with the wrong %s",
+  async (_name, change) => {
+    const call = await continued();
+    try {
+      const reply = parentReply(change);
+      vi.mocked(invoke).mockImplementationOnce(async () =>
+        change === undefined ? { ...reply, parent: undefined } : reply,
+      );
+      await expect(
+        call.host.request({ url: parentUrl, parent: { version: 1, callId } }),
+      ).rejects.toThrow("host-parent-read/v1/js-correlation");
+      expect(retires()).toHaveLength(1);
+    } finally {
+      await call.finish();
+    }
+  },
+);
+
+it.each([
+  ["success", true],
+  ["native rejection", false],
+])(
+  "suppresses a held parent read's %s after retirement, then sends nothing",
+  async (_name, succeeds) => {
+    const call = await continued();
+    const read = { url: parentUrl, parent: { version: 1 as const, callId } };
+    try {
+      let settle = () => {};
+      vi.mocked(invoke).mockImplementationOnce(
+        () =>
+          new Promise((resolve, reject) => {
+            settle = () =>
+              succeeds
+                ? resolve(parentReply())
+                : reject("host-parent-read/v1/native-transport");
+          }),
+      );
+      const pending = call.host.request(read).catch((error: unknown) => error);
+      await call.reviewed.retire(callId).catch(() => {});
+      settle();
+      expect(String(await pending)).toBe(
+        "Error: host-parent-read/v1/js-lifecycle",
+      );
+      await expect(call.host.request(read)).rejects.toThrow(
+        "host-parent-read/v1/js-lifecycle",
+      );
+      expect(parentReads()).toHaveLength(1);
+    } finally {
+      await call.finish();
+    }
+  },
+);
+
+const resultInput = {
+  url: "https://api.example.test/output.mp4",
+  maxBytes: 3,
+  parent: { version: 1 as const, callId },
+};
+const resultFrame = (change: Record<string, unknown> = {}) =>
+  byteFrame(new Uint8Array([1, 2, 3]), {
+    status: 200,
+    headers: {},
+    parent: parentReply().parent,
+    source: { sha256: "b".repeat(64), size: 3 },
+    ...change,
+  });
+const resultReads = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.filter(([name]) => name === "plugin_host_request_bytes");
+
+it("reads one parent result source with frozen scalars and no fallback", async () => {
+  const call = await credentialCall();
+  try {
+    await expect(call.host.requestBytes?.(resultInput)).rejects.toThrow(
+      "unavailable",
+    );
+    call.approve();
+    call.native.progress(createResponse);
+    for (const refused of [
+      { ...resultInput, maxBytes: 0 },
+      { ...resultInput, parent: { version: 2 as unknown as 1, callId } },
+      {
+        ...resultInput,
+        parent: { version: 1 as const, callId: crypto.randomUUID() },
+      },
+    ])
+      await expect(call.host.requestBytes?.(refused)).rejects.toThrow();
+    expect(resultReads()).toHaveLength(0);
+
+    vi.mocked(invoke).mockImplementationOnce(async () => resultFrame());
+    const input = structuredClone(resultInput);
+    const pending = call.host.requestBytes?.(input);
+    input.url = "https://other.example.test";
+    input.maxBytes = 99;
+    const response = await pending;
+    expect(resultReads()[0]?.[1]).toEqual({
+      id: "example.plugin",
+      revision: "abc",
+      request: { url: resultInput.url, maxBytes: 3 },
+      parent: { version: 1, callId },
+    });
+    expect(response?.body).toEqual(new Uint8Array([1, 2, 3]));
+    expect(response?.source).toEqual({ sha256: "b".repeat(64), size: 3 });
+    expect(response?.parent?.sequence).toBe(2);
+    expect(Object.isFrozen(response)).toBe(true);
+
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("Refused"));
+    await expect(call.host.requestBytes?.(resultInput)).rejects.toThrow(
+      "Refused",
+    );
+    expect(resultReads()).toHaveLength(2);
+    expect(retires()).toHaveLength(0);
+  } finally {
+    await call.finish();
+  }
+  await expect(call.host.requestBytes?.(resultInput)).rejects.toThrow(
+    "unavailable",
+  );
+});
+
+it.each([
+  ["sequence", { parent: { ...parentReply().parent, sequence: 1 } }],
+  [
+    "call",
+    { parent: { ...parentReply().parent, callId: crypto.randomUUID() } },
+  ],
+  ["size", { source: { sha256: "b".repeat(64), size: 2 } }],
+  ["hash", { source: { sha256: "not-a-hash", size: 3 } }],
+  ["missing source", { source: undefined }],
+  ["headers", { headers: { "x-test": "bytes" } }],
+  ["status", { status: 206 }],
+])(
+  "retires the call on a result read with the wrong %s",
+  async (_name, change) => {
+    const call = await continued();
+    try {
+      vi.mocked(invoke).mockImplementationOnce(async () => resultFrame(change));
+      await expect(call.host.requestBytes?.(resultInput)).rejects.toThrow(
+        "Invalid parent read",
+      );
+      expect(retires()).toHaveLength(1);
+    } finally {
+      await call.finish();
+    }
+  },
+);
+
+it("suppresses a result read that returns after retirement", async () => {
+  const call = await continued();
+  try {
+    const held = reviewGate<unknown>();
+    vi.mocked(invoke).mockImplementationOnce(() => held.promise);
+    const pending = call.host
+      .requestBytes?.(resultInput)
+      .catch((error: unknown) => error);
+    await call.reviewed.retire(callId).catch(() => {});
+    held.resolve(resultFrame());
+    expect(String(await pending)).toContain("unavailable");
+  } finally {
+    await call.finish();
+  }
+});
+
+const media = {
+  version: 1 as const,
+  kind: "video" as const,
+  container: "mp4" as const,
+  codec: "h264" as const,
+  width: 1280,
+  height: 720,
+  durationMs: 5000,
+  toleranceMs: 50,
+  maxBytes: 16 * 1024 * 1024,
+};
+const mediaRequest = { ...credentialRequest, expectedMedia: media };
+const prepared = {
+  version: 1,
+  callId,
+  digest,
+  destination: credentialRequest.destination,
+  phase: "prepared",
+};
+const selections = () =>
+  vi
+    .mocked(invoke)
+    .mock.calls.filter(([name]) => name === "plugin_host_reviewed_result");
+const pending = async (result: Promise<unknown> | undefined) =>
+  Promise.race([
+    result?.then(() => "settled"),
+    new Promise((resolve) => setTimeout(() => resolve("pending"), 0)),
+  ]);
+/** A media call whose native peer serves one result read and one selection. */
+async function mediaCall(
+  select: (host: Host) => unknown,
+  ack: (step: { phase: string }) => unknown = () => prepared,
+  input: Record<string, unknown> = mediaRequest,
+  origin?: ReturnType<typeof agentOrigin>["origin"],
+) {
+  let host: Host | undefined;
+  const call = await credentialCall(
+    vi.fn(() => select(host as Host)),
+    input,
+    origin,
+  );
+  host = call.host;
+  const base = vi.mocked(invoke).getMockImplementation();
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "plugin_host_request_bytes")
+      return resultFrame({
+        parent: { ...parentReply().parent, destination: input.destination },
+      });
+    if (command === "plugin_host_reviewed_result")
+      return ack((args as { step: { phase: string } }).step);
+    return base?.(command, args);
+  });
+  return call;
+}
+const readAndSelect = async (host: Host) => {
+  const read = await host.requestBytes?.(resultInput);
+  return { source: read?.source };
+};
+
+it("freezes expected media scalars and retires a changed projection", async () => {
+  const input = structuredClone(mediaRequest);
+  const call = await credentialCall(vi.fn(), input);
+  input.expectedMedia.durationMs = 9000;
+  input.expectedMedia.maxBytes = 1;
+  try {
+    expect(call.native.args.request).toEqual(mediaRequest);
+    call.approve({ ...mediaRequest, expectedMedia: { ...media, width: 1920 } });
+    expect(call.reviewed.snapshot()?.projection).toBeUndefined();
+    expect(retires()).toHaveLength(1);
+  } finally {
+    await call.finish();
+  }
+});
+
+it("refuses malformed expected media before native authority", async () => {
+  const { host, fiber } = await oncePlugin();
+  try {
+    for (const change of [
+      { version: 2 },
+      { kind: "image" },
+      { container: "mov" },
+      { codec: "hevc" },
+      { width: 1280.5 },
+      { durationMs: "5000" },
+      { maxBytes: Number.POSITIVE_INFINITY },
+    ])
+      await expect(
+        host.reviewAndInvokeOnce?.(
+          {
+            ...credentialRequest,
+            expectedMedia: { ...media, ...change } as typeof media,
+          },
+          { callId, onCreateResponse: () => {} },
+        ),
+      ).rejects.toThrow("Invalid reviewed invocation");
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it("reports expected media support only as the exact version", async () => {
+  const { host, fiber } = await oncePlugin();
+  const http = nativeSupport.credentialHttp;
+  try {
+    const supported = {
+      ...nativeSupport,
+      credentialHttp: { ...http, expectedMedia: 1 },
+    };
+    vi.mocked(invoke).mockResolvedValueOnce(supported);
+    expect(await host.reviewedInvocationSupport?.()).toEqual({
+      ...supported,
+      reviewStart: 1,
+    });
+    for (const expectedMedia of [2, true, "1", null]) {
+      vi.mocked(invoke).mockResolvedValueOnce({
+        ...nativeSupport,
+        credentialHttp: { ...http, expectedMedia },
+      });
+      expect(await host.reviewedInvocationSupport?.()).toEqual(unsupported);
+    }
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+// MOCKED IPC: this is the literal the registered native capabilities command
+// returns (asserted natively in host_secrets/tests/reviewed_http.rs).
+const nativeResultSupport = {
+  version: 1,
+  synthetic: true,
+  credentialHttp: {
+    version: 1,
+    createResponse: true,
+    continuation: true,
+    expectedMedia: 1,
+    result: true,
+    delivery: true,
+    resultUrl: 1,
+  },
+};
+
+it("qualifies the native result URL capability strictly", async () => {
+  const { host, fiber } = await oncePlugin();
+  const http = nativeResultSupport.credentialHttp;
+  try {
+    vi.mocked(invoke).mockResolvedValueOnce(nativeResultSupport);
+    expect(await host.reviewedInvocationSupport?.()).toEqual({
+      ...nativeResultSupport,
+      reviewStart: 1,
+    });
+    for (const resultUrl of [2, true, "1", null])
+      for (const reply of [
+        { ...nativeResultSupport, credentialHttp: { ...http, resultUrl } },
+        {
+          ...nativeResultSupport,
+          credentialHttp: { ...http, resultUrl: 1, extra: resultUrl },
+        },
+      ]) {
+        vi.mocked(invoke).mockResolvedValueOnce(reply);
+        expect(await host.reviewedInvocationSupport?.()).toEqual(unsupported);
+      }
+  } finally {
+    await fiber.dispose();
+  }
+});
+
+it("reads the native-selected result by the latest sequence, never a URL", async () => {
+  const call = await credentialCall();
+  const select = {
+    maxBytes: 3,
+    parent: { version: 1 as const, callId },
+    result: { version: 1 as const, sequence: 2 },
+  };
+  const read = { url: parentUrl, parent: { version: 1 as const, callId } };
+  try {
+    call.approve(credentialRequest, { resultUrl: 1 });
+    expect(call.reviewed.snapshot()?.projection?.resultUrl).toBe(1);
+    call.native.progress(createResponse);
+    vi.mocked(invoke).mockImplementationOnce(async () => parentReply());
+    await call.host.request(read);
+    for (const refused of [
+      { ...select, url: resultInput.url },
+      { ...select, parent: undefined },
+      { ...select, result: { version: 2 as unknown as 1, sequence: 2 } },
+      { ...select, result: { version: 1 as const, sequence: 1 } },
+      { ...select, result: { version: 1 as const, sequence: 3 } },
+      { ...select, result: { ...select.result, url: resultInput.url } },
+      {
+        ...select,
+        parent: { version: 1 as const, callId: crypto.randomUUID() },
+      },
+    ])
+      await expect(
+        call.host.requestBytes?.(refused as typeof select),
+      ).rejects.toThrow("unavailable");
+    expect(resultReads()).toHaveLength(0);
+
+    vi.mocked(invoke).mockImplementationOnce(async () =>
+      resultFrame({ parent: { ...parentReply().parent, sequence: 3 } }),
+    );
+    const input = structuredClone(select);
+    const pending = call.host.requestBytes?.(input);
+    input.result.sequence = 9;
+    const response = await pending;
+    expect(resultReads()[0]?.[1]).toEqual({
+      id: "example.plugin",
+      revision: "abc",
+      request: { result: { version: 1, sequence: 2 }, maxBytes: 3 },
+      parent: { version: 1, callId },
+    });
+    expect(response?.source).toEqual({ sha256: "b".repeat(64), size: 3 });
+    // The download advanced the sequence; its own read selects nothing.
+    await expect(call.host.requestBytes?.(select)).rejects.toThrow(
+      "unavailable",
+    );
+    expect(retires()).toHaveLength(0);
+  } finally {
+    await call.finish();
+  }
+});
+
+it("retires a projection with an unknown result URL grant", async () => {
+  const call = await credentialCall();
+  try {
+    call.approve(credentialRequest, { resultUrl: 2 });
+    expect(call.reviewed.snapshot()?.projection).toBeUndefined();
+    expect(retires()).toHaveLength(1);
+  } finally {
+    await call.finish();
+  }
+});
+
+it("prepares only the call's own retained source, privately, and stays pending", async () => {
+  const call = await mediaCall(readAndSelect);
+  try {
+    call.approve(mediaRequest);
+    call.native.progress(createResponse);
+    await vi.waitFor(() => expect(selections()).toHaveLength(1));
+    expect(selections()[0]?.[1]).toEqual({
+      id: "example.plugin",
+      revision: "abc",
+      parent: { version: 1, callId },
+      step: { phase: "prepare", source: { sha256: "b".repeat(64), size: 3 } },
+    });
+    expect(await pending(call.result)).toBe("pending");
+    expect(call.reviewed.snapshot()?.status).toBe("dispatching");
+    expect(retires()).toHaveLength(0);
+    // A plugin's own review keeps its prepared media native: nothing uploads.
+    expect(selections()).toHaveLength(1);
+    // The callback ran once; nothing re-selects or completes the call.
+    call.native.progress(createResponse);
+    expect(call.onCreateResponse).toHaveBeenCalledOnce();
+  } finally {
+    await call.finish();
+  }
+});
+
+/** An agent's media review, in a community at its HTTPS origin and thread. */
+const delivered = {
+  ...mediaRequest.destination,
+  community: "https://fixture.test",
+  root: "a".repeat(64),
+};
+const agentMedia = { ...mediaRequest, destination: delivered };
+const preparedSha = "d".repeat(64);
+const uploadReceipt = {
+  url: `https://fixture.test/media/${preparedSha}.mp4`,
+  type: "video/mp4",
+  size: 5,
+  sha256: preparedSha,
+  dim: "1280x720",
+};
+const steps = (upload: object = uploadReceipt) =>
+  ({
+    prepare: {
+      ...prepared,
+      destination: delivered,
+      prepared: { sha256: preparedSha, size: 5 },
+    },
+    upload: { ...prepared, destination: delivered, phase: "uploaded", upload },
+    publish: { ...prepared, destination: delivered, phase: "publishing" },
+  }) as Record<string, unknown>;
+/** An agent's media call through creation, under `ack`'s native steps. */
+async function agentMediaCall(
+  ack: (step: { phase: string }) => unknown = (step) => steps()[step.phase],
+) {
+  const { state, origin } = agentOrigin(delivered);
+  const call = await mediaCall(readAndSelect, ack, agentMedia, origin);
+  call.approve(agentMedia);
+  call.native.progress({ ...createResponse, destination: delivered });
+  return { ...call, state };
+}
+const phases = () =>
+  selections().map(([, args]) => (args as { step: { phase: string } }).step);
+
+it("uploads an agent's prepared media once and admits one attachment-only message", async () => {
+  const call = await agentMediaCall();
+  const receipt = {
+    callId,
+    destination: delivered,
+    digest,
+    outcome: "unknown" as const,
+    delivery: {
+      upload: "uploaded" as const,
+      status: "posted" as const,
+      eventId: "e".repeat(64),
+    },
+  };
+  try {
+    await vi.waitFor(() => expect(selections()).toHaveLength(3));
+    const url = uploadReceipt.url;
+    expect(phases()).toEqual([
+      { phase: "prepare", source: { sha256: "b".repeat(64), size: 3 } },
+      { phase: "upload" },
+      {
+        phase: "publish",
+        event: {
+          kind: 9,
+          content: `![video.mp4](<${url}>)`,
+          tags: [
+            ["h", "origin-a"],
+            ["e", delivered.root, "", "reply"],
+            [
+              "imeta",
+              `url ${url}`,
+              "m video/mp4",
+              "size 5",
+              `x ${preparedSha}`,
+              "filename video.mp4",
+              "dim 1280x720",
+            ],
+          ],
+        },
+      },
+    ]);
+    expect(retires()).toHaveLength(0);
+  } finally {
+    await call.finish(receipt);
+  }
+  const result = (await call.result) as ReviewedInvocationReceipt;
+  expect(result.delivery).toEqual(receipt.delivery);
+  expect(Object.isFrozen(result.delivery)).toBe(true);
+});
+
+it.each([
+  // A consistent receipt for other bytes than were prepared.
+  [
+    "hash",
+    {
+      sha256: "c".repeat(64),
+      url: `https://fixture.test/media/${"c".repeat(64)}.mp4`,
+    },
+  ],
+  ["size", { size: 4 }],
+  ["origin", { url: `https://other.test/media/${preparedSha}.mp4` }],
+  ["type", { type: "video/webm" }],
+])(
+  "posts nothing for an upload receipt with the wrong %s",
+  async (_name, change) => {
+    const call = await agentMediaCall(
+      (step) => steps({ ...uploadReceipt, ...change })[step.phase],
+    );
+    try {
+      await vi.waitFor(() => expect(retires()).toHaveLength(1));
+      expect(phases().map((step) => step.phase)).toEqual(["prepare", "upload"]);
+    } finally {
+      await call.finish();
+    }
+  },
+);
+
+it("asks for no message once the agent's handle is gone", async () => {
+  let call: Awaited<ReturnType<typeof agentMediaCall>> | undefined;
+  call = await agentMediaCall((step) => {
+    // The handle goes while the upload is in flight.
+    if (step.phase === "upload" && call) call.state.live = false;
+    return steps()[step.phase];
+  });
+  try {
+    await vi.waitFor(() => expect(retires()).toHaveLength(1));
+    expect(phases().map((step) => step.phase)).toEqual(["prepare", "upload"]);
+  } finally {
+    await call.finish();
+  }
+});
+
+it.each([
+  ["upload", { upload: "maybe", status: "failed" }],
+  ["status", { upload: "uploaded", status: "sent" }],
+  ["event ID", { upload: "uploaded", status: "posted", eventId: "x" }],
+])(
+  "refuses a terminal delivery with an invalid %s",
+  async (_name, delivery) => {
+    const call = await agentMediaCall(() => undefined);
+    await call.finish({
+      callId,
+      destination: delivered,
+      digest,
+      outcome: "unknown",
+      delivery,
+    } as unknown as ReviewedInvocationReceipt);
+    expect(String(await call.result)).toContain(
+      "Invalid reviewed invocation receipt",
+    );
+  },
+);
+
+it.each([
+  ["hash", () => ({ source: { sha256: "c".repeat(64), size: 3 } })],
+  ["size", () => ({ source: { sha256: "b".repeat(64), size: 2 } })],
+  [
+    "extra selection key",
+    () => ({ source: { sha256: "b".repeat(64), size: 3 }, path: "/tmp/x" }),
+  ],
+  [
+    "extra source key",
+    () => ({ source: { sha256: "b".repeat(64), size: 3, url: "x" } }),
+  ],
+  ["null", () => null],
+  ["string", () => "source"],
+])("retires on a selection with the wrong %s", async (_name, selection) => {
+  const call = await mediaCall(async (host) => {
+    await host.requestBytes?.(resultInput);
+    return selection();
+  });
+  try {
+    call.approve(mediaRequest);
+    call.native.progress(createResponse);
+    await vi.waitFor(() => expect(retires()).toHaveLength(1));
+    expect(selections()).toHaveLength(0);
+  } finally {
+    await call.finish();
+  }
+});
+
+it.each([
+  [
+    "no retained source",
+    () => ({ source: { sha256: "b".repeat(64), size: 3 } }),
+  ],
+  [
+    "a throw",
+    () => {
+      throw new Error("plugin");
+    },
+  ],
+  ["a rejection", () => Promise.reject(new Error("plugin"))],
+])("retires an expected-media call on %s", async (_name, select) => {
+  const call = await mediaCall(select);
+  try {
+    call.approve(mediaRequest);
+    call.native.progress(createResponse);
+    await vi.waitFor(() => expect(retires()).toHaveLength(1));
+    expect(selections()).toHaveLength(0);
+  } finally {
+    await call.finish();
+  }
+});
+
+it("selects nothing on a void callback and keeps legacy callbacks unchanged", async () => {
+  for (const [input, select] of [
+    [mediaRequest, () => undefined],
+    [mediaRequest, async () => undefined],
+    [credentialRequest, readAndSelect],
+    [
+      credentialRequest,
+      () => {
+        throw new Error("plugin");
+      },
+    ],
+  ] as const) {
+    vi.mocked(invoke).mockClear();
+    const call = await mediaCall(select, undefined, input);
+    try {
+      call.approve(input);
+      call.native.progress(createResponse);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(call.onCreateResponse).toHaveBeenCalledOnce();
+      expect(selections()).toHaveLength(0);
+      expect(retires()).toHaveLength(0);
+      expect(await pending(call.result)).toBe("pending");
+    } finally {
+      await call.finish();
+    }
+  }
+});
+
+it.each([
+  ["phase", () => ({ ...prepared, phase: "result" })],
+  ["call", () => ({ ...prepared, callId: crypto.randomUUID() })],
+  ["digest", () => ({ ...prepared, digest: "ef".repeat(32) })],
+  [
+    "destination",
+    () => ({
+      ...prepared,
+      destination: { ...prepared.destination, channel: "other" },
+    }),
+  ],
+  ["missing", () => undefined],
+  [
+    "native refusal",
+    () => {
+      throw new Error("Refused");
+    },
+  ],
+])(
+  "retires on a prepared acknowledgement with the wrong %s",
+  async (_name, ack) => {
+    const call = await mediaCall(readAndSelect, ack);
+    try {
+      call.approve(mediaRequest);
+      call.native.progress(createResponse);
+      await vi.waitFor(() => expect(retires()).toHaveLength(1));
+      expect(selections()).toHaveLength(1);
+    } finally {
+      await call.finish();
+    }
+  },
+);
+
+it("suppresses a selection or acknowledgement after retirement", async () => {
+  const held = reviewGate<unknown>();
+  const late = reviewGate<unknown>();
+  const call = await mediaCall(
+    async (host) => {
+      await readAndSelect(host);
+      return held.promise;
+    },
+    () => late.promise,
+  );
+  try {
+    call.approve(mediaRequest);
+    call.native.progress(createResponse);
+    await vi.waitFor(() => expect(call.onCreateResponse).toHaveBeenCalled());
+    await call.reviewed.retire(callId).catch(() => {});
+    held.resolve({ source: { sha256: "b".repeat(64), size: 3 } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(selections()).toHaveLength(0);
+    expect(retires()).toHaveLength(1);
+  } finally {
+    await call.finish();
+  }
+  // A held native acknowledgement after retirement is ignored too.
+  const second = await mediaCall(readAndSelect, () => late.promise);
+  vi.mocked(invoke).mockClear();
+  try {
+    second.approve(mediaRequest);
+    second.native.progress(createResponse);
+    await vi.waitFor(() => expect(selections()).toHaveLength(1));
+    await second.reviewed.retire(callId).catch(() => {});
+    late.resolve({ ...prepared, phase: "wrong" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(retires()).toHaveLength(1);
+  } finally {
+    await second.finish();
+  }
+});

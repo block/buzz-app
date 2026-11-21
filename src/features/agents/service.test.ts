@@ -23,7 +23,7 @@ import { registerAttention } from "./attention-command";
 import { canMessageAgent, createAgentChoices, deletingAgent } from "./choices";
 import { createAgentLibrary } from "./library";
 import type { AttentionSource } from "./attention-sources";
-import { appClient } from "../../buzz-mcp/app-client";
+import { appClient, appInvocation } from "../../buzz-mcp/app-client";
 import { ClaudeDefaults } from "../../bundled/claude-code/defaults";
 import { CodexProvider } from "../../bundled/codex/tabs";
 import type { AgentModelSettingsContext } from "./model-settings";
@@ -116,6 +116,8 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { saveOwnerSections } from "./prompt-sections";
 import { startingFolder } from "./conversation-folders";
 import { memoryStorage } from "./test-fakes";
+import { HostService } from "../host/service";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { SyncedTeams } from "./team-config";
 import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
 import { NoTeamChannel, type TeamSent } from "./team-ops";
@@ -184,6 +186,18 @@ const records = vi.hoisted(() => ({
   removeAgent: vi.fn(),
   unshare: vi.fn(),
 }));
+// Reviewed delivery's native IPC; the real module everywhere else.
+vi.mock("@tauri-apps/api/core", async (original) => {
+  const actual = await original<typeof import("@tauri-apps/api/core")>();
+  return {
+    ...actual,
+    invoke: vi.fn(actual.invoke),
+    isTauri: vi.fn(actual.isTauri),
+    Channel: class {
+      constructor(public onmessage: (value: unknown) => void) {}
+    },
+  };
+});
 vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
   clearDeletedDefaultAgent: vi.fn(async () => false),
@@ -6198,6 +6212,517 @@ describe("an agent in several communities", () => {
     const { agent } = await service.join(bot);
     return { ...ready, agent };
   }
+
+  it("lends a plugin's tool a review bound to the membership and conversation that called it", async () => {
+    const f = await joined();
+    const review = vi.fn(async () => ({}) as never);
+    f.ctx.provide("host", { reviewAndInvokeOnce: review });
+    const hosts: unknown[] = [];
+    f.plugin.agents.addTool({
+      name: "notes_add",
+      description: "Add a note.",
+      inputSchema: { type: "object" },
+      call: async (_client, _context, _args, _proof, host) => {
+        hosts.push(host);
+        await host?.reviewAndInvokeOnce({} as never, {} as never);
+        return "added";
+      },
+    });
+    const [tool] = f.service.tools();
+    await vi.waitFor(() => expect(f.plugin.agents.handle(away)).toBeDefined());
+    const options = {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    };
+    const call = (
+      key: string,
+      context: { channel?: string; root?: string },
+    ) => {
+      const handle = f.plugin.agents.handle(key);
+      if (!handle) throw new Error(`no handle for ${key}`);
+      const client = appClient(handle, options);
+      return tool?.call(
+        client,
+        context,
+        {},
+        undefined,
+        appInvocation(client, context, () => true),
+      );
+    };
+    await Promise.all([
+      call(bot, { channel: "a" }),
+      call(away, { channel: "a" }),
+      call(bot, { channel: "b", root: "r" }),
+    ]);
+    const viewerKey = f.service.find(bot)?.owner;
+    expect(review.mock.calls.map((each) => (each as unknown[])[2])).toEqual([
+      {
+        invocation: expect.objectContaining({ key: bot, channel: "a" }),
+        relay: "wss://relay.example.test",
+        destination: {
+          community: "https://relay.example.test",
+          viewer: viewerKey,
+          channel: "a",
+        },
+      },
+      {
+        invocation: expect.objectContaining({ key: away, channel: "a" }),
+        relay: "wss://other.example.test",
+        destination: {
+          community: "https://other.example.test",
+          viewer: viewerKey,
+          channel: "a",
+        },
+      },
+      {
+        invocation: expect.objectContaining({ key: bot, root: "r" }),
+        relay: "wss://relay.example.test",
+        destination: {
+          community: "https://relay.example.test",
+          viewer: viewerKey,
+          channel: "b",
+          root: "r",
+        },
+      },
+    ]);
+    // No sender without the app's own invocation and an addressed channel.
+    const client = appClient(
+      f.plugin.agents.handle(bot) as AgentHandle,
+      options,
+    );
+    const forged = { ...appInvocation(client, { channel: "a" }, () => true) };
+    hosts.length = 0;
+    await tool?.call(client, { channel: "a" }, {});
+    await tool?.call(client, { channel: "a" }, {}, undefined, forged as never);
+    await tool?.call(
+      client,
+      {},
+      {},
+      undefined,
+      appInvocation(client, {}, () => true),
+    );
+    expect(hosts).toEqual([undefined, undefined, undefined]);
+    expect(review).toHaveBeenCalledTimes(3);
+  });
+
+  it("delivers distinct agents' reviewed media only as each membership, after its turn", async () => {
+    const f = await joined();
+    await f.service.create({ type: "example/echo", name: "Sib" });
+    const viewerKey = f.service.find(bot)?.owner as string;
+    // The viewer's open conversation; native IPC is faked below.
+    const sessions = new Map<string, object>();
+    let open = "https://relay.example.test";
+    f.ctx.provide("relay", {
+      snapshot: () => {
+        if (!sessions.has(open))
+          sessions.set(open, {
+            viewer: viewerKey,
+            scope: `${open}:${viewerKey}`,
+          });
+        return { session: sessions.get(open), origin: open };
+      },
+      subscribe: () => () => {},
+    });
+    const host = new HostService(f.ctx);
+    const digest = "cd".repeat(32);
+    const prepared = "d".repeat(64);
+    const steps: unknown[] = [];
+    type Args = {
+      request: { destination: { community: string } };
+      once: { callId: string };
+      author: unknown;
+      parent: { callId: string };
+      step: { phase: string };
+    };
+    let native!: {
+      args: Args;
+      ipc: Record<string, { onmessage(value: unknown): void }>;
+      terminal: (receipt: unknown) => void;
+    };
+    const original = vi.mocked(invoke).getMockImplementation();
+    const desktop = vi.mocked(isTauri).getMockImplementation();
+    vi.mocked(isTauri).mockImplementation(() => true);
+    vi.mocked(invoke).mockImplementation(async (command, raw) => {
+      const args = raw as Args;
+      const destination = native?.args.request.destination;
+      const parent = {
+        version: 1,
+        callId: native?.args.once.callId,
+        digest,
+        destination,
+      };
+      switch (command) {
+        case "plugin_host_call_context":
+          return { boot: "12345678-1234-4234-8234-123456789abc", page: 1 };
+        case "plugin_host_reviewed_invoke":
+          return new Promise((terminal) => {
+            native = { args, ipc: args as never, terminal };
+          });
+        case "plugin_host_request_bytes": {
+          const meta = new TextEncoder().encode(
+            JSON.stringify({
+              status: 200,
+              headers: {},
+              parent: { ...parent, sequence: 2 },
+              source: { sha256: "b".repeat(64), size: 3 },
+            }),
+          );
+          const frame = new Uint8Array(4 + meta.length + 3);
+          new DataView(frame.buffer).setUint32(0, meta.length, false);
+          frame.set(meta, 4);
+          frame.set([1, 2, 3], 4 + meta.length);
+          return frame.buffer;
+        }
+        case "plugin_host_reviewed_retire":
+          native.terminal({
+            callId: native.args.once.callId,
+            destination,
+            digest,
+            outcome: "cancelled",
+          });
+          return undefined;
+        case "plugin_host_reviewed_result": {
+          steps.push(args.step);
+          const ack = { ...parent, callId: args.parent.callId };
+          if (args.step.phase === "prepare")
+            return {
+              ...ack,
+              phase: "prepared",
+              prepared: { sha256: prepared, size: 5 },
+            };
+          if (args.step.phase === "upload")
+            return {
+              ...ack,
+              phase: "uploaded",
+              upload: {
+                url: `${destination.community}/media/${prepared}.mp4`,
+                type: "video/mp4",
+                size: 5,
+                sha256: prepared,
+                dim: "1280x720",
+              },
+            };
+          return { ...ack, phase: "publishing" };
+        }
+      }
+      return undefined;
+    });
+    const proposals: Promise<unknown>[] = [];
+    f.plugin.agents.addTool({
+      name: "video_review",
+      description: "Propose one reviewed video.",
+      inputSchema: { type: "object" },
+      call: async (_client, _context, args, _proof, lent) => {
+        if (!lent) throw new Error("no review lent");
+        const callId = (args as { callId: string }).callId;
+        // Proposed during the turn; approved and delivered after it ends.
+        proposals.push(
+          lent.reviewAndInvokeOnce(
+            {
+              operation: "synthetic",
+              version: 1,
+              body: '{"prompt":"Original"}',
+              destination: lent.destination,
+              effect: {
+                kind: "credential-http",
+                method: "POST",
+                url: "https://api.example.test/v1/create",
+                headers: { accept: "application/json" },
+                slot: "api-key",
+              },
+              disclosure: { version: "example/1", text: "About one credit" },
+              expectedMedia: {
+                version: 1,
+                kind: "video",
+                container: "mp4",
+                codec: "h264",
+                width: 1280,
+                height: 720,
+                durationMs: 5000,
+                toleranceMs: 50,
+                maxBytes: 16777216,
+              },
+            } as never,
+            {
+              callId,
+              onCreateResponse: async () => {
+                const read = await f.plugin.host.requestBytes?.({
+                  url: "https://api.example.test/output.mp4",
+                  maxBytes: 3,
+                  parent: { version: 1, callId },
+                });
+                return read?.source && { source: read.source };
+              },
+            },
+          ),
+        );
+        return "proposed";
+      },
+    });
+    const [tool] = f.service.tools();
+    await vi.waitFor(() => expect(f.plugin.agents.handle(away)).toBeDefined());
+    const options = {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    };
+    /** One turn of `key`'s that proposes a review, then ends. */
+    const turn = async (key: string, callId: string, community: string) => {
+      open = community;
+      const handle = f.plugin.agents.handle(key);
+      if (!handle) throw new Error(`no handle for ${key}`);
+      const client = appClient(handle, options);
+      let live = true;
+      const context = { channel: "a" };
+      await tool?.call(
+        client,
+        context,
+        { callId },
+        undefined,
+        appInvocation(client, context, () => live),
+      );
+      await vi.waitFor(() =>
+        expect(native?.args.once).toMatchObject({ callId }),
+      );
+      // The turn ends with the review started; approval and delivery follow.
+      live = false;
+      const { args, ipc } = native;
+      ipc.onReview?.onmessage({
+        callId,
+        pluginId: "example",
+        revision: "one",
+        request: args.request,
+        author: args.author,
+        digest,
+        expiresAt: Date.now() + 60_000,
+      });
+      const current = host.reviewed.snapshot();
+      if (current?.projection)
+        host.reviewed.update({ ...current, status: "dispatching" });
+      ipc.onProgress?.onmessage({
+        version: 1,
+        callId,
+        digest,
+        destination: args.request.destination,
+        sequence: 1,
+        phase: "create-response",
+        status: 200,
+        safeBody: '{"id":"task"}',
+      });
+      const before = steps.length;
+      await vi.waitFor(() => expect(steps.length - before).toBe(3));
+      const delivery = {
+        upload: "uploaded",
+        status: "posted",
+        eventId: callId.slice(0, 8).padEnd(64, "e"),
+      };
+      native.terminal({
+        callId,
+        destination: args.request.destination,
+        digest,
+        outcome: "unknown",
+        delivery,
+      });
+      const receipt = await proposals[proposals.length - 1];
+      return {
+        author: args.author,
+        destination: args.request.destination,
+        publish: steps[steps.length - 1],
+        receipt,
+      };
+    };
+    try {
+      const home = await turn(
+        bot,
+        "11111111-1111-4111-8111-111111111111",
+        "https://relay.example.test",
+      );
+      const sib = await turn(
+        sibling,
+        "22222222-2222-4222-8222-222222222222",
+        "https://relay.example.test",
+      );
+      const awayTurn = await turn(
+        away,
+        "33333333-3333-4333-8333-333333333333",
+        "https://other.example.test",
+      );
+      const message = (community: string) => ({
+        phase: "publish",
+        event: {
+          kind: 9,
+          content: `![video.mp4](<${community}/media/${prepared}.mp4>)`,
+          tags: [
+            ["h", "a"],
+            [
+              "imeta",
+              `url ${community}/media/${prepared}.mp4`,
+              "m video/mp4",
+              "size 5",
+              `x ${prepared}`,
+              "filename video.mp4",
+              "dim 1280x720",
+            ],
+          ],
+        },
+      });
+      expect(
+        [home, sib, awayTurn].map(({ author, destination, publish }) => ({
+          author,
+          destination,
+          publish,
+        })),
+      ).toEqual([
+        {
+          author: { pubkey: bot, relay: "wss://relay.example.test" },
+          destination: {
+            community: "https://relay.example.test",
+            viewer: viewerKey,
+            channel: "a",
+          },
+          publish: message("https://relay.example.test"),
+        },
+        {
+          author: { pubkey: sibling, relay: "wss://relay.example.test" },
+          destination: {
+            community: "https://relay.example.test",
+            viewer: viewerKey,
+            channel: "a",
+          },
+          publish: message("https://relay.example.test"),
+        },
+        {
+          author: { pubkey: bot, relay: "wss://other.example.test" },
+          destination: {
+            community: "https://other.example.test",
+            viewer: viewerKey,
+            channel: "a",
+          },
+          publish: message("https://other.example.test"),
+        },
+      ]);
+      for (const { receipt } of [home, sib, awayTurn])
+        expect(receipt).toMatchObject({
+          outcome: "unknown",
+          delivery: { upload: "uploaded", status: "posted" },
+        });
+      // The same key's away membership cannot review from the home conversation.
+      const invokes = vi
+        .mocked(invoke)
+        .mock.calls.filter(
+          ([name]) => name === "plugin_host_reviewed_invoke",
+        ).length;
+      open = "https://relay.example.test";
+      const handle = f.plugin.agents.handle(away) as AgentHandle;
+      const client = appClient(handle, options);
+      await tool?.call(
+        client,
+        { channel: "a" },
+        { callId: "44444444-4444-4444-8444-444444444444" },
+        undefined,
+        appInvocation(client, { channel: "a" }, () => true),
+      );
+      await expect(proposals[proposals.length - 1]).rejects.toThrow(
+        "current conversation session",
+      );
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([name]) => name === "plugin_host_reviewed_invoke",
+          ),
+      ).toHaveLength(invokes);
+      // Removing the agent, unlike its turn ending, retires its started review.
+      const stopping = "55555555-5555-4555-8555-555555555555";
+      open = "https://relay.example.test";
+      const kept = f.plugin.agents.handle(sibling) as AgentHandle;
+      const keptClient = appClient(kept, options);
+      let running = true;
+      await tool?.call(
+        keptClient,
+        { channel: "a" },
+        { callId: stopping },
+        undefined,
+        appInvocation(keptClient, { channel: "a" }, () => running),
+      );
+      await vi.waitFor(() =>
+        expect(native.args.once).toMatchObject({ callId: stopping }),
+      );
+      running = false;
+      const retires = () =>
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(
+            ([name, args]) =>
+              name === "plugin_host_reviewed_retire" &&
+              (args as { callId: string }).callId === stopping,
+          );
+      expect(retires()).toEqual([]);
+      await f.service.remove(sibling);
+      await vi.waitFor(() =>
+        expect(retires()).toEqual([
+          ["plugin_host_reviewed_retire", { callId: stopping }],
+        ]),
+      );
+      await expect(proposals[proposals.length - 1]).resolves.toMatchObject({
+        outcome: "cancelled",
+      });
+    } finally {
+      vi.mocked(invoke).mockImplementation(original as never);
+      vi.mocked(isTauri).mockImplementation(desktop as never);
+    }
+  });
+
+  it("lends no review where no host is reachable, and still runs the tool", async () => {
+    const f = await joined();
+    const call = vi.fn(async () => "added");
+    await f.ctx
+      .extend({
+        pluginOwner: Object.freeze({ id: "buzz.notes", revision: "bundled" }),
+      })
+      .plugin({
+        inject: ["agents"],
+        apply: (plugin: Context) =>
+          plugin.agents.addTool({
+            name: "notes_add",
+            description: "Add a note.",
+            inputSchema: { type: "object" },
+            call,
+          }),
+      });
+    const handle = f.plugin.agents.handle(bot) as AgentHandle;
+    const client = appClient(handle, {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    const context = { channel: "a" };
+    await f.service.tools()[0]?.call(
+      client,
+      context,
+      {},
+      undefined,
+      appInvocation(client, context, () => true),
+    );
+    expect(call).toHaveBeenCalledExactlyOnceWith(client, context, {});
+  });
+
+  it("stops a lent invocation with the real handle, while it is still held", async () => {
+    const f = await joined();
+    await vi.waitFor(() => expect(f.plugin.agents.handle(away)).toBeDefined());
+    const handle = f.plugin.agents.handle(away) as AgentHandle;
+    const client = appClient(handle, {
+      read: vi.fn(),
+      memories: async () => ({ entries: [], partial: false }),
+    });
+    let open = true;
+    const invocation = appInvocation(client, { channel: "a" }, () => open);
+    invocation?.initiating();
+    // After its call returns, it starts nothing new, but its started work lives.
+    open = false;
+    expect(() => invocation?.initiating()).toThrow("The tool call has ended");
+    expect(() => invocation?.live()).not.toThrow();
+    await f.service.remove(away);
+    expect(() => invocation?.live()).toThrow("ask for its handle again");
+  });
 
   it("joins with the same key, shares its settings, and keeps its own attention and runs", async () => {
     const { service, native, run, emit, second, select, agent } =
@@ -24565,13 +25090,17 @@ it("checks a provider operation and admits one exact proposal from a consumer to
   });
   let authority: AgentToolAuthority | undefined;
   let proof: AgentToolProof | undefined;
+  // A reachable host is never lent to an operation's checked call.
+  const review = vi.fn();
+  f.ctx.provide("host", { reviewAndInvokeOnce: review });
   consumer.ctx.agents.addTool({
     name: "consumer_propose",
     description: "Propose a question.",
     inputSchema: { type: "object" },
     operation: provider.operation,
-    async call(_client, context, args, issued) {
+    async call(_client, context, args, issued, host) {
       if (!issued) throw new Error("Expected operation proof");
+      expect(host).toBeUndefined();
       proof = issued;
       expect(context).toEqual({ channel, root: "root" });
       for (const input of [
@@ -24630,6 +25159,7 @@ it("checks a provider operation and admits one exact proposal from a consumer to
       }),
     );
     expect(proof).toBeDefined();
+    expect(review).not.toHaveBeenCalled();
     expect(() => authority?.check()).toThrow("call has ended");
   } finally {
     release.resolve(undefined);

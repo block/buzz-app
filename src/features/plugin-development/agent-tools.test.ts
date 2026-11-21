@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import { createPluginManager, type PluginManager } from "../../plugins/manager";
 import type { PluginState } from "../../plugins/runtime";
 import type { PluginInfo, StorageResult } from "../../plugins/types";
@@ -162,7 +162,7 @@ function fakeManager(
 }
 
 function tools(manager: object, registered = {}) {
-  const added = new Map<string, AddedTool>();
+  const added = new Map<string, PluginTool>();
   registerPluginDevelopmentTools({
     plugins: () => manager as unknown as PluginManager,
     agents: { addTool: (tool) => void added.set(tool.name, tool) },

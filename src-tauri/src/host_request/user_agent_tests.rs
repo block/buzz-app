@@ -56,6 +56,7 @@ async fn ordinary_and_protected_requests_default_user_agent_and_preserve_overrid
                 headers: BTreeMap::new(),
                 body: None,
                 timeout_ms: None,
+                secret: None,
             };
             if let Some((name, value)) = supplied {
                 input.headers.insert(name.into(), value.into());

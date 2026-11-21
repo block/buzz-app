@@ -223,15 +223,25 @@ impl Community {
     /// with the next of `replies`, one connection each, recording those other
     /// requests' heads in order.
     pub(crate) fn serve(&self, replies: Vec<String>) -> Served {
+        let expected = replies.len();
+        let mut replies = replies.into_iter();
+        self.serve_with(expected, move |_, _| replies.next().unwrap())
+    }
+    /// As [`Self::serve`], answering each of `expected` requests from its
+    /// head and its `Content-Length` body.
+    pub(crate) fn serve_with(
+        &self,
+        expected: usize,
+        mut answer: impl FnMut(&str, &[u8]) -> String + Send + 'static,
+    ) -> Served {
         let (listener, acceptor) = (self.listener.clone(), self.acceptor.clone());
         let discovery = self.discovery();
         let heads = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let expected = replies.len();
         let recorded = heads.clone();
         let task = tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            let mut replies = replies.into_iter();
-            while replies.len() > 0 {
+            let mut answered = 0;
+            while answered < expected {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let mut stream = acceptor.accept(tcp).await.unwrap();
                 let mut head = Vec::new();
@@ -239,13 +249,24 @@ impl Community {
                     head.push(stream.read_u8().await.unwrap());
                 }
                 let head = String::from_utf8(head).unwrap();
-                let answer = if head.starts_with("GET /info ") {
+                let reply = if head.starts_with("GET /info ") {
                     discovery.clone()
                 } else {
-                    recorded.lock().unwrap().push(head);
-                    replies.next().unwrap()
+                    let length = head
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse().unwrap())
+                        })
+                        .unwrap_or(0);
+                    let mut body = vec![0; length];
+                    stream.read_exact(&mut body).await.unwrap();
+                    recorded.lock().unwrap().push(head.clone());
+                    answered += 1;
+                    answer(&head, &body)
                 };
-                stream.write_all(answer.as_bytes()).await.unwrap();
+                stream.write_all(reply.as_bytes()).await.unwrap();
                 let _ = stream.shutdown().await;
             }
         });

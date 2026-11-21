@@ -25,6 +25,7 @@ fn input() -> HostRequest {
         headers: BTreeMap::new(),
         body: Some("{}".into()),
         timeout_ms: Some(1000),
+        secret: None,
     }
 }
 fn ipc(
@@ -376,6 +377,25 @@ fn fingerprints_bind_exact_fields_and_absence_not_ambiguous_concatenation() {
     empty.body = None;
     empty.headers = BTreeMap::from([("ab".into(), "c".into())]);
     assert_ne!(absent.fingerprint(), empty.fingerprint());
+}
+
+#[test]
+fn slot_fingerprints_frame_presence_identity_and_adjacent_fields() {
+    let mut request = input();
+    let absent = request.fingerprint();
+    request.secret = Some(String::new());
+    assert_ne!(request.fingerprint(), absent);
+    request.secret = Some("key".into());
+    let key = request.fingerprint();
+    assert_ne!(key, absent);
+    request.secret = Some("other".into());
+    assert_ne!(request.fingerprint(), key);
+    request.secret = Some("a".into());
+    request.headers.insert("b".into(), "c".into());
+    let first = request.fingerprint();
+    request.secret = Some("ab".into());
+    request.headers = BTreeMap::from([("c".into(), String::new())]);
+    assert_ne!(request.fingerprint(), first);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

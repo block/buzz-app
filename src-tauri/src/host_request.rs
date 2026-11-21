@@ -16,7 +16,7 @@ pub(crate) struct CallContext {
     boot: String,
     page: u64,
 }
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Once {
     boot: String,
@@ -182,9 +182,162 @@ pub(crate) struct HostRequest {
     headers: BTreeMap<String, String>,
     body: Option<String>,
     timeout_ms: Option<u64>,
+    secret: Option<String>,
+}
+
+/// Frozen generic effect of a reviewed credential-bearing create.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CredentialHttp {
+    pub(crate) kind: String,
+    pub(crate) method: String,
+    pub(crate) url: String,
+    pub(crate) headers: BTreeMap<String, String>,
+    pub(crate) slot: String,
+}
+impl CredentialHttp {
+    fn request(&self, body: &str) -> HostRequest {
+        HostRequest {
+            url: self.url.clone(),
+            method: self.method.clone(),
+            headers: self.headers.clone(),
+            body: Some(body.into()),
+            timeout_ms: Some(10_000),
+            secret: Some(self.slot.clone()),
+        }
+    }
+    pub(crate) fn validate(&self, body: &str) -> Result<(), String> {
+        let (url, _, _) = validate_request(&self.request(body))?;
+        if self.kind != "credential-http"
+            || self.method != "POST"
+            || body.len() > 32 * 1024
+            || url.fragment().is_some()
+            || self.headers.keys().any(|name| {
+                name.eq_ignore_ascii_case("authorization") || name.eq_ignore_ascii_case("x-api-key")
+            })
+        {
+            return Err("Invalid reviewed HTTP effect".into());
+        }
+        buzzodz_plugins::valid_id(&self.slot)
+    }
+    /// Preparation is not effect admission. The caller must still compose its
+    /// retained review, page, identity and exact-account fences before spawn.
+    pub(crate) fn prepare(
+        &self,
+        body: &str,
+        manager: &buzzodz_plugins::Manager,
+        id: &str,
+        revision: &str,
+        identity: &crate::identity::IdentityHost,
+        deadline: std::time::Instant,
+    ) -> Result<
+        (
+            buzzodz_plugins::secrets::PreparedSecret,
+            reqwest::RequestBuilder,
+        ),
+        String,
+    > {
+        self.validate(body)?;
+        let request = self.request(body);
+        let (secret, headers) =
+            request.prepare_secret(manager, id, revision, identity, deadline)?;
+        let sender = client(true)?.clone();
+        #[cfg(test)]
+        let sender = credential_tests::client(&self.url).unwrap_or(sender);
+        let outgoing = sender
+            .post(&self.url)
+            .headers(headers)
+            .body(body.to_owned())
+            .timeout(Duration::from_secs(10));
+        Ok((secret, outgoing))
+    }
+    /// One GET on the reviewed create's exact origin, with its frozen non-secret
+    /// headers and retained credential. No body, caller headers or slot.
+    pub(crate) fn read(
+        &self,
+        url: &str,
+        secret: &buzzodz_plugins::secrets::PreparedSecret,
+        timeout: Duration,
+    ) -> Result<reqwest::RequestBuilder, String> {
+        let (target, _, mut headers) = validate_request(&HostRequest {
+            url: url.into(),
+            method: "GET".into(),
+            headers: self.headers.clone(),
+            body: None,
+            timeout_ms: None,
+            secret: None,
+        })?;
+        let origin = reqwest::Url::parse(&self.url).map_err(|_| "Invalid reviewed HTTP effect")?;
+        if target.origin() != origin.origin() || target.fragment().is_some() {
+            return Err("Parent reads require the reviewed origin".into());
+        }
+        insert_credential(&self.headers, &mut headers, secret)?;
+        let sender = client(true)?.clone();
+        #[cfg(test)]
+        let sender = credential_tests::client(url).unwrap_or(sender);
+        Ok(sender.get(target).headers(headers).timeout(timeout))
+    }
+}
+
+/// Adds the prepared credential header beside bounded, non-conflicting headers.
+fn insert_credential(
+    declared: &BTreeMap<String, String>,
+    headers: &mut HeaderMap,
+    prepared: &buzzodz_plugins::secrets::PreparedSecret,
+) -> Result<(), String> {
+    prepared.with_header(|name, value| -> Result<(), String> {
+        if declared.keys().any(|key| key.eq_ignore_ascii_case(name))
+            || declared.len() + 1 > 32
+            || declared
+                .iter()
+                .map(|(k, v)| k.len() + v.len())
+                .sum::<usize>()
+                + name.len()
+                + value.len()
+                > MAX_HEADER_BYTES
+        {
+            return Err("Credential header conflicts or exceeds request limits".into());
+        }
+        let name =
+            HeaderName::from_bytes(name.as_bytes()).map_err(|_| "Invalid credential header")?;
+        let mut value = HeaderValue::from_str(value).map_err(|_| "Invalid credential header")?;
+        value.set_sensitive(true);
+        headers.insert(name, value);
+        Ok(())
+    })
 }
 
 impl HostRequest {
+    // Callerless preparation only; remove allowance with the real 3c caller.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) fn prepare_secret(
+        &self,
+        manager: &buzzodz_plugins::Manager,
+        id: &str,
+        revision: &str,
+        identity: &crate::identity::IdentityHost,
+        deadline: std::time::Instant,
+    ) -> Result<(buzzodz_plugins::secrets::PreparedSecret, HeaderMap), String> {
+        let (url, _, mut headers) = validate_request(self)?;
+        let slot = self.secret.as_deref().ok_or("No credential slot")?;
+        buzzodz_plugins::valid_id(slot)?;
+        let viewer = identity
+            .current_viewer()?
+            .ok_or("Identity is unavailable")?;
+        let prepared = manager.prepare_secret(buzzodz_plugins::secrets::SecretRequest {
+            plugin: id,
+            revision,
+            slot,
+            identity: &viewer,
+            origin: &url.origin().ascii_serialization(),
+            deadline,
+        })?;
+        insert_credential(&self.headers, &mut headers, &prepared)?;
+        if std::time::Instant::now() >= deadline {
+            return Err("Credential preparation expired".into());
+        }
+        Ok((prepared, headers))
+    }
     fn fingerprint(&self) -> [u8; 32] {
         let timeout = self.timeout_ms.map(|n| n.to_string()).unwrap_or_default();
         fingerprint(
@@ -198,6 +351,12 @@ impl HostRequest {
                 },
                 self.body.as_deref().unwrap_or_default().as_bytes(),
                 timeout.as_bytes(),
+                if self.secret.is_some() {
+                    b"some"
+                } else {
+                    b"none"
+                },
+                self.secret.as_deref().unwrap_or_default().as_bytes(),
             ]
             .into_iter()
             .chain(
@@ -249,11 +408,15 @@ struct UploadFile {
 pub(crate) struct HostResponse {
     pub(crate) status: u16,
     headers: BTreeMap<String, String>,
-    body: String,
+    pub(crate) body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) parent: Option<crate::reviewed_invocation::Correlation>,
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn plugin_host_request<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     webview: tauri::Webview<R>,
     calls: tauri::State<'_, HostCalls>,
     manager: tauri::State<'_, PluginManager>,
@@ -261,8 +424,39 @@ pub(crate) async fn plugin_host_request<R: tauri::Runtime>(
     revision: String,
     request: HostRequest,
     once: Option<Once>,
+    parent: Option<crate::reviewed_invocation::ParentRef>,
 ) -> Result<HostResponse, String> {
-    let deadline = request_deadline(request.timeout_ms)?;
+    let entered = std::time::Instant::now();
+    let deadline = request_deadline(request.timeout_ms);
+    if let Some(parent) = parent {
+        use crate::reviewed_invocation::ReadFailure::Admission;
+        let deadline = deadline.map_err(|_| Admission.message())?;
+        if once.is_some()
+            || request.method != "GET"
+            || request.body.is_some()
+            || request.secret.is_some()
+            || !request.headers.is_empty()
+        {
+            return Err(Admission.message());
+        }
+        validate_request(&request).map_err(|_| Admission.message())?;
+        // No registry lookup here: its blocking lock would outlast the read's
+        // end. The fence re-derives the reviewed origin's grant under try-locks.
+        let read = crate::reviewed_invocation::ParentRead {
+            id: &id,
+            revision: &revision,
+            url: &request.url,
+            // One end from entry, within the existing credential transport bound.
+            end: tokio::time::Instant::from_std(entered) + deadline.min(Duration::from_secs(10)),
+        };
+        return crate::reviewed_invocation::parent_read(&app, webview.label(), read, parent).await;
+    }
+    let deadline = deadline?;
+    if let Some(slot) = &request.secret {
+        buzzodz_plugins::valid_id(slot)?;
+        let _entry = (entered + deadline, calls.context(webview.label())?, &once);
+        return Err("Saved credential requests are unavailable".into());
+    }
     let (url, method, headers) = validate_request(&request)?;
     let operation = async {
         let (plugin_id, artifact) = (id.clone(), revision.clone());
@@ -360,6 +554,7 @@ fn validate_byte_upload(upload: &ByteUpload, bytes: &[u8]) -> Result<reqwest::Ur
         headers: BTreeMap::new(),
         body: None,
         timeout_ms: None,
+        secret: None,
     })?;
     Ok(url)
 }
@@ -443,20 +638,26 @@ async fn send_byte_upload(
 }
 
 /// A GET with no caller headers or body; byte limits apply to actual chunks.
+/// Either a URL, or (with a parent) the one result a native-observed
+/// response of that call named. Never both.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ByteRequest {
-    url: String,
+    url: Option<String>,
+    result: Option<crate::reviewed_invocation::ResultRef>,
     max_bytes: usize,
     timeout_ms: Option<u64>,
 }
 
 #[tauri::command]
-pub(crate) async fn plugin_host_request_bytes(
+pub(crate) async fn plugin_host_request_bytes<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    webview: tauri::Webview<R>,
     manager: tauri::State<'_, PluginManager>,
     id: String,
     revision: String,
     request: ByteRequest,
+    parent: Option<crate::reviewed_invocation::ParentRef>,
 ) -> Result<tauri::ipc::Response, String> {
     let entered = tokio::time::Instant::now();
     let timeout = request.timeout_ms.unwrap_or(30_000);
@@ -466,20 +667,78 @@ pub(crate) async fn plugin_host_request_bytes(
     {
         return Err("Invalid byte request limits".into());
     }
+    let end = entered + Duration::from_millis(timeout);
+    let (url, parent) = match (request.url, request.result, parent) {
+        (Some(url), None, parent) => (url, parent),
+        (None, Some(result), Some(parent)) => {
+            let operation = async {
+                let admission = crate::host_files::byte_admission(end).await?;
+                let fetched = crate::reviewed_invocation::parent_result(
+                    &app,
+                    webview.label(),
+                    (&id, &revision),
+                    parent,
+                    result,
+                    (end, request.max_bytes),
+                    admission,
+                )
+                .await?;
+                parent_frame(fetched)
+            };
+            return tokio::time::timeout_at(end, operation)
+                .await
+                .map_err(|_| "Host byte request timed out")?;
+        }
+        _ => return Err("Invalid byte request".into()),
+    };
     let (url, _, _) = validate_request(&HostRequest {
-        url: request.url,
+        url,
         method: "GET".into(),
         headers: BTreeMap::new(),
         body: None,
         timeout_ms: Some(timeout),
+        secret: None,
     })?;
-    let end = entered + Duration::from_millis(timeout);
+    if let Some(parent) = parent {
+        if url.fragment().is_some() {
+            return Err("Parent byte reads require a URL without a fragment".into());
+        }
+        let operation = async {
+            byte_origin(manager.clone(), &id, &revision, &url).await?;
+            let admission = crate::host_files::byte_admission(end).await?;
+            let read = crate::reviewed_invocation::ParentRead {
+                id: &id,
+                revision: &revision,
+                url: url.as_str(),
+                end,
+            };
+            let fetched = crate::reviewed_invocation::parent_bytes(
+                &app,
+                webview.label(),
+                read,
+                parent,
+                &url,
+                request.max_bytes,
+                admission,
+            )
+            .await?;
+            byte_origin(manager, &id, &revision, &url).await?;
+            parent_frame(fetched)
+        };
+        // No fallback: a parent failure never becomes an ordinary request.
+        return tokio::time::timeout_at(end, operation)
+            .await
+            .map_err(|_| "Host byte request timed out")?;
+    }
     let operation = async {
         let _place = crate::host_files::byte_admission(end).await?;
         let reach = byte_origin(manager.clone(), &id, &revision, &url).await?;
         let (status, headers, bytes) = match reach {
             ByteReach::Declared => {
-                let get = client(false)?
+                let sender = client(false)?;
+                #[cfg(test)]
+                let sender = &credential_tests::client(url.as_str()).unwrap_or(sender.clone());
+                let get = sender
                     .get(url.clone())
                     .timeout(Duration::from_millis(timeout));
                 read_bytes(get, request.max_bytes).await?
@@ -525,6 +784,7 @@ pub(crate) async fn plugin_host_read_page(
         headers: BTreeMap::new(),
         body: None,
         timeout_ms: Some(timeout),
+        secret: None,
     })?;
     let end = tokio::time::Instant::now() + Duration::from_millis(timeout);
     let operation = async {
@@ -544,6 +804,20 @@ pub(crate) async fn plugin_host_read_page(
     tokio::time::timeout_at(end, operation)
         .await
         .map_err(|_| "Host page request timed out")?
+}
+
+fn parent_frame(
+    fetched: crate::reviewed_invocation::Fetched,
+) -> Result<tauri::ipc::Response, String> {
+    let metadata = serde_json::json!({
+        "status": 200, "headers": {}, "parent": fetched.correlation,
+        "source": {"sha256": fetched.sha256, "size": fetched.bytes.len()},
+    });
+    let framed = frame(metadata, fetched.bytes);
+    // Transfer admission ends with the frame; the retained source is
+    // bounded by its one unfinished reviewed operation instead.
+    drop(fetched.admission);
+    framed.map(tauri::ipc::Response::new)
 }
 
 /// How a byte request may reach its URL: a declared origin gets any response;
@@ -599,8 +873,14 @@ fn byte_frame(
     headers: BTreeMap<String, String>,
     bytes: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
-    let metadata = serde_json::to_vec(&serde_json::json!({"status":status,"headers":headers}))
-        .map_err(|_| "Could not encode byte response")?;
+    frame(
+        serde_json::json!({"status":status,"headers":headers}),
+        bytes,
+    )
+}
+
+fn frame(metadata: serde_json::Value, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    let metadata = serde_json::to_vec(&metadata).map_err(|_| "Could not encode byte response")?;
     if metadata.len() > 20 * 1024 {
         return Err("Host byte response metadata is too large".into());
     }
@@ -627,6 +907,7 @@ pub(crate) async fn plugin_host_upload(
         headers: upload.headers.clone(),
         body: None,
         timeout_ms: None,
+        secret: None,
     })?;
     let operation = async {
         let grants = with_manager(manager, move |manager| manager.host_grants(&id, &revision))
@@ -899,14 +1180,165 @@ pub(crate) async fn read_response(
         status,
         headers,
         body,
+        parent: None,
     })
+}
+
+/// A credential-free result GET: no API header, cookies, caller headers,
+/// redirects or retries.
+pub(crate) fn result_get(
+    url: &reqwest::Url,
+    timeout: Duration,
+) -> Result<reqwest::RequestBuilder, String> {
+    let sender = client(true)?.clone();
+    #[cfg(test)]
+    let sender = credential_tests::client(url.as_str()).unwrap_or(sender);
+    Ok(sender.get(url.clone()).timeout(timeout))
+}
+
+/// A result URL an authenticated response named: public HTTPS with no
+/// credentials, fragment or local host, sent exactly as named, never rebuilt.
+pub(crate) fn result_target(value: &str) -> Option<reqwest::Url> {
+    if value.len() > 2048 || value.chars().any(char::is_control) {
+        return None;
+    }
+    let url = reqwest::Url::parse(value).ok()?;
+    let exact = url.as_str() == value
+        && url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none();
+    (exact && crate::public_https::public_host(&url).is_ok()).then_some(url)
+}
+
+#[cfg(test)]
+pub(crate) static RESULT_NET: Mutex<Option<crate::public_https::Net>> = Mutex::new(None);
+
+/// The credential-free result GET to a public host: one vetted DNS answer,
+/// pinned; no proxy, cookies, caller headers, redirects or retries.
+pub(crate) async fn public_result_get(
+    url: &reqwest::Url,
+    timeout: Duration,
+) -> Result<reqwest::RequestBuilder, String> {
+    const REFUSED: &str = "Result bytes unavailable; the attempt is consumed";
+    #[cfg(test)]
+    let net = RESULT_NET
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(crate::public_https::Net::system);
+    #[cfg(not(test))]
+    let net = crate::public_https::Net::system();
+    let client = net
+        .builder(url)
+        .await
+        .map_err(|_| REFUSED)?
+        .retry(reqwest::retry::never())
+        .pool_max_idle_per_host(0)
+        .build()
+        .map_err(|_| REFUSED)?;
+    Ok(client.get(url.clone()).timeout(timeout))
+}
+
+/// Only a non-empty success body within the actual streamed bound; no
+/// headers or error bodies leave this function.
+pub(crate) async fn read_result_bytes(
+    request: reqwest::RequestBuilder,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    const REFUSED: &str = "Result bytes unavailable; the attempt is consumed";
+    let response = send_http(request).await.map_err(|_| REFUSED)?;
+    if !response.status().is_success() {
+        return Err(REFUSED.into());
+    }
+    let (_, _, bytes) = response_bytes(response, max_bytes)
+        .await
+        .map_err(|_| REFUSED)?;
+    if bytes.is_empty() {
+        return Err(REFUSED.into());
+    }
+    Ok(bytes)
 }
 
 async fn read_bytes(
     request: reqwest::RequestBuilder,
     max_bytes: usize,
 ) -> Result<(u16, BTreeMap<String, String>, Vec<u8>), String> {
-    let mut response = request.send().await.map_err(|_| "Host request failed")?;
+    response_bytes(send_http(request).await?, max_bytes).await
+}
+
+async fn send_http(request: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
+    #[cfg(not(test))]
+    let response = request.send().await.map_err(|_| "Host request failed")?;
+    #[cfg(test)]
+    let response = {
+        let (client, request) = request.build_split();
+        let request = request.map_err(|_| "Host request failed")?;
+        secret_tests::observe(request.url());
+        client
+            .execute(request)
+            .await
+            .map_err(|_| "Host request failed")?
+    };
+    Ok(response)
+}
+
+/// Private responses never export headers or non-success bodies. Exact key
+/// reflection is rejected before any successful JSON crosses into the renderer.
+/// Encoded/transformed disclosure remains part of trust in the reviewed origin.
+pub(crate) async fn read_credential_response(
+    request: reqwest::RequestBuilder,
+    secret: &buzzodz_plugins::secrets::PreparedSecret,
+) -> Result<HostResponse, String> {
+    credential_response(request, secret)
+        .await
+        .map_err(|_| "Reviewed HTTP response unavailable; outcome unknown".into())
+}
+
+/// Where a credential response was refused. Every refusal of a successful
+/// response is one kind, so a caller can never tell reflection from bad content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CredentialFailure {
+    Transport,
+    Status,
+    Response,
+}
+
+pub(crate) async fn credential_response(
+    request: reqwest::RequestBuilder,
+    secret: &buzzodz_plugins::secrets::PreparedSecret,
+) -> Result<HostResponse, CredentialFailure> {
+    use CredentialFailure::{Response, Status, Transport};
+    let response = send_http(request).await.map_err(|_| Transport)?;
+    // Status first: a non-success response is refused the same way whatever it reflects.
+    if !response.status().is_success() {
+        return Err(Status);
+    }
+    if response.headers().iter().any(|(name, value)| {
+        secret.reflects_secret(name.as_str().as_bytes()) || secret.reflects_secret(value.as_bytes())
+    }) {
+        return Err(Response);
+    }
+    let (status, _, bytes) = response_bytes(response, 64 * 1024)
+        .await
+        .map_err(|_| Response)?;
+    if secret.reflects_secret(&bytes) {
+        return Err(Response);
+    }
+    let body = String::from_utf8(bytes).map_err(|_| Response)?;
+    serde_json::from_str::<serde_json::Value>(&body).map_err(|_| Response)?;
+    Ok(HostResponse {
+        status,
+        headers: BTreeMap::new(),
+        body,
+        parent: None,
+    })
+}
+
+async fn response_bytes(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<(u16, BTreeMap<String, String>, Vec<u8>), String> {
     let status = response.status().as_u16();
     let mut headers = BTreeMap::new();
     let mut header_bytes = 0;
@@ -1012,6 +1444,7 @@ mod tests {
             headers: BTreeMap::new(),
             body: Some("{}".into()),
             timeout_ms: None,
+            secret: None,
         }
     }
 
@@ -1290,3 +1723,9 @@ mod byte_tests;
 #[cfg(test)]
 #[path = "host_request/user_agent_tests.rs"]
 mod user_agent_tests;
+
+#[cfg(test)]
+mod secret_tests;
+
+#[cfg(test)]
+pub(crate) mod credential_tests;

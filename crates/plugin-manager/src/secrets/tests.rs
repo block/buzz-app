@@ -16,6 +16,7 @@ const PLUGIN: &str = "example.slots";
 mod continuity;
 mod management;
 pub(crate) mod native_creators;
+mod transport;
 mod validators;
 
 type Hook = Arc<dyn Fn(&str) + Send + Sync>;

@@ -1355,6 +1355,8 @@ it("lists the tools plugins add, and runs them for Pi", async () => {
     expect.anything(),
     { channel, root: root.id },
     { q: "logs" },
+    undefined,
+    expect.objectContaining({ channel, root: root.id }),
   );
   await expect(call("bad")).resolves.toEqual({
     content: [{ type: "text", text: "No such thing" }],

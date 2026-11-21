@@ -167,14 +167,18 @@ fn byte_origin_recheck_observes_revocation_and_queue_respects_request_deadline()
             );
             let permit = crate::host_files::BYTE_WORK.try_acquire().unwrap();
             let result = plugin_host_request_bytes(
+                f.app.handle().clone(),
+                f.view.as_ref().clone(),
                 f.app.state(),
                 "example.bytes".into(),
                 f.revision.clone(),
                 ByteRequest {
-                    url: url.to_string(),
+                    url: Some(url.to_string()),
+                    result: None,
                     max_bytes: 1,
                     timeout_ms: Some(1),
                 },
+                None,
             )
             .await;
             assert!(result.err().unwrap().contains("timed out"));
@@ -220,4 +224,92 @@ async fn stalled_chunk_reader_obeys_its_deadline_without_an_application_retry() 
     release.send(()).unwrap();
     let listener = server.await.unwrap().into_std().unwrap();
     assert!(matches!(listener.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
+}
+
+#[test]
+fn supplied_secret_is_strictly_rejected_by_text_bytes_and_upload_ipc() {
+    use tauri::Manager as _;
+    let f = Fixture::new(true, false);
+    f.app.manage(HostCalls::default());
+    let calls = f.app.state::<HostCalls>();
+    let context = calls.context("main").unwrap();
+    let once = serde_json::json!({"boot":context.boot,"page":context.page,
+        "activation":uuid::Uuid::new_v4(),"callId":uuid::Uuid::new_v4()});
+    for (command, field, input, protected) in [
+        (
+            "plugin_host_request",
+            "request",
+            serde_json::json!({"url":"https://example.test","method":"POST"}),
+            false,
+        ),
+        (
+            "plugin_host_request",
+            "request",
+            serde_json::json!({"url":"https://example.test","method":"POST"}),
+            true,
+        ),
+        (
+            "plugin_host_request_bytes",
+            "request",
+            serde_json::json!({"url":"https://example.test","maxBytes":1}),
+            false,
+        ),
+        (
+            "plugin_host_upload",
+            "upload",
+            serde_json::json!({"url":"https://example.test","file":{"field":"file","path":"/not-opened.tar.gz","name":"fixture.tar.gz","contentType":"application/gzip"}}),
+            false,
+        ),
+    ] {
+        let mut body = serde_json::json!({"id":"example.bytes","revision":f.revision});
+        body[field] = input;
+        body[field]["secret"] = "key".into();
+        if protected {
+            body["once"] = once.clone();
+        }
+        let error = f
+            .ipc(
+                command,
+                tauri::ipc::InvokeBody::Json(body),
+                Default::default(),
+            )
+            .err()
+            .unwrap();
+        if command == "plugin_host_request" {
+            assert!(
+                error.contains("Saved credential requests are unavailable"),
+                "{error}"
+            );
+        } else {
+            assert!(
+                error.contains("unknown field") && error.contains("secret"),
+                "{error}"
+            );
+        }
+    }
+    for top_level in [false, true] {
+        let mut metadata = serde_json::json!({"id":"example.bytes","revision":f.revision,"once":once,
+            "upload":{"url":"https://example.test","field":"file","name":"a.png","contentType":"image/png"}});
+        if top_level {
+            metadata["secret"] = "key".into();
+        } else {
+            metadata["upload"]["secret"] = "key".into();
+        }
+        let headers = reqwest::header::HeaderMap::from_iter([(
+            "x-buzz-upload".parse().unwrap(),
+            metadata.to_string().parse().unwrap(),
+        )]);
+        let error = f
+            .ipc(
+                "plugin_host_upload_bytes_once",
+                tauri::ipc::InvokeBody::Raw(b"\x89PNG\r\n\x1a\n".to_vec()),
+                headers,
+            )
+            .err()
+            .unwrap();
+        assert!(error.contains("Invalid upload metadata"), "{error}");
+    }
+    // All failures precede transport/consumption, including raw metadata decode.
+    assert!(calls.claims.lock().unwrap().consumed.is_empty());
+    assert!(!f.root().exists());
 }

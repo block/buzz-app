@@ -64,6 +64,9 @@ use nsec_backup::{
     nsec_restore_install, nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub use reviewed_invocation::fixture::run as run_reviewed_invocation_fixture;
 mod claude_key;
 #[cfg(unix)]
 mod cli_link;
@@ -100,6 +103,7 @@ use legacy_communities::legacy_communities;
 use local_skills::local_skills_list;
 use os_idle::get_os_idle_seconds;
 use repositories_folder::{repositories_folder_list, repositories_folder_validate};
+mod public_https;
 mod relaunch;
 mod relay;
 mod relay_admin;
@@ -829,7 +833,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::federated_identity_cancel_sign_in,
         federated_identity::federated_identity_sign_in_link,
         federated_identity::federated_identity_sign_out,
+        reviewed_invocation::plugin_host_reviewed_capabilities,
+        reviewed_invocation::plugin_host_reviewed_invoke,
         reviewed_invocation::plugin_host_reviewed_retire,
+        reviewed_invocation::plugin_host_reviewed_dispatch,
+        reviewed_invocation::plugin_host_reviewed_result,
         federated_identity::access::federated_identity_register,
         federated_identity::access::federated_identity_unregister,
         federated_identity::access::federated_identity_request,

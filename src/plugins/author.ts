@@ -13,11 +13,23 @@ export type {
   HostByteUpload,
   HostRequestOnceOptions,
   HostResponse,
+  HostResponseParent,
   HostByteRequest,
   HostByteResponse,
+  HostByteSource,
   HostSavedBytes,
   HostMcpServer,
   McpHandler,
+  ReviewedInvocationCreateResponse,
+  ReviewedInvocationDestination,
+  ReviewedInvocationDisclosure,
+  ReviewedInvocationEffect,
+  ReviewedInvocationExpectedMedia,
+  ReviewedInvocationOptions,
+  ReviewedInvocationRequest,
+  ReviewedInvocationReceipt,
+  ReviewedInvocationSourceSelection,
+  ReviewedInvocationSupport,
 } from "../features/host/service";
 export type {
   IdentityNames,
@@ -260,7 +272,10 @@ export type {
   AuthenticatedRequest,
 } from "../features/federated-identity/service";
 
-export type { AddedTool } from "../buzz-mcp/session-tools";
+export type {
+  AddedToolHost,
+  PluginTool as AddedTool,
+} from "../buzz-mcp/session-tools";
 export type {
   BuzzClient,
   Media,

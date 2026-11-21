@@ -1953,6 +1953,7 @@ function ThreadMessages({
             }
             row={row}
             getThreadRoot={getThreadRoot}
+            reviewRoot={resolvedRoot}
             stackPrevious={inside || continuation}
             stackNext={
               inside ||
@@ -2339,6 +2340,7 @@ function ThreadMessages({
                 onReply={soloConversation ? undefined : focusReply}
                 stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
                 row={snapshot.root}
+                reviewRoot={snapshot.root.id}
                 representedAgents={stableActivity.agents(
                   snapshot.root.id,
                   rootPresentation.representedAgents.get(snapshot.root.id),

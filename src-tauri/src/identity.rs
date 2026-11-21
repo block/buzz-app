@@ -6,6 +6,7 @@ use base64::{
 use bech32::{primitives::decode::CheckedHrpstring, Bech32, Hrp};
 use buzz_agent_controller::LegacyHumanError;
 use buzz_credential_store as credentials;
+use buzzodz_plugins::secrets::Refusal;
 use nostr::{
     event::Event,
     key::{Keys, SecretKey as NostrSecretKey},
@@ -1078,6 +1079,20 @@ impl IdentityHost {
             State::Closed
         })
     }
+    /// Holds the identity mutex as a concurrent identity job would.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> impl Sized + '_ {
+        self.0.lock().unwrap()
+    }
+    #[cfg(test)]
+    pub(crate) fn poison(&self) {
+        let identity = self.0.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = identity.lock().unwrap();
+            panic!("poison the identity fixture");
+        })
+        .join();
+    }
     #[cfg(test)]
     fn fixture_in(state: State) -> Self {
         Self(Arc::new(Mutex::new(Identity {
@@ -1095,6 +1110,40 @@ impl IdentityHost {
             State::Missing => Ok(None),
             _ => Err("Identity is unavailable".into()),
         }
+    }
+
+    /// Keep the current native viewer stable through synchronous effect admission.
+    /// No OS access, await or re-entry into IdentityHost is permitted in `admit`.
+    pub(crate) fn with_current_viewer<T>(
+        &self,
+        expected: &str,
+        admit: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        self.try_with_current_viewer(expected, || Ok(admit()?))
+            .map_err(Refusal::message)
+    }
+
+    /// `with_current_viewer`, where only another holder of the mutex is `Busy`;
+    /// a poisoned mutex stays permanently refused.
+    pub(crate) fn try_with_current_viewer<T>(
+        &self,
+        expected: &str,
+        admit: impl FnOnce() -> std::result::Result<T, Refusal>,
+    ) -> std::result::Result<T, Refusal> {
+        let identity = match self.0.try_lock() {
+            Ok(identity) => identity,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return Err(Refusal::Busy("Identity is busy".into()))
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err("Identity is busy".into()),
+        };
+        let State::Ready(key) = &identity.state else {
+            return Err("Identity is unavailable".into());
+        };
+        if key.viewer()? != expected {
+            return Err("Identity changed".into());
+        }
+        admit()
     }
 
     /// The saved key's public key, or `None` when secure storage confirms none.

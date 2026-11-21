@@ -12,6 +12,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -105,6 +106,31 @@ impl AppAgentHost {
             protection_upgrade: Arc::default(),
         }
     }
+    /// `agent` saved under `dir` with its key already read, for tests outside
+    /// Agents.
+    #[cfg(test)]
+    pub(crate) fn fixture(dir: &Path, agent: &AppAgent, key: Secret, tokens: AgentTokens) -> Self {
+        let path = dir.join("identities.json");
+        std::fs::write(&path, serde_json::to_vec(&[agent]).unwrap()).unwrap();
+        Self {
+            agents: Ok(AppAgents::open(path)),
+            old: Err("unused".into()),
+            credentials: Arc::new(PlatformCredentials::default()),
+            keys: Arc::new(Mutex::new(HashMap::from([(
+                agent.pubkey.clone(),
+                Arc::new(key),
+            )]))),
+            profiles: Arc::default(),
+            removals: Arc::default(),
+            hosting: Arc::new(Hosting {
+                dir: Err("unused".into()),
+                packaged: true,
+                held: Mutex::default(),
+            }),
+            tokens,
+            protection_upgrade: Arc::default(),
+        }
+    }
     /// The saved identities, for readers outside Agents such as the inventory.
     pub(crate) fn agents(&self) -> Result<AppAgents, String> {
         self.agents.clone()
@@ -168,6 +194,18 @@ impl AppAgentHost {
         relay: String,
     ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
         self.signer_for(pubkey, relay, Duration::ZERO).await
+    }
+    /// The saved membership as it is now: its incarnation fence, without its
+    /// key or evidence, for one reviewed delivery's later effects.
+    pub(crate) async fn custody(&self, pubkey: String, relay: String) -> Result<Custody, String> {
+        let incarnation = self.tokens.stamp(&pubkey, &relay)?;
+        let agent = self.agent(pubkey, relay).await?;
+        let member = self.tokens.fence(&agent, incarnation)?;
+        Ok(Custody {
+            host: self.clone(),
+            agent,
+            member,
+        })
     }
     /// As [`Self::signer`], with evidence valid for at least `valid_for`.
     async fn signer_for(
@@ -988,10 +1026,10 @@ pub(crate) fn app_agent_release(state: tauri::State<'_, AppAgentHost>, pubkey: S
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AppAgentEvent {
-    kind: u16,
-    content: String,
+    pub(crate) kind: u16,
+    pub(crate) content: String,
     #[serde(default)]
-    tags: Vec<Vec<String>>,
+    pub(crate) tags: Vec<Vec<String>>,
 }
 
 /// Signs one event as the agent and posts it to the agent's own community.
@@ -1057,6 +1095,228 @@ async fn confirmed_post(
         ));
     }
     Ok(confirmed)
+}
+
+/// One reviewed delivery's agent: the membership captured when its review
+/// began. Each effect signs as that incarnation with fresh organization
+/// evidence; nothing re-picks the agent by pubkey, so a re-import cannot
+/// answer for it.
+pub(crate) struct Custody {
+    host: AppAgentHost,
+    agent: AppAgent,
+    member: Admission,
+}
+
+/// What one reviewed delivery effect is known to have done.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Sent<T> {
+    Done(T),
+    /// Nothing was sent, or the community refused it.
+    Failed,
+    /// It may or may not have taken effect; it is never repeated.
+    Unknown,
+}
+
+impl Custody {
+    pub(crate) fn member(&self) -> &Admission {
+        &self.member
+    }
+    /// Fresh evidence for the captured incarnation, once the author may still
+    /// post there and the caller's `current` fences hold.
+    async fn admit(
+        &self,
+        channel: &str,
+        root: Option<&str>,
+        current: &(impl Fn() -> Result<(), String> + Sync),
+    ) -> Result<(AppAgent, Arc<Secret>, Admission), String> {
+        let (agent, key) = self.host.key(self.agent.clone()).await?;
+        let evidence = self
+            .host
+            .tokens
+            .authorize_for(&agent, &key, self.member.incarnation(), Duration::ZERO)
+            .await?;
+        writable(&agent, &key, &evidence, channel, root).await?;
+        current()?;
+        Ok((agent, key, evidence))
+    }
+    /// Streams the prepared MP4 once, after the author's write check and the
+    /// caller's `current` fences: the receipt's URL for exactly those bytes.
+    pub(crate) async fn upload(
+        &self,
+        channel: &str,
+        root: Option<&str>,
+        file: std::fs::File,
+        (size, sha256): (usize, &str),
+        current: &(impl Fn() -> Result<(), String> + Sync),
+    ) -> Sent<String> {
+        let Ok((agent, key, evidence)) = self.admit(channel, root, current).await else {
+            return Sent::Failed;
+        };
+        let sent = AtomicBool::new(false);
+        let receipt = evidence
+            .run(true, async {
+                sent.store(true, Ordering::SeqCst);
+                let body = reqwest::Body::from(tokio::fs::File::from_std(file));
+                put(
+                    &agent,
+                    &key,
+                    evidence.header(),
+                    (size, sha256),
+                    body,
+                    "video/mp4",
+                )
+                .await
+            })
+            .await;
+        match settled(receipt, &sent) {
+            // A stored blob with an unusable receipt is not something to post.
+            Sent::Done(receipt) => {
+                media_target(&agent, &receipt, sha256, size).map_or(Sent::Unknown, Sent::Done)
+            }
+            Sent::Failed => Sent::Failed,
+            Sent::Unknown => Sent::Unknown,
+        }
+    }
+    /// Signs the one event and posts it once, after the author's write check
+    /// and the caller's `current` fences. Its ID is kept whatever follows: an
+    /// unconfirmed post is never re-signed or resent.
+    pub(crate) async fn publish(
+        &self,
+        channel: &str,
+        root: Option<&str>,
+        event: AppAgentEvent,
+        current: &(impl Fn() -> Result<(), String> + Sync),
+    ) -> (Option<String>, Sent<()>) {
+        let Ok((agent, key, evidence)) = self.admit(channel, root, current).await else {
+            return (None, Sent::Failed);
+        };
+        let Ok(signed) = agent.sign(&key, event.kind, event.content, event.tags) else {
+            return (None, Sent::Failed);
+        };
+        let Some(id) = signed.get("id").and_then(Value::as_str).map(str::to_owned) else {
+            return (None, Sent::Failed);
+        };
+        let sent = AtomicBool::new(false);
+        let posted = evidence
+            .run(true, async {
+                sent.store(true, Ordering::SeqCst);
+                post(&agent, &key, evidence.header(), signed).await
+            })
+            .await;
+        (Some(id), settled(posted.map(drop), &sent))
+    }
+}
+
+/// Only a community refusal, or nothing sent at all, is a known failure.
+fn settled<T>(result: Result<T, String>, sent: &AtomicBool) -> Sent<T> {
+    match result {
+        Ok(value) => Sent::Done(value),
+        Err(error)
+            if !sent.load(Ordering::SeqCst) || error.starts_with("The community refused") =>
+        {
+            Sent::Failed
+        }
+        Err(_) => Sent::Unknown,
+    }
+}
+
+/// The author may still post there, read as the author rather than the viewer:
+/// the community's own current roster lists it above guest, its metadata is
+/// not archived, and any root is that channel's own signed message.
+async fn writable(
+    agent: &AppAgent,
+    key: &Secret,
+    evidence: &Admission,
+    channel: &str,
+    root: Option<&str>,
+) -> Result<(), String> {
+    let community = reqwest::Url::parse(&agent.upload_url())
+        .and_then(|url| url.join("/"))
+        .map_err(|_| "Invalid agent community")?;
+    let info = crate::relay::relay_info(community.as_str()).await?;
+    let authority = info["self"]
+        .as_str()
+        .or(info["pubkey"].as_str())
+        .ok_or("Community identity unavailable")?;
+    let mut filters = vec![
+        serde_json::json!({"kinds":[39002], "authors":[authority], "#d":[channel], "limit":1, "consistency":"strong"}),
+        serde_json::json!({"kinds":[39000], "authors":[authority], "#d":[channel], "limit":1, "consistency":"strong"}),
+    ];
+    filters.extend(root.map(|root| serde_json::json!({"ids":[root], "limit":1})));
+    let events = evidence
+        .run(false, read(agent, key, evidence.header(), &filters))
+        .await?;
+    let events: Vec<nostr::event::Event> =
+        serde_json::from_value(events).map_err(|_| "Invalid agent read")?;
+    let events: Vec<_> = events
+        .iter()
+        .filter(|event| event.verify().is_ok())
+        .collect();
+    let tags = |event: &nostr::event::Event| -> Vec<Vec<String>> {
+        event
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice().to_vec())
+            .collect()
+    };
+    let of = |kind: u16| {
+        events
+            .iter()
+            .find(|event| {
+                event.kind.as_u16() == kind
+                    && event.pubkey.to_hex() == authority
+                    && tags(event)
+                        .iter()
+                        .any(|tag| tag.len() > 1 && tag[0] == "d" && tag[1] == channel)
+            })
+            .map(|event| tags(event))
+    };
+    let role = of(39002).and_then(|roster| {
+        roster
+            .into_iter()
+            .find(|tag| tag.len() > 1 && tag[0] == "p" && tag[1] == agent.pubkey)
+            .map(|tag| {
+                tag.get(3)
+                    .filter(|role| !role.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| "member".into())
+            })
+    });
+    // The relay omits the archived tag on active channels.
+    let open = of(39000)
+        .is_some_and(|metadata| !metadata.contains(&vec!["archived".into(), "true".into()]));
+    let rooted = root.is_none_or(|root| {
+        events.iter().any(|event| {
+            event.id.to_hex() == root
+                && tags(event)
+                    .iter()
+                    .any(|tag| tag.len() > 1 && tag[0] == "h" && tag[1] == channel)
+        })
+    });
+    if role.is_none_or(|role| role == "guest") || !open || !rooted {
+        return Err("The agent cannot post there".into());
+    }
+    Ok(())
+}
+
+/// The receipt's media URL, if it is exactly `sha256`'s `size` bytes as MP4 in
+/// the agent's own community.
+fn media_target(agent: &AppAgent, receipt: &Value, sha256: &str, size: usize) -> Option<String> {
+    let base = reqwest::Url::parse(&agent.upload_url()).ok()?;
+    let url = base.join(receipt.get("url")?.as_str()?).ok()?;
+    let name = url.path_segments()?.next_back()?;
+    let exact = receipt.get("sha256")?.as_str()? == sha256
+        && receipt.get("size")?.as_u64()? == size as u64
+        && receipt.get("type")?.as_str()? == "video/mp4"
+        && url.origin() == base.origin()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && name.split('.').next() == Some(sha256)
+        && name.matches('.').count() <= 1
+        && agent.media_url(url.as_str()).ok()? == url.as_str();
+    exact.then(|| url.into())
 }
 
 fn publish_error(event_id: &str, error: String) -> String {
@@ -1276,15 +1536,36 @@ async fn upload(
     bytes: Vec<u8>,
     mime: &str,
 ) -> Result<Value, String> {
-    use base64::Engine;
     use sha2::{Digest, Sha256};
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
-    let auth = serde_json::to_vec(&agent.upload_auth(key, &sha256)?)
+    put(
+        agent,
+        key,
+        evidence,
+        (bytes.len(), &sha256),
+        bytes.into(),
+        mime,
+    )
+    .await
+}
+
+/// One upload of `size` bytes hashing to `sha256`, as the agent.
+async fn put(
+    agent: &AppAgent,
+    key: &Secret,
+    evidence: Option<&str>,
+    (size, sha256): (usize, &str),
+    body: reqwest::Body,
+    mime: &str,
+) -> Result<Value, String> {
+    use base64::Engine;
+    let auth = serde_json::to_vec(&agent.upload_auth(key, sha256)?)
         .map_err(|_| "Could not authorize upload")?;
     let response = attach(client()?.put(agent.upload_url()), evidence)
         .timeout(Duration::from_secs(120))
         .header("Content-Type", mime)
-        .header("X-SHA-256", &sha256)
+        .header("X-SHA-256", sha256)
+        .header("Content-Length", size)
         .header(
             "Authorization",
             format!(
@@ -1293,7 +1574,7 @@ async fn upload(
             ),
         )
         .header("x-auth-tag", &agent.auth)
-        .body(bytes)
+        .body(body)
         .send()
         .await
         .map_err(|_| "Agent upload unconfirmed")?;
@@ -1526,12 +1807,16 @@ fn client() -> Result<&'static reqwest::Client, String> {
     static CLIENT: OnceLock<Result<reqwest::Client, reqwest::Error>> = OnceLock::new();
     CLIENT
         .get_or_init(|| {
-            reqwest::Client::builder()
+            let builder = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(Duration::from_secs(10))
                 // A connection idle across sleep may be dead; open a new one.
-                .pool_idle_timeout(Duration::from_secs(30))
-                .build()
+                .pool_idle_timeout(Duration::from_secs(30));
+            // Tests' loopback communities use one self-signed root.
+            #[cfg(test)]
+            let builder =
+                builder.tls_certs_only([crate::federated_identity::testing::trusted_root()]);
+            builder.build()
         })
         .as_ref()
         .map_err(|_| "Agent client unavailable".into())

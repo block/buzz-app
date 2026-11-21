@@ -19,6 +19,13 @@ import {
   isAttentionTool,
 } from "./attention";
 import { BESTIE_TOOLS, callBestieTool, isBestieTool } from "./bestie";
+import type {
+  ReviewedInvocationDestination,
+  ReviewedInvocationOptions,
+  ReviewedInvocationReceipt,
+  ReviewedInvocationRequest,
+} from "../features/host/service";
+import { type AppInvocation, appInvocation } from "./app-client";
 import type { BuzzClient, Context } from "./client";
 import {
   callToolOperation,
@@ -43,21 +50,44 @@ import {
 /** A tool a plugin adds to every agent session in the app, listed after
  * the Buzz tools under the same server and loaded on search. Its name should
  * start with its plugin's, as `notes_get` does; no two tools share one. */
-export type AddedTool = Readonly<{
+export type PluginTool = Readonly<{
   name: string;
   description: string;
   inputSchema: Readonly<Record<string, unknown>>;
   /** A provider operation checked with these exact tool arguments. */
   operation?: AgentToolOperation;
   /** Runs as the agent in `context`. Use `client.signal` to cancel waits and
-   * check it before external writes. A throw is a tool error for the agent. */
+   * check it before external writes. A throw is a tool error for the agent.
+   * `host` is there when the app ran the call for one of its agents in an
+   * addressed conversation; an operation's checked call gets none. */
   call(
     client: BuzzClient,
     context: Context,
     args: Record<string, unknown>,
     proof?: AgentToolProof,
+    host?: AddedToolHost,
   ): Promise<Reply>;
 }>;
+/** What the app lends one call of a plugin's tool: the conversation it was
+ * addressed in, and a review that can only send there as this agent. */
+export type AddedToolHost = Readonly<{
+  destination: ReviewedInvocationDestination;
+  reviewAndInvokeOnce(
+    request: ReviewedInvocationRequest,
+    options: ReviewedInvocationOptions,
+  ): Promise<ReviewedInvocationReceipt>;
+}>;
+/** A plugin's tool as the app holds it, which lends each call its host. */
+export type AddedTool = Omit<PluginTool, "call"> &
+  Readonly<{
+    call(
+      client: BuzzClient,
+      context: Context,
+      args: Record<string, unknown>,
+      proof?: AgentToolProof,
+      invocation?: AppInvocation,
+    ): Promise<Reply>;
+  }>;
 type Listed = Pick<AddedTool, "name" | "description" | "inputSchema">;
 
 export { isFinalMessage, isMessageTool, MESSAGE_TOOLS } from "./message-tools";
@@ -198,6 +228,9 @@ export async function callSessionTool(
       return checkedToolError(client, session, error);
     }
   }
+  // Taken before any check waits; the call can start a review until it ends.
+  let open = true;
+  const invocation = appInvocation(client, context, () => open);
   // Hold the reviewed destination and arguments while the checker waits.
   if (client.protect) {
     context = structuredClone(context);
@@ -221,9 +254,18 @@ export async function callSessionTool(
     });
   let reply: Reply;
   try {
-    reply = await dispatchSessionTool(client, context, name, args, added);
+    reply = await dispatchSessionTool(
+      client,
+      context,
+      name,
+      args,
+      added,
+      invocation,
+    );
   } catch (error) {
     return checkedToolError(client, session, error);
+  } finally {
+    open = false;
   }
   await client.protect?.({ kind: "tool-result", session, content: reply });
   return reply;
@@ -248,12 +290,15 @@ async function dispatchSessionTool(
   name: string,
   args: Record<string, unknown>,
   added: readonly AddedTool[],
+  invocation: AppInvocation | undefined,
 ): Promise<Reply> {
   const tool = added.find((tool) => tool.name === name);
   if (tool) {
     // A plugin's tool doesn't get the agent's device settings or Bestie.
     const { settings: _, bestie: __, ...plugin } = client;
-    return tool.call(plugin, context, args);
+    return invocation
+      ? tool.call(plugin, context, args, undefined, invocation)
+      : tool.call(plugin, context, args);
   }
   if (isSoloWorkerTool(name)) return callSoloWorkerTool(client, name, args);
   if (isPluginTool(name)) return callPluginTool(client, context, name, args);

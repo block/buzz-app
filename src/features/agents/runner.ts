@@ -3489,6 +3489,9 @@ export class AgentRunners {
         relay: agent.relay,
         name: agent.name,
         owner: agent.owner,
+        // Its guard throws once this handle's lifetime ends.
+        live: () => {},
+        lifetime: () => lifetime,
         // What acts as the agent stops with it: a turn still working once it
         // is deleted, removed from this community or retyped can't.
         publish: async (

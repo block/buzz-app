@@ -72,6 +72,7 @@ struct Fixture {
     app: tauri::App<MockRuntime>,
     view: tauri::WebviewWindow<MockRuntime>,
     revision: String,
+    events: tokio::sync::mpsc::UnboundedReceiver<(u32, Value)>,
 }
 impl Fixture {
     fn new(configured: bool, safe: bool, identity: IdentityHost, instance: bool) -> Self {
@@ -116,7 +117,7 @@ impl Fixture {
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
         std::fs::write(source.join("manifest.json"), serde_json::to_vec(&json!({"id":ID,"name":"Slots","apiVersion":1,
-            "host":{"networkOrigins":[origin],"secrets":[{"id":"key","label":"Key","origins":[origin],"header":"Authorization","scheme":"Bearer"}]}})).unwrap()).unwrap();
+            "host":{"networkOrigins":[origin],"secrets":[{"id":"key","label":"Key","origins":[origin],"header":"Authorization","scheme":"Bearer"}],"reviewedInvocations":[{"id":"create","credentialHttp":{"version":1,"slot":"key","resultUrl":{"version":1,"jsonPointer":"/output/0"}}}]}})).unwrap()).unwrap();
         let revision = manager
             .install(&source)
             .unwrap()
@@ -126,7 +127,15 @@ impl Fixture {
             .unwrap()
             .revision;
         manager.change("enable", ID).unwrap();
+        let (events_tx, events) = tokio::sync::mpsc::unbounded_channel();
         let builder = mock_builder()
+            .channel_interceptor(move |_, callback, _, body| {
+                let tauri::ipc::InvokeResponseBody::Json(body) = body else {
+                    return false;
+                };
+                let _ = events_tx.send((callback.0, serde_json::from_str(body).unwrap()));
+                true
+            })
             .manage(PluginManager(Ok(manager.clone())))
             .manage(identity)
             .manage(crate::host_request::HostCalls::default())
@@ -149,6 +158,7 @@ impl Fixture {
             app,
             view,
             revision,
+            events,
         }
     }
     fn body(&self) -> Value {
@@ -532,6 +542,9 @@ fn non_unix_private_enrollment_refuses_without_store_or_input_work() {
         .unwrap()
         .is_some());
 }
+
+#[cfg(target_os = "macos")]
+mod reviewed_http;
 
 #[cfg(target_os = "macos")]
 #[test]

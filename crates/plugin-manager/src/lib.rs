@@ -22,6 +22,11 @@ mod migrate_agent_flag;
 pub mod secrets;
 pub use secrets::{CleanupStatus, SecretStatus, SecretStore};
 
+/// Operation-local revocation witness. The open file prevents inode reuse while
+/// a macOS native review is pending; it is never serialized or caller-supplied.
+/// Other platforms refuse admission, so their witness retains no file.
+pub struct ReviewedInvocationWitness(#[cfg(target_os = "macos")] File);
+
 pub type Result<T> = std::result::Result<T, String>;
 pub const LIMIT: u64 = 8 * 1024 * 1024;
 const MAX_README_BYTES: usize = 256 * 1024;
@@ -99,6 +104,9 @@ pub struct HostGrants {
     /// a process takes stdin and the caller appends its own arguments.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub processes: Vec<HostProcess>,
+    /// Experimental fake-input reviewed invocations; no caller-selected program or arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewed_invocations: Vec<ReviewedInvocation>,
     /// The plugin may serve MCP servers on loopback HTTP to the agents it
     /// runs, answering their messages itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -184,6 +192,60 @@ pub struct ProcessArtifact {
 pub struct ProcessArtifactSibling {
     pub name: String,
     pub sha256: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewedInvocation {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ProcessArtifact>,
+    #[serde(
+        default,
+        rename = "credentialHttp",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub credential_http: Option<ReviewedCredentialHttp>,
+}
+/// Generic reviewed POST authority; the declared slot still restricts its origin.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewedCredentialHttp {
+    pub version: u32,
+    pub slot: String,
+    /// Where an authenticated response of this call names its one result
+    /// download. Absent: no response-derived download authority.
+    #[serde(default, rename = "resultUrl", skip_serializing_if = "Option::is_none")]
+    pub result_url: Option<ReviewedResultUrl>,
+}
+/// One fixed RFC 6901 pointer, evaluated natively; never a selector language.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewedResultUrl {
+    pub version: u32,
+    #[serde(rename = "jsonPointer")]
+    pub json_pointer: String,
+}
+impl ReviewedResultUrl {
+    fn valid(&self) -> bool {
+        let segments = self.json_pointer.split('/').skip(1);
+        self.version == 1
+            && self.json_pointer.len() <= 256
+            && self.json_pointer.len() > 1
+            && self.json_pointer.starts_with('/')
+            && self.json_pointer.split('/').count() <= 17
+            && !self.json_pointer.chars().any(char::is_control)
+            && segments.into_iter().all(|segment| {
+                // `~` only as `~0` or `~1`.
+                let mut rest = segment;
+                while let Some(at) = rest.find('~') {
+                    if !matches!(rest.as_bytes().get(at + 1), Some(b'0' | b'1')) {
+                        return false;
+                    }
+                    rest = &rest[at + 2..];
+                }
+                true
+            })
+    }
 }
 fn valid_sha256(hash: &str) -> bool {
     hash.len() == 64
@@ -278,6 +340,28 @@ impl Manifest {
                 || host.processes.len() > 16
             {
                 return Err("Too many host declarations".into());
+            }
+            if host.reviewed_invocations.len() > 4 {
+                return Err("Too many reviewed invocations".into());
+            }
+            let mut reviewed_ids = std::collections::HashSet::new();
+            for invocation in &host.reviewed_invocations {
+                valid_id(&invocation.id)?;
+                let valid = match (&invocation.artifact, &invocation.credential_http) {
+                    (Some(artifact), None) => valid_artifact(artifact),
+                    (None, Some(http)) => {
+                        http.version == 1
+                            && host.secrets.iter().any(|slot| slot.id == http.slot)
+                            && http
+                                .result_url
+                                .as_ref()
+                                .is_none_or(ReviewedResultUrl::valid)
+                    }
+                    _ => false,
+                };
+                if !reviewed_ids.insert(&invocation.id) || !valid {
+                    return Err("Invalid reviewed invocation".into());
+                }
             }
             let mut hook_types = std::collections::HashSet::new();
             for key in &host.agent_hooks {
@@ -1739,11 +1823,111 @@ impl Manager {
             .host
             .unwrap_or_default())
     }
+    /// Capture the grant and registry incarnation in one locked admission.
+    /// Every registry save replaces this file, including identical-byte saves.
+    #[cfg(target_os = "macos")]
+    pub fn admit_reviewed_invocation(
+        &self,
+        id: &str,
+        revision: &str,
+        operation: &str,
+    ) -> Result<(ReviewedInvocation, ReviewedInvocationWitness)> {
+        if revision == "bundled" {
+            return Err("Reviewed invocations require an installed plugin".into());
+        }
+        let _lock = self.lock()?;
+        // current_artifact_locked commits any read-triggered migration first.
+        let grant = self
+            .current_artifact_locked(id, revision)?
+            .manifest
+            .host
+            .unwrap_or_default()
+            .reviewed_invocations
+            .into_iter()
+            .find(|grant| grant.id == operation)
+            .ok_or("Reviewed invocation grant unavailable")?;
+        let file = File::open(self.root.join("registry.json")).map_err(err)?;
+        Ok((grant, ReviewedInvocationWitness(file)))
+    }
+
+    /// Experimental fake-only dispatch fence. Registry mutations (including CLI
+    /// disable/reload) cannot overtake the final grant check and synchronous spawn.
+    /// The callback must not await or call back into the manager.
+    #[cfg(target_os = "macos")]
+    pub fn with_reviewed_invocation<T>(
+        &self,
+        id: &str,
+        revision: &str,
+        expected: &ReviewedInvocation,
+        witness: &ReviewedInvocationWitness,
+        dispatch: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        if self.safe_mode {
+            return Err("External plugins are disabled in safe mode".into());
+        }
+        if revision == "bundled" {
+            return Err("Reviewed invocations require an installed plugin".into());
+        }
+        if expected.artifact.is_none() || expected.credential_http.is_some() {
+            return Err("Synthetic reviewed invocation grant required".into());
+        }
+        let _lock = self.lock()?;
+        let artifact = self.current_artifact_locked(id, revision)?;
+        if !artifact
+            .manifest
+            .host
+            .unwrap_or_default()
+            .reviewed_invocations
+            .contains(expected)
+        {
+            return Err("Reviewed invocation grant changed".into());
+        }
+        // Read/validate first: if it migrated, that save must also revoke admission.
+        self.check_reviewed_witness(witness)?;
+        dispatch()
+    }
+    #[cfg(target_os = "macos")]
+    fn check_reviewed_witness(&self, witness: &ReviewedInvocationWitness) -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let current = File::open(self.root.join("registry.json")).map_err(err)?;
+        let admitted = witness.0.metadata().map_err(err)?;
+        let current = current.metadata().map_err(err)?;
+        if (admitted.dev(), admitted.ino()) != (current.dev(), current.ino()) {
+            return Err("Reviewed invocation registry was replaced; operation retired".into());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    pub fn admit_reviewed_invocation(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<(ReviewedInvocation, ReviewedInvocationWitness)> {
+        Err("Native private review requires macOS".into())
+    }
+    #[cfg(not(target_os = "macos"))]
+    pub fn with_reviewed_invocation<T>(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ReviewedInvocation,
+        _: &ReviewedInvocationWitness,
+        _: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        Err("Native private review requires macOS".into())
+    }
     fn current_artifact(&self, id: &str, revision: &str) -> Result<Artifact> {
         if self.safe_mode {
             return Err("External plugins are disabled in safe mode".into());
         }
         let _lock = self.lock()?;
+        self.current_artifact_locked(id, revision)
+    }
+    fn current_artifact_locked(&self, id: &str, revision: &str) -> Result<Artifact> {
+        if self.safe_mode {
+            return Err("External plugins are disabled in safe mode".into());
+        }
         let r = self.read()?;
         let p = r.installed.get(id).ok_or("Plugin is not installed")?;
         if !p.enabled || p.current != revision {
@@ -2087,6 +2271,47 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         true
+    }
+
+    #[test]
+    fn reviewed_grants_reject_undeclared_transport_and_invalid_pins() {
+        let recipient = if cfg!(windows) {
+            "C:/fixture/recipient"
+        } else {
+            "/fixture/recipient"
+        };
+        let base = serde_json::json!({"id":"example.review", "name":"Review", "apiVersion":1,
+            "host":{"reviewedInvocations":[{"id":"synthetic","artifact":{"path":recipient,"sha256":"ab".repeat(32)}}]}});
+        serde_json::from_value::<Manifest>(base.clone())
+            .unwrap()
+            .validate()
+            .unwrap();
+        for field in ["args", "env", "url", "script", "accepted", "secret"] {
+            let mut value = base.clone();
+            value["host"]["reviewedInvocations"][0][field] = serde_json::json!("unexpected");
+            assert!(
+                serde_json::from_value::<Manifest>(value).is_err(),
+                "{field}"
+            );
+        }
+        for (field, invalid) in [("path", "relative"), ("sha256", "no-hash")] {
+            let mut value = base.clone();
+            value["host"]["reviewedInvocations"][0]["artifact"][field] = serde_json::json!(invalid);
+            assert!(serde_json::from_value::<Manifest>(value)
+                .unwrap()
+                .validate()
+                .is_err());
+        }
+        let mut duplicate = base.clone();
+        let entry = duplicate["host"]["reviewedInvocations"][0].clone();
+        duplicate["host"]["reviewedInvocations"]
+            .as_array_mut()
+            .unwrap()
+            .push(entry);
+        assert!(serde_json::from_value::<Manifest>(duplicate)
+            .unwrap()
+            .validate()
+            .is_err());
     }
 
     #[test]

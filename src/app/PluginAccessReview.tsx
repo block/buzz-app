@@ -190,6 +190,75 @@ function hostDeclarations(
         details: <code className={styles.sourcePath}>{operation.path}</code>,
       }),
     ),
+    ...(manifest.host?.reviewedInvocations ?? []).map((invocation) => {
+      if (invocation.credentialHttp) {
+        return {
+          key: `reviewed:${invocation.id}`,
+          signature: `Reviewed invocation ${invocation.id}: ${JSON.stringify(invocation.credentialHttp)}`,
+          title: `Reviewed invocation ${invocation.id}:`,
+          label: "Request one host-reviewed HTTPS create",
+          hint: `Ask Buzz to send an approved request using a saved credential.${
+            invocation.credentialHttp.resultUrl
+              ? " Download one public HTTPS result URL selected from an authenticated operation response; no API credentials sent."
+              : ""
+          } Requires compatible native support.`,
+          icon: GlobeIcon,
+          details: (
+            <>
+              <p className="m-0">
+                Saved credential slot:{" "}
+                <code className={styles.sourcePath}>
+                  {invocation.credentialHttp.slot}
+                </code>
+              </p>
+              <p className="mb-0 mt-2">
+                Credential HTTP version: {invocation.credentialHttp.version}
+              </p>
+              {invocation.credentialHttp.resultUrl && (
+                <p className="mb-0 mt-2">
+                  Result URL from response field:{" "}
+                  <code className={styles.sourcePath}>
+                    {invocation.credentialHttp.resultUrl.jsonPointer}
+                  </code>
+                </p>
+              )}
+              <p className="mb-0 mt-2">
+                Review the exact request before approving one create. An unknown
+                result is not retried. This declaration alone does not enable
+                execution.
+              </p>
+            </>
+          ),
+        };
+      }
+      return {
+        key: `reviewed:${invocation.id}`,
+        signature: `Reviewed invocation ${invocation.id}: ${JSON.stringify(invocation.artifact)}`,
+        title: `Reviewed invocation ${invocation.id}:`,
+        label: "Request one host-reviewed synthetic invocation",
+        hint: "Private synthetic input goes only to this pinned program after Approve and run in the Buzz card. Experimental; no saved credentials.",
+        icon: TerminalWindowIcon,
+        details: (
+          <>
+            <ProgramDetails program={invocation.artifact.path} args={[]} />
+            <p className="m-0">
+              SHA-256:{" "}
+              <code className={styles.sourcePath}>
+                {invocation.artifact.sha256}
+              </code>
+            </p>
+            <p className="mb-0 mt-2">Declared companion files:</p>
+            <pre className="m-0 whitespace-pre-wrap break-words">
+              {JSON.stringify(invocation.artifact.siblings ?? [], null, 2)}
+            </pre>
+            <p className="mb-0 mt-2">
+              Runs with your account’s access; no caller arguments or
+              environment. An unknown result is not retried.
+            </p>
+          </>
+        ),
+      };
+    }),
     ...(manifest.host?.processes ?? []).map((process) => ({
       key: `process:${process.id}`,
       signature: `Process ${process.id}: ${JSON.stringify([process.program, ...(process.args ?? [])])}${process.bundled ? " (bundled with Buzz)" : ""} · artifact: ${JSON.stringify(process.artifact ?? null)} and any further arguments · stdin, full user access`,

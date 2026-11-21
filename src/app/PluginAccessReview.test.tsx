@@ -331,3 +331,165 @@ it.each([
     ).toBeVisible();
   },
 );
+const credentialReview = (slot: string): PluginManifest => ({
+  id: "example.review",
+  name: "Review",
+  apiVersion: 1,
+  host: {
+    reviewedInvocations: [
+      { id: "create", credentialHttp: { version: 1, slot } },
+    ],
+  },
+});
+
+it("discloses reviewed credential HTTP without synthetic program access or guaranteed availability", async () => {
+  render(<PluginAccessReview manifest={credentialReview("api-key")} />);
+  expect(screen.queryByText(/no saved credentials/)).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: /synthetic invocation/ }),
+  ).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: /host-reviewed HTTPS create/ }),
+  );
+  const details = await screen.findByRole("region", {
+    name: "Reviewed invocation create details",
+  });
+  await waitFor(() => expect(details).toBeVisible());
+  expect(within(details).getByText("api-key")).toBeVisible();
+  expect(within(details).getByText(/Credential HTTP version: 1/)).toBeVisible();
+  expect(
+    within(details).getByText(
+      /This declaration alone does not enable execution/,
+    ),
+  ).toBeVisible();
+  expect(within(details).queryByText(/Program:/)).toBeNull();
+  expect(screen.getByText(/Requires compatible native support/)).toBeVisible();
+});
+
+it.each(["slot", "effect"])(
+  "treats a changed reviewed HTTP %s as changed access",
+  async (change) => {
+    const previous: PluginManifest =
+      change === "slot"
+        ? credentialReview("old-key")
+        : {
+            ...credentialReview("old-key"),
+            host: {
+              reviewedInvocations: [
+                {
+                  id: "create",
+                  artifact: {
+                    path: "/fixture/recipient",
+                    sha256: "ab".repeat(32),
+                  },
+                },
+              ],
+            },
+          };
+    render(
+      <PluginAccessReview
+        manifest={credentialReview("new-key")}
+        previousManifest={previous}
+      />,
+    );
+    const changed = within(
+      screen.getByRole("region", { name: "Changed declarations" }),
+    );
+    fireEvent.click(
+      changed.getByRole("button", { name: /host-reviewed HTTPS create/ }),
+    );
+    await waitFor(() => expect(changed.getByText("new-key")).toBeVisible());
+    expect(changed.getByText("Previously")).toBeVisible();
+    expect(changed.getByText("After this update")).toBeVisible();
+    expect(
+      changed.getByText(change === "slot" ? "old-key" : "/fixture/recipient"),
+    ).toBeVisible();
+  },
+);
+
+it("discloses a declared result URL pointer as changed reviewed access", async () => {
+  const manifest = credentialReview("api-key");
+  const selected: PluginManifest = {
+    ...manifest,
+    host: {
+      reviewedInvocations: [
+        {
+          id: "create",
+          credentialHttp: {
+            version: 1,
+            slot: "api-key",
+            resultUrl: { version: 1, jsonPointer: "/output/0" },
+          },
+        },
+      ],
+    },
+  };
+  render(
+    <PluginAccessReview manifest={selected} previousManifest={manifest} />,
+  );
+  const changed = within(
+    screen.getByRole("region", { name: "Changed declarations" }),
+  );
+  expect(
+    changed.getAllByText(
+      /Download one public HTTPS result URL selected from an authenticated operation response; no API credentials sent\./,
+    ).length,
+  ).toBeGreaterThan(0);
+  fireEvent.click(
+    changed.getByRole("button", { name: /host-reviewed HTTPS create/ }),
+  );
+  await waitFor(() => expect(changed.getByText("/output/0")).toBeVisible());
+  expect(changed.getByText(/Result URL from response field:/)).toBeVisible();
+});
+
+it("discloses the reviewed recipient pin and treats changed companion bytes as changed access", async () => {
+  const before: PluginManifest = {
+    id: "example.review",
+    name: "Review",
+    apiVersion: 1,
+    host: {
+      reviewedInvocations: [
+        {
+          id: "synthetic",
+          artifact: {
+            path: "/fixture/recipient",
+            sha256: "ab".repeat(32),
+            siblings: [{ name: "data", sha256: "cd".repeat(32) }],
+          },
+        },
+      ],
+    },
+  };
+  const after: PluginManifest = {
+    ...before,
+    host: {
+      reviewedInvocations: [
+        {
+          id: "synthetic",
+          artifact: {
+            path: "/fixture/recipient",
+            sha256: "ab".repeat(32),
+            siblings: [{ name: "data", sha256: "ef".repeat(32) }],
+          },
+        },
+      ],
+    },
+  };
+  render(<PluginAccessReview manifest={after} previousManifest={before} />);
+  const changed = within(
+    screen.getByRole("region", { name: "Changed declarations" }),
+  );
+  fireEvent.click(
+    changed.getByRole("button", { name: /host-reviewed synthetic invocation/ }),
+  );
+  await waitFor(() => {
+    expect(changed.getAllByText(/unknown result is not retried/)).toHaveLength(
+      2,
+    );
+    expect(changed.getByText(/"efefef/)).toBeVisible();
+    expect(changed.getByText(/"cdcdcd/)).toBeVisible();
+    expect(changed.getByText("Previously")).toBeVisible();
+    expect(changed.getByText("After this update")).toBeVisible();
+  });
+  expect(changed.getAllByText("ab".repeat(32))).toHaveLength(2);
+});

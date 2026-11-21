@@ -1,12 +1,12 @@
 // An agent's lookup of a pull request's state: what the owner's links and
 // sidebar show, from the same store, with how old it is.
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import { pullStateReport } from "./pull-state-report";
 import { PULL_REFRESH_MS, type PullStates } from "./pull-states";
 import { parseGitHubReference } from "./references";
 
 export function addPullStateTool(
-  agents: { addTool(tool: AddedTool): void },
+  agents: { addTool(tool: PluginTool): void },
   states: PullStates,
 ) {
   agents.addTool({

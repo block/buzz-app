@@ -219,13 +219,15 @@ function PagePreview({
   const [open, setOpen] = useState(false);
   // Previews stay below the window header, in the workspace that holds the row.
   const [boundary, setBoundary] = useState<Element | null>(null);
-  useEffect(() => {
-    if (!enabled) setOpen(false);
-  }, [enabled]);
   const actions =
     useRef<
       NonNullable<ComponentProps<typeof PopoverRoot>["actionsRef"]>["current"]
     >(null);
+  useEffect(() => {
+    if (enabled) return;
+    if (open && actions.current) actions.current.close();
+    else setOpen(false);
+  }, [enabled, open]);
   // Content that opens something hands focus to it; Base UI would otherwise
   // return focus to this row after closing.
   const handoff = useRef(false);
@@ -254,12 +256,18 @@ function PagePreview({
       open={enabled && open}
       actionsRef={actions}
       onOpenChange={(next, details) => {
-        // Hover only: pressing the row selects the page instead.
+        // Hover only: pressing the row selects the page instead, and Base UI's
+        // useClick would otherwise mark openEvent as "click" on a closed
+        // controlled popover and block subsequent hover previews.
+        if (next && (!enabled || details.reason === "trigger-press")) {
+          details.cancel();
+          return;
+        }
         if (next) {
           handoff.current = false;
           setBoundary(details.trigger?.closest(".shell-workspace") ?? null);
         }
-        setOpen(enabled && next && details.reason !== "trigger-press");
+        setOpen(next);
       }}
     >
       {/* Marked transient, so a conversation's default focus is not held back. */}

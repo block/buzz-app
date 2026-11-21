@@ -790,6 +790,9 @@ export class AgentRunners {
   }
   /** Whether live events are held until startup ends. */
   private heldForStartup = false;
+  /** The agents holding live events until their attention on the relay is
+   * read. */
+  private heldPending = new Set<AgentKey>();
   /** Mention turns working now, which closing or reloading the app would
    * stop, and those the app left working last time until they are given
    * again or forgotten, as saved. */
@@ -1665,7 +1668,8 @@ export class AgentRunners {
     // Until plugins finish starting or Attention is shown, every checkpoint
     // stays put, so the first catch-up still reads what the app missed while
     // closed, and live events stay held. After that, no plugin showing
-    // Attention is like turning it off.
+    // Attention is like turning it off. An agent whose attention on the relay
+    // is not read yet waits the same way, alone.
     const shown = this.host.attentionShown();
     const held = this.starting();
     for (const runner of this.runners.values()) {
@@ -1679,10 +1683,10 @@ export class AgentRunners {
       const attention =
         agent?.attention ?? this.host.savedAttention(runner.key);
       let retriesChanged = false;
+      // Waiting for the relay set keeps backoff, as startup does.
       for (const [key, retry] of runner.readRetries)
         if (
           !shown ||
-          agent?.attentionEnabled === false ||
           !runner.type?.run ||
           !this.currentReadRetry(attention, retry.object)
         ) {
@@ -1690,7 +1694,10 @@ export class AgentRunners {
           retriesChanged = true;
         }
       if (retriesChanged) this.host.watchReadFailuresChanged();
-      for (const stream of held ? [] : streams) {
+      // Mentions need no attention, so only watches wait for the relay set.
+      const waits = (stream: Stream) =>
+        held || (!!agent?.attentionPending && !stream.mentions);
+      for (const stream of streams.filter((stream) => !waits(stream))) {
         const checkpoint = this.checkpoints[stream.key];
         // Mentions are answered with Attention off or not shown.
         const hidden = !shown && !stream.mentions;
@@ -1844,6 +1851,13 @@ export class AgentRunners {
     if (!held && this.heldForStartup) {
       this.heldForStartup = false;
       this.releaseHeld(() => true);
+    }
+    const read = [...this.heldPending].filter(
+      (key) => !this.host.agent(key)?.attentionPending,
+    );
+    if (read.length) {
+      for (const key of read) this.heldPending.delete(key);
+      this.releaseHeld((agent) => read.includes(agent.key));
     }
     if (changed) this.saveCheckpoints();
   }
@@ -2669,8 +2683,10 @@ export class AgentRunners {
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
-    // An agent whose Attention waits for startup holds what it would hear.
-    const waiting = !agent.attentionEnabled && this.starting();
+    // An agent whose Attention waits for startup, or for its attention on the
+    // relay, holds what it would hear.
+    const pending = !!agent.attentionPending;
+    const waiting = !agent.attentionEnabled && (pending || this.starting());
     if (!agent.attentionEnabled && !waiting) return { triggers: [] };
     const matches = this.watches(runner, agent).filter(
       ({ slug, watch }) => !done.has(slug) && watchMatches(watch, event),
@@ -2685,7 +2701,8 @@ export class AgentRunners {
       };
       const discarded = matches.filter(hidden).map(({ slug }) => slug);
       if (discarded.length === matches.length) return { triggers: [] };
-      this.heldForStartup = true;
+      if (pending) this.heldPending.add(agent.key);
+      else this.heldForStartup = true;
       return { triggers: [], held: true, discarded };
     }
     const reads = this.host.reads(agent, event);

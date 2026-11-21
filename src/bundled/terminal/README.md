@@ -6,4 +6,8 @@ Opens a terminal right inside a channel, running your own shell on your computer
 
 1. Choose **Toggle channel terminal** in the channel header, or press Cmd/Ctrl+J.
 2. Each channel keeps its own shell. **Hide terminal** keeps it running; **End session** closes it.
-3. On a Mac, turn on **Use Option as Meta key** in Terminal settings to treat the Option key as the Meta key in the terminal.
+3. In **Settings → Plugins → Terminal → Placement**, choose Bottom drawer,
+   Side panel, or Tab. A visible terminal moves with its shell and scrollback intact.
+4. On a Mac, turn on **Use Option as Meta key** in Terminal settings to treat the Option key as the Meta key in the terminal.
+
+`placement-preference.ts` owns the device-local placement choice and cross-window sync.

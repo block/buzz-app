@@ -181,7 +181,7 @@ export function ToastProvider({
         noticeOver = card.querySelector("[data-reachable-over-modal]")
           ? modalOpen()
           : undefined;
-      if (card || target.classList.contains("buzz-toast-guard")) return;
+      if (card) return;
       const modal = target.closest('[aria-modal="true"]');
       if (modal && modal === noticeOver) void revealReturn(target, modal);
       noticeOver = undefined;
@@ -207,30 +207,21 @@ export function ToastProvider({
   return (
     <ToastHost value={id}>
       {createPortal(
-        <>
-          <Toaster
-            ref={attachViewport}
-            id={id}
-            position="top-right"
-            swipeDirections={["left", "right"]}
-            expand={false}
-            visibleToasts={Infinity}
-            hotkey={["F6"]}
-            customAriaLabel="App notifications"
-            className={
-              skipBlur
-                ? "buzz-toast-viewport buzz-toast-no-blur"
-                : "buzz-toast-viewport"
-            }
-          />
-          {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: A focus guard, as Base UI renders, returns Tab under a modal. */}
-          <span
-            className="buzz-toast-guard sr-only"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: The focus guard is a Tab stop only while a modal is open.
-            tabIndex={0}
-            aria-hidden="true"
-          />
-        </>,
+        <Toaster
+          ref={attachViewport}
+          id={id}
+          position="top-right"
+          swipeDirections={["left", "right"]}
+          expand={false}
+          visibleToasts={Infinity}
+          hotkey={["F6"]}
+          customAriaLabel="App notifications"
+          className={
+            skipBlur
+              ? "buzz-toast-viewport buzz-toast-no-blur"
+              : "buzz-toast-viewport"
+          }
+        />,
         portalContainer ?? document.body,
       )}
       {children}

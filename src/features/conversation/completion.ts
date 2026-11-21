@@ -1,5 +1,9 @@
 import type { MentionRecipient } from "../messages/mention-draft";
-import { composerToken, type ComposerToken } from "../messages/composer-token";
+import {
+  chipLabel,
+  composerToken,
+  type ComposerToken,
+} from "../messages/composer-token";
 import type { Contribution } from "../../plugins/contributions";
 import { isBundledContribution } from "../../plugins/provenance";
 import type {
@@ -149,7 +153,8 @@ export function completionResult(
             !/^[0-9a-f]{64}$/.test(person.pubkey) ||
             typeof person.name !== "string" ||
             !person.name.trim(),
-        )
+        ) ||
+        (edit.label !== undefined && !chipLabel(edit.label))
       )
         continue;
     } else if ("mention" in edit) {
@@ -198,6 +203,9 @@ export function completionResult(
                           }),
                         ),
                       ),
+                      ...(edit.label !== undefined
+                        ? { label: edit.label }
+                        : {}),
                     }
                   : "mention" in edit
                     ? { mention: Object.freeze({ ...edit.mention }) }

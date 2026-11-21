@@ -1,7 +1,11 @@
+import { Fragment, Slice } from "prosemirror-model";
 import { forwardReference, type ForwardReference } from "./forward-clipboard";
 import { canonicalChatCard } from "./chat-cards";
 import {
+  composerSchema,
+  groupLabelHolds,
   projectComposerDocument,
+  readComposerDocument,
   readComposerSnapshot,
 } from "./composer-document";
 
@@ -11,8 +15,10 @@ export type MentionRecipient = Readonly<{
   /** A recipient selected in the editor. Automatic and legacy spans omit it. */
   explicit?: true;
 }>;
+/** One recipient on a span. A group chip projects one per member, each with
+ * the group's `label`: then the span is `@label`, not `@name`. */
 export type DraftRecipient = MentionRecipient &
-  Readonly<{ start: number; end: number }>;
+  Readonly<{ start: number; end: number; label?: string }>;
 
 let humanMentionSelection = false;
 /** The host's own composer entry points can collect local send evidence. */
@@ -37,6 +43,33 @@ export function editorMention({
 }
 
 export const hasHumanMentionSelection = () => humanMentionSelection;
+/** One entry per person: a group shares a span with its members, and two
+ * chips can name the same person. */
+export const distinctRecipients = <T extends MentionRecipient>(
+  recipients: readonly T[],
+) => [...new Map(recipients.map((item) => [item.pubkey, item])).values()];
+function capRecipients<T extends MentionRecipient>(recipients: readonly T[]) {
+  const kept = new Set<string>();
+  return recipients.filter((item) => {
+    if (!kept.has(item.pubkey) && kept.size >= 32) return false;
+    kept.add(item.pubkey);
+    return true;
+  });
+}
+/** `text` without the spans `recipients` cover; a group's span counts once. */
+export function withoutSpans(
+  text: string,
+  recipients: readonly Readonly<{ start: number; end: number }>[],
+) {
+  const spans = [
+    ...new Map(
+      recipients.map((item) => [`${item.start}:${item.end}`, item]),
+    ).values(),
+  ].sort((a, b) => b.start - a.start);
+  for (const { start, end } of spans)
+    text = text.slice(0, start) + text.slice(end);
+  return text;
+}
 // Serializable draft metadata must not expose editor implementation types to plugins.
 export type ComposerSnapshot = { version: 1; content: unknown };
 /** A name Space committed before the chooser could decide. The editor resolves
@@ -102,11 +135,13 @@ export function mentionDraft(value: unknown): MentionDraft {
           /^[0-9a-f]{64}$/.test(item.pubkey) &&
           typeof item.name === "string" &&
           !!item.name.trim() &&
+          (item.label === undefined ||
+            (typeof item.label === "string" && !!item.label.trim())) &&
           Number.isInteger(item.start) &&
           Number.isInteger(item.end) &&
           item.start >= 0 &&
           item.end <= text.length &&
-          text.slice(item.start, item.end) === `@${item.name}` &&
+          text.slice(item.start, item.end) === `@${item.label ?? item.name}` &&
           mentionBoundary(text, item.end),
       )
     : [];
@@ -136,16 +171,52 @@ export function mentionDraft(value: unknown): MentionDraft {
         }
       : {}),
     ...(doc ? { document: document as ComposerSnapshot } : {}),
-    recipients: safe
-      .slice(0, 32)
-      .map(({ pubkey, name, start, end, explicit }) => ({
+    recipients: capRecipients(safe).map(
+      ({ pubkey, name, label, start, end, explicit }) => ({
         pubkey,
         name,
+        ...(label === undefined ? {} : { label }),
         start,
         end,
         ...(explicit === true ? { explicit } : {}),
-      })),
+      }),
+    ),
   };
+}
+/** `draft` as a send gives it: a group chip whose label no longer holds
+ * against the `people` the send tags is one chip per member, each keeping its
+ * explicit pick. With nothing to split it returns `draft` itself; the draft
+ * in the box is left as typed. */
+export function sentDraft(
+  draft: MentionDraft,
+  people: readonly MentionRecipient[],
+) {
+  if (!draft.recipients.some((item) => item.label !== undefined)) return draft;
+  const doc = readComposerDocument(draft, draft.recipients);
+  const stale = projectComposerDocument(doc).tokens.filter(
+    ({ node }) =>
+      node.attrs.group && !groupLabelHolds(node.attrs.group.label, people),
+  );
+  if (!stale.length) return draft;
+  const split = stale.reduceRight((next, { from, to, node }) => {
+    const members: readonly MentionRecipient[] = node.attrs.group.members;
+    const chips = members.flatMap((person, index) => [
+      ...(index ? [composerSchema.text(" ", node.marks)] : []),
+      composerSchema.nodes.token.create(
+        { source: `@${person.name}`, recipient: person, editAsText: false },
+        null,
+        node.marks,
+      ),
+    ]);
+    return next.replace(from, to, new Slice(Fragment.from(chips), 0, 0));
+  }, doc);
+  const { text, recipients, document } = projectComposerDocument(split).draft;
+  return mentionDraft({
+    ...draft,
+    text,
+    recipients,
+    ...(draft.document ? { document } : {}),
+  });
 }
 /** What counts as a draft everywhere: text, an attached chat or GIF, or `files`.
  * A typed tag is text the person put there; the composer no longer saves
@@ -175,12 +246,7 @@ export function addressingOnly(value: MentionDraft): boolean {
     value.gifs?.length
   )
     return false;
-  let rest = value.text;
-  for (const { start, end } of [...value.recipients].sort(
-    (a, b) => b.start - a.start,
-  ))
-    rest = rest.slice(0, start) + rest.slice(end);
-  return !rest.trim();
+  return !withoutSpans(value.text, value.recipients).trim();
 }
 /** Prefill exact, already-selected identities; never infer recipients from prose. */
 export function followupDraft(

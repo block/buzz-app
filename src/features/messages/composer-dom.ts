@@ -1,5 +1,6 @@
 import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
+import type { ComposerGroup } from "./composer-document";
 import type { ComposerToken } from "./composer-token";
 import type { AnnotationMark } from "./composer-annotations";
 import type { AnnotationObservation } from "../conversation/contracts";
@@ -104,7 +105,7 @@ export type ComposerInputElement = HTMLDivElement & {
   setSelectionRange(start: number, end: number, direction?: string): void;
   insertText(
     text: string,
-    recipient?: MentionRecipient | readonly MentionRecipient[],
+    recipient?: MentionRecipient | readonly MentionRecipient[] | ComposerGroup,
     range?: { start: number; end: number },
     /** The key typed to end the query. A closing colon is recorded before
      * conversion for one-step undo; after recipients, it takes the place of

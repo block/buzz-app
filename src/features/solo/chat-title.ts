@@ -35,6 +35,7 @@ function chatTitle(
   for (const recipient of [...draft.recipients].sort(
     (a, b) => a.start - b.start,
   )) {
+    if (recipient.label !== undefined) break;
     if (
       recipient.start < draftStart ||
       draft.text.slice(draftStart, recipient.start).trim()

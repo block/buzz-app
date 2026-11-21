@@ -315,14 +315,16 @@ test("completed, dismissed and refuted mention searches stay closed while fresh 
   expect(await searches()).not.toContainEqual(expect.stringContaining("Zed "));
 });
 
-for (const row of ["people", "supplement"]) {
+for (const row of ["people", "supplement", "group"]) {
   test(`a ${row} row proves the owner's mention only from a person's pick`, async ({
     page,
   }) => {
     await page.addInitScript(() => {
       localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
     });
-    await page.goto("/tests/fixtures/mentions.html?supplement");
+    await page.goto(
+      `/tests/fixtures/mentions.html?supplement=${row === "group" ? "group" : ""}`,
+    );
     const input = page.getByRole("textbox", { name: "Message #General" });
     await expect
       .poll(() => page.evaluate(() => window.mentionFixture.list().status))
@@ -340,7 +342,7 @@ for (const row of ["people", "supplement"]) {
       if (trusted) await pick.click();
       else await pick.dispatchEvent("click");
       await expect(input.locator(".inline-chip")).toHaveCount(
-        row === "people" ? 1 : 2,
+        row === "supplement" ? 2 : 1,
       );
       const count = await page.evaluate(
         () => window.mentionFixture.publications.length,

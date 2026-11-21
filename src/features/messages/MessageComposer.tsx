@@ -52,11 +52,14 @@ import {
   readComposerSnapshot,
   composerMarkdownContext,
   markdownRanges,
+  groupLabelHolds,
 } from "./composer-document";
 import { useMessageEdit, lastEditableMessage } from "./useMessageEdit";
 import { editMentionText } from "./message-edit";
 import type { ChannelMessage } from "../relay/contracts";
 import { useListedChannel } from "../relay/listed-channel";
+import { foldProfiles } from "../relay/profiles";
+import { profileMentionNames } from "./profile-mentions";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -151,6 +154,7 @@ import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
+  distinctRecipients,
   legacyFollowupDraft,
   MAX_DRAFT_GIFS,
   mentionBoundary,
@@ -158,7 +162,9 @@ import {
   editorMention,
   hasHumanMentionSelection,
   hostComposerProvenance,
+  sentDraft,
   stageableGif,
+  withoutSpans,
   type MentionDraft,
   type MentionRecipient,
 } from "./mention-draft";
@@ -1147,6 +1153,32 @@ function Composer({
           ]),
         ]
       : pubkeys;
+  const dmAgents = () => {
+    const viewer = session.viewer;
+    const profiles = session.profiles.snapshot();
+    return viewer && dmMembers?.length === 2 && dmMembers.includes(viewer)
+      ? dmMembers.flatMap((pubkey) => {
+          const profile = profiles.get(pubkey);
+          return pubkey !== viewer && profile?.isAgent
+            ? [{ pubkey, name: profile.name }]
+            : [];
+        })
+      : [];
+  };
+  const boundNames = (people: readonly MentionRecipient[]) => {
+    const profiles = session.profiles.snapshot();
+    return [...people, ...dmAgents()].flatMap(({ pubkey, name }) => {
+      const event = session.profiles.event?.(pubkey);
+      const own = event && foldProfiles([event]).get(pubkey);
+      return [
+        ...new Set([
+          name,
+          ...profileMentionNames(profiles.get(pubkey)),
+          own && !own.nameIsFallback ? own.name : undefined,
+        ]),
+      ].flatMap((each) => (each ? [{ pubkey, name: each }] : []));
+    });
+  };
   // Read at send time: inline mentions win, else the toolbar's agents. A
   // reference addresses nobody, so it goes along with the toolbar's agents.
   const sendRecipients = () => {
@@ -2128,7 +2160,11 @@ function Composer({
       );
       return false;
     }
-    if (recipient && valueRef.current.recipients.length >= 32) {
+    if (
+      recipient &&
+      distinctRecipients([...valueRef.current.recipients, recipient]).length >
+        32
+    ) {
       setError("Choose at most 32 recipients");
       return false;
     }
@@ -2236,7 +2272,8 @@ function Composer({
       ? "unresolved"
       : !admits()(recipient.pubkey)
         ? "unavailable"
-        : valueRef.current.recipients.length >= 32
+        : distinctRecipients([...valueRef.current.recipients, recipient])
+              .length > 32
           ? "limit"
           : undefined;
     const accepted =
@@ -2415,9 +2452,11 @@ function Composer({
   function keepProseCaret(add: (at: CompletionQuery) => boolean, focus = true) {
     const before = valueRef.current;
     let start = 0;
-    for (const tag of [...before.recipients].sort(
-      (a, b) => a.start - b.start,
-    )) {
+    for (const tag of [
+      ...new Map(
+        before.recipients.map((tag) => [`${tag.start}:${tag.end}`, tag]),
+      ).values(),
+    ].sort((a, b) => a.start - b.start)) {
       if (tag.start !== start || !/[ \t]/.test(before.text[tag.end] ?? ""))
         break;
       start = tag.end;
@@ -2437,6 +2476,7 @@ function Composer({
   function insertMentions(
     recipients: readonly MentionRecipient[],
     range?: CompletionQuery,
+    requested?: string,
   ) {
     if (
       !Array.isArray(recipients) ||
@@ -2451,6 +2491,14 @@ function Composer({
       )
     )
       return false;
+    const label =
+      requested !== undefined &&
+      groupLabelHolds(
+        requested,
+        boundNames([...recipients, ...valueRef.current.recipients]),
+      )
+        ? requested
+        : undefined;
     const unique = [
       ...new Map(
         recipients.map((person) => [person.pubkey, editorMention(person)]),
@@ -2469,31 +2517,45 @@ function Composer({
       input.current.readOnly
     )
       return false;
+    if (requested !== undefined && range && inMarkdownCode(range, false))
+      return insert(`@${requested} `, undefined, range);
     // Message edits only add references, never new notification intent.
     if (editing.target)
       return insert(
-        unique.map((person) => editMentionText(person)).join(""),
+        label === undefined
+          ? unique.map((person) => editMentionText(person)).join("")
+          : `@${label} `,
         undefined,
         range,
       );
     const admitted = admits();
+    const noun = label === undefined ? "team" : "group";
     if (unique.some((person) => !admitted(person.pubkey))) {
       setError(
-        "A team member is no longer available. Refresh choices before trying again.",
+        label === undefined
+          ? "A team member is no longer available. Refresh choices before trying again."
+          : "A recipient is no longer available. Refresh choices before trying again.",
       );
       return false;
     }
-    const text = unique.map((person) => `@${person.name} `).join("");
+    const text =
+      label === undefined
+        ? unique.map((person) => `@${person.name} `).join("")
+        : `@${label} `;
     if (
       !(solo && !range
         ? keepProseCaret(
             (at) =>
               !!input.current?.insertText(text, unique, at, undefined, false),
           )
-        : input.current.insertText(text, unique, range))
+        : input.current.insertText(
+            text,
+            label === undefined ? unique : { label, members: unique },
+            range,
+          ))
     ) {
       setError(
-        "The team would exceed the message length or 32-recipient limit. Nothing was added.",
+        `The ${noun} would exceed the message length or 32-recipient limit. Nothing was added.`,
       );
       return false;
     }
@@ -2502,6 +2564,18 @@ function Composer({
       rememberMention(session, channelId, person.pubkey);
     setError(undefined);
     return true;
+  }
+  function inMarkdownCode(
+    range: Readonly<{ start: number; end: number }>,
+    links = true,
+  ) {
+    const doc = readComposerSnapshot(valueRef.current.document);
+    const context = doc
+      ? composerMarkdownContext(doc, undefined, links)
+      : { text: valueRef.current.text, protected: [] };
+    return [...context.protected, ...markdownRanges(context.text).literal].some(
+      (r) => range.start < r.end && range.end > r.start,
+    );
   }
   function replaceRecipients(recipients: readonly MentionRecipient[]) {
     if (
@@ -2537,13 +2611,10 @@ function Composer({
   }
   function replaceRecipientsIfEmpty(recipients: readonly MentionRecipient[]) {
     const current = valueRef.current;
-    const prose = [...current.recipients]
-      .sort((a, b) => b.start - a.start)
-      .reduce(
-        (text, tag) => text.slice(0, tag.start) + text.slice(tag.end),
-        current.text,
-      );
-    return !prose.trim() && replaceRecipients(recipients);
+    return (
+      !withoutSpans(current.text, current.recipients).trim() &&
+      replaceRecipients(recipients)
+    );
   }
   function insertResource(resource: ComposerResource): true | string {
     if (
@@ -2570,18 +2641,7 @@ function Composer({
     // A typed terminator (Space, closing punctuation after a name, the closing
     // emoji colon) stays literal in code. Tab, Enter and a click are not typed.
     const typed = key?.length === 1 ? key : undefined;
-    if (typed) {
-      const doc = readComposerSnapshot(valueRef.current.document);
-      const context = doc
-        ? composerMarkdownContext(doc)
-        : { text: observation.text, protected: [] };
-      if (
-        [...context.protected, ...markdownRanges(context.text).literal].some(
-          (r) => query.start < r.end && query.end > r.start,
-        )
-      )
-        return false;
-    }
+    if (typed && inMarkdownCode(query)) return false;
     const chosen = chosenWorkspace(edit);
     if (chosen !== undefined) {
       // The chat's workspace leaves no text behind; the control shows it.
@@ -2606,7 +2666,7 @@ function Composer({
       return true;
     }
     if ("mentions" in edit && edit.mentions)
-      return insertMentions(edit.mentions, query);
+      return insertMentions(edit.mentions, query, edit.label);
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query, typed);
     if ("token" in edit && edit.token) {
@@ -3148,7 +3208,11 @@ function Composer({
     let retiredByOwner = false;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
-    const captured = valueRef.current;
+    const typed = valueRef.current;
+    const captured = sentDraft(
+      typed,
+      boundNames(routing ? recipientsNow : typed.recipients),
+    );
     const explicit =
       human && ownerProvenance
         ? captured.recipients
@@ -3185,6 +3249,14 @@ function Composer({
       !threadRootId &&
       followUpBehaviorPreference() === "queue";
     try {
+      if (captured !== typed && composerMarkdown(captured).length > 16000) {
+        const groups = new Set(typed.recipients.map((item) => item.label));
+        for (const item of captured.recipients) groups.delete(item.label);
+        groups.delete(undefined);
+        throw new Error(
+          `${[...groups].map((label) => `@${label}`).join(", ")} ${pendingRefusals.length}.`,
+        );
+      }
       const tokens = draftTokens(captured);
       messageTokenTags(tokens);
       if (command && onCommand) {
@@ -3193,7 +3265,7 @@ function Composer({
           setSending(true);
           if (await handled) {
             attempt.signal.throwIfAborted();
-            if (valueRef.current !== captured) return;
+            if (valueRef.current !== typed) return;
             const current = viewRevision(scope, draftKey);
             if (current !== savedRevision) {
               diagnose("send-upload-conflict", savedRevision, current);
@@ -3256,7 +3328,9 @@ function Composer({
         return;
       }
       let references: readonly string[] = [];
-      let recipients = capturedRecipients.map((item) => item.pubkey);
+      let recipients = distinctRecipients(capturedRecipients).map(
+        (item) => item.pubkey,
+      );
       let declinedImports: readonly string[] = [];
       if (soloConversation || ownSoloConversation) {
         admission.current = true;
@@ -3266,8 +3340,9 @@ function Composer({
           fromPill,
         ));
       } else if (recipients.length) {
+        const people = distinctRecipients(captured.recipients);
         // An agent only an earlier Buzz runs would not answer; offer it here first.
-        const lookup = oldAgents.find(captured.recipients);
+        const lookup = oldAgents.find(people);
         const old = lookup instanceof Promise ? await lookup : lookup;
         if (old.length) {
           setSending(true);
@@ -3276,7 +3351,7 @@ function Composer({
             old,
             attempt.signal,
             () =>
-              valueRef.current === captured &&
+              valueRef.current === typed &&
               sameAttachmentSelection(
                 attachments.store.snapshot(),
                 capturedAttachments,
@@ -3291,7 +3366,7 @@ function Composer({
           .channels.find((item) => item.id === channelId);
         if (channel?.members && allowsOutsideMentions(channel)) {
           const current = () =>
-            valueRef.current === captured &&
+            valueRef.current === typed &&
             sameAttachmentSelection(
               attachments.store.snapshot(),
               capturedAttachments,
@@ -3302,7 +3377,7 @@ function Composer({
           const elsewhere = new Map(
             (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
           );
-          const bring = captured.recipients.flatMap((person) => {
+          const bring = people.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
             return agent && !channel.members?.includes(person.pubkey)
               ? [agent]
@@ -3319,7 +3394,7 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          const missing = captured.recipients.filter(
+          const missing = people.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),
@@ -3347,7 +3422,7 @@ function Composer({
       if (attachments.store.snapshot().some((item) => item.status === "error"))
         return;
       if (
-        valueRef.current !== captured ||
+        valueRef.current !== typed ||
         !sameAttachmentSelection(
           attachments.store.snapshot(),
           capturedAttachments,
@@ -3385,7 +3460,7 @@ function Composer({
         setError(undefined);
         const current = () =>
           permitted.current &&
-          valueRef.current === captured &&
+          valueRef.current === typed &&
           viewRevision(scope, draftKey) === savedRevision &&
           sameAttachmentSelection(
             attachments.store.snapshot(),
@@ -3647,7 +3722,7 @@ function Composer({
             // restored. A later edit belongs to its author, not this job.
             if (!flushPendingDraft(scope, draftKey)) return "conflict";
             const current = viewRevision(scope, draftKey);
-            const capturedRevision = JSON.stringify(captured);
+            const capturedRevision = JSON.stringify(typed);
             const cleared = (raw: string | null | undefined) => {
               if (!raw) return false;
               try {
@@ -3710,7 +3785,7 @@ function Composer({
             if (target.snapshot().length) return "conflict";
             if (
               current !== capturedRevision &&
-              replaceView(scope, draftKey, current, captured) !== "saved"
+              replaceView(scope, draftKey, current, typed) !== "saved"
             )
               return false;
             if (!target.adopt(files)) return false;
@@ -3718,7 +3793,7 @@ function Composer({
             // The whole captured pick set returns with the whole draft; the
             // recipient filter above applies again on the next send.
             notifyRecovered(session, recoveryKey, {
-              draft: captured,
+              draft: typed,
               picks: capturedPicks,
               preparationError,
             });

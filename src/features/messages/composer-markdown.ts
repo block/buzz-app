@@ -141,14 +141,16 @@ function qualifyNamesakes(
     composerSchema.marks.recipient.isInSet(node?.marks ?? [])?.attrs;
   const keys = new Map<string, Set<string>>();
   doc.descendants((node) => {
-    const found = person(node);
+    const members: readonly { pubkey: string; name: string }[] =
+      node.attrs.group?.members ?? [];
     // Mobile readers match names case-insensitively, so case-only namesakes
     // collide too; each occurrence keeps its own spelling.
-    if (found)
-      keys.set(
-        found.name.toLowerCase(),
-        (keys.get(found.name.toLowerCase()) ?? new Set()).add(found.pubkey),
-      );
+    for (const found of [person(node), ...members])
+      if (found)
+        keys.set(
+          found.name.toLowerCase(),
+          (keys.get(found.name.toLowerCase()) ?? new Set()).add(found.pubkey),
+        );
   });
   if (![...keys.values()].some((set) => set.size > 1)) return doc;
   const { code, link } = composerSchema.marks;
@@ -345,7 +347,7 @@ function authoredLiteralRanges(doc: EditorNode, mode: ComposerMarkdownMode) {
           ? "\n"
           : node.attrs.source;
       context.source +=
-        node.marks.length || node.attrs.recipient
+        node.marks.length || node.attrs.recipient || node.attrs.group
           ? value.replace(/\S/g, "a")
           : value;
     });
@@ -437,6 +439,7 @@ function paragraphMarkdown(
       literals.push({ start, end: text.length });
     if (
       node.attrs.recipient ||
+      node.attrs.group ||
       composerSchema.marks.recipient.isInSet(node.marks)
     )
       recipients.push({ start, end: text.length });

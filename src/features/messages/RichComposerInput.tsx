@@ -106,6 +106,29 @@ const TokenChip = memo(function TokenChip({
   );
 });
 
+const GroupChip = memo(function GroupChip({
+  label,
+  names,
+  count,
+}: {
+  label: string;
+  names: string;
+  count: number;
+}) {
+  return (
+    <InlineChip
+      address={{ kind: "person", id: label }}
+      kindName="Group"
+      face={{ label, loading: false, resolved: true }}
+      qualifier={{
+        text: `· ${count}`,
+        accessibleLabel: `${count} ${count === 1 ? "recipient" : "recipients"}: ${names}`,
+      }}
+      interactive={false}
+    />
+  );
+});
+
 /** Decorations never change source text or infer notification recipients from names. */
 export function RichComposerInput({
   draft,
@@ -378,6 +401,25 @@ export function RichComposerInput({
         const preview = gifPreviews.get(start);
         if (preview && preview.end === end && !mention)
           return { start, end, editAsText: false, content: preview.content };
+        const people = draft.recipients.filter(
+          (item) => item.start === start && item.label !== undefined,
+        );
+        const group = people[0]?.label;
+        if (group !== undefined && draft.text.slice(start, end) === `@${group}`)
+          return {
+            start,
+            end,
+            editAsText: false,
+            content: (
+              <GroupChip
+                label={group}
+                names={people
+                  .map((item) => labels.get(item.pubkey) ?? item.name)
+                  .join(", ")}
+                count={people.length}
+              />
+            ),
+          };
         const profile = mention ? undefined : profileLinks.get(start);
         const identity = mention ?? profile?.pubkey;
         const label = profile?.label ?? draft.text.slice(start + 1, end);

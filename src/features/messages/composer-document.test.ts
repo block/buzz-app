@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  composerGroup,
   composerSchema as schema,
   projectComposerDocument,
   readComposerDocument,
@@ -735,6 +736,14 @@ describe("inline formatting batch", () => {
       ),
     ).toBe("_@Honey_");
   });
+  it("trusts a group chip only with a one-line label", () => {
+    const members = [{ pubkey: "a".repeat(64), name: "Honey" }];
+    const group = (label: string) =>
+      composerGroup({ label, members }, `@${label}`);
+    expect(group("crew")).not.toBeNull();
+    for (const label of ["crew\n\n# Title", "\u202ecrew", "x".repeat(257)])
+      expect(group(label)).toBeNull();
+  });
   it("escapes literal punctuation in each generated format", () => {
     for (const mark of ["bold", "italic", "strike"] as const)
       for (const character of ["*", "_", "~", "!"]) {
@@ -779,3 +788,48 @@ it.each(["chat", "document"] as const)(
     expect(readComposerDocument(draft, []).eq(original)).toBe(true);
   },
 );
+
+it("a group chip's members keep `explicit` through a saved draft, as a person chip does", () => {
+  const ann = { pubkey: "a".repeat(64), name: "Ann", explicit: true as const };
+  const bo = { pubkey: "b".repeat(64), name: "Bo", explicit: true as const };
+  const saved = mentionDraft(
+    projectComposerDocument(
+      doc(
+        paragraph(
+          schema.nodes.token.create({
+            source: "@Crew",
+            group: { label: "Crew", members: [ann, bo] },
+          }),
+          schema.text(" "),
+          schema.nodes.token.create({ source: "@Ann", recipient: ann }),
+        ),
+      ),
+    ).draft,
+  );
+  expect(
+    projectComposerDocument(
+      readComposerDocument(saved, []),
+    ).draft.recipients.map(({ pubkey, label, explicit }) => [
+      pubkey,
+      label,
+      explicit,
+    ]),
+  ).toEqual([
+    [ann.pubkey, "Crew", true],
+    [bo.pubkey, "Crew", true],
+    [ann.pubkey, undefined, true],
+  ]);
+});
+
+it("a person chip keeps `explicit` when it is rebuilt from the draft text", () => {
+  const ann = { pubkey: "a".repeat(64), name: "Ann", explicit: true as const };
+  const draft = mentionDraft({
+    text: "@Ann ",
+    recipients: [{ ...ann, start: 0, end: 4 }],
+  });
+  expect(
+    projectComposerDocument(
+      readComposerDocument(draft, [{ start: 0, end: 4 }]),
+    ).draft.recipients.map(({ pubkey, explicit }) => [pubkey, explicit]),
+  ).toEqual([[ann.pubkey, true]]);
+});

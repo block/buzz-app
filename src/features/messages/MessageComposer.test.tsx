@@ -113,6 +113,7 @@ import type { EmojiSnapshot } from "../relay/emoji-directory";
 import { emojiQuery } from "../../bundled/emoji/emoji-query";
 import type { ComposerInputElement } from "./composer-dom";
 import { profileTarget } from "../profiles/target";
+import { profileMentionParts } from "./profile-mentions";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import * as modelStorage from "./solo-model-picks-storage";
@@ -241,6 +242,10 @@ function mount(
   viewer?: string,
   agents?: Agents,
   task?: ChannelMessage,
+  match: ComposerCompletion["match"] = ({ text, start }) =>
+    text.startsWith("!") && start > 0
+      ? { start: 0, end: start, query: text.slice(1, start) }
+      : null,
 ) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
@@ -257,10 +262,7 @@ function mount(
     pluginId: "test",
     revision,
     title: "Delayed",
-    match: ({ text, start }) =>
-      text.startsWith("!") && start > 0
-        ? { start: 0, end: start, query: text.slice(1, start) }
-        : null,
+    match,
     component: Completion,
   });
   let completions: readonly Contribution<ComposerCompletion>[] = [
@@ -7787,7 +7789,7 @@ it("qualifies both namesakes retroactively without changing source and removes q
   expect(h.messages.send).toHaveBeenCalledWith(
     "channel",
     "@Honey @Honey  ",
-    [first.pubkey, first.pubkey],
+    [first.pubkey],
     [],
   );
 });
@@ -8393,9 +8395,14 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
   expect(h.input()).toHaveValue("x".repeat(15999));
   expect(screen.getByRole("alert")).toHaveTextContent("too long");
   h.fill("");
+  const people = Array.from({ length: 32 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `P${i}`,
+  }));
   act(() => {
-    for (let i = 0; i < 32; i++)
-      expect(h.commands().insertMention(first)).toBe(true);
+    for (const person of people)
+      expect(h.commands().insertMention(person)).toBe(true);
+    expect(h.commands().insertMention(people[7] ?? first)).toBe(true);
   });
   const before = h.input().value;
   act(() => {
@@ -8942,7 +8949,6 @@ it.each([undefined, "root"])(
     h.submit();
     expect(send.mock.calls.at(-1)?.[threadRootId ? 3 : 2]).toEqual([
       first.pubkey,
-      second.pubkey,
       second.pubkey,
     ]);
     expect(h.input()).toHaveValue("@Honey ");
@@ -13299,6 +13305,204 @@ it("batch insertion rejects an unavailable member atomically and does not send o
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
 });
+const bangAnywhere: ComposerCompletion["match"] = ({ text, start }) => {
+  const at = text.lastIndexOf("!", start - 1);
+  return at >= 0 && /^$|[\s`]$/.test(text.slice(0, at).slice(-1))
+    ? { start: at, end: start, query: text.slice(at + 1, start) }
+    : null;
+};
+function offerCrew(
+  h: ReturnType<typeof mount>,
+  mentions: readonly MentionRecipient[],
+  label = "Crew",
+) {
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [{ id: "crew", label, edit: { mentions, label } }],
+    });
+  });
+}
+it("a labelled mentions edit is one chip, sent as `@label` with each member once", async () => {
+  const h = mount();
+  h.fill("!Crew");
+  offerCrew(h, [first, second, first]);
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("@Crew ");
+  expect(
+    screen.getByRole("img", {
+      name: "Group Crew, 2 recipients: Honey · rcaj, Honey · 04hu",
+    }),
+  ).toHaveTextContent("@Crew · 2");
+  act(() => void h.commands().insertMention(first));
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[1]).toBe(
+    `@Crew @Honey (${first.pubkey}) `,
+  );
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+});
+it("a selection offset inside a group chip keeps it one chip that notifies every member", async () => {
+  const h = mount();
+  h.fill("!Crew");
+  offerCrew(h, [first, second]);
+  await h.user.keyboard("{Enter}");
+  act(() => h.input().setSelectionRange(2, 2));
+  fireEvent(document, new Event("selectionchange"));
+  expect(
+    screen.getByRole("img", {
+      name: "Group Crew, 2 recipients: Honey · rcaj, Honey · 04hu",
+    }),
+  ).toBeVisible();
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  expect(h.messages.send.mock.calls[0]?.[1]).toBe("@Crew ");
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+    first.pubkey,
+    second.pubkey,
+  ]);
+});
+it("deleting a group chip removes every member from who is notified", async () => {
+  const h = mount();
+  h.fill("!Crew");
+  offerCrew(h, [first, second]);
+  await h.user.keyboard("{Enter}");
+  act(() => h.input().setSelectionRange(0, 5));
+  await h.user.keyboard("{Backspace}");
+  expect(h.commands().recipients).toEqual([]);
+  expect(screen.queryByRole("img", { name: /^Group Crew/ })).toBeNull();
+});
+it.each([
+  [
+    "a group",
+    { mentions: [first, second], label: "Crew" },
+    [first.pubkey, second.pubkey],
+  ],
+  ["a person", { mention: first }, [first.pubkey]],
+])(
+  "picking %s inside link text keeps its recipients",
+  async (_, edit, notified) => {
+    const h = mount(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      bangAnywhere,
+    );
+    const label = "go !Crew now";
+    await h.user.type(h.input(), label);
+    act(() => h.input().setSelectionRange(0, label.length));
+    act(() => void h.input().editLink()?.save(label, "https://example.test/"));
+    act(() => h.input().setSelectionRange(8, 8));
+    fireEvent(document, new Event("selectionchange"));
+    expect(h.input().querySelector("a")).not.toBeNull();
+    act(() => {
+      h.completionRequests.at(-1)?.({
+        items: [{ id: "pick", label: "Pick", edit }],
+      });
+    });
+    await h.user.keyboard("{Enter}");
+    expect(h.input().querySelector("a [data-source]")).not.toBeNull();
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual(notified);
+  },
+);
+it.each([
+  ["a code span", "Crew", "see `run !Crew` now", "see `run @Crew ` now"],
+  ["a fenced block", "Crew", "```\nrun !Crew\n```", "```\nrun @Crew \n```"],
+  [
+    "a code span",
+    "Honey team",
+    "see `run !Crew` now",
+    "see `run @Honey team ` now",
+  ],
+])(
+  "a labelled mentions edit inside %s is only its name (%s)",
+  async (_, label, text, sent) => {
+    const h = mount(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      bangAnywhere,
+    );
+    h.fill(text);
+    const caret = text.indexOf("!Crew") + "!Crew".length;
+    act(() => h.input().setSelectionRange(caret, caret));
+    fireEvent(document, new Event("selectionchange"));
+    offerCrew(h, [first, second], label);
+    await h.user.keyboard("{Enter}");
+    expect(h.input()).toHaveValue(sent);
+    expect(h.commands().recipients).toEqual([]);
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+    expect(h.messages.send.mock.calls[0]?.[1]).toBe(sent);
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
+  },
+);
+it.each([
+  ["Crew", "@Crew "],
+  [
+    "*ops*",
+    "[@Honey](nostr:npub1424242424242424242424242424242424242424242424242424qamrcaj) [@Honey](nostr:npub1hwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwamhwasxw04hu) ",
+  ],
+])(
+  "a labelled mentions edit while editing a sent message adds text and no recipients (%s)",
+  async (label, text) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    h.fill("!Crew");
+    offerCrew(h, [first, second], label);
+    await h.user.keyboard("{Enter}");
+    expect(h.input()).toHaveValue(text);
+    expect(h.commands().recipients).toEqual([]);
+    h.submit();
+    expect(h.messages.edit.mock.calls[0]?.[1]).toBe(text);
+    expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+it("a labelled mentions edit with an unavailable member adds nothing", async () => {
+  const h = mount({ inviteAgents: true });
+  h.fill("!Crew");
+  offerCrew(h, [first, { pubkey: "c".repeat(64), name: "Missing" }]);
+  await h.user.keyboard("{Enter}");
+  expect(h.input()).toHaveValue("!Crew");
+  expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
+});
+it("a person in a chip and also mentioned alone is one reference outside a DM", async () => {
+  const h = mount();
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "dm",
+        members: ["d".repeat(64), second.pubkey],
+        participants: [second.pubkey],
+      },
+    ],
+  };
+  Object.assign(h.session, {
+    channels: { list: () => list, subscribeList: () => () => {} },
+    memberAdditions: { add: vi.fn() },
+    outbox: { ...h.session.outbox, supports: () => true },
+  });
+  h.fill("!Crew");
+  offerCrew(h, [first, second]);
+  await h.user.keyboard("{Enter}");
+  act(() => void h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  await act(async () => {});
+  expect(h.messages.send).toHaveBeenCalledOnce();
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([second.pubkey]);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+});
 it.each(["disabled", "retarget", "unmount"])(
   "revokes batch commands after %s",
   (transition) => {
@@ -14375,6 +14579,16 @@ it("while a typed tag decides, a Solo menu toggle edits the tags, not a hidden l
   expect(sendingTo("Ada")).toBeInTheDocument();
 });
 
+it("after a Solo group chip, each picked tag joins the leading tags in order", async () => {
+  const { h, ada, bea } = mountSoloAgents({ main: first.pubkey });
+  h.fill("!Crew");
+  offerCrew(h, [ada, bea]);
+  await h.user.keyboard("{Enter}");
+  act(() => void h.commands().insertText("hello"));
+  act(() => void h.commands().insertMention(ada));
+  act(() => void h.commands().insertMention(bea));
+  expect(h.input()).toHaveValue("@Crew @Ada @Bea hello");
+});
 it("while a typed tag decides, a Solo team pick replaces the tags", () => {
   const { h, ada, bea, sendingTo } = mountSoloAgents({ main: first.pubkey });
   act(() => {
@@ -17370,7 +17584,10 @@ it.each([
       act(() => {
         h.input().insertText(
           "",
-          Array.from({ length: 32 }, () => second),
+          Array.from({ length: 32 }, (_, i) => ({
+            pubkey: i.toString(16).padStart(64, "0"),
+            name: `P${i}`,
+          })),
         );
       }),
     alert:
@@ -18324,6 +18541,426 @@ it("pastes a copied forward literally inside a code block", async () => {
   expect(
     screen.queryByRole("button", { name: "Remove forwarded message" }),
   ).not.toBeInTheDocument();
+});
+
+const oneChipLabels = new Set([
+  "Team 42",
+  "24-7",
+  "eng-oncall",
+  "a-b-c",
+  "हिंदी टीम",
+  "हिंदी-टीम",
+  "ทีมไทย",
+  "Cafe\u0301 crew",
+]);
+const groupLabelMatrix = [
+  ...oneChipLabels,
+  "eng_ios",
+  "-ops",
+  "ops-",
+  "a--b",
+  "a - b",
+  "Honey team",
+  "Honey-crew",
+];
+async function pickSent(edit: {
+  mentions: MentionRecipient[];
+  label?: string;
+}) {
+  const h = mount();
+  h.fill("!Crew");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [{ id: "crew", label: "Crew", edit }],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  const chips = screen
+    .queryAllByRole("img")
+    .map((node) => node.getAttribute("aria-label"));
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  const [, content, tags] = h.messages.send.mock.calls[0] ?? [];
+  cleanup();
+  return { chips, content, tags };
+}
+it.each(groupLabelMatrix)(
+  "a group picked with the label %s is one chip only when the label is plain text and starts with no member's name",
+  async (label) => {
+    const group = await pickSent({ mentions: [first, second], label });
+    expect(group.tags).toEqual([first.pubkey, second.pubkey]);
+    if (oneChipLabels.has(label)) {
+      expect(group.content).toBe(`@${label} `);
+      expect(group.chips).toEqual([
+        `Group ${label}, 2 recipients: Honey · rcaj, Honey · 04hu`,
+      ]);
+    } else {
+      expect(group).toEqual(await pickSent({ mentions: [first, second] }));
+      expect(group.chips.some((name) => name?.startsWith("Group"))).toBe(false);
+    }
+  },
+);
+const maryJane = { ...first, name: "Mary Jane" };
+const wes = { ...second, name: "Wes" };
+it.each([
+  ["Mary crew", [maryJane, wes], false],
+  ["mary crew", [maryJane, wes], false],
+  ["MARY CREW", [maryJane, wes], false],
+  ["Mary-crew", [maryJane, wes], false],
+  ["Marys crew", [maryJane, wes], true],
+  ["Crew Mary", [maryJane, wes], true],
+  ["Wesley team", [maryJane, wes], true],
+  ["ÉMILE crew", [{ ...first, name: "Émile Durand" }], false],
+  ["ſam crew", [{ ...first, name: "Sam Lee" }], false],
+])(
+  "a group picked with the label %s is one chip only when mobile's reader binds no member's name or first word at its start",
+  async (label, members, holds) => {
+    const group = await pickSent({ mentions: members, label });
+    expect(group.tags).toEqual(members.map((person) => person.pubkey));
+    if (holds) expect(group.content).toBe(`@${label} `);
+    else expect(group).toEqual(await pickSent({ mentions: members }));
+  },
+);
+it.each(["eng-oncall", "a-b-c"])(
+  "a group labelled %s is still one chip after its saved draft is restored",
+  async (label) => {
+    const h = mount();
+    h.fill("!Crew");
+    offerCrew(h, [first, second], label);
+    await h.user.keyboard("{Enter}");
+    act(() => h.input().blur());
+    h.remount();
+    expect(
+      screen
+        .queryAllByRole("img")
+        .map((node) => node.getAttribute("aria-label")),
+    ).toEqual([`Group ${label}, 2 recipients: Honey · rcaj, Honey · 04hu`]);
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+    expect(h.messages.send.mock.calls[0]?.[1]).toBe(`@${label} `);
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual([
+      first.pubkey,
+      second.pubkey,
+    ]);
+  },
+);
+
+it.each([true, false])(
+  "a group label that starts with the name of a person already in the draft is its members (person in the draft: %s)",
+  async (withPerson) => {
+    const h = mount(
+      {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      bangAnywhere,
+    );
+    if (withPerson) {
+      h.fill("!H");
+      act(() => {
+        h.completionRequests.at(-1)?.({
+          items: [{ id: "honey", label: "Honey", edit: { mention: first } }],
+        });
+      });
+      await h.user.keyboard("{Enter}");
+      await h.user.keyboard("!Crew");
+    } else h.fill("!Crew");
+    offerCrew(h, [{ ...second, name: "Wes" }], "Honey crew");
+    await h.user.keyboard("{Enter}");
+    expect(
+      screen.queryAllByRole("img", { name: /^Group Honey crew/ }),
+    ).toHaveLength(withPerson ? 0 : 1);
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+    expect(h.messages.send.mock.calls[0]?.[1]).toBe(
+      withPerson ? "@Honey @Wes " : "@Honey crew ",
+    );
+    expect(h.messages.send.mock.calls[0]?.[2]).toEqual(
+      withPerson ? [first.pubkey, second.pubkey] : [second.pubkey],
+    );
+  },
+);
+
+const savedCrew = (
+  text: string,
+  label: string,
+  crew: readonly MentionRecipient[],
+  before: readonly MentionRecipient[] = [],
+) => {
+  const start = text.indexOf(`@${label}`);
+  return {
+    text,
+    recipients: [
+      ...before.map((person) => ({ ...person, start: 0, end: start - 1 })),
+      ...crew.map((person) => ({
+        ...person,
+        start,
+        end: start + label.length + 1,
+        label,
+      })),
+    ],
+  };
+};
+const opsCrew = savedCrew("@*ops* hi", "*ops*", [maryJane, wes]);
+async function sentGroups(h: ReturnType<typeof mount>) {
+  const groups = screen.queryAllByRole("img", { name: /^Group / }).length;
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalled());
+  const [, content, tags] = h.messages.send.mock.calls[0] ?? [];
+  return { groups, content, tags };
+}
+it.each([
+  ["*ops*", opsCrew],
+  [
+    "Mary crew",
+    savedCrew("@Mary Jane @Mary crew hi", "Mary crew", [wes], [maryJane]),
+  ],
+])(
+  "a saved group labelled %s comes back as typed and is sent as its members",
+  async (_label, saved) => {
+    writeView("scope", "draft:channel", typedDraft(saved));
+    expect(await sentGroups(mount())).toEqual({
+      groups: 1,
+      content: "@Mary Jane @Wes hi",
+      tags: [maryJane.pubkey, wes.pubkey],
+    });
+  },
+);
+it("a group whose label no longer holds is sent as its members from a draft saved without a document", async () => {
+  writeView("scope", "draft:channel", opsCrew);
+  expect(await sentGroups(mount())).toEqual({
+    groups: 1,
+    content: "@Mary Jane @Wes hi",
+    tags: [maryJane.pubkey, wes.pubkey],
+  });
+});
+it("a group whose label no longer holds is sent as its members from a draft another window saves", async () => {
+  const h = mount();
+  act(() => writeView("scope", "draft:channel", typedDraft(opsCrew)));
+  expect(await sentGroups(h)).toEqual({
+    groups: 1,
+    content: "@Mary Jane @Wes hi",
+    tags: [maryJane.pubkey, wes.pubkey],
+  });
+});
+it("a group whose label a person added after it binds is sent as its members when the draft reopens over a conflict", async () => {
+  const h = mount({}, undefined, undefined, undefined, undefined, bangAnywhere);
+  h.fill("!Crew");
+  offerCrew(h, [wes], "Mary crew");
+  await h.user.keyboard("{Enter}");
+  await h.user.keyboard("!M");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [{ id: "mary", label: "Mary Jane", edit: { mention: maryJane } }],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  act(() => writeView("scope", "draft:channel", "Saved elsewhere"));
+  h.remount();
+  expect(screen.getByRole("alert")).toHaveTextContent(/changed elsewhere/);
+  fireEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
+  expect(await sentGroups(h)).toEqual({
+    groups: 1,
+    content: "@Wes @Mary Jane ",
+    tags: [wes.pubkey, maryJane.pubkey],
+  });
+});
+it("a group picked before a member whose name starts its label is sent as its members, with the text after it in place", async () => {
+  const h = mount({}, undefined, undefined, undefined, undefined, bangAnywhere);
+  h.fill("!Crew");
+  offerCrew(h, [wes], "Mary crew");
+  await h.user.keyboard("{Enter}");
+  await h.user.keyboard("!M");
+  act(() => {
+    h.completionRequests.at(-1)?.({
+      items: [{ id: "mary", label: "Mary Jane", edit: { mention: maryJane } }],
+    });
+  });
+  await h.user.keyboard("{Enter}");
+  await h.user.keyboard("see you");
+  expect(await sentGroups(h)).toEqual({
+    groups: 1,
+    content: "@Wes @Mary Jane see you",
+    tags: [wes.pubkey, maryJane.pubkey],
+  });
+});
+it("in a Solo chat with agents only, a group of people outside it whose label starts with the toolbar agent's name is sent as its members", async () => {
+  const { h } = mountSoloAgents({ main: first.pubkey });
+  const outside = [
+    { pubkey: "d".repeat(64), name: "Cy" },
+    { pubkey: "e".repeat(64), name: "Di" },
+  ];
+  await choicesLoaded();
+  h.fill("!Crew");
+  offerCrew(h, outside, "Ada crew");
+  await h.user.keyboard("{Enter}");
+  act(() => void h.commands().insertText("hi"));
+  expect(await sentGroups(h)).toEqual({
+    groups: 1,
+    content: "@Cy @Di hi",
+    tags: [first.pubkey],
+  });
+});
+it.each([
+  ["picked", 0],
+  ["saved in a draft", 1],
+])(
+  "in a one-to-one DM with an agent, a group whose label starts with the agent's name is %s and sent as its members",
+  async (_how, groups) => {
+    const viewer = "d".repeat(64);
+    const ops = "c".repeat(64);
+    if (groups)
+      writeView(
+        "scope",
+        "draft:channel",
+        typedDraft(savedCrew("@Ops crew hi", "Ops crew", [maryJane, wes])),
+      );
+    const h = mount({}, undefined, viewer);
+    h.setProfiles(new Map([[ops, { name: "Ops", isAgent: true }]]));
+    const dm = {
+      status: "ready" as const,
+      channels: [
+        { id: "channel", channelType: "dm" as const, members: [viewer, ops] },
+      ],
+    };
+    Object.assign(h.session.channels, {
+      list: () => dm,
+      get: () => dm.channels[0],
+    });
+    h.remount();
+    if (!groups) {
+      h.fill("!Crew");
+      offerCrew(h, [maryJane, wes], "Ops crew");
+      await h.user.keyboard("{Enter}hi");
+    }
+    expect(await sentGroups(h)).toEqual({
+      groups,
+      content: "@Mary Jane @Wes hi",
+      tags: [],
+    });
+  },
+);
+it.each([
+  ["verified", "picked", 0, "Mary Jane Jones crew", ""],
+  ["verified", "saved in a draft", 1, "Mary Jane Jones crew", ""],
+  ["self-set", "picked", 0, "Mo crew", "Mo Jones"],
+])(
+  "a group whose label starts with a member's %s name is %s and sent as its members",
+  async (_name, _how, groups, label, own) => {
+    const mj = { ...first, name: "MJ" };
+    const verified = {
+      displayName: "MJ",
+      username: "mj",
+      fullName: "Mary Jane Jones",
+      issuerLabel: "Example",
+      verifiedAt: 1,
+      status: "checked" as const,
+      multipleIssuers: false,
+    };
+    if (groups)
+      writeView(
+        "scope",
+        "draft:channel",
+        typedDraft(savedCrew(`@${label} hi`, label, [mj, wes])),
+      );
+    const h = mount();
+    h.setProfiles(
+      new Map([
+        [mj.pubkey, { name: "MJ", verified }],
+        [wes.pubkey, { name: "Wes" }],
+      ]),
+    );
+    if (own)
+      Object.assign(h.session.profiles, {
+        event: (pubkey: string) =>
+          pubkey === mj.pubkey
+            ? {
+                id: "e".repeat(64),
+                pubkey,
+                created_at: 1,
+                kind: 0,
+                content: JSON.stringify({ name: own }),
+                tags: [],
+              }
+            : undefined,
+      });
+    if (!groups) {
+      h.fill("!Crew");
+      offerCrew(h, [mj, wes], label);
+      await h.user.keyboard("{Enter}hi");
+    }
+    const sent = await sentGroups(h);
+    const reader = new Map([
+      [mj.pubkey, { name: "Mary Jane Jones", verified }],
+      [wes.pubkey, { name: "Wes" }],
+    ]);
+    expect({
+      ...sent,
+      parts: profileMentionParts(
+        { content: sent.content ?? "", mentions: sent.tags ?? [] },
+        reader,
+      ),
+    }).toEqual({
+      groups,
+      content: "@MJ @Wes hi",
+      tags: [mj.pubkey, wes.pubkey],
+      parts: [
+        { text: "@MJ", target: profileTarget(mj.pubkey) },
+        { text: " " },
+        { text: "@Wes", target: profileTarget(wes.pubkey) },
+        { text: " hi" },
+      ],
+    });
+  },
+);
+it.each([
+  ["the composer's own send", false],
+  ["a submission", true],
+])(
+  "a group sent as its members past the length limit is refused through %s, and the draft stays",
+  async (_path, submitted) => {
+    const submit = vi.fn();
+    const draftKey = submitted ? "new-draft" : "draft:channel";
+    const text = `@*ops* ${"x".repeat(15990)}`;
+    writeView(
+      "scope",
+      draftKey,
+      typedDraft(savedCrew(text, "*ops*", [maryJane, wes])),
+    );
+    const h = mount(
+      submitted
+        ? { submission: { draftKey, locked: false, disabled: false, submit } }
+        : {},
+    );
+    h.submit();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "@*ops* could not be tagged: the message would be too long.",
+    );
+    expect(submit).not.toHaveBeenCalled();
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(screen.queryAllByRole("img", { name: /^Group / })).toHaveLength(1);
+    expect(h.input()).toHaveValue(text);
+  },
+);
+it("undoing and redoing a group pick brings back one chip with the same members", async () => {
+  const h = mount();
+  h.fill("!Crew");
+  offerCrew(h, [maryJane, wes]);
+  await h.user.keyboard("{Enter}");
+  const chips = () =>
+    screen.queryAllByRole("img").map((node) => node.getAttribute("aria-label"));
+  const picked = chips();
+  expect(picked).toEqual(["Group Crew, 2 recipients: Mary Jane, Wes"]);
+  act(() => h.input().undo(false));
+  expect(chips()).toEqual([]);
+  act(() => h.input().undo(true));
+  expect(chips()).toEqual(picked);
+  expect(await sentGroups(h)).toEqual({
+    groups: 1,
+    content: "@Crew ",
+    tags: [maryJane.pubkey, wes.pubkey],
+  });
 });
 
 it("lets a send gate keep or refuse a message the composer would publish, and publishes when a gate throws", async () => {

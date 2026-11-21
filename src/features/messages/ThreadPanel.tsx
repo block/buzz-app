@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { hostComposerProvenance } from "./mention-draft";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
@@ -1666,9 +1667,14 @@ function ThreadMessages({
         ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
         : null;
     if (line) {
+      // Below any header the reader scrolls under, as a thread sheet's.
+      const cover =
+        Number.parseFloat(getComputedStyle(element).scrollPaddingTop) || 0;
       correctScrollTop(
         element,
-        line.getBoundingClientRect().top - element.getBoundingClientRect().top,
+        line.getBoundingClientRect().top -
+          element.getBoundingClientRect().top -
+          cover,
       );
       // Only a line that leaves the reader at the latest reply follows it.
       follow.current =
@@ -2264,238 +2270,242 @@ function ThreadMessages({
             : undefined
         }
       />
-      <section
-        ref={scroller}
-        data-message-scroller
-        className={styles.threadHistory}
-        style={
-          {
-            "--channel-preview-inset": preview
-              ? `calc(${joinNoticeHeight}px + var(--space-3))`
-              : "0px",
-          } as CSSProperties
-        }
-        aria-label="Thread messages"
-        aria-busy={positioning}
-        data-positioning={positioning || undefined}
-        data-jump-visible={showJumpToLatest || undefined}
-        onScroll={(event) => {
-          if (!positioned.current) return;
-          const element = event.currentTarget;
-          if (olderAnchor.current) {
-            const anchor = olderAnchor.current;
-            const row = [
-              ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-            ].find((row) => row.dataset.messageId === anchor.id);
-            if (row) anchor.top = row.getBoundingClientRect().top;
+      {/* The reader's scrollport, with its edge material for a sheet. */}
+      <div className={styles.threadHistoryFrame} data-thread-history-frame="">
+        <section
+          ref={scroller}
+          data-message-scroller
+          className={styles.threadHistory}
+          style={
+            {
+              "--channel-preview-inset": preview
+                ? `calc(${joinNoticeHeight}px + var(--space-3))`
+                : "0px",
+            } as CSSProperties
           }
-          // A browser-generated scroll during reflow must not replace the
-          // reading intent before ResizeObserver has corrected the new geometry.
-          const previous = resizePosition.current;
-          if (
-            previous &&
-            (previous.width !== element.clientWidth ||
-              previous.height !== element.clientHeight ||
-              previous.contentHeight !== element.scrollHeight)
-          )
-            return;
-          const bottom =
-            element.scrollHeight - element.clientHeight - element.scrollTop <
-            80;
-          if (jumpingToLatest.current) return;
-          captureResizePosition();
-          if (element.scrollTop !== lineTop.current) {
-            follow.current = bottom;
-            lineTop.current = undefined;
-          }
-          setShowJumpToLatest(!bottom);
-          if (bottom) setNewMessageCount(0);
-          loadOlder();
-        }}
-        onWheel={(event) => {
-          keepReadingPosition();
-          if (event.deltaY < 0) loadOlder();
-        }}
-        onTouchMove={() => {
-          keepReadingPosition();
-          loadOlder();
-        }}
-        onPointerDown={keepReadingPosition}
-        onKeyDown={(event) => {
-          moveMessageSelection(event);
-          if (event.defaultPrevented) return;
-          if (
-            [
-              "ArrowUp",
-              "ArrowDown",
-              "PageUp",
-              "PageDown",
-              "Home",
-              "End",
-              " ",
-            ].includes(event.key)
-          ) {
-            keepReadingPosition();
+          aria-label="Thread messages"
+          aria-busy={positioning}
+          data-positioning={positioning || undefined}
+          data-jump-visible={showJumpToLatest || undefined}
+          onScroll={(event) => {
+            if (!positioned.current) return;
+            const element = event.currentTarget;
+            if (olderAnchor.current) {
+              const anchor = olderAnchor.current;
+              const row = [
+                ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
+              ].find((row) => row.dataset.messageId === anchor.id);
+              if (row) anchor.top = row.getBoundingClientRect().top;
+            }
+            // A browser-generated scroll during reflow must not replace the
+            // reading intent before ResizeObserver has corrected the new geometry.
+            const previous = resizePosition.current;
             if (
-              ["ArrowUp", "PageUp", "Home"].includes(event.key) ||
-              (event.key === " " && event.shiftKey)
+              previous &&
+              (previous.width !== element.clientWidth ||
+                previous.height !== element.clientHeight ||
+                previous.contentHeight !== element.scrollHeight)
             )
-              loadOlder();
-          }
-        }}
-        tabIndex={0}
-      >
-        <JumpToLatestButton
-          visible={showJumpToLatest}
-          newMessageCount={newMessageCount}
-          onClick={jumpToLatest}
-        />
-        <MessageContextMenus>
-          <div
-            data-thread-rows=""
-            data-activity-history-scope=""
-            inert={positioning}
-          >
-            {snapshot.root && intro}
-            {snapshot.root ? (
-              <MessageRow
-                viewer={session.viewer}
-                extensions={extensions}
-                session={session}
-                scope={scope}
-                onReply={soloConversation ? undefined : focusReply}
-                stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
-                row={snapshot.root}
-                representedAgents={stableActivity.agents(
-                  snapshot.root.id,
-                  rootPresentation.representedAgents.get(snapshot.root.id),
-                )}
-                repliedAgents={stableActivity.agents(
-                  `replied:${snapshot.root.id}`,
-                  rootReplies.repliedAgents.get(snapshot.root.id),
-                )}
-                recordedActivity={stableActivity.activity(
-                  snapshot.root.id,
-                  rootActivity,
-                  "history",
-                )}
-                profile={profiles.get(snapshot.root.authorId)}
-                participantProfiles={profiles}
-                agentPubkeys={agentPubkeys}
-                media={session.media}
-                onOpenLink={onOpenLink}
-                canOpenLink={canOpenLink}
-                day={false}
-                layout="thread"
-                retry={session.messages.retry}
-                mediaMode="thread"
-                {...(mediaSeek
-                  ? {
-                      mediaSeekTo: mediaSeek.seconds,
-                      mediaSeekRequest: mediaSeek.request,
-                    }
-                  : {})}
-                {...(onOpenMediaReview
-                  ? { onOpenMediaReview: openRootMedia }
-                  : {})}
-              />
-            ) : snapshot.status !== "loading" ? (
-              targetUnavailable ? (
-                // One notice, with its recovery beside it, when nothing loaded.
-                <div className={styles.threadNotice}>
-                  <p role="status">This message isn’t available.</p>
-                  {!historyError && (
-                    <Button type="button" onClick={() => void view.refresh()}>
+              return;
+            const bottom =
+              element.scrollHeight - element.clientHeight - element.scrollTop <
+              80;
+            if (jumpingToLatest.current) return;
+            captureResizePosition();
+            if (element.scrollTop !== lineTop.current) {
+              follow.current = bottom;
+              lineTop.current = undefined;
+            }
+            setShowJumpToLatest(!bottom);
+            if (bottom) setNewMessageCount(0);
+            loadOlder();
+          }}
+          onWheel={(event) => {
+            keepReadingPosition();
+            if (event.deltaY < 0) loadOlder();
+          }}
+          onTouchMove={() => {
+            keepReadingPosition();
+            loadOlder();
+          }}
+          onPointerDown={keepReadingPosition}
+          onKeyDown={(event) => {
+            moveMessageSelection(event);
+            if (event.defaultPrevented) return;
+            if (
+              [
+                "ArrowUp",
+                "ArrowDown",
+                "PageUp",
+                "PageDown",
+                "Home",
+                "End",
+                " ",
+              ].includes(event.key)
+            ) {
+              keepReadingPosition();
+              if (
+                ["ArrowUp", "PageUp", "Home"].includes(event.key) ||
+                (event.key === " " && event.shiftKey)
+              )
+                loadOlder();
+            }
+          }}
+          tabIndex={0}
+        >
+          <JumpToLatestButton
+            visible={showJumpToLatest}
+            newMessageCount={newMessageCount}
+            onClick={jumpToLatest}
+          />
+          <MessageContextMenus>
+            <div
+              data-thread-rows=""
+              data-activity-history-scope=""
+              inert={positioning}
+            >
+              {snapshot.root && intro}
+              {snapshot.root ? (
+                <MessageRow
+                  viewer={session.viewer}
+                  extensions={extensions}
+                  session={session}
+                  scope={scope}
+                  onReply={soloConversation ? undefined : focusReply}
+                  stackNext={joinsLive && snapshot.root.id === lastMessage?.id}
+                  row={snapshot.root}
+                  representedAgents={stableActivity.agents(
+                    snapshot.root.id,
+                    rootPresentation.representedAgents.get(snapshot.root.id),
+                  )}
+                  repliedAgents={stableActivity.agents(
+                    `replied:${snapshot.root.id}`,
+                    rootReplies.repliedAgents.get(snapshot.root.id),
+                  )}
+                  recordedActivity={stableActivity.activity(
+                    snapshot.root.id,
+                    rootActivity,
+                    "history",
+                  )}
+                  profile={profiles.get(snapshot.root.authorId)}
+                  participantProfiles={profiles}
+                  agentPubkeys={agentPubkeys}
+                  media={session.media}
+                  onOpenLink={onOpenLink}
+                  canOpenLink={canOpenLink}
+                  day={false}
+                  layout="thread"
+                  retry={session.messages.retry}
+                  mediaMode="thread"
+                  {...(mediaSeek
+                    ? {
+                        mediaSeekTo: mediaSeek.seconds,
+                        mediaSeekRequest: mediaSeek.request,
+                      }
+                    : {})}
+                  {...(onOpenMediaReview
+                    ? { onOpenMediaReview: openRootMedia }
+                    : {})}
+                />
+              ) : snapshot.status !== "loading" ? (
+                targetUnavailable ? (
+                  // One notice, with its recovery beside it, when nothing loaded.
+                  <div className={styles.threadNotice}>
+                    <p role="status">This message isn’t available.</p>
+                    {!historyError && (
+                      <Button type="button" onClick={() => void view.refresh()}>
+                        Try again
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <p className={styles.empty}>Original message unavailable.</p>
+                )
+              ) : null}
+              <ol className={styles.threadList}>
+                {showOlderPageStatus && snapshot.error && (
+                  <li className={styles.threadHistoryPageStatus}>
+                    <p role="alert">{snapshot.error}</p>
+                    <Button type="button" onClick={retryThread}>
                       Try again
                     </Button>
-                  )}
-                </div>
-              ) : (
-                <p className={styles.empty}>Original message unavailable.</p>
-              )
-            ) : null}
-            <ol className={styles.threadList}>
-              {showOlderPageStatus && snapshot.error && (
-                <li className={styles.threadHistoryPageStatus}>
-                  <p role="alert">{snapshot.error}</p>
-                  <Button type="button" onClick={retryThread}>
-                    Try again
-                  </Button>
-                </li>
+                  </li>
+                )}
+                {renderReplies(undefined)}
+              </ol>
+              {!preview && !positioning && composerRoot && (
+                <AgentConnectionSetup
+                  key={`${channelId}:${rootId}`}
+                  session={session}
+                  channel={session.channels?.get?.(channelId)}
+                  rows={rows}
+                />
               )}
-              {renderReplies(undefined)}
-            </ol>
-            {!preview && !positioning && composerRoot && (
-              <AgentConnectionSetup
-                key={`${channelId}:${rootId}`}
-                session={session}
-                channel={session.channels?.get?.(channelId)}
-                rows={rows}
-              />
+              {!positioning && rootId && (
+                <TypingIndicator
+                  audience="agents"
+                  inFlow
+                  session={session}
+                  channelId={channelId}
+                  threadRootId={rootId}
+                  previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
+                  openActivity={onOpenLink}
+                  canOpenActivity={canOpenLink}
+                />
+              )}
+            </div>
+          </MessageContextMenus>
+          {requireReadyRoot &&
+            snapshot.root &&
+            snapshot.root.id !== messageId && (
+              <p role="status">
+                This saved draft does not identify a thread root. Open its
+                origin to check the destination.
+              </p>
             )}
-            {!positioning && rootId && (
-              <TypingIndicator
-                audience="agents"
-                inFlow
-                session={session}
-                channelId={channelId}
-                threadRootId={rootId}
-                previousAuthor={joinsLive ? lastMessage?.authorId : undefined}
-                openActivity={onOpenLink}
-                canOpenActivity={canOpenLink}
-              />
-            )}
-          </div>
-        </MessageContextMenus>
-        {requireReadyRoot &&
-          snapshot.root &&
-          snapshot.root.id !== messageId && (
-            <p role="status">
-              This saved draft does not identify a thread root. Open its origin
-              to check the destination.
+          {positioning || (snapshot.status === "loading" && !rows.length) ? (
+            <ThreadLoading />
+          ) : null}
+          {selectionNotice && (
+            <p role="alert">
+              {selectionNotice.unavailable
+                ? "That message is no longer available."
+                : "Couldn’t open that message."}
             </p>
           )}
-        {positioning || (snapshot.status === "loading" && !rows.length) ? (
-          <ThreadLoading />
-        ) : null}
-        {selectionNotice && (
-          <p role="alert">
-            {selectionNotice.unavailable
-              ? "That message is no longer available."
-              : "Couldn’t open that message."}
-          </p>
-        )}
-        {snapshot.limited && !snapshot.error && (
-          <p className={styles.threadNote}>Thread history limit reached.</p>
-        )}
-        {(historyError || (targetUnavailable && snapshot.root)) && (
-          <div className={styles.threadNotice}>
-            {targetUnavailable && snapshot.root && (
-              <p role="status">Selected message unavailable.</p>
-            )}
-            {historyError && <p role="alert">{THREAD_FAILED}</p>}
-            <Button type="button" onClick={() => void view.refresh()}>
-              Try again
-            </Button>
-          </div>
-        )}
-        {selectionNotice && !selectionNotice.unavailable && (
-          <div className={styles.threadHistoryControls}>
-            <Button
-              type="button"
-              loading={selectionNotice.pending}
-              onClick={selectionNotice.retry}
-            >
-              Try again
-            </Button>
-          </div>
-        )}
-        <div
-          className={styles.timelineEnd}
-          data-thread-end=""
-          aria-hidden="true"
-        />
-      </section>
+          {snapshot.limited && !snapshot.error && (
+            <p className={styles.threadNote}>Thread history limit reached.</p>
+          )}
+          {(historyError || (targetUnavailable && snapshot.root)) && (
+            <div className={styles.threadNotice}>
+              {targetUnavailable && snapshot.root && (
+                <p role="status">Selected message unavailable.</p>
+              )}
+              {historyError && <p role="alert">{THREAD_FAILED}</p>}
+              <Button type="button" onClick={() => void view.refresh()}>
+                Try again
+              </Button>
+            </div>
+          )}
+          {selectionNotice && !selectionNotice.unavailable && (
+            <div className={styles.threadHistoryControls}>
+              <Button
+                type="button"
+                loading={selectionNotice.pending}
+                onClick={selectionNotice.retry}
+              >
+                Try again
+              </Button>
+            </div>
+          )}
+          <div
+            className={styles.timelineEnd}
+            data-thread-end=""
+            aria-hidden="true"
+          />
+        </section>
+        <DialogBarMaterial className={styles.threadEdgeBottom} />
+      </div>
       {/* After the scroller, so its ref is attached when this registers. */}
       <MessageSelection
         list={scroller}

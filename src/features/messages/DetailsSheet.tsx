@@ -51,22 +51,42 @@ function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
     new DOMRect(box.left - originX, box.top - originY, box.width, box.height);
   const rect = local(composer.getBoundingClientRect());
   const bounds = local(pane.getBoundingClientRect());
-  // The scrim dims the pane's own surface, clipped to its rounded shape.
+  // The scrim dims the pane's outer surface, clipped to the pane's own region:
+  // joined panels share their shell's rounded shape, and their inner panels
+  // deliberately have no radius.
   const surface =
     pane.closest<HTMLElement>("[data-details-sheet-surface]") ??
+    pane.closest<HTMLElement>("[data-buzz-surface][data-joined]") ??
     pane.closest<HTMLElement>("[data-buzz-surface]") ??
     pane;
-  const surfaceBounds = local(surface.getBoundingClientRect());
+  const surfaceBox = surface.getBoundingClientRect();
+  const surfaceBounds = local(surfaceBox);
   const surfaceStyle = getComputedStyle(surface);
+  const clip = (
+    pane.closest<HTMLElement>(
+      "[data-details-sheet-surface], [data-overlay-boundary]",
+    ) ?? pane
+  ).getBoundingClientRect();
   // A sheet over a composer inside another sheet stops below that sheet's
-  // header, which stays above it.
+  // header, which stays above it; nor does its scrim cover that header, whose
+  // Close still closes both.
   const header = frame?.matches("[data-details-sheet-surface]")
     ? frame.querySelector("header")?.getBoundingClientRect()
     : undefined;
-  // Nor does its scrim cover that header, whose Close still closes both.
-  const scrimTop = header
-    ? Math.max(surfaceBounds.top, header.bottom - originY)
-    : surfaceBounds.top;
+  // A region edge at the surface's border extends through that border.
+  const inset = (distance: number, border: string) =>
+    distance <= Number.parseFloat(border) ? 0 : distance;
+  const scrimInset = [
+    Math.max(
+      inset(clip.top - surfaceBox.top, surfaceStyle.borderTopWidth),
+      header ? header.bottom - surfaceBox.top : 0,
+    ),
+    inset(surfaceBox.right - clip.right, surfaceStyle.borderRightWidth),
+    inset(surfaceBox.bottom - clip.bottom, surfaceStyle.borderBottomWidth),
+    inset(clip.left - surfaceBox.left, surfaceStyle.borderLeftWidth),
+  ]
+    .map((value) => `${value}px`)
+    .join(" ");
   return {
     "--composer-left": `${rect.left}px`,
     "--composer-width": `${rect.width}px`,
@@ -78,24 +98,36 @@ function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
       "--sheet-top": `${Math.max(bounds.top, header ? header.bottom - originY : 0)}px`,
     }),
     "--pane-top": `${bounds.top}px`,
-    "--scrim-top": `${scrimTop}px`,
+    "--scrim-top": `${surfaceBounds.top}px`,
     "--scrim-left": `${surfaceBounds.left}px`,
     "--scrim-width": `${surfaceBounds.width}px`,
-    "--scrim-height": `${surfaceBounds.bottom - scrimTop}px`,
-    "--scrim-radius": header
-      ? `0 0 ${surfaceStyle.borderBottomRightRadius} ${surfaceStyle.borderBottomLeftRadius}`
-      : surfaceStyle.borderRadius,
+    "--scrim-height": `${surfaceBounds.height}px`,
+    "--scrim-radius": surfaceStyle.borderRadius,
+    "--scrim-inset": scrimInset,
   } as CSSProperties;
 }
 
 /** Follows the composer while the sheet is mounted: it grows as a reply is
- * typed, and the pane resizes with the window and its splits. */
-function useComposerGeometry(host: ComposerOverlayHost, mounted: boolean) {
+ * typed, and the pane resizes with the window and its splits. It also measures
+ * the sheet's header, which a thread reads beneath. */
+function useComposerGeometry(
+  host: ComposerOverlayHost,
+  mounted: boolean,
+  surface: HTMLElement | null,
+) {
   const { composer, pane } = host;
   const [style, setStyle] = useState(() => geometry(host));
   useLayoutEffect(() => {
     if (!mounted) return;
-    const update = () => setStyle(geometry({ composer, pane }));
+    const header = surface?.querySelector("header");
+    const update = () =>
+      setStyle({
+        ...geometry({ composer, pane }),
+        "--sheet-border-width": surface
+          ? getComputedStyle(surface).borderBottomWidth
+          : "0px",
+        "--sheet-header-height": `${header?.getBoundingClientRect().height ?? 0}px`,
+      } as CSSProperties);
     update();
     const observer =
       typeof ResizeObserver === "undefined"
@@ -103,12 +135,13 @@ function useComposerGeometry(host: ComposerOverlayHost, mounted: boolean) {
         : new ResizeObserver(update);
     observer?.observe(composer);
     observer?.observe(pane);
+    if (header) observer?.observe(header);
     window.addEventListener("resize", update);
     return () => {
       observer?.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [composer, pane, mounted]);
+  }, [composer, pane, mounted, surface]);
   return style;
 }
 
@@ -185,23 +218,31 @@ function useGrowth() {
 }
 
 /** Crossfades the view's own composer into the sheet's, in place, without
- * moving focus or draft ownership. */
+ * moving focus or draft ownership. A close that interrupts the opening
+ * reverses from the painted opacity rather than jumping. */
 function useComposerHandoff(
   sheet: HTMLElement | null,
   source: HTMLElement,
   open: boolean,
   enabled: boolean,
 ) {
+  const interrupted = useRef<{
+    target: HTMLElement;
+    opacity: string;
+    sourceOpacity: string;
+  } | null>(null);
   useLayoutEffect(() => {
     if (!sheet || !enabled) return;
     let animations: Animation[] = [];
     let started = false;
+    let editor: HTMLElement | null = null;
     const start = () => {
       const target = sheet.querySelector<HTMLElement>(
         "[data-message-composer]",
       );
       if (!target || started) return;
       started = true;
+      editor = target;
       if (immediate() || typeof target.animate !== "function") {
         if (open) source.dataset.composerCovered = "";
         return;
@@ -217,12 +258,21 @@ function useComposerHandoff(
         ),
         fill: "both",
       };
+      const prior =
+        interrupted.current?.target === target ? interrupted.current : null;
+      interrupted.current = null;
       const incoming = target.animate(
-        [{ opacity: open ? 0 : 1 }, { opacity: open ? 1 : 0 }],
+        [
+          { opacity: prior?.opacity ?? (open ? 0 : 1) },
+          { opacity: open ? 1 : 0 },
+        ],
         options,
       );
       const outgoing = source.animate(
-        [{ opacity: open ? 1 : 0 }, { opacity: open ? 0 : 1 }],
+        [
+          { opacity: prior?.sourceOpacity ?? (open ? 1 : 0) },
+          { opacity: open ? 0 : 1 },
+        ],
         options,
       );
       animations = [incoming, outgoing];
@@ -239,6 +289,14 @@ function useComposerHandoff(
     if (!started) observer.observe(sheet, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
+      interrupted.current =
+        editor && animations.some((item) => item.playState === "running")
+          ? {
+              target: editor,
+              opacity: getComputedStyle(editor).opacity,
+              sourceOpacity: getComputedStyle(source).opacity,
+            }
+          : null;
       for (const animation of animations) animation.cancel();
       delete source.dataset.composerCovered;
     };
@@ -278,7 +336,7 @@ export function DetailsSheet({
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
-  const style = useComposerGeometry(host, mounted);
+  const style = useComposerGeometry(host, mounted, surface);
   // The view's own composer stays usable under a reader; a thread's reply box
   // replaces it.
   useLayoutEffect(() => {
@@ -351,6 +409,8 @@ export function DetailsSheet({
           className={styles.sheet}
           data-details-sheet-surface=""
           data-contained-composer={containsComposer || undefined}
+          // Every sheet fits its content and grows with it, up to its maximum.
+          data-height="content"
           style={style}
           // A thread places focus in its reply box; a reader takes it itself.
           initialFocus={containsComposer ? false : popup}

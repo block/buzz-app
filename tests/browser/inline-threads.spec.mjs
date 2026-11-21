@@ -198,6 +198,43 @@ test.describe("Inline", () => {
     await expect(sheet(page)).toHaveCount(0);
   });
 
+  test("a thread sheet fits its content and fades into its own surface", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [short, long] = roots(app);
+    await clickRow(page, viewThread(page, short));
+    await expect(sheet(page).getByText("Unread reply 0")).toBeVisible();
+    // A short thread hugs its rows instead of taking the full height.
+    const room = (element) =>
+      Number.parseFloat(getComputedStyle(element).maxHeight) -
+      element.getBoundingClientRect().height;
+    await expect.poll(() => sheet(page).evaluate(room)).toBeGreaterThan(100);
+    await page.keyboard.press("Escape");
+    await expect(sheet(page)).toHaveCount(0);
+    for (let index = 0; index < 30; index++) app.reply(long.id, false, false);
+    await clickRow(page, viewThread(page, long));
+    await expect(sheet(page).getByText("Unread reply 1")).toBeVisible();
+    // A long one grows to the maximum and reads up from its reply box.
+    await expect.poll(() => sheet(page).evaluate(room)).toBeLessThan(1);
+    await sheet(page)
+      .locator("[data-message-scroller]")
+      .evaluate((element) => {
+        element.scrollTop = 0;
+      });
+    await expect(
+      sheet(page).getByRole("button", { name: "Jump to latest", exact: true }),
+    ).toBeVisible();
+    // The panel-colored composer fade would paint a darker strip over the
+    // raised sheet; the sheet's own edge material replaces it.
+    expect(
+      await sheet(page)
+        .locator("[data-thread-history-frame] + *")
+        .evaluate((element) => getComputedStyle(element, "::before").content),
+    ).toBe("none");
+  });
+
   test("details in the conversation read over its composer", async ({
     page,
     app,

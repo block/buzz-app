@@ -1019,7 +1019,10 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
   expect(recipient()).toHaveValue("");
   expect(recipient()).toHaveFocus();
   expect(screen.getByRole("button", { name: "Remove Person 2" })).toBeVisible();
+  // After a pick the list closes until the next name is typed.
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
   for (let index = 0; index < 7; index++) {
+    await t.user.type(recipient(), "Person");
     await waitFor(() =>
       expect(screen.getAllByRole("option").length).toBeGreaterThan(0),
     );
@@ -1029,21 +1032,22 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(8);
   expect(recipient()).toHaveAttribute("readonly");
-  // The eighth pick keeps the list open and swaps it for the limit, since
-  // "8 people selected" alone doesn't say eight is the most.
+  // The eighth pick closes the list like any pick; the limit notice shows
+  // when the list is reopened below.
   expect(recipient()).toHaveFocus();
-  expect(recipient()).toHaveAttribute("aria-expanded", "true");
+  expect(recipient()).toHaveAttribute("aria-expanded", "false");
   expect(recipient()).toHaveAttribute("placeholder", "8 people selected");
   expect(
-    screen.getByText("You can message up to 8 people at once."),
-  ).toHaveAttribute("role", "status");
+    screen.queryByText("You can message up to 8 people at once."),
+  ).not.toBeInTheDocument();
   expect(screen.queryAllByRole("option")).toHaveLength(0);
   await t.user.keyboard("{Tab}");
   expect(screen.getByRole("textbox")).toHaveFocus();
   await t.user.click(recipient());
-  expect(
-    await screen.findByText("You can message up to 8 people at once."),
-  ).toHaveAttribute("role", "status");
+  // A full field can't be typed in, so reopening it shows no notice now;
+  // the "8 people selected" placeholder is what remains.
+  expect(recipient()).toHaveAttribute("placeholder", "8 people selected");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
   await t.user.keyboard("{Enter}");
   expect(
     screen.getAllByRole("button", { name: /^Remove Person/ }),
@@ -1054,7 +1058,31 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
     screen.getAllByRole("button", { name: /^Remove Person/ }),
   ).toHaveLength(7);
   expect(recipient()).not.toHaveAttribute("readonly");
+  // With people still picked the list stays closed until a letter is typed.
+  expect(screen.queryAllByRole("option")).toHaveLength(0);
+  await t.user.type(recipient(), "Person");
   expect(await screen.findAllByRole("option")).not.toHaveLength(0);
+});
+
+it("closes the people list after each pick and brings it back when the next name is typed", async () => {
+  const t = setup();
+  t.mount();
+  // Nothing picked yet: the suggestions show on focus.
+  await screen.findByRole("option", { name: "Person 1" });
+  await t.user.click(screen.getByRole("option", { name: "Person 1" }));
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(recipient()).toHaveFocus();
+  // Clicking the field again doesn't reopen it; a letter does.
+  await t.user.click(recipient());
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  await t.user.type(recipient(), "Person 3");
+  await t.user.click(await screen.findByRole("option", { name: "Person 3" }));
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  // Removing every pick returns to suggestions on focus.
+  await t.user.click(screen.getByRole("button", { name: "Remove Person 1" }));
+  await t.user.click(screen.getByRole("button", { name: "Remove Person 3" }));
+  await t.user.click(recipient());
+  expect(await screen.findByRole("listbox")).toBeVisible();
 });
 
 it("shows selected recipient artwork without opening or sending, and updates it on removal", async () => {
@@ -1066,6 +1094,7 @@ it("shows selected recipient artwork without opening or sending, and updates it 
     "data-placeholder",
     "Message Person 1",
   );
+  await t.user.type(recipient(), "Person 2");
   await t.user.click(
     await screen.findByRole("option", { name: "Person 2, Agent" }),
   );
@@ -1391,7 +1420,10 @@ it("removes once for pointerdown plus click, then Backspace; effects outlive chi
   const t = setup();
   t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.click(screen.getByRole("option", { name: "Person 2, Agent" }));
+  await t.user.type(recipient(), "Person 2");
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
   const control = screen.getByRole("button", { name: "Remove Person 1" });
   fireEvent.pointerDown(control, { button: 0 });
   fireEvent.click(control, { detail: 1, clientX: 123, clientY: 234 });
@@ -1425,7 +1457,10 @@ it("keeps a failed draft editable and resolves changed recipients again", async 
   expect(screen.getByRole("textbox")).toHaveTextContent("Hello");
   expect(t.onStarted).not.toHaveBeenCalled();
   await t.user.click(recipient());
-  await t.user.click(screen.getByRole("option", { name: "Person 2, Agent" }));
+  await t.user.type(recipient(), "Person 2");
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
   await t.user.click(send());
   await waitFor(() =>
     expect(t.onStarted).toHaveBeenCalledWith(channel, "d".repeat(64)),
@@ -2003,6 +2038,8 @@ it("distinguishes namesake options and chips without pictures", async () => {
     const discriminator = labels.get(person.pubkey);
     assert.exists(discriminator);
     const label = `Chris ${discriminator}`;
+    // The list closes after the first pick; typing brings it back.
+    if (person !== same[0]) await t.user.type(recipient(), "Chris");
     const option = await screen.findByRole("option", { name: label });
     expect(option).toHaveTextContent(discriminator);
     await t.user.click(option);

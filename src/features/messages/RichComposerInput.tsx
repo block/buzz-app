@@ -7,6 +7,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useNamesRevision } from "../identity-names/react";
 import { useListedChannel } from "../relay/listed-channel";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
+import { avatarMedia } from "../../shared/avatar-source";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { Profile } from "../relay/contracts";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
@@ -79,19 +80,26 @@ const TokenChip = memo(function TokenChip({
   kind,
   id,
   label,
+  avatar,
   qualifier,
   reveal,
 }: {
   kind: "agent" | "person";
   id: string;
   label: string;
+  avatar: string | undefined;
   qualifier: string | undefined;
   reveal: boolean;
 }) {
   return (
     <InlineChip
       address={{ kind, id }}
-      face={{ label, loading: false, resolved: true }}
+      face={{
+        label,
+        avatarUrl: avatar ?? null,
+        loading: false,
+        resolved: true,
+      }}
       qualifier={
         qualifier
           ? {
@@ -400,6 +408,10 @@ export function RichComposerInput({
               }
               id={identity}
               label={faceLabel}
+              avatar={avatarMedia(
+                directory.profiles.get(identity)?.picture,
+                session.media,
+              )}
               qualifier={qualifier}
               reveal={!!mention && reveal.has(mention)}
             />

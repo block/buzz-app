@@ -700,6 +700,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "message",
       "link",
       "resolved preview",
+      "avatar",
       "loading",
       "unresolved",
     ],
@@ -708,7 +709,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/InlineChip.tsx",
     baseUi: [],
-    composes: ["preview-card"],
+    composes: ["preview-card", "avatar"],
   },
   {
     slug: "full-page-surface",

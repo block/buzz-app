@@ -62,7 +62,7 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
   font: inherit;
   line-height: inherit;
 }
-.token img {
+.token img:where(:not([data-avatar-shape] img)) {
   display: inline-block;
   width: var(--size-emoji-inline);
   height: var(--size-emoji-inline);
@@ -74,7 +74,7 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
   line-height: var(--size-emoji-line);
 }
 /* Size emoji tokens only: ProseMirror adds an img separator after a trailing token. */
-.input[data-single-emoji] .token img {
+.input[data-single-emoji] .token img:where(:not([data-avatar-shape] img)) {
   vertical-align: top;
   width: var(--size-emoji-display);
   height: var(--size-emoji-display);
@@ -94,7 +94,7 @@ html[data-keyboard-navigation] .input:focus-visible:not([aria-disabled]) {
   margin-top: calc(var(--size-emoji-display) - var(--text-body-sm));
   line-height: 0;
 }
-.input[data-emoji-images-only] .token img {
+.input[data-emoji-images-only] .token img:where(:not([data-avatar-shape] img)) {
   vertical-align: bottom;
   margin-top: calc(var(--text-body-sm) - var(--size-emoji-display));
 }

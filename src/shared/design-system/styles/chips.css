@@ -33,7 +33,16 @@
 
   .inline-chip[data-kind="person"],
   .inline-chip[data-kind="agent"] {
-    border-radius: var(--radius-pill);
+    border-radius: var(--mention-radius, var(--radius-pill));
+  }
+
+  .inline-chip[data-kind="agent"],
+  [data-mention-kind="agent"] {
+    --mention-radius: 0.4em;
+    @supports (corner-shape: squircle) {
+      --mention-radius: 0.675em;
+      corner-shape: squircle;
+    }
   }
 
   :where(html[data-message-density="compact"])
@@ -117,11 +126,52 @@
     }
   }
 
+  /* An identity's avatar in place of a person or agent chip's sigil or icon,
+     in the composer and in messages alike. It sits concentric with the
+     pill's rounded end: the same --space-half inset above, below and before
+     it. Its artwork is a block so no line box offsets it inside the slot. */
+  .inline-chip-avatar {
+    display: inline-block;
+    overflow: hidden;
+    margin-right: 0.3em;
+  }
+
+  .inline-chip-avatar > * {
+    display: block;
+  }
+
+  .inline-chip:has(.inline-chip-avatar) {
+    padding-block: var(--space-half);
+    padding-inline: var(--space-half) var(--space-1h);
+    background-color: var(--affordance-mention);
+  }
+
+  /* Use the same font box for artwork in the composer and in messages. */
+  .inline-chip .inline-chip-avatar,
+  [data-mention-kind] .inline-chip-avatar {
+    line-height: normal;
+    width: 1lh;
+    height: 1lh;
+    vertical-align: text-top;
+  }
+
+  /* A slow or failed picture shows the kind's icon, as a chip without one does. */
+  .inline-chip-avatar [data-avatar-fallback] svg {
+    width: 0.8em;
+    height: 0.8em;
+  }
+
   .inline-chip-label {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .inline-chip:has(.inline-chip-avatar) .inline-chip-label {
+    letter-spacing: var(--text-message--letter-spacing);
+    font-weight: var(--type-weight-medium);
+    line-height: normal;
   }
 
   .inline-chip-qualifier {

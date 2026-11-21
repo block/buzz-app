@@ -36,16 +36,30 @@ const reviewers = [
 export const profiles = new Map<string, Profile>([
   [workflowOwner.pubkey, { name: "Wes" }],
   [reader, { name: "Alex Morgan", picture: "https://fixture.test/avatar" }],
-  [teammate, { name: "Sam Rivera" }],
-  [agent, { name: "Studio assistant", isAgent: true }],
+  [
+    teammate,
+    { name: "Sam Rivera", picture: "https://fixture.test/teammate-avatar" },
+  ],
+  [
+    agent,
+    {
+      name: "Studio assistant",
+      isAgent: true,
+      picture: "https://fixture.test/agent-avatar",
+    },
+  ],
   ...reviewers.map(({ name, pubkey }) => [pubkey, { name }] as const),
 ]);
 export const artwork = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#e9e8e4"/><circle cx="460" cy="100" r="48" fill="#cda97c"/><path d="M0 360L180 120L390 360M210 360L425 180L640 360" fill="#859e89"/></svg>')}`;
+const teammateAvatar = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" fill="#cda97c"/><circle cx="48" cy="38" r="18" fill="#f4ece2"/><path d="M16 96a32 30 0 0 1 64 0z" fill="#f4ece2"/></svg>')}`;
+const agentAvatar = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" fill="#3b6fd8"/><path d="M38 34L24 48l14 14M58 34l14 14-14 14" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>')}`;
 export const media = (url: string) => {
   if (url.endsWith("/panorama"))
     return `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1"><path d="M0 .5H1000" stroke="#859e89"/></svg>')}`;
   if (url.includes("/gif-")) return animatedGif;
   if (url.endsWith("/video")) return video;
+  if (url.endsWith("/teammate-avatar")) return teammateAvatar;
+  if (url.endsWith("/agent-avatar")) return agentAvatar;
   if (url.endsWith("/avatar")) return avatar;
   if (url.endsWith("/landscape") || url.endsWith("/poster")) return artwork;
   if (url.endsWith("/notes")) return "https://example.com/design-notes.txt";

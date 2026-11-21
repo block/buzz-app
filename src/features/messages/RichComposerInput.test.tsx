@@ -394,3 +394,26 @@ it.each(["bold", "italic"])(
     expect(h.draft().text).toBe("see  now!");
   },
 );
+
+it("shows a mentioned profile's safe avatar in its composer chip and keeps the sigil otherwise", () => {
+  const people = placeholderPeople(2);
+  const h = mount(longMentionDraft(people));
+  const [first, second] = people;
+  if (!first || !second) throw new Error("No people");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", picture: "https://example.org/ada.png" }],
+      [second.pubkey, { name: "Bo", picture: "http://example.org/bo.png" }],
+    ]),
+  );
+  const [ada, bo] = h.input.querySelectorAll<HTMLElement>(
+    "[data-source] .inline-chip",
+  );
+  expect(ada?.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://example.org/ada.png",
+  );
+  expect(ada).toHaveTextContent("@Ada");
+  expect(bo?.querySelector("img")).toBeNull();
+  expect(bo).toHaveTextContent("@Bo");
+});

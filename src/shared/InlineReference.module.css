@@ -35,7 +35,7 @@ html[data-keyboard-navigation] .link:focus-visible {
    bubbles) set the --mention-* trio, which wins over both.
    Channel hosts reset ordinary buttons, so the color is restated here. */
 [data-mention-kind].link {
-  border-radius: var(--radius-pill);
+  border-radius: var(--mention-radius, var(--radius-pill));
   text-decoration: none;
   --link-text: var(--mention-text, var(--text-mention));
   --link-hover: var(--mention-hover, var(--affordance-mention-hover));
@@ -62,6 +62,12 @@ html[data-keyboard-navigation] .link:focus-visible {
 
 .lead {
   white-space: nowrap;
+}
+
+/* With an avatar, the pill's leading inset matches its block padding, so the
+   avatar sits concentric with the pill's rounded end (chips.css). */
+[data-mention-kind][data-mention-avatar].link {
+  padding-inline-start: var(--space-half);
 }
 
 /* Flush against the name, as a channel's hash reads as part of it. */

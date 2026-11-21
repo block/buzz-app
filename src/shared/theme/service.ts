@@ -41,6 +41,11 @@ export type MessageDensity = "default" | "compact";
 export const DENSITY_KEY = "buzz-message-density.v1";
 export const parseMessageDensity = (value: unknown): MessageDensity =>
   value === "compact" ? "compact" : "default";
+/** Size of emoji-only messages and reaction artwork. */
+export type EmojiSize = "default" | "large";
+export const EMOJI_SIZE_KEY = "buzz-emoji-size.v1";
+export const parseEmojiSize = (value: unknown): EmojiSize =>
+  value === "large" ? "large" : "default";
 
 export interface AppearanceSnapshot {
   readonly preference: ColorModePreference;
@@ -55,6 +60,8 @@ export interface AppearanceSnapshot {
   readonly contrastError: string | null;
   readonly density: MessageDensity;
   readonly densityError: string | null;
+  readonly emojiSize: EmojiSize;
+  readonly emojiSizeError: string | null;
   readonly error: string | null;
 }
 
@@ -82,6 +89,8 @@ export function createAppearance(
     contrastError: null,
     density: "default",
     densityError: null,
+    emojiSize: "default",
+    emojiSizeError: null,
   };
   let disposed = false;
   let paletteGuard = 0;
@@ -117,6 +126,7 @@ export function createAppearance(
       state.messageWidth === "wide" ? "78rem" : "52rem",
     );
     root.dataset.messageDensity = state.density;
+    root.dataset.emojiSize = state.emojiSize;
     root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document
@@ -245,6 +255,22 @@ export function createAppearance(
     }
     notify();
   };
+  const restoreEmojiSize = () => {
+    try {
+      state = {
+        ...state,
+        emojiSize: parseEmojiSize(host?.localStorage.getItem(EMOJI_SIZE_KEY)),
+        emojiSizeError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        emojiSizeError:
+          "Emoji size could not be restored. Choose a size to try saving it again.",
+      };
+    }
+    notify();
+  };
   const onStorage = (event: StorageEvent) => {
     if (
       event.key !== APPEARANCE_KEY &&
@@ -253,6 +279,7 @@ export function createAppearance(
       event.key !== ACCENT_KEY &&
       event.key !== CONTRAST_KEY &&
       event.key !== DENSITY_KEY &&
+      event.key !== EMOJI_SIZE_KEY &&
       event.key !== LEGACY_BUBBLE_KEY &&
       event.key !== null
     )
@@ -266,6 +293,8 @@ export function createAppearance(
         restoreMessageWidth();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
       if (event.key === null || event.key === DENSITY_KEY) restoreDensity();
+      if (event.key === null || event.key === EMOJI_SIZE_KEY)
+        restoreEmojiSize();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
@@ -279,6 +308,8 @@ export function createAppearance(
         restoreMessageWidth();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
       if (event.key === null || event.key === DENSITY_KEY) restoreDensity();
+      if (event.key === null || event.key === EMOJI_SIZE_KEY)
+        restoreEmojiSize();
       if (
         event.key === null ||
         event.key === ACCENT_KEY ||
@@ -293,6 +324,7 @@ export function createAppearance(
   restoreAccent();
   restoreContrast();
   restoreDensity();
+  restoreEmojiSize();
   host?.addEventListener("storage", onStorage);
   systemScheme?.addEventListener("change", onSystemSchemeChange);
   return {
@@ -393,6 +425,20 @@ export function createAppearance(
           "This message density is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, density, densityError };
+      notify();
+    },
+    setEmojiSize(value: EmojiSize) {
+      if (disposed) return;
+      const emojiSize = parseEmojiSize(value);
+      let emojiSizeError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        host.localStorage.setItem(EMOJI_SIZE_KEY, emojiSize);
+      } catch {
+        emojiSizeError =
+          "This emoji size is active, but could not be saved on this device. Try again.";
+      }
+      state = { ...state, emojiSize, emojiSizeError };
       notify();
     },
     /** After `dispose`, setters change nothing. */

@@ -1604,6 +1604,13 @@
   --rim-shade: #ffffff1f;
 }
 
+:root[data-emoji-size="large"] {
+  --size-emoji-display: calc(var(--type-rem) * 4);
+  --size-emoji-line: calc(var(--type-rem) * 4.5);
+  /* Reaction artwork, still inside the pill. */
+  --size-emoji-reaction: 1rem;
+}
+
 :root[data-color-mode="dark"],
 .dark {
   --bg-app: var(--neutral-2);

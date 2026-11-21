@@ -119,6 +119,8 @@ it.each([
       contrastError: null,
       density: "default",
       densityError: null,
+      emojiSize: "default",
+      emojiSizeError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
     expect(b.meta.setAttribute).toHaveBeenLastCalledWith(
@@ -564,4 +566,47 @@ it("keeps density active on storage failure, retries, and follows other windows"
   app.dispose();
   app.setDensity("compact");
   expect(b.root.dataset.messageDensity).toBe("default");
+});
+
+it.each([
+  [null, "default"],
+  ["LARGE", "default"],
+  ["default", "default"],
+  ["large", "large"],
+] as const)(
+  "bootstrap and service agree on stored emoji size %j",
+  (stored, emojiSize) => {
+    const b = browser();
+    if (stored !== null) b.values.set("buzz-emoji-size.v1", stored);
+    runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+      localStorage: b.storage,
+      document: b.host.document,
+      matchMedia: b.host.matchMedia,
+    });
+    expect(b.root.dataset.emojiSize).toBe(emojiSize);
+    const app = createAppearance(b.host);
+    expect(app.snapshot().emojiSize).toBe(emojiSize);
+    expect(b.root.dataset.emojiSize).toBe(emojiSize);
+    app.dispose();
+  },
+);
+
+it("keeps emoji size active on storage failure, retries, and follows other windows", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  b.storage.setItem.mockImplementationOnce(() => {
+    throw new Error("denied");
+  });
+  app.setEmojiSize("large");
+  expect(b.root.dataset.emojiSize).toBe("large");
+  expect(app.snapshot().emojiSizeError).not.toBeNull();
+  app.setEmojiSize("large");
+  expect(b.values.get("buzz-emoji-size.v1")).toBe("large");
+  expect(app.snapshot().emojiSizeError).toBeNull();
+  b.values.set("buzz-emoji-size.v1", "default");
+  b.change("buzz-emoji-size.v1");
+  expect(b.root.dataset.emojiSize).toBe("default");
+  app.dispose();
+  app.setEmojiSize("large");
+  expect(b.root.dataset.emojiSize).toBe("default");
 });

@@ -1063,6 +1063,9 @@ Quitting Buzz also turns it off.
   Text size stays with **Interface size**.
   Hover a row to highlight it and show message actions at the right
   edge. The choice applies on this device only.
+- **Emoji size**: **Settings → Appearance → Emoji size → Large** shows
+  emoji-only messages, including drafts in the message box, and reaction
+  emoji bigger. The choice applies on this device only.
 - **Time format**: **Settings → Appearance → Clock** chooses 12-hour or
   24-hour times. System, the default, follows the desktop app's operating
   system: the 24-hour time setting on macOS, the short time format on Windows,

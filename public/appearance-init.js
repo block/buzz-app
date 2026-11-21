@@ -74,6 +74,14 @@
     /* Default spacing remains usable without storage. */
   }
   document.documentElement.dataset.messageDensity = density;
+  let emojiSize = "default";
+  try {
+    if (localStorage.getItem("buzz-emoji-size.v1") === "large")
+      emojiSize = "large";
+  } catch {
+    /* Default emoji remain usable without storage. */
+  }
+  document.documentElement.dataset.emojiSize = emojiSize;
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

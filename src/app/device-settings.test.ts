@@ -27,6 +27,7 @@ it("offers appearance and the message and agent preferences, and nothing else", 
     { key: "appearance.accent", value: "citrus", saved: true },
     { key: "appearance.vibe", value: "low", saved: true },
     { key: "conversations.message_density", value: "default", saved: true },
+    { key: "conversations.emoji_size", value: "default", saved: true },
     { key: "conversations.thread_placement", value: "side", saved: true },
     {
       key: "conversations.follow_up_behavior",

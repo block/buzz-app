@@ -22,6 +22,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ConfirmAction } from "./ConfirmAction";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { WorkflowForm, type WorkflowSelection } from "./WorkflowForm";
+import type { WebhookAddressSurface } from "./WorkflowWebhookSecretDialog";
 import { conditionRowError } from "./workflowConditionExpression";
 import { draftIssue } from "./editor-model";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
@@ -59,6 +60,7 @@ export function WorkflowEditor({
   runs,
   details,
   status,
+  webhook,
   children,
   create = false,
   chooseChannel = false,
@@ -82,6 +84,8 @@ export function WorkflowEditor({
   runs?: ReactNode;
   details?: ReactNode;
   status?: ReactNode;
+  /** The saved webhook address, worded for the surface it appears on. */
+  webhook?: ((surface: WebhookAddressSurface) => ReactNode) | undefined;
   children?: ReactNode;
   create?: boolean;
   chooseChannel?: boolean;
@@ -328,6 +332,7 @@ export function WorkflowEditor({
               disabled={disabled}
               selection={selection}
               onSelect={setSelection}
+              webhook={webhook?.("trigger-settings")}
               overview={
                 <div className="workflow-form">
                   <Field
@@ -396,6 +401,8 @@ export function WorkflowEditor({
                 />
               </Field>
               {enableSwitch}
+              {/* The saved address shows here too; it's the only place for definitions Form mode can't show. */}
+              {webhook?.("yaml")}
               {details}
             </div>
           )}

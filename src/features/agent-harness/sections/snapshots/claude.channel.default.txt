@@ -50,6 +50,8 @@ Use `agent_types` to list installed agent types. `agent_read` and `team_read` sh
 - Without `mentions`, `send` resolves `@Name` against current channel members. It fails before sending on an unresolved/ambiguous name or a mentioned pubkey that is not a member. Sending never changes membership.
 - Only `@mention` when you need their attention. Don't mention in narrative (e.g., "coordinating with Duncan" — no `@`). Naming someone while talking *about* them is narrative — "waiting on @morgan", "until @morgan brings work", "I'll loop in @morgan later". Drop the `@`. Every mention sends a notification; a mention nobody needs to act on is a false alarm.
 
+For literal data containing @names or nostr profile links, use `infer_mentions: false` on `send` or `reply_in_subthread` when the active tool schema supports it. This leaves message text unchanged and skips content-derived recipients; explicit `mentions` still notify.
+
 ## Callback Mentions
 
 - When you **finish delegated work**, you MUST `@mention` the delegator in the message that reports the result, deliverable, or blocker. This is the #1 cause of stalled collaboration.

@@ -1395,6 +1395,13 @@ default Huddle voice.
   The session scope stays selected when you switch between Codex, Claude, Goose
   and Pi. The harness-switch confirmation shows **Session scope · Dropped**
   when the destination cannot keep the saved scope.
+- On hosts whose active tool schema lists `infer_mentions`, agents can send
+  literal data with `infer_mentions: false` on `send` or `reply_in_subthread`.
+  It preserves text and skips recipients inferred from @names and nostr profile
+  links. Explicit `mentions` still notify; omit them or use an empty list for no
+  sender-derived p-tags. Normal inference stays the default. Other notification
+  rules still apply. Older hosts may ignore unknown arguments, so qualify the
+  host and refresh the session's tool inventory before relying on this option.
 - An agent's own messages do not wake it, even when they mention its name.
   To pass work to the same agent in another conversation, use `self_handoff`
   with the channel, text, and a thread message ID outside a Solo chat.

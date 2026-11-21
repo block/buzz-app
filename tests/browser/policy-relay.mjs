@@ -607,19 +607,30 @@ export function policyRelay({
           filter.authors?.some((id) => heldAuthors.has(id))
         )
           return holdProfile(result);
+        // An older page's aux closure, read apart from its rows, is not held.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
+          !(filter.include_aux && !filter.include_summaries) &&
           holdOlder
         )
           return new Promise((resolve, reject) => {
-            const abort = () => reject(init.signal.reason);
+            const abort = () => {
+              // A read the app cancels is no longer pending.
+              const index = pending.indexOf(receipt);
+              if (index >= 0) pending.splice(index, 1);
+              reject(init.signal.reason);
+            };
             init.signal.addEventListener("abort", abort, { once: true });
             const receipt = {
               community,
               channel,
               filter,
               events: result.filter((event) => event.kind === 9),
+              // The app abandoned the read, such as a cancelled read-ahead.
+              get closed() {
+                return init.signal.aborted;
+              },
               release() {
                 init.signal.removeEventListener("abort", abort);
                 resolve(Response.json(result));

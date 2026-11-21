@@ -15,7 +15,6 @@ import { useState } from "react";
 import type { SoloRegionProps } from "../../features/channel-navigation/solo-navigation-contract";
 import type { SidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
-import { readView, writeView } from "../../shared/view-state";
 import {
   conversationTarget,
   soloDraftTarget,
@@ -319,15 +318,18 @@ it("shows only chats and the Plugins card under a plugin restriction and restore
   f.roster((rows) => rows.filter((row) => row.channelType !== "solo"));
   expect(screen.queryByRole("button", { name: /^Planning/ })).toBeNull();
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
-  expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
+  await user.click(newMessageButton());
+  expect(f.open).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      route: { version: 1, params: "new-message" },
+    }),
+  );
   act(() => publish([]));
   expect(screen.getByRole("button", { name: "Inbox" })).toBeVisible();
   expect(screen.getByText("Plugin heading")).toBeVisible();
   expect(screen.getByText("Team plugin slot")).toBeVisible();
 });
-it("keeps Solo creation to chats and the New menu above the sections", async () => {
+it("starts every conversation in New message from the + above the sections", async () => {
   const user = userEvent.setup();
   const f = fixture(true, true);
   expect(screen.queryByRole("tab")).toBeNull();
@@ -337,13 +339,11 @@ it("keeps Solo creation to chats and the New menu above the sections", async () 
     within(solo).getByRole("button", { name: "New Solo chat" }),
   ).not.toHaveAttribute("aria-haspopup");
   expect(
-    within(solo).queryByRole("button", { name: "New options" }),
+    within(solo).queryByRole("button", { name: "New message" }),
   ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  expect(
-    (await screen.findAllByRole("menuitem")).map((item) => item.textContent),
-  ).toEqual(["New chat", "New channel", "New DM", "New workspace"]);
-  await user.click(screen.getByRole("menuitem", { name: "New DM" }));
+  const plus = newMessageButton();
+  expect(plus).not.toHaveAttribute("aria-haspopup");
+  await user.click(plus);
   expect(f.open).toHaveBeenLastCalledWith({
     version: 1,
     kind: "page",
@@ -505,135 +505,14 @@ it("preserves a source opening only for itself, through a later render", async (
   expect(teamRow()).not.toHaveAttribute("aria-current");
 });
 
-it.each([
-  ["New workspace", "New workspace", "Cancel"],
-  ["New channel", "Create a channel", "Close channel creation"],
-])(
-  "opens %s and returns focus to New options on cancel",
-  async (item, title, close) => {
-    const user = userEvent.setup();
-    fixture(true, true);
-    const trigger = screen.getByRole("button", { name: "New options" });
-    await user.click(trigger);
-    await user.click(await screen.findByRole("menuitem", { name: item }));
-    const dialog = await screen.findByRole("dialog", { name: title });
-    await waitFor(() =>
-      expect(
-        within(dialog).getByRole("textbox", { name: "Name" }),
-      ).toHaveFocus(),
-    );
-    await user.click(within(dialog).getByRole("button", { name: close }));
-    await waitFor(() => expect(trigger).toHaveFocus());
-  },
-);
-
-it("keeps unavailable creation actions disabled", async () => {
-  const user = userEvent.setup();
-  fixture(true);
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "New workspace" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByRole("menuitem", { name: "New channel" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  expect(screen.queryByRole("menuitem", { name: "New section" })).toBeNull();
-});
-
-it("creates a workspace from New options without opening a chat in it", async () => {
-  const f = fixture(true, true);
-  const user = userEvent.setup();
-  const create = vi
-    .spyOn(f.session.sidebarPreferences, "createSection")
-    .mockResolvedValue(undefined);
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "New workspace" }),
-  );
-  const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Name" }),
-    "Planning",
-  );
-  await user.click(within(dialog).getByRole("button", { name: "Create" }));
-  await waitFor(() => expect(dialog).not.toBeInTheDocument());
-  expect(create).toHaveBeenCalledTimes(1);
-  expect(f.open).not.toHaveBeenCalled();
-});
-
-it.each([
-  ["New workspace", "New workspace", "Name"],
-  ["New channel", "Create a channel", "Name"],
-])(
-  "retains typed %s input through cached reconnect and session replacement",
-  async (item, title, inputName) => {
-    const f = fixture(true, true);
-    const user = userEvent.setup();
-    f.connection({ status: "connecting", cached: true });
-    await user.click(screen.getByRole("button", { name: "New options" }));
-    await user.click(await screen.findByRole("menuitem", { name: item }));
-    const input = within(
-      await screen.findByRole("dialog", { name: title }),
-    ).getByRole("textbox", { name: inputName });
-    await user.type(input, "Keep this draft");
-    f.connection({ status: "error" });
-    expect(input).toHaveValue("Keep this draft");
-    f.replaceSession();
-    expect(
-      within(screen.getByRole("dialog", { name: title })).getByRole("textbox", {
-        name: inputName,
-      }),
-    ).toHaveValue("Keep this draft");
-  },
-);
-
-it("header channel creation expands the saved destination without changing other collapsed sections", async () => {
-  writeView(scope, "channel-sidebar", {
-    collapsed: ["channels", "starred"],
-    width: 280,
-  });
-  const f = fixture(true, true);
-  const create = vi
-    .spyOn(f.session.channelCreation, "create")
-    .mockResolvedValue("new-channel");
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "New channel" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Create a channel",
-  });
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Name" }),
-    "Planning",
-  );
-  await user.click(
-    within(dialog).getByRole("button", { name: /^Create channel$/ }),
-  );
-  await waitFor(() => expect(create).toHaveBeenCalledOnce());
-  await waitFor(() =>
-    expect(f.open).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: "conversation",
-        channelId: "new-channel",
-      }),
-    ),
-  );
-  expect(readView(scope, "channel-sidebar", null)).toMatchObject({
-    collapsed: ["starred"],
-    width: 280,
-  });
-});
-
-it("reveals Solo when New chat reopens the same destination after filtering it out", async () => {
-  const f = fixture(true);
-  const user = userEvent.setup();
-  f.navigate(soloDraftTarget(scope));
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
-});
+/** The sidebar's own +, apart from the Direct messages section's. */
+function newMessageButton() {
+  const button = screen
+    .getAllByRole("button", { name: "New message" })
+    .find((candidate) => !candidate.closest("[data-sidebar-section]"));
+  if (!button) throw new Error("Missing the sidebar's New message button");
+  return button;
+}
 
 const soloFailure = vi.hoisted(() => ({ active: false }));
 vi.mock("../../bundled/channels/SoloInventory", async (original) => {
@@ -687,105 +566,6 @@ it("contains a Solo render failure without rendering the failed inventory in its
     consoleError.mockRestore();
     await h.dispose();
   }
-});
-
-it("does not reveal or open a channel when its creation completes in a replaced session", async () => {
-  writeView(scope, "channel-sidebar", {
-    collapsed: ["channels", "starred"],
-    width: 280,
-  });
-  const f = fixture(true, true);
-  let finish!: (id: string) => void;
-  const pending = new Promise<string>((resolve) => {
-    finish = resolve;
-  });
-  const create = vi
-    .spyOn(f.session.channelCreation, "create")
-    .mockReturnValue(pending);
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "New channel" }),
-  );
-  const dialog = await screen.findByRole("dialog", {
-    name: "Create a channel",
-  });
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Name" }),
-    "Planning",
-  );
-  try {
-    await user.click(
-      within(dialog).getByRole("button", { name: /^Create channel$/ }),
-    );
-    await waitFor(() => expect(create).toHaveBeenCalledOnce());
-    f.replaceSession();
-  } finally {
-    await act(async () => {
-      finish("new-channel");
-      await pending;
-    });
-  }
-  expect(f.open).not.toHaveBeenCalled();
-  expect(readView(scope, "channel-sidebar", null)).toMatchObject({
-    collapsed: ["channels", "starred"],
-    width: 280,
-  });
-});
-
-it.each(["empty", "chats", "projects", "both"])(
-  "keeps unfiled creation available with %s",
-  async (inventory) => {
-    const user = userEvent.setup();
-    const f = fixture(true, true);
-    const channels = f.session.channels.list();
-    const preferences = f.session.sidebarPreferences.snapshot();
-    vi.spyOn(f.session.channels, "list").mockReturnValue({
-      ...channels,
-      channels:
-        inventory === "empty" || inventory === "projects"
-          ? []
-          : channels.channels,
-    });
-    vi.spyOn(f.session.sidebarPreferences, "snapshot").mockReturnValue({
-      ...preferences,
-      data: {
-        sections:
-          inventory === "projects" || inventory === "both"
-            ? [{ id: "project", name: "Work", order: 0 }]
-            : [],
-        assignments: {},
-        starred: [],
-        muted: [],
-      },
-    });
-    f.connection({});
-    expect(
-      await screen.findByLabelText("Solo", { selector: "summary" }),
-    ).toBeVisible();
-    const trigger = screen.getByRole("button", { name: "New options" });
-    await user.click(trigger);
-    await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
-    expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
-    await user.click(trigger);
-    await user.click(
-      await screen.findByRole("menuitem", { name: "New workspace" }),
-    );
-    const dialog = await screen.findByRole("dialog", { name: "New workspace" });
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(trigger).toHaveFocus());
-  },
-);
-
-it("keeps new Solo chats available when project creation is unavailable", async () => {
-  const user = userEvent.setup();
-  const f = fixture(true);
-  await user.click(screen.getByRole("button", { name: "New options" }));
-  expect(
-    await screen.findByRole("menuitem", { name: "New workspace" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  await user.click(screen.getByRole("menuitem", { name: "New chat" }));
-  expect(f.open).toHaveBeenLastCalledWith(soloDraftTarget(scope));
 });
 
 it("renders one contributed region heading with no built-in creation action", async () => {
@@ -1255,13 +1035,12 @@ it("renders each framed workspace once with creation controls and restores the o
       </PrimarySidebar>
     </ToastProvider>,
   );
-  const user = userEvent.setup();
   const checkOrdinary = async () => {
     expect(
-      await screen.findByRole("button", { name: "New chat in Work" }),
+      await screen.findByRole("button", { name: "New message in Work" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "New chat in Empty" }),
+      screen.getByRole("button", { name: "New message in Empty" }),
     ).toBeVisible();
     expect(
       view.container.querySelectorAll(
@@ -1269,12 +1048,7 @@ it("renders each framed workspace once with creation controls and restores the o
       ),
     ).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Chats" })).toBeNull();
-    await user.click(screen.getByRole("button", { name: "New options" }));
-    expect(
-      await screen.findByRole("menuitem", { name: "New chat" }),
-    ).toBeVisible();
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(newMessageButton()).toBeVisible();
   };
   try {
     await checkOrdinary();
@@ -1305,7 +1079,7 @@ it("renders each framed workspace once with creation controls and restores the o
       view.container.querySelector('[data-solo-workspace="work"]'),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "New chat in Work" }),
+      screen.getByRole("button", { name: "New message in Work" }),
     ).toBeVisible();
     const mixed = view.container.querySelectorAll(
       '[data-sidebar-section="group:mixed"]',
@@ -1321,11 +1095,7 @@ it("renders each framed workspace once with creation controls and restores the o
         '[data-solo-channel-id="chat"], [data-solo-destination-id="chat"]',
       ),
     ).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: "New options" }));
-    await screen.findByRole("menuitem", { name: "New workspace" });
-    expect(screen.getByRole("menuitem", { name: "New chat" })).toBeVisible();
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(newMessageButton()).toBeVisible();
     await act(() => source.fiber.dispose());
     await checkOrdinary();
   } finally {
@@ -1498,8 +1268,8 @@ it("shows a disabled region's chat in Solo while leaving its saved filing dorman
   }
 });
 
-it.each(["New options"])(
-  "selects the created workspace through its source from %s and retains selection failures for retry",
+it.each(["New workspace"])(
+  "selects the created workspace through its source from the %s row and retains selection failures for retry",
   async (triggerName) => {
     const h = createSoloRegionFixture(viewer);
     let saved: SidebarPreferences = {
@@ -1544,7 +1314,6 @@ it.each(["New options"])(
     const navigator = { ...h.navigator, open };
     const view = render(
       <ToastProvider>
-        <NewMenu relay={h.relay} navigator={navigator} />
         <PrimarySidebar
           relay={h.relay}
           navigator={navigator}
@@ -1556,9 +1325,8 @@ it.each(["New options"])(
     );
     const user = userEvent.setup();
     try {
-      await user.click(screen.getByRole("button", { name: triggerName }));
       await user.click(
-        await screen.findByRole("menuitem", { name: "New workspace" }),
+        await screen.findByRole("button", { name: triggerName }),
       );
       const dialog = await screen.findByRole("dialog", {
         name: "New workspace",

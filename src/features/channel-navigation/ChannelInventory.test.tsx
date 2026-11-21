@@ -1676,11 +1676,10 @@ it.each(["ready", "error"] as const)(
   },
 );
 
-it.each(["Laptop", "Team", "Favorites"])(
+it.each(["Team", "Favorites"])(
   "uses only the invoking section for placement (%s)",
   async (section) => {
     vi.stubGlobal("crypto", webcrypto);
-    const fromGroup = section === "Laptop";
     const fromStarred = section === "Favorites";
     const preferences = createSidebarPreferencesStore({
       read: async () => ({
@@ -1734,37 +1733,17 @@ it.each(["Laptop", "Team", "Favorites"])(
         expect(icon.querySelector("svg")).toBeInTheDocument();
         expect(icon).not.toHaveTextContent("★");
       }
-      if (fromGroup || fromStarred) {
-        fireEvent.click(
-          within(header).getByRole("button", {
-            name: `New options in ${section}`,
-          }),
-        );
-        fireEvent.click(
-          await screen.findByRole("menuitem", { name: "New channel" }),
-        );
-      } else {
-        fireEvent.click(
-          within(header).getByRole("button", { name: "Create channel" }),
-        );
-      }
+      fireEvent.click(
+        within(header).getByRole("button", { name: "Create channel" }),
+      );
       const destination = screen.queryByRole("combobox", {
         name: "Destination workspace",
       });
-      if (fromGroup) expect(destination).toHaveTextContent("Laptop");
-      else expect(destination).not.toBeInTheDocument();
-      const title = fromGroup
-        ? "Create a channel in Laptop"
-        : fromStarred
-          ? "Create a channel in Favorites"
-          : "Create a channel";
+      expect(destination).not.toBeInTheDocument();
+      const title = fromStarred
+        ? "Create a channel in Favorites"
+        : "Create a channel";
       expect(screen.getByRole("dialog")).toHaveAccessibleName(title);
-      if (fromGroup)
-        expect(
-          screen
-            .getByRole("dialog")
-            .querySelector(".buzz-dialog-step [data-sidebar-group-icon]"),
-        ).toHaveTextContent("💻");
       fireEvent.change(screen.getByRole("textbox", { name: "Name" }), {
         target: { value: "New laptop channel" },
       });
@@ -1777,14 +1756,14 @@ it.each(["Laptop", "Team", "Favorites"])(
         expect(create).toHaveBeenCalledWith({
           name: "New laptop channel",
           visibility: "open",
-          ...(fromGroup || fromStarred
+          ...(fromStarred
             ? {
                 setup: {
                   agents: [],
                   canvas: "",
                   templateId: "",
-                  groupId: fromGroup ? "laptop" : "",
-                  ...(fromStarred ? { starred: true } : {}),
+                  groupId: "",
+                  starred: true,
                 },
               }
             : {}),

@@ -1,86 +1,37 @@
-import { type RefObject, useRef, useState } from "react";
-import {
-  ChatCircleIcon,
-  ChatsCircleIcon,
-  HashIcon,
-} from "../../shared/design-system/icons";
-import type { ButtonProps } from "../../shared/design-system/ui/Button";
+import type { RefObject } from "react";
+import { PlusIcon } from "../../shared/design-system/icons";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
-import { SplitButton } from "../../shared/design-system/ui/SplitButton";
-import { readView, writeView } from "../../shared/view-state";
 
-const labels = {
-  chat: "New chat",
-  channel: "New channel",
-  dm: "New DM",
-} as const;
-
-export type WorkspaceNewAction = keyof typeof labels;
-const actions = ["chat", "channel", "dm"] as const;
-const icons = { chat: ChatCircleIcon, channel: HashIcon, dm: ChatsCircleIcon };
-
+/** A workspace's +: every conversation in it starts in New message. Inside
+ * the workspace's own menu it's that menu's New message item. */
 export function WorkspaceNewMenu({
-  scope,
-  id,
   name,
-  channelAvailable,
-  dmAvailable,
+  available,
   menuAnchor,
-  choose,
+  start,
 }: {
-  scope: string;
-  /** What the remembered action is saved under: a workspace, or Favorites. */
-  id: string;
   name: string;
-  channelAvailable: boolean;
-  dmAvailable: boolean;
+  available: boolean;
   menuAnchor?: RefObject<HTMLButtonElement | null> | undefined;
-  choose: (action: WorkspaceNewAction, trigger: HTMLButtonElement) => void;
+  start: () => void;
 }) {
-  const key = `workspace-new-action:${id}`;
-  const [action, setAction] = useState<WorkspaceNewAction>(() => {
-    const saved = readView<unknown>(scope, key, "chat");
-    return saved === "channel" || saved === "dm" ? saved : "chat";
-  });
-  const primary = useRef<HTMLButtonElement>(null);
-  const enabled = (choice: WorkspaceNewAction) =>
-    choice === "chat" ||
-    (choice === "channel" ? channelAvailable : dmAvailable);
-  const items = actions.map((choice) => (
-    <MenuItem
-      key={choice}
-      disabled={!enabled(choice)}
-      onClick={() => {
-        const trigger = (menuAnchor ?? primary).current;
-        if (!trigger) return;
-        setAction(choice);
-        writeView(scope, key, choice);
-        choose(choice, trigger);
-      }}
-    >
-      {labels[choice]}
-    </MenuItem>
-  ));
-  if (menuAnchor) return <>{items}</>;
-  // An unavailable remembered action falls back to New chat, always enabled.
-  const shown = enabled(action) ? action : "chat";
-  const Icon = icons[shown];
-  const label = `${labels[shown]} in ${name}`;
-  const primaryProps = {
-    ref: primary,
-    "aria-label": label,
-    title: label,
-    onClick: (event) => choose(shown, event.currentTarget),
-    children: <Icon aria-hidden="true" />,
-  } satisfies ButtonProps;
+  if (menuAnchor)
+    return (
+      <MenuItem disabled={!available} onClick={start}>
+        New message
+      </MenuItem>
+    );
+  const label = `New message in ${name}`;
   return (
-    <SplitButton
-      {...primaryProps}
+    <IconButton
+      disabled={!available}
+      aria-label={label}
+      title={label}
       variant="ghost"
       size="sm"
-      icon
-      menuLabel={`New options in ${name}`}
-      menu={items}
+      icon={<PlusIcon aria-hidden="true" />}
+      onClick={start}
     />
   );
 }

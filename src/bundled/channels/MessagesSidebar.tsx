@@ -211,6 +211,7 @@ function ScopedSidebar({
             before,
             content,
             team,
+            listEnd,
             after,
             dialogs,
           }) => (
@@ -310,6 +311,7 @@ function ScopedSidebar({
                                 slot={slot}
                               />
                             ))}
+                          {listEnd}
                         </SidebarUnread>
                         {after}
                       </props.Frame>

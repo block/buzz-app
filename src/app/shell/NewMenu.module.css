@@ -1,9 +1,0 @@
-.split {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  min-inline-size: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-half);
-}

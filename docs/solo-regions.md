@@ -244,6 +244,9 @@ in Solo. A channel group rendered inside a Team channel row uses the Team
 channel menu.
 Each entry has a unique `id`, a `label`, and an `onSelect` callback. The callback
 can return a promise. The host reports callback failures in the region heading.
+In a Solo channel group, entries follow **View channel details**. An optional
+`icon` supplies decorative artwork and `hint` adds short help on focus or hover.
+The host rechecks the row’s channel membership before calling `onSelect`.
 
 `ui.Workspace` and `ui.ChannelGroup` accept an optional
 `headerAccessory: ReactNode` beside their native controls. The accessory

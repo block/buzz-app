@@ -1258,7 +1258,8 @@ Quitting Buzz also turns it off.
   to a workspace or home section from the sidebar clears its star.
 - **Plugin channel rows**: a plugin can open a channel from its Solo row and keep
   that row selected. The sidebar then keeps its scroll position and open
-  sections. When a plugin is explicitly disabled, its existing chats appear as
+  sections. A plugin can add actions to the row’s **⋯** menu after **View channel
+  details**. When a plugin is explicitly disabled, its existing chats appear as
   ordinary chats in **Solo**, with their saved workspace filings dormant.
   Enabling the plugin again returns its chats to its rows when available.
 - **Open thread marker**: while a thread is displayed in the side pane, its

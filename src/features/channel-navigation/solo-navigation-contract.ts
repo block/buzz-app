@@ -157,7 +157,11 @@ export type SoloChannelGroupProps = Readonly<{
   /** Offered only while the host permits starting a chat from this channel. */
   onNewTask?(): void;
   headerLeading?: SoloHeaderLeading | undefined;
-  headerMenuActions?: readonly SoloHeaderMenuAction[] | undefined;
+  /** Entries in the Solo channel overflow, after View channel details. */
+  headerMenuActions?:
+    | readonly (SoloHeaderMenuAction &
+        Readonly<{ icon?: ReactNode; hint?: string }>)[]
+    | undefined;
   /** Independent header content that stays visible when collapsed. */
   headerAccessory?: ReactNode;
   /** Compact, non-interactive content shown in place of quiet header actions. */

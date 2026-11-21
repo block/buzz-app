@@ -1,6 +1,6 @@
 import { generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
-import { newChat } from "./navigation.mjs";
+import { activate, newChat } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
 
 const solo = "33333333-3333-4333-8333-333333333333";
@@ -393,8 +393,15 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
   app,
 }) => {
   await page.goto(app.origin);
+  // Let startup select the team channel. Keyboard activation follows the DM
+  // row even if the nearby sidebar sections move while profiles load.
+  await expect(page.locator('button[data-channel-id="beta"]')).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
   const row = page.locator('button[data-channel-id="dm-peer"]');
-  await row.click();
+  await activate(row);
+  await expect(row).toHaveAttribute("aria-current", "page");
   await expect
     .poll(() =>
       app.report.presenceSnapshots.some((snapshot) =>
@@ -410,6 +417,7 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
   const avatar = row.locator(".buzz-avatar-status");
   await expect(avatar).toHaveAttribute("data-status", "away");
   await page
+    .getByRole("article", { name: "Conversation", exact: true })
     .getByRole("button", {
       name: "Manage members of Alice Fixture",
       exact: true,

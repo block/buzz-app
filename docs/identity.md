@@ -393,6 +393,7 @@ lists it, a successful import automatically backs up the key as on a new
 account; a listed key continues without another upload.
 
 **Restore your key** opens native recovery in a separate browser sign-in.
+Its callback page stays open and offers **Return to Buzz**.
 Only the account’s linked key can be installed. While waiting, **Cancel** cancels
 the attempt; during installation, navigation is disabled. A successful install
 continues directly to community restoration and the next required step, without
@@ -1307,11 +1308,16 @@ copy takes the mark as the file has it: that session may have been checked
 before another copy's sign-out, so it never erases the mark. Expiry, refusals
 and close never set it, so renewing the same account stays one click. Sign out of Buzz leaves an existing mark in place.
 
-The browser callback shows that sign-in was received and attempts to close after
-three seconds. After verified session installation, macOS can return focus to
-the visible Buzz window while the captured sign-in browser is still foreground.
-Cancellation, sign-out, replacement and failed verification retire that attempt's
-return permission. Other platforms keep manual focus return.
+The browser callback shows that sign-in was received. On macOS, when Buzz was
+focused as the browser opened, the attempt arms a focus return: the page attempts
+to close after three seconds and, after verified session installation, macOS can
+return focus to the visible Buzz window while the captured sign-in browser is
+still foreground. Cancellation, sign-out, replacement and failed verification
+retire that attempt's return permission. Every other attempt (Windows, Linux, and
+macOS when Buzz was not focused) arms none: its page stays open and offers
+**Return to Buzz**, a bare `buzz://` link that brings Buzz to the front and opens
+nothing (see [OS deep links](deep-links.md#accepted-links)). A failed sign-in's
+page offers the same link.
 
 FI records use the OS secure-store service
 `xyz.block.buzz.desktop.federated-session` (with `.debug` for Rust debug

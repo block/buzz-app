@@ -14,8 +14,15 @@
   --surface-panel: #fff;
   --text-standard: #0f0f0f;
   --text-subtle: #525252;
+  --text-on-prominent: #fff;
+  --affordance-prominent: #000;
+  --affordance-prominent-hover: #191919;
+  --affordance-prominent-pressed: #525252;
+  --border-focus: #000;
   --space-panel-inset: 2rem;
   --radius-container: 2rem;
+  --radius-capsule: 2.125rem;
+  --duration-state: 150ms;
   --duration-settle: 220ms;
   --easing-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --shadow-panel: 0 1rem 2.5rem rgb(35 30 30 / 6%);
@@ -131,10 +138,6 @@ p {
   letter-spacing: -0.0025em;
 }
 
-p:empty {
-  display: none;
-}
-
 .brand {
   position: absolute;
   inset-block-start: 1.09375rem;
@@ -167,6 +170,48 @@ h1 {
   line-height: 1.25;
   font-weight: 500;
   letter-spacing: -0.015em;
+}
+
+/* The shared prominent Button recipe, on the link back to the app. */
+.action {
+  display: flex;
+  align-items: center;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-block-size: 2.5rem;
+  margin-block-start: 1.5rem;
+  /* In a narrow card with enlarged text the inset yields before the label breaks mid-word. */
+  padding: 0.5rem min(1.5rem, 12%);
+  border: 1px solid transparent;
+  border-radius: var(--radius-capsule);
+  background: var(--affordance-prominent);
+  color: var(--text-on-prominent);
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.0025em;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color var(--duration-state) ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .action:hover {
+    background: var(--affordance-prominent-hover);
+  }
+}
+
+.action:active {
+  background: var(--affordance-prominent-pressed);
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* Beside the link nothing closes the page: plain manual-close text at the hint's distance. */
+.action + p {
+  margin-block-start: 1.5rem;
 }
 
 .hint {
@@ -224,6 +269,10 @@ body[data-complete="false"] #close-spinner {
 @media (prefers-reduced-motion: reduce) {
   #close-spinner {
     animation: none;
+  }
+
+  .action {
+    transition: none;
   }
 }
 

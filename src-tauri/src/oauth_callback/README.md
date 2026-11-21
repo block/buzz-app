@@ -7,20 +7,23 @@ each performing its own code exchange and verification:
 
 - Key-backup restore (`nsec_backup`) uses a standard OAuth `redirect_uri`
   callback with native state protection and the branded callback page below.
+  It arms no focus return.
 - Native FI uses NIP-FA `return_to` and an S256 handoff challenge, without
   inventing an echoed OAuth state. Handoff secrets stay in its native session
   owner. It uses the shared callback template and account card with Buzz
   branding and the existing light web sign-in shell, including cube artwork.
   Success means the callback was received, not that native account verification
   has completed: the page instructs the user to return to the app to finish
-  verification. Errors retain their generic recovery copy. Federated pages share
-  the three-second close script and manual-close hint.
+  verification. Errors retain their generic recovery copy. Whether the page
+  closes itself or offers a link back follows the attempt's focus return; see
+  [Leaving the callback page](#leaving-the-callback-page).
   After native verification and session installation,
   their attempt-scoped macOS return can focus the visible Buzz window only
   while the captured browser is foreground. Cancellation, replacement, expiry
   and failed verification retire that permission. The signed-in snapshot
-  publishes before the return delay. The CSP permits exact embedded style and
-  script hashes and self-contained data assets.
+  publishes before the return delay. The CSP permits the exact embedded style
+  hash, the close script's hash only on a page that carries that script, and
+  self-contained data assets.
 
 Each caller passes an owner key: native FI uses its server's fingerprint and
 restore a fixed key. An owner's pending attempt cannot be replaced by that owner.
@@ -84,6 +87,37 @@ browser-launch failure, or the start of a main-document load. Loads in other
 webviews leave the attempt intact. Listener cleanup does not close the external
 browser.
 
+## Leaving the callback page
+
+A callback that ends the attempt, whether a success or a provider error, sends
+the person back to the app. How the page lets them leave is decided per attempt
+from whether a focus return is armed, never from the platform it was built for:
+
+- **A success with a return armed** closes itself. Native FI arms a return only
+  on macOS, and only when Buzz was focused as the browser opened. The page shows
+  a spinner with muted **Closing this window automatically** text for three
+  seconds before trying to close, and the native return can then focus Buzz.
+- **Every other reply that ends the attempt** stays open and offers **Return to
+  Buzz**. That covers a success with no return armed (native FI on Windows and
+  Linux, on macOS when Buzz was not focused, and every key-backup restore) and
+  any provider error, which retires an armed return. The link opens bare
+  `buzz://`, which brings Buzz to the front, opens nothing, shows no notice and
+  never displaces a link waiting to open (see
+  [OS deep links](../../../docs/deep-links.md#accepted-links)). The page carries
+  no script, no `script-src`, no close delay and no spinner or closing text, so
+  nothing can close it before the person uses the link and nothing reserves
+  space for a countdown: under the link it shows only **You can close this
+  window.**
+
+A reply that leaves the attempt pending (an invalid callback or an unknown path)
+offers no link: the app has nothing new to show.
+
+The link is ordinary navigation that needs a click, and the browser may ask
+before opening the app. It reaches whichever app the OS has registered for
+`buzz://`: an ordinary `just desktop` run registers none, so there the link does
+nothing or opens another installed copy. Nothing native activates the window on
+Windows or Linux beyond what that existing link does.
+
 ## Callback handling and limits
 
 - Accepts GET requests using HTTP/1.0 or HTTP/1.1, with exactly one matching
@@ -99,13 +133,16 @@ browser.
   mark outside a rounded white panel, a pale backdrop and decorative cube artwork.
   It stays light in either browser theme, with the panel near the top on narrow
   windows. Responses use `no-store` and `no-referrer`. Its Content Security Policy
-  permits only embedded image/font data and the exact stylesheet and close-window script
-  by hash, with no external assets or network
-  requests. Inline hashes use HTML-normalized line endings so Windows CRLF
-  checkouts receive the same styling and script behavior as LF checkouts.
-  A valid callback shows the headline **Signing you in…** and a
-  spinner with muted **Closing this window automatically** text for three seconds
-  before trying to close its page. The hint reserves its wrapped size through
+  permits only embedded image/font data and the exact stylesheet by hash, plus
+  the close-window script by hash on a page without the link back, with no
+  external assets or network requests. Inline hashes use HTML-normalized line
+  endings so Windows CRLF checkouts receive the same styling and script behavior
+  as LF checkouts. The link honors reduced motion like the
+  shared Button. A valid callback shows the headline
+  **Sign-in received** and asks the person to return to the app to finish
+  verification, then follows
+  [Leaving the callback page](#leaving-the-callback-page). On a page that closes
+  itself, the hint reserves its wrapped size through
   script startup and a blocked-close fallback, keeping the panel stationary.
   Manual-close text aligns with the heading; only automatic-closing text reserves
   the spinner's space.
@@ -118,10 +155,11 @@ browser.
   and disappears if closing is blocked, leaving manual-close guidance. Error
   pages remain open. Restoring an unclosed tab later can still fail because the
   loopback listener is temporary.
-  The headline describes sign-in in progress. The native owner still performs
+  The headline says only that the callback arrived. The native owner still performs
   code exchange and account validation after receiving the callback, and reports
   any verification failures in the app.
-  The standalone stylesheet mirrors the shared roles without loading the app;
+  The standalone stylesheet mirrors the shared roles without loading the app,
+  including the prominent Button recipe for **Return to Buzz**;
   the app's existing Inter Latin font is embedded, with system fallbacks for other
   characters. It does not inherit
   the app's Appearance preference. `public/builderlab-mark.svg` is a standalone

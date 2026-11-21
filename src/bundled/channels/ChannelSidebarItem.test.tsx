@@ -11,7 +11,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Profiler, type ReactNode } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
@@ -19,6 +19,7 @@ import type { InboxItem, InboxSnapshot } from "../../features/relay/inbox";
 import type { PresenceStatus } from "../../features/presence/presence";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { UnreadBadge } from "./UnreadBadge";
+import { SidebarCardDisplayContext } from "./SidebarCardDisplay";
 import { createSidebarPreferencesStore } from "../../features/relay/sidebar-preferences-store";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 
@@ -834,4 +835,105 @@ it("keeps cached mute from quieting unread but retains confirmed mute through re
   } finally {
     store.dispose();
   }
+});
+
+describe("conversation identity", () => {
+  const me = "e".repeat(64);
+  const agent = "a".repeat(64);
+  const tom = "b".repeat(64);
+  const molly = "c".repeat(64);
+  function viewer(profiles = new Map<string, Profile>()) {
+    const state = owner(profiles);
+    const ensure = vi.fn(async () => {});
+    const session = {
+      ...state.session,
+      viewer: me,
+      profiles: { ...state.session.profiles, ensure },
+    } as unknown as RelaySession;
+    return { session, ensure };
+  }
+
+  it("shows the one other member's face in a chat with one agent", () => {
+    const { session } = viewer(
+      new Map([[agent, { name: "Scout", isAgent: true }]]),
+    );
+    render(
+      <ChannelSidebarItem
+        {...itemProps(session, false, {
+          id: "alpha",
+          name: "Q1 roadmap",
+          channelType: "solo",
+          members: [me, agent],
+        })}
+      />,
+    );
+    const identity = document.querySelector("[data-dm-identity]");
+    expect(identity?.querySelector(".buzz-avatar")).not.toBeNull();
+    expect(identity?.hasAttribute("data-dm-participant-count")).toBe(false);
+  });
+
+  it("loads the one other member's profile when it's unknown", () => {
+    const { session, ensure } = viewer();
+    render(
+      <ChannelSidebarItem
+        {...itemProps(session, false, {
+          id: "alpha",
+          name: "Q1 roadmap",
+          channelType: "solo",
+          members: [me, agent],
+        })}
+      />,
+    );
+    expect(ensure).toHaveBeenCalledWith([agent]);
+  });
+
+  it("shows the number of others in a named conversation, like a group DM", () => {
+    const { session } = viewer();
+    render(
+      <ChannelSidebarItem
+        {...itemProps(session, false, {
+          id: "alpha",
+          name: "Site refresh",
+          channelType: "stream",
+          members: [me, tom, molly, agent],
+        })}
+      />,
+    );
+    expect(
+      document.querySelector("[data-dm-participant-count]"),
+    ).toHaveTextContent("3");
+  });
+
+  it("shows the chat bubble when no one else is in it", () => {
+    const { session } = viewer();
+    render(
+      <ChannelSidebarItem
+        {...itemProps(session, false, {
+          id: "alpha",
+          name: "Notes",
+          channelType: "stream",
+          members: [me],
+        })}
+      />,
+    );
+    expect(document.querySelector("[data-dm-identity]")).toBeNull();
+    expect(screen.getByRole("button", { name: /Notes/ })).toBeInTheDocument();
+  });
+
+  it("clusters up to three faces in tile view", () => {
+    const { session } = viewer();
+    render(
+      <SidebarCardDisplayContext.Provider value="icons">
+        <ChannelSidebarItem
+          {...itemProps(session, false, {
+            id: "alpha",
+            name: "Site refresh",
+            channelType: "stream",
+            members: [me, tom, molly, agent, "d".repeat(64)],
+          })}
+        />
+      </SidebarCardDisplayContext.Provider>,
+    );
+    expect(document.querySelectorAll(".buzz-avatar")).toHaveLength(3);
+  });
 });

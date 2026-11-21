@@ -15,7 +15,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -31,12 +30,15 @@ import {
   ClockIcon,
   DotsThreeIcon,
 } from "../../shared/design-system/icons/index";
-import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
 import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
-import { ChannelSidebarTile } from "./ChannelSidebarTile";
+import {
+  ConversationRowIdentity,
+  ConversationTileIdentity,
+  conversationOthers,
+} from "./ConversationIdentity";
 import { SidebarCardDisplayContext } from "./SidebarCardDisplay";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
@@ -57,7 +59,6 @@ import {
   sidebarRow,
   type RegisteredSidebarRows,
 } from "../../features/channel-navigation/sidebar-rows-service";
-import { avatarMedia } from "../../shared/avatar-source";
 import {
   sidebarHome,
   sidebarRowKind,
@@ -231,15 +232,24 @@ function ChannelSidebarItemCore({
   useLayoutEffect(() => {
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
-  const Icon = channelIcon(channel);
   const tiled = useContext(SidebarCardDisplayContext) === "icons";
+  const identityShowsMembers =
+    conversationOthers(channel, session.viewer).length > 0;
+  const identity = (
+    <ConversationRowIdentity
+      channel={channel}
+      session={session}
+      profile={profile}
+      presence={presence === "unknown" ? undefined : presence}
+    />
+  );
   const solo = channel.channelType === "solo";
   const plainRow = (
     <ChannelSidebarRow
       channel={channel}
       tile={
         tiled && (
-          <ChannelSidebarTile
+          <ConversationTileIdentity
             channel={channel}
             profile={profile}
             presence={presence === "unknown" ? undefined : presence}
@@ -314,7 +324,7 @@ function ChannelSidebarItemCore({
       working={agents.length > 0}
       ordinary={ordinary}
       muted={muted}
-      dmVisualSpacing={channel.channelType === "dm"}
+      dmVisualSpacing={identityShowsMembers}
       icon={
         channel.channelType === "dm" ? (
           <DmTypingBadge
@@ -322,41 +332,18 @@ function ChannelSidebarItemCore({
             channelId={channel.id}
             agents={agents}
           >
-            {channel.participants?.length === 1 ? (
-              <span className={styles.dmAvatar} data-dm-identity="">
-                <Avatar
-                  src={avatarMedia(profile?.picture, session.media)}
-                  alt=""
-                  fallback={channel.name}
-                  size="fill"
-                  shape={profile?.isAgent ? "squircle" : "circle"}
-                  statusBadge={presence === "unknown" ? undefined : presence}
-                />
-              </span>
-            ) : (channel.participants?.length ?? 0) > 1 ? (
-              <span
-                className={styles.dmCount}
-                data-dm-identity=""
-                data-dm-participant-count=""
-                title={`${channel.participants?.length} other participants`}
-                aria-hidden="true"
-              >
-                {channel.participants?.length}
-              </span>
-            ) : (
-              <Icon size={16} />
-            )}
+            {identity}
           </DmTypingBadge>
         ) : ChatIconComponent ? (
-          <ContributionBoundary fallback={<Icon size={16} />}>
+          <ContributionBoundary fallback={identity}>
             <ChatIconComponent
               session={session}
               channelId={channel.id}
-              fallback={<Icon size={16} />}
+              fallback={identity}
             />
           </ContributionBoundary>
         ) : (
-          <Icon size={16} />
+          identity
         )
       }
       nameAccessory={

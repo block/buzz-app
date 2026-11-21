@@ -279,6 +279,25 @@ restoring the corresponding mode before restoring a selection. Key the editor
 by document identity when switching documents so internal selection, undo history
 and link-dialog intent belong to that document.
 
+## Migration writes
+
+Check `ctx.relay.snapshot().session.supportsMigrationWrites === true` before
+starting an import that needs migration labels. Older hosts omit this property.
+The property confirms that the host signs the label. Relay support for throttling
+depends on the connected community.
+
+Pass `migration: "example-import"` in `session.channelCreation.create(input)`
+and in `session.memberAdditions.add(channelId, pubkey, options)`. The host signs
+`["migration", source]` on channel creation (kind 9007) and membership additions
+(kind 9000). The source must be a nonempty string. The tag classifies workload.
+The normal access checks still apply.
+
+The host batches membership additions by source. A migration batch that fails
+delivery stops and reports the error. If a successful batch only adds some of
+its members, the host keeps the source on individual additions for the rest.
+Both calls report relay migration throttling with an error that starts with
+`rate-limited:`. Pause the import before issuing another write when you see it.
+
 ## Host access (`manifest.host`)
 
 Everything beyond the services above must be declared in `manifest.json`; the owner reviews it at install. Undeclared commands, origins, processes and file access are refused by the host. Limits: at most 16 each of `commands`, `processes`, `networkOrigins`, `agentHooks`, `agentPromptSections`. Program names are bare names (`[A-Za-z0-9._-]`, at most 80 bytes, no paths), at most 16 args of 1024 bytes each.

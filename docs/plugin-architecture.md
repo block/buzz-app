@@ -9,7 +9,7 @@ Plugins are the unit of contribution and installation. They can contain substant
 ## Stability
 
 Every service below is a preview tied to the host version. Nothing is promised
-across versions yet, and the author types are `0.0.0-preview.1`.
+across versions yet, and the author types are `0.0.0-preview.2`.
 
 - **Steady:** the plugin envelope (manifest, `inject`/`apply`, `ctx.effect`
   cleanup) and capability services: host grants, `addTool` (the tool's shape, not
@@ -205,7 +205,7 @@ buzzodz plugin init /tmp/my-page example.page "My page"
 # Generate and pack the host-matched type-only preview once:
 pnpm author:build
 (cd dist-author && pnpm pack --pack-destination ..)
-pnpm --dir /tmp/my-page add -D "$PWD/buzz-author-0.0.0-preview.1.tgz"
+pnpm --dir /tmp/my-page add -D "$PWD/buzz-author-0.0.0-preview.2.tgz"
 buzzodz plugin build /tmp/my-page
 buzzodz plugin sign /tmp/my-page/dist
 buzzodz plugin install /tmp/my-page/dist

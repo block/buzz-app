@@ -1338,6 +1338,30 @@
     overflow: hidden;
   }
 
+  /* Dock keyboard mode numbers sit in the corner opposite the unread badge. */
+  .buzz-tabs[data-variant="dock"] .buzz-tabs-key {
+    @apply text-caption;
+    position: absolute;
+    inset-block-end: 0;
+    inset-inline-start: 0;
+    display: grid;
+    place-items: center;
+    min-inline-size: 1lh;
+    block-size: 1lh;
+    padding-inline: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--surface-dock-count);
+    color: var(--text-dock-count);
+    box-shadow: 0 0 0 1px var(--bg-app);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+  }
+  .buzz-tabs-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
   /* Count labels straddle the corner; other contributed marks keep their slot. */
   .buzz-tabs[data-variant="dock"] .buzz-tabs-badge:has(.buzz-count-badge) {
     inset-inline-end: calc(-1 * var(--space-1));

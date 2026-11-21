@@ -1290,3 +1290,201 @@ it.each([
     }
   },
 );
+
+const dockChord = { key: "d", mod: true } as const;
+
+/** Packaged macOS build: the native menu owns ⌘D, so dispatch leaves it alone. */
+async function dockHarness(
+  saved: Record<string, unknown>,
+  { native = true, goToDock = true } = {},
+) {
+  vi.mocked(isTauri).mockReturnValue(true);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  localStorage.setItem(SHORTCUT_BINDINGS_KEY, JSON.stringify(saved));
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(
+    root,
+    window,
+    bindings,
+    native ? [dockChord] : [],
+  );
+  const runs = { focus: vi.fn(), home: vi.fn(), dock: vi.fn() };
+  shortcuts.registerHost({
+    id: "focus-composer",
+    title: "Focus composer",
+    binding: { key: "l", mod: true },
+    order: 10,
+    run: runs.focus,
+  });
+  shortcuts.registerHost({
+    id: "open-home",
+    title: "Open Home",
+    binding: { key: "h", mod: true },
+    order: 20,
+    run: runs.home,
+  });
+  if (goToDock)
+    shortcuts.registerHost({
+      id: "go-to-dock",
+      title: "Go to dock",
+      binding: dockChord,
+      order: 72,
+      run: runs.dock,
+    });
+  return {
+    runs,
+    bindings,
+    shortcuts,
+    plugins: catalog([]),
+    /** A real Command key press at the window dispatcher. */
+    press: (key: string) =>
+      fireEvent.keyDown(document.body, { key, metaKey: true }),
+    async dispose() {
+      cleanup();
+      bindings.dispose();
+      await root.fiber.dispose();
+    },
+  };
+}
+const showDock = (h: Awaited<ReturnType<typeof dockHarness>>) =>
+  render(
+    <ShortcutSettings
+      shortcuts={h.shortcuts}
+      bindings={h.bindings}
+      plugins={h.plugins}
+      apple
+    />,
+  );
+
+it("upgrade profile: a saved ⌘D override shows the action back on its default with a note, and dispatch agrees", async () => {
+  const stored = { "focus-composer": dockChord };
+  const h = await dockHarness(stored);
+  try {
+    showDock(h);
+    const focus = within(row("Focus composer"));
+    expect(focus.getByText("⌘L")).toBeVisible();
+    expect(focus.queryByText("⌘D")).toBeNull();
+    expect(
+      focus.getByText(
+        "⌘D is now Go to dock in the menu. This action is back on ⌘L.",
+      ),
+    ).toBeVisible();
+    expect(focus.getByText("Modified")).toBeVisible();
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    // Dispatch: the menu keeps ⌘D, the web action answers to ⌘L.
+    expect(h.press("d")).toBe(true);
+    expect(h.runs.focus).not.toHaveBeenCalled();
+    expect(h.runs.dock).not.toHaveBeenCalled();
+    expect(h.press("l")).toBe(false);
+    expect(h.runs.focus).toHaveBeenCalledOnce();
+    // Nothing was rewritten.
+    expect(
+      JSON.parse(localStorage.getItem(SHORTCUT_BINDINGS_KEY) ?? ""),
+    ).toEqual(stored);
+    expect(h.bindings.snapshot().overrides).toEqual(stored);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("upgrade profile: a masked action whose default another override holds reads Not set with a choose-one note and no conflict warning", async () => {
+  const stored = {
+    "focus-composer": dockChord,
+    "open-home": { key: "l", mod: true },
+  };
+  const h = await dockHarness(stored);
+  try {
+    showDock(h);
+    const focus = row("Focus composer");
+    const home = row("Open Home");
+    expect(focus).toHaveTextContent("Not set");
+    expect(within(focus).queryByText("⌘L")).toBeNull();
+    expect(within(focus).queryByText("⌘D")).toBeNull();
+    expect(
+      within(focus).getByText(
+        "⌘D is now Go to dock in the menu. ⌘L is used by Open Home, so this action has no shortcut. Choose one.",
+      ),
+    ).toBeVisible();
+    expect(within(home).getByText("⌘L")).toBeVisible();
+    expect(home).not.toHaveTextContent("Not set");
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    // The unbound action can still be rebound.
+    expect(change("Focus composer")).toBeEnabled();
+    // Dispatch: ⌘L runs Open Home once, Focus composer has no chord, ⌘D nothing.
+    expect(h.press("l")).toBe(false);
+    expect(h.runs.home).toHaveBeenCalledOnce();
+    expect(h.runs.focus).not.toHaveBeenCalled();
+    expect(h.press("d")).toBe(true);
+    expect(h.runs.home).toHaveBeenCalledOnce();
+    expect(h.runs.focus).not.toHaveBeenCalled();
+    expect(h.runs.dock).not.toHaveBeenCalled();
+    // Stored overrides are untouched.
+    expect(
+      JSON.parse(localStorage.getItem(SHORTCUT_BINDINGS_KEY) ?? ""),
+    ).toEqual(stored);
+    expect(h.bindings.snapshot().overrides).toEqual(stored);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("refuses recording a native menu chord, names its owner, and shows the owning row read-only", async () => {
+  const h = await dockHarness({});
+  try {
+    showDock(h);
+    const dockRow = within(row("Go to dock"));
+    expect(dockRow.getByText("Reserved by Buzz")).toBeVisible();
+    expect(dockRow.getByText("⌘D")).toBeVisible();
+    expect(dockRow.queryByRole("button")).toBeNull();
+    fireEvent.click(change("Open Home"));
+    fireEvent.keyDown(capture("Open Home"), { key: "d", metaKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "⌘D is reserved for Go to dock. Try another.",
+    );
+    expect(h.bindings.snapshot().overrides).toEqual({});
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe("{}");
+    // Another chord is still accepted on the same row.
+    fireEvent.keyDown(capture("Open Home"), { key: "u", metaKey: true });
+    expect(h.bindings.snapshot().overrides).toEqual({
+      "open-home": { key: "u", mod: true },
+    });
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("names the Buzz menu when no listed row owns the refused native chord", async () => {
+  const h = await dockHarness({}, { goToDock: false });
+  try {
+    showDock(h);
+    fireEvent.click(change("Open Home"));
+    fireEvent.keyDown(capture("Open Home"), { key: "d", metaKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "⌘D is reserved for the Buzz menu. Try another.",
+    );
+    expect(h.bindings.snapshot().overrides).toEqual({});
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("records ⌘D when no native menu owns it and the action then runs on it", async () => {
+  const h = await dockHarness({}, { native: false, goToDock: false });
+  try {
+    showDock(h);
+    fireEvent.click(change("Open Home"));
+    fireEvent.keyDown(capture("Open Home"), { key: "d", metaKey: true });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(h.bindings.snapshot().overrides).toEqual({ "open-home": dockChord });
+    expect(row("Open Home")).not.toHaveTextContent("Not set");
+    expect(h.press("d")).toBe(false);
+    expect(h.runs.home).toHaveBeenCalledOnce();
+  } finally {
+    await h.dispose();
+  }
+});

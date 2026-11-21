@@ -1,6 +1,6 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createBrowserHistory } from "./browser-history";
-import { createNavigationController } from "./controller";
+import { createNavigationController, type AttemptObserver } from "./controller";
 import { createMemoryHistory, homeTarget } from "./history";
 
 const settings = {
@@ -527,5 +527,47 @@ it("guards asynchronous native traversal without losing the presentation or its 
   fixture.flush();
   expect(nav.snapshot().entry.target).toEqual(homeTarget);
   expect(original.signal.aborted).toBe(true);
+  host.dispose();
+});
+
+it("a return to the opener through deferred browser traversal delivers the attempt observer only when the traversal lands", async () => {
+  const fixture = browser("", true);
+  const host = createNavigationController(createBrowserHistory(fixture.host));
+  const nav = host.navigation;
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "test",
+    pageId: "board",
+  } as const;
+  const draft = { ...page, pageId: "draft" } as const;
+  void nav.open(page);
+  const opener = nav.snapshot().entry;
+  void nav.open(draft);
+  const draftVisit = nav.snapshot().entry;
+  host.passThrough(draftVisit.id, () => true);
+  const departing = nav.snapshot().attempt;
+  const onAttempt = vi.fn<AttemptObserver>();
+  // A blank New Message passes through: opening its opener returns to it.
+  const returned = nav.open(page, { onAttempt });
+  expect(fixture.pending()).toBe(1);
+  expect(onAttempt).not.toHaveBeenCalled();
+  expect(nav.snapshot().entry).toBe(draftVisit);
+  expect(nav.snapshot().attempt).toBe(departing);
+  fixture.flush();
+  expect(onAttempt).toHaveBeenCalledOnce();
+  const [call] = onAttempt.mock.calls;
+  if (!call) throw new Error("observer was not called");
+  const { attempt, result } = call[0];
+  expect(attempt).toBe(nav.snapshot().attempt);
+  expect(attempt).not.toBe(departing);
+  expect(attempt.entry.id).toBe(opener.id);
+  expect(attempt.entry.target).toEqual(page);
+  // open() answered for the visit left behind; only `result` follows the opener.
+  await expect(returned).resolves.toEqual({ status: "superseded" });
+  expect(await Promise.race([result, "pending"])).toBe("pending");
+  host.complete(attempt, { status: "opened" });
+  await expect(result).resolves.toEqual({ status: "opened" });
+  expect(onAttempt).toHaveBeenCalledOnce();
   host.dispose();
 });

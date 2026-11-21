@@ -1032,13 +1032,16 @@ Quitting Buzz also turns it off.
   is on. With a message selected, E edits it, R reacts, T or → replies in thread,
   U marks it unread, and Delete deletes your own message.
   With message text selected, Q quotes it into the draft.
-  ⌘1–9 switch communities, and ⇧Esc marks everything read. ⌘R (Ctrl+R)
+  ⌘1–9 switch communities, ⌘D goes to the dock, and ⇧Esc marks everything read. ⌘R (Ctrl+R)
   reloads Buzz in place: every community reconnects and reads its
   conversations from the relay again, and running agents keep working. ⇧⌘R
   (Ctrl+Shift+R) reloads the whole app, which restarts running agents. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
-  Settings…** in the menu bar also opens Settings.
+  Settings…** in the menu bar also opens Settings. If an older custom shortcut
+  used ⌘D, Settings → Shortcuts says what that action uses now. On Windows and
+  Linux, an older custom shortcut on Ctrl+D keeps it, and **Go to dock** shows
+  **Not set** until you give it a key.
 - **Message width**: choose **Narrow** or **Wide** in **Settings → Appearance →
   Interface**. Narrow is the default; Wide gives messages and the composer
   50% more room when the pane is wide enough. The choice is saved on this device.
@@ -1153,6 +1156,23 @@ Quitting Buzz also turns it off.
   panel headers also have bottom hairlines. Dock icons stay still, highlight
   on hover, and show instant labels to their right. Bestie uses your
   configured avatar.
+- **Dock from the keyboard** (desktop app only): **⌘D** (Ctrl+D on Windows and
+  Linux) moves focus to the dock with Bestie selected and shows a number on the
+  first nine apps. Then:
+  - **⌘D** again or **Return** opens the selected app. **⌘D ⌘D** opens your
+    Bestie DM with the cursor in its message box. Without a Bestie, it opens the
+    Bestie setup.
+  - **1–9** opens that app, in the dock's current order.
+  - **↑/↓** moves between apps.
+  - **Esc** goes back to where you were, including a web page open in Buzz.
+  - **Tab**, a click, or moving focus elsewhere leaves without opening anything.
+
+  An app opened this way takes the focus, so you can keep using the keyboard.
+  The labels show each app's keys, for example "Messages ⌘D 2". On macOS,
+  **Window → Go to Dock** does the same, and works while a web page has focus;
+  the shortcut can't be changed there. On Windows and Linux you can change it in
+  **Settings → Shortcuts**, and Ctrl+D in a terminal stays with the
+  terminal. Nothing happens while a dialog is open.
   The floating **New options** button at the end of the sidebar list opens
   **New chat**, **New channel**, **New DM** and **New workspace**. **Cmd/Ctrl+N**
   opens this menu in Messages, including during Focus. The **Solo** heading's

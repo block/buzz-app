@@ -11,17 +11,20 @@ import {
 } from "../../plugins/contributions";
 import {
   inEditable,
-  isBindingList,
   matches,
   normalizeShortcut,
+  resolveBindings,
+  type BindingRow,
   type KeyBinding,
+  type ResolvedBinding,
   type NormalizedShortcut,
   type Shortcut,
 } from "./bindings";
 export type { KeyBinding, NormalizedShortcut, Shortcut } from "./bindings";
 export type RegisteredShortcut = Contribution<NormalizedShortcut>;
 /** Host-only: a field matches it itself, so it is listed in Settings but never reserved or run. */
-export type HostShortcut = NormalizedShortcut & Readonly<{ local: boolean }>;
+export type HostShortcut = NormalizedShortcut &
+  Readonly<{ local: boolean; yields: boolean }>;
 export type Shortcuts = {
   register(shortcut: Shortcut): void;
   snapshot(): readonly RegisteredShortcut[];
@@ -31,6 +34,8 @@ export type Shortcuts = {
 export type BindingOverrides = {
   /** A stored override is a nonempty alias list; anything else means the default. */
   resolve(key: string): readonly KeyBinding[] | undefined;
+  /** A new value on every change, so the resolved table is reused until then. */
+  snapshot?(): unknown;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -75,18 +80,18 @@ export class ShortcutsService extends Service implements Shortcuts {
       ? undefined
       : window,
     overrides?: BindingOverrides,
+    /** Chords a native menu owns on this platform: dispatch leaves them to it. */
+    native: readonly KeyBinding[] = [],
   ) {
     super(ctx, "shortcuts");
+    this.overrides = overrides;
+    this.native = Object.freeze(native.map((chord) => Object.freeze(chord)));
     this.contributions = createContributions<NormalizedShortcut>(ctx);
     const apple = /Mac|iPhone|iPad/.test(host?.navigator.platform ?? "");
     // The effective chord is resolved at match time, so a rebind never requires
     // re-registration and survives plugin disable/enable. Anything that is not
     // a binding list (a malformed store entry, an inherited property under a
     // key such as "constructor") means the default, so dispatch cannot throw.
-    const bindingsFor = (shortcut: NormalizedShortcut, key: string) => {
-      const override = overrides?.resolve(key);
-      return isBindingList(override) ? override : shortcut.binding;
-    };
     const dispatch = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||
@@ -95,6 +100,9 @@ export class ShortcutsService extends Service implements Shortcuts {
         event.getModifierState("AltGraph")
       )
         return;
+      // The native menu owns these: no web action runs and nothing is
+      // prevented, so the key equivalent reaches it.
+      if (matches(this.native, event, apple)) return;
       const editable = inEditable(event);
       const modal =
         modalOpen() ||
@@ -103,6 +111,9 @@ export class ShortcutsService extends Service implements Shortcuts {
           .some((target) => (target as Element).matches?.(MODAL));
       const eligible = (shortcut: Shortcut) =>
         eligibleIn(shortcut, editable, modal);
+      const table = this.resolved();
+      const bindingsFor = (shortcut: NormalizedShortcut, key: string) =>
+        table.get(key)?.effective ?? shortcut.binding;
       // Host chords are reserved even while unavailable (e.g. Settings behind a modal).
       const reserved = [...this.hostBindings.values()].find(
         (shortcut) =>
@@ -164,16 +175,73 @@ export class ShortcutsService extends Service implements Shortcuts {
   }
   /** Host composition only: runs a host shortcut if it is eligible now. */
   readonly runHost: (id: string) => boolean;
+  /** Chords owned by a native menu on this platform; never matched here. */
+  readonly native: readonly KeyBinding[];
+  private readonly overrides: BindingOverrides | undefined;
+  private table:
+    | Readonly<{
+        hosts: readonly HostShortcut[];
+        contributions: readonly RegisteredShortcut[];
+        overrides: unknown;
+        value: ReadonlyMap<string, ResolvedBinding>;
+      }>
+    | undefined;
+  /** What every action answers to now, as dispatch and Settings apply it. */
+  resolved(): ReadonlyMap<string, ResolvedBinding> {
+    const hosts = this.hostReady;
+    const contributions = this.contributions.snapshot();
+    const overrides = this.overrides?.snapshot?.();
+    const table = this.table;
+    if (
+      table &&
+      table.hosts === hosts &&
+      table.contributions === contributions &&
+      table.overrides === overrides &&
+      (!this.overrides || this.overrides.snapshot)
+    )
+      return table.value;
+    const value = resolveBindings(
+      this.bindingRows(),
+      (key) => this.overrides?.resolve(key),
+      this.native,
+    );
+    this.table = { hosts, contributions, overrides, value };
+    return value;
+  }
+  /** Every dispatcher action in Settings order: host by order, then contributions. */
+  bindingRows(): BindingRow[] {
+    return [
+      ...[...this.hostBindings.values()]
+        .sort((a, b) => a.order - b.order || (a.id < b.id ? -1 : 1))
+        .map((shortcut) => ({
+          key: shortcut.id,
+          defaults: shortcut.binding,
+          local: shortcut.local,
+          yields: shortcut.yields,
+        })),
+      ...[...this.contributions.snapshot()]
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+        .map((shortcut) => ({ key: shortcut.key, defaults: shortcut.binding })),
+    ];
+  }
   snapshot = () => this.contributions.snapshot();
   subscribe = (listener: () => void) => this.contributions.subscribe(listener);
   register(shortcut: Shortcut) {
     this.contributions.register(this.ctx, normalizeShortcut(shortcut));
   }
   /** Host composition only; not part of the injected plugin contract. */
-  registerHost(shortcut: Shortcut, { local = false } = {}) {
+  registerHost(
+    shortcut: Shortcut,
+    {
+      local = false,
+      /** The default gives way to a saved shortcut on the same chord. */
+      yields = false,
+    } = {},
+  ) {
     const entry: HostShortcut = Object.freeze({
       ...normalizeShortcut(shortcut),
       local,
+      yields,
     });
     if (this.hostBindings.has(entry.id))
       throw new Error(`Host shortcut already registered: ${entry.id}`);

@@ -34,7 +34,10 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
-import type { Navigation } from "../../features/navigation/controller";
+import {
+  sameOpen,
+  type Navigation,
+} from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
 import { targetKey } from "../../features/navigation/targets";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
@@ -64,6 +67,15 @@ import {
   bestieDetailTarget,
 } from "./routes";
 import { FirstAgentWelcome, useFirstAgentWelcome } from "./FirstAgentWelcome";
+import {
+  bestieFocusRequests,
+  type BestieFocusRequest,
+} from "../../app/shell/bestie-context";
+import type { ComposerFocusRequest } from "../../features/messages/MessageComposer";
+import { activeModal } from "../../shared/design-system/overlayLayer";
+
+const nextFocus = (value: number | ComposerFocusRequest) =>
+  (typeof value === "number" ? value : value.seq) + 1;
 import styles from "./PinnedBestie.module.css";
 
 /** Bestie owns its pinned destination; Messages owns conversation tabs and readers. */
@@ -107,7 +119,9 @@ export function BestieConversation({
     setMembersOpen(true);
   };
   const [sent, setSent] = useState<string>();
-  const [composerFocus, focusComposer] = useState(0);
+  const [composerFocus, focusComposer] = useState<
+    number | ComposerFocusRequest
+  >(0);
   const trigger = useRef<HTMLElement | null>(null);
   const main = useRef<HTMLElement>(null);
   const dismissedTo = useRef<{
@@ -311,7 +325,7 @@ export function BestieConversation({
         !opener.closest('[inert], [aria-hidden="true"]')
       )
         opener.focus({ preventScroll: true });
-      else focusComposer((value) => value + 1);
+      else focusComposer((value) => nextFocus(value));
     },
     onCloseTabs: (tabs, entries) => dismissContent(tabs, entries, "main"),
   });
@@ -443,6 +457,54 @@ export function BestieConversation({
     };
     window.addEventListener("buzz:close-all-tabs", close);
     return () => window.removeEventListener("buzz:close-all-tabs", close);
+  });
+  // The dock's ⌘D ⌘D puts the cursor in this conversation's composer, only for
+  // the exact open it made and while nothing has moved since the press.
+  const focusRequest = useSyncExternalStore(
+    bestieFocusRequests.subscribe,
+    bestieFocusRequests.snapshot,
+  );
+  const handedOff = useRef<BestieFocusRequest>(undefined);
+  useLayoutEffect(() => {
+    const request = focusRequest;
+    if (!request || handedOff.current === request) return;
+    // Another Bestie surface (the pinned one) leaves the request to its page.
+    // The open's current attempt names the visit, even after it resolved
+    // its address.
+    const opened = navigator.snapshot().attempt;
+    if (
+      sameOpen(opened, request.attempt) &&
+      navigation?.entryId !== opened.entry.id
+    )
+      return;
+    const valid = () => {
+      const workspace = main.current;
+      return (
+        bestieFocusRequests.snapshot() === request &&
+        sameOpen(navigator.snapshot().attempt, request.attempt) &&
+        !request.attempt.signal.aborted &&
+        ownsCurrentVisit() &&
+        request.inScope() &&
+        request.session === session &&
+        request.channelId === channel.id &&
+        !request.cancelled() &&
+        performance.now() < request.expires &&
+        !!workspace?.isConnected &&
+        !workspace.closest('[hidden], [inert], [aria-hidden="true"]') &&
+        !activeModal(document)
+      );
+    };
+    if (!valid()) {
+      bestieFocusRequests.clear(request);
+      return;
+    }
+    handedOff.current = request;
+    state.selectMain(undefined);
+    focusComposer((value) => ({
+      seq: nextFocus(value),
+      valid,
+      done: () => bestieFocusRequests.clear(request),
+    }));
   });
   // Close All can remove both the focused content and its context menu.
   // Keep surviving controls focused; otherwise return to the main conversation.

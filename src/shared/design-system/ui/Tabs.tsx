@@ -36,6 +36,14 @@ export type TabItem<Value extends string> = {
     | undefined;
   /** Link a retained, externally owned tab panel. */
   panelId?: string;
+  /** Dock: a key shown on the tab while a keyboard mode is on; hidden from assistive technology. */
+  keyMarker?: string | undefined;
+  /** Spoken keys that activate this tab now (`aria-keyshortcuts`). */
+  keyShortcuts?: string | undefined;
+  /** Extra description, such as a mode's key instructions. */
+  describedBy?: string | undefined;
+  /** Dock: shown after the label in the tab's hint, such as its shortcut. */
+  hint?: ReactNode;
   /** Increment to briefly identify an already-open navigation tab. */
   attentionRequest?: number | undefined;
   onClose?: (() => void) | undefined;
@@ -174,6 +182,8 @@ export function Tabs<Value extends string>({
               {...(item.panelId
                 ? { id: `${item.panelId}-tab`, "aria-controls": item.panelId }
                 : {})}
+              aria-keyshortcuts={item.keyShortcuts}
+              aria-describedby={item.describedBy}
               onClick={() => {
                 if (item.value === value) onReselect?.(item.value);
               }}
@@ -236,6 +246,11 @@ export function Tabs<Value extends string>({
                   ) : (
                     item.trailing
                   )}
+                  {variant === "dock" && item.keyMarker ? (
+                    <span className="buzz-tabs-key" aria-hidden="true">
+                      {item.keyMarker}
+                    </span>
+                  ) : null}
                 </>
               )}
             </BaseTabs.Tab>
@@ -257,7 +272,16 @@ export function Tabs<Value extends string>({
                 item.renderTab(tab)
               ) : variant === "dock" ? (
                 <Tooltip
-                  content={item.label}
+                  content={
+                    item.hint ? (
+                      <span className="buzz-tabs-hint">
+                        {item.label}
+                        {item.hint}
+                      </span>
+                    ) : (
+                      item.label
+                    )
+                  }
                   hint="dock"
                   side={orientation === "vertical" ? "right" : "bottom"}
                 >

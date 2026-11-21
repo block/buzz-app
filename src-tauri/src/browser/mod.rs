@@ -103,6 +103,8 @@ struct BrowserSession {
     // WebKit requires suspend and resume calls in pairs.
     media_suspended: Cell<bool>,
     presentation: Presentation,
+    // What the host last asked for; a hidden guest never takes focus back.
+    requested_visible: Cell<bool>,
 }
 
 /// The latest presentation the host asked for while WebKit owned a fullscreen
@@ -187,6 +189,7 @@ impl BrowserSession {
     }
 
     fn set_bounds(&self, bounds: BrowserBounds, visible: bool) -> Result<(), String> {
+        self.requested_visible.set(visible);
         // A fullscreen page has left the panel: entering fullscreen hides the main
         // window, and hiding or placing the guest would blank the fullscreen
         // window. WebKit can also report the exit before the page is back in
@@ -590,6 +593,7 @@ fn build_contents(
         handoff,
         media_suspended: Cell::new(false),
         presentation: Presentation::default(),
+        requested_visible: Cell::new(false),
     };
     platform::resize_guest(&browser.guest, &browser.host, bounds)?;
     if !defer_navigation {
@@ -765,12 +769,137 @@ pub async fn browser_action(
     .await
 }
 
+/// The main window can take keyboard focus now: shown, not minimized and
+/// focused, as a menu request requires.
+pub(crate) fn window_accepts_focus(visible: bool, minimized: bool, focused: bool) -> bool {
+    visible && !minimized && focused
+}
+
+fn main_window_accepts_focus<R: tauri::Runtime>(app: &AppHandle<R>) -> bool {
+    app.get_webview_window("main").is_some_and(|window| {
+        window_accepts_focus(
+            window.is_visible().unwrap_or(false),
+            window.is_minimized().unwrap_or(true),
+            window.is_focused().unwrap_or(false),
+        )
+    })
+}
+
+/// A guest takes keyboard focus back only while the host still shows it in
+/// the main window, not away in fullscreen. `shown` is what is on screen: a
+/// resize hides the guest before the host asks for it again.
+fn guest_accepts_focus(
+    requested_visible: bool,
+    shown: bool,
+    away: bool,
+    in_host_window: bool,
+) -> bool {
+    requested_visible && shown && !away && in_host_window
+}
+
+/// Gives keyboard focus back to the guest page a dock exit returns to. Only
+/// the trusted main view may ask, and every check runs again when the request
+/// reaches the UI thread. True only when the guest holds focus afterwards;
+/// false lets the caller fall back.
+#[tauri::command]
+pub async fn browser_focus(
+    app: AppHandle,
+    webview: Webview,
+    session_id: String,
+) -> Result<bool, String> {
+    if webview.label() != "main" {
+        return Ok(false);
+    }
+    let handle = app.clone();
+    on_main_thread(&app, move || {
+        if !main_window_accepts_focus(&handle) {
+            return Ok(false);
+        }
+        // A closed or replaced session is no longer the one the exit saved.
+        Ok(with_browser(&session_id, |browser| {
+            let away = platform::fullscreen(&browser.guest) || browser.fullscreen.returning();
+            if !guest_accepts_focus(
+                browser.requested_visible.get(),
+                platform::shown(&browser.guest),
+                away,
+                platform::in_host_window(&browser.guest, &browser.host),
+            ) {
+                return Ok(false);
+            }
+            browser.guest.focus().map_err(|error| error.to_string())?;
+            Ok(platform::focused(&browser.guest))
+        })
+        .unwrap_or(false))
+    })
+    .await
+}
+
+/// Makes the trusted main view first responder, so keys reach the app after
+/// a native shortcut left a guest page. Only the main view may ask. Answers
+/// true only when the main view really holds the keyboard afterwards.
+#[tauri::command]
+pub async fn focus_main_view<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    webview: tauri::Webview<R>,
+) -> Result<bool, String> {
+    if webview.label() != "main" {
+        return Ok(false);
+    }
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let focused = main_window_accepts_focus(&handle)
+            && handle.get_webview_window("main").is_some_and(|main| {
+                // The webview, not the window: a guest can be first responder
+                // inside an already focused window. AppKit can refuse the
+                // transfer while Wry still reports success, so check it.
+                let main = AsRef::<tauri::Webview<R>>::as_ref(&main);
+                main.set_focus().is_ok() && platform::main_view_focused(main)
+            });
+        let _ = sender.try_send(focused);
+    })
+    .map_err(|error| error.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or_else(|| "Buzz stopped before the request completed".to_string())
+}
+
 #[tauri::command]
 pub async fn browser_status(app: AppHandle, session_id: String) -> Result<BrowserSnapshot, String> {
     on_main_thread(&app, move || {
         with_browser(&session_id, BrowserSession::snapshot)
     })
     .await
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::{guest_accepts_focus, window_accepts_focus};
+
+    #[test]
+    fn focus_needs_a_shown_focused_main_window() {
+        assert!(window_accepts_focus(true, false, true));
+        for (visible, minimized, focused) in [
+            (false, false, true),
+            (true, true, true),
+            (true, false, false),
+            (false, true, false),
+        ] {
+            assert!(!window_accepts_focus(visible, minimized, focused));
+        }
+    }
+
+    #[test]
+    fn a_guest_takes_focus_back_only_while_shown_in_the_main_window() {
+        assert!(guest_accepts_focus(true, true, false, true));
+        // Hidden by the host, hidden by a resize the host has not placed
+        // again, away in fullscreen, or in another window.
+        assert!(!guest_accepts_focus(false, true, false, true));
+        assert!(!guest_accepts_focus(true, false, false, true));
+        assert!(!guest_accepts_focus(true, true, true, true));
+        assert!(!guest_accepts_focus(true, true, false, false));
+    }
 }
 
 #[cfg(test)]

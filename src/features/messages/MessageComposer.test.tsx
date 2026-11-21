@@ -1058,6 +1058,46 @@ it("a first focus request starts after the retained mention and later requests p
   expect([h.input().selectionStart, h.input().selectionEnd]).toEqual([0, 6]);
 });
 
+it("a guarded focus request re-checks its owner and reports whether it focused", () => {
+  const h = mount({ autoFocus: false });
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  try {
+    outside.focus();
+    const done = vi.fn();
+    h.retarget({ focusRequest: { seq: 1, valid: () => false, done } });
+    expect(outside).toHaveFocus();
+    expect(done).toHaveBeenCalledWith(false);
+
+    h.retarget({ focusRequest: { seq: 2, valid: () => true, done } });
+    expect(h.input()).toHaveFocus();
+    expect(done).toHaveBeenLastCalledWith(true);
+  } finally {
+    outside.remove();
+  }
+});
+
+it("a guarded focus request does not take focus from an open menu; a counter still does", () => {
+  const h = mount({ autoFocus: false });
+  const menu = document.createElement("div");
+  menu.setAttribute("role", "menu");
+  const item = document.createElement("button");
+  menu.append(item);
+  document.body.append(menu);
+  try {
+    item.focus();
+    const done = vi.fn();
+    h.retarget({ focusRequest: { seq: 1, done } });
+    expect(item).toHaveFocus();
+    expect(done).toHaveBeenCalledWith(false);
+    // Callers that pass a plain counter keep their behaviour.
+    h.retarget({ focusRequest: 2 });
+    expect(h.input()).toHaveFocus();
+  } finally {
+    menu.remove();
+  }
+});
+
 it("autofocuses each selected conversation once without stealing focus on updates", () => {
   const h = mount({ autoFocus: true });
   expect(h.input()).toHaveFocus();

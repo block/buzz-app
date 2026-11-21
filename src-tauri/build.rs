@@ -284,6 +284,8 @@ fn main() {
             "browser_navigate",
             "browser_action",
             "browser_status",
+            "browser_focus",
+            "focus_main_view",
             "mesh_compute_catalog",
             "mesh_compute_share",
             "mesh_compute_inventory",

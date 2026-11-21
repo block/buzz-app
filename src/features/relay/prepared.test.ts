@@ -57,6 +57,147 @@ function setup(
 }
 
 describe("prepared channel working sets", () => {
+  it.each(["prepare", "refresh"] as const)(
+    "selecting a channel promotes its queued %s head without adding a fourth read",
+    async (method) => {
+      let time = 10_000;
+      const { queries, store, next, pending } = setup({ now: () => time });
+      const reads: Promise<unknown>[] = [];
+      try {
+        queries.ensureList();
+        next().respond(discovery(["a"]));
+        await flush();
+        queries.ensure("a", new AbortController().signal);
+        next().respond(empty("a"));
+        await vi.waitFor(() =>
+          expect(queries.window("a").status).toBe("ready"),
+        );
+        time += 5 * 60_000;
+        for (let limit = 1; limit <= 5; limit++) {
+          const read = store.session.read([{ kinds: [9], "#h": ["a"], limit }]);
+          void read.catch(() => {});
+          reads.push(read);
+        }
+        queries[method]?.("a");
+        expect(pending).toHaveLength(3);
+        const first = next(),
+          second = next(),
+          third = next();
+        first.respond([]);
+        await reads[0];
+        expect(next().filters[0]).toMatchObject({ kinds: [9], limit: 4 });
+
+        queries.ensure("a", new AbortController().signal);
+        expect(pending).toHaveLength(0);
+        second.respond([]);
+        await reads[1];
+        expect(pending).toHaveLength(1);
+        const selected = next();
+        expect(selected.filters[0]).toMatchObject({
+          "#h": ["a"],
+          top_level: true,
+        });
+        const ownRow = message(viewer, "a", "selected head", 20);
+        selected.respond([ownRow, ...empty("a")]);
+        await vi.waitFor(() =>
+          expect(queries.window("a").rows).toEqual([
+            expect.objectContaining({ id: ownRow.id }),
+          ]),
+        );
+        expect(next().filters[0]).toMatchObject({ kinds: [9], limit: 5 });
+        expect(pending).toHaveLength(0);
+        expect(third.signal?.aborted).toBe(false);
+      } finally {
+        store.dispose();
+        await Promise.allSettled(reads);
+      }
+    },
+  );
+
+  it("gives the next slot to the latest selection after rapid switches and eviction", async () => {
+    const { queries, store, next, pending } = setup({ maxWindows: 2 });
+    const reads: Promise<unknown>[] = [];
+    try {
+      queries.ensureList();
+      next().respond(discovery(["a", "b", "c"]));
+      await flush();
+      for (let limit = 1; limit <= 4; limit++) {
+        const read = store.session.read([{ kinds: [9], "#h": ["c"], limit }]);
+        void read.catch(() => {});
+        reads.push(read);
+      }
+      expect(pending).toHaveLength(3);
+      const first = next(),
+        second = next(),
+        third = next();
+      for (const id of ["a", "b", "c"])
+        queries.ensure(id, new AbortController().signal);
+      // Background roster confirmation can ensure a different retained window.
+      queries.ensure("b");
+      expect(queries.window("a").status).toBe("idle");
+      expect(pending).toHaveLength(0);
+      first.respond([]);
+      await reads[0];
+      const selected = next();
+      expect(selected.filters[0]).toMatchObject({
+        "#h": ["c"],
+        top_level: true,
+      });
+      second.respond([]);
+      await reads[1];
+      expect(next().filters[0]).toMatchObject({ kinds: [9], limit: 4 });
+      third.respond([]);
+      await reads[2];
+      expect(next().filters[0]).toMatchObject({ "#h": ["b"], top_level: true });
+    } finally {
+      store.dispose();
+      await Promise.allSettled(reads);
+    }
+  });
+
+  it.each(["leave", "evict"] as const)(
+    "releases navigation priority for a shared hover head when the reader can %s",
+    async (end) => {
+      const { queries, store, next, pending } = setup();
+      const reads: Promise<unknown>[] = [];
+      try {
+        queries.ensureList();
+        next().respond(discovery(["a", "b"]));
+        await flush();
+        for (let limit = 1; limit <= 4; limit++) {
+          const read = store.session.read([{ kinds: [9], "#h": ["b"], limit }]);
+          void read.catch(() => {});
+          reads.push(read);
+        }
+        expect(pending).toHaveLength(3);
+        const first = next(),
+          second = next(),
+          third = next();
+        const opening = new AbortController();
+        queries.prepare?.("a");
+        queries.ensure("a", opening.signal);
+        if (end === "leave") opening.abort();
+        else queries.refresh?.("b");
+
+        first.respond([]);
+        await reads[0];
+        expect(next().filters[0]).toMatchObject({ kinds: [9], limit: 4 });
+        second.respond([]);
+        await reads[1];
+        const hover = next();
+        expect(hover.filters[0]).toMatchObject({
+          "#h": ["a"],
+          top_level: true,
+        });
+        hover.respond(empty("a"));
+        expect(third.signal?.aborted).toBe(false);
+      } finally {
+        store.dispose();
+        await Promise.allSettled(reads);
+      }
+    },
+  );
+
   it("prepares heads only on intent without allocating history and reuses them after history eviction", async () => {
     const { queries, store, next, pending } = setup();
     queries.ensureList();

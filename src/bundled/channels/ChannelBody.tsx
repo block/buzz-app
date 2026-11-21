@@ -53,7 +53,12 @@ export const ChannelBody = memo(function ChannelBody({
   } = useConversation();
   // ChannelWorkspace already keys this lifetime by viewer/scope/generation.
   const continuityKey = useId();
-  const window = useChannelWindow(queries.channels, channelId);
+  const opening =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.channelId === channelId
+      ? navigation.signal
+      : undefined;
+  const window = useChannelWindow(queries.channels, channelId, opening);
   useLayoutEffect(() => {
     clientMetrics.channelMounted(channelId);
     return () => clientMetrics.channelUnmounted(channelId);

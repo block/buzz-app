@@ -207,8 +207,15 @@ function sameRosterEntry(
       return false;
   return true;
 }
-export function useChannelWindow(queries: ChannelQueries, channelId: string) {
-  useEffect(() => queries.ensure(channelId), [queries, channelId]);
+export function useChannelWindow(
+  queries: ChannelQueries,
+  channelId: string,
+  navigation?: AbortSignal,
+) {
+  useEffect(() => {
+    if (navigation) queries.ensure(channelId, navigation);
+    else queries.ensure(channelId);
+  }, [queries, channelId, navigation]);
   const subscribe = useCallback(
     (listener: () => void) => queries.subscribeWindow(channelId, listener),
     [queries, channelId],

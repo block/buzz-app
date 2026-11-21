@@ -12,23 +12,123 @@ import {
   scriptedTransport,
 } from "./testing";
 
-function setup() {
+function setup(options?: Parameters<typeof createRelaySession>[1]) {
   const relay = keypair(),
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
-  const owner = createRelaySession({
-    ...wire.transport,
-    subscribe(callbacks) {
-      live = callbacks;
-      return { update() {}, prioritize() {}, retry() {}, dispose() {} };
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, prioritize() {}, retry() {}, dispose() {} };
+      },
     },
-  });
+    options,
+  );
   const empty = (id: string) =>
     bounds(relay, id, "head", { has_more: false, next_cursor: null });
   live.receive(["a", "z"].map((id) => roster(relay, id, [viewer.pubkey])));
   return { relay, viewer, wire, live, owner, empty };
 }
+
+function holdProfileReads(h: ReturnType<typeof setup>, count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const read = h.owner.session.read([
+      { kinds: [0], authors: [h.viewer.pubkey], limit: index + 1 },
+    ]);
+    void read.catch(() => {});
+    return read;
+  });
+}
+
+it("a revoked selection cannot dispatch its queued head when a slot opens", async () => {
+  const h = setup({ prepared: true });
+  // Profile reads survive channel access changes and keep the reader busy.
+  const reads = holdProfileReads(h, 3);
+  try {
+    expect(h.wire.pending).toHaveLength(3);
+    const first = h.wire.next();
+    h.owner.session.channels.ensure("a", new AbortController().signal);
+    expect(h.owner.session.channels.window("a").status).toBe("loading");
+    expect(h.wire.pending).toHaveLength(2);
+
+    h.live.receive([roster(h.relay, "a", [], 1700000001)]);
+    first.respond([]);
+    await reads[0];
+    expect(h.owner.session.channels.window("a").rows).toEqual([]);
+    expect(h.wire.pending).toHaveLength(2);
+
+    h.owner.session.channels.ensure("z");
+    const selected = h.wire.pending.pop();
+    assert.exists(selected);
+    expect(selected.filters[0]).toMatchObject({ "#h": ["z"], top_level: true });
+    const row = message(h.viewer, "z", "still accessible", 1700000002);
+    selected.respond([row, h.empty("z")]);
+    await vi.waitFor(() =>
+      expect(h.owner.session.channels.window("z").rows[0]?.id).toBe(row.id),
+    );
+    expect(h.wire.pending.flatMap(({ filters }) => filters)).not.toContainEqual(
+      expect.objectContaining({ "#h": ["a"], top_level: true }),
+    );
+  } finally {
+    h.owner.dispose();
+    await Promise.allSettled(reads);
+  }
+});
+
+it.each(["first connection", "reconnect"] as const)(
+  "gives an opening head the next slot when stream recovery owns the read after %s",
+  async (connection) => {
+    const h = setup({ prepared: true });
+    const { channels } = h.owner.session;
+    const opening = new AbortController();
+    const reads: ReturnType<typeof holdProfileReads> = [];
+    try {
+      if (connection === "reconnect") {
+        h.live.state({ status: "connected", routes: [] });
+        h.live.established("z");
+        channels.ensure("z", opening.signal);
+        await flush();
+        const retired = h.wire.next();
+        expect(retired.filters[0]).toMatchObject({
+          "#h": ["z"],
+          top_level: true,
+        });
+        h.live.state({ status: "retrying", routes: [] });
+        expect(retired.signal?.aborted).toBe(true);
+        await flush();
+      }
+      reads.push(...holdProfileReads(h, 4));
+      expect(h.wire.pending).toHaveLength(3);
+      const first = h.wire.next();
+      h.live.state({ status: "connected", routes: [] });
+      h.live.established("z");
+      if (connection === "first connection")
+        channels.ensure("z", opening.signal);
+      await flush();
+      expect(h.wire.pending).toHaveLength(2);
+
+      first.respond([]);
+      await reads[0];
+      const selected = h.wire.pending.pop();
+      assert.exists(selected);
+      expect(selected.filters[0]).toMatchObject({
+        "#h": ["z"],
+        top_level: true,
+      });
+      const row = message(h.viewer, "z", "recovered head", 1700000002);
+      selected.respond([row, h.empty("z")]);
+      await vi.waitFor(() =>
+        expect(channels.window("z").rows[0]?.id).toBe(row.id),
+      );
+    } finally {
+      h.owner.dispose();
+      await Promise.allSettled(reads);
+    }
+  },
+);
 
 it("a cold selected channel dispatches while another retained catch-up is stalled", async () => {
   const h = setup();

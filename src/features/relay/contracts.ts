@@ -416,7 +416,8 @@ export interface ChannelQueries {
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;
   ensureList(): void;
-  ensure(channelId: string): void;
+  /** A live visit can give its pending channel head priority until it leaves. */
+  ensure(channelId: string, navigation?: AbortSignal): void;
   loadOlder(channelId: string): void;
   /** Detach the window to history at `from` (unix seconds; 0 is the channel
    * start). Resolves the first message at or after `from`, else the newest. */

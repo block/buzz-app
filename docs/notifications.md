@@ -224,7 +224,8 @@ startup and updates; this projection adds no relay reads, network subscriptions,
 or storage. Confirmed channel mutes count as the sidebar row shows them: a muted channel
 lights the dot only for a mention of you or manual unread, and a muted DM still
 lights it. Muting removes no retained unread evidence, so unmuting can restore
-the dot. The dot
+the dot. Archived channels and hidden non-DM channels have no sidebar row, so they
+never light it. The dot
 stays clear while mute preferences are unresolved. Personal space,
 account/session changes, access loss and host disposal clear or recompute the
 indicator. Disabling Channels does not stop host ownership. Desktop alert

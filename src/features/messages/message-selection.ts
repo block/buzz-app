@@ -37,6 +37,9 @@ export function registerMessageList(element: HTMLElement, list: MessageList) {
   };
 }
 
+/** Every registered list element, for plugins that track a per-list cursor. */
+export const messageListElements = () => [...lists.keys()];
+
 /** The row's message box, not its day divider, takes focus. */
 export function focusTarget(row: HTMLElement) {
   return row.querySelector<HTMLElement>(":scope > [data-layout]") ?? row;

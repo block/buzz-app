@@ -6,7 +6,7 @@ import {
 import { animationsSettled } from "./animations.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, wheel } from "./timeline.mjs";
 
 // Real focus, key dispatch through the app's own handlers, Base UI menus and
 // focus return need a browser; key tables and letters are unit-tested.
@@ -276,4 +276,69 @@ test("a selection stays visible through its menus, and Tab and j reach people an
   await expect(nav.getByRole("button", { name: "Beta" })).toBeFocused();
   await page.keyboard.press("k");
   await expect(nav.getByRole("button", { name: "Alpha" })).toBeFocused();
+});
+
+// Painting without keyboard navigation, real focus moves, a real click and
+// wheel scrolling need a browser; cursor bookkeeping is unit-tested.
+test.describe("with history to scroll", () => {
+  test.use({ historyCounts: { alpha: 40, beta: 1 } });
+  test("the cursor stays marked through focus elsewhere, clicks and scrolling", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await enableVimKeys(page);
+    const cursor = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll("[data-message-cursor]")].map(
+          (box) => box.closest("[data-message-id]")?.dataset.messageId,
+        ),
+      );
+    const box = (id) =>
+      page.locator(`[data-message-id="${id}"] > [data-layout]`);
+    const painted = (id) =>
+      box(id).evaluate(
+        (element) => getComputedStyle(element, "::after").content !== "none",
+      );
+    await nothingFocused(page);
+    await page.keyboard.press("j");
+    await expect.poll(() => selectedId(page)).not.toBeNull();
+    const newest = await selectedId(page);
+    await page.keyboard.press("k");
+    await expect.poll(() => selectedId(page)).not.toBe(newest);
+    const older = await selectedId(page);
+    await expect.poll(cursor).toEqual([older]);
+
+    // Focus in the sidebar, the which-key menu or the composer leaves it marked.
+    await page.keyboard.press("\\");
+    await expect(
+      page.locator('button[data-channel-id][aria-current="page"]'),
+    ).toBeFocused();
+    expect(await painted(older)).toBe(true);
+    await page.keyboard.press(" ");
+    await expect(page.locator("[data-vim-which-key]")).toBeVisible();
+    expect(await painted(older)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-vim-which-key]")).toHaveCount(0);
+    await nothingFocused(page);
+    await page.keyboard.press("i");
+    await expect(composer(page, "Alpha")).toBeFocused();
+    expect(await painted(older)).toBe(true);
+
+    // A click moves it, marked without keyboard navigation; k resumes from it.
+    await box(newest).click({ position: { x: 4, y: 4 } });
+    await expect.poll(cursor).toEqual([newest]);
+    expect(await painted(newest)).toBe(true);
+    expect(await painted(older)).toBe(false);
+    await nothingFocused(page);
+    await page.keyboard.press("k");
+    await expect.poll(() => selectedId(page)).toBe(older);
+
+    // Scrolling it away moves it, with its focus, to a message in view.
+    await wheel(page, -4000);
+    await expect.poll(cursor).not.toEqual([older]);
+    const [moved] = await cursor();
+    await expect(box(moved)).toBeInViewport();
+    await expect(box(moved)).toBeFocused();
+  });
 });

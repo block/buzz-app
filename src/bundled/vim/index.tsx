@@ -29,6 +29,7 @@ import {
   messageStops,
   stepPart,
 } from "./motion";
+import { trackCursor } from "./cursor";
 import { createPending, SHOW_AFTER_MS } from "./pending";
 import { LEADER, type Sequence, type SequenceGroup } from "./sequences";
 import { WhichKey } from "./WhichKey";
@@ -155,6 +156,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   ctx.effect(() => {
     const release = enableMenuLetters("hjkl");
+    const stopCursor = trackCursor();
     const host = document.createElement("div");
     const live = document.createElement("p");
     live.setAttribute("role", "status");
@@ -176,6 +178,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       queueMicrotask(() => {
         pending.cancel();
         release();
+        stopCursor();
         root.unmount();
         host.remove();
         live.remove();

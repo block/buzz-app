@@ -3,6 +3,7 @@
  * their own arrow-key behavior: a move is that arrow, pressed on the focus.
  * Only what nothing handles falls back to scrolling.
  */
+import { cursorRow } from "./cursor";
 import { WHICH_KEY } from "./pending";
 import {
   activeMessageList,
@@ -117,9 +118,19 @@ function scrollThen(
   );
 }
 
-/** `j` / `k`: the next or previous item, or the newest message from nowhere. */
-export function step(down: boolean) {
+/** With nothing focused, the conversation's cursor message takes focus. */
+function resume() {
   const origin = focused();
+  if (origin) return origin;
+  const row = cursorRow(topModal() ?? activeMessageList());
+  if (!row) return;
+  selectMessage(row);
+  return focusTarget(row);
+}
+
+/** `j` / `k`: the next or previous item, from the cursor when nothing is focused. */
+export function step(down: boolean) {
+  const origin = resume();
   const selected = selectedMessage();
   if (origin && press(origin, down ? "ArrowDown" : "ArrowUp")) {
     // Down past the newest message stays on it rather than typing.
@@ -185,7 +196,8 @@ const PART =
  * not in a message or it has no parts. Its hover toolbar is left to `go`.
  */
 export function messageStops() {
-  const origin = focused();
+  const cursor = cursorRow(topModal() ?? activeMessageList());
+  const origin = focused() ?? (cursor && focusTarget(cursor));
   const row = origin?.closest<HTMLElement>(ROW);
   if (!origin || !row || origin.matches(TYPING)) return;
   const parts = [...row.querySelectorAll<HTMLElement>(PART)].filter(
@@ -202,6 +214,7 @@ export function messageStops() {
 
 /** Tab / Shift-Tab: the message's next or previous part, wrapping to itself. */
 export function stepPart(forward: boolean) {
+  resume();
   const found = messageStops();
   if (!found) return;
   const { row, stops } = found;
@@ -265,7 +278,7 @@ const currentPane = () => {
 /** Focus a pane without typing into it: its newest message, else its entry. */
 function enter(pane: HTMLElement) {
   if (pane === sidebar()) return revealConversation();
-  const newest = visibleMessages(pane).at(-1);
+  const newest = cursorRow(pane) ?? visibleMessages(pane).at(-1);
   if (newest) return selectMessage(newest);
   focusKeyboardTarget(
     composerIn(pane) ??
@@ -290,7 +303,7 @@ export function focusMessages() {
     pane && pane !== sidebar()
       ? pane
       : panes().find((candidate) => candidate !== sidebar());
-  const newest = visibleMessages(workspace).at(-1);
+  const newest = cursorRow(workspace) ?? visibleMessages(workspace).at(-1);
   if (newest) selectMessage(newest);
 }
 
@@ -305,7 +318,7 @@ export const inSidebar = () => {
  * Menu key and Shift+F10 open. False when the focus has none.
  */
 export function openActions() {
-  const origin = focused();
+  const origin = resume();
   if (!origin || !press(origin, "ContextMenu")) return false;
   // WebKit can leave focus on the item; the menu's keys need it inside.
   let frames = 10;

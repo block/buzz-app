@@ -1044,8 +1044,11 @@ Quitting Buzz also turns it off.
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
   Settings…** in the menu bar also opens Settings.
 - **Vim keys** is an optional plugin, off by default; turn it on in
-  **Settings → Plugins**. Then `j`/`k` move between messages and list items
-  (with nothing selected, `j` selects the newest message you can see),
+  **Settings → Plugins**. Each conversation then keeps a cursor: one message
+  stays marked while you type, use the sidebar or a menu, or click. Clicking a
+  message moves it there, and scrolling keeps it on a message you can see.
+  `j`/`k` move between messages and list items (with nothing focused, they
+  start from the cursor, which begins on the newest message you can see),
   `gg`/`G` go to the top or bottom, and `go` opens the selected message's,
   person's or conversation's actions, each with a key that runs it; while it
   is on, every menu shows those keys. In a selected message, `Tab` moves to

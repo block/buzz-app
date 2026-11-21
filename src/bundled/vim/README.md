@@ -7,7 +7,9 @@ fire while you type in a field or a terminal.
 
 1. Turn on **Vim keys** in **Settings → Plugins**.
 2. Press `j` and `k` to move between messages, list items and menu items.
-   With nothing selected, `j` selects the newest message you can see.
+   Each conversation keeps a cursor on one message, which starts on the
+   newest one you can see. With nothing focused, `j`, `k`, `go` and Tab start
+   from it.
 3. Press `go` to open the selected item's actions. Each action shows its key;
    press it to run the action.
 4. Press Space to see the leader keys, such as `Space /` to search where you
@@ -56,6 +58,12 @@ Space on a focused button starts the leader instead of pressing it; press
 Enter to press the button. Checkboxes, switches and options keep Space. When
 another shortcut uses the same key, such as Escape for marking a conversation
 read, Settings → Shortcuts marks it "Also used by"; change one to choose.
+
+The cursor stays marked while focus is elsewhere, such as the message box,
+the sidebar or a menu. Clicking a message moves the cursor to it. Scrolling
+keeps the cursor on a message you can see; if the selected message scrolls
+away, the selection moves with it. The plugin marks the cursor's message box
+with `data-message-cursor`, which Buzz paints like a selected message.
 
 In a message with parts, Tab and Shift-Tab stay within it, wrapping back to
 the message; press Escape, `j` or `k` to move on. In a message without parts,

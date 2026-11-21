@@ -3723,19 +3723,23 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 
 /* A keyboard-selected message: a quiet wash and a focus-coloured bar at its
    start, without changing the row's layout box. It stays while focus is on
-   one of its parts, such as its author, or in a menu it opened. Standalone
-   selectors: see the :focus-within note above. */
+   one of its parts, such as its author, or in a menu it opened. A plugin
+   that keeps a cursor, such as Vim keys, marks one message per list with
+   data-message-cursor; it keeps this treatment without keyboard navigation.
+   Standalone selectors: see the :focus-within note above. */
 html[data-keyboard-navigation] .message:focus-visible {
   outline: none;
 }
 html[data-keyboard-navigation] .message:focus-within,
 html[data-keyboard-navigation] .message[data-menu-origin],
-html[data-keyboard-navigation] .message:has([data-menu-origin]) {
+html[data-keyboard-navigation] .message:has([data-menu-origin]),
+.message[data-message-cursor] {
   isolation: isolate;
 }
 html[data-keyboard-navigation] .message:focus-within::after,
 html[data-keyboard-navigation] .message[data-menu-origin]::after,
-html[data-keyboard-navigation] .message:has([data-menu-origin])::after {
+html[data-keyboard-navigation] .message:has([data-menu-origin])::after,
+.message[data-message-cursor]::after {
   content: "";
   position: absolute;
   inset-block: 0;
@@ -3752,7 +3756,8 @@ html[data-keyboard-navigation] .message:has([data-menu-origin])::after {
 @media (forced-colors: active) {
   html[data-keyboard-navigation] .message:focus-within,
   html[data-keyboard-navigation] .message[data-menu-origin],
-  html[data-keyboard-navigation] .message:has([data-menu-origin]) {
+  html[data-keyboard-navigation] .message:has([data-menu-origin]),
+  .message[data-message-cursor] {
     outline: 2px solid Highlight;
   }
 }

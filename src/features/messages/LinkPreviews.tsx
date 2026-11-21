@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import {
 import type {
   ContributionReader,
   LinkPreviewRenderer,
+  LinkPreviewSettings,
   LinkPreviewStatus,
 } from "../conversation/contracts";
 import { useTargetOpener } from "../conversation/opener";
@@ -63,14 +65,28 @@ function LinkPreviewSetup({
   url,
   title,
   onOpenSettings,
+  onFocusedRemoval,
 }: {
   url: string;
   title: string;
   onOpenSettings(): void;
+  onFocusedRemoval(): void;
 }) {
   const host = hostOf(url);
+  const button = useRef<HTMLButtonElement>(null);
+  const removed = useRef(onFocusedRemoval);
+  removed.current = onFocusedRemoval;
+  // Layout cleanup runs while the button is still attached, so it can tell
+  // whether a status change is about to take keyboard focus with it.
+  useLayoutEffect(() => {
+    const node = button.current;
+    return () => {
+      if (node && node.ownerDocument.activeElement === node) removed.current();
+    };
+  }, []);
   return (
     <button
+      ref={button}
       type="button"
       className={styles.setup}
       onClick={onOpenSettings}
@@ -87,14 +103,14 @@ export function LinkPreviews({
   messageId,
   registry,
   onOpenLink,
-  onOpenSettings,
+  settings,
 }: {
   urls: readonly string[];
   messageId: string;
   registry: ContributionReader<LinkPreviewRenderer> | undefined;
   onOpenLink(url: string): boolean;
-  /** Opens a Settings section; without it, renderers that need setup draw no card. */
-  onOpenSettings?: ((section: string) => void) | undefined;
+  /** Plugin Settings cards; without them, renderers that need setup draw no card. */
+  settings?: LinkPreviewSettings | undefined;
 }) {
   const renderers = useSyncExternalStore(
     registry?.subscribe ?? noSubscribe,
@@ -137,30 +153,75 @@ export function LinkPreviews({
       (read[index] ?? "checking") as LinkPreviewStatus,
     ]),
   );
+  const sections = distinct.map((renderer) =>
+    renderer.settings ? `${renderer.pluginId}/${renderer.settings}` : "",
+  );
+  const readSettings = () =>
+    sections
+      .map((section) => (section && settings?.has(section) ? "1" : "0"))
+      .join("");
+  const available = useSyncExternalStore(
+    settings?.subscribe ?? noSubscribe,
+    readSettings,
+    readSettings,
+  );
+  const sectionOf = new Map(
+    distinct.flatMap((renderer, index) => {
+      const section = sections[index];
+      return section && available[index] === "1" ? [[renderer, section]] : [];
+    }),
+  );
   const cards = matched.flatMap(({ url, renderer }) => {
     const status = statusOf.get(renderer) ?? "checking";
     if (status === "checking") return [];
-    if (status === "needs-setup" && !(onOpenSettings && renderer.settings))
-      return [];
+    if (status === "needs-setup" && !sectionOf.has(renderer)) return [];
     return [{ url, renderer, status }];
   });
-  if (!registry || !cards.length) return null;
+  const container = useRef<HTMLDivElement>(null);
+  const focusLost = useRef(false);
+  useLayoutEffect(() => {
+    if (!focusLost.current) return;
+    focusLost.current = false;
+    const root = container.current;
+    if (!root) return;
+    const active = root.ownerDocument.activeElement;
+    if (active && active !== root.ownerDocument.body) return;
+    const next =
+      root.querySelector<HTMLElement>("[data-link-preview-setup]") ??
+      root.querySelector<HTMLElement>(
+        "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])",
+      ) ??
+      root;
+    next.focus({ preventScroll: true });
+  });
+  if (!registry || !matched.length) return null;
   const shown = open ? cards : cards.slice(0, FOLD_AFTER);
   const hidden = cards.length - shown.length;
   return (
-    <div className={styles.previews} data-link-previews>
+    <div
+      ref={container}
+      className={styles.previews}
+      tabIndex={-1}
+      data-link-previews={cards.length ? "" : undefined}
+    >
       {shown.map(({ url, renderer, status }) => {
         const key = contributionKey(renderer);
-        if (status === "needs-setup" && onOpenSettings && renderer.settings) {
-          const section = `${renderer.pluginId}/${renderer.settings}`;
+        const section = sectionOf.get(renderer);
+        if (status === "needs-setup" && settings && section) {
           return (
             <LinkPreviewSetup
               key={`setup:${key}:${url}`}
               url={url}
               title={renderer.title}
+              onFocusedRemoval={() => {
+                focusLost.current = true;
+              }}
               onOpenSettings={() => {
-                if (registry.snapshot().includes(renderer))
-                  onOpenSettings(section);
+                if (
+                  registry.snapshot().includes(renderer) &&
+                  settings.has(section)
+                )
+                  settings.open(section);
               }}
             />
           );

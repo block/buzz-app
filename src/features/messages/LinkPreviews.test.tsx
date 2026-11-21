@@ -212,6 +212,25 @@ function provider(initial: "checking" | "ready" | "needs-setup") {
   };
 }
 
+function settingsWith(
+  open: (section: string) => void = () => {},
+  sections: string[] = ["tracker/setup"],
+) {
+  const listeners = new Set<() => void>();
+  return {
+    has: (section: string) => sections.includes(section),
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    open,
+    add(section: string) {
+      sections.push(section);
+      for (const listener of [...listeners]) listener();
+    },
+  };
+}
+
 function withStatus(
   base: Contribution<LinkPreviewRenderer>,
   state: ReturnType<typeof provider>,
@@ -241,7 +260,7 @@ it("draws a setup card that opens the plugin's Settings card while a renderer ne
         ),
       ])}
       onOpenLink={onOpenLink}
-      onOpenSettings={onOpenSettings}
+      settings={settingsWith(onOpenSettings)}
     />,
   );
   const setups = screen.getAllByRole("button", {
@@ -270,7 +289,7 @@ it("swaps every card from a renderer once it reports ready, and draws none while
         ),
       ])}
       onOpenLink={() => true}
-      onOpenSettings={() => {}}
+      settings={settingsWith()}
     />,
   );
   expect(screen.queryAllByRole("button")).toHaveLength(0);
@@ -317,7 +336,7 @@ it("ignores a retired registration's updates and stops listening when its cards 
       messageId="m"
       registry={reader(live)}
       onOpenLink={() => true}
-      onOpenSettings={onOpenSettings}
+      settings={settingsWith(onOpenSettings)}
     />,
   );
   const setup = screen.getByRole("button", { name: /^Set up Tracker/ });
@@ -347,7 +366,7 @@ it("treats a status that throws as ready", () => {
       messageId="m"
       registry={reader([throwing])}
       onOpenLink={() => true}
-      onOpenSettings={() => {}}
+      settings={settingsWith()}
     />,
   );
   expect(screen.getByText("tracker https://tracker.example/1")).toBeTruthy();
@@ -368,7 +387,7 @@ it("folds only the links that draw, and keeps folded links' status live", () => 
         entry("web", () => true, 100, card("web")),
       ])}
       onOpenLink={() => true}
-      onOpenSettings={() => {}}
+      settings={settingsWith()}
     />,
   );
   expect(screen.getByText("web https://web.example/")).toBeTruthy();
@@ -401,7 +420,7 @@ it("draws the setup card again after a ready preview failed to render", () => {
         ),
       ])}
       onOpenLink={() => true}
-      onOpenSettings={() => {}}
+      settings={settingsWith()}
     />,
   );
   expect(screen.queryAllByRole("button")).toHaveLength(0);
@@ -430,7 +449,7 @@ it("mounts no preview on a status read before its subscription", () => {
         ),
       ])}
       onOpenLink={() => true}
-      onOpenSettings={() => {}}
+      settings={settingsWith()}
     />,
   );
   expect(Card).not.toHaveBeenCalled();
@@ -458,8 +477,125 @@ it("does not subscribe to a registration that left before its cards mounted", ()
       messageId="m"
       registry={registry}
       onOpenLink={() => true}
-      onOpenSettings={() => {}}
+      settings={settingsWith()}
     />,
   );
   expect(state.subscribe).not.toHaveBeenCalled();
+});
+
+it("draws previews when a provider's subscribe throws, and tries again on the next mount", () => {
+  const state = provider("checking");
+  state.subscribe.mockImplementationOnce(() => {
+    throw new Error("broken");
+  });
+  const registry = reader([
+    withStatus(
+      entry("tracker", () => true, 0, card("tracker")),
+      state,
+    ),
+  ]);
+  const view = (
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={registry}
+      onOpenLink={() => true}
+      settings={settingsWith()}
+    />
+  );
+  const { unmount } = render(view);
+  expect(screen.getByText("tracker https://tracker.example/1")).toBeTruthy();
+  unmount();
+  render(view);
+  expect(state.subscribe).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText("tracker https://tracker.example/1")).toBeNull();
+  act(() => state.set("ready"));
+  expect(screen.getByText("tracker https://tracker.example/1")).toBeTruthy();
+});
+
+it("offers setup only once the plugin's Settings card is registered", () => {
+  const state = provider("needs-setup");
+  const settings = settingsWith(() => {}, []);
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, card("t")),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      settings={settings}
+    />,
+  );
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+  act(() => settings.add("other/setup"));
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+  act(() => settings.add("tracker/setup"));
+  expect(
+    screen.getAllByRole("button", { name: /^Set up Tracker/ }),
+  ).toHaveLength(1);
+});
+
+it("keeps keyboard focus in the message when a focused setup card goes away", () => {
+  const state = provider("needs-setup");
+  const { container } = render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, card("tracker")),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      settings={settingsWith()}
+    />,
+  );
+  screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
+  act(() => state.set("checking"));
+  const previews = container.firstElementChild;
+  expect(previews).toBeTruthy();
+  expect(document.activeElement).toBe(previews);
+  act(() => state.set("needs-setup"));
+  screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
+  act(() => state.set("ready"));
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "tracker https://tracker.example/1" }),
+  );
+});
+
+it("moves focus to another setup card when the focused one's renderer is ready", () => {
+  const tracker = provider("needs-setup");
+  const other = provider("needs-setup");
+  const otherEntry = {
+    ...withStatus(
+      entry("other", (url) => url.includes("other"), 0, card("other")),
+      other,
+    ),
+    title: "Other",
+  } as Contribution<LinkPreviewRenderer>;
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1", "https://other.example/1"]}
+      messageId="m"
+      registry={reader([
+        otherEntry,
+        withStatus(
+          entry("tracker", (url) => url.includes("tracker"), 1, card("t")),
+          tracker,
+        ),
+      ])}
+      onOpenLink={() => true}
+      settings={settingsWith(() => {}, ["tracker/setup", "other/setup"])}
+    />,
+  );
+  screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
+  act(() => tracker.set("checking"));
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: /^Set up Other/ }),
+  );
 });

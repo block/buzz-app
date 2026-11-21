@@ -57,6 +57,7 @@ export function linkPreviewStatus(
       listeners.add(listener);
       if (!stop && installed()) {
         let live = true;
+        let failed = false;
         let unsubscribe: (() => void) | undefined;
         try {
           const result = entry.subscribe?.(() => {
@@ -64,17 +65,27 @@ export function linkPreviewStatus(
           });
           if (typeof result === "function") unsubscribe = result;
         } catch {
-          unsubscribe = undefined;
+          failed = true;
         }
-        stop = () => {
+        if (failed) {
+          // A provider that can't report changes would leave its links stuck
+          // on one answer, so they draw as if it had no status. The next first
+          // subscriber tries again.
           live = false;
-          try {
-            unsubscribe?.();
-          } catch {
-            // A provider's unsubscribe failing must not break unmounting.
-          }
-        };
-        refresh();
+          stop = () => {};
+          current = "ready";
+          for (const each of [...listeners]) each();
+        } else {
+          stop = () => {
+            live = false;
+            try {
+              unsubscribe?.();
+            } catch {
+              // A provider's unsubscribe failing must not break unmounting.
+            }
+          };
+          refresh();
+        }
       }
       return () => {
         listeners.delete(listener);

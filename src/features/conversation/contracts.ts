@@ -304,6 +304,12 @@ export type IdentityMarkProps = Readonly<{
   pubkey: string;
   profiles: RelaySession["profiles"];
 }>;
+export type LinkPreviewSettings = Readonly<{
+  /** True while that plugin Settings card is registered. */
+  has(section: string): boolean;
+  subscribe(listener: () => void): () => void;
+  open(section: string): void;
+}>;
 export type ConversationExtensions = Readonly<{
   attachments?: ContributionReader<AttachmentRenderer>;
   messages?: ContributionReader<MessageRenderer>;
@@ -315,8 +321,8 @@ export type ConversationExtensions = Readonly<{
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
-  /** Opens a Settings section, such as a link preview's setup card. */
-  openSettings?: ((section: string) => void) | undefined;
+  /** Plugin Settings cards by `plugin/card` key, for a link preview's setup card. */
+  settings?: LinkPreviewSettings | undefined;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
   annotators?: ContributionReader<ComposerAnnotator>;
 }>;

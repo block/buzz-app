@@ -31,6 +31,7 @@ import type {
   InlineRenderer,
   LinkRenderer,
   LinkPreviewRenderer,
+  LinkPreviewSettings,
   MessageRenderer,
   IdentityMark,
   MessageAction,
@@ -184,6 +185,9 @@ function validate(
       "A conversation contribution needs an id, title and component",
     );
 }
+// The navigation target grammar for the card half of a `plugin/card` section.
+const settingsCardId = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+
 export class ConversationService extends Service implements Conversation {
   readonly attachments;
   private readonly attachmentEntries;
@@ -462,25 +466,32 @@ export class ConversationService extends Service implements Conversation {
         throw new Error(
           "A link preview renderer status needs both status and subscribe functions",
         );
-      if (typeof value.settings !== "string" || !value.settings)
+      if (value.settings === undefined)
         throw new Error(
           "A link preview renderer status needs a settings card id",
         );
     }
     if (
       value.settings !== undefined &&
-      (typeof value.settings !== "string" || !value.settings)
+      (typeof value.settings !== "string" ||
+        !settingsCardId.test(value.settings))
     )
       throw new Error(
-        "A link preview renderer settings card id must be a string",
+        "A link preview renderer settings card id must be a Settings card id",
       );
     this.linkPreviewEntries.register(this.ctx, value);
   }
-  readonly openSettings = (section: string) => {
-    void this.ctx.reflect
-      .get("navigation")
-      ?.open({ version: 1, kind: "settings", section });
-  };
+  readonly settings: LinkPreviewSettings = Object.freeze({
+    has: (section: string) =>
+      this.ctx.reflect.get("settingsCards")?.has(section) ?? false,
+    subscribe: (listener: () => void) =>
+      this.ctx.reflect.get("settingsCards")?.subscribe(listener) ?? (() => {}),
+    open: (section: string) => {
+      void this.ctx.reflect
+        .get("navigation")
+        ?.open({ version: 1, kind: "settings", section });
+    },
+  });
   registerCodeBlock(value: CodeBlockRenderer) {
     validate(value);
     if (typeof value.matches !== "function")

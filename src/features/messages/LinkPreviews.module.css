@@ -7,6 +7,12 @@
   min-width: 0;
   max-width: 100%;
 }
+.previews:empty {
+  margin-top: 0;
+}
+.previews:focus {
+  outline: none;
+}
 .previews > * {
   max-width: 100%;
 }

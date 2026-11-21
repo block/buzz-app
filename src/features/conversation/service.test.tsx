@@ -2,6 +2,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginRuntime } from "../../plugins/runtime";
 import { ConversationService } from "./service";
+import { SettingsCardsService } from "../settings/service";
 import { ChannelMembersDialog } from "../../bundled/channels/ChannelMembersDialog";
 import { ChannelGeneralAccess } from "../../bundled/channels/ChannelGeneralAccess";
 import { DocumentEditor } from "../messages/DocumentEditor";
@@ -276,7 +277,11 @@ it("registers link previews and withdraws them with their plugin", async () => {
         { subscribe },
         { status, subscribe },
         { status, subscribe, settings: "" },
+        { status, subscribe, settings: "tracker/setup" },
+        { status, subscribe, settings: "Setup" },
+        { status, subscribe, settings: "x".repeat(129) },
         { settings: 7 },
+        { settings: "-setup" },
       ])
         expect(() =>
           ctx.conversation.registerLinkPreview({
@@ -519,4 +524,32 @@ it("retires plugin chat menu contributions when their plugin is disabled", async
   await vi.waitFor(() =>
     expect(h.service.chatMenus.snapshot()).toHaveLength(0),
   );
+});
+
+it("reports which plugin Settings cards a link preview setup card can open", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  new SettingsCardsService(root);
+  const service = new ConversationService(root);
+  const listener = vi.fn();
+  const stop = service.settings.subscribe(listener);
+  expect(service.settings.has("tracker/setup")).toBe(false);
+  const fiber = root
+    .extend({ pluginOwner: { id: "tracker", revision: "one" } })
+    .plugin((ctx) => {
+      ctx.settingsCards.register({
+        id: "setup",
+        title: "Tracker",
+        component: () => null,
+      });
+    });
+  await fiber.await();
+  expect(service.settings.has("tracker/setup")).toBe(true);
+  expect(service.settings.has("other/setup")).toBe(false);
+  expect(listener).toHaveBeenCalled();
+  stop();
+  await root.fiber.dispose();
 });

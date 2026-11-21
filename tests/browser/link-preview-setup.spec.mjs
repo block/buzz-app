@@ -47,4 +47,21 @@ test("a link preview that needs setup draws a card that opens its plugin's Setti
   await expect(setups).toHaveCount(0);
   await page.evaluate(() => window.fixtureLinkSetup?.("needs-setup"));
   await expect(setups).toHaveCount(2);
+
+  const focusInRow = () =>
+    page.evaluate(
+      () =>
+        document.activeElement
+          ?.closest("[data-message-id]")
+          ?.getAttribute("data-message-id") ?? null,
+    );
+  await setups.first().focus();
+  await page.evaluate(() => window.fixtureLinkSetup?.("checking"));
+  await expect(setups).toHaveCount(0);
+  expect(await focusInRow()).toBe(message.id);
+  await page.evaluate(() => window.fixtureLinkSetup?.("needs-setup"));
+  await setups.last().focus();
+  await page.evaluate(() => window.fixtureLinkSetup?.("ready"));
+  await expect(row.locator("[data-tracker-card]")).toHaveCount(2);
+  expect(await focusInRow()).toBe(message.id);
 });

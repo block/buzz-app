@@ -333,3 +333,61 @@ test("a width that could not be saved survives other saves in its workspace", ()
   });
   expect(width()).toBe("500px");
 });
+
+// The pages' column floors are in rem, so a larger text size must narrow the
+// secondary pane's range rather than push the pane past the window edge.
+test("limits follow the text size", async () => {
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(960);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const root = document.documentElement;
+  root.style.fontSize = "20px";
+  vi.spyOn(window, "getComputedStyle");
+  function Workspace() {
+    const split = usePanelSplit(undefined, "text-size", 448, 316);
+    return (
+      <div ref={split.ref} data-testid="workspace">
+        {split.handle}
+      </div>
+    );
+  }
+  try {
+    const view = render(
+      <StrictMode>
+        <Workspace />
+      </StrictMode>,
+    );
+    const handle = screen.getByRole("separator");
+    const width = () =>
+      screen
+        .getByTestId("workspace")
+        .style.getPropertyValue("--secondary-panel-width");
+    // 960px less the primary column's 20rem (400px at 20px text).
+    fireEvent.keyDown(handle, { key: "End" });
+    expect(width()).toBe("560px");
+    // The secondary floor scales too: 316px at 16px text.
+    fireEvent.keyDown(handle, { key: "Home" });
+    expect(width()).toBe("395px");
+    // Changing the text size later remeasures without a resize.
+    await act(async () => {
+      root.style.fontSize = "16px";
+    });
+    fireEvent.keyDown(handle, { key: "End" });
+    expect(width()).toBe("640px");
+    // After unmount a text size change no longer remeasures.
+    const measured = vi.mocked(getComputedStyle);
+    view.unmount();
+    measured.mockClear();
+    await act(async () => {
+      root.style.fontSize = "20px";
+    });
+    expect(measured).not.toHaveBeenCalled();
+  } finally {
+    root.style.removeProperty("font-size");
+  }
+});

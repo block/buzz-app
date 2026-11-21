@@ -112,17 +112,38 @@ function PanelSplitHandle({
   primary: { defaultWidth: number; maxRatio: number } | undefined;
 }) {
   const [available, setAvailable] = useState(0);
+  // Pixel size of 1rem. The pages' CSS column floors are in rem, so they grow
+  // with the text size; the clamp below must grow with them.
+  const [rem, setRem] = useState(16);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
-    const measure = () => setAvailable(element.clientWidth);
+    const measure = () => {
+      setAvailable(element.clientWidth);
+      setRem(
+        parseFloat(getComputedStyle(document.documentElement).fontSize) || 16,
+      );
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
-    return () => observer.disconnect();
+    // A text size change restyles the root without resizing the container.
+    const restyle = new MutationObserver(measure);
+    restyle.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style"],
+    });
+    return () => {
+      observer.disconnect();
+      restyle.disconnect();
+    };
   }, [ref]);
-  const minimum = Math.max(min, available * (1 - (primary?.maxRatio ?? 1)));
-  const max = Math.max(minimum, available - 320);
+  const minimum = Math.max(
+    (min * rem) / 16,
+    available * (1 - (primary?.maxRatio ?? 1)),
+  );
+  // Leave the primary column 20rem, the Channels board's floor.
+  const max = Math.max(minimum, available - 20 * rem);
   const clamp = (width: number) => Math.min(max, Math.max(minimum, width));
   const width = clamp(
     preferred ??

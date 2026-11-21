@@ -30,6 +30,8 @@
 @import "./settings-controls.css";
 @import "./overlays.css";
 @import "./chips.css";
+@import "./tour.css";
+@import "./schematic.css";
 @import "./bento.css";
 @source "../";
 @source "../../../../tests/fixtures/design-system";

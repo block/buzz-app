@@ -271,6 +271,10 @@ export const GoogleDriveLogoIcon = defineIcon(
   "tabler",
   TablerGoogleDriveLogoIcon,
 );
+import TablerHandGrabIcon from "@tabler/icons-react/dist/esm/icons/IconHandGrab.mjs";
+export const HandGrabIcon = defineIcon("tabler", TablerHandGrabIcon);
+import TablerHandStopIcon from "@tabler/icons-react/dist/esm/icons/IconHandStop.mjs";
+export const HandStopIcon = defineIcon("tabler", TablerHandStopIcon);
 import TablerHashIcon from "@tabler/icons-react/dist/esm/icons/IconHash.mjs";
 export const HashIcon = defineIcon("tabler", TablerHashIcon);
 import TablerHouseIcon from "@tabler/icons-react/dist/esm/icons/IconHome.mjs";
@@ -400,6 +404,8 @@ import TablerWebhooksLogoIcon from "@tabler/icons-react/dist/esm/icons/IconWebho
 export const WebhooksLogoIcon = defineIcon("tabler", TablerWebhooksLogoIcon);
 import TablerWrenchIcon from "@tabler/icons-react/dist/esm/icons/IconTool.mjs";
 export const WrenchIcon = defineIcon("tabler", TablerWrenchIcon);
+import TablerPointerIcon from "@tabler/icons-react/dist/esm/icons/IconPointer.mjs";
+export const PointerIcon = defineIcon("tabler", TablerPointerIcon);
 import TablerXIcon from "@tabler/icons-react/dist/esm/icons/IconX.mjs";
 export const XIcon = defineIcon("tabler", TablerXIcon);
 import TablerXCircleIcon from "@tabler/icons-react/dist/esm/icons/IconCircleX.mjs";

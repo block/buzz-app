@@ -13,6 +13,8 @@
 @import "../design-system/styles/settings-controls.css";
 @import "../design-system/styles/overlays.css";
 @import "../design-system/styles/chips.css";
+@import "../design-system/styles/tour.css";
+@import "../design-system/styles/schematic.css";
 @import "./tokens.css";
 
 @source "../design-system/ui";

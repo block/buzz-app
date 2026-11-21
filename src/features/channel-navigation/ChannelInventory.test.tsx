@@ -75,6 +75,11 @@ import { localAgentsFixture } from "../agents/local-testing";
 import { forgetDefaultAgent, setDefaultAgent } from "../solo/default-agent";
 import type { RegisteredPage } from "../pages/service";
 
+// The once-per-device sidebar tour is covered by its own tests.
+vi.mock("../../bundled/channels/SidebarTour", () => ({
+  SidebarTour: () => null,
+}));
+
 const { rowRender, menuRender } = vi.hoisted(() => ({
   rowRender: vi.fn(),
   menuRender: vi.fn(),

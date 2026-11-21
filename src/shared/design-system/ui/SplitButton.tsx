@@ -5,7 +5,7 @@ import { MenuPopup, MenuRoot, MenuTrigger } from "./Menu";
 
 export type SplitButtonProps = Pick<
   ButtonProps,
-  "onClick" | "onBlur" | "aria-label" | "aria-disabled"
+  "onClick" | "onBlur" | "aria-label" | "aria-disabled" | "title"
 > & {
   /** The main action's label, which names the menu's current choice. */
   children: ReactNode;

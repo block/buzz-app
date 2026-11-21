@@ -4403,6 +4403,14 @@ export class AgentsService extends Service implements Agents {
       this.listeners.delete(listener);
     };
   };
+  /** Whether agents this copy runs are working, for the top-bar Update action to wait
+   * on: a restart stops their turns. Read-only, and not part of `Agents`. */
+  readonly work = Object.freeze({
+    isWorking: () => this.runners.isWorking(),
+    workingCount: () => this.runners.workingCount(),
+    subscribeWorking: (listener: () => void) =>
+      this.runners.subscribeWorking(listener),
+  });
   resumeInterrupted = () => {
     this.runners.resumeInterrupted(this.interruptedKeys());
     this.update();

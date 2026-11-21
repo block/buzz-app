@@ -72,6 +72,8 @@ import {
 import { useListedChannel } from "../relay/listed-channel";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
+import { splitPartition } from "../relay/partition";
+import { parseCommunityShareLink } from "../navigation/buzz-links";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import {
@@ -131,7 +133,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
-import { messageCopyLink, messageCopyText } from "./message-copy";
+import { messageCopyText, messageShareLink } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useThreadDraft } from "./draft-places";
 
@@ -710,9 +712,16 @@ function MessageRowContent({
         ? previewLinks(
             displayRow.content,
             row.attachments.map((attachment) => attachment.url),
+          ).filter(
+            // This community's shared links render as Buzz links, not web pages.
+            (url) =>
+              !scope ||
+              parseCommunityShareLink(url)?.origin !==
+                splitPartition(scope)?.communityOrigin,
           )
         : [],
     [
+      scope,
       linkPreviewRegistry,
       markdownBody,
       row.agentEnvelope,
@@ -1202,7 +1211,7 @@ function MessageRowContent({
             }
           : undefined
       }
-      link={messageCopyLink(row, scope)}
+      link={messageShareLink(row, scope)}
       copyText={() =>
         messageCopyText(row, directory.profiles, directory.agents)
       }

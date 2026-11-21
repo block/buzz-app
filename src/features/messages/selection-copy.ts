@@ -265,7 +265,9 @@ export function unselectable(element: Element): boolean {
 }
 
 function anchor(node: Element, inner: string, format: CopyFormat): string {
-  const target = node.getAttribute("href") ?? "";
+  // A link opened in its in-app form copies as authored.
+  const target =
+    node.getAttribute("data-shared-href") ?? node.getAttribute("href") ?? "";
   const panel = node.getAttribute("data-panel-target") === target;
   const href = panel ? target : safeHref(target);
   if (!href) return inner;

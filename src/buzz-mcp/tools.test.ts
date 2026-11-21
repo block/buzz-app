@@ -1,4 +1,5 @@
 import { LIVE_CANVAS_BYTES } from "../features/channel-templates/model";
+import { communityDestination } from "../features/communities/destination";
 import {
   CANVAS_HISTORY_PAGE,
   CANVAS_MAX_EVENT_BYTES,
@@ -92,6 +93,7 @@ function fake(
     signingAuthority: null,
     key: me,
     pubkey: me,
+    community: "https://relay.example",
     effectiveEdit: vi.fn(async (id: string) => {
       const found = events.find((event) => event.id === id);
       if (!found) throw new Error("No effective edit fixture");
@@ -895,6 +897,10 @@ it.each([
   ["current thread", {}],
   ["explicit thread", { thread: nested }],
   ["message link", { message_url: `buzz://message?channel=chan&id=${nested}` }],
+  [
+    "shared link",
+    { message_url: `https://relay.example/channel/chan/${nested}` },
+  ],
 ] as const)(
   "keeps agent ownership and nested reply context in a %s read",
   async (_, args) => {
@@ -1037,6 +1043,33 @@ it("reads an edited message with the files and emoji its latest edit leaves", as
       ["emoji", "wave", "https://relay.test/wave.png"],
     ])} at `,
   );
+});
+
+it("reads a shared https link only from the community it names", async () => {
+  const { client } = fake(community);
+  for (const message_url of [
+    `https://other.example/channel/chan/${nested}`,
+    `https://relay.example:8443/channel/chan/${nested}`,
+  ])
+    await expect(
+      callTool(client, { channel: "chan", root }, "read", { message_url }),
+    ).rejects.toThrow("another community");
+  // Both sides are normalized origins: case and a default port still match.
+  const normalized = {
+    ...client,
+    community: communityDestination("wss://Relay.Example:443/").url,
+  };
+  await expect(
+    callTool(normalized, { channel: "chan", root }, "read", {
+      message_url: `https://RELAY.example:443/channel/chan/${nested}`,
+    }),
+  ).resolves.toContain(nested);
+  const unknown = { ...client, community: undefined };
+  await expect(
+    callTool(unknown, { channel: "chan", root }, "read", {
+      message_url: `https://relay.example/channel/chan/${nested}`,
+    }),
+  ).rejects.toThrow("another community");
 });
 
 const reply = (id: string, created_at: number) =>

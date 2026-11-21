@@ -151,7 +151,7 @@ export function SoloChatMenuItems({
         </MenuItem>
       )}
       {includeChannelControls && (
-        <ChannelCopyLinkMenuItem channelId={channel.id} />
+        <ChannelCopyLinkMenuItem channelId={channel.id} scope={session.scope} />
       )}
       {active &&
         !regions.managed.has(channel.id) &&

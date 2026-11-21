@@ -823,11 +823,19 @@ Quitting Buzz also turns it off.
 - **Message link previews** appear when you hover or focus a Buzz message link.
   When the message can't be shown, the card says why: the channel is private,
   gone or in another community; the message isn't available, and may have
-  been deleted; or the preview couldn't load. Links don't record their
-  community, so one from another community looks like a private or missing
+  been deleted; or the preview couldn't load. A `buzz://` link doesn't record
+  its community, so one from another community looks like a private or missing
   channel. The card still opens the link, unless the channel is private
   to you: then the link and its card don't open anything, and the link can
   still be copied. Once you have access, the link opens again.
+- **Copy link** on a message or channel copies a web link on the community's
+  address, such as `https://<community>/channel/<channel>/<message>`. Opened
+  in a browser, it offers to open Buzz, which shows the conversation in the
+  community you have selected. In Buzz, a link to the current community opens
+  like any Buzz link; a link to another community opens in the browser.
+  The web link needs a relay that serves its page; a self-hosted or older
+  relay without one answers it with an error. An agent's `read` tool reads a
+  web link only from its own community.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.

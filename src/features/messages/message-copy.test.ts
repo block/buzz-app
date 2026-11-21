@@ -2,7 +2,11 @@ import { expect, it } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
 import { deepLinkStep } from "../navigation/deep-links";
 import { profileTarget } from "../profiles/target";
-import { messageCopyText, messageCopyLink } from "./message-copy";
+import {
+  messageCopyText,
+  messageCopyLink,
+  messageShareLink,
+} from "./message-copy";
 const person = "a".repeat(64);
 const row: ChannelMessage = {
   id: "b".repeat(64),
@@ -92,4 +96,16 @@ it("does not create links for pending, failed, unavailable or malformed targets"
     ).toBeUndefined();
   expect(messageCopyLink(row, undefined)).toBeUndefined();
   expect(messageCopyLink(row, "invalid")).toBeUndefined();
+});
+
+it("shares a message as an https link on its community's relay", () => {
+  expect(
+    messageShareLink(
+      { ...row, threadRootId: "d".repeat(64) },
+      `https://relay.test:${person}`,
+    ),
+  ).toBe(
+    `https://relay.test/channel/general/${row.id}?thread=${"d".repeat(64)}`,
+  );
+  expect(messageShareLink(row, undefined)).toBeUndefined();
 });

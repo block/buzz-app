@@ -13,7 +13,11 @@ import {
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
-import { parseBuzzLink } from "../navigation/buzz-links";
+import {
+  parseBuzzLink,
+  parseCommunityShareLink,
+} from "../navigation/buzz-links";
+import { splitPartition } from "../relay/partition";
 import { bareHostParts, messageLinkParts } from "./message-link-parts";
 import { labelText } from "./label-text";
 import {
@@ -582,11 +586,18 @@ function PreparedMessageMarkdown({
     prepared.content === sourceRow.content
       ? sourceRow
       : { ...sourceRow, content: prepared.content };
-  const renderLink = (url: string, label?: string, children?: ReactNode) => {
+  const communityOrigin = scope && splitPartition(scope)?.communityOrigin;
+  const renderLink = (href: string, label?: string, children?: ReactNode) => {
+    // A shared https link to this community renders and opens as its
+    // `buzz://` link; any other community's stays a web link.
+    const shared = parseCommunityShareLink(href);
+    const url =
+      shared && shared.origin === communityOrigin ? shared.link : href;
     const channel = channelForLink(url, directory.channels);
     return (
       <MessageLink
         url={url}
+        sharedUrl={href}
         label={label}
         directoryLabel={channelLinkLabel(url, directory.channels)}
         registry={extensions?.links}

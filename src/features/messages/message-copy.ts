@@ -2,6 +2,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import { scanMarkdown, MAX_MARKDOWN_LENGTH } from "../relay/message-content";
 import { parseOpenTarget } from "../navigation/targets";
 import { splitPartition } from "../relay/partition";
+import { communityShareLink } from "../navigation/buzz-links";
 import { profileMentionParts } from "./profile-mentions";
 import { isLiteralMarkdownContext } from "./markdown-preparation";
 
@@ -75,4 +76,17 @@ export function messageCopyLink(
   } catch {
     return undefined;
   }
+}
+
+/** Copy link: the message's https link on its community's relay, which opens
+ * it in Buzz. Unlike `messageCopyLink`, it names the community. */
+export function messageShareLink(
+  row: ChannelMessage,
+  scope: string | undefined,
+): string | undefined {
+  const link = messageCopyLink(row, scope);
+  return (
+    communityShareLink(link, scope && splitPartition(scope)?.communityOrigin) ??
+    link
+  );
 }

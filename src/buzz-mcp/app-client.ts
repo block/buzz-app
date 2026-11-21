@@ -6,6 +6,7 @@ import type { BuzzClient, Memories } from "./client";
 import { nativeToolClient } from "../features/agents/tool-operation";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import { imageType } from "../features/relay/attachment-limits";
+import { communityDestination } from "../features/communities/destination";
 import type { AgentHandle, AgentHandoff } from "../features/agents/service";
 import type {
   HostProcess,
@@ -24,6 +25,15 @@ export function relayKeyOf(
   source: { workflowAuthority(): string | undefined } | undefined,
 ) {
   return source && (source.workflowAuthority() ?? null);
+}
+
+/** The https origin of the community a `wss://` relay URL names. */
+function communityOrigin(relay: string) {
+  try {
+    return communityDestination(relay).url;
+  } catch {
+    return undefined;
+  }
 }
 
 export function appClient(
@@ -89,6 +99,7 @@ export function appClient(
           },
         }
       : {}),
+    community: communityOrigin(agent.relay),
     ...(agent.protection
       ? {
           protect: async (

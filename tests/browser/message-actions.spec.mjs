@@ -278,7 +278,7 @@ test("message actions reveal, copy, restore focus and reply across responsive la
       .getByText("Link copied", { exact: true }),
   ).toBeVisible();
   const copiedLink = await page.evaluate(() => window.copiedMessages.at(-1));
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  expect(copiedLink).toBe(`https://primary.example/channel/alpha/${event.id}`);
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const panel = page.getByRole("complementary", {
@@ -592,7 +592,7 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
       .getByText("Link copied", { exact: true }),
   ).toBeVisible();
   const copiedLink = await page.evaluate(() => window.copiedMessageLink);
-  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  expect(copiedLink).toBe(`https://primary.example/channel/alpha/${event.id}`);
   const sharedConversation = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .getByRole("button", { name: "Alice Fixture", exact: true });
@@ -605,9 +605,13 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
     sharedChannel,
     `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
   );
-  for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
+  // The shared https link opens in place, as the Buzz link it names.
+  for (const link of [
+    `a[data-shared-href="${copiedLink}"][href="buzz://message?channel=alpha&id=${event.id}"]`,
+    `a[href="buzz://channel/alpha/${event.id}"]`,
+  ]) {
     await sharedConversation.click();
-    await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
+    await page.locator(`[data-channel-timeline] ${link}`).click();
     await expect(row).toBeVisible();
     await expect(row).toBeFocused();
   }

@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -11,13 +12,19 @@ import {
 import { useTeamMentions } from "./use-team-mentions";
 import { MENTION_ROWS, useMentionChoices } from "./use-mention-choices";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
-import type { ComposerSession } from "../../features/messages/composer-session";
+import {
+  fullSession,
+  type ComposerSession,
+} from "../../features/messages/composer-session";
+import { savedAgentStore } from "../../features/solo/default-agent";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
+  guestMentionDetail,
   outsideMentionDetail,
   remoteMentionDetail,
 } from "./mention-candidates";
 import { outsideMentionReferences } from "../../features/messages/mention-admission";
+import { useChannelGuests } from "../../features/channel-members/guests";
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
 import {
   channelMember,
@@ -81,6 +88,13 @@ export function MentionCompletion({
     JSON.stringify(["inline", scope, channelId, threadRootId, query.start]),
   );
   const { profiles, agents, channel, list, choices } = model;
+  const bestie = useBestie(session);
+  const guests = useChannelGuests(
+    session,
+    channel && channel.channelType !== "dm" && channel.channelType !== "solo"
+      ? channelId
+      : undefined,
+  );
   const teams = useTeamMentions(
     session,
     channelId,
@@ -231,11 +245,20 @@ export function MentionCompletion({
             disabled ??
             // The other verified name sits beside the detail.
             ([
+              recipient.pubkey === bestie ? "Bestie" : undefined,
               otherName,
               remoteMentionDetail(execution),
               model.managedBy.get(recipient.pubkey),
               memberKeys.has(recipient.pubkey)
-                ? undefined
+                ? guests.has(recipient.pubkey)
+                  ? guestMentionDetail(
+                      !!agent,
+                      // Signature-checked, as the send's dialog decides.
+                      !!session.viewer &&
+                        session.profiles.owner?.(recipient.pubkey) ===
+                          session.viewer,
+                    )
+                  : undefined
                 : inviteAgents &&
                     !outsideMentionReferences(
                       channel,
@@ -444,6 +467,22 @@ export function MentionCompletion({
     parentAdmission,
     selected,
     community,
+    guests,
+    bestie,
   ]);
   return null;
+}
+
+/** The viewer's current Bestie (`useSavedAgentState`'s agent), in every
+ * channel. A composer without a full relay session has none to name. */
+function useBestie(session: ComposerSession) {
+  const host = fullSession(session);
+  const store = useMemo(
+    () => host && savedAgentStore(host, host.scope ?? ""),
+    [host],
+  );
+  return useSyncExternalStore(
+    useCallback((notify) => store?.subscribe(notify) ?? (() => {}), [store]),
+    () => store?.snapshot(),
+  );
 }

@@ -42,9 +42,16 @@ export const DENSITY_KEY = "buzz-message-density.v1";
 export const parseMessageDensity = (value: unknown): MessageDensity =>
   value === "compact" ? "compact" : "default";
 
+export type MessageAlignment = "top" | "bottom";
+export const MESSAGE_ALIGNMENT_KEY = "buzz-message-alignment.v1";
+export const parseMessageAlignment = (value: unknown): MessageAlignment =>
+  value === "bottom" ? "bottom" : "top";
+
 export interface AppearanceSnapshot {
   readonly preference: ColorModePreference;
   readonly mode: ColorMode;
+  readonly messageAlignment: MessageAlignment;
+  readonly messageAlignmentError: string | null;
   readonly messageWidth: MessageWidth;
   readonly messageWidthError: string | null;
   readonly fontScale: number;
@@ -72,6 +79,8 @@ export function createAppearance(
     preference: "system",
     mode: "light",
     error: null,
+    messageAlignment: "top",
+    messageAlignmentError: null,
     messageWidth: "narrow",
     messageWidthError: null,
     fontScale: 1,
@@ -117,6 +126,7 @@ export function createAppearance(
       state.messageWidth === "wide" ? "78rem" : "52rem",
     );
     root.dataset.messageDensity = state.density;
+    root.dataset.messageAlignment = state.messageAlignment;
     root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document
@@ -169,6 +179,24 @@ export function createAppearance(
         ...state,
         fontError:
           "Interface size could not be restored. Choose a size to try saving it again.",
+      };
+    }
+    notify();
+  };
+  const restoreMessageAlignment = () => {
+    try {
+      state = {
+        ...state,
+        messageAlignment: parseMessageAlignment(
+          host?.localStorage.getItem(MESSAGE_ALIGNMENT_KEY),
+        ),
+        messageAlignmentError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        messageAlignmentError:
+          "Message alignment could not be restored. Choose an alignment to try saving it again.",
       };
     }
     notify();
@@ -250,6 +278,7 @@ export function createAppearance(
       event.key !== APPEARANCE_KEY &&
       event.key !== FONT_SCALE_KEY &&
       event.key !== MESSAGE_WIDTH_KEY &&
+      event.key !== MESSAGE_ALIGNMENT_KEY &&
       event.key !== ACCENT_KEY &&
       event.key !== CONTRAST_KEY &&
       event.key !== DENSITY_KEY &&
@@ -262,6 +291,8 @@ export function createAppearance(
       if (event.storageArea !== host?.localStorage) return;
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
+      if (event.key === null || event.key === MESSAGE_ALIGNMENT_KEY)
+        restoreMessageAlignment();
       if (event.key === null || event.key === MESSAGE_WIDTH_KEY)
         restoreMessageWidth();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
@@ -275,6 +306,8 @@ export function createAppearance(
     } catch {
       if (event.key === null || event.key === APPEARANCE_KEY) restore();
       if (event.key === null || event.key === FONT_SCALE_KEY) restoreFont();
+      if (event.key === null || event.key === MESSAGE_ALIGNMENT_KEY)
+        restoreMessageAlignment();
       if (event.key === null || event.key === MESSAGE_WIDTH_KEY)
         restoreMessageWidth();
       if (event.key === null || event.key === CONTRAST_KEY) restoreContrast();
@@ -289,6 +322,7 @@ export function createAppearance(
   };
   restore();
   restoreFont();
+  restoreMessageAlignment();
   restoreMessageWidth();
   restoreAccent();
   restoreContrast();
@@ -337,6 +371,20 @@ export function createAppearance(
           "This interface size is active, but could not be saved on this device. Try again.";
       }
       state = { ...state, fontScale, fontError };
+      notify();
+    },
+    setMessageAlignment(value: MessageAlignment) {
+      if (disposed) return;
+      const messageAlignment = parseMessageAlignment(value);
+      let messageAlignmentError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        host.localStorage.setItem(MESSAGE_ALIGNMENT_KEY, messageAlignment);
+      } catch {
+        messageAlignmentError =
+          "This message alignment is active, but could not be saved on this device. Try again.";
+      }
+      state = { ...state, messageAlignment, messageAlignmentError };
       notify();
     },
     setMessageWidth(value: MessageWidth) {

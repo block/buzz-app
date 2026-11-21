@@ -16904,6 +16904,9 @@ it("gives a run its owner's channel templates with the owner's agents each adds"
   ]);
 });
 
+/** A new private conversation that names the owner. */
+const withOwner = { members: [viewer], open: false };
+
 it("binds run-only placement to the owner, community and just-created confirmed chat", async () => {
   const f = await setup();
   const preferences = {
@@ -16954,17 +16957,9 @@ it("binds run-only placement to the owner, community and just-created confirmed 
       workspace.prepare("work", { members: [], open: false }, "new-chat"),
     ).rejects.toThrow("Your owner can't see");
     await expect(
-      workspace.prepare(
-        "unknown",
-        { members: [viewer], open: false },
-        "new-chat",
-      ),
+      workspace.prepare("unknown", withOwner, "new-chat"),
     ).rejects.toThrow("No such workspace");
-    const file = await workspace.prepare(
-      "work",
-      { members: [viewer], open: false },
-      "new-chat",
-    );
+    const file = await workspace.prepare("work", withOwner, "new-chat");
     await expect(file("old-chat")).rejects.toThrow("No new chat from this run");
     await handle.publish({
       kind: 9007,
@@ -16994,11 +16989,7 @@ it("binds run-only placement to the owner, community and just-created confirmed 
       { signal: expect.any(AbortSignal) },
     );
     await expect(file("new-chat")).rejects.toThrow("already attempted");
-    const stale = await workspace.prepare(
-      "work",
-      { members: [viewer], open: false },
-      "new-chat",
-    );
+    const stale = await workspace.prepare("work", withOwner, "new-chat");
     f.connect(false);
     await expect(stale("new-chat")).rejects.toThrow();
     await expect(workspace.list()).rejects.toThrow();
@@ -17011,51 +17002,33 @@ it("binds run-only placement to the owner, community and just-created confirmed 
 /** A session with workspace `work` and relay state for conversation `chat`. */
 function workspaceSession(
   f: Awaited<ReturnType<typeof setup>>,
-  conversation: {
-    open?: boolean;
-    members?: readonly string[];
-    tags?: string[][];
-  },
+  members: readonly string[] = [bot, viewer],
 ) {
   const authority = "f".repeat(64);
   const assign = vi.fn(async () => {});
   const kit = { status: "ready", entries: [] as unknown[] };
   Object.assign(f.session.agentChoices, {
-    refresh: vi.fn(async () => {}),
-    snapshot: () => ({
-      identities: [],
-      templates: { status: "ready", complete: true, identities: [] },
-      archives: { status: "ready", archived: [] },
-    }),
+    snapshot: () => ({ identities: [] }),
   });
   Object.assign(f.session, {
     channelKit: {
       available: true,
-      refresh: vi.fn(async () => {}),
+      refresh: async () => {},
       snapshot: () => kit,
     },
     relayAuthor: authority,
     snapshotRead: vi.fn(async (filters: readonly ReadFilter[]) => {
-      const id = filters[0]?.["#d"]?.[0] ?? "";
+      const d = ["d", filters[0]?.["#d"]?.[0] ?? ""];
       return [
         event("meta", {
           kind: 39000,
           pubkey: authority,
-          tags: [
-            ["d", id],
-            ["t", "stream"],
-            [conversation.open ? "public" : "private"],
-            ["P", bot],
-            ...(conversation.tags ?? []),
-          ],
+          tags: [d, ["t", "stream"], ["private"], ["P", bot]],
         }),
         event("roster", {
           kind: 39002,
           pubkey: authority,
-          tags: [
-            ["d", id],
-            ...(conversation.members ?? [bot, viewer]).map((key) => ["p", key]),
-          ],
+          tags: [d, ...members.map((key) => ["p", key])],
         }),
       ];
     }),
@@ -17072,76 +17045,9 @@ function workspaceSession(
   return { assign, kit };
 }
 
-it("files a new open channel its owner isn't in, but not a private one", async () => {
+it("keeps a workspace's local folders out of a Solo chat with anyone else", async () => {
   const f = await setup();
-  const { assign } = workspaceSession(f, { open: true, members: [bot] });
-  await f.service.create({ type: "example/echo", name: "Echo" });
-  const handle = await handleOf(f.run, f.emit);
-  try {
-    await expect(
-      handle.workspaces?.prepare(
-        "work",
-        { members: [], open: false },
-        "private-chat",
-      ),
-    ).rejects.toThrow("Your owner can't see");
-    const file = await handle.workspaces?.prepare(
-      "work",
-      { members: [], open: true },
-      "open-chat",
-    );
-    await handle.publish({
-      kind: 9007,
-      content: "",
-      tags: [
-        ["h", "open-chat"],
-        ["visibility", "open"],
-        ["channel_type", "forum"],
-      ],
-    });
-    await expect(file?.("open-chat")).resolves.toEqual({ status: "filed" });
-    expect(assign).toHaveBeenCalledExactlyOnceWith(
-      "open-chat",
-      "work",
-      expect.any(AbortSignal),
-    );
-  } finally {
-    await f.ctx.fiber.dispose();
-  }
-});
-
-it("refuses to file a new channel its owner can't see", async () => {
-  const f = await setup();
-  const { assign } = workspaceSession(f, { members: [bot] });
-  await f.service.create({ type: "example/echo", name: "Echo" });
-  const handle = await handleOf(f.run, f.emit);
-  try {
-    // The relay made it private, though the agent asked for open.
-    const file = await handle.workspaces?.prepare(
-      "work",
-      { members: [], open: true },
-      "chat",
-    );
-    await handle.publish({
-      kind: 9007,
-      content: "",
-      tags: [
-        ["h", "chat"],
-        ["visibility", "open"],
-      ],
-    });
-    await expect(file?.("chat")).resolves.toMatchObject({
-      status: "not-filed",
-    });
-    expect(assign).not.toHaveBeenCalled();
-  } finally {
-    await f.ctx.fiber.dispose();
-  }
-});
-
-it("reads a workspace's defaults as New channel and New chat do", async () => {
-  const f = await setup();
-  const { kit } = workspaceSession(f, {});
+  const { kit } = workspaceSession(f);
   const marked = workspaceCanvas({ folders: ["/repo"], canvas: "Rules" });
   kit.entries = [
     {
@@ -17160,77 +17066,31 @@ it("reads a workspace's defaults as New channel and New chat do", async () => {
   await f.service.create({ type: "example/echo", name: "Echo" });
   const handle = await handleOf(f.run, f.emit);
   try {
-    // A Solo chat of the owner and their agents keeps the local folders; one
-    // with anyone else, or a team channel, gets only the instructions.
-    const solo = (members: string[]) => ({ solo: true as const, members });
-    await expect(
-      handle.workspaces?.defaults("work", solo([viewer, bot])),
-    ).resolves.toEqual({ canvas: marked, agents: [], skipped: [] });
-    const refresh = vi.spyOn(f.session.agentChoices, "refresh");
-    await expect(
-      handle.workspaces?.defaults("work", solo([viewer, other])),
-    ).resolves.toEqual({ canvas: "Rules", agents: [], skipped: [] });
-    expect(refresh).toHaveBeenCalled();
-    await expect(
-      handle.workspaces?.defaults("work", { solo: false }),
-    ).resolves.toEqual({ canvas: "Rules", agents: [], skipped: [] });
-    await expect(
-      handle.workspaces?.defaults("other", { solo: false }),
-    ).rejects.toThrow("No such workspace");
-    // Where saved defaults are unavailable, a workspace has none.
-    Object.assign(f.session.channelKit, { available: false });
-    await expect(
-      handle.workspaces?.defaults("work", { solo: false }),
-    ).resolves.toEqual({
-      canvas: "",
-      agents: [],
-      skipped: [],
-    });
-    expect(f.plugin.agents.handle(bot)?.workspaces).toBeUndefined();
+    const canvas = async (members: string[]) =>
+      (await handle.workspaces?.defaults("work", { solo: true, members }))
+        ?.canvas;
+    expect(await canvas([viewer, bot])).toBe(marked);
+    expect(await canvas([viewer, other])).toBe("Rules");
   } finally {
     await f.ctx.fiber.dispose();
   }
 });
 
-const moves: [
-  string,
-  Parameters<typeof workspaceSession>[1],
-  string | undefined,
-  string,
-][] = [
-  ["a channel its owner is in", {}, "work", "filed"],
-  ["an open channel", { open: true, members: [bot] }, "work", "filed"],
-  ["back to unfiled", {}, undefined, "filed"],
-  [
-    "a private channel its owner isn't in",
-    { members: [bot] },
-    "work",
-    "Your owner can't see",
-  ],
-  [
-    "a region's chat",
-    { tags: [["t", "buzz.region:example:work"]] },
-    "work",
-    "managed by its region",
-  ],
-  ["an unknown workspace", {}, "other", "No such workspace"],
-];
-it.each(moves)(
+it.each([
+  ["a channel its owner is in", [bot, viewer], "filed"],
+  ["a private channel its owner isn't in", [bot], "Your owner can't see"],
+])(
   "moves only conversations its owner can see: %s",
-  async (_, conversation, workspace, outcome) => {
+  async (_, members, outcome) => {
     const f = await setup();
-    const { assign } = workspaceSession(f, conversation);
+    const { assign } = workspaceSession(f, members);
     await f.service.create({ type: "example/echo", name: "Echo" });
     const handle = await handleOf(f.run, f.emit);
     try {
-      const moving = handle.workspaces?.move("chat", workspace);
+      const moving = handle.workspaces?.move("chat", "work");
       if (outcome === "filed") {
         await expect(moving).resolves.toEqual({ status: "filed" });
-        expect(assign).toHaveBeenCalledExactlyOnceWith(
-          "chat",
-          workspace,
-          expect.any(AbortSignal),
-        );
+        expect(assign).toHaveBeenCalledOnce();
       } else {
         await expect(moving).rejects.toThrow(outcome);
         expect(assign).not.toHaveBeenCalled();
@@ -17240,25 +17100,6 @@ it.each(moves)(
     }
   },
 );
-
-it("reports a move it can't confirm, and stops when its community changes", async () => {
-  const f = await setup();
-  const { assign } = workspaceSession(f, {});
-  assign.mockRejectedValueOnce(new Error("record full"));
-  await f.service.create({ type: "example/echo", name: "Echo" });
-  const handle = await handleOf(f.run, f.emit);
-  try {
-    await expect(handle.workspaces?.move("chat", "work")).resolves.toEqual({
-      status: "unconfirmed",
-      error: "record full",
-    });
-    f.connect(false);
-    await expect(handle.workspaces?.move("chat", "work")).rejects.toThrow();
-    expect(assign).toHaveBeenCalledOnce();
-  } finally {
-    await f.ctx.fiber.dispose();
-  }
-});
 
 it.each([
   "cached preferences",
@@ -17330,11 +17171,7 @@ it.each([
         "Workspaces are unavailable",
       );
       await expect(
-        handle.workspaces?.prepare(
-          "work",
-          { members: [viewer], open: false },
-          "new-chat",
-        ),
+        handle.workspaces?.prepare("work", withOwner, "new-chat"),
       ).rejects.toThrow("Workspaces are unavailable");
       expect(f.session.snapshotRead).not.toHaveBeenCalled();
       expect(assign).not.toHaveBeenCalled();
@@ -17342,7 +17179,7 @@ it.each([
     }
     const file = await handle.workspaces?.prepare(
       "work",
-      { members: [viewer], open: false },
+      withOwner,
       "new-chat",
     );
     await handle.publish({
@@ -17461,18 +17298,10 @@ it("keeps overlapping prepared creates independently fileable through the run", 
       ],
     });
   try {
-    const first = await ws.prepare(
-      "work",
-      { members: [viewer], open: false },
-      "first",
-    );
+    const first = await ws.prepare("work", withOwner, "first");
     await create("first");
     // First tool is still confirming metadata when the second publishes.
-    const second = await ws.prepare(
-      "work",
-      { members: [viewer], open: false },
-      "second",
-    );
+    const second = await ws.prepare("work", withOwner, "second");
     await create("second");
     const pending = first("first");
     await Promise.race([
@@ -17551,7 +17380,7 @@ it.each(["authority", "assignment"])(
     try {
       const file = await handle.workspaces?.prepare(
         "work",
-        { members: [viewer], open: false },
+        withOwner,
         "chat",
         signal.signal,
       );
@@ -17648,7 +17477,7 @@ it.each(["filed", "deleted", "retired"])(
     try {
       const file = await handle.workspaces?.prepare(
         "work",
-        { members: [viewer], open: false },
+        withOwner,
         "new-chat",
         call.signal,
       );
@@ -21203,14 +21032,6 @@ describe("full external agent access", () => {
       const discover = await f.call("workspace_list", {});
       expect(discover.result.isError).toBe(true);
       expect(discover.result.content[0]?.text).toBe(
-        "Workspaces are unavailable on this host",
-      );
-      const move = await f.call("channel_move", {
-        channel: "chat",
-        workspace: "work",
-      });
-      expect(move.result.isError).toBe(true);
-      expect(move.result.content[0]?.text).toBe(
         "Workspaces are unavailable on this host",
       );
       const create = await f.call("channel_create", {

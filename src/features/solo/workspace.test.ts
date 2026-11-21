@@ -254,7 +254,7 @@ it.each([
         value: {
           type: "template",
           id: await projectTemplateId("work"),
-          canvas: "",
+          canvas: workspaceCanvas({ folders: ["/repo"], canvas: "Rules" }),
           agents: [pubkey],
           teamIds: [],
         },
@@ -294,12 +294,19 @@ it.each([
       agents: [pubkey],
       skipped: [],
     });
-  // An agent not available here is skipped, and the chat still starts.
-  else if (state === "archived" || state === "removed-legacy")
+  // An agent not available here is skipped, and the create still goes on.
+  else if (state === "archived" || state === "removed-legacy") {
     expect(await loadChatSetup(f.session, "work")).toMatchObject({
       agents: [],
       skipped: [pubkey],
     });
+    // A new channel gets the same agents, and only the shareable Canvas.
+    expect(await loadChannelSetup(f.session, "work")).toEqual({
+      canvas: "Rules",
+      agents: [],
+      skipped: [pubkey],
+    });
+  }
   // One not yet checked is neither: the start waits.
   else
     await expect(loadChatSetup(f.session, "work")).rejects.toThrow(
@@ -431,60 +438,3 @@ it.each([
     expect(result).not.toContain("/private");
   },
 );
-it("skips an archived default agent in New chat and New channel alike", async () => {
-  const f = fixture();
-  const [kept, archived, teammate] = ["a", "b", "c"].map((c) =>
-    c.repeat(64),
-  ) as [string, string, string];
-  const marked = workspaceCanvas({ folders: ["/repo"], canvas: "Rules" });
-  f.kit.entries = [
-    {
-      eventId: "head",
-      record: {
-        value: {
-          type: "template",
-          id: await projectTemplateId("work"),
-          canvas: marked,
-          agents: [kept, archived],
-          teamIds: ["crew"],
-        },
-      },
-    },
-    {
-      eventId: "team",
-      record: { value: { type: "team", id: "crew", agents: [teammate] } },
-    },
-  ];
-  const identity = (pubkey: string) => ({ pubkey, name: "A", managed: true });
-  Object.assign(f.session, {
-    agentChoices: {
-      refresh: vi.fn(async () => {}),
-      snapshot: () => ({
-        templates: {
-          status: "ready",
-          complete: true,
-          identities: [kept, archived, teammate].map(identity),
-        },
-        identities: [],
-        archives: { status: "ready", archived: [archived] },
-      }),
-    },
-    channels: {
-      refreshList: vi.fn(),
-      list: () => ({ status: "ready", channels: [] }),
-    },
-  });
-  expect(await loadChannelSetup(f.session, "work")).toEqual({
-    canvas: "Rules",
-    agents: [kept, teammate],
-    skipped: [archived],
-  });
-  // New chat keeps its full Canvas, and skips the same agent.
-  expect(await loadChatSetup(f.session, "work")).toEqual({
-    projectId: "work",
-    canvas: marked,
-    agents: [kept, teammate],
-    skipped: [archived],
-    revision: "head,team",
-  });
-});

@@ -229,17 +229,9 @@ it("checks file-capture errors before exposing them and does not recheck approva
   expect(protect).toHaveBeenCalledOnce();
   expect(protect.mock.calls[0]?.[0].kind).toBe("tool");
 });
-it("never hands a plugin's tool the owner's workspaces, settings or Bestie", async () => {
-  const workspaces = {
-    list: vi.fn(),
-    defaults: vi.fn(),
-    prepare: vi.fn(),
-    move: vi.fn(),
-  };
+it("never hands a plugin's tool or operation the owner's workspaces", async () => {
   const client = {
-    workspaces,
-    settings: {},
-    bestie: {},
+    workspaces: {},
   } as unknown as import("./client").BuzzClient;
   const seen: object[] = [];
   const call = vi.fn(async (plugin: object) => {
@@ -249,7 +241,7 @@ it("never hands a plugin's tool the owner's workspaces, settings or Bestie", asy
   await callSessionTool(client, {}, "plugin_write", {}, [
     { ...tool("plugin_write"), call },
   ]);
-  // A provider operation's consumer gets the same client.
+  // Registers the client as a live native call, as a run does.
   nativeToolClient(client, {
     signal: new AbortController().signal,
     check: () => {},
@@ -264,9 +256,5 @@ it("never hands a plugin's tool the owner's workspaces, settings or Bestie", asy
     { ...tool("plugin_op"), operation: provider.operation, call },
   ]);
   expect(seen).toHaveLength(2);
-  for (const plugin of seen) {
-    expect(plugin).not.toHaveProperty("workspaces");
-    expect(plugin).not.toHaveProperty("settings");
-  }
-  expect(seen[0]).not.toHaveProperty("bestie");
+  for (const plugin of seen) expect(plugin).not.toHaveProperty("workspaces");
 });

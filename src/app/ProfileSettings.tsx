@@ -41,7 +41,11 @@ import { profileTimeZone } from "../features/profiles/local-time";
 import { TimeZoneField } from "../features/profiles/TimeZoneField";
 import {
   deviceTimeZone,
+  sameTimeZone,
+  setTimeZonePinned,
+  timeZonePinned,
   withDeviceTimeZone,
+  withFollowedTimeZone,
 } from "../features/profiles/share-time-zone";
 
 type LoadedProfile = Awaited<ReturnType<typeof communityApi.inspectProfile>>;
@@ -137,6 +141,8 @@ export function ProfileSettings({
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
   // Unset until the time zone is edited; null clears the shared zone.
   const [tzDraft, setTzDraft] = useState<string | null>();
+  // Unset until "Use this computer's time zone" is changed.
+  const [followDraft, setFollowDraft] = useState<boolean>();
   const latestPersisted = useRef<PersonalProfile>(client.profile);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -159,6 +165,7 @@ export function ProfileSettings({
     previousScope.current = profileScope;
     setDraft(null);
     setTzDraft(undefined);
+    setFollowDraft(undefined);
     setLoaded(cachedProfile(selectedProfileSession(communities, communityId)));
     setLoadStatus(communityId ? "idle" : "ready");
     setSaved(false);
@@ -262,10 +269,24 @@ export function ProfileSettings({
         ? deviceTimeZone()
         : profileTimeZone(loaded.existing.tz)
       : undefined;
-  const tz = tzDraft === undefined ? persistedTz : (tzDraft ?? undefined);
-  const tzChanged = tzDraft !== undefined && tz !== persistedTz;
+  // A zone not picked on this device follows the device's zone.
+  const persistedFollow =
+    !!communityId &&
+    !!client.viewer &&
+    !timeZonePinned(communityId, client.viewer);
+  const following = followDraft ?? persistedFollow;
+  const sharedTz = tzDraft === undefined ? persistedTz : (tzDraft ?? undefined);
+  const tz =
+    sharedTz !== undefined && following
+      ? (deviceTimeZone() ?? sharedTz)
+      : sharedTz;
+  const followChanged =
+    followDraft !== undefined && followDraft !== persistedFollow;
+  // Also true while following when the background has not caught the saved
+  // zone up, so Save offers what the box shows.
+  const tzChanged = !sameTimeZone(tz, persistedTz);
   const profileEdited = draft !== null && !profilesEqual(edited, persisted);
-  const hasChanges = profileEdited || tzChanged;
+  const hasChanges = profileEdited || tzChanged || followChanged;
   // A dispatched save continues after Settings closes, so it is not
   // discardable. Before then (the fresh read), closing would drop the edit.
   const discardable = hasChanges && !dispatched;
@@ -393,6 +414,7 @@ export function ProfileSettings({
                       session
                         ? communityApi.inspectProfile(id, session)
                         : communityApi.inspectProfile(id);
+                    const pinViewer = client.viewer;
                     const saveGeneration = beginProfileSave(communities);
                     setSaving(true);
                     setSaved(false);
@@ -421,17 +443,31 @@ export function ProfileSettings({
                               about: latest.profile.about?.trim() ?? "",
                             };
                           setDispatched(true);
-                          await communityApi.publishProfile(
-                            community.id,
-                            next,
-                            tzChanged
-                              ? withTimeZone(latest.existing, tz)
-                              : // Any save shares the default zone the box
-                                // shows, unless a zone arrived since.
-                                tzByDefault
-                                ? withDeviceTimeZone(latest.existing, tz)
-                                : latest.existing,
-                          );
+                          // A pick is pinned before it is published, so the
+                          // background never overwrites it once live.
+                          const pinning =
+                            followChanged && !following && pinViewer;
+                          if (pinning)
+                            setTimeZonePinned(community.id, pinning, true);
+                          try {
+                            await communityApi.publishProfile(
+                              community.id,
+                              next,
+                              tzChanged
+                                ? withTimeZone(latest.existing, tz)
+                                : // Any save shares the zone the box shows,
+                                  // unless the person opted out since.
+                                  following
+                                  ? withFollowedTimeZone(latest.existing, tz)
+                                  : tzByDefault
+                                    ? withDeviceTimeZone(latest.existing, tz)
+                                    : latest.existing,
+                            );
+                          } catch (reason) {
+                            if (pinning)
+                              setTimeZonePinned(community.id, pinning, false);
+                            throw reason;
+                          }
                           // Once dispatched, finish on this session even if Settings closes.
                           const confirmed = await inspect(community.id);
                           if (
@@ -443,6 +479,8 @@ export function ProfileSettings({
                             throw new Error(
                               "Your profile change is not current. Your edits are retained; save again to retry.",
                             );
+                          if (followChanged && following && pinViewer)
+                            setTimeZonePinned(community.id, pinViewer, false);
                           setLoaded(confirmed);
                         }
                         if (isCurrentProfileSave(communities, saveGeneration))
@@ -455,6 +493,7 @@ export function ProfileSettings({
                           );
                         setDraft(null);
                         setTzDraft(undefined);
+                        setFollowDraft(undefined);
                         setSaved(true);
                       } catch (reason) {
                         if (mounted.current)
@@ -488,10 +527,18 @@ export function ProfileSettings({
                     <TimeZoneField
                       value={tz}
                       fallback={persistedTz}
+                      following={following}
                       byDefault={tzByDefault && !tzChanged}
                       disabled={saving || !previewReady}
                       onChange={(next) => {
                         setTzDraft(next ?? null);
+                        setSaved(false);
+                        setError("");
+                      }}
+                      onFollowingChange={(next) => {
+                        // A pick starts from the zone shown.
+                        if (!next && tz !== undefined) setTzDraft(tz);
+                        setFollowDraft(next);
                         setSaved(false);
                         setError("");
                       }}
@@ -513,6 +560,7 @@ export function ProfileSettings({
                         onClick={() => {
                           setDraft(null);
                           setTzDraft(undefined);
+                          setFollowDraft(undefined);
                           setSaved(false);
                           setError("");
                         }}

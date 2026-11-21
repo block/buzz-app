@@ -40,11 +40,14 @@ function matches(zone: string, query: string) {
 
 /** Chooses the profile's shared `tz`, written exactly as picked. Undefined
  * means none is shared; the picker then offers `fallback`, else this device's
- * zone. */
+ * zone. While `following`, the shared zone is this device's and the picker
+ * is locked to it. */
 export function TimeZoneField({
   value,
   fallback,
   onChange,
+  following = false,
+  onFollowingChange,
   byDefault = false,
   disabled = false,
 }: {
@@ -52,12 +55,15 @@ export function TimeZoneField({
   /** The zone rechecking offers, such as the saved one. */
   fallback?: string | undefined;
   onChange(value: string | undefined): void;
+  following?: boolean;
+  onFollowingChange?(following: boolean): void;
   /** The profile has no `tz` yet; `value` will be shared from this device. */
   byDefault?: boolean;
   disabled?: boolean;
 }) {
   const device = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const shown = value ?? fallback ?? device;
+  const picking = !disabled && value !== undefined && !following;
   const zones = useMemo(
     () => [
       ...new Set([
@@ -79,10 +85,18 @@ export function TimeZoneField({
         disabled={disabled}
         onCheckedChange={(checked) => onChange(checked ? shown : undefined)}
       />
+      {onFollowingChange && (
+        <Checkbox
+          label="Use this computer’s time zone"
+          checked={following && value !== undefined}
+          disabled={disabled || value === undefined}
+          onCheckedChange={onFollowingChange}
+        />
+      )}
       {byDefault && value !== undefined && (
         <p className="text-caption text-secondary">
-          This device’s time zone is shared by default. Uncheck and save to stop
-          sharing it.
+          This device’s time zone is shared by default. Uncheck Show my local
+          time and save to stop sharing it.
         </p>
       )}
       <Combobox.Root
@@ -96,15 +110,12 @@ export function TimeZoneField({
           if (open) setSearch("");
         }}
         autoHighlight
-        disabled={disabled || value === undefined}
+        disabled={!picking}
         onValueChange={(zone) => {
           if (zone) onChange(zone);
         }}
       >
-        <Combobox.Trigger
-          label="Time zone"
-          disabled={disabled || value === undefined}
-        >
+        <Combobox.Trigger label="Time zone" disabled={!picking}>
           {zoneLabel(shown)}
         </Combobox.Trigger>
         <Combobox.Popup

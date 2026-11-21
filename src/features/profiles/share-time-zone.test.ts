@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { profileFromEvent } from "../communities/api";
 import {
@@ -6,71 +7,74 @@ import {
   endProfileSave,
 } from "../communities/profile-saves";
 import type { Communities } from "../communities/service";
-import { newer, type EventData } from "../relay/events";
 import { keypair, profile } from "../relay/testing";
 import {
-  resetSharedTimeZones,
-  shareDeviceTimeZone,
+  followDeviceTimeZone,
+  resetFollowedTimeZones,
+  setTimeZonePinned,
+  timeZonePinned,
   withDeviceTimeZone,
 } from "./share-time-zone";
 
 const viewer = keypair();
 const community = "https://community.example.org";
-const zone = "Asia/Kolkata";
+const other = "https://other.example.org";
+const zone = "America/Los_Angeles";
 
-afterEach(resetSharedTimeZones);
+afterEach(resetFollowedTimeZones);
 
-function share(
-  events: Promise<ReturnType<typeof profile>[]>,
+function communitiesOf(ids: string[], who = viewer.pubkey) {
+  const snapshot = { viewer: who, memberships: ids.map((id) => ({ id })) };
+  return { snapshot: () => snapshot } as unknown as Communities;
+}
+
+/** Runs the follower over `profiles`, the strong read of each community. */
+function follow(
+  profiles: Record<string, Record<string, unknown> | undefined>,
   options: {
     zone?: string | undefined;
     signal?: AbortSignal;
+    only?: string[];
     communities?: Communities;
-    /** The strong read's events; the background read's by default. */
-    strong?: () => Promise<EventData[]>;
+    inspect?: (id: string) => Promise<ReturnType<typeof profileFromEvent>>;
   } = {},
 ) {
   const publish = vi.fn(async () => {});
-  const { strong = () => events, ...rest } = options;
-  const inspect = vi.fn(async () =>
-    profileFromEvent(
-      (await strong()).reduce<EventData | undefined>(newer, undefined),
-    ),
+  const inspect = vi.fn(
+    options.inspect ??
+      (async (id: string) => {
+        const content = profiles[id];
+        return profileFromEvent(content && profile(viewer, content));
+      }),
   );
   return {
     publish,
     inspect,
-    shared: shareDeviceTimeZone({
-      community,
+    followed: followDeviceTimeZone({
       viewer: viewer.pubkey,
-      communities: {} as Communities,
-      read: events,
+      communities: options.communities ?? communitiesOf(Object.keys(profiles)),
       inspect,
       publish,
-      zone,
-      ...rest,
+      zone: "zone" in options ? options.zone : zone,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.only ? { only: options.only } : {}),
     }),
   };
 }
 
-it("adds the device zone to an existing profile that never had one, keeping its fields", async () => {
-  const { publish, shared } = share(
-    Promise.resolve([
-      profile(viewer, { name: "Old", website: "https://example.org" }, 1),
-      profile(
-        viewer,
-        {
-          name: "Mic",
-          display_name: "Mic",
-          picture: "https://example.org/mic.png",
-          website: "https://example.org",
-        },
-        2,
-      ),
-    ]),
-  );
-  expect(await shared).toBe(true);
-  expect(publish).toHaveBeenCalledWith(
+it("moves a stale zone to this device's, keeping the profile's other fields", async () => {
+  const { publish, followed } = follow({
+    [community]: {
+      name: "Mic",
+      display_name: "Mic",
+      picture: "https://example.org/mic.png",
+      website: "https://example.org",
+      tz: "Pacific/Honolulu",
+    },
+  });
+  expect(await followed).toEqual([]);
+  expect(publish).toHaveBeenCalledExactlyOnceWith(
+    community,
     { name: "Mic", picture: "https://example.org/mic.png", about: "" },
     {
       name: "Mic",
@@ -80,146 +84,141 @@ it("adds the device zone to an existing profile that never had one, keeping its 
       tz: zone,
     },
   );
-  // Once per launch: a later fresh read in the same community publishes nothing.
-  const again = share(Promise.resolve([profile(viewer, { name: "Mic" }, 3)]));
-  expect(await again.shared).toBe(false);
-  expect(again.publish).not.toHaveBeenCalled();
+});
+
+it("follows in every joined community, not only one", async () => {
+  const { publish, followed } = follow({
+    [community]: { name: "Mic", tz: "Pacific/Honolulu" },
+    [other]: { name: "Mic" },
+  });
+  expect(await followed).toEqual([]);
+  expect(publish).toHaveBeenCalledTimes(2);
+  expect(publish).toHaveBeenCalledWith(
+    other,
+    { name: "Mic", picture: "", about: "" },
+    { name: "Mic", tz: zone },
+  );
 });
 
 it.each([
   ["an opt-out", { name: "Mic", tz: "" }],
-  ["a shared zone", { name: "Mic", tz: "Europe/Paris" }],
-  ["a zone this engine rejects", { name: "Mic", tz: "Mars/Olympus" }],
+  ["this device's zone", { name: "Mic", tz: zone }],
+  ["another spelling of this device's zone", { name: "Mic", tz: "US/Pacific" }],
   ["a handle the writer would rename", { name: "mic", display_name: "Mic" }],
+  ["no profile", undefined],
 ])("leaves %s alone", async (_case, content) => {
-  const { publish, shared } = share(
-    Promise.resolve([profile(viewer, content)]),
-  );
-  expect(await shared).toBe(false);
+  const { publish, followed } = follow({ [community]: content });
+  expect(await followed).toEqual([]);
   expect(publish).not.toHaveBeenCalled();
 });
 
-it("publishes the strong read, not a lagging background read", async () => {
-  // The background read still holds the profile from before another device
-  // added a description; publishing it would revert that edit.
-  const { publish, inspect, shared } = share(
-    Promise.resolve([profile(viewer, { name: "Mic" }, 1)]),
-    {
-      strong: async () => [
-        profile(
-          viewer,
-          { name: "Mic", about: "New bio", website: "https://example.org" },
-          2,
-        ),
-      ],
-    },
-  );
-  expect(await shared).toBe(true);
-  expect(inspect).toHaveBeenCalledOnce();
-  expect(publish).toHaveBeenCalledWith(
-    { name: "Mic", picture: "", about: "New bio" },
-    {
-      name: "Mic",
-      about: "New bio",
-      website: "https://example.org",
-      tz: zone,
-    },
-  );
-});
-
-it.each([
-  ["has a zone by now", { name: "Mic", tz: "Europe/Paris" }],
-  ["has opted out by now", { name: "Mic", tz: "" }],
-  ["the writer would now rename", { name: "mic", display_name: "Mic" }],
-])(
-  "rechecks the strong read and leaves a profile that %s alone",
-  async (_case, content) => {
-    const { publish, shared } = share(
-      Promise.resolve([profile(viewer, { name: "Mic" }, 1)]),
-      { strong: async () => [profile(viewer, content, 2)] },
-    );
-    expect(await shared).toBe(false);
-    expect(publish).not.toHaveBeenCalled();
-  },
-);
-
-it("reads strongly only when the background read would share", async () => {
-  const { inspect, shared } = share(
-    Promise.resolve([profile(viewer, { name: "Mic", tz: "" })]),
-  );
-  expect(await shared).toBe(false);
-  expect(inspect).not.toHaveBeenCalled();
-});
-
-it("publishes nothing after a failed strong read and tries again on the next read", async () => {
-  const failed = share(Promise.resolve([profile(viewer, { name: "Mic" })]), {
-    strong: () => Promise.reject(new Error("offline")),
+it("never overwrites a zone pinned on this device", async () => {
+  setTimeZonePinned(community, viewer.pubkey, true);
+  const { publish, inspect, followed } = follow({
+    [community]: { name: "Mic", tz: "Europe/Paris" },
   });
-  expect(await failed.shared).toBe(false);
-  expect(failed.publish).not.toHaveBeenCalled();
-  const next = share(Promise.resolve([profile(viewer, { name: "Mic" })]));
-  expect(await next.shared).toBe(true);
+  expect(await followed).toEqual([]);
+  expect(inspect).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalled();
+  // Unpinning follows again.
+  setTimeZonePinned(community, viewer.pubkey, false);
+  expect(timeZonePinned(community, viewer.pubkey)).toBe(false);
+  const again = follow({ [community]: { name: "Mic", tz: "Europe/Paris" } });
+  expect(await again.followed).toEqual([]);
+  expect(again.publish).toHaveBeenCalledOnce();
+});
+
+it("keeps a zone pinned while its read was in flight", async () => {
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const { publish, inspect, followed } = follow(
+    { [community]: undefined },
+    {
+      inspect: async () => {
+        await held;
+        return profileFromEvent(
+          profile(viewer, { name: "Mic", tz: "Europe/Paris" }),
+        );
+      },
+    },
+  );
+  await vi.waitFor(() => expect(inspect).toHaveBeenCalled());
+  setTimeZonePinned(community, viewer.pubkey, true);
+  release();
+  expect(await followed).toEqual([]);
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it("remembers a pinned zone across launches", async () => {
+  const stored = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => stored.get(key) ?? null,
+    setItem: (key: string, value: string) => stored.set(key, value),
+    removeItem: (key: string) => stored.delete(key),
+  });
+  try {
+    setTimeZonePinned(community, viewer.pubkey, true);
+    vi.resetModules();
+    const next = await import("./share-time-zone");
+    expect(next.timeZonePinned(community, viewer.pubkey)).toBe(true);
+    expect(next.timeZonePinned(other, viewer.pubkey)).toBe(false);
+  } finally {
+    resetFollowedTimeZones();
+    vi.unstubAllGlobals();
+  }
 });
 
 it("stands aside for a profile save that is running or started after it began", async () => {
-  const communities = {} as Communities;
-  // A save running when the share begins.
+  const communities = communitiesOf([community]);
+  const content = { name: "Mic", tz: "Pacific/Honolulu" };
+  // A save running when the run begins.
   beginProfileSave(communities);
-  const running = share(Promise.resolve([profile(viewer, { name: "Mic" })]), {
-    communities,
-  });
-  expect(await running.shared).toBe(false);
+  const running = follow({ [community]: content }, { communities });
+  expect(await running.followed).toEqual([community]);
   expect(running.publish).not.toHaveBeenCalled();
   endProfileSave(communities);
-  resetSharedTimeZones();
   // A save that starts and finishes while the strong read is in flight.
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
-  const events = [profile(viewer, { name: "Mic" })];
-  const started = share(Promise.resolve(events), {
-    communities,
-    strong: async () => {
-      await held;
-      return events;
+  const started = follow(
+    { [community]: content },
+    {
+      communities,
+      inspect: async () => {
+        await held;
+        return profileFromEvent(profile(viewer, content));
+      },
     },
-  });
+  );
   await vi.waitFor(() => expect(started.inspect).toHaveBeenCalled());
   beginProfileSave(communities);
   endProfileSave(communities);
   release();
-  expect(await started.shared).toBe(false);
+  expect(await started.followed).toEqual([community]);
   expect(started.publish).not.toHaveBeenCalled();
 });
 
-it("retries after a run abandoned during its strong read", async () => {
-  // The trigger restarts while the first run's strong read is in flight.
+it("runs one at a time, so a second trigger sees the first's write", async () => {
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
-  const events = [profile(viewer, { name: "Mic" })];
-  const controller = new AbortController();
-  const first = share(Promise.resolve(events), {
-    signal: controller.signal,
-    strong: async () => {
-      await held;
-      return events;
-    },
-  });
-  await vi.waitFor(() => expect(first.inspect).toHaveBeenCalled());
-  controller.abort();
-  const second = share(Promise.resolve(events));
+  const first = follow({ [community]: { name: "Mic", tz: "Asia/Tokyo" } });
+  first.publish.mockImplementation(() => held);
+  await vi.waitFor(() => expect(first.publish).toHaveBeenCalled());
+  const second = follow({ [community]: { name: "Mic", tz: zone } });
+  await new Promise((resolve) => setTimeout(resolve));
+  expect(second.inspect).not.toHaveBeenCalled();
   release();
-  expect(await first.shared).toBe(false);
-  expect(await second.shared).toBe(true);
-  expect(first.publish).not.toHaveBeenCalled();
-  expect(second.publish).toHaveBeenCalledOnce();
+  expect(await first.followed).toEqual([]);
+  expect(await second.followed).toEqual([]);
+  expect(second.publish).not.toHaveBeenCalled();
 });
 
 it("lets a save wait for a write it has handed to the writer", async () => {
-  const communities = {} as Communities;
+  const communities = communitiesOf([community]);
   let release!: () => void;
   const held = new Promise<void>((resolve) => (release = resolve));
-  const { publish, shared } = share(
-    Promise.resolve([profile(viewer, { name: "Mic" })]),
+  const { publish, followed } = follow(
+    { [community]: { name: "Mic", tz: "Asia/Tokyo" } },
     { communities },
   );
   publish.mockImplementation(() => held);
@@ -229,39 +228,49 @@ it("lets a save wait for a write it has handed to the writer", async () => {
   await new Promise((resolve) => setTimeout(resolve));
   expect(settled).toBe(false);
   release();
-  expect(await shared).toBe(true);
+  expect(await followed).toEqual([]);
   await vi.waitFor(() => expect(settled).toBe(true));
 });
 
-it("never creates a profile", async () => {
-  const other = keypair();
-  const { publish, shared } = share(
-    Promise.resolve([profile(other, { name: "Someone else" })]),
+it("reports a failed read or publication so the check can be retried, and still checks the rest", async () => {
+  const unread = follow(
+    { [community]: undefined, [other]: { name: "Mic" } },
+    {
+      inspect: async (id) => {
+        if (id === community) throw new Error("offline");
+        return profileFromEvent(profile(viewer, { name: "Mic" }));
+      },
+    },
   );
-  expect(await shared).toBe(false);
-  expect(publish).not.toHaveBeenCalled();
+  expect(await unread.followed).toEqual([community]);
+  expect(unread.publish).toHaveBeenCalledExactlyOnceWith(
+    other,
+    expect.anything(),
+    expect.anything(),
+  );
+  const unpublished = follow({ [community]: { name: "Mic" } });
+  unpublished.publish.mockRejectedValueOnce(new Error("offline"));
+  expect(await unpublished.followed).toEqual([community]);
 });
 
-it("publishes nothing after a failed read and tries again on the next one", async () => {
-  const failed = share(Promise.reject(new Error("offline")));
-  expect(await failed.shared).toBe(false);
-  expect(failed.publish).not.toHaveBeenCalled();
-  const next = share(Promise.resolve([profile(viewer, { name: "Mic" })]));
-  expect(await next.shared).toBe(true);
-});
-
-it("publishes nothing when the read was abandoned or the device zone is unusable", async () => {
+it("publishes nothing once abandoned, after an identity switch, or without a usable device zone", async () => {
   const controller = new AbortController();
   controller.abort();
-  const aborted = share(Promise.resolve([profile(viewer, { name: "Mic" })]), {
-    signal: controller.signal,
-  });
-  expect(await aborted.shared).toBe(false);
-  const unzoned = share(Promise.resolve([profile(viewer, { name: "Mic" })]), {
-    zone: undefined,
-  });
-  expect(await unzoned.shared).toBe(false);
-  expect(unzoned.publish).not.toHaveBeenCalled();
+  const aborted = follow(
+    { [community]: { name: "Mic" } },
+    { signal: controller.signal },
+  );
+  expect(await aborted.followed).toEqual([]);
+  expect(aborted.publish).not.toHaveBeenCalled();
+  const switched = follow(
+    { [community]: { name: "Mic" } },
+    { communities: communitiesOf([community], keypair().pubkey) },
+  );
+  await switched.followed;
+  expect(switched.publish).not.toHaveBeenCalled();
+  const unzoned = follow({ [community]: { name: "Mic" } }, { zone: undefined });
+  expect(await unzoned.followed).toEqual([]);
+  expect(unzoned.inspect).not.toHaveBeenCalled();
 });
 
 it("adds the device zone to a first or untouched profile but keeps an opt-out", () => {
@@ -272,48 +281,41 @@ it("adds the device zone to a first or untouched profile but keeps an opt-out", 
   });
 });
 
-it("remembers on this device that a community was settled, across launches", async () => {
-  const stored = new Map<string, string>();
-  vi.stubGlobal("localStorage", {
-    getItem: (key: string) => stored.get(key) ?? null,
-    setItem: (key: string, value: string) => stored.set(key, value),
-    removeItem: (key: string) => stored.delete(key),
-  });
-  try {
-    // An opted-out profile settles the community on this device.
-    const first = share(
-      Promise.resolve([profile(viewer, { name: "Mic", tz: "" })]),
-    );
-    expect(await first.shared).toBe(false);
-    // Next launch: another app has rewritten the profile without `tz`.
-    vi.resetModules();
-    const next = await import("./share-time-zone");
-    const publish = vi.fn(async () => {});
-    const events = [profile(viewer, { name: "Mic" })];
-    expect(
-      await next.shareDeviceTimeZone({
-        community,
-        viewer: viewer.pubkey,
-        communities: {} as Communities,
-        read: Promise.resolve(events),
-        inspect: async () => profileFromEvent(events[0]),
-        publish,
-        zone,
-      }),
-    ).toBe(false);
-    expect(publish).not.toHaveBeenCalled();
-  } finally {
-    resetSharedTimeZones();
-    vi.unstubAllGlobals();
-  }
+it("writes nothing to a community left while its read was in flight", async () => {
+  const snapshot = {
+    viewer: viewer.pubkey,
+    memberships: [{ id: community }],
+  };
+  const communities = { snapshot: () => snapshot } as unknown as Communities;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const { publish, inspect, followed } = follow(
+    { [community]: undefined },
+    {
+      communities,
+      inspect: async () => {
+        await held;
+        return profileFromEvent(
+          profile(viewer, { name: "Mic", tz: "Asia/Tokyo" }),
+        );
+      },
+    },
+  );
+  await vi.waitFor(() => expect(inspect).toHaveBeenCalled());
+  snapshot.memberships = [];
+  release();
+  expect(await followed).toEqual([]);
+  expect(publish).not.toHaveBeenCalled();
 });
 
-it("publishes nothing after a failed publication and tries again on the next read", async () => {
-  const events = [profile(viewer, { name: "Mic" })];
-  const failed = share(Promise.resolve(events));
-  failed.publish.mockRejectedValueOnce(new Error("offline"));
-  expect(await failed.shared).toBe(false);
-  const next = share(Promise.resolve(events));
-  expect(await next.shared).toBe(true);
-  expect(next.publish).toHaveBeenCalledOnce();
+it("checks only the communities it is given", async () => {
+  const { inspect, followed } = follow(
+    {
+      [community]: { name: "Mic", tz: "Asia/Tokyo" },
+      [other]: { name: "Mic", tz: "Asia/Tokyo" },
+    },
+    { only: [other] },
+  );
+  expect(await followed).toEqual([]);
+  expect(inspect).toHaveBeenCalledExactlyOnceWith(other);
 });

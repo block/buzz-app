@@ -1,4 +1,5 @@
-import { expect, it, vi } from "vitest";
+import { assert, expect, it, vi } from "vitest";
+import type { RelayEvent } from "./events";
 import { ReadError } from "./errors";
 import type { LiveCallbacks } from "./live";
 import { createRelaySession } from "./session";
@@ -9,6 +10,7 @@ import {
   message,
   roster,
   scriptedTransport,
+  signed,
 } from "./testing";
 
 function setup() {
@@ -280,6 +282,124 @@ it("opening a channel with live messages but no saved page shows nothing until t
     expect(
       h.owner.session.channels.window("z").rows.map((row) => row.id),
     ).toEqual([older.id, arrived.id]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+function huddleCard(h: ReturnType<typeof setup>, created_at: number) {
+  return signed(h.relay, {
+    kind: 48100,
+    created_at,
+    tags: [["h", "z"]],
+    content: JSON.stringify({ ephemeral_channel_id: crypto.randomUUID() }),
+  });
+}
+/** A side read of a channel's rows (the huddle launcher's cards, an agent's
+ * messages) as the channel opens. */
+async function readBeside(
+  h: ReturnType<typeof setup>,
+  kind: number,
+  rows: RelayEvent[],
+) {
+  const read = h.owner.session.read([
+    { kinds: [kind], "#h": ["z"], limit: 30 },
+  ]);
+  const entry = h.wire.pending.find(
+    ({ filters }) =>
+      filters[0]?.kinds?.length === 1 && filters[0].kinds[0] === kind,
+  );
+  assert.exists(entry);
+  h.wire.pending.splice(h.wire.pending.indexOf(entry), 1);
+  entry.respond(rows);
+  await read;
+  await flush();
+}
+const headRead = (h: ReturnType<typeof setup>) =>
+  h.wire.pending.find(
+    ({ filters, signal }) =>
+      !signal?.aborted &&
+      filters[0]?.["#h"]?.[0] === "z" &&
+      filters[0]?.top_level &&
+      filters[0]?.until === undefined,
+  );
+
+it("a catch-up does not page back for rows a cold window held before its first page", async () => {
+  // An old Huddle card read before the first page was never shown, so the
+  // head the stream's catch-up reads shows at once.
+  const h = setup();
+  try {
+    h.owner.session.channels.ensure("z");
+    const beforeStream = h.wire.next();
+    await readBeside(h, 48100, [huddleCard(h, 1600000000)]);
+    expect(h.owner.session.channels.window("z").rows).toEqual([]);
+    h.live.state({ status: "connected", routes: [] });
+    h.live.established("z");
+    await flush();
+    expect(beforeStream.signal?.aborted).toBe(true);
+    const row = message(h.viewer, "z", "newest", 1700000002);
+    const head = headRead(h);
+    assert.exists(head);
+    head.respond([
+      row,
+      bounds(h.relay, "z", "head", {
+        has_more: true,
+        next_cursor: { created_at: row.created_at, id: row.id },
+      }),
+    ]);
+    await flush();
+    expect(h.owner.session.channels.window("z")).toMatchObject({
+      status: "ready",
+      hasMore: true,
+    });
+    expect(
+      h.owner.session.channels.window("z").rows.map((row) => row.id),
+    ).toEqual([row.id]);
+    expect(
+      h.wire.pending.filter(
+        ({ filters, signal }) =>
+          !signal?.aborted &&
+          filters[0]?.["#h"]?.[0] === "z" &&
+          filters[0]?.top_level,
+      ),
+    ).toEqual([]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("another channel's revocation leaves a cold window's first page owed", async () => {
+  // Its head read is cancelled with the access change. The rows read beside
+  // it stay held, so the open window reads its first page again.
+  const h = setup();
+  try {
+    h.owner.session.channels.ensure("z");
+    const first = h.wire.next();
+    const side = message(keypair(), "z", "an agent's", 1700000001);
+    await readBeside(h, 9, [side]);
+    expect(h.owner.session.channels.window("z").rows).toEqual([]);
+    h.live.receive([roster(h.relay, "a", [], 1700000001)]);
+    await flush();
+    expect(first.signal?.aborted).toBe(true);
+    expect(h.owner.session.channels.window("z")).toMatchObject({
+      status: "loading",
+      rows: [],
+    });
+    const again = headRead(h);
+    assert.exists(again);
+    const row = message(h.viewer, "z", "hello", 1700000002);
+    again.respond([
+      row,
+      side,
+      bounds(h.relay, "z", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    expect(h.owner.session.channels.window("z")).toMatchObject({
+      status: "ready",
+    });
+    expect(
+      h.owner.session.channels.window("z").rows.map((row) => row.id),
+    ).toEqual([side.id, row.id]);
   } finally {
     h.owner.dispose();
   }

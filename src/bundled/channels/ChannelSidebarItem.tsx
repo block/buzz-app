@@ -48,6 +48,7 @@ import { ContributionBoundary } from "../../features/conversation/ContributionBo
 import {
   sidebarRow,
   type RegisteredSidebarRows,
+  type SidebarRowHiddenChange,
 } from "../../features/channel-navigation/sidebar-rows-service";
 import { avatarMedia } from "../../shared/avatar-source";
 import { sidebarRowKind, type SidebarRowKind } from "./sidebar-sections";
@@ -55,7 +56,7 @@ import { sidebarRowKind, type SidebarRowKind } from "./sidebar-sections";
 type ItemProps = {
   chatIcon?: ChatIcon["component"] | undefined;
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
   channel: ChannelSummary;
   profile?: Profile | undefined;
   session: RelaySession;
@@ -439,6 +440,7 @@ function ChannelSidebarItemCore({
         <ContributedChannelRow
           channel={channel}
           sectionKey={sectionKey}
+          selected={selected === channel.id}
           session={session}
           entries={rowContributions}
           onHiddenChange={onHiddenChange}
@@ -480,6 +482,7 @@ function ChannelSidebarItemCore({
 function ContributedChannelRow({
   channel,
   sectionKey,
+  selected,
   session,
   entries,
   children,
@@ -487,10 +490,11 @@ function ContributedChannelRow({
 }: {
   channel: ChannelSummary;
   sectionKey: string;
+  selected: boolean;
   session: RelaySession;
   entries: readonly RegisteredSidebarRows[];
   children: ReactElement;
-  onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
+  onHiddenChange?: SidebarRowHiddenChange | undefined;
 }) {
   const target = useMemo(
     () => ({ kind: "channel" as const, channelId: channel.id }),
@@ -513,8 +517,8 @@ function ContributedChannelRow({
         : ""
       : sectionKey;
   const row = useMemo(
-    () => sidebarRow(live, pluginSection, unread),
-    [live, pluginSection, unread],
+    () => sidebarRow(live, pluginSection, unread, selected),
+    [live, pluginSection, unread, selected],
   );
   return (
     <SidebarRowRenderer

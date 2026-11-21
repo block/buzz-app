@@ -304,7 +304,7 @@ it.each(["throw", "invalid", "descendant", "disable"])(
   },
 );
 
-it("reports the saved Solo workspace id rather than its drag target key", async () => {
+it("reports the saved Solo workspace id rather than its drag target key, and which chat is open", async () => {
   const seen = vi.fn();
   const plugin = await contributedRows({
     version: 1,
@@ -335,10 +335,15 @@ it("reports the saved Solo workspace id rather than its drag target key", async 
   seen.mockClear();
   f.replaceSession();
   expect(seen).toHaveBeenCalledWith(
-    expect.objectContaining({ id, kind: "solo", sectionKey: "work" }),
+    expect.objectContaining({
+      id,
+      kind: "solo",
+      sectionKey: "work",
+      selected: false,
+    }),
   );
   expect(seen).toHaveBeenCalledWith(
-    expect.objectContaining({ id: other, sectionKey: "" }),
+    expect.objectContaining({ id: other, sectionKey: "", selected: true }),
   );
 });
 

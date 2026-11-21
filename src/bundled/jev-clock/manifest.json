@@ -1,0 +1,7 @@
+{
+  "id": "buzz.jev-clock",
+  "name": "Jev Clock",
+  "apiVersion": 1,
+  "description": "A live canvas around a clock: Jev picks what you need to see from every incoming message, and it floats in.",
+  "discovery": { "category": "productivity", "tags": ["messaging"] }
+}

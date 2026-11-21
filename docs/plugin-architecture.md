@@ -1432,6 +1432,9 @@ to load. An SVG that paints with `currentColor` is drawn as a mask in the text
 colour, so a monochrome glyph follows the theme and hover and selected states
 like the host's icons; any other image keeps its own colours. Registration drops any other value with one console warning that names
 the page; the page still registers and opens. Bundled pages keep their host icons.
+The legacy `buzz.relay-notes/notes` page also retains the host Notes icon when
+externally installed, ignoring its declared icon. This compatibility mapping
+affects presentation only; it grants neither bundled status nor additional access.
 External plugins ship no separate assets, so inline the art into `plugin.js`, for
 example with a bundler `?inline` import.
 

@@ -2021,6 +2021,12 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   from a different publisher, waits for your review instead. A plugin you
   remove is not installed again automatically; it stays under
   **Recommended** if you want it back.
+- **Notes reader** is no longer bundled. When available in the Marketplace,
+  install it on desktop to restore the **Shared notes** page, including after an
+  upgrade that previously had the reader enabled. The install review controls
+  whether it is enabled; the old bundled choice is not carried over. Browser installations
+  cannot load external plugins. Existing shared notes and the agents' built-in
+  `notes_get`, `notes_set`, and `notes_rm` tools remain available without the reader.
 - **Bestie** starts on, and **Reminders** and **Workflows** start off, on fresh
   local installs. Upgrades preserve their previous state, including Bestie off
   when no choice was saved. Enable or disable them in **Manage plugins**; saved

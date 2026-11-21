@@ -515,12 +515,13 @@ test("installed pre-push forwards stdin and runs related tests with literal path
   assert.equal(f.git("stash", "list"), "");
 });
 
-for (const name of [
-  "browser-host/relay-broker.mjs",
-  "scripts/developer-settings.ts",
-  "scripts/live-setup-probe.mjs",
+// The fixture copies the real scripts/, so those deletions find the real tests.
+for (const [name, importer] of [
+  ["browser-host/relay-broker.mjs"],
+  ["scripts/developer-settings.ts", "scripts/developer-settings.test.mjs"],
+  ["scripts/live-setup-probe.mjs", "scripts/live-setup-probe.test.mjs"],
 ]) {
-  test(`${name} selects related tests and deletion selects the full suite`, (t) => {
+  test(`${name} selects related tests and deletion selects its importers`, (t) => {
     const f = pushFixture(t, { [name]: "export const value = 1;\n" });
     const result = f.push();
     assert.equal(result.status, 0, result.stdout + result.stderr);
@@ -533,9 +534,23 @@ for (const name of [
     f.git("update-ref", "refs/remotes/origin/main", "HEAD");
     f.git("rm", name);
     f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete source");
+    rmSync(path.join(f.dir, "push-args.json"));
     const deleted = f.push();
     assert.equal(deleted.status, 0, deleted.stdout + deleted.stderr);
-    assert.deepEqual(f.args(), ["run"]);
+    if (importer)
+      assert.deepEqual(f.args(), [
+        "related",
+        "--run",
+        "--passWithNoTests",
+        path.join(f.git("rev-parse", "--show-toplevel").trim(), importer),
+      ]);
+    else {
+      assert.match(
+        deleted.stdout,
+        /No unit tests import the changed JS inputs/,
+      );
+      assert.throws(() => f.args(), /ENOENT/);
+    }
   });
 }
 
@@ -631,13 +646,104 @@ test("shared config and unknown base conservatively run all JS unit tests", (t) 
   assert.deepEqual(f.args(), ["run"]);
 });
 
-test("source deletion runs all JS tests instead of losing dependency coverage", (t) => {
-  const f = pushFixture(t, { "src/deleted.ts": "export const value = 1;\n" });
+test("source deletion tests the unchanged files that imported it", (t) => {
+  // tsc does not check browser-host/, so only this selection covers it.
+  const f = pushFixture(t, {
+    "src/deleted/index.ts": "export const value = 1;\n",
+    "browser-host/deleted.test.mjs": 'import "../src/deleted";\n',
+    "browser-host/unrelated.test.mjs": 'import "../src/undeleted";\n',
+  });
   f.git("update-ref", "refs/remotes/origin/main", "HEAD");
-  f.git("rm", "src/deleted.ts");
+  f.git("rm", "src/deleted/index.ts");
   f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete source");
   assert.equal(f.push().status, 0);
+  const top = f.git("rev-parse", "--show-toplevel").trim();
+  assert.deepEqual(f.args(), [
+    "related",
+    "--run",
+    "--passWithNoTests",
+    path.join(top, "browser-host/deleted.test.mjs"),
+    path.join(top, "src/app/pages.integration.test.mjs"),
+  ]);
+});
+
+test("tsconfig, scripts and lockfile-metadata edits run types without the full suite", (t) => {
+  const lock = (packages) =>
+    `lockfileVersion: '9.0'\n\nimporters:\n  .: {}\n\npackages:\n${packages}`;
+  const f = pushFixture(t, { "pnpm-lock.yaml": lock("  a@1.0.0: {}\n") });
+  const manifest = JSON.parse(f.read("package.json"));
+  const step = (changes, ref) => {
+    f.git("update-ref", "refs/remotes/origin/main", "HEAD");
+    for (const [file, content] of Object.entries(changes))
+      f.write(file, content);
+    f.git("add", "--", ...Object.keys(changes));
+    f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", ref);
+    rmSync(path.join(f.dir, "push-args.json"), { force: true });
+    const result = f.push(`HEAD:refs/heads/${ref}`);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    try {
+      return f.args();
+    } catch {
+      assert.match(result.stdout, /No unit tests import the changed JS inputs/);
+      return "types only";
+    }
+  };
+  assert.equal(
+    step({ "tsconfig.author.json": "{}\n" }, "tsconfig"),
+    "types only",
+  );
+  const scripts = {
+    ...manifest,
+    scripts: { ...manifest.scripts, probe: "true" },
+  };
+  assert.equal(
+    step(
+      { "package.json": `${JSON.stringify(scripts, null, 2)}\n` },
+      "scripts",
+    ),
+    "types only",
+  );
+  assert.equal(
+    step(
+      { "pnpm-lock.yaml": `# settings\n${lock("  a@1.0.0: {}\n")}` },
+      "metadata",
+    ),
+    "types only",
+  );
+  assert.deepEqual(
+    step({ "pnpm-lock.yaml": lock("  a@1.0.1: {}\n") }, "lock"),
+    ["run"],
+  );
+  const added = {
+    ...scripts,
+    devDependencies: { ...scripts.devDependencies, probe: "1.0.0" },
+  };
+  assert.deepEqual(
+    step(
+      { "package.json": `${JSON.stringify(added, null, 2)}\n` },
+      "dependency",
+    ),
+    ["run"],
+  );
+});
+
+test("a fast-forward push diffs from the pushed tip, not a stale origin/main", (t) => {
+  const f = pushFixture(t, { "vitest.config.ts": "export default {};\n" });
+  assert.equal(f.push().status, 0);
   assert.deepEqual(f.args(), ["run"]);
+  // origin/main stays behind, as after main was merged into the remote branch.
+  f.write("src/later.ts", "export const later = 1;\n");
+  f.git("add", "src/later.ts");
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "later");
+  assert.equal(f.push().status, 0);
+  const top = f.git("rev-parse", "--show-toplevel").trim();
+  assert.deepEqual(f.args(), [
+    "related",
+    "--run",
+    "--passWithNoTests",
+    path.join(top, "src/later.ts"),
+    path.join(top, "src/app/pages.integration.test.mjs"),
+  ]);
 });
 
 test("a type error blocks the actual Git push before unit tests", (t) => {

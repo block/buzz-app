@@ -755,9 +755,13 @@ probes do not replace this confirmation before PR readiness.
 
 Pre-push runs the project TypeScript check (`tsc --noEmit`), then Vitest tests
 related to the branch's changed JS/TS inputs, using the locally available merge
-base with `origin/main`. Documentation-only, native-only and Rust-only pushes
-skip this runner. Shared JS configuration/dependency
-changes, source deletions, or a missing base run the full Vitest suite instead.
+base with `origin/main`, or the remote ref's tip when the push fast-forwards it.
+Documentation-only, native-only and Rust-only pushes skip this runner. A source
+deletion selects tests related to the files that referenced it at the base.
+TypeScript config, `package.json` scripts, lockfile metadata and other `bin/`
+changes need only the type check. Dependency changes, the Vitest config or its
+relay fixture, the Hermit Node pin, or a missing base run the full Vitest suite
+instead.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
 inputs, the Vite config test for `vite.config.ts` (unit tests use
 `vitest.config.ts`, so it selects only its importers), and the app composition

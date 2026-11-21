@@ -110,7 +110,8 @@ test("a fast upward scroll reads larger pages than a slow one", async ({
   const limits = [];
   let loaded = 20;
   for (let step = 0; step < 200 && loaded < historySize; step++) {
-    await page.mouse.wheel(0, -1500);
+    // Back-to-back notches: scrolls far apart measure no pace.
+    for (let notch = 0; notch < 3; notch++) await page.mouse.wheel(0, -500);
     const pending = app.pending.shift();
     if (pending) {
       limits.push(pending.filter.limit);

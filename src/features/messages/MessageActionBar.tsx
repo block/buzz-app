@@ -99,9 +99,20 @@ type RowMenus = { rows: Map<string, Props>; changed: (id: string) => void };
 const RowMenus = createContext<RowMenus | undefined>(undefined);
 const SELECTION_HIGHLIGHT = "buzz-message-highlight";
 
-/** The context menu of the toolbar message rows rendered inside `children`. */
-export function MessageContextMenus({ children }: { children: ReactElement }) {
+/** The context menu of the toolbar message rows rendered inside `children`.
+ * A virtualized list passes `keepMounted` to hold the menu's row until it closes. */
+export function MessageContextMenus({
+  children,
+  keepMounted,
+}: {
+  children: ReactElement;
+  keepMounted?: ((id: string) => () => void) | undefined;
+}) {
   const [target, setTarget] = useState<string>();
+  useEffect(
+    () => (target ? keepMounted?.(target) : undefined),
+    [target, keepMounted],
+  );
   const [, refresh] = useReducer((count: number) => count + 1, 0);
   const shown = useRef(target);
   useLayoutEffect(() => {

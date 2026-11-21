@@ -28,15 +28,21 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  cloneElement,
+  type ReactElement,
   type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
+import { flushSync } from "react-dom";
+import { Virtualizer } from "virtua";
+import { stageEdges, ThreadItem } from "./thread-items";
 import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
@@ -68,8 +74,18 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
-import { correctScrollTop } from "./scroll-correction";
+import { correctScrollTop as applyScrollCorrection } from "./scroll-correction";
 
+const corrected = new WeakMap<HTMLElement, number>();
+function correctScrollTop(element: HTMLElement, delta: number) {
+  applyScrollCorrection(element, delta);
+  corrected.set(element, element.scrollTop);
+}
+
+/** Virtua mounts a row at an estimated offset, hidden until it measures it:
+ * never a reading anchor. */
+const measured = (row: HTMLElement) =>
+  row.checkVisibility?.({ visibilityProperty: true }) ?? true;
 export type ThreadPanelProps = {
   intro?: ReactNode;
   extensions?: ConversationExtensions | undefined;
@@ -820,7 +836,7 @@ function ThreadMessages({
     const top = element.getBoundingClientRect().top;
     const row = [
       ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
-    ].find((row) => row.getBoundingClientRect().bottom > top);
+    ].find((row) => row.getBoundingClientRect().bottom > top && measured(row));
     const line = element.querySelector<HTMLElement>(
       "[data-new-messages-boundary]",
     );
@@ -854,9 +870,14 @@ function ThreadMessages({
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
+  const readerScrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   useEffect(
     () => () => {
       if (jumpTimer.current !== undefined) clearTimeout(jumpTimer.current);
+      if (readerScrollTimer.current !== undefined)
+        clearTimeout(readerScrollTimer.current);
     },
     [],
   );
@@ -934,25 +955,26 @@ function ThreadMessages({
       };
     };
   }, [messageId, navigation?.signal]);
-  const selectedOffset = useCallback(() => {
+  // The row's place in the viewport, not in the scroll range: Virtua corrects
+  // scrollTop itself as it measures rows above, which moves the row's offset
+  // and scrollTop together before this panel hears of it.
+  const selectedPosition = useCallback(() => {
     const row = selectedRow();
     const container = scroller.current;
     return row && container
-      ? row.getBoundingClientRect().top -
-          container.getBoundingClientRect().top +
-          container.scrollTop
+      ? row.getBoundingClientRect().top - container.getBoundingClientRect().top
       : undefined;
   }, [selectedRow]);
   const completeTarget = useCallback(() => {
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
-    targetAnchor.current = selectedOffset();
+    targetAnchor.current = selectedPosition();
     setInitialPositioned(true);
     captureResizePosition();
     readingSettled.current = true;
     readingPositioned(scroller.current);
     navigation?.complete({ status: "opened" });
-  }, [captureResizePosition, navigation, selectedOffset]);
+  }, [captureResizePosition, navigation, selectedPosition]);
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
@@ -1297,6 +1319,43 @@ function ThreadMessages({
     navigation.complete({ status: "failed", reason: failure, presented: true });
   }, [navigation, failure]);
   const [sent, setSent] = useState<string>();
+  // Virtua mounts the top-level replies near the viewport. Rows that must stay
+  // mounted elsewhere: the focused one, and those a row asks for (an open menu,
+  // report or edit).
+  const [focusedId, setFocusedId] = useState<string>();
+  const [exposedId, setExposedId] = useState<string>();
+  const [pinnedIds, setPinnedIds] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
+  const keepRowMounted = useCallback((id: string) => {
+    setPinnedIds((ids) => new Map(ids).set(id, (ids.get(id) ?? 0) + 1));
+    return () =>
+      setPinnedIds((ids) => {
+        const next = new Map(ids);
+        const count = (ids.get(id) ?? 0) - 1;
+        if (count > 0) next.set(id, count);
+        else next.delete(id);
+        return next;
+      });
+  }, []);
+  // The root and its divider sit above the virtual list.
+  const threadRows = useRef<HTMLDivElement>(null);
+  const [listStart, setListStart] = useState(0);
+  useLayoutEffect(() => {
+    const rows = threadRows.current;
+    const list = rows?.querySelector<HTMLElement>(":scope > ol");
+    if (!rows || !list || typeof ResizeObserver === "undefined") return;
+    const measure = () => setListStart(list.offsetTop);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(rows);
+    return () => observer.disconnect();
+  }, []);
+  const committed = useRef<{
+    ids: readonly string[];
+    items: ReadonlyMap<string, ReactElement>;
+  }>({ ids: [], items: new Map() });
+  const [stagePass, restage] = useReducer((count: number) => count + 1, 0);
   const [replyFocus, setReplyFocus] = useState(0);
   useEffect(() => {
     if (!joining || (channelAccess !== "member" && channelAccess !== "guest"))
@@ -1657,10 +1716,10 @@ function ThreadMessages({
       }
     }
     if (targetAnchor.current !== undefined) {
-      const offset = selectedOffset();
+      const offset = selectedPosition();
       if (offset !== undefined) {
         correctScrollTop(element, offset - targetAnchor.current);
-        targetAnchor.current = offset;
+        targetAnchor.current = selectedPosition() ?? offset;
         follow.current = false;
       }
       if (snapshot.status !== "loading" && walked)
@@ -1740,7 +1799,7 @@ function ThreadMessages({
     rootTarget,
     returning,
     revealed,
-    selectedOffset,
+    selectedPosition,
     tree,
     expanded,
     expandedActivity,
@@ -1806,7 +1865,7 @@ function ThreadMessages({
       captureResizePosition();
       setSent(undefined);
     }
-  }, [sent, snapshot.replies, expanded, captureResizePosition]);
+  }, [sent, snapshot.replies, expanded, captureResizePosition, stagePass]);
   // Parent commits already position history, exact targets and own sends. Save
   // their result; only child-only reflow and viewport resizing need correction.
   useLayoutEffect(() => {
@@ -1835,7 +1894,7 @@ function ThreadMessages({
       // Exact-history restoration must start from this corrected geometry,
       // rather than applying the same child-only height delta a second time.
       if (targetAnchor.current !== undefined)
-        targetAnchor.current = selectedOffset();
+        targetAnchor.current = selectedPosition();
       if (olderAnchor.current) {
         const row = element.querySelector<HTMLElement>(
           `[data-message-id="${olderAnchor.current.id}"]`,
@@ -1848,7 +1907,7 @@ function ThreadMessages({
     observer.observe(content);
     observer.observe(end);
     return () => observer.disconnect();
-  }, [active, initialPositioned, captureResizePosition, selectedOffset]);
+  }, [active, initialPositioned, captureResizePosition, selectedPosition]);
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
@@ -1872,7 +1931,23 @@ function ThreadMessages({
       captureResizePosition();
     }, 1000);
   };
+  // Virtua's pointer-events hold stays in force only while the reader scrolls,
+  // when hit-testing is wasted work; the panel's own corrections must not
+  // swallow a click (Messages.module.css .threadRows).
+  const markReaderScrolling = () => {
+    const rows = threadRows.current;
+    if (!rows) return;
+    if (!rows.hasAttribute("data-reader-scrolling"))
+      rows.setAttribute("data-reader-scrolling", "");
+    if (readerScrollTimer.current !== undefined)
+      clearTimeout(readerScrollTimer.current);
+    readerScrollTimer.current = setTimeout(() => {
+      readerScrollTimer.current = undefined;
+      rows.removeAttribute("data-reader-scrolling");
+    }, 150);
+  };
   const keepReadingPosition = () => {
+    if (scroller.current) corrected.delete(scroller.current);
     jumpingToLatest.current = false;
     remounted.current = undefined;
     if (jumpTimer.current !== undefined) {
@@ -1893,6 +1968,9 @@ function ThreadMessages({
   let previousDay = snapshot.root
     ? new Date(snapshot.root.createdAt * 1000).toDateString()
     : undefined;
+  // A top-level activity group renders its entries inside its first reply's
+  // item: that item, not the entry's own, holds them.
+  const itemOwners = new Map<string, string>();
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     const chronologicalSiblings = tree.children.get(parent) ?? [];
     // Outcome captions stay within one displayed level, so a collapsed branch
@@ -1919,6 +1997,9 @@ function ThreadMessages({
     );
     const siblings = chronologicalSiblings;
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
+    if (parent === undefined)
+      for (const group of groups)
+        for (const id of group.ids) itemOwners.set(id, group.ids[0] ?? id);
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
     // A group stays open while any of its rows was opened, so one that gains
     // an earlier row from paging keeps the reader's choice.
@@ -2011,6 +2092,7 @@ function ThreadMessages({
             layout={continuation ? "continuation" : "thread"}
             compactAvatar={depth > 0}
             retry={session.messages.retry}
+            keepMounted={keepRowMounted}
             {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
             {...(onOpenMediaReview && rootId
               ? { onOpenMediaReview: openRootMedia }
@@ -2055,6 +2137,7 @@ function ThreadMessages({
           }
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
+          data-selected={row.id === messageId || undefined}
         >
           {!parent && row.id === lineRow && (
             <div className={styles.newMessages} data-new-messages-boundary>
@@ -2174,6 +2257,74 @@ function ThreadMessages({
         : plainText(selectedParent?.content ?? ""),
     [selectedParent?.diff, selectedParent?.content],
   );
+  // Virtua's items: each top-level reply with its branch.
+  const replyItems = (
+    renderReplies(undefined) as (ReactElement | null)[]
+  ).filter((item): item is ReactElement => !!item);
+  const nextIds = replyItems.map((item) => String(item.key));
+  const staged = stageEdges(committed.current.ids, nextIds);
+  const current = new Map(replyItems.map((item) => [String(item.key), item]));
+  const listed = staged.ids.flatMap((id) => {
+    const item = current.get(id) ?? committed.current.items.get(id);
+    return item ? [item] : [];
+  });
+  // Kept mounted with their top-level reply: the exact target, an own send
+  // awaiting its reveal, the focused row, the unread line, rows that asked,
+  // and the place a Back/Forward return restores.
+  const place =
+    returning && restoredVisit.current !== navigation?.signal
+      ? (navigation?.position(THREAD_PLACE) as ThreadPlace | undefined)?.anchor
+      : undefined;
+  const returnAnchor =
+    place &&
+    [place.id, ...place.ancestors].find((id) =>
+      snapshot.replies.some((reply) => reply.id === id),
+    );
+  const itemOf = (id: string) => {
+    const top = tree.ancestors(id).at(-1) ?? id;
+    return itemOwners.get(top) ?? top;
+  };
+  const keptIds = new Set(
+    [
+      messageId,
+      sent,
+      focusedId,
+      exposedId,
+      returnAnchor,
+      lineRow,
+      ...pinnedIds.keys(),
+    ].flatMap((id) => (id ? [itemOf(id)] : [])),
+  );
+  const keptIndices = listed.flatMap((item, index) =>
+    keptIds.has(String(item.key)) ? [index] : [],
+  );
+  // Keyboard selection reaches a loaded reply by mounting it first.
+  const expose = (id: string, step: -1 | 1 | 0 = 0) => {
+    const atRoot = id === snapshot.root?.id;
+    const index = atRoot
+      ? -1
+      : listed.findIndex((item) => String(item.key) === itemOf(id));
+    const target = index + step;
+    const item = listed[target];
+    if (
+      (index < 0 && !atRoot) ||
+      !item ||
+      scroller.current?.querySelector(
+        `[data-thread-rows] > ol > li[aria-posinset="${target + 1}"]`,
+      )
+    )
+      return;
+    flushSync(() => setExposedId(String(item.key)));
+  };
+  // Every commit records what Virtua was given.
+  useLayoutEffect(() => {
+    committed.current = {
+      ids: listed.map((item) => String(item.key)),
+      items: new Map(listed.map((item) => [String(item.key), item])),
+    };
+    // The start's change is in; the end's follows before paint.
+    if (staged.ids !== nextIds) restage();
+  });
   const captureOlderAnchor = (element: HTMLElement, following = false) => {
     follow.current &&= following;
     const row = [
@@ -2181,7 +2332,7 @@ function ThreadMessages({
     ].find(
       (row) =>
         row.getBoundingClientRect().bottom >
-        element.getBoundingClientRect().top,
+          element.getBoundingClientRect().top && measured(row),
     );
     olderAnchor.current = row?.dataset.messageId
       ? {
@@ -2326,7 +2477,11 @@ function ThreadMessages({
           if (jumpingToLatest.current) return;
           captureResizePosition();
           if (element.scrollTop !== lineTop.current) {
-            follow.current = bottom && !detached;
+            // Virtua's sizes are still estimates right after a correction, so
+            // the geometry it was made in can read as the bottom.
+            const echo =
+              Math.abs(element.scrollTop - (corrected.get(element) ?? -1)) < 1;
+            follow.current = bottom && !detached && !(echo && !follow.current);
             lineTop.current = undefined;
           }
           setShowJumpToLatest(!bottom || detached);
@@ -2335,16 +2490,34 @@ function ThreadMessages({
           loadNewer();
         }}
         onWheel={(event) => {
+          markReaderScrolling();
           keepReadingPosition();
           if (event.deltaY < 0) loadOlder();
           if (event.deltaY > 0) loadNewer();
         }}
         onTouchMove={() => {
+          markReaderScrolling();
           keepReadingPosition();
           loadOlder();
           loadNewer();
         }}
         onPointerDown={keepReadingPosition}
+        onFocus={(event) => {
+          // The item, not its first message: a collapsed activity group's
+          // toggle has none.
+          const position = event.target
+            .closest("[data-thread-rows] > ol > li")
+            ?.getAttribute("aria-posinset");
+          const item = position ? listed[Number(position) - 1] : undefined;
+          setFocusedId(item ? String(item.key) : undefined);
+          setExposedId(undefined);
+        }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setFocusedId(undefined);
+            setExposedId(undefined);
+          }
+        }}
         onKeyDown={(event) => {
           moveMessageSelection(event);
           if (event.defaultPrevented) return;
@@ -2359,6 +2532,7 @@ function ThreadMessages({
               " ",
             ].includes(event.key)
           ) {
+            markReaderScrolling();
             keepReadingPosition();
             if (
               ["ArrowUp", "PageUp", "Home"].includes(event.key) ||
@@ -2375,8 +2549,10 @@ function ThreadMessages({
           newMessageCount={newMessageCount}
           onClick={jumpToLatest}
         />
-        <MessageContextMenus>
+        <MessageContextMenus keepMounted={keepRowMounted}>
           <div
+            ref={threadRows}
+            className={styles.threadRows}
             data-thread-rows=""
             data-activity-history-scope=""
             inert={positioning}
@@ -2439,17 +2615,32 @@ function ThreadMessages({
                 <p className={styles.empty}>Original message unavailable.</p>
               )
             ) : null}
-            <ol>
-              {showOlderPageStatus && snapshot.error && (
-                <li className={styles.threadHistoryPageStatus}>
-                  <p role="alert">{snapshot.error}</p>
-                  <Button type="button" onClick={retryThread}>
-                    Try again
-                  </Button>
-                </li>
+            {showOlderPageStatus && snapshot.error && (
+              <div className={styles.threadHistoryPageStatus}>
+                <p role="alert">{snapshot.error}</p>
+                <Button type="button" onClick={retryThread}>
+                  Try again
+                </Button>
+              </div>
+            )}
+            <Virtualizer
+              scrollRef={scroller}
+              as="ol"
+              item={ThreadItem}
+              // An exact target corrects for a page by its own offset; Virtua's
+              // shift would correct for the same page again.
+              shift={staged.shift && targetAnchor.current === undefined}
+              bufferSize={1600}
+              keepMounted={keptIndices}
+              startMargin={listStart}
+            >
+              {listed.map((item, index) =>
+                cloneElement(item as ReactElement<Record<string, unknown>>, {
+                  "aria-posinset": index + 1,
+                  "aria-setsize": listed.length,
+                }),
               )}
-              {renderReplies(undefined)}
-            </ol>
+            </Virtualizer>
             {!preview && !positioning && composerRoot && (
               <AgentConnectionSetup
                 key={`${channelId}:${rootId}`}
@@ -2524,6 +2715,7 @@ function ThreadMessages({
         rows={rows}
         session={session}
         conversationId={rootId}
+        expose={expose}
       />
       {preview && (
         <ChannelJoinNotice

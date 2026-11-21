@@ -1,4 +1,5 @@
 import { test, expect } from "./playwright-test.mjs";
+import { scrollUntilMounted, threadReplyCount } from "./thread-rows.mjs";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
@@ -21,8 +22,7 @@ test("reconnect repair failure keeps retry reachable at the newest replies", asy
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
-    const replies = history.locator("ol [data-message-id]");
-    await expect(replies).toHaveCount(10);
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
     await expect
       .poll(() =>
         history.evaluate(
@@ -56,7 +56,7 @@ test("reconnect repair failure keeps retry reachable at the newest replies", asy
     // The notice says what happened; the read error stays a diagnostic.
     await expect(error).toHaveText("This thread didn’t load.");
     await expect(retry).toBeInViewport();
-    await expect(replies).toHaveCount(10);
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
     await retry.click();
     await expect(error).toHaveCount(0);
     // The click can scroll to the button and legitimately demand an older page;
@@ -91,10 +91,10 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
     );
     const history = page.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
-    await expect(replies).toHaveCount(10);
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
     await history.hover();
     await page.mouse.wheel(0, -4000);
-    await expect(replies).toHaveCount(60);
+    await expect.poll(() => threadReplyCount(history)).toBe(60);
     await page.evaluate(() => {
       window.messagesFixture.failOlderPages(2);
       window.messagesFixture.holdOlderPage();
@@ -112,8 +112,10 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
       .toBe(3);
-    // The full-image root can fill the viewport. Read the reply cue before
-    // releasing the request so recovery is measured from that position.
+    // The full-image root can fill the viewport, leaving no reply mounted at
+    // the top. Scroll to the reply cue before releasing the request so recovery
+    // is measured from that position.
+    await scrollUntilMounted(history, replies.first());
     await replies.first().scrollIntoViewIfNeeded();
     await expect(replies.first()).toBeInViewport();
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
@@ -135,7 +137,7 @@ test("older-page retry repeats the failed continuation at the scrollback cue", a
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
       .toBe(5);
-    await expect(replies).toHaveCount(110);
+    await expect.poll(() => threadReplyCount(history)).toBe(110);
     await expect(retry).toHaveCount(0);
     const filters = await page.evaluate(
       () => window.messagesFixture.report.filters,
@@ -171,15 +173,14 @@ test("legacy continuation failure exposes recovery after retained replies", asyn
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?failLegacyContinuation=1`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
-    const replies = history.locator("ol [data-message-id]");
     // The first page is started on mount; the next page is a separate read.
-    await expect(replies).toHaveCount(50);
+    await expect.poll(() => threadReplyCount(history)).toBe(50);
     const error = history.getByRole("alert");
     const retry = history.getByRole("button", { name: "Try again" });
     await expect(error).toHaveText("This thread didn’t load.");
     await expect(retry).toBeVisible();
     await retry.click();
-    await expect(replies).toHaveCount(61);
+    await expect.poll(() => threadReplyCount(history)).toBe(61);
     await expect(error).toHaveCount(0);
   } finally {
     await server.close();
@@ -205,8 +206,7 @@ test("older-page loading adds no row or layout shift while the request is held",
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
-    const replies = history.locator("ol [data-message-id]");
-    await expect(replies).toHaveCount(10);
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
     // Settle at the top before the held request so native scrolling cannot
     // masquerade as a layout shift caused by a loading row.
     await history.evaluate((el) => {
@@ -217,7 +217,8 @@ test("older-page loading adds no row or layout shift while the request is held",
     await page.evaluate(() => document.fonts.ready);
     const before = await history.evaluate((el) => ({
       height: el.scrollHeight,
-      top: el.querySelector("ol [data-message-id]").getBoundingClientRect().top,
+      top: el.querySelector("[data-thread-rows] > ol").getBoundingClientRect()
+        .top,
     }));
     await page.evaluate(() => window.messagesFixture.holdOlderPage());
     await history.hover();
@@ -233,13 +234,12 @@ test("older-page loading adds no row or layout shift while the request is held",
     expect(
       await history.evaluate((el) => ({
         height: el.scrollHeight,
-        top: el.querySelector("ol [data-message-id]").getBoundingClientRect()
+        top: el.querySelector("[data-thread-rows] > ol").getBoundingClientRect()
           .top,
       })),
     ).toEqual(before);
-    expect(await replies.count()).toBe(10);
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
-    await expect(replies).toHaveCount(60);
+    await expect.poll(() => threadReplyCount(history)).toBe(60);
     await expect(cue).toHaveCount(0);
   } finally {
     await page
@@ -272,7 +272,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
     });
     const history = panel.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
-    await expect(replies).toHaveCount(10);
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
     // Loading belongs to history; the composer retains its live region idle.
     await expect(history.getByRole("status")).toHaveCount(0);
     await expect(
@@ -313,6 +313,7 @@ test("newest window positions immediately; scrollback preserves the visible repl
     expect(continuation.before_id).toBeDefined();
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
     // Newly prepended content preserves the reply being read.
+    await scrollUntilMounted(history, replies.first());
     await replies.first().scrollIntoViewIfNeeded();
     await expect(replies.first()).toBeInViewport();
     const readingId = await history.evaluate((el) => {
@@ -328,19 +329,20 @@ test("newest window positions immediately; scrollback preserves the visible repl
       return reading.dataset.messageId;
     });
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
-    await expect(replies).toHaveCount(60);
+    await expect.poll(() => threadReplyCount(history)).toBe(60);
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
     const readingReply = history.locator(`ol [data-message-id="${readingId}"]`);
     await expect(readingReply).toBeInViewport();
     // The page was prepended, not substituted for the reply being read.
     expect(
-      await replies.evaluateAll(
-        (rows, id) => rows.findIndex((row) => row.dataset.messageId === id),
-        readingId,
+      Number(
+        await readingReply
+          .locator("xpath=ancestor::li[@aria-posinset][1]")
+          .getAttribute("aria-posinset"),
       ),
-    ).toBeGreaterThanOrEqual(50);
+    ).toBeGreaterThanOrEqual(51);
     await page.evaluate(() => window.messagesFixture.live());
-    await expect(replies).toHaveCount(61);
+    await expect.poll(() => threadReplyCount(history)).toBe(61);
     await expect(readingReply).toBeInViewport();
     await expect(
       history.getByText("Live reply", { exact: true }),
@@ -353,13 +355,15 @@ test("newest window positions immediately; scrollback preserves the visible repl
       });
       await history.hover();
       await page.mouse.wheel(0, -300);
-      await expect(replies).toHaveCount(count);
+      await expect.poll(() => threadReplyCount(history)).toBe(count);
     }
-    expect(await history.locator("ol [data-message-id]").count()).toBe(305);
-    const ids = await history
+    // One list item per reply: a repeated reply would add an item, and the
+    // mounted ones are distinct.
+    expect(await threadReplyCount(history)).toBe(305);
+    const mounted = await history
       .locator("ol [data-message-id]")
-      .evaluateAll((rows) => rows.map((r) => r.dataset.messageId));
-    expect(new Set(ids).size).toBe(305);
+      .evaluateAll((rows) => rows.map((row) => row.dataset.messageId));
+    expect(new Set(mounted).size).toBe(mounted.length);
     expect(
       (await page.evaluate(() => window.messagesFixture.report.filters)).every(
         (f) => f.thread_window && f.thread_cursor === undefined,
@@ -391,12 +395,11 @@ test("older-page retry reparents a visible reply under its late parent", async (
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1&nestedWindow=1&failOlderPages=2`,
     );
     const history = page.getByRole("region", { name: "Thread messages" });
-    const replies = history.locator("ol [data-message-id]");
     const child = history.getByText("Nested window child", { exact: true });
     const note = history.getByText(
       "Earlier reply unavailable in loaded history.",
     );
-    await expect(replies).toHaveCount(10);
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
     // No gesture: the thread reads the page that holds the child's parent.
     // Nobody asked for that read, so its failure shows only on the reply.
     await expect(note).toBeVisible();
@@ -410,6 +413,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
     await page.mouse.wheel(0, -300);
     const retry = history.getByRole("button", { name: "Try again" });
     await expect(history.getByRole("alert")).toContainText("Older page failed");
+    await scrollUntilMounted(history, child);
     await child.scrollIntoViewIfNeeded();
     await expect(child).toBeInViewport();
     await page.evaluate(() => window.messagesFixture.holdOlderPage());
@@ -425,7 +429,7 @@ test("older-page retry reparents a visible reply under its late parent", async (
     const parent = history.getByText("First root reply 292", { exact: true });
     await expect(parent).toBeVisible();
     await expect(child).toBeInViewport();
-    await expect(replies).toHaveCount(60);
+    await expect.poll(() => threadReplyCount(history)).toBe(60);
     await expect(note).toHaveCount(0);
     // The missing parent must reparent this child without losing it from the
     // reader's viewport; the exact Y coordinate is not the user contract.
@@ -472,7 +476,7 @@ for (const reading of [false, true, "exact"])
       // With no gesture the thread reads the page that holds the child's parent
       // behind its first window. That read is held: the first page is positioned
       // and readable, and nothing calls the parent unavailable.
-      await expect(history.locator("ol [data-message-id]")).toHaveCount(10);
+      await expect.poll(() => threadReplyCount(history)).toBe(10);
       await expect
         .poll(() =>
           page.evaluate(() => window.messagesFixture.report.filters.length),
@@ -500,7 +504,7 @@ for (const reading of [false, true, "exact"])
       // The page lands with no gesture. The child moves into its parent's
       // branch and stays shown, and the reader stays where they were.
       await expect(parent).toBeVisible();
-      await expect(history.locator("ol [data-message-id]")).toHaveCount(60);
+      await expect.poll(() => threadReplyCount(history)).toBe(60);
       await expect
         .poll(async () => Math.abs((await top()) - before))
         .toBeLessThan(2);
@@ -520,3 +524,132 @@ for (const reading of [false, true, "exact"])
       await server.close();
     }
   });
+
+test("keyboard selection steps to the reply beside it when the virtual list left that one unmounted", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
+    for (const count of [60, 110, 160, 210]) {
+      await history.evaluate((el) => {
+        el.scrollTop = 0;
+        el.dispatchEvent(new Event("scroll"));
+      });
+      await history.hover();
+      await page.mouse.wheel(0, -300);
+      await expect.poll(() => threadReplyCount(history)).toBe(count);
+    }
+    await history.evaluate((el) => {
+      el.scrollTop = el.scrollHeight / 2;
+    });
+    // The first reply the list holds, in one step: with the root above it, the
+    // replies before it are loaded but not mounted.
+    await expect
+      .poll(() =>
+        history.evaluate((el) => {
+          const [first] = [
+            ...el.querySelectorAll("[data-thread-rows] > ol > li"),
+          ].sort(
+            (a, b) =>
+              Number(a.getAttribute("aria-posinset")) -
+              Number(b.getAttribute("aria-posinset")),
+          );
+          return Number(first?.getAttribute("aria-posinset"));
+        }),
+      )
+      .toBeGreaterThan(2);
+    const at = await history.evaluate((el) => {
+      const [first] = [
+        ...el.querySelectorAll("[data-thread-rows] > ol > li"),
+      ].sort(
+        (a, b) =>
+          Number(a.getAttribute("aria-posinset")) -
+          Number(b.getAttribute("aria-posinset")),
+      );
+      const box = first?.querySelector("[data-message-id] > [data-layout]");
+      if (!box) throw new Error("No reply is mounted");
+      box.tabIndex = -1;
+      box.focus({ preventScroll: true });
+      return Number(first.getAttribute("aria-posinset"));
+    });
+    expect(at).toBeGreaterThan(2);
+    await page.keyboard.press("ArrowUp");
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          Number(
+            document.activeElement
+              ?.closest("[data-thread-rows] > ol > li")
+              ?.getAttribute("aria-posinset"),
+          ),
+        ),
+      )
+      .toBe(at - 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("thread rows ignore pointer input while the reader scrolls but not through the panel's own corrections", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
+    );
+    const history = page.getByRole("region", { name: "Thread messages" });
+    await expect.poll(() => threadReplyCount(history)).toBe(10);
+    const sample = () =>
+      history.evaluate(
+        (el) =>
+          new Promise((resolve) => {
+            const list = el.querySelector("[data-thread-rows] > ol");
+            const states = new Set();
+            const end = performance.now() + 600;
+            const watch = () => {
+              states.add(getComputedStyle(list).pointerEvents);
+              if (performance.now() < end) requestAnimationFrame(watch);
+              else resolve([...states]);
+            };
+            watch();
+          }),
+      );
+    const programmatic = sample();
+    await history.evaluate((el) => {
+      el.scrollTop -= 60;
+    });
+    expect(await programmatic).toEqual(["auto"]);
+    await history.hover();
+    const wheeled = sample();
+    await page.mouse.wheel(0, -120);
+    expect(await wheeled).toContain("none");
+    await expect(history.locator("[data-thread-rows] > ol")).toHaveCSS(
+      "pointer-events",
+      "auto",
+    );
+  } finally {
+    await server.close();
+  }
+});

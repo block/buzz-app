@@ -28,6 +28,9 @@ import type { RelayEvent } from "../relay/events";
 import type { ComposerInputElement } from "./composer-dom";
 import { composerDOMFixture } from "./composer-testing";
 
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("./virtua.testing"));
+
 composerDOMFixture();
 
 beforeEach(() => {

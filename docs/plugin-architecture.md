@@ -3869,7 +3869,9 @@ Escape return to the composer (a handled Escape does not also close the thread),
 and Up at the oldest rendered row stays native so history can load. When the
 timeline is scrolled far enough that the newest message is unmounted, Up from the
 composer keeps its old edit-last behavior, Down at the last rendered row scrolls
-natively, and ⌘⇧\ does nothing rather than act on an older message. E edits a selected eligible own message through the scope's
+natively, and ⌘⇧\ does nothing rather than act on an older message. A thread's list
+mounts the loaded reply it needs instead: Up/Down step to the next reply in display
+order, and selecting the newest reply mounts it first. E edits a selected eligible own message through the scope's
 editor, R opens the row's reaction picker through the host-owned
 `[data-reaction-tool]` trigger, and ⌘⇧\ selects the newest message in the focused
 pane, even from another selected message, and does the same. T or → clicks the row's Reply action (open or answer its

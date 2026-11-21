@@ -902,6 +902,35 @@ it("opens a list's menu with the actions of the row under the press", async () =
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
 });
 
+it("keeps the row under a list's open menu mounted until the menu has closed", async () => {
+  const release = vi.fn();
+  const keepMounted = vi.fn(() => release);
+  render(
+    <MessageContextMenus keepMounted={keepMounted}>
+      <div>
+        <MessageActionBar
+          withToolbar
+          messageId="a"
+          copyText={() => "a"}
+          overflowItems={<MenuItem>Edit a</MenuItem>}
+        >
+          <div data-message-id="a">
+            <p>Text a</p>
+          </div>
+        </MessageActionBar>
+      </div>
+    </MessageContextMenus>,
+  );
+  expect(keepMounted).not.toHaveBeenCalled();
+  fireEvent.contextMenu(screen.getByText("Text a"), { button: 2 });
+  await screen.findByRole("menuitem", { name: "Edit a" });
+  expect(keepMounted).toHaveBeenCalledExactlyOnceWith("a");
+  expect(release).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(release).toHaveBeenCalledOnce());
+});
+
 it("drops a row's queued Forward when the row goes before its list's menu closes", async () => {
   const forward = vi.fn();
   function List({ rows }: { rows: string[] }) {

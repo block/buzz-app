@@ -1,6 +1,7 @@
 import { openChannelDetails } from "./channel-details.mjs";
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
+import { threadMessageCount } from "./thread-rows.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({
@@ -255,6 +256,13 @@ test.describe("large thread opening", () => {
               '[aria-label="Thread messages"]',
             );
             const rows = panel?.querySelectorAll("[data-message-id]");
+            const list = panel?.querySelector("[data-thread-rows] > ol");
+            const size = Number(
+              list?.firstElementChild?.getAttribute("aria-setsize") ?? 0,
+            );
+            const held = rows
+              ? rows.length + size - (list?.children.length ?? 0)
+              : 0;
             const rect = panel?.getBoundingClientRect();
             const visible =
               rect &&
@@ -270,7 +278,7 @@ test.describe("large thread opening", () => {
               firstPaint = performance.now() - start;
             if (
               !visible ||
-              rows.length !== 301 ||
+              held !== 301 ||
               panel.textContent.includes("Loading thread…")
             )
               return requestAnimationFrame(check);
@@ -291,7 +299,7 @@ test.describe("large thread opening", () => {
         phase,
         ...timing,
       });
-      await expect(history.locator("[data-message-id]")).toHaveCount(301);
+      expect(await threadMessageCount(history)).toBe(301);
       // Every reply is unread, so each opening starts at the first unread one.
       await expect(
         history.locator("[data-new-messages-boundary]"),

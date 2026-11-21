@@ -13,6 +13,9 @@ export type MessageList = Readonly<{
   row(id: string): ChannelMessage | undefined;
   /** The conversation's newest message, rendered or not. */
   newest(): string | undefined;
+  /** A virtualized list mounts this message, or with a step the one displayed
+   * beside it, when it has left it out. */
+  expose?(id: string, step?: -1 | 1): void;
   canEdit(row: ChannelMessage): boolean;
   edit(row: ChannelMessage): void;
   /** Your own messages, through the menu's delete confirmation. */
@@ -95,9 +98,15 @@ function showsNewest(list: HTMLElement) {
  * can put an older sibling last; false when it isn't rendered or there is none.
  */
 export function selectNewestMessage(list: HTMLElement | null | undefined) {
-  if (!list?.isConnected || !showsNewest(list)) return false;
+  if (!list?.isConnected) return false;
+  const owner = lists.get(list);
+  if (!showsNewest(list)) {
+    const id = owner?.newest();
+    if (id) owner?.expose?.(id);
+    if (!showsNewest(list)) return false;
+  }
   const rows = rowsIn(list);
-  const newest = lists.get(list)?.newest();
+  const newest = owner?.newest();
   const row =
     rows.find((row) => row.dataset.messageId === newest) ?? rows.at(-1);
   if (!row) return false;
@@ -166,7 +175,8 @@ export function replyTrigger(element: HTMLElement) {
  * Up/Down move between messages and Escape returns to the composer, but only
  * while a message itself is selected; controls inside it keep their keys.
  * Up at the oldest rendered row stays native so history can load, as does
- * Down at the last rendered row while newer ones are unmounted.
+ * Down at the last rendered row while newer ones are unmounted, unless the
+ * list can expose the message displayed beside it.
  */
 export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
   if (
@@ -189,9 +199,11 @@ export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
     focusWithKeyboard(composer);
     return;
   }
+  const step = event.key === "ArrowUp" ? -1 : 1;
+  selected.list.expose?.(selected.row.id, step);
   const rows = rowsIn(owner);
   const index = rows.indexOf(selected.element);
-  const next = rows[index + (event.key === "ArrowUp" ? -1 : 1)];
+  const next = rows[index + step];
   if (next) {
     event.preventDefault();
     selectMessage(next);

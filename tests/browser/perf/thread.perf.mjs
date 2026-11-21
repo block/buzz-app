@@ -195,17 +195,8 @@ for (const phase of ["open", "close", "reopen"])
       async function open() {
         await trigger.click();
         await expect(history).not.toHaveAttribute("data-positioning");
-        await expect(history.locator("[data-message-id]")).toHaveCount(101);
-        await expect(
-          history.getByRole("link", {
-            name: "Open image attachment",
-            exact: true,
-          }),
-        ).toHaveCount(15);
-        await expect(
-          history.getByRole("button", { name: /^View 1 reply/ }),
-        ).toHaveCount(20);
-        // Every reply is unread, so each opening starts at the first unread one.
+        // The panel may virtualize replies, so readiness is judged by what is
+        // in view: the unread boundary and every visible image and video.
         await expect(
           history.locator("[data-new-messages-boundary]"),
         ).toBeInViewport();
@@ -213,28 +204,21 @@ for (const phase of ["open", "close", "reopen"])
           .poll(() =>
             history.evaluate((element) => {
               const bounds = element.getBoundingClientRect();
-              return [...element.querySelectorAll("img")].every((image) => {
-                const box = image.getBoundingClientRect();
-                return (
-                  box.bottom <= bounds.top ||
-                  box.top >= bounds.bottom ||
-                  (image.complete && image.naturalWidth > 0)
-                );
-              });
-            }),
-          )
-          .toBe(true);
-        await expect
-          .poll(() =>
-            history
-              .locator("video")
-              .evaluateAll(
-                (videos) =>
-                  videos.length === 10 &&
-                  videos.every(
+              const visible = (media) => {
+                const box = media.getBoundingClientRect();
+                return box.bottom > bounds.top && box.top < bounds.bottom;
+              };
+              return (
+                [...element.querySelectorAll("img")]
+                  .filter(visible)
+                  .every((image) => image.complete && image.naturalWidth > 0) &&
+                [...element.querySelectorAll("video")]
+                  .filter(visible)
+                  .every(
                     (video) => video.readyState >= 2 && video.videoWidth > 0,
-                  ),
-              ),
+                  )
+              );
+            }),
           )
           .toBe(true);
         await transitions(dock);
@@ -290,7 +274,6 @@ for (const phase of ["open", "close", "reopen"])
         work: {
           phase,
           replyCount,
-          mountedRows: 101,
           participants: 12,
           agentParticipants: 8,
           collapsedNestedReplies: 20,
@@ -308,6 +291,9 @@ for (const phase of ["open", "close", "reopen"])
         await virtuaIdle(page, channel);
         sample.work.channelAfterCheck = await channelGeometry();
       }
+      sample.work.mountedRows = await history
+        .locator("[data-message-id]")
+        .count();
       await perf.save(sample);
       await expect(channelInput).toHaveText(channelDraft);
       if (phase === "close")

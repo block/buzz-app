@@ -8,6 +8,7 @@ import {
   releaseReadingFocus,
 } from "./reading.mjs";
 import { openPage } from "./navigation.mjs";
+import { threadMessageCount } from "./thread-rows.mjs";
 import { channelUnread } from "./unread-state.mjs";
 
 test.use({
@@ -1015,11 +1016,10 @@ test("a line placed just short of the latest reply stays in view", async ({
   expect(Math.abs((await measure()).top)).toBeLessThan(1);
   // The reader's own scrolling still decides following: back at the latest
   // reply, a new one is followed.
-  const rows = history.locator("[data-message-id]");
   const arrive = async () => {
-    const count = await rows.count();
+    const count = await threadMessageCount(history);
     app.reply(root.id);
-    await expect(rows).toHaveCount(count + 1);
+    await expect.poll(() => threadMessageCount(history)).toBe(count + 1);
     return measure();
   };
   await history.hover();

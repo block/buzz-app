@@ -20,7 +20,11 @@ afterEach(() => {
 
 const message = (id: string) => ({ id }) as ChannelMessage;
 
-function fixture(ids = ["one", "two", "three"], newest = ids.at(-1)) {
+function fixture(
+  ids = ["one", "two", "three"],
+  newest = ids.at(-1),
+  expose?: MessageList["expose"],
+) {
   const list = document.createElement("section");
   list.innerHTML = ids
     .map(
@@ -44,6 +48,7 @@ function fixture(ids = ["one", "two", "three"], newest = ids.at(-1)) {
     composer: () => composer,
     canQuote: () => false,
     quote: vi.fn(),
+    ...(expose && { expose }),
   };
   cleanups.push(registerMessageList(list, controller));
   const box = (id: string) =>
@@ -182,4 +187,44 @@ it("leaves keys native while the newest message is scrolled out of the window", 
   box("two")?.focus();
   expect(key(list, "ArrowDown")).toBe(false);
   expect(document.activeElement).toBe(box("two"));
+});
+
+/** A virtualized list whose `id` row is unmounted until the list is asked to expose it. */
+function virtualized(ids: string[], newest: string, id: string) {
+  const exposed = vi.fn(() => {
+    const row = document.createElement("div");
+    row.dataset.messageId = id;
+    row.innerHTML = '<div data-layout="timeline"></div>';
+    const after = ids[ids.indexOf(id) + 1];
+    const next = after && list.querySelector(`[data-message-id="${after}"]`);
+    if (next) next.before(row);
+    else list.append(row);
+  });
+  const { list, box } = fixture(ids, newest, exposed);
+  list.querySelector(`[data-message-id="${id}"]`)?.remove();
+  return { list, box, exposed };
+}
+
+it("mounts the neighbor in the list's order before stepping past an unmounted gap", () => {
+  const { list, box, exposed } = virtualized(
+    ["one", "gap", "two"],
+    "two",
+    "gap",
+  );
+  box("two")?.setAttribute("tabindex", "-1");
+  box("two")?.focus();
+  expect(key(list, "ArrowUp")).toBe(true);
+  expect(exposed).toHaveBeenCalledWith("two", -1);
+  expect(document.activeElement).toBe(box("gap"));
+});
+
+it("mounts the newest message before selecting it when it is scrolled out of the window", () => {
+  const { list, box, exposed } = virtualized(
+    ["one", "two", "latest"],
+    "latest",
+    "latest",
+  );
+  expect(selectNewestMessage(list)).toBe(true);
+  expect(exposed).toHaveBeenCalledWith("latest");
+  expect(document.activeElement).toBe(box("latest"));
 });

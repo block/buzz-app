@@ -116,6 +116,21 @@ export const nativeWriteKinds = [
   42000,
   45010,
   ...WORKFLOW_KINDS,
+  // Kinds that board, calendar and badge plugins publish: NIP-34 issues,
+  // statuses and NIP-22 comments; projects; NIP-52 calendar; NIP-58 badges.
+  1111,
+  1621,
+  1630,
+  1631,
+  1632,
+  1633,
+  30621,
+  31922,
+  31923,
+  31924,
+  31925,
+  8,
+  30009,
 ] as const;
 
 /** Searches and reads native code may abandon. Mirrors `cancellable_read` in

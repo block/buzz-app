@@ -5,6 +5,7 @@ import type {
   WorkflowView,
   WorkflowRun,
   WorkflowRunCursor,
+  WorkflowRunPage,
   WorkflowDefinitions,
 } from "../../features/workflows/types";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
@@ -112,7 +113,7 @@ export function createWorkflowFixture(
     dismiss: [] as string[],
   };
   const secrets = new Map<string, string>();
-  const runViews: { disposed(): boolean }[] = [];
+  const runViews: ReturnType<typeof fixtureView<WorkflowRunPage>>[] = [];
   let runCursor: WorkflowRunCursor | undefined;
   const publish = (next: readonly WorkflowOperation[]) => {
     operations = next;
@@ -183,7 +184,7 @@ export function createWorkflowFixture(
     runs: (_workflow, cursor) => {
       calls.runs++;
       runCursor = cursor;
-      const next = fixtureView({
+      const next = fixtureView<WorkflowRunPage>({
         runs: cursor ? [] : [fixtureRun],
         next: cursor ? null : fixtureCursor,
       });

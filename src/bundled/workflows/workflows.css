@@ -18,7 +18,6 @@
 }
 .workflow-filter-toolbar,
 .workflow-page-status,
-.workflow-page-footnote,
 .workflow-page-state,
 .workflow-collection,
 .workflows-body > .buzz-empty-state,
@@ -73,9 +72,6 @@
 }
 .workflow-page-status:empty {
   display: none;
-}
-.workflow-page-footnote {
-  margin-block: var(--space-4) 0;
 }
 .workflow-page-state {
   padding-block: var(--space-8);

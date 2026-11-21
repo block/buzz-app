@@ -349,7 +349,7 @@ it("can't turn a workflow on in an archived channel, but saves its edits while i
   expect(run).toHaveAttribute("aria-disabled", "true");
   expect(run).toHaveAccessibleDescription(archivedReason);
   const enable = within(editor).getByRole("switch", {
-    name: "Enabled in configuration",
+    name: "Enabled",
   });
   expect(enable).not.toBeChecked();
   expect(enable).toHaveAttribute("aria-disabled", "true");
@@ -382,7 +382,7 @@ it("blocks saving an enabled workflow in an archived channel until it's turned o
     within(editor).getByText(saveReason, { selector: "[role=status]" }),
   ).toBeVisible();
   const enable = within(editor).getByRole("switch", {
-    name: "Enabled in configuration",
+    name: "Enabled",
   });
   expect(enable).toBeChecked();
   expect(enable).not.toHaveAttribute("aria-disabled");
@@ -421,9 +421,7 @@ it("doesn't save an enabled workflow when its channel is archived during the act
   const { fixture, archive } = archivedEditor(fixtureYaml, false);
   const user = userEvent.setup();
   const editor = await screen.findByRole("dialog", { name: "Message helper" });
-  await user.click(
-    within(editor).getByRole("switch", { name: "Enabled in configuration" }),
-  );
+  await user.click(within(editor).getByRole("switch", { name: "Enabled" }));
   await user.click(
     within(editor).getByRole("button", { name: "Save changes" }),
   );
@@ -499,7 +497,7 @@ it("keeps a rejected save's and unreadable YAML's reasons ahead of the archived 
   );
   expect(
     within(reopened).getByText(
-      "Correct the YAML before changing the name or configuration.",
+      "Correct the YAML before changing the name or enabling or disabling this workflow.",
       { selector: "[role=status]" },
     ),
   ).toBeVisible();

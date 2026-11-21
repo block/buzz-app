@@ -573,6 +573,8 @@ function WorkflowCard({
   } | null>(null);
   // History reads only the workflow's identity, which the card key fixes.
   const [history] = useState(definition);
+  // Whether the run history on screen in the detail lists an unfinished run.
+  const [runInProgress, setRunInProgress] = useState(false);
   const openRef = useRef<HTMLButtonElement>(null);
   const wasSelected = useRef(selected);
   useEffect(() => {
@@ -616,10 +618,15 @@ function WorkflowCard({
       : locked || awaitingReadback
         ? "Waiting for the submitted change to be resolved."
         : !fields.editable
-          ? "Correct the YAML before changing the configured state."
+          ? "Correct the YAML before enabling or disabling this workflow."
           : !capability.availability.save
             ? "Saving is unavailable from this host."
             : undefined;
+  const toggleDescription =
+    toggleReason ??
+    (runInProgress
+      ? "Disabling won’t cancel runs already in progress."
+      : undefined);
   const reasonId = useId();
   const archivedReasonId = useId();
   const deleteReasonId = useId();
@@ -704,7 +711,7 @@ function WorkflowCard({
           disableHoverablePopup
         >
           <Switch
-            aria-label={`Enabled in configuration: ${name}`}
+            aria-label={`Enabled: ${name}`}
             aria-describedby={toggleReason ? reasonId : undefined}
             checked={enabled}
             disabled={!!toggleReason}
@@ -913,11 +920,8 @@ function WorkflowCard({
       {fields.editable && (
         <SettingsGroup>
           <SwitchPreferenceRow
-            label="Enabled in configuration"
-            description={
-              toggleReason ??
-              "Saved configuration only. Turning off does not confirm runs have stopped or cancel active runs."
-            }
+            label="Enabled"
+            {...(toggleDescription ? { description: toggleDescription } : {})}
             checked={enabled}
             disabled={!!toggleReason}
             onCheckedChange={(next) => {
@@ -932,6 +936,7 @@ function WorkflowCard({
         key={createdRun ?? ""}
         capability={capability}
         workflow={history}
+        onInProgressChange={setRunInProgress}
       />
     </section>
   );
@@ -1939,10 +1944,6 @@ export function WorkflowLanding({
           onDismiss={() => setError(null)}
         />
       )}
-      <p className="workflow-page-footnote text-caption text-subtle">
-        Saved configuration only. Turning off does not confirm runs have stopped
-        or cancel active runs.
-      </p>
     </>
   );
 }

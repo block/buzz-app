@@ -208,7 +208,7 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   await editor.closeInspector();
   expect(
     await page
-      .getByRole("switch", { name: /^Enabled in configuration$/ })
+      .getByRole("switch", { name: /^Enabled$/ })
       .getAttribute("aria-checked"),
   ).toBe("false");
   await editor.rename("Incomplete editor");
@@ -281,7 +281,7 @@ test("existing workflow enablement uses the inspector switch beside header actio
   const close = dialog.getByRole("button", { name: "Close editor" });
   const enable = dialog
     .getByRole("complementary", { name: "Workflow settings" })
-    .getByRole("switch", { name: "Enabled in configuration", exact: true });
+    .getByRole("switch", { name: "Enabled", exact: true });
   // Compare header controls in the settled frame, not during entrance motion.
   await settleDialogMotion(dialog);
   for (const width of [1440, 390]) {
@@ -355,7 +355,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   const editor = editorControls(page);
   const { button } = editor;
   const enabled = page.getByRole("switch", {
-    name: /^Enabled in configuration$/,
+    name: /^Enabled$/,
   });
   const reply = page.getByRole("switch", {
     name: "Reply in the triggering thread",
@@ -546,7 +546,7 @@ test("real session page under StrictMode fences community changes, warns before 
   await expect(button(/^Open Fixture A helper:/)).toBeVisible();
   await expect(
     page.getByRole("switch", {
-      name: "Enabled in configuration: Fixture A helper",
+      name: "Enabled: Fixture A helper",
       exact: true,
     }),
   ).toBeDisabled();
@@ -860,7 +860,7 @@ test("landing activation confirms once and locks while delivery is unresolved", 
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
   const enable = page.getByRole("switch", {
-    name: "Enabled in configuration: Fixture A helper",
+    name: "Enabled: Fixture A helper",
     exact: true,
   });
   await enable.click();
@@ -985,7 +985,7 @@ test("restricted cards and read-only editors keep keyboard controls without disc
   await expect(page.locator(".workflow-card details")).toHaveCount(0);
   await expect(
     page.getByRole("switch", {
-      name: "Enabled in configuration: Fixture A helper",
+      name: "Enabled: Fixture A helper",
     }),
   ).toHaveAccessibleDescription("Saving is unavailable from this host.");
   await expect(reason).toBeHidden();
@@ -1059,7 +1059,7 @@ test("restricted cards and read-only editors keep keyboard controls without disc
   await expect(name).toBeDisabled();
   await expect(name).toHaveAccessibleDescription(/Only the author/);
   const enable = dialog.getByRole("switch", {
-    name: "Enabled in configuration",
+    name: "Enabled",
     exact: true,
   });
   await expect(enable).toBeDisabled();
@@ -1106,7 +1106,7 @@ test("landing keeps a succeeded toggle locked until its exact revision is read b
 }) => {
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
   const enable = page.getByRole("switch", {
-    name: "Enabled in configuration: Fixture A helper",
+    name: "Enabled: Fixture A helper",
     exact: true,
   });
   await enable.click();
@@ -1124,7 +1124,7 @@ test("landing keeps a succeeded toggle locked until its exact revision is read b
     .click();
   await expect(
     page.getByRole("switch", {
-      name: "Enabled in configuration: Fixture A helper",
+      name: "Enabled: Fixture A helper",
       exact: true,
     }),
   ).toBeEnabled();
@@ -1272,7 +1272,7 @@ test("rejected deletion shows a toast, restores the card, and permits one delibe
   await expect(button(/^Open Fixture A helper:/)).toBeEnabled();
   await expect(
     page.getByRole("switch", {
-      name: "Enabled in configuration: Fixture A helper",
+      name: "Enabled: Fixture A helper",
       exact: true,
     }),
   ).toBeEnabled();
@@ -1678,9 +1678,7 @@ test("schedule presets round-trip into YAML and warn before enabling a frequent 
 
   await pill("Every hour").click();
   await editor.closeInspector();
-  await page
-    .getByRole("switch", { name: /^Enabled in configuration$/ })
-    .click();
+  await page.getByRole("switch", { name: /^Enabled$/ }).click();
   await editor.primary("Create workflow").click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText(
@@ -1829,15 +1827,12 @@ test("late webhook receipt survives navigation and exact readback on the landing
   await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
   const editor = editorControls(page);
   const { button, yaml } = editor;
-  const caveat = page.getByText(
-    /Turning off does not confirm runs have stopped/,
-  );
-  await expect(caveat).toBeVisible();
   await editor.open("Fixture A helper");
-  // In the editor the caveat describes the inspector's enable switch.
+  // The editor reads run history only in its Runs tab, so the inspector's
+  // enable switch carries no in-progress caveat.
   await expect(
-    editor.region.getByText(/Turning off does not confirm runs have stopped/),
-  ).toBeVisible();
+    editor.region.getByRole("switch", { name: "Enabled", exact: true }),
+  ).toHaveAccessibleDescription("");
   await editor.tab("YAML").click();
   await yaml.fill(
     (await yaml.inputValue()).replace("on: message_posted", "on: webhook"),

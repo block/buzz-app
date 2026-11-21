@@ -1056,6 +1056,9 @@ Quitting Buzz also turns it off.
   grammar checker, adds its own wavy underlines; right-click one, or put the
   caret in it and press ⌘. (Ctrl+. elsewhere), to see what it found and pick a
   replacement. ⌘Z undoes the change.
+- **Emoticons**: in the message box, an emoticon typed as its own word, such as
+  `:D`, `;)` or `<3`, becomes its emoji when you press Space or Enter. ⌘Z
+  brings back what you typed. Emoticons in code and links stay as typed.
 - **Message density**: **Settings → Appearance → Message density → Compact**
   shows conversations, including threads, as a flat, left-aligned list without
   bubbles, across the window's full width, to fit more on screen. Hover or focus

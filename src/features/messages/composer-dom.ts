@@ -148,6 +148,9 @@ export type ComposerInputElement = HTMLDivElement & {
   ): boolean;
   toggleFormat(format: ComposerFormat): void;
   insertLineBreak(kind?: "paragraph" | "hard"): boolean;
+  /** Turn an emoticon such as `:D` that ends right at the caret into its
+   * emoji, as typing Space after it does; one undo step. */
+  convertEmoticon(): boolean;
   editLink(): ComposerLinkEdit | null;
   /** Append source links and this app's copied `text/html` as a quote. Leave
    * the caret on a new line after it; false when the draft cannot take it. */

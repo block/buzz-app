@@ -159,20 +159,20 @@ test.describe("workspace heading resize", () => {
       }, scale);
       for (const width of ["Home", "End"]) {
         await handle.press(width);
+        const label = heading.getByText("Work", { exact: true });
+        const resting = await label.boundingBox();
         await heading.hover();
         await expect(arrow).toBeVisible();
+        expect(await label.boundingBox()).toEqual(resting);
         await expect
           .poll(async () =>
             heading.evaluate((row) => {
-              const label = row
-                .querySelector("summary")
-                .getBoundingClientRect();
               const control = row
                 .querySelector(".buzz-split-button")
                 .getBoundingClientRect();
               const bounds = row.getBoundingClientRect();
               return (
-                label.right <= control.left + 0.5 &&
+                control.left >= bounds.left - 0.5 &&
                 control.right <= bounds.right + 0.5
               );
             }),
@@ -407,7 +407,9 @@ creationSidebar(
     // one trailing inset before the row's edge; nothing floats over the title.
     const placement = await create.evaluate((button) => {
       const row = button.closest(".navigation-section-heading");
-      const title = row.querySelector("summary").getBoundingClientRect();
+      const title = row
+        .querySelector("summary")
+        .firstElementChild.getBoundingClientRect();
       const rowEnd = row.getBoundingClientRect().right;
       const { left, right } = button.getBoundingClientRect();
       return { afterTitle: left >= title.right - 0.5, inset: rowEnd - right };

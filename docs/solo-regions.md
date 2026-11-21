@@ -238,6 +238,13 @@ never part of the signed message.
 
 ## Header accessories
 
+When `ui.headerMenuActions === true`, pass `headerMenuActions` to
+`ui.Workspace` or `ui.ChannelGroup` to add entries to the existing Actions menu
+in Solo. A channel group rendered inside a Team channel row uses the Team
+channel menu.
+Each entry has a unique `id`, a `label`, and an `onSelect` callback. The callback
+can return a promise. The host reports callback failures in the region heading.
+
 `ui.Workspace` and `ui.ChannelGroup` accept an optional
 `headerAccessory: ReactNode` beside their native controls. The accessory
 stays in place when native actions appear or the body collapses.
@@ -248,11 +255,10 @@ Hosts that predate this prop ignore it.
 
 Both headers also accept optional `headerMetadata: ReactNode` for compact,
 non-interactive content such as a relative activity time. The host displays
-it at the trailing edge. Hovering that slot or focusing its controls reveals
-the native Actions button and, when available, the New task pencil. They
-overlay the metadata and can cover an adjacent accessory without shifting the
-header. Without an accessory, the slot fits both actions clear of the title.
-Touch shows the controls directly. New task also remains available in the menu.
+it at the trailing edge. Heading hover or focus on the actions replaces the
+metadata with Actions and New task when available. The title and accessory
+keep their space. Touch shows the controls directly. New task also remains
+available in the menu.
 
 Both headers accept optional `headerLeading` with a non-interactive `icon`, an
 action `label`, and an `onActivate` callback. This moves the caret before the

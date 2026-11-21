@@ -50,7 +50,11 @@ import {
   type RegisteredSidebarRows,
 } from "../../features/channel-navigation/sidebar-rows-service";
 import { avatarMedia } from "../../shared/avatar-source";
-import { sidebarRowKind, type SidebarRowKind } from "./sidebar-sections";
+import {
+  sidebarHome,
+  sidebarRowKind,
+  type SidebarRowKind,
+} from "./sidebar-sections";
 
 type ItemProps = {
   chatIcon?: ChatIcon["component"] | undefined;
@@ -208,6 +212,7 @@ function ChannelSidebarItemCore({
   const actions = useRef<HTMLButtonElement>(null);
   const actionsOpen = !!menuAnchor && menuAnchor === actions.current;
   const menuLabel = `Actions for ${channel.name}`;
+  const channelActions = sidebarHome(channel) === "channels";
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
@@ -230,7 +235,7 @@ function ChannelSidebarItemCore({
       }
       menuAction={
         menuEnabled &&
-        channel.channelType === "solo" && (
+        (channelActions || channel.channelType === "solo") && (
           <MenuRoot
             open={menuOpen && present && actionsOpen}
             onOpenChange={(open) => {
@@ -250,7 +255,8 @@ function ChannelSidebarItemCore({
                   variant="bare"
                   size="compact"
                   aria-label={menuLabel}
-                  data-solo-row-action=""
+                  data-channel-row-action={channelActions ? "" : undefined}
+                  data-solo-row-action={channelActions ? undefined : ""}
                   icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
                 />
               )}

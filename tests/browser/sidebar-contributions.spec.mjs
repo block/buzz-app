@@ -515,6 +515,54 @@ appTest.describe("Solo header accessories", () => {
     });
   };
 
+  appTest.describe("Team channel actions", () => {
+    const title = "alpha-channel-planning-and-weekly-status-updates";
+    appTest.use({
+      channelNames: { alpha: title, beta: "Beta", gamma: "Gamma" },
+    });
+
+    appTest(
+      "keeps both actions clickable and clear of the title",
+      async ({ page, app }) => {
+        await admitNewTask(page);
+        await page.goto(
+          `${app.origin}/?solo-region-fixture&team-row-channel-group`,
+        );
+        await openPage(page, "Messages");
+        const group = page.locator('[data-team-row-channel-group="alpha"]');
+        const actions = group.getByRole("button", {
+          name: `Actions for ${title}`,
+        });
+        const newTask = group.getByRole("button", {
+          name: `New task in ${title}`,
+        });
+        const draft = group.getByRole("textbox", { name: "New task title" });
+        const channel = group.getByRole("button", { name: title, exact: true });
+        const label = channel.locator(".navigation-item-label");
+        await channel.hover();
+        await expect(actions).toHaveCSS("opacity", "1");
+        await expect(newTask).toHaveCSS("opacity", "1");
+        const mask = await label.evaluate(
+          (element) => getComputedStyle(element).maskImage,
+        );
+        expect(mask).not.toBe("none");
+        await newTask.hover();
+        await expect(label).toHaveCSS("mask-image", mask);
+        await actions.click();
+        const menu = page.getByRole("menu", { name: `Actions for ${title}` });
+        await expect(menu).toBeVisible();
+        await expect(draft).toHaveCount(0);
+        await menu.getByRole("menuitem").first().focus();
+        await page.keyboard.press("Escape");
+        await expect(menu).toBeHidden();
+        await newTask.hover();
+        await expect(actions).toHaveCSS("opacity", "1");
+        await newTask.click();
+        await expect(draft).toBeVisible();
+      },
+    );
+  });
+
   // Real hit testing catches an accessory covered by the workspace selection
   // target. Text truncation, the trailing swap and focus use browser layout.
   appTest(
@@ -636,8 +684,8 @@ appTest.describe("Solo header accessories", () => {
             (await disclosure.boundingBox())?.x,
           );
           await heading.hover();
-          await expect(metadata).toBeVisible();
-          await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "0");
+          await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "1");
+          await expect(metadata).toBeHidden();
           await page.mouse.move(
             activityBox.x + activityBox.width / 2,
             activityBox.y + activityBox.height / 2,
@@ -657,8 +705,7 @@ appTest.describe("Solo header accessories", () => {
           await expect(heading).not.toHaveAttribute("data-selected");
           await resize.focus();
           await heading.hover();
-          await expect(metadata).toBeVisible();
-          await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "0");
+          await expect(nativeMenu.locator("..")).toHaveCSS("opacity", "1");
 
           await page.mouse.move(0, 0);
           await action.focus();
@@ -729,18 +776,29 @@ appTest.describe("Solo header accessories", () => {
         );
         await expect(time).toHaveCount(1);
         await page.keyboard.press("Escape");
-        await expect(menu).toBeHidden();
+        await expect(menu).toHaveCount(0);
       }
-      await headers[0].group
-        .getByRole("button", { name: "Actions for Work" })
-        .press("Enter");
+      const work = headers[0].group;
+      const workActions = work.getByRole("button", {
+        name: "Actions for Work",
+      });
+      const workTitle = work.getByRole("button", { name: "Work", exact: true });
+      await workTitle.hover();
+      await workActions.click();
+      const workMenu = page.getByRole("menu", { name: "Actions for Work" });
+      const newTask = workMenu.getByRole("menuitem", { name: "New task" });
+      await expect(newTask).toBeVisible();
       await expect(
-        page.getByRole("menuitem", { name: "New task" }),
+        workMenu.getByRole("menuitem", { name: "New chat" }),
       ).toBeVisible();
-      await expect(
-        page.getByRole("menuitem", { name: "New chat" }),
-      ).toBeVisible();
-      await page.keyboard.press("Escape");
+      // Start Escape inside the menu. A pointer click can leave focus outside it.
+      await newTask.focus();
+      await expect(newTask).toBeFocused();
+      await newTask.press("Escape");
+      await expect(workMenu).toHaveCount(0);
+      await expect(workTitle).toBeFocused();
+      await sidebar.getByRole("button", { name: "Other", exact: true }).hover();
+      await expect(workActions.locator("..")).toHaveCSS("opacity", "0");
       const channelGroup = headers[1].group;
       await page.evaluate(() => {
         document.documentElement.style.fontSize = "24px";
@@ -816,11 +874,10 @@ appTest.describe("Solo header accessories", () => {
       const actions = workspace.getByRole("button", {
         name: "Actions for Work",
       });
-      const timing = await time.boundingBox();
-      await page.mouse.move(
-        timing.x + timing.width / 2,
-        timing.y + timing.height / 2,
-      );
+      await workspace
+        .getByRole("button", { name: "Work", exact: true })
+        .hover();
+      await expect(actions.locator("..")).toHaveCSS("opacity", "1");
       await actions.click();
       await page
         .getByRole("menuitem", { name: "New channel", exact: true })
@@ -895,11 +952,11 @@ appTest.describe("Solo header accessories", () => {
       }
 
       appTest(
-        "keeps both actions clear of long metadata-only titles",
+        "keeps actions and accessories clear of long titles",
         async ({ page, app }) => {
           await admitNewTask(page);
           await page.goto(
-            `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories&leading-header`,
+            `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories&leading-header&channel-header-accessory`,
           );
           await openPage(page, "Messages");
           const resize = page.getByRole("separator", {
@@ -940,10 +997,25 @@ appTest.describe("Solo header accessories", () => {
             await expect(time).toBeHidden();
             await expect(actions.locator("..")).toHaveCSS("opacity", "1");
             expect(await label.boundingBox()).toEqual(rest);
-            const button = await pencil.boundingBox();
-            expect
-              .soft(rest.x + rest.width, title)
-              .toBeLessThanOrEqual(button.x);
+            await expect(pencil).toBeVisible();
+            const intersectsTitle = await label.evaluate((element) => {
+              const label = element.getBoundingClientRect();
+              const row = element.closest(".navigation-section-heading");
+              return [
+                ...row.querySelectorAll(
+                  ".navigation-section-heading-trailing button",
+                ),
+              ].some((button) => {
+                const control = button.getBoundingClientRect();
+                return (
+                  control.x < label.right &&
+                  control.right > label.x &&
+                  control.y < label.bottom &&
+                  control.bottom > label.y
+                );
+              });
+            });
+            expect(intersectsTitle, title).toBe(false);
           }
         },
       );

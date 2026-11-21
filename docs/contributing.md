@@ -552,6 +552,54 @@ agreed isolated identity/data setup; browser fixtures and test identities must
 never use real keys. Do not launch a native app or switch someone's active identity
 merely to follow this testing guidance.
 
+### Reviewing a pull request at its exact head
+
+`bin/node scripts/review-head.mjs <pr-number|commit>` gives a reviewer a
+repeatable evidence run without touching their own checkout. Run it from a
+trusted checkout: it fetches the pull request head into a detached sibling
+worktree (`<repo>-review-pr-<n>-<sha>`), bootstraps it, and asks
+`scripts/flake-check.mjs select` which Vitest files and browser journeys the diff
+reaches. That is the capped selection of CI's advisory flake check, not CI's full
+suites. Lanes:
+
+- **static:** `pnpm check` and `vite build`.
+- **tests:** the Node integration tests and the selected Vitest files.
+- **rust:** `cargo fmt --check`, Clippy and workspace tests, only when Rust
+  inputs changed.
+- **browser:** the selected journeys plus any `--browser=<spec[:line]>` you name,
+  in Chromium and WebKit. Linux uses the CI Playwright configuration; other
+  hosts use the local one.
+- **full:** `--lanes=full` runs `just scan` instead.
+
+A Linux host outside CI's runners needs CI's system packages once: the browser
+libraries (`sudo bin/pnpm exec playwright install-deps chromium webkit`) and,
+for the Rust lane, the apt packages in `.github/workflows/ci.yml`. A lane that
+fails for want of them says so in the summary.
+
+Pick lanes with `--lanes=auto|all|full|static,tests,…`, compare against another
+base with `--base=<ref>`, and add `--tag=<name>` when several reviewers share a
+machine so each gets its own worktree. The run writes
+`test-results/review/<label>/receipt.json` (exact head, base, merge base, tool
+versions, every command and exit code) and a `summary.md` that a review body can
+quote, including what the run did **not** prove. It fails if the worktree
+moved, gained changes, or the pull request head moved on the remote during the
+run. Both files are rewritten as each lane starts and finishes, so a run that
+is killed partway keeps the lanes it finished, shows `result: "incomplete"`, and
+makes no exact-head claim. Exit codes: 0 passed, 1 a lane or final check failed,
+2 the run could not start (usage, an unresolved target or base, or a failed
+selection).
+
+The reviewed code runs as you, with only a short allowlist of environment
+variables (path, home, locale, proxy and toolchain locations; no tokens or
+`CI`). Bootstrap still copies the trusted checkout's `.env.local`. This is not
+a sandbox: review untrusted authors on a disposable machine. When the change
+edits the setup or selection tooling (`bin/`, `scripts/bootstrap-worktree.sh`,
+`scripts/flake-check*`), the summary says that its own versions decided what
+ran.
+
+This is review evidence, not acceptance: it does not replace CI or the
+`BUZZ_DEV_VIEWER= just desktop` check for anything that ships.
+
 ### Broker consolidation and completion
 
 The behavior-preserving cleanup pass shares status text/emoji limits, DM

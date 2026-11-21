@@ -139,6 +139,44 @@ test("reselect uncovers the transcript and keeps the narrow reply dock available
   await expect(side).toBeVisible();
 });
 
+test("an aside sits between the transcript and the side pane, positioned by their row", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const region = history(page);
+  await select(page, { channelId: "alpha" });
+  await expectBottom(page, region);
+  const replyTab = await openReplyTab(app, region);
+  const dock = page.locator("[data-panel-workspace]");
+  await expect(dock.getByRole("tab", { name: replyTab })).toBeVisible();
+
+  const aside = page.getByRole("complementary", { name: "Reader aside" });
+  // The page's content sets the aside's width.
+  await aside.evaluate((element) => {
+    element.style.width = "160px";
+  });
+  const layout = await aside.evaluate((element) => {
+    const box = (node) => node.getBoundingClientRect();
+    const row = element.offsetParent;
+    const history = document.querySelector(
+      '[aria-label="Channel message history"]',
+    );
+    return {
+      inRow: row === element.parentElement && row.contains(history),
+      aside: box(element),
+      row: box(row),
+      history: box(history),
+      dock: box(document.querySelector("[data-panel-workspace]")),
+    };
+  });
+  expect(layout.inRow).toBe(true);
+  expect(layout.aside.width).toBe(160);
+  expect(layout.history.right).toBeLessThanOrEqual(layout.aside.left);
+  expect(layout.aside.right).toBe(layout.row.right);
+  expect(layout.aside.right).toBeLessThanOrEqual(layout.dock.left);
+});
+
 test("a gesture retires a queued latest request before new messages arrive", async ({
   page,
   app,

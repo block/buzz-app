@@ -452,6 +452,26 @@ it("a workspace owns its main reader, intro, menu, and no initial detail", async
   expect(source).toHaveBeenCalledOnce();
 });
 
+it("a workspace places its aside after the main reader, in the reader's row", () => {
+  const f = fixture();
+  cleanup();
+  render(
+    <ConversationWorkspace
+      id="task"
+      session={f.session}
+      scope="origin:viewer"
+      target={{ channelId: "alpha" }}
+      label="Task"
+      host={f.host}
+      aside={<aside aria-label="Task dashboard" />}
+    />,
+  );
+  const reader = screen.getByText("conversation in alpha", { exact: false });
+  const aside = screen.getByRole("complementary", { name: "Task dashboard" });
+  expect(reader.parentElement?.nextElementSibling).toBe(aside);
+  expect(screen.getByRole("tabpanel")).toContainElement(aside);
+});
+
 it.each([false, true])(
   "a workspace requests composer focus unless another editor owns it (editing=%s)",
   (editing) => {

@@ -528,7 +528,7 @@ export function PageTabs({
                   ),
                   actions: workspace?.actions,
                   content: workspace ? (
-                    <div className={styles.conversation}>
+                    <div className={styles.workspaceRow}>
                       <div className={styles.workspaceReader}>
                         {primaryTab &&
                         primaryChannel &&
@@ -573,6 +573,7 @@ export function PageTabs({
                           </p>
                         )}
                       </div>
+                      {workspace.aside}
                     </div>
                   ) : (
                     children(open, close, isOpen)

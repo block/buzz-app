@@ -51,6 +51,15 @@
 .soloConversation {
   container: solo-conversation / inline-size;
 }
+/* A workspace's main reader and the page's aside, which this row positions. */
+.workspaceRow {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
 .workspaceReader {
   flex: 1;
   min-height: 0;

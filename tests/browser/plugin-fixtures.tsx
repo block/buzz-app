@@ -508,6 +508,10 @@ export const fixturePlugins: readonly BundledPlugin[] = [
                   scope={connection.scope}
                   label="Transcript fixture"
                   target={target}
+                  // Zero width, so only the aside test changes the layout.
+                  aside={
+                    <aside aria-label="Reader aside" style={{ width: 0 }} />
+                  }
                   latestRequest={
                     request && request.opening === opening
                       ? request.signal

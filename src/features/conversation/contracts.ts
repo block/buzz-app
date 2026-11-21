@@ -516,6 +516,9 @@ export type ConversationWorkspaceProps = {
   label: string;
   /** Content at the start of history. It scrolls with the messages. */
   intro?: ReactNode;
+  /** Content after the main tab's reader, before the side pane. It sets its
+   * own width; its offset parent is the row of the reader and the aside. */
+  aside?: ReactNode;
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

@@ -44,6 +44,7 @@ import {
   noticeFilter,
   parseWindow,
   WINDOW_KINDS,
+  WINDOW_PAGE_SIZE,
   windowFilter,
   type WindowCursor,
 } from "./window";
@@ -121,6 +122,19 @@ type WindowState = {
   /** A head read asked for the newest notices again. */
   noticeHead?: boolean | undefined;
   noticeRead?: { controller: AbortController; generation: number } | undefined;
+  /** Older pages shown without their aux closure, oldest last, with their
+   * rows, and the read that adds it to them one page at a time. */
+  auxPages: {
+    cursor: WindowCursor;
+    limit: number | undefined;
+    rows: ReadonlySet<string>;
+  }[];
+  auxRead?:
+    | { controller: AbortController; generation: number; dropped?: boolean }
+    | undefined;
+  /** A refused aux read's retry hint: no aux read before it, one at it. */
+  auxRetryAt?: number;
+  auxRetry?: ReturnType<typeof setTimeout>;
 };
 type Head = {
   rows: readonly ChannelMessage[];
@@ -225,6 +239,9 @@ const UNAVAILABLE: ChannelList = Object.freeze({
 });
 const describe = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+/** Rows per aux read: the relay's aux closure costs about a tenth of a second
+ * a row, so a larger read risks its read timeout. */
+const AUX_PAGE = 50;
 const isAbort = (error: unknown) => readErrorKind(error) === "cancelled";
 /** An open channel name's match rank: the joined-channel rule (`matchRank`),
  * so "buzz community" finds "buzz-community"; an exact lookup names one. */
@@ -242,6 +259,23 @@ const CATCH_UP_PAGES = 5;
 /** Membership notices a window reads below its head. Past it, older pages show
  * without their notices. */
 const MAX_NOTICES = 2000;
+/** `events` with an id in `ids`, and the non-row events about them: edits and
+ * reactions of kept rows, and the deletions of those. */
+function retainAbout(events: readonly RelayEvent[], ids: ReadonlySet<string>) {
+  const about = new Map<string, RelayEvent[]>();
+  for (const event of events)
+    if (!channelRowKind(event.kind))
+      for (const [name, id] of event.tags)
+        if (name === "e" && id) {
+          const list = about.get(id);
+          if (list) list.push(event);
+          else about.set(id, [event]);
+        }
+  const kept = new Set(ids);
+  for (const id of kept)
+    for (const event of about.get(id) ?? []) kept.add(event.id);
+  return events.filter((event) => kept.has(event.id));
+}
 /** Relay query order: time descending, then ID ascending at ties. */
 const newestFirst = (a: RelayEvent, b: RelayEvent) =>
   b.created_at - a.created_at || a.id.localeCompare(b.id);
@@ -693,9 +727,11 @@ export function createChannelStore(
   }
   function evict(state: WindowState) {
     windows.delete(state.channelId);
+    clearTimeout(state.auxRetry);
     state.generation++;
     state.controller?.abort();
     state.noticeRead?.controller.abort();
+    dropAux(state);
     state.events = [];
     state.notices.clear();
     state.floor = undefined;
@@ -735,6 +771,7 @@ export function createChannelStore(
       cursor: null,
       events: [],
       notices: new Map(),
+      auxPages: [],
       atHead: true,
       sent: new Set(),
       generation: 0,
@@ -984,6 +1021,110 @@ export function createChannelStore(
       if (state.noticeRead === current) state.noticeRead = undefined;
     }
   }
+  /** End aux work for rows the window is replacing or dropping. */
+  function dropAux(state: WindowState) {
+    if (state.auxRead) {
+      state.auxRead.dropped = true;
+      state.auxRead.controller.abort();
+    }
+    state.auxPages = [];
+  }
+  /** Add the aux closure to older pages shown without it, one read at a time. */
+  async function fillAux(state: WindowState) {
+    const reading = state.auxRead;
+    if (
+      reading?.generation === state.generation &&
+      !reading.controller.signal.aborted
+    )
+      return;
+    if (!transport || !state.auxPages.length) return;
+    if (performance.now() < (state.auxRetryAt ?? 0)) return;
+    const source = transport;
+    const { channelId, generation } = state;
+    const controller = new AbortController();
+    const current: NonNullable<WindowState["auxRead"]> = {
+      controller,
+      generation,
+    };
+    state.auxRead = current;
+    // A read lost to anything but dropAux is read again with the next fill.
+    const keep = (page: WindowState["auxPages"][number]) => {
+      if (!current.dropped) state.auxPages.unshift(page);
+    };
+    controllers.add(controller);
+    try {
+      while (live(state, generation) && canReadRemote(channelId)) {
+        const next = state.auxPages.shift();
+        if (!next) break;
+        // A page whose rows the window has since dropped needs no aux.
+        const held = rowIds(state);
+        if (![...next.rows].some((id) => held.has(id))) continue;
+        const page = next;
+        const { cursor, limit = WINDOW_PAGE_SIZE } = page;
+        const chunk = Math.min(limit, AUX_PAGE);
+        // The rows' thread summaries came with them.
+        const events = await retryRead(
+          (signal) =>
+            source.read([windowFilter(channelId, cursor, chunk, true, false)], {
+              signal,
+            }),
+          controller.signal,
+        ).catch((error: unknown) => {
+          keep(page);
+          throw error;
+        });
+        if (!live(state, generation) || controller.signal.aborted)
+          return keep(page);
+        const read = parseWindow(channelId, cursor, source.relayAuthor, events);
+        if (read.cursor && limit > chunk)
+          state.auxPages.unshift({
+            ...page,
+            cursor: read.cursor,
+            limit: limit - chunk,
+          });
+        // Only aux about rows the window still holds: a row it has since
+        // dropped stays dropped. The closure spans the events held too, so a
+        // held edit's deletion arrives.
+        const ids = new Set(state.events.map((event) => event.id));
+        const added = retainAbout(read.events, rowIds(state)).filter(
+          (event) => !ids.has(event.id),
+        );
+        if (!added.length) continue;
+        const merged = [...state.events, ...added];
+        const rows = Object.freeze(
+          foldChannelMessages(channelId, source.relayAuthor, merged),
+        );
+        state.events = merged;
+        // The closure applies to the rows the window holds, past the budget
+        // too: it never slides away from the reader. The next older page
+        // slides or limits the window over everything it holds.
+        setWindow(state, { rows });
+      }
+    } catch (error) {
+      if (error instanceof ReadError && error.retryAfterMs !== undefined) {
+        state.auxRetryAt = performance.now() + error.retryAfterMs;
+        clearTimeout(state.auxRetry);
+        state.auxRetry = setTimeout(() => {
+          // Timers can fire a fraction of a millisecond before the hint.
+          delete state.auxRetryAt;
+          if (windows.get(channelId) === state) void fillAux(state);
+        }, error.retryAfterMs);
+      }
+      if (!isAbort(error))
+        relayDebug("aux failed", channelId.slice(0, 8), readErrorKind(error));
+    } finally {
+      controllers.delete(controller);
+      if (state.auxRead === current) state.auxRead = undefined;
+      // A generation change the window survives (an access purge) ends this
+      // fill but not its work.
+      if (
+        !current.dropped &&
+        state.generation !== generation &&
+        windows.get(channelId) === state
+      )
+        void fillAux(state);
+    }
+  }
   /** The known profiles of a head's row and notice authors. */
   function headProfiles(channelId: string, head: Head) {
     const notices =
@@ -1063,6 +1204,7 @@ export function createChannelStore(
     state.generation++;
     state.controller?.abort();
     state.noticeRead?.controller.abort();
+    dropAux(state);
     state.events = [];
     state.notices.clear();
     state.noticeCursor = undefined;
@@ -1121,10 +1263,12 @@ export function createChannelStore(
     cursor: WindowCursor | null,
     settings: ReadOptions,
     withNotices = false,
+    limit?: number,
+    full = true,
   ) {
     if (!transport) throw new Error("Relay is unavailable");
     const source = transport;
-    const filters = [windowFilter(channelId, cursor)];
+    const filters = [windowFilter(channelId, cursor, limit, full, true)];
     if (withNotices && !cursor)
       filters.push(noticeFilter(channelId, source.relayAuthor, null));
     const read = (signal?: AbortSignal) =>
@@ -1246,7 +1390,11 @@ export function createChannelStore(
     if (intent === channelId) prepareMedia(channelId);
     return head;
   }
-  async function loadPage(state: WindowState, cursor: WindowCursor | null) {
+  async function loadPage(
+    state: WindowState,
+    cursor: WindowCursor | null,
+    limit?: number,
+  ) {
     if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
     const controller = new AbortController();
@@ -1260,12 +1408,38 @@ export function createChannelStore(
       if (prepared && !cursor) {
         const head = await requestHead(state.channelId, "foreground");
         if (!live(state, generation)) return;
+        // A reader paged back from the head keeps its older rows when the
+        // newer head meets them; past a gap the head replaces them.
+        const ids = rowIds(state);
+        if (
+          !state.atHead &&
+          besideHead &&
+          (!head.hasMore || head.events.some((event) => ids.has(event.id)))
+        ) {
+          accept(head.events);
+          // Its newest notices came with it, or need their own read.
+          if (head.noticesRead) {
+            takeNotices(state, head.notices ?? [], null);
+            state.noticeHead = false;
+          } else void fillNotices(state, true);
+          state.restored = false;
+          state.readAt = head.readAt;
+          setWindow(state, { freshness: head.cached ? "cached" : "verified" });
+          return;
+        }
         adoptHead(state, head);
         return;
       }
-      const reading = readPage(state.channelId, cursor, {
-        signal: controller.signal,
-      });
+      // An older page's aux closure costs the relay far more than its rows
+      // (seconds against a tenth of one): rows show first, aux follows.
+      const reading = readPage(
+        state.channelId,
+        cursor,
+        { signal: controller.signal },
+        false,
+        limit,
+        !cursor,
+      );
       if (besideHead) void fillNotices(state, true);
       const { page } = await reading;
       // A settled catch-up aborts an older read that has already resolved.
@@ -1274,14 +1448,26 @@ export function createChannelStore(
         (cursor ? state.events : []).map((event) => [event.id, event]),
       );
       for (const event of page.events) combined.set(event.id, event);
-      const retained = [...combined.values()];
-      const rows = Object.freeze(
-        foldChannelMessages(state.channelId, transport.relayAuthor, retained),
-      );
-      if (
-        rows.length > maxHistoryRows ||
-        listByteSize(retained) > maxHistoryBytes
-      ) {
+      let retained = [...combined.values()];
+      const fold = (events: readonly RelayEvent[]) =>
+        Object.freeze(
+          foldChannelMessages(state.channelId, transport.relayAuthor, events),
+        );
+      const over = (events: readonly RelayEvent[], folded = fold(events)) =>
+        folded.length > maxHistoryRows ||
+        listByteSize(events) > maxHistoryBytes;
+      let rows = fold(retained);
+      // An older page past the budget slides the window down to it.
+      let ceiling: number | undefined;
+      if (cursor && over(retained, rows)) {
+        const slid = slideOlder(state, page.events, (events) => !over(events));
+        if (slid) {
+          retained = slid.events;
+          rows = fold(retained);
+          ceiling = slid.ceiling;
+        }
+      }
+      if (over(retained, rows)) {
         setWindow(state, {
           loadingOlder: false,
           historyLimited: true,
@@ -1290,6 +1476,7 @@ export function createChannelStore(
         return;
       }
       state.events = retained;
+      if (ceiling !== undefined) state.ceiling = ceiling;
       state.atHead = !cursor;
       if (!cursor) attached(state);
       moveCursor(state, page.cursor);
@@ -1308,9 +1495,27 @@ export function createChannelStore(
         freshness: "verified",
       });
       void fillNotices(state, !cursor && !besideHead);
+      if (cursor) {
+        state.auxPages.push({
+          cursor,
+          limit,
+          rows: new Set(
+            page.events
+              .filter((event) => WINDOW_KINDS.includes(event.kind))
+              .map((event) => event.id),
+          ),
+        });
+        void fillAux(state);
+      }
       void fetchProfiles(rows);
     } catch (error) {
-      if (isAbort(error) || !live(state, generation)) return;
+      if (!live(state, generation)) return;
+      if (isAbort(error)) {
+        // A read cancelled under the window (a stream drop) ends its page.
+        if (cursor && !controller.signal.aborted)
+          setWindow(state, { loadingOlder: false });
+        return;
+      }
       // A denied revalidation must not keep exposing a cached head.
       const denied = readErrorKind(error) === "denied";
       if (denied) {
@@ -1366,6 +1571,7 @@ export function createChannelStore(
   function reattach(state: WindowState) {
     state.controller?.abort();
     state.controller = undefined;
+    dropAux(state);
     const above = new Map<string, RelayEvent>();
     state.above = above;
     state.generation++;
@@ -1382,6 +1588,7 @@ export function createChannelStore(
     ceiling: number | null,
   ) {
     state.controller?.abort();
+    dropAux(state);
     state.controller = undefined;
     state.generation++;
     state.events = page.events;
@@ -1404,29 +1611,62 @@ export function createChannelStore(
     });
     void fetchProfiles(state.snapshot.rows);
   }
-  /** Keep a detached window within the history budget by dropping its oldest
-   * rows: the next older page continues from the oldest row kept. */
-  function trimOldest(state: WindowState, events: readonly RelayEvent[]) {
+  /** An older page past the history budget: keep its rows and the oldest
+   * held rows that `fit` with them, and detach below the newest rows dropped.
+   * No kept row shares the ceiling's second, so a newer read resumes there
+   * without a gap or a repeat. Undefined when no rows fit. */
+  function slideOlder(
+    state: WindowState,
+    page: readonly RelayEvent[],
+    fits: (events: readonly RelayEvent[]) => boolean,
+  ) {
+    const held = new Set(state.events.map((event) => event.id));
+    const events = [
+      ...state.events,
+      ...page.filter((event) => !held.has(event.id)),
+    ];
     const rows = events
       .filter((event) => channelRowKind(event.kind))
+      .sort(newestFirst)
+      .reverse();
+    const take = (count: number) =>
+      retainAbout(events, new Set(rows.slice(0, count).map((row) => row.id)));
+    // The most rows that fit: binary search, as more rows never fit better.
+    let low = 0;
+    let high = rows.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (fits(take(mid))) low = mid;
+      else high = mid - 1;
+    }
+    const above = rows[low];
+    while (low && rows[low - 1]?.created_at === above?.created_at) low--;
+    if (!low || !above) return undefined;
+    return { events: take(low), ceiling: above.created_at };
+  }
+  /** Keep a window within the history budget by dropping its oldest rows,
+   * besides the uncounted `own` ones: the next older page continues from the
+   * oldest row kept. */
+  function trimOldest(
+    state: WindowState,
+    events: readonly RelayEvent[],
+    own: ReadonlySet<string> = new Set(),
+  ) {
+    const rows = events
+      .filter((event) => channelRowKind(event.kind) && !own.has(event.id))
       .sort(newestFirst);
     if (
       rows.length <= maxHistoryRows &&
       listByteSize(events) <= maxHistoryBytes
     )
       return events;
+    const retain = (kept: readonly RelayEvent[]) =>
+      retainAbout(events, new Set([...own, ...kept.map((event) => event.id)]));
     let kept = rows.slice(0, maxHistoryRows);
-    const retain = (ids: ReadonlySet<string>) =>
-      events.filter(
-        (event) =>
-          ids.has(event.id) ||
-          (!channelRowKind(event.kind) &&
-            event.tags.some((tag) => tag[0] === "e" && ids.has(tag[1] ?? ""))),
-      );
-    let retained = retain(new Set(kept.map((event) => event.id)));
+    let retained = retain(kept);
     while (kept.length > 1 && listByteSize(retained) > maxHistoryBytes) {
       kept = kept.slice(0, -Math.max(1, Math.ceil(kept.length / 4)));
-      retained = retain(new Set(kept.map((event) => event.id)));
+      retained = retain(kept);
     }
     const oldest = kept.at(-1);
     state.floor = undefined;
@@ -3933,6 +4173,10 @@ export function createChannelStore(
       if (disposed || !transport || !authorized(channelId)) return;
       intent = channelId;
       current = channelId;
+      // Another channel's aux reads wait for its revisit; the opened channel
+      // reads first.
+      for (const other of windows.values())
+        if (other.channelId !== channelId) other.auxRead?.controller.abort();
       const state = touch(channelId);
       const retained = prepared ? heads.peek(channelId) : undefined;
       if (retained && ["idle", "error"].includes(state.snapshot.status))
@@ -3960,14 +4204,16 @@ export function createChannelStore(
         state.snapshot.status !== "idle" &&
         state.snapshot.status !== "error"
       ) {
+        // Aux work a failed read left over resumes on revisit.
+        void fillAux(state);
         if (prepared) {
           prepareMedia(channelId);
           const previous = heads.peek(channelId);
-          // Revalidate a retained head on revisit after its freshness lease. Do not
-          // replace a paged history reader with a new head merely because time passed.
+          // Revalidate a retained head on revisit after its freshness lease. A
+          // detached segment is old history, not what the head refreshes.
           if (
             previous &&
-            state.atHead &&
+            state.ceiling === undefined &&
             !state.controller &&
             (previous.cached || now() - previous.savedAt >= FRESH_FOR)
           )
@@ -4044,7 +4290,7 @@ export function createChannelStore(
         setWindow(state, { status: "loading", error: undefined });
       void loadPage(state, null);
     },
-    loadOlder(channelId: string) {
+    loadOlder(channelId: string, rows = WINDOW_PAGE_SIZE) {
       if (disposed || !transport) return;
       if (!canReadRemote(channelId)) {
         revalidateCached(channelId);
@@ -4061,7 +4307,14 @@ export function createChannelStore(
       )
         return;
       setWindow(state, { loadingOlder: true, error: undefined });
-      void loadPage(state, state.cursor);
+      void loadPage(state, state.cursor, rows);
+    },
+    cancelOlder(channelId: string) {
+      const state = windows.get(channelId);
+      if (!state?.snapshot.loadingOlder) return;
+      state.controller?.abort();
+      state.controller = undefined;
+      setWindow(state, { loadingOlder: false });
     },
     async seek(channelId: string, from: number, signal: AbortSignal) {
       const state = windows.get(channelId);
@@ -4359,43 +4612,26 @@ export function createChannelStore(
       const localIds = new Set(
         (local?.snapshot() ?? []).map((item) => item.event.id),
       );
-      let retained = [...state.events, ...incoming];
-      let limited = false;
-      if (
-        listByteSize(retained) > maxHistoryBytes ||
-        retained.filter(
-          (event) => channelRowKind(event.kind) && !localIds.has(event.id),
-        ).length > maxHistoryRows
-      ) {
-        limited = true;
-        const newest = retained
-          .filter(
-            (event) => channelRowKind(event.kind) && !localIds.has(event.id),
-          )
-          .sort(
-            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
-          )
-          .slice(0, maxHistoryRows);
-        const keep = new Set([...newest.map((event) => event.id), ...localIds]);
-        retained = retained.filter(
-          (event) =>
-            keep.has(event.id) ||
-            (!channelRowKind(event.kind) &&
-              event.tags.some(
-                (tag) => tag[0] === "e" && keep.has(tag[1] ?? ""),
-              )),
-        );
-        while (retained.length && listByteSize(retained) > maxHistoryBytes)
-          retained.splice(0, Math.max(1, Math.ceil(retained.length / 4)));
-        const retainedIds = new Set(retained.map((event) => event.id));
+      const merged = [...state.events, ...incoming];
+      // A full window drops its oldest rows; older pages read them again.
+      const retained = trimOldest(state, merged, localIds);
+      const trimmed = retained.length < merged.length;
+      const retainedIds = new Set(retained.map((event) => event.id));
+      if (trimmed) {
+        // An older read in flight continues below the rows dropped.
+        if (state.snapshot.loadingOlder) state.controller?.abort();
         for (const id of state.traffic.keys())
           if (!retainedIds.has(id)) state.traffic.delete(id);
       }
-      const retainedIds = new Set(retained.map((event) => event.id));
       for (const event of incoming)
         if (retainedIds.has(event.id)) state.traffic.set(event.id, event);
       state.events = retained;
-      setWindow(state, limited ? { historyLimited: true } : {});
+      setWindow(
+        state,
+        trimmed
+          ? { hasMore: true, historyLimited: false, loadingOlder: false }
+          : {},
+      );
       if (disposed || generation !== epoch) return;
       void fetchProfiles(state.snapshot.rows.slice(-12));
     }
@@ -4531,6 +4767,7 @@ export function createChannelStore(
     for (const state of windows.values()) {
       state.generation++;
       state.controller?.abort();
+      clearTimeout(state.auxRetry);
     }
     windows.clear();
     heads.clear();
@@ -4799,6 +5036,7 @@ export function createChannelStore(
         retained.kept = keptAfter();
         // The descent below the newest notices waits for the floor set here.
         void fillNotices(retained, false);
+        void fillAux(retained);
         // A drop mid-fill has marked the window cached; the stream is retrying.
         setWindow(retained, {
           ...(retained.atHead ? { hasMore: page.hasMore } : {}),
@@ -4867,7 +5105,9 @@ export function createChannelStore(
       setWindow(state, { freshness: "verified", error: undefined });
       // The replay holds only the outage's notices: finish a notice read that
       // failed or was cut before the drop. It reads nothing when none is owed.
+      // So for an aux read.
       void fillNotices(state, false);
+      void fillAux(state);
       return true;
     },
     /** A grant for the channel reached the session. The relay may have left

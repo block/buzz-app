@@ -9,6 +9,8 @@ import { byteSize } from "./budget";
 import { ReadError } from "./errors";
 import type { AgentLibrary } from "../agents/library";
 
+/** Reads running at once; at most one of them is background. */
+export const ACTIVE_READS = 8;
 export type Priority = "foreground" | "background";
 export type ReadOptions = {
   signal?: AbortSignal;
@@ -159,7 +161,7 @@ export function createRelayReader(
     if (closed || suspended || recovering || !transport) return;
     while (!closed && !suspended && !recovering) {
       const active = [...jobs.values()].filter((job) => job.running);
-      if (active.length >= 3) return;
+      if (active.length >= ACTIVE_READS) return;
       const background = active.some((job) => job.priority === "background");
       const queued = [...jobs.values()].filter((job) => !job.running);
       const job =

@@ -174,17 +174,18 @@ it("preserves ordered bridge extensions and distinguishes their request identity
 it("fresh reads retain scheduler bounds but never join older or simultaneous equal work", async () => {
   const h = setup();
   const old = h.read(filter("c"));
-  const one = h.read(filter("c"), { fresh: true });
-  const two = h.read(filter("c"), { fresh: true });
-  const three = h.read(filter("c"), { fresh: true });
-  expect(h.pending).toHaveLength(3);
+  const fresh = Array.from({ length: 8 }, () =>
+    h.read(filter("c"), { fresh: true }),
+  );
+  expect(h.pending).toHaveLength(8);
   h.next().respond([]);
   await flush();
-  expect(h.pending).toHaveLength(3);
-  h.next().respond([]);
-  h.next().respond([]);
-  h.next().respond([]);
-  await Promise.all([old, one, two, three]);
+  expect(h.pending).toHaveLength(8);
+  while (h.pending.length) {
+    h.next().respond([]);
+    await flush();
+  }
+  await Promise.all([old, ...fresh]);
 });
 
 /** Real owner wiring; tests dispatch lifecycle events, never toggle a private gate. */

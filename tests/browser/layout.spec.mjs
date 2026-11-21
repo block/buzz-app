@@ -25,6 +25,7 @@ import {
   upper,
   expectAnchor,
   keyScroll,
+  readAhead,
 } from "./timeline.mjs";
 
 // These layout/navigation journeys exercise opt-in page surfaces.
@@ -40,7 +41,9 @@ const readingTest = test.extend({
   // Keep the old restored row visible when wheel input selects another row.
   historyCounts: { alpha: 24, beta: 1 },
 });
-async function expectNonPaging(page, app) {
+/** `ahead`: the reads released to read ahead on opening, which are not paging,
+ * nor is the aux closure read for a page's rows. */
+async function expectNonPaging(page, app, ahead = []) {
   expect(
     await page
       .getByRole("region", { name: "Channel message history" })
@@ -48,7 +51,12 @@ async function expectNonPaging(page, app) {
     "resize reading position stays outside older-page prefetch",
   ).toBeGreaterThan(0);
   expect(
-    app.report.queries.filter(({ filter }) => filter.until !== undefined),
+    app.report.queries.filter(
+      ({ filter }) =>
+        filter.until !== undefined &&
+        !(filter.include_aux && !filter.include_summaries) &&
+        !ahead.some((read) => read.filter === filter),
+    ),
   ).toHaveLength(0);
 }
 
@@ -668,6 +676,7 @@ readingTest(
   async ({ page, app }) => {
     await open(page, app);
     await settle(page);
+    const ahead = await readAhead(page, app);
     await link(page, app, "https://github.com/block/buzz/pull/4");
     const history = page.getByRole("region", {
       name: "Channel message history",
@@ -720,7 +729,7 @@ readingTest(
     await history.hover();
     await wheel(page, -200);
     const saved = await anchor(page);
-    await expectNonPaging(page, app);
+    await expectNonPaging(page, app, ahead);
     await opener(page, target).evaluate((el) =>
       el.focus({ preventScroll: true }),
     );
@@ -775,7 +784,7 @@ readingTest(
     await page.setViewportSize({ width: 1200, height: 700 });
     await settle(page);
     await expectAnchor(page, saved);
-    await expectNonPaging(page, app);
+    await expectNonPaging(page, app, ahead);
   },
 );
 
@@ -1197,8 +1206,9 @@ companionReadingTest(
   async ({ page, app }) => {
     await open(page, app);
     await settle(page);
+    const ahead = await readAhead(page, app);
     const saved = await upper(page);
-    await expectNonPaging(page, app);
+    await expectNonPaging(page, app, ahead);
     await companionLauncher(page, "Companion fixture").click();
     await settle(page);
     await expectAnchor(page, saved);
@@ -1268,6 +1278,7 @@ companionReadingTest(
   async ({ page, app }) => {
     await open(page, app);
     await settle(page);
+    const ahead = await readAhead(page, app);
     const original = await upper(page);
     await companionLauncher(page, "Companion fixture").click();
     await settle(page);
@@ -1314,7 +1325,7 @@ companionReadingTest(
     await button(page, "Close Companion fixture panel").click();
     await settle(page);
     await expectAnchor(page, reading);
-    await expectNonPaging(page, app);
+    await expectNonPaging(page, app, ahead);
   },
 );
 

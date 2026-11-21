@@ -40,6 +40,7 @@ errors before trusting a number.
 | `scroll-long` | 12,000px upward through 360 fully loaded messages |
 | `scroll-paging-fast` | Scrolling to the oldest of 640 messages while older pages arrive after 100ms |
 | `scroll-paging-delayed` | The same with 500ms page delays |
+| `scroll-paging-delayed-short` | The delayed case with one- and two-line messages |
 | `scroll-paging-fast-keyboard`, `-markdown`, `-first-seen` | The fast case in keyboard modality, with Markdown messages, or with older pages the app hasn't verified yet |
 | `thread-open-rich`, `-close-rich`, `-reopen-rich` | A 120-reply thread with media, tables and code |
 | `thread-unread-open-60`, `-200` | Opening a thread whose 60 or 200 replies are all unread |
@@ -59,6 +60,7 @@ never arrive) fails instead of reporting a fast time.
 | `scriptMs`, `layoutMs`, `styleMs`, `taskMs` | Chromium's JavaScript, layout, style and main-thread task time |
 | `loafBlockingMs` | Long-animation-frame blocking time, from every frame that overlaps the action |
 | `rafP95GapMs`, `rafMaxGapMs`, `rafGapsOver33`, `rafGapsOver50` | Animation-frame spacing during a scroll gesture |
+| `edgeWaitMs` | Paging time spent held at the top edge, waiting for older history |
 | `domGapFrames` | Thread scroll frames with no loaded reply in view |
 | `idleTaskMsPerSec`, `trafficTaskMsPerSec`, `taskMsPerMessage` (and script, style and layout per message) | Background traffic cost |
 | `heapGrowthKBPerMessage`, `nodesDelta`, `listenersDelta` | Background traffic growth, measured after a forced GC |

@@ -347,7 +347,7 @@ export async function bestieFixture(
   );
   new HostService(root);
   new SettingsCardsService(root);
-  new ConversationService(root);
+  const conversation = new ConversationService(root);
   new PanelsService(root);
   // Builderlab's Apps panel; no native browser here.
   new BrowserService(root, { available: false } as BrowserPlatform);
@@ -437,6 +437,7 @@ export async function bestieFixture(
     bestie,
     raw,
     agents,
+    conversation,
     pages,
     open,
     navigation,

@@ -12,6 +12,7 @@ import {
 import { Cube3dSphereIcon } from "../../shared/design-system/icons";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import { MatchRank, matchName } from "../../features/search/match";
+import { catchUpWorkspaceDisplayName } from "../../features/solo/catch-up-workspace";
 
 const LIMIT = 20;
 /** Rows kept for open channels when joined matches would fill the list. */
@@ -91,13 +92,14 @@ export function ChannelCompletion({
       const list = session.channels.list();
       const places = (preferences?.snapshot().data?.sections ?? [])
         .flatMap((section) => {
-          const found = rank(section.name, needle);
-          return found === undefined ? [] : [{ section, rank: found }];
+          const name = catchUpWorkspaceDisplayName(section.name);
+          const found = rank(name, needle);
+          return found === undefined ? [] : [{ section, name, rank: found }];
         })
         .sort(
           (a, b) =>
             a.rank - b.rank ||
-            a.section.name.localeCompare(b.section.name) ||
+            a.name.localeCompare(b.name) ||
             a.section.id.localeCompare(b.section.id),
         )
         .slice(0, LIMIT);
@@ -206,9 +208,9 @@ export function ChannelCompletion({
       withdraw = publish({
         items: [
           ...places.map(
-            ({ section }): CompletionSuggestion => ({
+            ({ section, name }): CompletionSuggestion => ({
               id: `workspace:${section.id}`,
-              label: section.name,
+              label: name,
               detail: "Workspace",
               preview: <Cube3dSphereIcon size={22} />,
               edit: workspaceEdit(section.id),

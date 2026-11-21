@@ -9,12 +9,12 @@ import { createSoloRegionFixture } from "../channel-navigation/solo-navigation-t
 
 afterEach(cleanup);
 
-function fixture() {
+function fixture(sections = [{ id: "buzz", name: "Buzz App", order: 0 }]) {
   const assign = vi.fn(async () => {});
   const snapshot = {
     status: "ready" as const,
     data: {
-      sections: [{ id: "buzz", name: "Buzz App", order: 0 }],
+      sections,
       assignments: { chat: "buzz" },
       starred: [],
       muted: [],
@@ -30,6 +30,30 @@ function fixture() {
   } as unknown as RelaySession;
   return { session, assign };
 }
+
+it("presents the legacy catch-up workspace with its current name", async () => {
+  const { session } = fixture([
+    { id: "bestie-catch-ups", name: "Catch-ups", order: 0 },
+  ]);
+  const user = userEvent.setup();
+  render(
+    <WorkspaceControl
+      session={session}
+      value="bestie-catch-ups"
+      onChange={() => {}}
+    />,
+  );
+  const control = screen.getByRole("button", {
+    name: "Workspace: Catch me up",
+  });
+  expect(control).toHaveTextContent("Catch me up");
+  expect(control).not.toHaveTextContent("Catch-ups");
+  await user.click(control);
+  expect(
+    await screen.findByRole("menuitemradio", { name: "Catch me up" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Catch-ups")).toBeNull();
+});
 
 it("moves a saved chat without changing project defaults", async () => {
   const { session, assign } = fixture();

@@ -26,6 +26,7 @@ import { useChannelNavigation } from "../../features/channel-navigation/ChannelN
 import { ChannelCopyLinkMenuItem } from "./ChannelCopyLinkMenuItem";
 import { ChannelLifecycleMenu } from "./ChannelLifecycleMenu";
 import { ChannelReadMenuItem } from "./ChannelReadMenuItem";
+import { catchUpWorkspaceDisplayName } from "../../features/solo/catch-up-workspace";
 
 /** The one action list for a Solo chat. Its hosts own the dialogs it opens. */
 export function SoloChatMenuItems({
@@ -130,7 +131,7 @@ export function SoloChatMenuItems({
               {grouped && <MenuItem onClick={() => onMove()}>Chats</MenuItem>}
               {groups.map((group) => (
                 <MenuItem key={group.id} onClick={() => onMove(group.id)}>
-                  {group.name}
+                  {catchUpWorkspaceDisplayName(group.name)}
                 </MenuItem>
               ))}
               <MenuItem onClick={onNewWorkspace}>New workspace</MenuItem>

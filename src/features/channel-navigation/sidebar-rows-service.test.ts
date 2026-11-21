@@ -97,6 +97,7 @@ it.each([
     { sortModes: [{ id: "one", label: "One", compare: null }] },
   ],
   ["non-function renderer", "example.plugin", { render: false }],
+  ["non-function menu", "example.plugin", { menu: false }],
   [
     "incompatible owner id",
     "MixedCase",

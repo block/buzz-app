@@ -83,8 +83,22 @@ import {
   type RegisteredSidebarRows,
 } from "../../features/channel-navigation/sidebar-rows-service";
 import { SidebarRowRenderer } from "../../features/channel-navigation/SidebarRowRenderer";
+import {
+  catchUpWorkspaceDisplayName,
+  isCatchUpWorkspace,
+} from "../../features/solo/catch-up-workspace";
 
 const emptyRows: readonly RegisteredSidebarRows[] = [];
+const pinCatchUpSectionsAfterChats = (
+  order: readonly string[],
+  catchUpSections: readonly string[],
+) => {
+  const catchUps = new Set(catchUpSections);
+  const next = order.filter((key) => !catchUps.has(key));
+  const chats = next.indexOf("solo");
+  next.splice(chats < 0 ? next.length : chats + 1, 0, ...catchUpSections);
+  return next;
+};
 
 /** Presentation only. The caller supplies authorized, saved chats. */
 export type ChatListItem = Readonly<{
@@ -285,11 +299,22 @@ export function SoloWorkspaces({
     id: string;
     name: string;
   }>();
-  const order = workspaceSectionOrder(snapshot.data);
   const sections = snapshot.data?.sections ?? [];
-  const groups = snapshot.data?.sectionOrder
-    ? order.flatMap((key) => sections.filter(({ id }) => key === `group:${id}`))
-    : sections;
+  const catchUpSectionSet = new Set(
+    sections
+      .filter(isCatchUpWorkspace)
+      .map(({ id }) => workspaceSectionKey(id)),
+  );
+  const savedOrder = workspaceSectionOrder(snapshot.data);
+  const catchUpSections = savedOrder.filter((key) =>
+    catchUpSectionSet.has(key),
+  );
+  const order = pinCatchUpSectionsAfterChats(savedOrder, catchUpSections);
+  const ordinaryOrder = order.filter((key) => !catchUpSectionSet.has(key));
+  const groups = order.flatMap((key) =>
+    sections.filter(({ id }) => key === workspaceSectionKey(id)),
+  );
+  const ordinaryGroups = groups.filter((group) => !isCatchUpWorkspace(group));
   const orderWritable = preferences.sectionOrderWritable;
   const [orderFocus, setOrderFocus] = useState<string>();
   useLayoutEffect(() => {
@@ -300,39 +325,59 @@ export function SoloWorkspaces({
     setOrderFocus(undefined);
   }, [orderFocus]);
   const moveProject = (id: string, to: number) => {
+    if (!ordinaryGroups.some((group) => group.id === id)) return;
     if (workspaceComposition) {
       const key = workspaceSectionKey(id);
-      const next = order.filter((section) => section !== key);
+      const next = ordinaryOrder.filter((section) => section !== key);
       next.splice(to, 0, key);
-      void preferences.reorderSections(key, next).catch(() => {});
+      void preferences
+        .reorderSections(
+          key,
+          pinCatchUpSectionsAfterChats(next, catchUpSections),
+        )
+        .catch(() => {});
       return;
     }
-    const ids = groups.map((group) => group.id).filter((key) => key !== id);
-    ids.splice(to, 0, id);
+    const ordinaryIds = ordinaryGroups
+      .map((group) => group.id)
+      .filter((key) => key !== id);
+    ordinaryIds.splice(to, 0, id);
+    const ids = [
+      ...ordinaryIds,
+      ...groups.filter(isCatchUpWorkspace).map((group) => group.id),
+    ];
     if (!snapshot.data?.sectionOrder) {
       void preferences.reorderSections(id, ids).catch(() => {});
       return;
     }
     let next = 0;
-    const reordered = order.map((key) =>
-      key.startsWith("group:") ? `group:${ids[next++]}` : key,
+    const reordered = ordinaryOrder.map((key) =>
+      key.startsWith("group:") ? `group:${ordinaryIds[next++]}` : key,
     );
-    void preferences.reorderSections(`group:${id}`, reordered).catch(() => {});
+    void preferences
+      .reorderSections(
+        `group:${id}`,
+        pinCatchUpSectionsAfterChats(reordered, catchUpSections),
+      )
+      .catch(() => {});
   };
   const assigned = snapshot.data?.assignments ?? {};
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
   const ids = new Set(groups.map((group) => group.id));
+  const project = (group: (typeof groups)[number]) => ({
+    ...group,
+    name: catchUpWorkspaceDisplayName(group.name),
+    rows: chats.filter((item) => assignmentFor(item) === group.id),
+  });
   const projects = [
-    ...groups.map((group) => ({
-      ...group,
-      rows: chats.filter((item) => assignmentFor(item) === group.id),
-    })),
+    ...groups.filter((group) => !isCatchUpWorkspace(group)).map(project),
     {
       id: "",
       name: "Chats",
       rows: chats.filter((item) => !ids.has(assignmentFor(item) ?? "")),
     },
+    ...groups.filter(isCatchUpWorkspace).map(project),
   ].filter(
     (project) =>
       !workspaceComposition ||
@@ -554,9 +599,13 @@ export function SoloWorkspaces({
       : DROP + project.id;
     const groupIndex = workspaceComposition
       ? order.indexOf(projectKey)
-      : groups.findIndex((group) => group.id === project.id);
-    const lastIndex = (workspaceComposition ? order.length : groups.length) - 1;
-    const reorderable = !!project.id && orderWritable;
+      : ordinaryGroups.findIndex((group) => group.id === project.id);
+    const reorderIndex = workspaceComposition
+      ? ordinaryOrder.indexOf(projectKey)
+      : ordinaryGroups.findIndex((group) => group.id === project.id);
+    const lastIndex =
+      (workspaceComposition ? ordinaryOrder.length : ordinaryGroups.length) - 1;
+    const reorderable = reorderIndex >= 0 && orderWritable;
     const open =
       !collapsed.includes(project.id) || renamingProject === project.id;
     const changeOpen = (open: boolean) =>
@@ -617,8 +666,8 @@ export function SoloWorkspaces({
                 menuAnchor,
               )}
             <MenuItem
-              disabled={!orderWritable || groupIndex <= 0}
-              onClick={() => moveProject(project.id, groupIndex - 1)}
+              disabled={!reorderable || reorderIndex <= 0}
+              onClick={() => moveProject(project.id, reorderIndex - 1)}
             >
               <MenuIcon>
                 <ArrowUpIcon size={14} />
@@ -626,8 +675,8 @@ export function SoloWorkspaces({
               Move up
             </MenuItem>
             <MenuItem
-              disabled={!orderWritable || groupIndex >= lastIndex}
-              onClick={() => moveProject(project.id, groupIndex + 1)}
+              disabled={!reorderable || reorderIndex >= lastIndex}
+              onClick={() => moveProject(project.id, reorderIndex + 1)}
             >
               <MenuIcon>
                 <ArrowDownIcon size={14} />
@@ -951,8 +1000,10 @@ export function SoloWorkspaces({
           onMove={(id, key) => move(id, key.slice(DROP.length) || undefined)}
           onReorder={(key, over) => {
             const id = key.slice(DROP.length);
-            const to = groups.findIndex((group) => DROP + group.id === over);
-            if (groups.some((group) => group.id === id) && to >= 0)
+            const to = ordinaryGroups.findIndex(
+              (group) => DROP + group.id === over,
+            );
+            if (ordinaryGroups.some((group) => group.id === id) && to >= 0)
               moveProject(id, to);
           }}
           overlay={(id, group) => {

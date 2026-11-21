@@ -421,7 +421,27 @@ transcript copy remains. The shortcut uses ordinary Solo creation; it needs no n
 relay capability. The chat stays private until it is shared through the existing
 Share flow. A leading source link is not used for the chat's starting title.
 
-Source permissions still apply when an agent follows the ordinary link; seeing a
-link does not mean it can read or post in that source. Rendered, live
+When Bestie is enabled with an eligible saved agent, a thread root with replies
+or any reply adds **Catch me up** with the agent's avatar beside **Start Solo
+chat**. Buzz resolves a reply to the thread root, opens the existing right side
+panel, and automatically sends a request to read the whole thread. A channel's
+left-navigation menu offers the same action for a complete known unread range,
+or for a fixed two-day range when the channel is read but recently active. It
+does not open or mark the source channel read.
+
+Each distinct frozen source stays in a closable panel tab. The resulting normal
+Solo chat uses a short source-and-date title and is filed in the ordinary
+**Catch me up** workspace after **Chats**, which Buzz creates on first use. The
+generated request renders as a compact summary with **Show request** for its
+source links and full instructions. Closing the panel leaves the chat in Solo.
+When the known private-channel roster does not include Bestie, it responds with
+the access guidance directly. Otherwise it checks access before any optional
+progress update. Progress updates use **Taking a look now. I’ll let you know
+what I find.** If Bestie cannot read the source, it asks to be added to the
+channel or for the messages to be pasted into the Solo chat. If no eligible
+Bestie is available, only the ordinary **Start Solo chat** action shows.
+
+Source permissions still apply when an agent follows a link; seeing a link does
+not mean it can read or post in that source. Rendered, live
 cross-account, restart and real-agent acceptance remain separate from focused
 component/service tests.

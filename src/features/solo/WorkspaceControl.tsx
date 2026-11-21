@@ -17,6 +17,7 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import styles from "./WorkspaceControl.module.css";
 import { useRegionWorkspace } from "./chat-workspace";
+import { catchUpWorkspaceDisplayName } from "./catch-up-workspace";
 
 export function WorkspaceControl({
   session,
@@ -53,6 +54,9 @@ export function WorkspaceControl({
         : undefined) ??
     "";
   const project = snapshot.data?.sections.find((item) => item.id === projectId);
+  const projectName = project
+    ? catchUpWorkspaceDisplayName(project.name)
+    : undefined;
   const choose = (next: string) => {
     setError("");
     if (onChange) {
@@ -76,7 +80,7 @@ export function WorkspaceControl({
       )
       .finally(() => setBusy(false));
   };
-  const name = project ? `Workspace: ${project.name}` : "Add workspace";
+  const name = projectName ? `Workspace: ${projectName}` : "Add workspace";
   if (channelId && regions.managed.has(channelId) && !filed) return null;
   return (
     <span className={styles.control}>
@@ -104,9 +108,9 @@ export function WorkspaceControl({
               title={name}
             >
               <Cube3dSphereIcon size={16} aria-hidden="true" />
-              {project && (
+              {projectName && (
                 <>
-                  <span className={styles.name}>{project.name}</span>
+                  <span className={styles.name}>{projectName}</span>
                   <CaretDownIcon
                     size={12}
                     className="buzz-dropdown-chevron"
@@ -124,7 +128,7 @@ export function WorkspaceControl({
             </MenuRadioItem>
             {(snapshot.data?.sections ?? []).map((item) => (
               <MenuRadioItem key={item.id} value={item.id} closeOnClick>
-                {item.name}
+                {catchUpWorkspaceDisplayName(item.name)}
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>

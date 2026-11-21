@@ -1234,6 +1234,25 @@ it.each<[string, boolean, (made: Bound, filter: ReadFilter) => Bound[]]>([
     (made) => [{ ...made, body: spent }, made],
   ],
   [
+    "a surplus bound for a cursor nobody asked for",
+    false,
+    (made) => [
+      made,
+      {
+        ...made,
+        tags: [
+          ["h", CHANNEL],
+          ["d", `${CHANNEL}:1:${"a".repeat(64)}`],
+        ],
+      },
+    ],
+  ],
+  [
+    "a bound with an extra tag",
+    false,
+    (made) => [{ ...made, tags: [...made.tags, ["e", "a".repeat(64)]] }],
+  ],
+  [
     "has_more that contradicts its cursor",
     false,
     (made) => [{ ...made, body: { ...made.body, has_more: false } }],

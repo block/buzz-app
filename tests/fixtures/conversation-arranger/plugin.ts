@@ -58,8 +58,14 @@ const auxTargets = (event: EventData) =>
   event.tags.flatMap(([name, id]) => (name === "e" && id ? [id] : []));
 const inOrder = (a: Cursor, b: Cursor) =>
   a.created_at - b.created_at || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
-const tagged = (event: EventData, name: string, value: string) =>
-  event.tags.some(([key, tag]) => key === name && tag === value);
+const exactTags = (event: EventData, tags: readonly (readonly string[])[]) =>
+  event.tags.length === tags.length &&
+  tags.every(
+    ([name, value]) =>
+      event.tags.filter(
+        (tag) => tag.length === 2 && tag[0] === name && tag[1] === value,
+      ).length === 1,
+  );
 const invalidBounds = () => new Error("The relay sent invalid window bounds");
 const parsed = (content: string) => {
   let body: unknown;
@@ -269,19 +275,20 @@ function createArranger(initial: ComposerAccessoryProps) {
       closure = false;
       answer = await read(windows(), signal);
     }
-    const stamped = answer.filter(
-      (event) =>
-        event.kind === kindOfBounds() &&
-        event.pubkey === props.session.relayAuthor,
-    );
+    const stamped = answer.filter((event) => event.kind === kindOfBounds());
+    if (stamped.length !== lanes.length) throw invalidBounds();
     const threadBoundsVerifiedByHost = Boolean(root);
     const bounds = lanes.map(([lane, cursor]) => {
       const at = cursor ? `${cursor.created_at}:${cursor.id}` : "head";
       const d = `${props.channelId}:${lane === "newer" ? "newer:" : ""}${at}`;
       const matching = stamped.flatMap((event) => {
         if (
-          !threadBoundsVerifiedByHost &&
-          !(tagged(event, "h", props.channelId) && tagged(event, "d", d))
+          event.pubkey !== props.session.relayAuthor ||
+          (!threadBoundsVerifiedByHost &&
+            !exactTags(event, [
+              ["d", d],
+              ["h", props.channelId],
+            ]))
         )
           return [];
         const body = parsed(event.content);

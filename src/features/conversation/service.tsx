@@ -44,7 +44,10 @@ import {
   publishOutgoing,
   type OutgoingMessage,
 } from "../messages/outgoing-message";
-import { ImageViewer, type ImageViewerProps } from "../messages/ImageViewer";
+import {
+  RelayImageViewer,
+  type ImageViewerProps,
+} from "../messages/ImageViewer";
 import type { RelaySession } from "../relay/session";
 import {
   ChannelMembersDialog,
@@ -338,17 +341,7 @@ export class ConversationService extends Service implements Conversation {
       GeneralAccess: ChannelGeneralAccess,
       DocumentEditor,
       ImageViewer: (props: ImageViewerProps) => (
-        <ImageViewer
-          {...props}
-          media={(url) => {
-            // Only the relay's own media needs the session's signed read;
-            // other https images load directly, even with no transport.
-            const relay = this.ctx.reflect.get("relay")?.snapshot();
-            return relay?.origin && url.startsWith(`${relay.origin}/media/`)
-              ? relay.session.media(url)
-              : url;
-          }}
-        />
+        <RelayImageViewer {...props} relay={this.ctx.reflect.get("relay")} />
       ),
       Markdown: (props: MarkdownProps) => (
         <PluginMarkdown

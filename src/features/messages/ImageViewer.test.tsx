@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ImageViewer } from "./ImageViewer";
+import { ImageViewer, RelayImageViewer } from "./ImageViewer";
+import type { RelayData, RelaySnapshot } from "../relay/service";
 
 afterEach(cleanup);
 
@@ -87,6 +95,127 @@ it("follows a controlled source to another image, then to an invalid one", () =>
   ).toHaveAttribute("href", "https://fixture.test/two.png");
   expect(onClose).not.toHaveBeenCalled();
   rerender(viewer("javascript:alert(1)"));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+it("shows an unavailable status, keeping Close, when the image fails to load", async () => {
+  const onClose = vi.fn();
+  const viewer = (src: string) => (
+    <ImageViewer src={src} onClose={onClose} media={(url) => url} />
+  );
+  const { rerender } = render(viewer("https://fixture.test/missing.png"));
+  fireEvent.error(screen.getByRole("img"));
+  expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  expect(
+    screen.getByText("Image unavailable", { selector: "[role=status]" }),
+  ).toBeVisible();
+  expect(onClose).not.toHaveBeenCalled();
+
+  // Another source tries again.
+  rerender(viewer("https://fixture.test/present.png"));
+  expect(screen.getByRole("img")).toHaveAttribute(
+    "src",
+    "https://fixture.test/present.png",
+  );
+
+  await userEvent.click(
+    screen.getByRole("button", { name: "Close fullscreen viewer" }),
+  );
+  await waitFor(() => expect(onClose).toHaveBeenCalled());
+});
+
+/** A relay whose snapshot and selected community the test moves. */
+function fixtureRelay(selected: string | undefined, snapshot: RelaySnapshot) {
+  const listeners = new Set<() => void>();
+  let current = { selected, snapshot };
+  return {
+    relay: {
+      snapshot: () => current.snapshot,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      selected: () => current.selected,
+    } as unknown as RelayData,
+    move(next: { selected: string | undefined; snapshot: RelaySnapshot }) {
+      current = next;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+
+const one = "https://one.fixture.test";
+const two = "https://two.fixture.test";
+const signed = (url: string) =>
+  `/api/relay/media?url=${encodeURIComponent(url)}`;
+const session = { media: signed } as unknown as RelaySnapshot["session"];
+const connecting = {
+  status: "connecting",
+  session,
+} as unknown as RelaySnapshot;
+const ready = (origin: string) =>
+  ({ status: "ready", origin, session }) as unknown as RelaySnapshot;
+
+it.each([
+  ["connecting", connecting],
+  [
+    "disconnected",
+    { status: "disconnected", session } as unknown as RelaySnapshot,
+  ],
+])(
+  "closes rather than load the selected community's media unsigned while %s",
+  (_, snapshot) => {
+    const onClose = vi.fn();
+    const { relay } = fixtureRelay(one, snapshot);
+    render(
+      <RelayImageViewer
+        src={`${one}/media/abc.png`}
+        onClose={onClose}
+        relay={relay}
+      />,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onClose).toHaveBeenCalledOnce();
+  },
+);
+
+it("loads other https images directly while the community connects", () => {
+  const { relay } = fixtureRelay(one, connecting);
+  render(
+    <RelayImageViewer
+      src="https://fixture.test/a.png"
+      onClose={() => {}}
+      relay={relay}
+    />,
+  );
+  expect(screen.getByRole("img")).toHaveAttribute(
+    "src",
+    "https://fixture.test/a.png",
+  );
+});
+
+it("signs relay media once ready, and closes when the community changes", () => {
+  const onClose = vi.fn();
+  const media = `${one}/media/abc.png`;
+  const { relay, move } = fixtureRelay(one, ready(one));
+  render(<RelayImageViewer src={media} onClose={onClose} relay={relay} />);
+  expect(screen.getByRole("img")).toHaveAttribute("src", signed(media));
+
+  // Switching: the old session is still the snapshot, but no longer selected.
+  move({ selected: two, snapshot: ready(one) });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+it("closes when the session drops while open", () => {
+  const onClose = vi.fn();
+  const media = `${one}/media/abc.png`;
+  const { relay, move } = fixtureRelay(one, ready(one));
+  render(<RelayImageViewer src={media} onClose={onClose} relay={relay} />);
+  move({ selected: one, snapshot: connecting });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(onClose).toHaveBeenCalledOnce();
 });

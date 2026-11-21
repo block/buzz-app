@@ -101,11 +101,13 @@ it("gives plugins the host image viewer for an image outside any message", async
   const relayed = "https://relay.fixture.test/media/abc.png";
   // A session without transport reads no media, as before connecting.
   let media = (_url: string): string | undefined => undefined;
+  const snapshot = {
+    origin: "https://relay.fixture.test",
+    session: { media: (url: string) => media(url) },
+  };
   host.provide("relay", {
-    snapshot: () => ({
-      origin: "https://relay.fixture.test",
-      session: { media: (url: string) => media(url) },
-    }),
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
   } as never);
   const runtime = new PluginRuntime(host, async () => ({ apply() {} }));
   const conversation = new ConversationService(host);

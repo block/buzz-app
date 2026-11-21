@@ -45,6 +45,8 @@ type ImageReviewStageProps = {
   media(url: string): string | undefined;
   select(url: string): void;
   onOpenLink(url: string): boolean;
+  /** The selected image's source failed to load or decode. */
+  onImageError?(source: string): void;
   allowCopy?: boolean;
 };
 
@@ -54,6 +56,7 @@ export function ImageReviewStage({
   media,
   select,
   onOpenLink,
+  onImageError,
   allowCopy = true,
 }: ImageReviewStageProps) {
   const stage = useRef<HTMLDivElement>(null);
@@ -320,6 +323,11 @@ export function ImageReviewStage({
               aria-hidden={!current || undefined}
               draggable={false}
               onLoad={current ? constrain : undefined}
+              onError={
+                current
+                  ? () => item.source && onImageError?.(item.source)
+                  : undefined
+              }
               style={{ transform: item.transform }}
             />
           ) : (

@@ -24,6 +24,8 @@ export type ComposerSession = Pick<
   RelaySession,
   "viewer" | "media" | "scope"
 > & {
+  /** Whose DM carries the relay's moderation notices; no one is added to it. */
+  relayAuthor?: RelaySession["relayAuthor"];
   names?: import("../identity-names/service").IdentityNameView | undefined;
   recovery?: RelaySession["recovery"];
   repositories: Pick<
@@ -59,9 +61,12 @@ export type ComposerSession = Pick<
   typing: Pick<RelaySession["typing"], "snapshot" | "subscribe"> &
     Partial<Pick<RelaySession["typing"], "send">>;
   presence?: Pick<NonNullable<RelaySession["presence"]>, "status"> | undefined;
-  /** `verified` names searched people; a bridge without it shows shared names only. */
+  /** `verified` names searched people; a bridge without it shows shared names
+   * only. Without `add`, an agent tagged in a DM does not join it. */
   directMessages: Pick<RelaySession["directMessages"], "people"> &
-    Partial<Pick<RelaySession["directMessages"], "verified">>;
+    Partial<
+      Pick<RelaySession["directMessages"], "verified" | "available" | "add">
+    >;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
   channelWrites: Pick<
     RelaySession["channelWrites"],

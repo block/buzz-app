@@ -1,6 +1,10 @@
 import { useRef, useState } from "react";
 import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
+import {
+  addAgentsToDirectMessage,
+  directMessageAddsAgents,
+} from "./mention-admission";
 import { communityHost } from "./community-host";
 import type { Agent, Agents } from "../agents/service";
 import { sameAgent } from "../agents/AgentManage";
@@ -43,7 +47,10 @@ export function useBringAgents(
   const channel =
     pending &&
     session.channels.list().channels.find((item) => item.id === channelId);
-  const canAdd = !!channel && canAddMembers(session, channel);
+  const dm = channel?.channelType === "dm";
+  const canAdd = dm
+    ? directMessageAddsAgents(session, channel)
+    : !!channel && canAddMembers(session, channel);
   const here =
     (pending &&
       communityHost(splitPartition(session.scope)?.communityOrigin ?? "")) ??
@@ -70,20 +77,32 @@ export function useBringAgents(
         }
       }
       check();
-      // Requested together, so they go to the relay together.
-      const results = await Promise.allSettled(
-        canAdd
-          ? request.agents
-              .filter((agent) => !added.has(agent.pubkey))
-              .map((agent) =>
-                session.memberAdditions
-                  .add(channelId, agent.pubkey)
-                  .then(() => added.add(agent.pubkey)),
-              )
-          : [],
-      );
-      const failed = results.find((result) => result.status === "rejected");
-      if (failed) throw failed.reason;
+      const adding = canAdd
+        ? request.agents
+            .map((agent) => agent.pubkey)
+            .filter((key) => !added.has(key))
+        : [];
+      if (dm && adding.length) {
+        // A DM takes them in one add.
+        await addAgentsToDirectMessage(
+          session,
+          channelId,
+          adding,
+          request.signal,
+        );
+        for (const key of adding) added.add(key);
+      } else {
+        // Requested together, so they go to the relay together.
+        const results = await Promise.allSettled(
+          adding.map((key) =>
+            session.memberAdditions
+              .add(channelId, key)
+              .then(() => added.add(key)),
+          ),
+        );
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed) throw failed.reason;
+      }
       check();
       if (notes.length) setPending({ ...request, busy: false, reviewed: true });
       else request.finish([...added]);

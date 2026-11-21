@@ -40,6 +40,8 @@ import {
 import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
+  directMessageAddsAgents,
+  joinsDirectMessage,
   outsideMentionReferences,
   pickedAgents,
   mentionAdmission,
@@ -3308,7 +3310,9 @@ function Composer({
               ? [agent]
               : [];
           });
-          if (bring.length && channel.channelType !== "dm") {
+          const dm = channel.channelType === "dm";
+          const addsAgents = dm && directMessageAddsAgents(session, channel);
+          if (bring.length && (!dm || addsAgents)) {
             setSending(true);
             setError(undefined);
             const brought = await bringing.prepare(
@@ -3319,17 +3323,40 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          const missing = captured.recipients.filter(
+          let missing = captured.recipients.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),
           );
-          if (missing.length && channel?.channelType === "dm") {
-            // Nobody can be added to a DM, so there is no choice to offer:
-            // outside people become references without a prompt.
-            references = missing.map((person) => person.pubkey);
-            recipients = recipients.filter((key) => !references.includes(key));
-          } else if (missing.length) {
+          if (dm && missing.length) {
+            // Only agents join a DM from a tag; outside people become
+            // references without a prompt. Each tag's profile says which it
+            // is, as it did in the chooser; without it the send stops rather
+            // than guess, since an agent sent as a reference hears nothing.
+            if (addsAgents) {
+              setSending(true);
+              setError(undefined);
+              await session.profiles
+                .ensure(missing.map((person) => person.pubkey))
+                .catch(() => {
+                  throw new Error(
+                    "Could not check who you mentioned. Your draft is kept. Retry.",
+                  );
+                });
+              attempt.signal.throwIfAborted();
+            }
+            references = missing
+              .filter(
+                (person) =>
+                  !addsAgents ||
+                  !joinsDirectMessage(session, channel, person.pubkey),
+              )
+              .map((person) => person.pubkey);
+            missing = missing.filter(
+              (person) => !references.includes(person.pubkey),
+            );
+          }
+          if (missing.length) {
             setSending(true);
             setError(undefined);
             const decision = await nonmembers.prepare(
@@ -3338,9 +3365,9 @@ function Composer({
               current,
             );
             if (decision === null) return;
-            references = decision;
-            recipients = recipients.filter((key) => !references.includes(key));
+            references = [...references, ...decision];
           }
+          recipients = recipients.filter((key) => !references.includes(key));
         }
       }
       attempt.signal.throwIfAborted();

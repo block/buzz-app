@@ -6,31 +6,6 @@ import {
   githubCommentHost,
 } from "../../../tests/fixtures/github-comment-host";
 
-function seed(
-  state: ReturnType<typeof githubCommentHost>["state"],
-  body = "Comment 1",
-  id = 1,
-  root?: number,
-) {
-  const row = {
-    id,
-    node_id: `comment-${id}`,
-    body,
-    user: { login: state.viewer },
-    html_url: `https://github.com/example-org/sample/pull/1#discussion_r${id}`,
-    created_at: "2026-01-01T00:00:00Z",
-    commit_id: state.head,
-    original_commit_id: state.head,
-    path: "src/example.ts",
-    side: "RIGHT",
-    line: 5001,
-    original_line: 5001,
-    ...(root ? { in_reply_to_id: root } : {}),
-  };
-  state.comments.push(row);
-  return row;
-}
-
 async function setup() {
   const fixture = githubCommentHost();
   const api = createPrComments(fixture.host);
@@ -81,16 +56,223 @@ it("indexes patch coordinates once per snapshot and invalidates on replacement",
   }
 });
 
+it("returns a write receipt independently of refresh and supports replies", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  expect(
+    (await api.create(snapshot, anchor, "First", "operation")).status,
+  ).toBe("sent");
+  const threads = await api.loadThreads(fixturePull);
+  expect(threads.items[0]?.comments[0]?.author).toBe("example-reviewer");
+  expect(threads.items[0]?.comments[0]?.avatarUrl).toBe(
+    "./design-system/assets/avatar.png",
+  );
+  expect(
+    (await api.reply(snapshot, 1, "Reply", "reply-operation")).status,
+  ).toBe("sent");
+  expect(state.comments.map((row) => row.body)).toEqual(["First", "Reply"]);
+});
+it.each(["head", "base"] as const)(
+  "refuses changed %s without posting",
+  async (field) => {
+    const { api, snapshot, anchor, state } = await setup();
+    state[field] = "c".repeat(40);
+    expect(
+      await api.create(snapshot, anchor, "Keep draft", "operation"),
+    ).toEqual({
+      status: "stale",
+    });
+    expect(state.comments).toHaveLength(0);
+  },
+);
+it.each(["denied", "validation"] as const)(
+  "classifies definite %s refusals",
+  async (mode) => {
+    const { api, snapshot, anchor, state } = await setup();
+    state.mode = mode;
+    expect(
+      await api.create(snapshot, anchor, "Keep draft", "operation"),
+    ).toMatchObject({
+      status: "failed",
+      error: { kind: mode === "denied" ? "forbidden" : "validation" },
+    });
+    expect(state.comments).toHaveLength(0);
+  },
+);
+it("reconciles timeout-after-success without a second POST", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  state.mode = "timeout";
+  const result = await api.create(snapshot, anchor, "Keep draft", "operation");
+  expect(result.status).toBe("unknown");
+  expect(await api.create(snapshot, anchor, "Keep draft", "operation")).toEqual(
+    result,
+  );
+  if (result.status !== "unknown")
+    throw new Error("Expected uncertain outcome");
+  expect((await api.reconcile(result.attempt)).status).toBe("sent");
+  expect(state.calls.filter((call) => call.args[0] === "POST")).toHaveLength(1);
+});
+it("does not reconcile under a changed GitHub viewer", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  state.mode = "timeout";
+  const result = await api.create(snapshot, anchor, "Keep draft", "operation");
+  if (result.status !== "unknown")
+    throw new Error("Expected uncertain outcome");
+  state.viewer = "another-reviewer";
+  expect(await api.reconcile(result.attempt)).toEqual(result);
+});
+it("coalesces simultaneous calls for the same operation before dispatch", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  const [first, second] = await Promise.all([
+    api.create(snapshot, anchor, "Same draft", "operation"),
+    api.create(snapshot, anchor, "Same draft", "operation"),
+  ]);
+  expect(first).toEqual(second);
+  expect(state.comments).toHaveLength(1);
+});
+
+it("allows intentional identical text with a new operation but reuses the first receipt", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  const first = await api.create(snapshot, anchor, "Same", "first-operation");
+  expect(await api.create(snapshot, anchor, "Same", "first-operation")).toEqual(
+    first,
+  );
+  expect(
+    (await api.create(snapshot, anchor, "Same", "second-operation")).status,
+  ).toBe("sent");
+  expect(state.comments).toHaveLength(2);
+});
+it.each(["success", "timeout"] as const)(
+  "rejects changed payloads for a %s operation",
+  async (mode) => {
+    const { api, snapshot, anchor, state } = await setup();
+    state.mode = mode;
+    const first = await api.create(snapshot, anchor, "Same", "operation");
+    for (const [target, body] of [
+      [anchor, "Changed"],
+      [{ ...anchor, line: 5001 }, "Same"],
+    ] as const)
+      expect(
+        await api.create(snapshot, target, body, "operation"),
+      ).toMatchObject({
+        status: "failed",
+        error: { kind: "validation" },
+      });
+    if (first.status === "unknown") {
+      const sent = await api.reconcile(first.attempt);
+      expect(sent).toEqual({
+        status: "sent",
+        comment: { id: "comment-1", url: state.comments[0]?.html_url },
+      });
+      expect(await api.create(snapshot, anchor, "Same", "operation")).toEqual(
+        sent,
+      );
+    }
+    expect(state.calls.filter((call) => call.args[0] === "POST")).toHaveLength(
+      1,
+    );
+  },
+);
+
+it("keeps an unknown attempt unresolved when reconciliation finds no unique match", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  state.mode = "timeout";
+  const result = await api.create(snapshot, anchor, "Same", "operation");
+  if (result.status !== "unknown") throw new Error("Expected unknown");
+  const saved = state.comments.splice(0);
+  expect(await api.reconcile(result.attempt)).toEqual(result);
+  state.comments.push(...saved, ...saved.map((row) => ({ ...row, id: 99 })));
+  expect(await api.reconcile(result.attempt)).toEqual(result);
+  expect(state.calls.filter((call) => call.args[0] === "POST")).toHaveLength(1);
+});
+it("refuses a different viewer before dispatch and sends exact captured payloads", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  state.viewer = "other";
+  expect(await api.create(snapshot, anchor, "Keep", "operation")).toMatchObject(
+    { status: "failed", error: { kind: "forbidden" } },
+  );
+  expect(state.comments).toHaveLength(0);
+  state.viewer = snapshot.viewer;
+  await api.create(snapshot, anchor, "First", "operation");
+  await api.reply(snapshot, 1, "Reply", "reply");
+  expect(
+    state.calls
+      .filter((call) => call.args[0] === "POST")
+      .map(({ args, input }) => ({ args, input })),
+  ).toEqual([
+    {
+      args: ["POST", "repos/example-org/sample/pulls/1/comments"],
+      input: {
+        body: "First",
+        commit_id: snapshot.head,
+        path: anchor.path,
+        side: "LEFT",
+        line: 5000,
+      },
+    },
+    {
+      args: ["POST", "repos/example-org/sample/pulls/1/comments/1/replies"],
+      input: { body: "Reply" },
+    },
+  ]);
+});
+it("keeps sent distinct when the next thread refresh fails", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  state.mode = "refresh-failed";
+  const sent = await api.create(snapshot, anchor, "First", "operation");
+  expect(sent.status).toBe("sent");
+  await expect(api.loadThreads(fixturePull)).rejects.toMatchObject({
+    kind: "transient",
+  });
+  expect(await api.create(snapshot, anchor, "First", "operation")).toEqual(
+    sent,
+  );
+  expect(state.comments).toHaveLength(1);
+});
+it("accepts deleted-file LEFT anchors and rejects RIGHT anchors", async () => {
+  const { snapshot } = await setup();
+  const deleted = {
+    ...snapshot,
+    files: [{ path: "src/deleted.ts" }],
+    diff: `diff --git a/src/deleted.ts b/src/deleted.ts
+--- a/src/deleted.ts
++++ /dev/null
+@@ -4 +0,0 @@
+-old
+`,
+  };
+  const anchor = {
+    head: snapshot.head,
+    base: snapshot.base,
+    path: "src/deleted.ts",
+    side: "LEFT",
+    line: 4,
+  } as const;
+  expect(anchorInSnapshot(deleted, anchor)).toBe(true);
+  expect(anchorInSnapshot(deleted, { ...anchor, side: "RIGHT" })).toBe(false);
+});
+it.each(["head", "base"] as const)(
+  "detects a %s race during snapshot loading",
+  async (field) => {
+    const fixture = githubCommentHost();
+    fixture.state.onCall = (call) => {
+      if (call.id === "diff") fixture.state[field] = "c".repeat(40);
+    };
+    const api = createPrComments(fixture.host);
+    await expect(api?.loadSnapshot(fixturePull)).rejects.toMatchObject({
+      kind: "transient",
+    });
+  },
+);
 it("reads file pages, outer thread cursors, and nested comment cursors", async () => {
-  const { api, state } = await setup();
+  const { api, snapshot, anchor, state } = await setup();
   state.files = Array.from({ length: 101 }, (_, index) => ({
     filename: `file-${index}`,
     previous_filename: "previous",
   }));
   expect((await api.loadSnapshot(fixturePull)).files).toHaveLength(101);
-  seed(state, "First", 1);
-  seed(state, "Reply", 2, 1);
-  seed(state, "Second", 3);
+  await api.create(snapshot, anchor, "First", "first");
+  await api.reply(snapshot, 1, "Reply", "reply");
+  await api.create(snapshot, anchor, "Second", "second");
   state.pageSize = 1;
   const first = await api.loadThreads(fixturePull);
   expect(first.items).toHaveLength(1);
@@ -114,8 +296,8 @@ it("reads file pages, outer thread cursors, and nested comment cursors", async (
     thread: {
       id: "thread-1",
       path: "src/example.ts",
-      side: "RIGHT",
-      line: 5001,
+      side: anchor.side,
+      line: anchor.line,
       outdated: false,
       rootCommentId: 1,
     },
@@ -148,4 +330,78 @@ it("normalizes inaccessible PR/thread GraphQL reads", async () => {
   await expect(api?.loadComments("thread-1")).rejects.toMatchObject({
     kind: "forbidden",
   });
+});
+it("retains queued same-operation receipts while allowing a fresh draft", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  state.mode = "hold";
+  let posted: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    posted = resolve;
+  });
+  state.onCall = (call) => {
+    if (call.args[0] === "POST") posted();
+  };
+  const first = api.create(snapshot, anchor, "Same", "operation-A");
+  await started;
+  const queued = api.create(snapshot, anchor, "Same", "operation-A");
+  expect(
+    await api.create(snapshot, anchor, "Changed", "operation-A"),
+  ).toMatchObject({
+    status: "failed",
+    error: { kind: "validation" },
+  });
+  state.release();
+  const receipt = await first;
+  expect(await queued).toEqual(receipt);
+  expect(await api.create(snapshot, anchor, "Same", "operation-A")).toEqual(
+    receipt,
+  );
+  expect(
+    await api.create(snapshot, anchor, "Changed", "operation-A"),
+  ).toMatchObject({
+    status: "failed",
+    error: { kind: "validation" },
+  });
+  expect(receipt).toEqual({
+    status: "sent",
+    comment: {
+      id: "comment-1",
+      url: "https://github.com/example-org/sample/pull/1#discussion_r1",
+    },
+  });
+  expect(state.comments).toHaveLength(1);
+  state.mode = "success";
+  expect(
+    (await api.create(snapshot, anchor, "Same", "operation-C")).status,
+  ).toBe("sent");
+  expect(state.comments).toHaveLength(2);
+});
+
+it("allows merged-PR inline comments and replies while retaining snapshot checks", async () => {
+  const fixture = githubCommentHost();
+  fixture.state.merged = true;
+  const api = createPrComments(fixture.host);
+  if (!api) throw new Error("Missing adapter");
+  const snapshot = await api.loadSnapshot(fixturePull);
+  const anchor = {
+    ...snapshot,
+    path: "src/example.ts",
+    side: "RIGHT",
+    line: 5001,
+  } as const;
+  expect(
+    (await api.create(snapshot, anchor, "After merge", "merged-comment"))
+      .status,
+  ).toBe("sent");
+  expect(
+    (await api.reply(snapshot, 1, "Reply after merge", "merged-reply")).status,
+  ).toBe("sent");
+  fixture.state.head = "c".repeat(40);
+  expect(
+    (await api.create(snapshot, anchor, "Old coordinate", "stale-merged"))
+      .status,
+  ).toBe("stale");
+  expect(fixture.state.calls.filter((c) => c.args[0] === "POST")).toHaveLength(
+    2,
+  );
 });

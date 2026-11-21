@@ -62,6 +62,11 @@ export type CommentPage = Page<Comment> & {
   head: string;
   base: string;
 };
+export type WriteResult =
+  | { status: "sent"; comment: Pick<Comment, "id" | "url"> }
+  | { status: "stale" }
+  | { status: "failed"; error: PrCommentError }
+  | { status: "unknown"; attempt: string };
 export class PrCommentError extends Error {
   constructor(
     message: string,
@@ -88,6 +93,21 @@ export interface PrComments {
     cursor?: string,
     signal?: AbortSignal,
   ): Promise<CommentPage>;
+  create(
+    snapshot: Snapshot,
+    anchor: Anchor,
+    body: string,
+    operation: string,
+  ): Promise<WriteResult>;
+  reply(
+    snapshot: Snapshot,
+    rootCommentId: number,
+    body: string,
+    operation: string,
+  ): Promise<WriteResult>;
+  reconcile(
+    attempt: string,
+  ): Promise<Extract<WriteResult, { status: "sent" | "unknown" }>>;
 }
 function failure(error: unknown): PrCommentError {
   const message = error instanceof Error ? error.message : String(error);
@@ -123,6 +143,21 @@ type Meta = {
   base: { sha: string };
   state: string;
   merged: boolean;
+};
+type RestComment = {
+  node_id: string;
+  id: number;
+  body: string;
+  user: { login: string; avatar_url?: string } | null;
+  html_url: string;
+  created_at: string;
+  commit_id: string | null;
+  original_commit_id: string | null;
+  path: string;
+  side: Side;
+  line: number | null;
+  original_line: number | null;
+  in_reply_to_id?: number;
 };
 const commentFields = `id databaseId body author { login avatarUrl } url`;
 type GraphComment = Omit<Comment, "author"> & {
@@ -204,6 +239,166 @@ export function createPrComments(
     rest<Meta>("GET", endpoint(pull), undefined, signal);
   const viewer = async () =>
     (await rest<{ login: string }>("GET", "user")).login;
+  async function allComments(pull: PullRef): Promise<RestComment[]> {
+    const result: RestComment[] = [];
+    for (let page = 1; page <= 100; page++) {
+      const rows = await rest<RestComment[]>(
+        "GET",
+        `${endpoint(pull)}/comments?per_page=100&page=${page}`,
+      );
+      result.push(...rows);
+      if (rows.length < 100) return result;
+    }
+    throw new PrCommentError(
+      "Too many comments to verify delivery safely",
+      "validation",
+    );
+  }
+  type Attempt = {
+    snapshot: Snapshot;
+    anchor: Anchor | undefined;
+    root: number | undefined;
+    body: string;
+    baseline: Set<number>;
+  };
+  type Operation = {
+    fingerprint: string;
+    result: Promise<WriteResult>;
+    pending?: Attempt | undefined;
+  };
+  const operations = new Map<string, Operation>();
+  async function send(
+    snapshot: Snapshot,
+    anchor: Anchor | undefined,
+    root: number | undefined,
+    body: string,
+    operation: string,
+  ): Promise<WriteResult> {
+    if (
+      !body.trim() ||
+      (anchor && !anchorInSnapshot(snapshot, anchor)) ||
+      (root !== undefined && (!Number.isSafeInteger(root) || root < 1))
+    )
+      return {
+        status: "failed",
+        error: new PrCommentError(
+          "Choose a commentable line in the current PR diff",
+          "validation",
+        ),
+      };
+    const payload = JSON.stringify([
+      snapshot.repository.toLowerCase(),
+      snapshot.number,
+      snapshot.viewer,
+      anchor ?? root,
+      body,
+    ]);
+    const operationKey = JSON.stringify([
+      snapshot.repository.toLowerCase(),
+      snapshot.number,
+      snapshot.viewer,
+      operation,
+    ]);
+    const hash = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(payload),
+    );
+    const fingerprint = Array.from(new Uint8Array(hash), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const prior = operations.get(operationKey);
+    if (prior)
+      return prior.fingerprint === fingerprint
+        ? prior.result
+        : {
+            status: "failed",
+            error: new PrCommentError(
+              "Submission changed while delivery was pending",
+              "validation",
+            ),
+          };
+    // Admit synchronously before any network request can dispatch a write.
+    let finish: (result: WriteResult) => void = () => {};
+    const result = new Promise<WriteResult>((resolve) => {
+      finish = resolve;
+    });
+    const attempt: Attempt = {
+      snapshot,
+      anchor,
+      root,
+      body,
+      baseline: new Set(),
+    };
+    const record: Operation = { fingerprint, result, pending: attempt };
+    operations.set(operationKey, record);
+    let dispatched = false;
+    try {
+      const previous = await allComments(snapshot);
+      attempt.baseline = new Set(previous.map((comment) => comment.id));
+      const current = await meta(snapshot);
+      if (
+        current.node_id !== snapshot.pullId ||
+        current.head.sha !== snapshot.head ||
+        current.base.sha !== snapshot.base
+      ) {
+        finish({ status: "stale" });
+        operations.delete(operationKey);
+        return result;
+      }
+      if ((await viewer()) !== snapshot.viewer)
+        throw new PrCommentError(
+          "GitHub account changed; reload before posting",
+          "forbidden",
+        );
+      if (
+        root !== undefined &&
+        !previous.some(
+          (comment) => comment.id === root && !comment.in_reply_to_id,
+        )
+      )
+        throw new PrCommentError(
+          "Reply thread no longer exists in this PR",
+          "validation",
+        );
+      dispatched = true;
+      const created = await rest<RestComment>(
+        "POST",
+        root === undefined
+          ? `${endpoint(snapshot)}/comments`
+          : `${endpoint(snapshot)}/comments/${root}/replies`,
+        anchor
+          ? {
+              body,
+              commit_id: anchor.head,
+              path: anchor.path,
+              side: anchor.side,
+              line: anchor.line,
+            }
+          : { body },
+      );
+      if (!created.id || !created.html_url)
+        throw new Error("GitHub did not return a comment receipt");
+      record.pending = undefined;
+      finish({
+        status: "sent",
+        comment: { id: created.node_id, url: created.html_url },
+      });
+    } catch (error) {
+      const definite =
+        !dispatched ||
+        error instanceof GhUnavailable ||
+        (error instanceof GitHubRestError &&
+          [400, 401, 403, 404, 422, 429].includes(error.status));
+      if (definite) {
+        finish({
+          status: "failed",
+          error: error instanceof PrCommentError ? error : failure(error),
+        });
+        operations.delete(operationKey);
+      } else finish({ status: "unknown", attempt: operationKey });
+    }
+    return result;
+  }
   return {
     async loadSnapshot(pull, signal) {
       try {
@@ -377,6 +572,47 @@ export function createPrComments(
         signal?.throwIfAborted();
         throw failure(error);
       }
+    },
+    create: (snapshot, anchor, body, operation) =>
+      send(snapshot, anchor, undefined, body, operation),
+    reply: (snapshot, root, body, operation) =>
+      send(snapshot, undefined, root, body, operation),
+    async reconcile(id) {
+      const record = operations.get(id);
+      if (!record) return { status: "unknown", attempt: id };
+      const prior = await record.result;
+      if (prior.status === "sent") return prior;
+      const attempt = record.pending;
+      if (!attempt) return { status: "unknown", attempt: id };
+      try {
+        if ((await viewer()) !== attempt.snapshot.viewer)
+          return { status: "unknown", attempt: id };
+        const matches = (await allComments(attempt.snapshot)).filter(
+          (comment) =>
+            !attempt.baseline.has(comment.id) &&
+            comment.user?.login === attempt.snapshot.viewer &&
+            comment.body === attempt.body &&
+            (attempt.root !== undefined
+              ? comment.in_reply_to_id === attempt.root
+              : !comment.in_reply_to_id &&
+                comment.path === attempt.anchor?.path &&
+                comment.side === attempt.anchor.side &&
+                comment.original_line === attempt.anchor.line &&
+                comment.original_commit_id === attempt.anchor.head),
+        );
+        if (matches.length === 1 && matches[0]) {
+          const sent = {
+            status: "sent",
+            comment: { id: matches[0].node_id, url: matches[0].html_url },
+          } as const;
+          record.pending = undefined;
+          record.result = Promise.resolve(sent);
+          return sent;
+        }
+      } catch {
+        /* A failed read proves nothing about a write. */
+      }
+      return { status: "unknown", attempt: id };
     },
   };
 }

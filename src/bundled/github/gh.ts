@@ -212,7 +212,7 @@ export class GitHubRestError extends Error {
   }
 }
 export type GitHubRest = <T>(
-  method: "GET",
+  method: "GET" | "POST",
   path: string,
   body?: Record<string, unknown>,
   signal?: AbortSignal,
@@ -222,13 +222,11 @@ export function gitHubRest(host: Pick<Host, "spawn">): GitHubRest | undefined {
   const spawn = host.spawn?.bind(host);
   if (!spawn) return undefined;
   return async <T>(
-    method: "GET",
+    method: "GET" | "POST",
     path: string,
-    _body?: Record<string, unknown>,
+    body?: Record<string, unknown>,
     signal?: AbortSignal,
   ) => {
-    if (method !== "GET")
-      throw new GitHubRestError("Comment view is read-only", 400);
     if (
       !/^(?:user$|repos\/[\w.-]+\/[\w.-]+\/pulls\/\d+(?:\/files|\/comments(?:\/\d+\/replies)?)?(?:\?per_page=100&page=\d+)?$)/.test(
         path,
@@ -237,6 +235,7 @@ export function gitHubRest(host: Pick<Host, "spawn">): GitHubRest | undefined {
       throw new GitHubRestError("Unsupported GitHub comment endpoint", 400);
     const { stdout, stderr, code } = await runGh(spawn, "rest", {
       args: [method, path],
+      ...(method === "POST" ? { input: JSON.stringify(body ?? {}) } : {}),
       signal,
       maxOutput: 5_000_000,
     });

@@ -2075,9 +2075,25 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   syntax highlighting, including Kotlin, even for small changes
   deep in large files. Oversized, unsupported or unparseable patches remain
   readable without syntax colors. Added and deleted lines use colored bars.
-- GitHub **Changes** displays inline discussions with Markdown, author avatars
-  and paginated replies. Outdated or unmapped threads appear below the diff.
-  This view is read-only.
+- In GitHub **Changes**, use the line gutter to
+  post a single-line comment, or **Reply** in an existing thread. Context lines
+  use New in Unified view and the selected side in Split view; deletion-only
+  lines use Old. Comments post immediately with your signed-in
+  `gh` account. Verified changes are interactive while comments continue loading.
+  Focus a diff file and use Up/Down then Enter to comment with the keyboard.
+  The selected line scrolls into view.
+  **Cancel** closes only that draft and keeps your scroll position as the gap closes.
+  Closed and merged PRs also offer commenting;
+  GitHub checks whether the submission is allowed. Raw or unmapped patches cannot
+  accept new line comments.
+  Comments render Markdown with author avatars and separated replies.
+  Several inline composers can stay open at once; opening another line keeps
+  existing text. Unsent text is local to the panel; cancel, refresh, leaving
+  Changes or closing the panel discards it. After a PR changes, select the line
+  again. If delivery is unknown,
+  use **Check delivery** before another submission; Buzz never automatically
+  resends it. Delivery tracking survives closing the composer or panel during
+  the plugin session; restarting or reloading the app clears it.
 - Some desktop plugins can upload images you provide to services they declare.
 - Plugin sharing search groups people who have not been added under **Not yet
   added**, or a heading chosen by the plugin. Its **Copy link** action appears

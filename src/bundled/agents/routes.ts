@@ -1,4 +1,5 @@
 import type { AgentViewProps } from "../../features/agents/service";
+import { relayOrigin } from "../../features/communities/destination";
 import { AGENT_CARD_ID } from "../../features/navigation/buzz-links";
 import type { Navigation } from "../../features/navigation/controller";
 import type {
@@ -73,12 +74,57 @@ export function agentCardRoute(value: JsonValue | undefined) {
     : undefined;
 }
 
+/** A community catalog address, independent of the agent's display name. */
+export function sharedAgentRoute(value: JsonValue | undefined) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const params = value as Readonly<Record<string, JsonValue>>;
+  if (
+    Object.keys(params).length !== 2 ||
+    typeof params.shared !== "string" ||
+    !/^[0-9a-f]{64}:[a-z0-9][a-z0-9_-]{0,63}$/.test(params.shared) ||
+    typeof params.community !== "string"
+  )
+    return;
+  try {
+    return { id: params.shared, community: relayOrigin(params.community) };
+  } catch {
+    return;
+  }
+}
+
+/** Opens the shared listing in this page's account/community scope. */
+export function sharedAgentTarget(
+  target: PageTarget,
+  id: string,
+  community: string,
+): PageTarget {
+  return {
+    ...target,
+    route: {
+      version: 1,
+      params: { shared: id, community: relayOrigin(community) },
+    },
+  };
+}
+
+/** A link to the listing, never to a name or a mutable event revision. */
+export function sharedAgentLink(id: string, community: string) {
+  const params = new URLSearchParams({
+    id: "buzz.agents",
+    page: "agents",
+    "route.shared": id,
+    "route.community": relayOrigin(community),
+  });
+  return `buzz://plugin?${params}`;
+}
+
 export const availableAgentProviderRoute = (value: JsonValue) =>
   Boolean(
     agentProviderRoute(value) ??
       agentRoute(value) ??
       teamRoute(value) ??
-      agentCardRoute(value),
+      agentCardRoute(value) ??
+      sharedAgentRoute(value),
   );
 
 /** The Agents page with `pubkey` open. */

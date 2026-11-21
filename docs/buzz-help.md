@@ -691,6 +691,9 @@ Quitting Buzz also turns it off.
   meanwhile get a divider above the first of them when you come back, before
   anything is marked read; older unread messages, or a read elsewhere on this
   device while you were away, leave that visit without one.
+- **Thread replies** begin below a divider labeled with the reply count,
+  including nested replies. A `+` means more replies may exist beyond those loaded
+  and Buzz does not yet have a larger total. Empty threads have no reply divider.
 - **Opening a thread** without choosing a reply starts at its first unread
   reply, below a **New messages** divider that stays as you read. When the
   unread reply is nested under another reply, the divider goes above that

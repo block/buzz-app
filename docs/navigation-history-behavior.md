@@ -69,9 +69,11 @@ links and shortcuts to Settings do, counts as Settings for whatever is selected
 when Settings closes. Back/Forward between sections remains reversible until
 Close. Back/Forward to Manage plugins reopens the plugin details that visit
 showed; opening it from another section starts at the list.
-Profile discard confirmation precedes dismissal and Back/Forward departure.
-Keep editing preserves the mounted draft and current visit; Discard changes
-continues the requested traversal without retiring the Settings visit.
+Profile discard confirmation precedes dismissal, Back/Forward departure and a
+move from Profile to another section, chosen or traversed. Keep editing
+preserves the mounted draft and current visit; Discard changes continues the
+requested traversal without retiring the Settings visit, and resets the Profile
+editor when Settings stays open.
 Agents-page provider controls retire that provider's known visits on the same
 scoped Agents page, preserving other providers and page visits. Their pending-work
 close protection remains in the shared Dialog. Settings → Agent setup provider

@@ -166,8 +166,9 @@ semantic tokens, UI authoring rules and the local component reference.
   Native buttons use normal Tab/Enter navigation and expose the current section.
   `ProfileSettings.tsx` edits the local default inline with Save and Cancel,
   sharing fields and validation with community setup. Cancel restores the saved
-  profile; switching sections retains an unsaved draft while Settings is open.
-  Closing Settings discards that draft, as leaving the former page did.
+  profile. Leaving Profile with an unsaved draft, for another section or by
+  closing Settings, asks **Discard changes?** first: **Keep editing** stays on
+  Profile, and **Discard changes** restores the saved profile and continues.
   Profile opens from the selected session’s already-verified kind-0 event while
   refreshing through that session, without another profile cache or retained
   Settings mount. Save waits for the fresh read; avatar editing stays available

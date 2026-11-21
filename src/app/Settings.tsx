@@ -710,6 +710,7 @@ export function Settings({
   navigationPane = false,
   onDeparturePending,
   onUnsavedChange,
+  profileDiscards = 0,
 }: {
   agents?: Agents | undefined;
   decisions?: DecisionsService | undefined;
@@ -737,6 +738,8 @@ export function Settings({
   navigationPane?: boolean;
   onDeparturePending?: (pending: boolean) => void;
   onUnsavedChange?: (unsaved: boolean) => void;
+  /** Counts accepted discards; each one resets the Profile editor. */
+  profileDiscards?: number;
 }) {
   useEffect(() => cards.retainVisibility(), [cards]);
   useEffect(() => adminAccess?.ensure(), [adminAccess]);
@@ -1583,7 +1586,7 @@ export function Settings({
         )}
         <div hidden={selected !== "profile"}>
           <ProfileSettings
-            key={`${client.viewer}:${selectedCommunity?.id ?? "local"}`}
+            key={`${client.viewer}:${selectedCommunity?.id ?? "local"}:${profileDiscards}`}
             communities={communities}
             community={selectedCommunity}
             onUnsavedChange={onUnsavedChange}

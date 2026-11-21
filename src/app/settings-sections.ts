@@ -106,6 +106,10 @@ const builtIn = new Set(
 /** Host-owned sections; any other section is a plugin card contribution key. */
 export const isBuiltInSettingsSection = (id: string) => builtIn.has(id);
 
+/** The section a Settings visit shows when it names none. */
+export const defaultSettingsSection = (community: unknown) =>
+  community ? "profile" : "appearance";
+
 export function settingsSections(
   cards: readonly Contribution<SettingsCard>[],
   community: Community | undefined,
@@ -215,6 +219,6 @@ export function settingsSections(
   return {
     groups,
     sections: groups.flatMap((group) => group.sections),
-    defaultSection: community ? "profile" : "appearance",
+    defaultSection: defaultSettingsSection(community),
   };
 }

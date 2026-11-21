@@ -933,8 +933,84 @@ it("asks before any Settings dismissal discards unsaved profile edits", async ()
   ).toBeNull();
 }, 15_000);
 
+it("asks before another Settings section hides unsaved profile edits", async () => {
+  const user = await setup();
+  if (!services) throw new Error("Missing app services");
+  const current = services;
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+    });
+  });
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  await within(settings).findByRole("heading", { name: "Appearance" });
+  await user.click(within(settings).getByRole("button", { name: "Profile" }));
+  const name = await within(settings).findByRole("textbox", {
+    name: "Display name",
+  });
+  await waitFor(() => expect(name).toHaveValue("Community name"));
+  await user.clear(name);
+  // The draft's content matters here, not how it was entered.
+  await user.paste("Unsaved name");
+  const prompt = () =>
+    screen.queryByRole("alertdialog", { name: "Discard changes?" });
+  const answer = async (choice: "Keep editing" | "Discard changes") => {
+    const asked = await screen.findByRole("alertdialog", {
+      name: "Discard changes?",
+    });
+    expect(asked).toHaveTextContent("Your profile has unsaved changes.");
+    await user.click(within(asked).getByRole("button", { name: choice }));
+    await waitFor(() => expect(prompt()).toBeNull());
+  };
+  const stillEditing = () => {
+    expect(
+      within(settings).getByRole("heading", { name: "Profile" }),
+    ).toBeVisible();
+    expect(name).toHaveValue("Unsaved name");
+  };
+
+  // Choosing a section and traversing history both leave Profile.
+  await user.click(
+    within(settings).getByRole("button", { name: "Notifications" }),
+  );
+  await answer("Keep editing");
+  stillEditing();
+  act(() => current.navigation.back());
+  await answer("Keep editing");
+  stillEditing();
+  // Reopening the section being edited hides nothing.
+  await user.click(within(settings).getByRole("button", { name: "Profile" }));
+  expect(prompt()).toBeNull();
+  stillEditing();
+
+  await user.click(
+    within(settings).getByRole("button", { name: "Notifications" }),
+  );
+  await answer("Discard changes");
+  await within(settings).findByRole("heading", { name: "Notifications" });
+  // Settings stays open, so the discard has to reset its mounted editor.
+  await user.click(within(settings).getByRole("button", { name: "Profile" }));
+  expect(
+    await within(settings).findByRole("textbox", { name: "Display name" }),
+  ).toHaveValue("Community name");
+  // Nothing is left to ask about in another section or on the way out.
+  await user.click(
+    within(settings).getByRole("button", { name: "Appearance" }),
+  );
+  await within(settings).findByRole("heading", { name: "Appearance" });
+  await user.click(
+    within(settings).getByRole("button", { name: "Close Settings" }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull(),
+  );
+  expect(prompt()).toBeNull();
+}, 15_000);
+
 it.each(["pending", "unavailable"] as const)(
-  "retains a dirty Profile through a same-scope %s Settings destination",
+  "asks before a same-scope %s Settings destination hides a dirty Profile",
   async (state) => {
     const user = await setup();
     if (!services) throw new Error("Missing app services");
@@ -978,7 +1054,25 @@ it.each(["pending", "unavailable"] as const)(
         },
       });
     }
+    const answer = async (choice: "Keep editing" | "Discard changes") => {
+      await user.click(
+        within(
+          await screen.findByRole("alertdialog", { name: "Discard changes?" }),
+        ).getByRole("button", { name: choice }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+        ).toBeNull(),
+      );
+    };
+    // The destination is another section, so the traversal waits for an answer.
     act(() => current.navigation.forward());
+    await answer("Keep editing");
+    expect(name).toBeVisible();
+    expect(name).toHaveValue("Keep this draft");
+    act(() => current.navigation.forward());
+    await answer("Discard changes");
     if (state === "pending")
       await waitFor(() =>
         expect(
@@ -986,18 +1080,58 @@ it.each(["pending", "unavailable"] as const)(
         ).not.toBeNull(),
       );
     else await screen.findByText(pageFailure);
-    expect(name).toBeInTheDocument();
-    expect(name).not.toBeVisible();
+    expect(name).not.toBeInTheDocument();
     act(() => current.navigation.back());
-    expect(await screen.findByRole("textbox", { name: "Display name" })).toBe(
-      name,
-    );
-    expect(name).toHaveValue("Keep this draft");
+    expect(
+      await screen.findByRole("textbox", { name: "Display name" }),
+    ).toHaveValue("Community name");
   },
   // Each Settings navigation here renders the whole app again, about a second
   // apiece on a loaded runner, as in the neighbouring tests.
   15_000,
 );
+
+it("retains a dirty Profile while its own Settings visit is pending", async () => {
+  const user = await setup();
+  if (!services) throw new Error("Missing app services");
+  const current = services;
+  const client = current.communities.snapshot();
+  if (!client.viewer || !client.selected)
+    throw new Error("Missing selected community");
+  const profile = {
+    version: 1,
+    kind: "settings",
+    section: "profile",
+    scope: {
+      viewer: client.viewer,
+      communityOrigin: communityDestination(client.selected).url,
+    },
+  } as const;
+  await act(async () => {
+    void current.navigation.open(profile);
+  });
+  const name = await screen.findByRole("textbox", { name: "Display name" });
+  await waitFor(() => expect(name).toHaveValue("Community name"));
+  await user.clear(name);
+  await user.paste("Keep this draft");
+  // Reopening Profile stays in the section, so nothing asks; communities
+  // reloading meanwhile holds that visit back.
+  const reloading = vi
+    .spyOn(current.communities, "snapshot")
+    .mockReturnValue({ ...client, status: "loading" });
+  await act(async () => {
+    void current.navigation.open(profile);
+  });
+  expect(
+    screen.queryByRole("alertdialog", { name: "Discard changes?" }),
+  ).toBeNull();
+  expect(name).toBeInTheDocument();
+  expect(name).not.toBeVisible();
+  reloading.mockRestore();
+  act(() => current.navigation.back());
+  await waitFor(() => expect(name).toBeVisible());
+  expect(name).toHaveValue("Keep this draft");
+}, 15_000);
 
 it("drops the retained draft after an accepted departure to another account's unavailable Settings", async () => {
   const user = await setup();

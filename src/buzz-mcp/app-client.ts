@@ -10,6 +10,7 @@ import type {
   AgentHandle,
   AgentHandoff,
   WorkspaceAudience,
+  WorkspaceChat,
 } from "../features/agents/service";
 import type {
   HostProcess,
@@ -147,11 +148,11 @@ export function appClient(
           check();
           return result;
         },
-        defaults: async (workspace: string, shared: boolean) => {
+        defaults: async (workspace: string, chat: WorkspaceChat) => {
           check();
           const result = await workspaces.defaults(
             workspace,
-            shared,
+            chat,
             options.signal,
           );
           check();

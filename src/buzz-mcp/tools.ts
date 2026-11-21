@@ -360,11 +360,14 @@ export const TOOLS: readonly Tool[] = [
       join_role: joinRole,
       template: str,
       solo: { type: "boolean" },
-      members: { ...strs, description: "Solo only: pubkeys or npubs." },
+      members: {
+        ...strs,
+        description: "Pubkeys or npubs who join in the create.",
+      },
       workspace: {
         ...str,
         description:
-          "Local host: exact ID from workspace_list. Your owner must see it: open, or a Solo chat with your owner in members. Without template, applies the workspace's defaults.",
+          "Local host: exact ID from workspace_list. Your owner must see it: open, or with your owner in members. Without template, applies the workspace's defaults.",
       },
     },
     ["name", "visibility"],
@@ -2252,8 +2255,6 @@ class Tools {
     if (args.solo !== undefined && typeof args.solo !== "boolean")
       throw new Error("solo must be true or false.");
     const solo = args.solo === true;
-    if (!solo && args.members !== undefined)
-      throw new Error("members is for Solo chats.");
     const members = keys(args, "members").filter(
       (key) => key !== this.client.pubkey,
     );
@@ -2269,7 +2270,7 @@ class Tools {
         "A Solo chat is a private stream without about or template.",
       );
     if (members.length > 32)
-      throw new Error("A Solo chat starts with at most 32 members.");
+      throw new Error("A channel starts with at most 32 members.");
     // Found first, so a wrong name creates nothing.
     const template =
       args.template === undefined
@@ -2280,36 +2281,42 @@ class Tools {
     const workspaces = this.client.workspaces;
     if (workspace !== undefined && !workspaces)
       throw new Error("Workspaces are unavailable on this host");
-    // Only a Solo chat starts with the owner in it; the host checks that.
-    if (workspace !== undefined && args.visibility !== "open" && !solo)
-      throw new Error(
-        "Your owner can't see a private channel filed for them; make it open, or a Solo chat with your owner in members.",
-      );
+    // A private one is filed only with the owner in `members`; the host
+    // checks that before anything is created.
     // As New channel or New chat in a workspace: its defaults, unless a
     // template is chosen. Read first, so they apply or nothing is created.
     const defaults =
       workspace !== undefined && !template
-        ? await workspaces?.defaults(workspace, !solo)
+        ? await workspaces?.defaults(
+            workspace,
+            solo ? { solo, members } : { solo },
+          )
         : undefined;
+    // Its default agents that this agent may add: Buzz adds them with your
+    // owner's key, which this agent never signs with.
+    const { addable, refused: barred } = await this.addable(
+      (defaults?.agents ?? []).filter((key) => key !== this.client.pubkey),
+    );
+    // As New chat and New channel, one not available here is skipped.
+    const refused: [string, string][] = [
+      ...(defaults?.skipped ?? [])
+        .filter((key) => key !== this.client.pubkey)
+        .map((key): [string, string] => [
+          key,
+          "not available in this community (archived, being deleted, or not in any channel here)",
+        ]),
+      ...barred,
+    ];
     // A Solo chat's agents join in the create, as Buzz starts one.
-    const joining = solo
-      ? [
-          ...new Set([
-            ...members,
-            ...(defaults?.agents ?? []).filter(
-              (key) => key !== this.client.pubkey,
-            ),
-          ]),
-        ]
-      : members;
+    const joining = solo ? [...new Set([...members, ...addable])] : members;
     if (joining.length > 32)
-      throw new Error("A Solo chat starts with at most 32 members.");
+      throw new Error("A channel starts with at most 32 members.");
     const setup: ChannelTemplate | undefined =
       template ??
       (defaults && {
         name: "workspace defaults",
         canvas: defaults.canvas,
-        agents: solo ? [] : defaults.agents,
+        agents: solo ? [] : addable,
       });
     const id = crypto.randomUUID();
     const file =
@@ -2339,8 +2346,13 @@ class Tools {
       !!now && (!solo || soloChannelMetadata(now as RelayEvent));
     const shown = await until(() => this.metadata(id), labeled).catch(unread);
     if (!shown || shown instanceof Error)
-      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${setup ? `; ${template ? "the template was" : "the workspace defaults were"} not applied` : ""}${role === "guest" ? "; join_role was not set" : ""}${joining.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}.`;
-    const lines = [`created ${id}`];
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${setup ? `; ${template ? "the template was" : "the workspace defaults were"} not applied` : ""}${role === "guest" ? "; join_role was not set" : ""}${joining.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}${refused.length ? `; workspace default agents not added: ${refused.map(([key]) => key).join(", ")}` : ""}.`;
+    const lines = [
+      `created ${id}`,
+      ...refused.map(
+        ([key, why]) => `workspace default agent ${key} not added: ${why}`,
+      ),
+    ];
     if (!labeled(shown))
       lines.push(
         "The community did not keep the Solo label, so it is an ordinary private channel.",
@@ -2420,6 +2432,40 @@ class Tools {
       }
     if (agents.length) lines.push(...(await this.change(id, agents, [])).lines);
     return lines;
+  }
+
+  /** Which of `agents` this agent may add, by each one's own
+   * `channel_add_policy`; the rest with why not. A failed read throws, so
+   * nothing is created. */
+  async addable(agents: readonly string[]) {
+    if (!agents.length)
+      return { addable: [] as string[], refused: [] as [string, string][] };
+    const events = await this.client.query([
+      { kinds: [10100], authors: [...agents] },
+    ]);
+    const policy = new Map<string, { at: number; value: unknown }>();
+    for (const event of events) {
+      if (!agents.includes(event.pubkey)) continue;
+      const seen = policy.get(event.pubkey);
+      if (seen && seen.at >= event.created_at) continue;
+      let value: unknown;
+      try {
+        value = (JSON.parse(event.content) as Record<string, unknown>)
+          .channel_add_policy;
+      } catch {}
+      policy.set(event.pubkey, { at: event.created_at, value });
+    }
+    const addable: string[] = [];
+    const refused: [string, string][] = [];
+    for (const key of agents) {
+      const value = policy.get(key)?.value;
+      if (value === "owner_only")
+        refused.push([key, "only your owner can add this agent"]);
+      else if (value === "nobody")
+        refused.push([key, "this agent can't be added by anyone else"]);
+      else addable.push(key);
+    }
+    return { addable, refused };
   }
 
   /** The owner's template named `name`, as one, without guessing. */

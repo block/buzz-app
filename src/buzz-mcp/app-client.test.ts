@@ -590,11 +590,15 @@ it("forwards workspace discovery, defaults, filing and moves only while the app 
   expect(await client.workspaces?.list()).toEqual([
     { id: "work", name: "Work" },
   ]);
-  expect(await client.workspaces?.defaults("work", true)).toEqual({
+  expect(await client.workspaces?.defaults("work", { solo: false })).toEqual({
     canvas: "# Rules",
     agents: [],
   });
-  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", true, undefined);
+  expect(defaults).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    { solo: false },
+    undefined,
+  );
   const audience = { members: ["owner"], open: false };
   const place = await client.workspaces?.prepare("work", audience, "chat");
   expect(prepare).toHaveBeenCalledExactlyOnceWith(

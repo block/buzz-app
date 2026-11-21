@@ -277,7 +277,11 @@ import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { openMetadata } from "../relay/discovery";
 import { prepareSoloMove } from "../channel-navigation/solo-navigation";
-import { loadChatSetup, shareableInstructions } from "../solo/workspace";
+import {
+  loadChannelSetup,
+  loadChatSetup,
+  shareableInstructions,
+} from "../solo/workspace";
 import { channelIdentity } from "../relay/channel-labels";
 import { regionLabels } from "../solo/region-labels";
 import { nameSoloChat } from "./solo-chat-name";
@@ -609,10 +613,17 @@ export type WorkspaceAudience = Readonly<{
   members: readonly string[];
   open: boolean;
 }>;
+/** A new conversation's kind: a Solo chat with the members it names, or a
+ * team channel. */
+export type WorkspaceChat = Readonly<
+  { solo: true; members: readonly string[] } | { solo: false }
+>;
 /** A workspace's defaults for a new conversation in it. */
 export type WorkspaceDefaults = Readonly<{
   canvas: string;
   agents: readonly string[];
+  /** Default agents not available here, left out of the create. */
+  skipped: readonly string[];
 }>;
 /** Run-only access to the owner's sidebar workspaces, for conversations the
  * owner can see. */
@@ -620,11 +631,10 @@ export type Workspaces = Readonly<{
   list(
     signal: AbortSignal,
   ): Promise<readonly Readonly<{ id: string; name: string }>[]>;
-  /** `shared`: for a team channel, whose Canvas gets only standalone
-   * instructions. */
+  /** As New chat for a Solo chat with `members`, or New channel. */
   defaults(
     workspace: string,
-    shared: boolean,
+    chat: WorkspaceChat,
     signal: AbortSignal,
   ): Promise<WorkspaceDefaults>;
   prepare(
@@ -734,7 +744,7 @@ export type AgentHandle = Readonly<{
     ): Promise<readonly Readonly<{ id: string; name: string }>[]>;
     defaults(
       workspace: string,
-      shared: boolean,
+      chat: WorkspaceChat,
       signal?: AbortSignal,
     ): Promise<WorkspaceDefaults>;
     prepare(
@@ -3312,21 +3322,43 @@ export class AgentsService extends Service implements Agents {
         };
         return {
           list: async (signal: AbortSignal) => operation().list(signal),
-          defaults: async (workspace, shared, signal) => {
+          defaults: async (workspace, chat, signal) => {
             const { binding, check, known } = operation();
             await known(workspace, signal);
             // As New channel: without saved defaults here, there are none.
             if (!binding.session.channelKit.available)
-              return { canvas: "", agents: [] };
-            const setup = await loadChatSetup(binding.session, workspace);
+              return { canvas: "", agents: [], skipped: [] };
+            const { session } = binding;
+            if (!chat.solo) {
+              const setup = await loadChannelSetup(session, workspace);
+              check(signal);
+              return setup;
+            }
+            const setup = await loadChatSetup(session, workspace);
             check(signal);
+            // Local folders stay with the owner and their own agents, as in
+            // New chat; anyone else in the chat gets only the instructions.
+            const own = () =>
+              new Set([
+                binding.viewer,
+                agent.pubkey,
+                ...setup.agents,
+                ...session.agentChoices
+                  .snapshot()
+                  .identities.map(({ pubkey }) => pubkey),
+              ]);
+            let owned = own();
+            if (chat.members.some((key) => !owned.has(key))) {
+              await session.agentChoices.refresh();
+              check(signal);
+              owned = own();
+            }
             return {
-              // As New channel: only standalone instructions reach a team
-              // channel's Canvas; local paths stay in Solo chats.
-              canvas: shared
-                ? shareableInstructions(setup.canvas)
-                : setup.canvas,
+              canvas: chat.members.every((key) => owned.has(key))
+                ? setup.canvas
+                : shareableInstructions(setup.canvas),
               agents: setup.agents,
+              skipped: setup.skipped,
             };
           },
           prepare: async (workspace, audience, signal) => {

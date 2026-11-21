@@ -22,6 +22,7 @@ import type {
   AgentHandle,
   Workspaces,
   WorkspaceAudience,
+  WorkspaceChat,
   AgentCreationInput,
   AgentReadout,
   AgentUpdateInput,
@@ -3734,12 +3735,12 @@ export class AgentRunners {
               ),
             defaults: (
               workspace: string,
-              shared: boolean,
+              chat: WorkspaceChat,
               signal?: AbortSignal,
             ) =>
               workspaces.defaults(
                 workspace,
-                shared,
+                chat,
                 AbortSignal.any([lifetime, ...(signal ? [signal] : [])]),
               ),
             move: (

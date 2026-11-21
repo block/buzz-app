@@ -2161,7 +2161,7 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
   ).resolves.toBe(`${plain} ops (stream, private)\nyou: owner`);
 });
 
-const noDefaults = async () => ({ canvas: "", agents: [] });
+const noDefaults = async () => ({ canvas: "", agents: [], skipped: [] });
 const unmoved = async () => ({ status: "unconfirmed" as const });
 
 it("discovers local workspaces and files only after creating a Solo with explicit members", async () => {
@@ -2218,13 +2218,6 @@ it("rejects unsupported or invalid workspace placement before publication", asyn
     defaults: noDefaults,
     move: unmoved,
   };
-  await expect(
-    callTool(client, {}, "channel_create", {
-      ...args,
-      solo: false,
-      members: undefined,
-    }),
-  ).rejects.toThrow("Your owner can't see a private channel");
   await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
     "No such workspace",
   );
@@ -2343,6 +2336,7 @@ it("files an open channel in a workspace with the workspace's defaults", async (
   const defaults = vi.fn(async () => ({
     canvas: "# Workspace rules",
     agents: [alice, me],
+    skipped: [],
   }));
   client.workspaces = {
     list: async () => [],
@@ -2357,7 +2351,7 @@ it("files an open channel in a workspace with the workspace's defaults", async (
     workspace: "work",
   });
   const id = published[0]?.tags[0]?.[1] as string;
-  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", true);
+  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", { solo: false });
   expect(prepare).toHaveBeenCalledExactlyOnceWith(
     "work",
     { members: [], open: true },
@@ -2375,12 +2369,59 @@ it("files an open channel in a workspace with the workspace's defaults", async (
   );
 });
 
+it("starts a private channel with its members and files it with the host's check", async () => {
+  const { client, published } = relay();
+  const prepare = vi.fn(async () => async () => ({ status: "filed" as const }));
+  const defaults = vi.fn(async () => ({ canvas: "", agents: [], skipped: [] }));
+  client.workspaces = {
+    list: async () => [],
+    prepare,
+    defaults,
+    move: unmoved,
+  };
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "launch",
+    visibility: "private",
+    type: "forum",
+    members: [alice],
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1] as string;
+  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", { solo: false });
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    { members: [alice], open: false },
+    id,
+  );
+  expect(published[0]?.tags).toContainEqual(["p", alice]);
+  expect(answer).toBe(
+    [
+      `created ${id}`,
+      `added ${alice} Alice Smith`,
+      "filed in workspace work",
+    ].join("\n"),
+  );
+  // A private channel the owner isn't named in is refused before creating.
+  prepare.mockRejectedValueOnce(
+    new Error("Your owner can't see this conversation"),
+  );
+  await expect(
+    callTool(client, {}, "channel_create", {
+      name: "hidden",
+      visibility: "private",
+      workspace: "work",
+    }),
+  ).rejects.toThrow("can't see");
+  expect(published).toHaveLength(1);
+});
+
 it("starts a Solo chat in a workspace with its default agents as members", async () => {
   const { client, published } = relay();
   const prepare = vi.fn(async () => async () => ({ status: "filed" as const }));
   const defaults = vi.fn(async () => ({
     canvas: "~/work notes",
     agents: [bob],
+    skipped: [],
   }));
   client.workspaces = {
     list: async () => [],
@@ -2396,7 +2437,10 @@ it("starts a Solo chat in a workspace with its default agents as members", async
     workspace: "work",
   });
   const id = published[0]?.tags[0]?.[1] as string;
-  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", false);
+  expect(defaults).toHaveBeenCalledExactlyOnceWith("work", {
+    solo: true,
+    members: [alice],
+  });
   expect(prepare).toHaveBeenCalledExactlyOnceWith(
     "work",
     { members: [alice, bob], open: false },
@@ -2411,9 +2455,107 @@ it("starts a Solo chat in a workspace with its default agents as members", async
   expect(answer).toContain("started the Canvas");
 });
 
+it.each([
+  [true, "a Solo chat"],
+  [false, "a team channel"],
+])(
+  "leaves out default agents only the owner can add, before creating %s",
+  async (solo, _) => {
+    const { client, published, state } = relay();
+    state.push(
+      event({
+        kind: 10100,
+        pubkey: bob,
+        content: JSON.stringify({ channel_add_policy: "owner_only" }),
+      }),
+    );
+    const prepare = vi.fn(async () => async () => ({
+      status: "filed" as const,
+    }));
+    client.workspaces = {
+      list: async () => [],
+      prepare,
+      defaults: async () => ({ canvas: "", agents: [alice, bob], skipped: [] }),
+      move: unmoved,
+    };
+    const answer = await callTool(client, {}, "channel_create", {
+      name: "launch",
+      ...(solo
+        ? { visibility: "private", solo: true, members: [me] }
+        : { visibility: "open" }),
+      workspace: "work",
+    });
+    expect(answer).toContain(
+      `workspace default agent ${bob} not added: only your owner can add this agent`,
+    );
+    const added = published.flatMap(({ tags }) =>
+      tags.flatMap(([key, value]) => (key === "p" ? [value] : [])),
+    );
+    expect(added).toContain(alice);
+    expect(added).not.toContain(bob);
+  },
+);
+
+it.each([
+  [true, "a Solo chat"],
+  [false, "a team channel"],
+])(
+  "creates %s without the default agents not available here, and lists them",
+  async (solo, _) => {
+    const { client, published } = relay();
+    client.workspaces = {
+      list: async () => [],
+      prepare: vi.fn(async () => async () => ({ status: "filed" as const })),
+      defaults: async () => ({ canvas: "", agents: [alice], skipped: [bob] }),
+      move: unmoved,
+    };
+    const answer = await callTool(client, {}, "channel_create", {
+      name: "launch",
+      ...(solo
+        ? { visibility: "private", solo: true, members: [me] }
+        : { visibility: "open" }),
+      workspace: "work",
+    });
+    expect(answer).toMatch(/^created /);
+    expect(answer).toContain(
+      `workspace default agent ${bob} not added: not available in this community`,
+    );
+    const added = published.flatMap(({ tags }) =>
+      tags.flatMap(([key, value]) => (key === "p" ? [value] : [])),
+    );
+    expect(added).toContain(alice);
+    expect(added).not.toContain(bob);
+  },
+);
+
+it("creates nothing when it can't read which default agents it may add", async () => {
+  const { client, published } = relay();
+  client.query = vi.fn(async () => {
+    throw new Error("relay offline");
+  });
+  client.workspaces = {
+    list: async () => [],
+    prepare: vi.fn(),
+    defaults: async () => ({ canvas: "", agents: [alice], skipped: [] }),
+    move: unmoved,
+  };
+  await expect(
+    callTool(client, {}, "channel_create", {
+      name: "launch",
+      visibility: "open",
+      workspace: "work",
+    }),
+  ).rejects.toThrow("relay offline");
+  expect(published).toEqual([]);
+});
+
 it("uses a chosen template instead of the workspace's defaults", async () => {
   const { client, published } = relay();
-  const defaults = vi.fn(async () => ({ canvas: "# Defaults", agents: [] }));
+  const defaults = vi.fn(async () => ({
+    canvas: "# Defaults",
+    agents: [],
+    skipped: [],
+  }));
   client.templates = vi.fn(async () => [
     { name: "Launch", canvas: "# Plan", agents: [] },
   ]);
@@ -2513,10 +2655,6 @@ it("refuses Solo arguments that do not fit, before publishing", async () => {
   await expect(create({ solo: true, template: "Triage" })).rejects.toThrow(
     shape,
   );
-  for (const members of [[alice], ["alice"], alice])
-    await expect(create({ members })).rejects.toThrow(
-      "members is for Solo chats.",
-    );
   await expect(create({ solo: true, members: ["alice"] })).rejects.toThrow(
     "Not a pubkey: alice",
   );
@@ -2530,7 +2668,7 @@ it("refuses Solo arguments that do not fit, before publishing", async () => {
     n.toString(16).padStart(64, "0"),
   );
   await expect(create({ solo: true, members: many })).rejects.toThrow(
-    "A Solo chat starts with at most 32 members.",
+    "A channel starts with at most 32 members.",
   );
   expect(published).toEqual([]);
 });

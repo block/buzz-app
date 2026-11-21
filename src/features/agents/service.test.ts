@@ -17020,6 +17020,14 @@ function workspaceSession(
   const authority = "f".repeat(64);
   const assign = vi.fn(async () => {});
   const kit = { status: "ready", entries: [] as unknown[] };
+  Object.assign(f.session.agentChoices, {
+    refresh: vi.fn(async () => {}),
+    snapshot: () => ({
+      identities: [],
+      templates: { status: "ready", complete: true, identities: [] },
+      archives: { status: "ready", archived: [] },
+    }),
+  });
   Object.assign(f.session, {
     channelKit: {
       available: true,
@@ -17152,24 +17160,31 @@ it("reads a workspace's defaults as New channel and New chat do", async () => {
   await f.service.create({ type: "example/echo", name: "Echo" });
   const handle = await handleOf(f.run, f.emit);
   try {
-    // A Solo chat keeps the local folders; a team channel gets only the
-    // standalone instructions.
-    await expect(handle.workspaces?.defaults("work", false)).resolves.toEqual({
-      canvas: marked,
-      agents: [],
-    });
-    await expect(handle.workspaces?.defaults("work", true)).resolves.toEqual({
-      canvas: "Rules",
-      agents: [],
-    });
-    await expect(handle.workspaces?.defaults("other", true)).rejects.toThrow(
-      "No such workspace",
-    );
+    // A Solo chat of the owner and their agents keeps the local folders; one
+    // with anyone else, or a team channel, gets only the instructions.
+    const solo = (members: string[]) => ({ solo: true as const, members });
+    await expect(
+      handle.workspaces?.defaults("work", solo([viewer, bot])),
+    ).resolves.toEqual({ canvas: marked, agents: [], skipped: [] });
+    const refresh = vi.spyOn(f.session.agentChoices, "refresh");
+    await expect(
+      handle.workspaces?.defaults("work", solo([viewer, other])),
+    ).resolves.toEqual({ canvas: "Rules", agents: [], skipped: [] });
+    expect(refresh).toHaveBeenCalled();
+    await expect(
+      handle.workspaces?.defaults("work", { solo: false }),
+    ).resolves.toEqual({ canvas: "Rules", agents: [], skipped: [] });
+    await expect(
+      handle.workspaces?.defaults("other", { solo: false }),
+    ).rejects.toThrow("No such workspace");
     // Where saved defaults are unavailable, a workspace has none.
     Object.assign(f.session.channelKit, { available: false });
-    await expect(handle.workspaces?.defaults("work", true)).resolves.toEqual({
+    await expect(
+      handle.workspaces?.defaults("work", { solo: false }),
+    ).resolves.toEqual({
       canvas: "",
       agents: [],
+      skipped: [],
     });
     expect(f.plugin.agents.handle(bot)?.workspaces).toBeUndefined();
   } finally {

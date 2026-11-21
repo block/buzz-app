@@ -553,11 +553,15 @@ Quitting Buzz also turns it off.
   each draft keeps its text, files, settings, model, and effort when you return.
   A locally hosted agent can list your sidebar workspaces with `workspace_list`
   and choose one when it creates a chat, channel or forum, if you can see the
-  result: a Solo chat must include you in its members, and a channel or forum
-  in a workspace must be open. Unless the agent picks a template, the
+  result: it must be open or include you in its members. A channel or forum
+  can start with members, as a Solo chat does. Unless the agent picks a template, the
   workspace’s defaults apply as from its **New chat** or **New channel**: its
-  default agents and Canvas. A team channel gets only the Canvas instructions,
-  not the folders or worktree settings. A known pre-write refusal reports
+  default agents and Canvas. Only a chat of you and your own agents gets the
+  workspace folders and worktree settings; a team channel, or a chat with anyone
+  else, gets only the Canvas instructions. A default agent that is archived or
+  not in this community is skipped, as **New chat** and **New channel** skip it,
+  and the agent says so. A default agent that only you can add is left out too,
+  and the agent says so; add it yourself. A known pre-write refusal reports
   “created, not filed.” A write that cannot be confirmed reports that placement
   may have completed: check the sidebar before moving it, and never create it
   again. The agent can also move any conversation you can see, including a DM,

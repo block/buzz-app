@@ -6,6 +6,7 @@ import type { GitAuth } from "../features/agents/native";
 import type {
   AgentAttention,
   WorkspaceAudience,
+  WorkspaceChat,
   WorkspaceDefaults,
   WorkspacePlacement,
   AgentReadout,
@@ -199,7 +200,10 @@ export interface BuzzClient {
    * one-use placement of a newly published conversation, and moves. */
   workspaces?: Readonly<{
     list(): Promise<readonly Readonly<{ id: string; name: string }>[]>;
-    defaults(workspace: string, shared: boolean): Promise<WorkspaceDefaults>;
+    defaults(
+      workspace: string,
+      chat: WorkspaceChat,
+    ): Promise<WorkspaceDefaults>;
     prepare(
       workspace: string,
       audience: WorkspaceAudience,

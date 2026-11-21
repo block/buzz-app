@@ -9,6 +9,7 @@ A plugin is a folder with `manifest.json` and one self-contained ES module `plug
 3. After that, edit the files in the same folder and call the `plugin_reload` tool with the manifest id. It briefly stops the plugin, loads the new files, waits for activation and, if the new code fails to start, restores the revision that was running. Read its `application` result (`applied` | `saved` | `failed`, with `nextStep`) instead of guessing. Call `plugin_status` (optionally with `id`) to see state, errors and the pages, panels, sidebar sections and agent tools it registered. Reload also applies `name`, `description` and `discovery` changes; a changed `id` is refused (install it as a new plugin).
 4. If you change `manifest.host` (host access), reload refuses. The owner must review the change via the plugin's **Update** in Settings → Plugins.
 5. Verify what the user will see. Keep the first version small, then refine.
+6. To share it, push the built plugin (`manifest.json` and `plugin.js`) to a Git repository the people you share with can read, such as a public GitHub repository, then call `plugin_link` with the repository (and `path` when it holds several plugins) and post the `markdown` it returns. Anyone opening the link gets the install review. A Buzz-hosted repository opens only for people in that community who can read it, so `plugin_link` refuses it.
 
 ## Minimal template (a primary page)
 

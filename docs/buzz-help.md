@@ -2015,6 +2015,14 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   If the updated plugin cannot start, use **Retry activation** or its recovery
   menu to **Roll back**, when available. Checks, review, Later, and
   cancellation keep plugin work running.
+- To share a plugin installed from Git, open its **More plugin actions** menu
+  in **Settings → Plugins → Manage plugins** and choose **Copy install link**.
+  Paste it in a message, where it shows as a **Plugin** link; opening it shows
+  the install review, and nothing installs until that person confirms. An agent
+  can make the same link for any Git repository, such as a GitHub one, and
+  post it. The person opening it needs read access to the repository: a plugin
+  in a Buzz-hosted repository opens only for people in that community who can
+  read it.
 - A `buzz://plugin-install` Git link pinned to both a commit and a folder can
   update a plugin installed from that same repository and folder: it opens an
   **Update** review showing access changes and any change to the branch or tag

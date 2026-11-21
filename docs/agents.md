@@ -437,6 +437,17 @@ each plugin's state and source, and `plugin_discover` lists the built plugins in
 a Git repository without taking the install preview. `plugin_disable` applies at
 once: it only stops code, and an enable request reverses it.
 
+`plugin_link` makes a link to share a plugin with other people: it reads the
+repository, picks the plugin (`path` when there are several) and returns a
+[`buzz://plugin-install` link](deep-links.md) with Markdown such as
+`[Install Notes](buzz://plugin-install?…)` to post. `repository` also takes a GitHub
+folder page, `https://github.com/owner/repo/tree/<branch>/<folder>` (pass `reference`
+and `path` instead when the branch name has a `/`). The link follows the branch or
+tag; `pin` adds the commit read. Whoever opens it needs their own read access to the
+repository, so the tool refuses a Buzz-hosted one, which opens only for people signed in to
+that community with access to it: share from a public repository, such as one on
+GitHub.
+
 `plugin_request` asks the person using Buzz to install, update, enable or remove a
 plugin and returns a request ID with `applied: false`. Install and update read the
 repository when the agent asks and pin the commit it saw, so the code reviewed is

@@ -14,6 +14,9 @@ import { Button } from "../shared/design-system/ui/Button";
 import { AlertDialog } from "../shared/design-system/ui/AlertDialog";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { PluginAccessReview } from "./PluginAccessReview";
+import { pluginInstallLink } from "../features/navigation/buzz-links";
+import { writeClipboardText } from "../shared/clipboard";
+import { useToastNotification } from "../shared/design-system/ui/Toast";
 
 export function PluginMenu({
   plugin,
@@ -43,6 +46,11 @@ export function PluginMenu({
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackError, setRollbackError] = useState<string | null>(null);
   const [showAccess, setShowAccess] = useState(false);
+  const notify = useToastNotification();
+  const repository =
+    plugin.updateSource && "repository" in plugin.updateSource
+      ? plugin.updateSource
+      : undefined;
   if (plugin.source !== "external") return null;
   return (
     <>
@@ -73,6 +81,29 @@ export function PluginMenu({
           }
         >
           <MenuItem onClick={() => setShowAccess(true)}>Review access</MenuItem>
+          {repository && (
+            <MenuItem
+              onClick={() =>
+                // The latest at its branch or tag, not this device's commit.
+                Promise.resolve()
+                  .then(() =>
+                    writeClipboardText(
+                      pluginInstallLink({
+                        repository: repository.repository,
+                        reference: repository.reference,
+                        path: repository.path,
+                      }),
+                    ),
+                  )
+                  .then(
+                    () => notify("Link copied.", "success"),
+                    () => notify("Couldn’t copy the link.", "error"),
+                  )
+              }
+            >
+              Copy install link
+            </MenuItem>
+          )}
           {plugin.manifest.updates &&
             plugin.updateSource &&
             "repository" in plugin.updateSource && (

@@ -1386,6 +1386,8 @@ pub fn run() {
         .on_window_event(|window, event| {
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
+            // The plugin updates its cached geometry here, for its next file save.
+            window_state::window_event(window, event);
             #[cfg(target_os = "macos")]
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -1409,6 +1411,8 @@ pub fn run() {
                 deep_links::focus_main(app);
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                // The window-state plugin has just saved; record the scale it measured at.
+                window_state::save_scale(app);
                 shut_down(app);
                 #[cfg(target_os = "macos")]
                 relaunch::on_exit(app);

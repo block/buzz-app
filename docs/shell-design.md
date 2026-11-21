@@ -261,8 +261,25 @@ setters may apply asynchronously (Linux/macOS), so getters can still report the
 startup frame. The plugin remains the only state-file writer and owns mode
 restoration. Linux placement remains subject to the window manager/compositor
 (notably Wayland).
-The plugin stores physical pixels, so changing display scaling can change the
-window's apparent size. On macOS, quitting in fullscreen can preserve the
+The plugin stores physical pixels without their scale, and it updates the
+position (on Move), the size (on Resize) and both (on Close and Exit) at
+different times. Buzz records the scale of each beside the plugin's file, in
+`.window-scale.json`: the size's, the position's and the previous position's
+(the normal origin a maximized window restores). The scales follow the plugin's
+own cache rules and are written only when the plugin writes its file (Exit and
+the onboarding save), with the saved geometry they belong to. Restore, and the
+scales Buzz keeps at launch, use a scale file only when that geometry matches
+the file being restored; a geometry file saved without its scales (by an older
+build, or by an exit cut short between the two writes) restores as below. On macOS and Linux, restore converts each position from
+its scale to the size's, measures the monitors in those pixels, and sends the
+result in logical units, so a window keeps its point size and place across
+screens with different scaling. The onboarding snapshot
+(`onboarding-window-restore.json`) has its own copy of the scale file
+(`onboarding-window-scale.json`), and the restore that uses the snapshot removes
+both. Without a matching scale file (state saved before Buzz recorded scales), and always
+on Windows, which rescales on DPI change, restore sends the saved physical
+pixels as before, so changing display scaling can change the window's apparent
+size. On macOS, quitting in fullscreen can preserve the
 fullscreen-sized frame instead of the earlier normal size; leaving fullscreen
 after relaunch may therefore produce a screen-sized window.
 

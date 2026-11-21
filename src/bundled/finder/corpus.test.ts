@@ -1,0 +1,144 @@
+import { expect, test } from "vitest";
+import { createCorpus, type FinderDoc } from "./corpus";
+
+let next = 0;
+const doc = (text: string, patch: Partial<FinderDoc> = {}): FinderDoc => ({
+  id: `m${next++}`,
+  channelId: "eng",
+  authorId: "a",
+  createdAt: next,
+  author: "Maya Chen",
+  place: "eng-infra",
+  text,
+  ...patch,
+});
+const texts = (
+  corpus: ReturnType<typeof createCorpus>,
+  query: string,
+  add?: string,
+) => {
+  if (add) corpus.add([doc(add)]);
+  return corpus.search(query).hits.map((hit) => hit.doc.text);
+};
+
+test("ranks word starts and runs above letters inside words", () => {
+  const corpus = createCorpus();
+  corpus.add([
+    doc("an explanation is pending"),
+    doc("the plan is pending"),
+    doc("deploy looks good"),
+    doc("draft a plan, look good"),
+  ]);
+  expect(texts(corpus, "plan")).toEqual([
+    "draft a plan, look good",
+    "the plan is pending",
+    "an explanation is pending",
+  ]);
+  // Letters close together beat initials spread over a sentence.
+  expect(texts(corpus, "dpl")[0]).toBe("deploy looks good");
+  expect(texts(corpus, "zzz")).toEqual([]);
+});
+
+test("finds the words typed, not letters picked across a long message", () => {
+  const corpus = createCorpus();
+  corpus.add([
+    doc("Yes, I'm here and responding. What do you need?"),
+    doc(
+      "Example TODOs [ ] Pick a small task to try with Pony. [ ] Share the doc",
+    ),
+    doc("\u201cI don't hold any shares myself, so back to work.\u201d", {
+      author: "Peter",
+    }),
+    doc("we should deploy the rollback today"),
+    doc("such as 13 replies in 5 minutes"),
+    doc("so does Jerry share the solo chat"),
+  ]);
+  expect(texts(corpus, "any shares")).toEqual([
+    "\u201cI don't hold any shares myself, so back to work.\u201d",
+  ]);
+  // Letters can still skip within a word and its neighbor, not a sentence.
+  expect(texts(corpus, "shares")).toEqual([
+    "\u201cI don't hold any shares myself, so back to work.\u201d",
+  ]);
+  expect(texts(corpus, "dplyrlbk")).toEqual([]);
+  expect(texts(corpus, "dplyrlbk", "we should deploy rollback today")).toEqual([
+    "we should deploy rollback today",
+  ]);
+});
+
+test("every term must match, in the text or who and where it was said", () => {
+  const corpus = createCorpus();
+  corpus.add([
+    doc("rollback the canary", { author: "Sam Ortiz" }),
+    doc("rollback finished"),
+    doc("canary looks good", { place: "release" }),
+  ]);
+  expect(texts(corpus, "sam rollback")).toEqual(["rollback the canary"]);
+  expect(texts(corpus, "canary release")).toEqual(["canary looks good"]);
+  expect(texts(corpus, "rollback !canary")).toEqual(["rollback finished"]);
+  expect(texts(corpus, "'nary")).toEqual([
+    "canary looks good",
+    "rollback the canary",
+  ]);
+});
+
+test("a capital letter makes that term match case", () => {
+  const corpus = createCorpus();
+  corpus.add([doc("ask about the API"), doc("the api is slow")]);
+  expect(texts(corpus, "API")).toEqual(["ask about the API"]);
+  expect(texts(corpus, "api")).toHaveLength(2);
+});
+
+test("typing more narrows without missing messages added in between", () => {
+  const corpus = createCorpus();
+  corpus.add([doc("quarterly roadmap review")]);
+  expect(texts(corpus, "road")).toHaveLength(1);
+  corpus.add([doc("roadmap draft")]);
+  expect(texts(corpus, "roadm")).toEqual([
+    "roadmap draft",
+    "quarterly roadmap review",
+  ]);
+  // Lengthening an exclusion matches more, not less.
+  expect(texts(corpus, "roadmap !dr")).toEqual(["quarterly roadmap review"]);
+  expect(texts(corpus, "roadmap !dra")).toEqual(["quarterly roadmap review"]);
+  expect(texts(corpus, "roadmap !draz")).toHaveLength(2);
+});
+
+test("keeps the best hits, newest first among equals, and counts the rest", () => {
+  const corpus = createCorpus();
+  corpus.add(
+    Array.from({ length: 80 }, (_, n) =>
+      doc(`standup notes ${n}`, { createdAt: n }),
+    ),
+  );
+  const results = corpus.search("standup", 10);
+  expect(results.total).toBe(80);
+  expect(results.hits.map((hit) => hit.doc.createdAt)).toEqual([
+    79, 78, 77, 76, 75, 74, 73, 72, 71, 70,
+  ]);
+  expect(corpus.search("").hits[0]?.doc.createdAt).toBe(79);
+});
+
+test("removed channels stop matching", () => {
+  const corpus = createCorpus();
+  corpus.add([
+    doc("secret plans", { channelId: "private" }),
+    doc("public plans"),
+  ]);
+  expect(texts(corpus, "plans")).toHaveLength(2);
+  corpus.remove((d) => d.channelId === "private");
+  expect(texts(corpus, "plans")).toEqual(["public plans"]);
+  expect(corpus.size).toBe(1);
+});
+
+test("underlines matched letters of the text by code point", () => {
+  const corpus = createCorpus();
+  corpus.add([doc("🚀 ship it")]);
+  const [hit] = corpus.search("ship").hits;
+  expect(hit?.positions).toEqual([2, 3, 4, 5]);
+  expect(
+    [...(hit?.doc.text ?? "")]
+      .filter((_, i) => hit?.positions.includes(i))
+      .join(""),
+  ).toBe("ship");
+});

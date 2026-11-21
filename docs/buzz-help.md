@@ -2140,7 +2140,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   (**Instructions**). Attention is on by default. **Settings → Plugins →
   Attention** controls it for every agent on this device; turning it off hides
   local agents' Attention tabs and pauses their watches and timers, while
-  ordinary mentions can still wake them. Hosted agents have no Attention tab on
+  ordinary mentions can still wake them. Only the agent's owner, the owner's
+  other agents and the owner's workflows can wake it by mention or DM. Anyone
+  else's mention or DM to the agent wakes nothing, and no watch hears it,
+  whatever the watch selects. Hosted agents have no Attention tab on
   this device. To start following something, ask the agent in a conversation,
   for example, “Watch this PR and tell me when CI finishes.”
   With nothing watched yet, a sonar preview shows example requests. Send your own request in a conversation with the agent.

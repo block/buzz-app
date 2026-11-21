@@ -369,6 +369,26 @@ export function addressedTo(event: EventData, agent: string) {
 export const tagsAgent = (event: EventData, agent: string) =>
   event.tags.some((tag) => tag[0] === "p" && tag[1] === agent);
 
+/** Whether the agent's owner may have sent `event`, which talks to the agent:
+ * the owner wrote it, or it claims the owner's authority. Claims are an `auth`
+ * tag naming the owner (another of the owner's agents) or a relay workflow
+ * (`buzz:workflow-owner`, which can name a sibling, or a mention of this
+ * agent). Only the mention path verifies them (`fromOwner`), and it tells the
+ * owner why it refused one of the owner's own workflows. An event from anyone
+ * else talks to nobody: it wakes neither a mention run nor a watch, whatever
+ * the watch selects. */
+export function mayBeOwners(event: EventData, agent: string, owner: string) {
+  return (
+    event.pubkey === owner ||
+    event.tags.some(
+      ([name, key]) =>
+        (name === "auth" && key === owner) ||
+        name === "buzz:workflow-owner" ||
+        (name === "buzz:workflow-mention" && key === agent),
+    )
+  );
+}
+
 /** Steps 1, 2 and 4 of event watch matching. Step 3 (addressed events and the
  * agent's own events) belongs to the caller; classifiers are not run here. */
 export function watchMatches(watch: EventWatch, event: EventData): boolean {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EventData } from "../relay/events";
 import {
   addressedTo,
+  mayBeOwners,
   timerSpent,
   timerState,
   validateObject,
@@ -172,6 +173,48 @@ describe("validateObject", () => {
         },
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("mayBeOwners", () => {
+  const owner = "c".repeat(64);
+  it("is the owner, or a claim of the owner's authority for the mention path to verify", () => {
+    expect(mayBeOwners(event({ pubkey: owner }), agent, owner)).toBe(true);
+    expect(
+      mayBeOwners(event({ tags: [["auth", owner, "", "f"]] }), agent, owner),
+    ).toBe(true);
+    expect(
+      mayBeOwners(
+        event({ tags: [["buzz:workflow-mention", agent]] }),
+        agent,
+        owner,
+      ),
+    ).toBe(true);
+    // A workflow, whoever it names: the mention path tells the owner why it
+    // refused one of theirs.
+    expect(
+      mayBeOwners(
+        event({ tags: [["buzz:workflow-owner", "d".repeat(64)]] }),
+        agent,
+        owner,
+      ),
+    ).toBe(true);
+  });
+  it("is nobody else, whatever they claim", () => {
+    expect(mayBeOwners(event(), agent, owner)).toBe(false);
+    expect(mayBeOwners(event({ tags: [["p", owner]] }), agent, owner)).toBe(
+      false,
+    );
+    expect(
+      mayBeOwners(event({ tags: [["auth", "d".repeat(64)]] }), agent, owner),
+    ).toBe(false);
+    expect(
+      mayBeOwners(
+        event({ tags: [["buzz:workflow-mention", "d".repeat(64)]] }),
+        agent,
+        owner,
+      ),
+    ).toBe(false);
   });
 });
 

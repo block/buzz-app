@@ -34,7 +34,7 @@ Terms:
 | Timers | Yes | Yes, for every agent type with standalone turns (Claude Code, Codex and Goose) | Same |
 | Conversation delivery address | Not supported | Optional `channel` and `root` continue an existing conversation | buzz-app extension |
 | Plugin source watches | Not supported | `type: "source"` stores a namespaced provider and provider-owned config | buzz-app extension |
-| Watch events from people other than the owner | The watch sees them | The watch sees them as data. The owner check (`fromOwner`) applies only to mentions. | Same |
+| Watch events from people other than the owner | The watch sees them | The watch sees them as data, unless they mention or DM the agent. Those wake nothing: the runner drops them before any watch selector or classifier, and the runtime's owner check (`fromOwner`) verifies the owner claims it lets through. | Same |
 
 ## Configuration compatibility
 

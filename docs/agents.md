@@ -684,7 +684,15 @@ running watches. CI and pull request state are not limited.
 
 The Agents runner starts a mention run from a `p` tag, or from any new message
 by the other member of a one-to-one DM the agent is in; group DMs still need
-the mention. It also owns watches and timers, and runs attention work in Janet's lanes: each
+the mention. Only the owner talks to an agent this way: a mention or DM from
+anyone else wakes nothing, in the mention lane or any watch, before watch
+selectors or classifiers run (`mayBeOwners` in `attention.ts`). Events that
+claim the owner's authority (an `auth` tag naming the owner, or a relay
+workflow's owner or mention tag) go on to the type's `fromOwner`, which verifies
+them, or tells the owner why it refused one of theirs. Off the mention
+path nothing verifies a claim, so a mention that only watches would hear must
+come from the owner's own key. It also owns watches and timers, and runs
+attention work in Janet's lanes: each
 Interest's turns one at a time, up to 8 Interests at once, beside the mention
 lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
 it is still current before and while its prompt is built. A subscription with a delivery address runs in that conversation through the type's `run`, with an `attention` trigger and the Interest instructions outside plugin-data framing. It remains in its Interest lane. Without an address it passes to the type's optional `runOnce`, which runs one turn with

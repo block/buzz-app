@@ -92,7 +92,7 @@ import {
 import {
   ArrowUpIcon,
   ChatCircleIcon,
-  LockIcon,
+  HashIcon,
   PaperclipIcon,
   PencilSimpleIcon,
   XIcon,
@@ -1613,7 +1613,7 @@ function Composer({
   const iconPlaceholder =
     channelLabel && placeholder === undefined && ChannelIcon !== ChatCircleIcon;
   const label = channelLabel
-    ? `Message ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`
+    ? `Message ${ChannelIcon === HashIcon ? "#" : ""}${channelName}`
     : editing.target
       ? "Edit message"
       : (customLabel ?? "Reply to thread");

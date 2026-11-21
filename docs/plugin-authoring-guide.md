@@ -201,6 +201,21 @@ channel. Without plugin-managed actions, the channel/chat link remains the defau
 Other omitted overrides preserve chat/channel behavior. Hosts predating this extension lack the two UI entries; check their
 presence before offering sharing when supporting those hosts.
 
+## Image viewer
+
+`ctx.conversation.ui.ImageViewer` opens an https image that is not a message
+attachment, such as a picture in a pull request, in Buzz's fullscreen viewer.
+Inject `react` and `conversation`, render it while the image is open, and stop
+rendering it when `onClose` runs (Escape, the backdrop or the close button). It
+takes an https `src` and an optional `name` for its header. Relay-hosted media
+loads through the session's signed read, as message media does, and other
+https images load directly. Any other source, or relay media the session cannot
+read (including while the community connects or after it changes), renders
+nothing and calls `onClose`. An image that fails to load shows an unavailable
+status with the close button kept. The type-only author package exports
+`ImageViewerProps`. Older hosts lack this entry; check its presence and keep a
+link to the image when supporting those hosts.
+
 ## Controlled document editing
 
 `ctx.conversation.ui.DocumentEditor` reuses Buzz's editor, persistent formatting

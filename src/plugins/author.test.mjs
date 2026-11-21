@@ -303,7 +303,7 @@ import type { createServices } from "@buzz/author";
       join(dir, "document-consumer.ts"),
       `
 import type { ComponentProps } from "react";
-import type { Agents, Context, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
+import type { Agents, Context, ImageViewerProps, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
 export const inject = ["react", "agents", "conversation", "panels"];
 export function apply(ctx: Context) {
   const React = ctx.react;
@@ -370,7 +370,11 @@ export function apply(ctx: Context) {
   const badScale: MarkdownProps = { content: "", scale: "custom" };
   // @ts-expect-error Tab content is required.
   const missing: PanelWorkspaceItem = { id: "page", label: "Page" };
-  void [bad, missing];
+  const picture: ImageViewerProps = { src: "https://example.test/a.png", name: "A", onClose: () => {} };
+  React.createElement(ctx.conversation.ui.ImageViewer, picture);
+  // @ts-expect-error The caller owns closing.
+  const unclosable: ImageViewerProps = { src: "https://example.test/a.png" };
+  void [bad, missing, unclosable];
 }
 `,
     );

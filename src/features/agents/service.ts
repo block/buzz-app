@@ -1785,6 +1785,10 @@ export type Agents = {
    * them again. Refused while it answers or is in a call, and for protected,
    * hosted and execution-target agents. */
   restartAgent(pubkey: string): Promise<void>;
+  /** Counts a Huddle seat from before its call opens, so Restart agent
+   * refuses it (bundled only). Throws while the agent restarts; returns the
+   * seat's end. */
+  reserveVoice(key: AgentKey): () => void;
   /** Undoes a switch: off Automatic, with `previous` back, saved the same
    * way. */
   restoreSettings(
@@ -3967,6 +3971,10 @@ export class AgentsService extends Service implements Agents {
       // Only the settings change, so only they are saved and checked.
       base: { settings: agent.configBase.settings },
     });
+  }
+  reserveVoice(key: AgentKey) {
+    this.bundledCaller("reserveVoice");
+    return this.runners.reserveVoice(key);
   }
   async restartAgent(pubkey: string) {
     this.bundledCaller("restartAgent");

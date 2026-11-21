@@ -1094,16 +1094,7 @@ export class AgentRunners {
     voice: NonNullable<AgentType["voice"]>,
     pluginId?: string,
   ) {
-    const key = seat.agent.key;
-    this.seats.set(key, (this.seats.get(key) ?? 0) + 1);
-    let ended = false;
-    const end = () => {
-      if (ended) return;
-      ended = true;
-      const left = (this.seats.get(key) ?? 1) - 1;
-      if (left) this.seats.set(key, left);
-      else this.seats.delete(key);
-    };
+    const end = this.reserveVoice(seat.agent.key);
     // The host aborts the seat's signal when its call ends.
     seat.signal.addEventListener("abort", end, { once: true });
     try {
@@ -1112,6 +1103,22 @@ export class AgentRunners {
       end();
       throw error;
     }
+  }
+  /** Counts a voice seat from before its call opens, so a restart refuses
+   * it; refused while the agent restarts or changes type. Returns its end. */
+  reserveVoice(key: AgentKey) {
+    const pubkey = this.runners.get(key)?.member.pubkey;
+    if (pubkey && this.transitions.has(pubkey))
+      throw new Error("This agent is restarting or changing provider");
+    this.seats.set(key, (this.seats.get(key) ?? 0) + 1);
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      const left = (this.seats.get(key) ?? 1) - 1;
+      if (left) this.seats.set(key, left);
+      else this.seats.delete(key);
+    };
   }
   private async connectVoice(
     seat: AgentVoicePipe,

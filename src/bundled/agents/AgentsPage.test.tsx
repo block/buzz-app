@@ -506,6 +506,7 @@ function setup(
     switchableAgents: () => [],
     switchToAutomatic: async () => ({ previous: {} }),
     restartAgent: async () => {},
+    reserveVoice: () => () => {},
     restoreSettings: async () => {},
     readNote: () => undefined,
     setNote: async () => {},

@@ -417,7 +417,12 @@ export interface ChannelQueries {
   subscribeWindow(channelId: string, listener: () => void): () => void;
   ensureList(): void;
   ensure(channelId: string): void;
-  loadOlder(channelId: string): void;
+  /** Read the next older page of `rows` top-level rows (default 20, at most
+   * 200). A page past the history budget slides the window down to it,
+   * detached from the head. */
+  loadOlder(channelId: string, rows?: number): void;
+  /** Cancel the window's older read in flight. */
+  cancelOlder?(channelId: string): void;
   /** Detach the window to history at `from` (unix seconds; 0 is the channel
    * start). Resolves the first message at or after `from`, else the newest. */
   seek?(

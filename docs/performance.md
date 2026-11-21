@@ -119,6 +119,7 @@ All scroll scenarios use the same observer, counters, fresh contexts and result 
 | `scroll-long` | 12,000px upward at 4000px/s across a 360-message channel, fully loaded before measuring |
 | `scroll-paging-fast` | Repeated 2500px upward gestures at 25,000px/s through 640 mixed-height messages, with 100ms added older-response delay, until the oldest message is visible |
 | `scroll-paging-delayed` | The same complete traversal with 500ms added older-response delay |
+| `scroll-paging-delayed-short` | `scroll-paging-delayed` through [short messages](#corpus-variants) |
 | `scroll-paging-fast-keyboard` | `scroll-paging-fast` in keyboard modality |
 | `scroll-paging-fast-markdown` | `scroll-paging-fast` through the [Markdown corpus](#corpus-variants) |
 | `scroll-paging-fast-first-seen` | `scroll-paging-fast` with [first-seen](#corpus-variants) older pages |
@@ -196,6 +197,9 @@ Recordings without these gesture timestamps used whole-operation cadence,
 including the settling tail. Their cadence values are not comparable with the
 new definition; rerun baselines before comparing. That cadence change added no
 summary metrics.
+Paging samples also report `edgeWaitMs`: time inside the cadence window whose
+frames start with the scroll offset at the top (at most 1px), where the reader
+waits for older history.
 Callback gaps expose main-thread stalls, not compositor FPS or a measured
 dropped-frame count. No generic blank-time, overlap or visual-shift verdict is
 inferred from them.
@@ -203,8 +207,12 @@ inferred from them.
 ## Corpus variants
 
 The default corpus is inert prose: an identifying line plus repeated sentences,
-authored by the viewer. Two opt-in fixture options change one property each, so a
+authored by the viewer. Three opt-in fixture options change one property each, so a
 variant differs from its base case only there.
+
+`shortMessages` (the `-short` cases) keeps only the identifying line, adding one
+sentence to every fifth row: one- and two-line chat messages, as in a busy
+direct message.
 
 `markdownMessages` (the `-markdown` cases) ends seven rows in eight with common
 chat content after the same height-varying text: colon prose, a second

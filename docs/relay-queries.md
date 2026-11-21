@@ -572,7 +572,7 @@ The timeline, channel-list preview and filtered plugin views share that operatio
 
 ## Bounds and lifecycle
 
-- Reads: three active slots, at most one background request, 128 pending distinct
+- Reads: eight active slots, at most one background request, 128 pending distinct
   requests, ten-second deadlines including queue time, four filters per request,
   500 per-filter limit, 64 KiB keys, and an 8 MiB result budget. Full-roster
   discovery reads (scan pages and omission confirmation) and the read-state
@@ -1230,8 +1230,8 @@ explicit `restricted: not a channel member` denial still revokes immediately.
 The outbound host owns WS and HTTP admission for each canonical community/viewer.
 Healthy requests have **no fixed inter-request delay**. WS admits up to three
 outstanding publications and four pending subscription setups; HTTP admits up to
-six requests awaiting response headers per principal (error normalization retains
-its slot). The broker's existing six-request guard additionally covers response
+ten requests awaiting response headers per principal (error normalization retains
+its slot). The broker's existing ten-request guard additionally covers response
 bodies. Available slots start immediately; completion frees capacity without a timer. These concurrency bounds do not
 reserve relay quota: large startup bursts can still receive quota refusals.
 Explicit server cooldowns, reconnect backoff and operation deadlines remain;

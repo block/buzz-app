@@ -1302,8 +1302,11 @@ remain separate delivery gates.
 The port retains the prepared-store implementation and its behavior tests:
 
 - 64 prepared heads / 4 MiB serialized memory budget, separate from history.
-- Three unpinned history windows; each caps at 2,400 rows or 8 MiB. Mounted readers
-  are not evicted by speculative preparation. A budget cap is distinct from EOF.
+- Three unpinned history windows; each holds at most 2,400 rows or 8 MiB. An older
+  page past that budget drops the newest rows and detaches the window from the
+  head; newer pages and Jump to latest return to it. Live rows at the budget drop
+  the oldest, which older pages read again. Mounted readers are not evicted by
+  speculative preparation. A budget cap is distinct from EOF.
 - Three read slots, at most one background request, with foreground promotion and
   deduplication. Hover/focus prepares at most one speculative head at a time;
   superseded hints do not form a backlog. That shared head keeps foreground

@@ -899,3 +899,95 @@ it("rechecks plugin participation policy after consent was staged", async () => 
   await user.click(confirm);
   expect(h.save).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "offers opening a private channel only when nobody else is a member (blocked: %s)",
+  async (blocked) => {
+    const h = harness();
+    const user = userEvent.setup();
+    h.load.mockResolvedValue({ ...base, visibility: "private" });
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        openingBlocked={blocked}
+      />,
+    );
+    const control = screen.getByRole("combobox", { name: "General access" });
+    await waitFor(() => expect(control).toBeEnabled());
+    await user.click(control);
+    for (const name of ["Public", "View only"]) {
+      const option = await screen.findByRole("option", { name });
+      if (blocked) {
+        expect(option).toHaveAttribute("aria-disabled", "true");
+        expect(option).toHaveAccessibleDescription(
+          "Has other members. Create a new public channel instead.",
+        );
+      } else expect(option).not.toHaveAttribute("aria-disabled", "true");
+    }
+    await user.click(screen.getByRole("option", { name: "View only" }));
+    if (blocked) {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(h.load).toHaveBeenCalledTimes(1);
+    } else expect(await screen.findByRole("alertdialog")).toBeVisible();
+    expect(h.save).not.toHaveBeenCalled();
+  },
+);
+
+it("refuses a staged opening the opening check closes after consent opened", async () => {
+  const h = harness();
+  h.load.mockResolvedValue({ ...base, visibility: "private" });
+  const user = userEvent.setup();
+  const view = render(
+    <ChannelGeneralAccess capability={h.capability} channelId="alpha" />,
+  );
+  await select(user, "General access", "View only");
+  const confirm = await screen.findByRole("button", { name: "Change access" });
+  expect(confirm).toBeEnabled();
+  view.rerender(
+    <ChannelGeneralAccess
+      capability={h.capability}
+      channelId="alpha"
+      openingBlocked
+    />,
+  );
+  expect(confirm).toBeDisabled();
+  expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
+    expect.stringContaining(
+      "Has other members. Create a new public channel instead.",
+    ),
+  );
+  await user.click(confirm);
+  expect(h.save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+  );
+});
+
+it.each([
+  ["Public", "member"],
+  ["View only", "guest"],
+] as const)(
+  "keeps switching an already %s channel open when opening is blocked",
+  async (current, joinRole) => {
+    const h = harness();
+    h.load.mockResolvedValue({ ...base, visibility: "public", joinRole });
+    const user = userEvent.setup();
+    render(
+      <ChannelGeneralAccess
+        capability={h.capability}
+        channelId="alpha"
+        openingBlocked
+      />,
+    );
+    const control = screen.getByRole("combobox", { name: "General access" });
+    await waitFor(() => expect(control).toHaveTextContent(current));
+    await user.click(control);
+    for (const name of ["Public", "View only"])
+      expect(await screen.findByRole("option", { name })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+  },
+);

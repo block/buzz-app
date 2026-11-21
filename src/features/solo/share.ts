@@ -7,7 +7,10 @@ import { canAddMembers, canShareSoloChat } from "../channel-members/members";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { ownSolo, soloLabels } from "./labels";
-import { generalAccessPolicy } from "../channels/general-access";
+import {
+  generalAccessPolicy,
+  openingBlocked,
+} from "../channels/general-access";
 
 /** Sharing changes access, never presentation or Solo placement. */
 export function canShareConversation(
@@ -120,6 +123,10 @@ export async function shareSoloChatAccess(
     !ownSolo(source, session.viewer)
   )
     throw new Error("You can no longer change this chat’s general access.");
+  if (openingBlocked(session, source?.members))
+    throw new Error(
+      "This chat has other members, so it can’t be shared. Create a new channel instead.",
+    );
   if (!confirmed) return base;
   if (confirmed.visibility !== "private")
     throw new Error(

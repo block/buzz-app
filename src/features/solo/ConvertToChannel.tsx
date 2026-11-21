@@ -30,12 +30,15 @@ import {
   soloRetainedAccessWarning,
 } from "./labels";
 import { applySharedChannelDetails } from "./share";
+import { useAgentChoices } from "../agents/use-choices";
 import {
   generalAccessOptions,
   generalAccessPolicy,
   generalAccessValue,
+  OPENING_BLOCKED_REASON,
   type GeneralAccess,
 } from "../channels/general-access";
+import { useOpeningBlocked } from "../channels/use-opening-blocked";
 
 /** Presentation gating only; fresh signed details authorize the actual write. */
 export function canConvertToChannel(
@@ -123,9 +126,28 @@ export function ConvertToChannel({
   const canFinish = converted || confirmedElsewhere;
   // Uncertain intent belongs to the details owner, including admission.
   const savedDraft = receipt?.draft ?? conversionAttempt?.draft;
+  // Re-render as the roster and the ownership evidence for it arrive.
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+  );
+  useAgentChoices(session);
+  const source =
+    list.channels.find((item) => item.id === id) ?? session.channels.get?.(id);
+  const memberKeys = source?.members?.join(":") ?? "";
+  useEffect(() => {
+    if (memberKeys)
+      void session.profiles
+        .ensure(memberKeys.split(":"), "foreground")
+        .catch(() => {});
+  }, [session, memberKeys]);
+  const blocked = useOpeningBlocked(session, source?.members);
+  const closed = base?.visibility === "private" && blocked;
   const selectedAccess = savedDraft
     ? generalAccessValue(savedDraft)
     : (access ?? (base ? generalAccessValue(base) : "private"));
+  // The opening check can settle after the user picked an open access.
+  const openingRefused = closed && !savedDraft && selectedAccess !== "private";
 
   const acceptDetails = useCallback(
     (next: ChannelDetails) => {
@@ -199,7 +221,7 @@ export function ConvertToChannel({
           (!base ||
             (action === "check"
               ? !matchingAttempt || attempt?.status !== "unconfirmed"
-              : !eligible || !!attempt))
+              : !eligible || !!attempt || openingRefused))
         )
           return;
         if (action === "finish" && !canFinish) return;
@@ -320,6 +342,7 @@ export function ConvertToChannel({
                 !!receipt?.running ||
                 !!attempt ||
                 !eligible ||
+                openingRefused ||
                 !!signal?.aborted
               }
               onClick={() => void run("convert")}
@@ -334,7 +357,20 @@ export function ConvertToChannel({
         label="General access"
         variant="field"
         value={selectedAccess}
-        groups={[{ label: "", options: Object.values(generalAccessOptions) }]}
+        groups={[
+          {
+            label: "",
+            options: Object.values(generalAccessOptions).map((option) =>
+              closed && option.value !== "private"
+                ? {
+                    ...option,
+                    disabled: true,
+                    description: OPENING_BLOCKED_REASON,
+                  }
+                : option,
+            ),
+          },
+        ]}
         disabled={
           busy ||
           converted ||
@@ -355,6 +391,7 @@ export function ConvertToChannel({
           Channel converted. Finish to return to the conversation.
         </p>
       )}
+      {openingRefused && <p role="status">{OPENING_BLOCKED_REASON}</p>}
       {!base && !error && <p role="status">Loading chat details…</p>}
       {base && !base.canEdit && !canFinish && (
         <p role="status">You don’t have permission to convert this chat.</p>

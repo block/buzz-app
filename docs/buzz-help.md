@@ -831,9 +831,12 @@ Quitting Buzz also turns it off.
 - **Manage members** shows **General** access first in the member list. **Public**
   lets people in the community read and new people participate; **View only**
   lets them read; **Private** limits access to people added to the channel.
-  Changing this choice does not change existing members' roles. Ordinary
-  participants have no role caption; Owner, Admin, and Viewing only mark
-  exceptions. Use a person's actions menu to change their role when permitted.
+  Changing this choice does not change existing members' roles. A Private
+  channel or chat that has, or once had, members besides you and your own
+  agents can't be made Public or View only, and such a chat can't be shared;
+  create a new channel instead. Ordinary participants have no role caption;
+  Owner, Admin, and Viewing only mark exceptions. Use a person's actions menu
+  to change their role when permitted.
   An owner can choose **Transfer ownership** there to make another person
   the owner; the previous owner becomes an admin. Ownership can't be
   transferred to an agent, or to someone who hasn't set up a profile.

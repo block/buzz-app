@@ -539,6 +539,12 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
             .expect("bundled mermaid manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/charts/manifest.json"))
             .expect("bundled charts manifest"),
+        // v1.0.1 pinned the reverted, on-by-default buzz.link-previews on in
+        // saved registries, so it returns as buzz.web-previews, which starts off.
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/link-previews/manifest.json"
+        ))
+        .expect("bundled link previews manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))

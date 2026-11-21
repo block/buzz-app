@@ -1383,6 +1383,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.drafts-and-sent"
                 | "buzz.changesets"
                 | "buzz.charts"
+                | "buzz.web-previews"
                 | "buzz.performance-diagnostics"
         );
         assert_eq!(plugin.enabled, default, "{id}");
@@ -1564,6 +1565,38 @@ fn failed_default_snapshot_does_not_block_untouched_upgrades() {
             saved_workflows.unwrap_or(true)
         );
     }
+}
+
+#[test]
+fn link_previews_pinned_on_by_v1_0_1_start_off_and_keep_a_later_opt_in() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("profiles/test");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("registry.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version": 2, "bundledEnabled": true,
+            "bundledOverrides": { "buzz.link-previews": true, "buzz.channels": true },
+            "installed": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let enabled = |manager: &Manager| {
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "buzz.web-previews")
+            .unwrap()
+            .enabled
+    };
+    let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+    assert!(!enabled(&manager));
+    manager.change("enable", "buzz.web-previews").unwrap();
+    let reopened = Manager::open(Some(home.path().into()), "test", false).unwrap();
+    assert!(enabled(&reopened));
 }
 
 #[test]

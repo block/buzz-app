@@ -938,6 +938,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                     <Settings
                       agents={services.agents}
                       decisions={services.decisions}
+                      speech={services.speech}
                       plugins={plugins}
                       cards={services.settingsCards}
                       adminAccess={services.adminAccess}

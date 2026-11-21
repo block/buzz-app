@@ -2042,6 +2042,15 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   Saving the key completes the switch; closing setup keeps the current provider.
   If a selected Builderlab account lacks Decisions API access, the pane explains
   that you can use your own TypeSafe key or contact your account administrator.
+- **Settings → Speech to text** chooses which provider transcribes speech on
+  this device. **On this Mac** uses Apple speech recognition on macOS: free,
+  with audio kept on the Mac. Builderlab is listed while you are signed in to
+  Builderlab and transcribes once your account has access, billed to the
+  current community. Until you choose, Builderlab is used when it can be and
+  otherwise this Mac. A chosen plugin provider that is turned off is not
+  replaced by another, so speech to text is unavailable until you choose
+  again. **Try it** listens once with the chosen provider and shows what it
+  heard.
 - In **Settings → Decisions API**, TypeSafe’s saved API key stays masked. Its
   chevron menu offers **Replace / Remove**. Replacement starts blank and masked,
   with inline **Cancel / Save** controls. **Save** stays disabled until you enter

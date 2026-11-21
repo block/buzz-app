@@ -100,6 +100,7 @@ mod relaunch;
 mod relay;
 mod relay_admin;
 mod sign_out;
+mod speech;
 mod system_clock;
 use identity::{
     identity_create, identity_export, identity_import, identity_import_legacy,
@@ -944,6 +945,12 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,
+        speech::speech_on_device_available,
+        speech::speech_on_device_prepare,
+        speech::speech_on_device_start,
+        speech::speech_on_device_finish,
+        speech::speech_on_device_cancel,
+        speech::speech_connect,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]

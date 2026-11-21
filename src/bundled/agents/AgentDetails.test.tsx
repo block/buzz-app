@@ -224,6 +224,7 @@ it.each([
         email: "a@example.com",
         canUseRemoteAgents,
         canUseBuilderlabDecisions: false,
+        canUseBuilderlabTranscription: false,
       },
     }));
     await session.signIn();

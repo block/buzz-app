@@ -25,6 +25,7 @@ import { builderlabType } from "./adapter-type";
 import { createKnownCommunitiesClient } from "./known-communities/client";
 import { startKnownCommunitiesSync } from "./known-communities/sync";
 import { offerBuilderlabDecisions } from "./decisions";
+import { offerBuilderlabSpeech } from "./speech";
 import type { AgentProviderSnapshot } from "../../features/agents/service";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { useAgentsSnapshot } from "../../features/agents/react";
@@ -49,6 +50,7 @@ export const inject = [
   "knownCommunities",
   "communityJoin",
   "decisions",
+  "speech",
   "navigation",
   ...(nativeBuilderlab() ? ["federatedIdentity"] : []),
 ];
@@ -207,6 +209,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
       session,
       loginAvailable,
       dev?.decide,
+      openIdentity,
+    );
+    offerBuilderlabSpeech(
+      ctx,
+      session,
+      loginAvailable,
+      dev?.connectSpeech,
       openIdentity,
     );
     ctx.provide("builderlab", hostedAgentSettings(agentSession, agents));

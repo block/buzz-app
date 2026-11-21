@@ -1,11 +1,13 @@
 export type Capabilities = Readonly<{
   canUseRemoteAgents: boolean;
   canUseBuilderlabDecisions: boolean;
+  canUseBuilderlabTranscription: boolean;
 }>;
 
 const capabilityFields = {
   canUseRemoteAgents: "can_use_remote_agents",
   canUseBuilderlabDecisions: "can_use_builderlab_decisions",
+  canUseBuilderlabTranscription: "can_use_builderlab_transcription",
 } as const satisfies Record<keyof Capabilities, string>;
 const capabilityKeys = Object.keys(capabilityFields) as (keyof Capabilities)[];
 

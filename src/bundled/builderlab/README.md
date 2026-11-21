@@ -283,3 +283,11 @@ native `decide` posts to the identity origin's API with that
 session as `Authorization: Bearer`, as for the build's other Builderlab calls;
 the token never reaches the webview. A 401 there refuses only that call, and
 native asks the adapter once whether the session still stands.
+
+It offers Builderlab as a speech to text provider the same way, reading
+`capabilities.can_use_builderlab_transcription`. Native `speech_connect` posts
+the host's WebRTC offer to `v3/builderlab/transcription/calls` with the same
+sign-in as `decide` and the community in `x-buzz-community`, and returns
+Builderlab's SDP answer; it names no model, so Builderlab chooses one. Audio
+then goes peer to peer, and the host commits it at each pause and at the end so
+Builderlab can meter the transcribed seconds.

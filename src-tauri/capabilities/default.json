@@ -196,6 +196,12 @@
     "allow-app-agent-state-load",
     "allow-app-agent-state-set",
     "allow-decide",
+    "allow-speech-on-device-available",
+    "allow-speech-on-device-prepare",
+    "allow-speech-on-device-start",
+    "allow-speech-on-device-finish",
+    "allow-speech-on-device-cancel",
+    "allow-speech-connect",
 
     "allow-title-bar-double-click",
     "allow-notification-show",

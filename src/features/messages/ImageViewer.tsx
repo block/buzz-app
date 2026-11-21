@@ -61,10 +61,12 @@ export function ImageViewer({
 const noRelay = () => () => {};
 const noSnapshot = () => undefined;
 
-/** Resolves media through `relay` as it changes. The selected community's
- * media needs the session's signed read, so before the session can give one
- * (connecting, disconnected or switching) it resolves to nothing and the
- * viewer closes. Other https images load directly. */
+/** Resolves media through `relay` as it changes. A community's media needs
+ * its session's signed read, so while that session cannot give one
+ * (connecting, disconnected, or after the selection moves to another
+ * community) it resolves to nothing and the viewer closes. Every community
+ * origin seen while open stays relay media, so a switch never reclassifies
+ * the previous one's media as external. Other https images load directly. */
 export function RelayImageViewer({
   relay,
   ...props
@@ -75,15 +77,17 @@ export function RelayImageViewer({
   );
   const ready = snapshot?.origin;
   const selected = relay?.selected?.();
-  const isMedia = (origin: string | undefined, url: string) =>
-    origin !== undefined && url.startsWith(`${origin}/media/`);
+  const seen = useRef(new Set<string>()).current;
+  for (const origin of [ready, selected]) if (origin) seen.add(origin);
+  const isMedia = (origin: string, url: string) =>
+    url.startsWith(`${origin}/media/`);
   return (
     <ImageViewer
       {...props}
       media={(url) => {
-        if (isMedia(ready, url) && (!selected || selected === ready))
+        if (ready && isMedia(ready, url) && (!selected || selected === ready))
           return snapshot?.session.media(url);
-        if (isMedia(selected, url) || isMedia(ready, url)) return undefined;
+        for (const origin of seen) if (isMedia(origin, url)) return undefined;
         return url;
       }}
     />

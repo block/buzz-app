@@ -210,6 +210,59 @@ it("signs relay media once ready, and closes when the community changes", () => 
   expect(onClose).toHaveBeenCalledOnce();
 });
 
+it.each([
+  ["another community connecting", { selected: two, snapshot: connecting }],
+  ["another community ready", { selected: two, snapshot: ready(two) }],
+  [
+    "no community",
+    {
+      selected: undefined,
+      snapshot: { status: "disconnected", session } as unknown as RelaySnapshot,
+    },
+  ],
+])(
+  "closes, never loading the old community's media unsigned, after switching to %s",
+  (_, next) => {
+    const onClose = vi.fn();
+    const media = `${one}/media/abc.png`;
+    const { relay, move } = fixtureRelay(one, ready(one));
+    const { container } = render(
+      <RelayImageViewer src={media} onClose={onClose} relay={relay} />,
+    );
+    const sources: (string | null)[] = [];
+    const record = new MutationObserver(() => {
+      for (const img of container.ownerDocument.querySelectorAll("img"))
+        sources.push(img.getAttribute("src"));
+    });
+    record.observe(container.ownerDocument.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+    });
+    move(next);
+    record.disconnect();
+    expect(sources).not.toContain(media);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(onClose).toHaveBeenCalledOnce();
+  },
+);
+
+it("still loads an external image directly after switching communities", () => {
+  const { relay, move } = fixtureRelay(one, ready(one));
+  render(
+    <RelayImageViewer
+      src="https://fixture.test/a.png"
+      onClose={() => {}}
+      relay={relay}
+    />,
+  );
+  move({ selected: two, snapshot: ready(two) });
+  expect(screen.getByRole("img")).toHaveAttribute(
+    "src",
+    "https://fixture.test/a.png",
+  );
+});
+
 it("closes when the session drops while open", () => {
   const onClose = vi.fn();
   const media = `${one}/media/abc.png`;

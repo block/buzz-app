@@ -233,9 +233,10 @@ it("replaces the Bestie's old hourly check-in with Hourly notes and Nightly revi
         channel: DM,
         enabled: true,
       }),
+      // The version it first shipped with; a newer one is offered.
       "interest/bestie-dream": {
         type: "interest",
-        instructions: dream.timer?.interest,
+        instructions: dream.timer?.earlier?.[2],
       },
       "watch/bestie-dream": expect.objectContaining({
         type: "timer",

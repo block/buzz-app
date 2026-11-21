@@ -1,3 +1,5 @@
+import { diffLines } from "diff";
+
 /** What a local Bestie can have on. A feature is either a marked, versioned
  * section of the agent's instructions, which its state follows and a later
  * version can replace, or a timer with an Interest, or both. A check-in is a
@@ -30,7 +32,23 @@ export type Feature = Readonly<{
     /** The local hour of the day the timer keeps, for a daily one. It is
      * armed at that hour's latest start, so its first wake is the next one. */
     atHour?: number;
+    /** Whether the Interest is saved between markers, as a section is, so
+     * which version it is from can be told and a later one offered. */
+    marked?: boolean;
+    /** The Interest's text of earlier versions, by version, as they were
+     * saved. */
+    earlier?: Readonly<Record<number, string>>;
+    /** What each version changed, by version, as its update shows it. */
+    changes?: Readonly<Record<number, Change>>;
   }>;
+}>;
+
+/** What a version changed. `wording` does the same; `behavior` does
+ * something differently with the same reach; `reach` reads, writes, sends or
+ * deletes more than before. */
+export type Change = Readonly<{
+  class: "wording" | "behavior" | "reach";
+  notes: readonly string[];
 }>;
 
 /** Remembers you as version 1 shipped it, whose chat turns kept prose in
@@ -107,21 +125,9 @@ export const notes: Feature = {
   },
 };
 
-/** The nightly pass over the day's notes and the curated memory. Its steps
- * are the Interest's instructions. It never sends a message. */
-export const dream: Feature = {
-  id: "dream.nightly",
-  title: "Nightly review",
-  description:
-    "Around 3 AM Bestie tidies its memory: it checks its notes against the messages, sorts what it knows and writes a short reflection. It never messages you. It needs only Remembers you. Runs while Buzz is open and the Watching plugin is on, and uses your tokens.",
-  version: 2,
-  requires: "memory",
-  timer: {
-    id: "bestie-dream",
-    everySecs: 86_400,
-    atHour: 3,
-    prompt: "Nightly review wake",
-    interest: `Nightly review. Your timer wakes you in your DM with the owner. That wake is an internal maintenance wake, not a message from the owner. In it you never send a message. You are the only one who merges, renames, deletes and rebuilds memory. Never change core or your instructions.
+/** Dreaming's steps as version 2 saved them, with no markers. Version 2
+ * called it Nightly review, and its text stays as it was. */
+const DREAM_V2 = `Nightly review. Your timer wakes you in your DM with the owner. That wake is an internal maintenance wake, not a message from the owner. In it you never send a message. You are the only one who merges, renames, deletes and rebuilds memory. Never change core or your instructions.
 
 1. READ. mem_get mem/heartbeat (its last_dream date), mem/user, mem/memory and mem/hypotheses. Lines carry a day, not a time, so what is dated on last_dream may have come after that review: count it as new. Read each mem/notes/<date> dated on or after last_dream, and each card those notes link as [[mem/entities/<type>/<id>]]. Stop and write nothing only if there is no note line dated on or after last_dream outside a reflection (from a "<!-- dream:start -->" line to the next "<!-- dream:end -->" line; anything after that end line is new), no line in mem/user dated on or after it, and no open hypothesis that is stale or whose expected events are overdue. Otherwise go on, even with no new note: step 3 still marks and retires stale hypotheses.
 2. CHECK AGAINST SOURCE. For each claim you will promote, change or remove, read its source event, by the id and channel its note gives. Events are the ground truth. If a note does not agree with its event, the event wins: fix the claim, and say so in step 6.
@@ -132,7 +138,53 @@ export const dream: Feature = {
 4. REWRITE mem/user as current directives with a date and source for each, and its "Open loops", in at most 4 KB. Keep everything the owner said that is still true.
 5. ORGANIZE THE CARDS. Merge duplicate lines. When two claims disagree: if the newer is a correction, the old line becomes "was X until <date>, per <source>"; if not, write "CONFLICT: A says…; B says…" and show which is a person's decision and which an agent's inference. A search that found nothing never overrules a recorded decision. Add new supported facts. Change or remove at most 2 existing claims a night, and only when the size limit requires it; an owner's correction does not count. Remove first a claim a stronger one made old, then one that repeats another; never the only support for a claim or the only open alternative; never infer a change from absence. Rename a card only by leaving "MOVED TO [[slug]]" at the old slug. Before you write mem/memory again, move each claim in it that is not a card line, a "Now" line or a lesson, such as one an earlier version of your memory rules saved there, to its card, or to mem/hypotheses if it is a guess, with its date and source; never drop one. Then write mem/memory again, in at most 4 KB: one line "[[mem/entities/<type>/<id>]] and a sentence" for each card, a "Now" section with one line for each active project, and the lessons. When it is full, leave out the cards with no new line and no question for the longest time; keep their slugs. The first night, move what mem/user holds beyond the owner's own facts into cards, mem/hypotheses and the index.
 6. REFLECT. Append a "Dream" section to the end of the latest note you reviewed, or of mem/notes/<today> if you reviewed none. Start it with a line "<!-- dream:start -->" and end it with a line "<!-- dream:end -->", so later lines are not part of it. In it: what helped and what went wrong, with event ids; the duties that follow; what stays open for tomorrow; and what changed: promoted, retired, new, merged.
-7. FINISH. Set last_dream in mem/heartbeat only if every step finished; if not, leave it, so the next review covers the same notes. Append a one-line receipt (time, slugs changed, promoted, retired), keeping the last 10. Send no message.`,
+7. FINISH. Set last_dream in mem/heartbeat only if every step finished; if not, leave it, so the next review covers the same notes. Append a one-line receipt (time, slugs changed, promoted, retired), keeping the last 10. Send no message.`;
+
+/** Dreaming's steps from version 3. */
+const DREAM_V3 = `Keep the two buzz:bestie lines around these steps as they are, and change the steps between them only when the owner asks. Add your own lines after the closing one.
+
+Dreaming. Your timer wakes you in your DM with the owner. That wake is an internal maintenance wake, not a message from the owner. In it you never send a message. You are the only one who merges, renames, deletes and rebuilds memory. Never change core or your instructions. Before you rewrite a slug, save its current text with mem_set to mem/backup/ and its name without "mem/" (mem/backup/user for mem/user), replacing the copy saved before. When you rewrite one, never drop a line the owner stated: mark it superseded instead. Drop at most a quarter of any slug's lines in one night. If a size limit and these rules conflict, keep the lines and say so in the reflection.
+
+1. READ. mem_get mem/heartbeat (its last_dream date), mem/user, mem/memory and mem/hypotheses. Lines carry a day, not a time, so what is dated on last_dream may have come after that review: count it as new. Read each mem/notes/<date> dated on or after last_dream, and each card those notes link as [[mem/entities/<type>/<id>]]. Stop and write nothing only if there is no note line dated on or after last_dream outside a reflection (from a "<!-- dream:start -->" line to the next "<!-- dream:end -->" line; anything after that end line is new), no line in mem/user dated on or after it, no open hypothesis that is stale or whose expected events are overdue, and no lesson in mem/memory marked "[new, unreviewed]". Otherwise go on, even with no new note: step 3 still marks and retires stale hypotheses, and step 6 still reviews marked lessons.
+2. CHECK AGAINST SOURCE. For each claim you will promote, change or remove, read its source event, by the id and channel its note gives. Events are the ground truth. If a note does not agree with its event, the event wins: fix the claim, and say so in step 6.
+3. HYPOTHESES. A fact is something the owner said, or a guess that passed this test. A hypothesis is a guess you made from what you saw, one line with its counts and a test:
+   - H3 Owner works US Pacific hours. for: 2 (days 11-04, 11-05) against: 0
+     test: true if owner states a time zone or 3 days of message times fit; false if owner states another zone
+   Count the new observations for and against each one. Two messages about one event are one observation. Never count an event you prompted, such as a reply in a format you suggested, as an observation. Count one for a hypothesis only if you would not have predicted the event without it. Only what the owner chose speaks to the owner's preferences. Promote one to a fact, as a dated line with its sources in mem/user or its card, only if the owner confirmed it, or it has 3 or more observations on 3 or more different days and none against. One clear contradiction retires it: move it to "Retired" (keep the last 10) with the event id, and don't suggest it again. A guess with no test is rejected. A fact that other evidence contradicts becomes a hypothesis again; the owner's newer statement replaces it. Silence is not evidence: one that expects regular events is marked "stale" when its time passes, and retires after 3 stale nights. Add the guesses in the notes as new hypotheses; keep at most 12 open, retiring the oldest with no support. You may mark one "ask".
+4. REWRITE mem/user as current directives with a date and source for each, and its "Open loops", in at most 4 KB. Keep everything the owner said that is still true.
+5. ORGANIZE THE CARDS. Merge duplicate lines. When two claims disagree: if the newer is a correction, the old line becomes "was X until <date>, per <source>"; if not, write "CONFLICT: A says…; B says…" and show which is a person's decision and which an agent's inference. A search that found nothing never overrules a recorded decision. Add new supported facts. Change or remove at most 2 existing claims a night, and only when the size limit requires it; an owner's correction does not count. Remove first a claim a stronger one made old, then one that repeats another; never the only support for a claim or the only open alternative; never infer a change from absence. Rename a card only by leaving "MOVED TO [[slug]]" at the old slug. Before you write mem/memory again, move each claim in it that is not a card line, a "Now" line or a lesson, such as one an earlier version of your memory rules saved there, to its card, or to mem/hypotheses if it is a guess, with its date and source; never drop one. Then write mem/memory again, in at most 4 KB: one line "[[mem/entities/<type>/<id>]] and a sentence" for each card, a "Now" section with one line for each active project, and the lessons. When it is full, leave out the cards with no new line and no question for the longest time; keep their slugs. The first night, move what mem/user holds beyond the owner's own facts into cards, mem/hypotheses and the index.
+6. REFLECT. Append a "Dream" section to the end of the latest note you reviewed, or of mem/notes/<today> if you reviewed none. Start it with a line "<!-- dream:start -->" and end it with a line "<!-- dream:end -->", so later lines are not part of it. In it: what helped and what went wrong, with event ids; the duties that follow; what stays open for tomorrow; and what changed: promoted, retired, new, merged. Mark each lesson you add to mem/memory "[new, unreviewed]". In each review, confirm, sharpen or remove each lesson so marked, and take the mark off one you keep.
+7. FINISH. Set last_dream in mem/heartbeat only if every step finished; if not, leave it, so the next review covers the same notes. Append a one-line receipt (time, "policy: dream.nightly v3", slugs changed, promoted, retired), keeping the last 10. Send no message.`;
+
+/** The nightly pass over the day's notes and the curated memory. Its steps
+ * are the Interest's instructions. It never sends a message. */
+export const dream: Feature = {
+  id: "dream.nightly",
+  title: "Dreaming",
+  description:
+    "Around 3 AM Bestie tidies its memory: it checks its notes against the messages, sorts what it knows and writes a short reflection. It never messages you. It needs only Remembers you. Runs while Buzz is open and the Watching plugin is on, and uses your tokens. Turning it off deletes its steps, with any changes to them.",
+  version: 3,
+  requires: "memory",
+  timer: {
+    id: "bestie-dream",
+    everySecs: 86_400,
+    atHour: 3,
+    prompt: "Dreaming wake",
+    marked: true,
+    interest: DREAM_V3,
+    earlier: { 2: DREAM_V2 },
+    changes: {
+      3: {
+        class: "reach",
+        notes: [
+          "Saves a copy of a memory before rewriting it, and drops at most a quarter of its lines in a night.",
+          "Never drops a line you told it; it marks the line replaced.",
+          "Won't count something it prompted as evidence.",
+          "Checks each new lesson again the next night.",
+          "Keeps its steps as they are unless you ask.",
+        ],
+      },
+    },
   },
 };
 
@@ -192,8 +244,11 @@ export function hasFeature(instructions: string, feature: Feature) {
   return featureState(instructions, feature) === "on";
 }
 
+/** `text` between the feature's markers of `version`. */
+const marked = (id: string, version: number, text: string) =>
+  `<!-- buzz:bestie/${id} v${version} -->\n${text}\n<!-- /buzz:bestie/${id} -->`;
 const block = ({ id, version, text }: Feature) =>
-  `<!-- buzz:bestie/${id} v${version} -->\n${text ?? ""}\n<!-- /buzz:bestie/${id} -->`;
+  marked(id, version, text ?? "");
 
 /** `instructions` with the feature's section added at the end, or with each
  * of its whole sections removed along with the blank lines that set it
@@ -285,4 +340,141 @@ export function restoredFeature(instructions: string, feature: Feature) {
     return undefined;
   const end = last.index + last[0].length;
   return `${rest.slice(0, first.index)}${block(feature)}${rest.slice(end)}`;
+}
+
+/** The Interest's instructions as the feature saves them: between its
+ * markers when it is marked. */
+export function interestText(feature: Feature) {
+  const timer = feature.timer;
+  if (!timer) return "";
+  return timer.marked
+    ? marked(feature.id, feature.version, timer.interest)
+    : timer.interest;
+}
+
+/** The versions of the feature's Interest this build has, newest first. */
+export function interestVersions(feature: Feature) {
+  return [
+    feature.version,
+    ...Object.keys(feature.timer?.earlier ?? {})
+      .map(Number)
+      .filter((version) => version < feature.version)
+      .sort((a, b) => b - a),
+  ];
+}
+
+/** The Interest's text of `version` as it was saved, markers and all. */
+export function shippedInterest(feature: Feature, version: number) {
+  return version === feature.version
+    ? interestText(feature)
+    : feature.timer?.earlier?.[version];
+}
+
+/** The one whole section of the feature in `text`: its version, and what
+ * is inside its markers and around them. */
+export function interestSection(text: string, feature: Feature) {
+  const found = [...text.matchAll(sections(feature))];
+  const [match] = found;
+  if (found.length !== 1 || !match) return undefined;
+  const whole = match[0];
+  return {
+    version: Number(/^<!-- \S+ v(\d+) -->/.exec(whole)?.[1]),
+    inside: whole.slice(whole.indexOf("-->") + 3, whole.lastIndexOf("<!--")),
+    before: text.slice(0, match.index),
+    after: text.slice(match.index + whole.length),
+  };
+}
+
+/** What a shipped version has between its markers, or all of it for one
+ * saved without them. */
+export function shippedSteps(feature: Feature, version: number) {
+  const text = shippedInterest(feature, version);
+  if (text === undefined) return undefined;
+  return interestSection(text, feature)?.inside ?? text;
+}
+
+/** How many lines differ between `a` and `b`. */
+function distance(a: string, b: string) {
+  return diffLines(`${plain(a)}\n`, `${plain(b)}\n`).reduce(
+    (sum, change) =>
+      change.added || change.removed ? sum + (change.count ?? 0) : sum,
+    0,
+  );
+}
+
+/** The shipped version whose steps are closest to `text`, by lines changed;
+ * the newer on a tie. */
+export function closestVersion(text: string, feature: Feature) {
+  let best = { version: feature.version, lines: Number.POSITIVE_INFINITY };
+  for (const version of interestVersions(feature)) {
+    const lines = distance(shippedSteps(feature, version) ?? "", text);
+    if (lines < best.lines) best = { version, lines };
+  }
+  return best.version;
+}
+
+/** Where a feature's Interest stands against the versions this build
+ * has, by the first that holds:
+ * - `edited-markers`: its markers were changed, so where it starts or ends
+ *   isn't clear;
+ * - `ahead`: a newer Buzz saved it; this build never offers an older one;
+ * - `untracked`: it has no markers and isn't a version saved without them,
+ *   as one set up by hand; `closest` is the version it is nearest;
+ * - `current`, `customized-latest`: the latest version, its steps as they
+ *   shipped or changed since;
+ * - `stock-old`, `customized-old`: an older `version`, as it shipped or
+ *   changed since.
+ * Lines outside the markers are the owner's, and never make it changed.
+ * Who changed it isn't known: Attention keeps no author. */
+export type InterestState =
+  | Readonly<{ state: "edited-markers" }>
+  | Readonly<{ state: "ahead"; version: number }>
+  | Readonly<{ state: "untracked"; closest: number }>
+  | Readonly<{ state: "current" | "customized-latest"; version: number }>
+  | Readonly<{ state: "stock-old" | "customized-old"; version: number }>;
+
+export function interestState(text: string, feature: Feature): InterestState {
+  const latest = feature.version;
+  if (featureState(text, feature) === "edited")
+    return { state: "edited-markers" };
+  const found = interestSection(text, feature);
+  if (!found) {
+    if (featureState(text, feature) === "on")
+      return { state: "edited-markers" };
+    // Saved by an earlier version, which had no markers.
+    const version = interestVersions(feature).find((version) => {
+      const shipped = shippedInterest(feature, version) ?? "";
+      return (
+        !interestSection(shipped, feature) && plain(shipped) === plain(text)
+      );
+    });
+    if (version === undefined)
+      return { state: "untracked", closest: closestVersion(text, feature) };
+    return version === latest
+      ? { state: "current", version }
+      : { state: "stock-old", version };
+  }
+  // Checked before its text is looked up, which this build doesn't have.
+  if (found.version > latest) return { state: "ahead", version: found.version };
+  const steps = shippedSteps(feature, found.version);
+  // A version that never shipped has no known steps to compare with.
+  if (steps === undefined)
+    return { state: "untracked", closest: closestVersion(text, feature) };
+  const stock = plain(found.inside) === plain(steps);
+  if (found.version === latest)
+    return { state: stock ? "current" : "customized-latest", version: latest };
+  return {
+    state: stock ? "stock-old" : "customized-old",
+    version: found.version,
+  };
+}
+
+/** `text` with the latest version's steps between the markers, and the
+ * lines outside them kept as they are. One with no markers becomes the
+ * latest version, whole. */
+export function updatedInterest(text: string, feature: Feature) {
+  const found = interestSection(text, feature);
+  return found
+    ? `${found.before}${interestText(feature)}${found.after}`
+    : interestText(feature);
 }

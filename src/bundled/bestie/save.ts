@@ -11,10 +11,13 @@ import {
   type Feature,
   featureState,
   hasFeature,
+  interestText,
+  interestVersions,
   LEGACY,
   memory,
   notes,
   restoredFeature,
+  shippedInterest,
   upgradedFeature,
   withFeature,
 } from "./features";
@@ -88,6 +91,13 @@ function lastHour(hour: number, now: Date) {
   return Math.floor(at.getTime() / 1000);
 }
 
+/** When a timer saved now is armed. A timer is next due one interval after
+ * it is armed, so a daily one is armed at its hour's latest start. */
+const armedAt = ({ atHour }: { atHour?: number }) =>
+  atHour === undefined
+    ? Math.floor(Date.now() / 1000)
+    : lastHour(atHour, new Date());
+
 /** The feature, and with Off the features that require it. */
 const offWith = (feature: Feature, on: boolean) =>
   on
@@ -105,7 +115,13 @@ function featureAttention(
   {
     channel,
     paused = false,
-  }: { channel?: string | undefined; paused?: boolean } = {},
+    instructions = interestText(feature),
+  }: {
+    channel?: string | undefined;
+    paused?: boolean;
+    /** Its steps, if not the latest version's. */
+    instructions?: string | undefined;
+  } = {},
 ) {
   const attention: Record<string, AttentionValue | null> = {};
   for (const { timer } of offWith(feature, on))
@@ -118,7 +134,7 @@ function featureAttention(
     if (!channel) throw new Error("A check-in needs your DM with the agent.");
     attention[interestSlug(timer.id)] = {
       type: "interest",
-      instructions: timer.interest,
+      instructions,
       ...(paused && { paused: true }),
     };
     attention[watchSlug(timer.id)] = {
@@ -127,11 +143,7 @@ function featureAttention(
       prompt: timer.prompt,
       enabled: !paused,
       interval_secs: timer.everySecs,
-      // A timer is next due one interval after it is armed.
-      armed_at:
-        timer.atHour === undefined
-          ? Math.floor(Date.now() / 1000)
-          : lastHour(timer.atHour, new Date()),
+      armed_at: armedAt(timer),
       max_occurrences: null,
       expires_at: null,
       channel,
@@ -208,8 +220,54 @@ export async function saveFeature(
   }
 }
 
+/** Whether the feature's timer or its Interest is paused in Attention. */
+export function featurePaused(agent: Agent, feature: Feature) {
+  const timer = feature.timer;
+  const wake = timer && agent.attention[watchSlug(timer.id)]?.value;
+  return (
+    (wake?.type === "timer" && !wake.enabled) ||
+    (!!timer && interestPaused(agent.attention, timer.id))
+  );
+}
+
+/** Starts the feature's timer again from now, as its switch first armed it,
+ * and resumes its Interest if that is paused, changing nothing else: the
+ * Interest's instructions stay as they are. Each object is saved only if it
+ * is still the one shown. */
+export async function restartFeature(
+  agents: FeatureAgents,
+  agent: Agent,
+  feature: Feature,
+) {
+  const timer = feature.timer;
+  const wake = timer && agent.attention[watchSlug(timer.id)];
+  const interest = timer && agent.attention[interestSlug(timer.id)];
+  if (
+    !timer ||
+    wake?.value.type !== "timer" ||
+    interest?.value.type !== "interest"
+  )
+    throw new Error(`${feature.title} is partly saved; remove it first.`);
+  const { paused: _, ...resumed } = interest.value;
+  await agents.save(agent.key, {
+    attention: {
+      [watchSlug(timer.id)]: {
+        ...wake.value,
+        enabled: true,
+        armed_at: armedAt(timer),
+      },
+      ...(interest.value.paused && { [interestSlug(timer.id)]: resumed }),
+    },
+    attentionExpected: {
+      [watchSlug(timer.id)]: wake,
+      ...(interest.value.paused && { [interestSlug(timer.id)]: interest }),
+    },
+    restart: [watchSlug(timer.id)],
+  });
+}
+
 /** Replaces the hourly check-in of an earlier version, which keeps its steps
- * in the instructions, with Hourly notes and Nightly review. If it was on,
+ * in the instructions, with Hourly notes and Dreaming. If it was on,
  * with memory, they are turned on in the DM its timer was delivered to. The
  * old Interest and timer are taken away in the same Attention change, before
  * the new ones are added, so it saves whole or not at all, and an agent at
@@ -249,10 +307,22 @@ export async function replaceCheckIn(
   const attention: Record<string, AttentionValue | null> = Object.assign(
     {},
     ...old.map((feature) => featureAttention(agent, feature, false)),
+    // Each check-in that replaces it is the oldest version this build has,
+    // the one it replaced it with first: a newer one is the owner's to
+    // choose, from its update row. One already there is left as it is.
     ...(on
-      ? [notes, dream].map((feature) =>
-          featureAttention(agent, feature, true, { channel, paused }),
-        )
+      ? [notes, dream]
+          .filter((feature) => !featurePresent(agent, feature))
+          .map((feature) =>
+            featureAttention(agent, feature, true, {
+              channel,
+              paused,
+              instructions: shippedInterest(
+                feature,
+                Math.min(...interestVersions(feature)),
+              ),
+            }),
+          )
       : []),
   );
   options.signal?.throwIfAborted();

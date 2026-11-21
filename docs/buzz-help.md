@@ -1661,6 +1661,21 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   follow-up that is due. Each wake uses model tokens, and the Attention plugin
   also runs the agent's other watches. Turning Remembers you off also turns the
   check-in off.
+- When Buzz ships a new version of **Dreaming**'s steps, the Bestie tab
+  says so under its switch, with what changed, and saves nothing until you
+  choose. Steps as Buzz shipped them offer **Update**, or **Later** to hide it
+  for 7 days. Steps changed since offer **Take version N**, or **Keep as is**
+  to hide it until a newer version. Lines added after its closing marker are
+  kept. One set up by hand reads **Customized · version N available**, and one
+  whose start or end line changed says so, each with **Review**. Its dialog
+  keeps the blocks you leave checked and replaces the rest, or **Keep as is**
+  hides it until a newer version. The text before each change is kept on this
+  device, and **Undo**, on the row that says what was saved, puts it back,
+  asking first if it has changed since. After an Undo, that row offers
+  **Restore previous text**, which puts back the text from before the Undo.
+  A check-in paused in the Attention tab
+  shows **Restart**, which runs it again from now with its steps unchanged;
+  turning a check-in off deletes its steps, with any changes to them.
 - Only the current Bestie checks in. Replacing or removing it stops its check-ins
   after this device reads the saved account choice, but leaves its memory
   guidance, stored memory, and private-channel memberships in place. A local or

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { interestSlug, watchSlug } from "../../features/agents/attention";
 import type {
   Agent,
@@ -30,8 +30,10 @@ import {
   FEATURES,
   type Feature,
   featureState,
+  interestText,
   restoredFeature,
 } from "./features";
+import { FeatureUpdate } from "./FeatureUpdate";
 import {
   formerWithSettings,
   startHostedRead,
@@ -43,11 +45,14 @@ import {
   cannotEdit,
   type FeatureAgents,
   featureOn,
+  featurePaused,
   instructionsOf,
+  restartFeature,
   restoreFeature,
   saveFeature,
 } from "./save";
 import { inCommunity, savedBestie } from "./saved";
+import { liveInterest, Receipts, record } from "./updates";
 
 /** The agents a tab saves to, and finds to know which are remote. */
 type TabAgents = FeatureAgents & Pick<Agents, "find">;
@@ -219,6 +224,12 @@ function BestieTab({
     (choice) => choice.pubkey !== agent.pubkey,
   );
   const name = agent.name || "This agent";
+  // What the owner changed in its check-ins on this device, kept per
+  // community and agent.
+  const receipts = useMemo(
+    () => new Receipts(scope ?? "", agent.key),
+    [scope, agent.key],
+  );
   const switches = (features: readonly Feature[]) =>
     features.map((feature) => (
       <FeatureSwitch
@@ -231,6 +242,7 @@ function BestieTab({
         former={former}
         saving={saving}
         setSaving={setSaving}
+        receipts={receipts}
       />
     ));
   return (
@@ -337,6 +349,7 @@ function FeatureSwitch({
   former,
   saving,
   setSaving,
+  receipts,
 }: {
   agents: FeatureAgents;
   agent: Agent;
@@ -347,6 +360,7 @@ function FeatureSwitch({
   former: boolean;
   saving: boolean;
   setSaving(saving: boolean): void;
+  receipts: Receipts;
 }) {
   const [error, setError] = useState<string>();
   const problem = cannotEdit(agents, agent, feature);
@@ -401,7 +415,23 @@ function FeatureSwitch({
       await saveFeature(agents, agent, feature, on, {
         ...(channel && { channel }),
       });
+      // Turning it on accepts the version it saves.
+      if (on && feature.timer?.marked)
+        record(receipts, feature, "on", null, {
+          type: "interest",
+          instructions: interestText(feature),
+        });
     });
+  const restart = () =>
+    run(async () => {
+      const before = liveInterest(agent, feature)?.value;
+      await restartFeature(agents, agent, feature);
+      if (before && feature.timer?.marked) {
+        const { paused: _, ...after } = before;
+        record(receipts, feature, "restart", before, after);
+      }
+    });
+  const paused = checked && featurePaused(agent, feature);
   const alert = error && (
     <p role="alert" className="buzz-field-error">
       {error}
@@ -446,10 +476,8 @@ function FeatureSwitch({
             ? "Only your Bestie checks in."
             : blocked && required && !checked
               ? `Turn on ${required.title} first.`
-              : // Paused on its own in the Attention tab, which can't resume a
-                // timer: saving it again here does.
-                checked && timer?.value.type === "timer" && !timer.value.enabled
-                ? `Paused in Attention. Turn ${feature.title} off and on again to restart it.`
+              : paused
+                ? "Paused in Attention."
                 : // Attention reads off while no plugin shows it, as when the
                   // Watching plugin is off.
                   checked && feature.timer && !agent.attentionEnabled
@@ -461,6 +489,36 @@ function FeatureSwitch({
         disabled={saving || ((blocked || formerCheckIn) && !checked)}
         onCheckedChange={(on) => void save(on)}
       />
+      {/* Paused on its own in the Attention tab, which can't resume a
+          timer. Restart does, keeping its steps; Off would delete them. */}
+      {paused && !formerCheckIn && (
+        <PreferenceRow
+          title={`${feature.title} is paused`}
+          subtitle="Restart runs it again from now, with its steps as they are."
+          trailing={(label) => (
+            <Button
+              variant="outline"
+              aria-describedby={label["aria-labelledby"]}
+              disabled={saving}
+              onClick={() => void restart()}
+            >
+              Restart
+            </Button>
+          )}
+        />
+      )}
+      {checked && feature.timer?.marked && !formerCheckIn && (
+        <FeatureUpdate
+          agents={agents}
+          agent={agent}
+          feature={feature}
+          receipts={receipts}
+          saving={saving}
+          run={run}
+          error={error}
+          clearError={() => setError(undefined)}
+        />
+      )}
       {/* A timer or Interest left without the rest, as when undoing a failed
           On failed too, or one was deleted in Attention: Remove takes it
           away. */}

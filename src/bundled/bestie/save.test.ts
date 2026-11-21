@@ -6,7 +6,7 @@ import {
 } from "../../features/agents/attention";
 import type { Agent, AgentChange, Agents } from "../../features/agents/service";
 import { type AgentRecord, setAttention } from "../../features/agents/store";
-import { dream, memory, notes, withFeature } from "./features";
+import { dream, interestState, memory, notes, withFeature } from "./features";
 import {
   cannotEdit,
   featureOn,
@@ -154,7 +154,7 @@ it("arms Nightly review at 03:00 where the device is, so its first wake is the n
     const timer = change.attention?.["watch/bestie-dream"] as TimerWatch;
     expect(timer).toMatchObject({
       interest_id: "bestie-dream",
-      prompt: "Nightly review wake",
+      prompt: "Dreaming wake",
       interval_secs: 86_400,
       channel: DM,
     });
@@ -447,3 +447,45 @@ function attentionOf({ timer }: typeof notes): Record<string, unknown> {
     [`watch/${timer?.id}`]: { type: "timer" },
   };
 }
+
+it("replaces an old hourly check-in with Nightly review as it first shipped, leaving its new version to the owner", async () => {
+  const checkingIn = withFeature(remembering, v1CheckIn, true);
+  const save = vi.fn<Agents["save"]>(async () => {});
+  await replaceCheckIn(
+    { save, types: () => [] },
+    ada(held(LEGACY_TIMER), checkingIn),
+  );
+  const [first] = save.mock.calls;
+  const made = first?.[1].attention?.["interest/bestie-dream"];
+  // Version 2, byte for byte and without markers, so its update row offers
+  // version 3 the way it does to anyone who had version 2.
+  expect(made).toEqual({
+    type: "interest",
+    instructions: dream.timer?.earlier?.[2],
+  });
+  expect(
+    interestState(made?.type === "interest" ? made.instructions : "", dream),
+  ).toEqual({ state: "stock-old", version: 2 });
+});
+
+it("leaves a Nightly review already there as it is when it replaces an old hourly check-in", async () => {
+  const checkingIn = withFeature(remembering, v1CheckIn, true);
+  const save = vi.fn<Agents["save"]>(async () => {});
+  await replaceCheckIn(
+    { save, types: () => [] },
+    ada(
+      held({
+        ...LEGACY_TIMER,
+        "interest/bestie-dream": { type: "interest", instructions: "Mine." },
+      }),
+      checkingIn,
+    ),
+  );
+  const changes = save.mock.calls.map(([, change]) => change.attention ?? {});
+  for (const change of changes) {
+    expect(change).not.toHaveProperty("interest/bestie-dream");
+    expect(change).not.toHaveProperty("watch/bestie-dream");
+  }
+  // Hourly notes, which wasn't there, still replaces it.
+  expect(changes[0]?.["interest/bestie-notes"]).toBeDefined();
+});

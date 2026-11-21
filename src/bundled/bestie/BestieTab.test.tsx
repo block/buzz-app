@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { useSyncExternalStore } from "react";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Agent, AgentChange, Agents } from "../../features/agents/service";
@@ -20,7 +27,8 @@ import {
   startHostedRead,
 } from "./former";
 import { validateObject } from "../../features/agents/attention";
-import { memory, notes, withFeature } from "./features";
+import { dream, interestText, memory, notes, withFeature } from "./features";
+import { Receipts } from "./updates";
 
 afterEach(() => {
   cleanup();
@@ -445,7 +453,7 @@ it("turns a hosted Bestie's memory on and off through its provider, and never to
   expect(set.mock.calls[1]?.[0]).toBe("Be brief.");
   expect(save).not.toHaveBeenCalled();
   // Its timers never run here.
-  for (const name of ["Hourly notes", "Nightly review"])
+  for (const name of ["Hourly notes", "Dreaming"])
     expect(screen.queryByRole("switch", { name })).not.toBeInTheDocument();
   expect(
     screen.getAllByText("Not available with remote agents yet."),
@@ -666,7 +674,7 @@ it("keeps memory on through the owner's edits, and offers Restore for edited mar
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
   expect(screen.getByText(/Fix its start and end lines there/)).toBeVisible();
   // Check-ins wait on memory.
-  for (const name of ["Hourly notes", "Nightly review"])
+  for (const name of ["Hourly notes", "Dreaming"])
     expect(screen.getByRole("switch", { name })).toHaveAttribute(
       "aria-disabled",
       "true",
@@ -730,7 +738,7 @@ it("checks in only while memory is on, hourly and nightly apart, each as an Inte
   };
   const { rerender } = render(<Tab agent={off as Agent} />);
   const hourly = () => screen.getByRole("switch", { name: "Hourly notes" });
-  const nightly = () => screen.getByRole("switch", { name: "Nightly review" });
+  const nightly = () => screen.getByRole("switch", { name: "Dreaming" });
   // Memory is off, so check-ins can't be turned on.
   expect(hourly()).toHaveAttribute("aria-disabled", "true");
   expect(nightly()).toHaveAttribute("aria-disabled", "true");
@@ -779,7 +787,7 @@ it("checks in only while memory is on, hourly and nightly apart, each as an Inte
   expect(hourly()).not.toBeChecked();
   rerender(<Tab agent={checking} />);
 
-  // Nightly review is its own switch: Hourly notes off leaves it alone.
+  // Dreaming is its own switch: Hourly notes off leaves it alone.
   save.mockClear();
   rerender(<Tab agent={on} />);
   await user.click(nightly());
@@ -920,7 +928,7 @@ it("offers to remove what is left of a check-in whose Interest or timer is gone"
   ]);
 });
 
-it("says a check-in paused in Attention is paused, and how to restart it", async () => {
+it("says a check-in paused in Attention is paused, and restarts it keeping its steps", async () => {
   const user = userEvent.setup();
   const { relay } = community(ada.pubkey);
   const { agents, save } = host();
@@ -936,11 +944,19 @@ it("says a check-in paused in Attention is paused, and how to restart it", async
   const hourly = screen.getByRole("switch", { name: "Hourly notes" });
   // Still on, so Off still removes it.
   expect(hourly).toBeChecked();
-  expect(
-    screen.getByText(
-      "Paused in Attention. Turn Hourly notes off and on again to restart it.",
-    ),
-  ).toBeVisible();
+  expect(screen.getByText("Paused in Attention.")).toBeVisible();
+  // Restart arms its timer again and leaves its Interest as it is; turning
+  // it off and on would have deleted its steps.
+  await user.click(screen.getByRole("button", { name: "Restart" }));
+  const [key, change] = save.mock.calls[0] ?? [];
+  expect(key).toBe(ada.key);
+  expect(Object.keys(change?.attention ?? {})).toEqual([TIMER]);
+  expect(change?.attention?.[TIMER]).toMatchObject({ enabled: true });
+  expect(change?.restart).toEqual([TIMER]);
+  expect(change?.attentionExpected).toEqual({
+    [TIMER]: paused.attention[TIMER],
+  });
+  save.mockClear();
   await user.click(hourly);
   expect(save.mock.calls[0]).toEqual([
     ada.key,
@@ -1404,4 +1420,452 @@ it("lets a former Bestie's leftover check-in be turned off", async () => {
   expect(save).toHaveBeenLastCalledWith(ada.key, {
     attention: { "interest/bestie-notes": null, "watch/bestie-notes": null },
   });
+});
+
+const DREAM = "interest/bestie-dream";
+const DREAM_TIMER = "watch/bestie-dream";
+/** Ada with Dreaming on, its Interest holding `instructions`. */
+function dreaming(instructions: string) {
+  return {
+    ...remembering(true),
+    attention: {
+      [DREAM]: {
+        slug: DREAM,
+        value: { type: "interest", instructions },
+        modifiedAt: 1,
+      },
+      [DREAM_TIMER]: {
+        slug: DREAM_TIMER,
+        value: { type: "timer", enabled: true },
+        modifiedAt: 1,
+      },
+    },
+  } as unknown as Agent;
+}
+const dreamV2 = dream.timer?.earlier?.[2] ?? "";
+const ownLines = "OWNER NOTES. Keep replies under five lines.";
+
+it("offers Dreaming's new version, and saves it only when asked, with a way back", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  const old = dreaming(dreamV2);
+  const { rerender } = render(<Tab agent={old} />);
+  // Showing the update saves nothing.
+  expect(
+    screen.getByText(`Version ${dream.version} of Dreaming is ready`),
+  ).toBeVisible();
+  expect(save).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "See changes" }));
+  expect(
+    await screen.findByRole("dialog", {
+      name: `Dreaming: version 2 → ${dream.version}`,
+    }),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: `Update to version ${dream.version}` }),
+  );
+  // Only the Interest, and only if it is still the one shown.
+  expect(save.mock.calls[0]).toEqual([
+    ada.key,
+    {
+      attention: {
+        [DREAM]: { type: "interest", instructions: interestText(dream) },
+      },
+      attentionExpected: { [DREAM]: old.attention[DREAM] },
+    },
+  ]);
+  const updated = dreaming(interestText(dream));
+  rerender(<Tab agent={updated} />);
+  expect(
+    screen.queryByText(`Version ${dream.version} of Dreaming is ready`),
+  ).toBeNull();
+  // Undo puts version 2 back.
+  save.mockClear();
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  expect(save.mock.calls[0]?.[1].attention).toEqual({
+    [DREAM]: { type: "interest", instructions: dreamV2 },
+  });
+});
+
+it("hides Dreaming's update for now with Later, and keeps a way to review it", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  render(<Tab agent={dreaming(dreamV2)} />);
+  await user.click(screen.getByRole("button", { name: "Later" }));
+  expect(
+    screen.queryByText(`Version ${dream.version} of Dreaming is ready`),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Review" }));
+  expect(
+    screen.getByText(`Version ${dream.version} of Dreaming is ready`),
+  ).toBeVisible();
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("puts a new version's buttons on their own line below what it changes", () => {
+  const { relay } = community(ada.pubkey);
+  const { agents } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  render(<Tab agent={dreaming(dreamV2)} />);
+  const title = `Version ${dream.version} of Dreaming is ready`;
+  const offer = screen.getByRole("group", { name: title });
+  // The row keeps the full width for its title and summary.
+  const row = within(offer).getByText(title).closest(".buzz-preference-row");
+  expect(row?.querySelector(".buzz-preference-row-trailing")).toBeNull();
+  for (const name of ["Later", "See changes", "Update"]) {
+    const button = within(offer).getByRole("button", { name });
+    expect(row?.contains(button)).toBe(false);
+    const position = row?.compareDocumentPosition(button) ?? 0;
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+});
+
+it("shows Dreaming set up by hand as one line with Review, and a saved version with Undo below it", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  const original = `${dreamV2}\n\n${ownLines}`;
+  const own = dreaming(original);
+  const { rerender } = render(<Tab agent={own} />);
+  const line = (title: string) =>
+    screen.getByText(title).closest(".buzz-preference-row") as HTMLElement;
+  const customized = line(`Customized · version ${dream.version} available`);
+  // Its one action is beside it; Keep as is is in its dialog.
+  expect(
+    within(customized).getByRole("button", { name: "Review" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Keep as is" })).toBeNull();
+  expect(screen.queryByText(/set up by hand/)).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Review" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByText("Closest to version 2.")).toBeVisible();
+  expect(
+    within(dialog).getByRole("button", { name: "Keep as is" }),
+  ).toBeVisible();
+  await user.click(
+    within(dialog).getByRole("button", {
+      name: `Use version ${dream.version}`,
+    }),
+  );
+  rerender(<Tab agent={dreaming(`${interestText(dream)}\n\n${ownLines}`)} />);
+  const today = new Date().toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  const saved = line(`Saved version ${dream.version} · ${today}`);
+  expect(
+    within(saved).getByText("The text before is kept on this device."),
+  ).toBeVisible();
+  expect(within(saved).getByRole("button", { name: "Undo" })).toBeVisible();
+  expect(screen.getAllByRole("button", { name: "Undo" })).toHaveLength(1);
+  // Undo puts the original back, word for word.
+  save.mockClear();
+  await user.click(within(saved).getByRole("button", { name: "Undo" }));
+  expect(save.mock.calls[0]?.[1].attention).toEqual({
+    [DREAM]: { type: "interest", instructions: original },
+  });
+  // Undone, it is customized again with Review, and its own row can put
+  // back the text from before the Undo.
+  rerender(<Tab agent={own} />);
+  const again = line(`Customized · version ${dream.version} available`);
+  expect(within(again).getByRole("button", { name: "Review" })).toBeVisible();
+  expect(
+    within(again).queryByRole("button", { name: /Undo|Restore/ }),
+  ).toBeNull();
+  const undone = line(`Undid version ${dream.version} · ${today}`);
+  expect(
+    within(undone).getByText(
+      "The text before the Undo is kept on this device.",
+    ),
+  ).toBeVisible();
+  expect(
+    within(undone).getByRole("button", { name: "Restore previous text" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  expect(screen.queryByText(/^Saved /)).toBeNull();
+});
+
+it("puts back lines added after a new version, from the row an Undo leaves", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  const added = "ADDED LATER. Mention the weather.";
+  for (const [before, take, change] of [
+    // Adopted from steps set up by hand, then a line added after them.
+    [
+      `${dreamV2}\n\n${ownLines}`,
+      "Review",
+      (text: string) => `${text}\n\n${added}`,
+    ],
+    // Updated from version 2 as shipped, then one of its steps edited.
+    [
+      dreamV2,
+      "See changes",
+      (text: string) => text.replace("1. READ.", "1. READ, slowly."),
+    ],
+  ] as const) {
+    localStorage.clear();
+    save.mockClear();
+    const { rerender, unmount } = render(<Tab agent={dreaming(before)} />);
+    await user.click(screen.getByRole("button", { name: take }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", {
+        name:
+          take === "Review"
+            ? `Use version ${dream.version}`
+            : `Update to version ${dream.version}`,
+      }),
+    );
+    const saved = save.mock.calls[0]?.[1].attention?.[DREAM];
+    expect(saved?.type).toBe("interest");
+    const updated = (saved as { instructions: string }).instructions;
+    const edited = change(updated);
+    expect(edited).not.toBe(updated);
+    // The owner changes it, then undoes the update anyway.
+    rerender(<Tab agent={dreaming(edited)} />);
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Undo anyway",
+      }),
+    );
+    expect(save.mock.calls[1]?.[1].attention).toEqual({
+      [DREAM]: { type: "interest", instructions: before },
+    });
+    // The offer is back, and the row the Undo left puts the added line back.
+    rerender(<Tab agent={dreaming(before)} />);
+    await user.click(
+      screen.getByRole("button", { name: "Restore previous text" }),
+    );
+    expect(save.mock.calls[2]?.[1].attention).toEqual({
+      [DREAM]: { type: "interest", instructions: edited },
+    });
+    unmount();
+  }
+});
+
+it("keeps Dreaming set up by hand, or with a changed start or end line, as is once the owner says so", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  const hiddenTitle = `Version ${dream.version} of Dreaming is available`;
+  for (const [text, title] of [
+    [
+      `${dreamV2}\n\n${ownLines}`,
+      `Customized · version ${dream.version} available`,
+    ],
+    [
+      `<!-- buzz:bestie/dream.nightly v2 -->\n${dreamV2}\n\n${ownLines}`,
+      `Start or end line changed · version ${dream.version} available`,
+    ],
+  ] as const) {
+    localStorage.clear();
+    // Kept as is before this layout, which saved the same choice.
+    new Receipts(SCOPE, ada.key).hide(dream.id, dream.version, false);
+    const old = render(<Tab agent={dreaming(text)} />);
+    expect(screen.getByText(hiddenTitle)).toBeVisible();
+    expect(screen.queryByText(title)).toBeNull();
+    old.unmount();
+    // Kept as is from the dialog: it stays hidden when the tab opens again.
+    localStorage.clear();
+    const first = render(<Tab agent={dreaming(text)} />);
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", {
+        name: "Keep as is",
+      }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByText(hiddenTitle)).toBeVisible();
+    first.unmount();
+    render(<Tab agent={dreaming(text)} />);
+    expect(screen.getByText(hiddenTitle)).toBeVisible();
+    expect(screen.queryByText(title)).toBeNull();
+    // Review shows the offer again.
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByText(title)).toBeVisible();
+    cleanup();
+  }
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("adopts a Dreaming set up by hand as version 3 with the lines it chose to keep", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  render(<Tab agent={dreaming(`${dreamV2}\n\n${ownLines}`)} />);
+  expect(
+    screen.getByText(`Customized · version ${dream.version} available`),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Review" }));
+  const kept = await screen.findByRole("checkbox", { name: ownLines });
+  expect(kept).toBeChecked();
+  // Unchecked, it stays only in the backup; checked again, it is kept.
+  await user.click(kept);
+  expect(kept).not.toBeChecked();
+  await user.click(kept);
+  expect(kept).toBeChecked();
+  await user.click(
+    screen.getByRole("button", { name: `Use version ${dream.version}` }),
+  );
+  expect(save.mock.calls[0]?.[1].attention).toEqual({
+    [DREAM]: {
+      type: "interest",
+      instructions: `${interestText(dream)}\n\n${ownLines}`,
+    },
+  });
+});
+
+it("offers Dreaming whose closing line was deleted the way it offers one set up by hand, showing the result first", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  render(
+    <Tab
+      agent={dreaming(
+        `<!-- buzz:bestie/dream.nightly v2 -->\n${dreamV2}\n\n${ownLines}`,
+      )}
+    />,
+  );
+  expect(
+    screen.getByText(
+      `Start or end line changed · version ${dream.version} available`,
+    ),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Review" }));
+  const dialog = await screen.findByRole("dialog");
+  // What it will be, whole, before it is saved.
+  expect(
+    within(dialog).getByText(
+      `Now → version ${dream.version} with the lines you keep`,
+    ),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByRole("checkbox", { name: ownLines }),
+  ).toBeChecked();
+  await user.click(
+    screen.getByRole("button", { name: `Use version ${dream.version}` }),
+  );
+  expect(save.mock.calls[0]?.[1].attention).toEqual({
+    [DREAM]: {
+      type: "interest",
+      instructions: `${interestText(dream)}\n\n${ownLines}`,
+    },
+  });
+});
+
+it("saves nothing from a dialog whose Interest changed after it opened, and closes it to review the latest", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  const { rerender } = render(<Tab agent={dreaming(dreamV2)} />);
+  for (const [latest, row] of [
+    // The agent adds the owner's notes: Review, not Update, keeps them.
+    [
+      `${dreamV2}\n\n${ownLines}`,
+      `Customized · version ${dream.version} available`,
+    ],
+    // A newer Buzz set it: nothing to do here.
+    [
+      "<!-- buzz:bestie/dream.nightly v4 -->\nSteps from a newer Buzz.\n<!-- /buzz:bestie/dream.nightly -->",
+      "Dreaming is version 4",
+    ],
+  ] as const) {
+    rerender(<Tab agent={dreaming(dreamV2)} />);
+    await user.click(screen.getByRole("button", { name: "See changes" }));
+    const dialog = await screen.findByRole("dialog");
+    rerender(<Tab agent={dreaming(latest)} />);
+    expect(
+      within(dialog).getByText(
+        /changed after this opened, so this can't be saved/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", {
+        name: `Update to version ${dream.version}`,
+      }),
+    ).toBeDisabled();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Show the latest" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText(row)).toBeVisible();
+  }
+  expect(save).not.toHaveBeenCalled();
+});
+
+it("says inside the dialog why a save was refused, keeping it open", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  save.mockRejectedValueOnce(
+    new Error("Attention changed. Review it and try again."),
+  );
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  render(<Tab agent={dreaming(dreamV2)} />);
+  await user.click(screen.getByRole("button", { name: "See changes" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(
+    within(dialog).getByRole("button", {
+      name: `Update to version ${dream.version}`,
+    }),
+  );
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Attention changed. Review it and try again.",
+  );
+  expect(screen.getByRole("dialog")).toBeVisible();
+});
+
+it("opens a dialog without the alert of a save that failed before it", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  save.mockRejectedValueOnce(
+    new Error("Attention changed. Review it and try again."),
+  );
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  render(<Tab agent={dreaming(dreamV2)} />);
+  // Update from the row fails, and says so beside it.
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Attention changed. Review it and try again.",
+  );
+  await user.click(screen.getByRole("button", { name: "See changes" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+  expect(
+    screen.queryByText("Attention changed. Review it and try again."),
+  ).toBeNull();
+});
+
+it("offers nothing to do to a Dreaming a newer Buzz set, not even Undo", async () => {
+  const user = userEvent.setup();
+  const { relay } = community(ada.pubkey);
+  const { agents, save } = host();
+  const Tab = bestieTab(relay, agents, navigation, settingsCards).component;
+  const { rerender } = render(<Tab agent={dreaming(dreamV2)} />);
+  await user.click(screen.getByRole("button", { name: "Update" }));
+  rerender(<Tab agent={dreaming(interestText(dream))} />);
+  expect(screen.getByRole("button", { name: "Undo" })).toBeVisible();
+  rerender(
+    <Tab
+      agent={dreaming(
+        "<!-- buzz:bestie/dream.nightly v4 -->\nSteps from a newer Buzz.\n<!-- /buzz:bestie/dream.nightly -->",
+      )}
+    />,
+  );
+  expect(screen.getByText("Dreaming is version 4")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Undo" })).toBeNull();
+  expect(save).toHaveBeenCalledTimes(1);
 });

@@ -103,13 +103,13 @@ turning it off removes that section. The section is the memory map and its
 rules, which every turn needs: each slug with its size and who writes it
 (`core`, `mem/user`, `mem/memory`, `mem/entities/<type>/<id>` cards,
 `mem/hypotheses`, `mem/notes/YYYY-MM-DD`, `mem/heartbeat`), add-then-organize
-(each card write is linked from that day's note, which is how Nightly review
+(each card write is linked from that day's note, which is how Dreaming
 finds it), what is a fact and what a guess, and checking a fact against its source before
 relying on it. Sizes are asked for in the text; nothing enforces them yet. An
 agent that already has the v1 section keeps it until Remembers you is turned
 off and on again, or until the upgrade from Every hour below replaces it, which
 it does only while the section's text is still v1 as it shipped.
-Nightly review never drops what v1 kept in `mem/memory`: before it rebuilds
+Dreaming never drops what v1 kept in `mem/memory`: before it rebuilds
 the index, it moves each claim there that is not a card line, a "Now" line or
 a lesson to its card, or to `mem/hypotheses` if it is a guess. The switch is on while the section is
 there, whatever you edit inside it or type next to its markers. Off removes
@@ -158,7 +158,7 @@ are there.
   each with its source, to `mem/notes/YYYY-MM-DD`, and dated lines to the
   entity cards they are about. It messages you in the DM only when a follow-up
   you asked for is due.
-- **Nightly review** (`bestie-dream`, once a day, about 03:00 on this device)
+- **Dreaming** (`bestie-dream`, once a day, about 03:00 on this device)
   is silent. It checks the claims it changes against their source messages,
   promotes a hypothesis to a fact only when you confirmed it or it has three
   observations on three days and none against, retires one on a contradiction,
@@ -172,7 +172,7 @@ Attention off for every agent. While a timer can't run, its row says it is
 paused, and a timer paused on its own in the Attention tab says to turn the
 switch off and on again to restart it. A check-in whose Interest or timer was
 deleted shows **Remove** for what is left. After a sleep a timer runs once, not
-once for each missed run. Nightly review is armed at the latest 03:00 here, so
+once for each missed run. Dreaming is armed at the latest 03:00 here, so
 its first run is the next 03:00; after each run Attention schedules the next
 one a day later, so a run made late by a sleep moves later until the timer is
 turned off and on again. Each check-in is a feature in `features.ts`, so
@@ -183,7 +183,7 @@ a `buzz:bestie/checkin.hourly` section of the instructions with all its steps,
 and a timer, `watch/bestie-hourly-check-in`. Its steps added Bestie to each
 private channel it had been added to, which Hourly notes no longer does. For
 your Bestie, whenever the account's choice is known, the plugin turns on Hourly
-notes and Nightly review in the DM the old timer ran in, when the old check-in
+notes and Dreaming in the DM the old timer ran in, when the old check-in
 was on with memory, paused if its timer or Interest was paused in Attention.
 That is one Attention change that removes the old Interest and timer before it
 adds the new ones, so it saves whole or not at all, and an agent at its limit

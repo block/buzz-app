@@ -54,7 +54,12 @@ export function ConnectChoice({
         </span>
       </div>
       <div className="flex flex-col gap-2">
-        <Button variant="prominent" size="lg" onClick={onConnect}>
+        <Button
+          variant="prominent"
+          size="lg"
+          data-return-focus="sign-in"
+          onClick={onConnect}
+        >
           Sign in with Builderlab
         </Button>
         <Button size="lg" data-return-focus="import" onClick={onImport}>

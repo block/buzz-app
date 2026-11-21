@@ -38,6 +38,47 @@ wireframes. When a page replaces another, focus moves to the new page's
 heading unless the page focuses a field itself, and **Back** returns focus to
 the choice that opened the page.
 
+While a first-run sign-in is in the browser and setup has not started, one
+waiting page (`BrowserSignIn.tsx`) replaces the page that started it: the
+welcome screen, the invited page, **Connect to your community**, a typed
+address that signs in at once, or a sign-in resumed after a restart or by
+**Open Buzz**. It is headed **Continue in your browser** and says to create the
+account or sign in there, and that Buzz is waiting and carries on by itself.
+When first run holds a community to join afterwards, it adds *Next, you’ll join
+this community* above that community's row (`FoundCommunityRow.tsx`): the
+lookup's name, icon and host for a link to a community this build's Builderlab
+hosts, whose answer the invited page keeps; the host alone for a typed address
+and for any community reached through **Connect to your community**, by link
+or typed. Those were looked up too, but first run keeps only the address, and
+nothing is looked up again for the row. The primary action is in the browser, so
+the one action here is not prominent, beside the page's back arrow, which is
+named **Cancel** while Buzz waits. **Open browser** restarts the same
+sign-in in a fresh tab on the form it opened: a sign-up stays a sign-up, and
+one **Open Buzz** restarted is a sign-in, still started from the same page.
+**Cancel** ends it and returns to the
+page that started it, holding what that page held and looking nothing up
+again: the invited page with its invite, **Connect to your community**, the
+**Other options** page with the typed address kept and editable, else the
+welcome screen. Focus returns to the action that starts that sign-in; the
+**Other options** page has none, so its *Join a community* heading takes
+focus, as on every entry to it. A
+canceled sign-in that finishes later is ignored: it cannot restart setup or
+use a later sign-in's account.
+
+When native stops waiting on the browser, the same page changes state instead
+of failing, since the person may still be signing up or verifying their email:
+**Finish in your browser**, saying that Buzz stopped waiting and to finish
+there and then choose **Continue**, still naming the community. The page
+changes in place, with the same heading, line and controls: its line is a
+polite status (`role="status"`), so the change is announced without moving
+focus and never as an alert. **Continue**
+is prominent, as Buzz no longer carries on by itself; it signs in again, which
+the browser's session finishes, and waits again. The back arrow is named
+**Back** now, and returns where
+**Cancel** does for that sign-in, keeping the invite or typed address the page
+names and looking nothing up again; only **Back** from a failed sign-in
+(*Couldn’t sign in*) returns to the plain welcome screen.
+
 A build's Builderlab is its first sign-in server, the built-in one unless the
 build adds another (see
 [configuration](configuration.md#federated-identity-build-input)). The bundled
@@ -47,8 +88,8 @@ the native FI session (#1461). **Sign in with Builderlab** is the native
 step, code exchange and token stay native. A session that already exists,
 including one saved by an earlier run or adopted from another Buzz copy's
 shared sign-in, signs in again, so the browser can choose the account; if that sign-in is canceled, first run stops rather than
-continuing as the old account, and one that times out fails as *Sign-in did
-not finish*. Setup's account calls then go through the native forwarder as the
+continuing as the old account, and one that times out shows **Finish in your
+browser** (above). Setup's account calls then go through the native forwarder as the
 bundled plugin's installation, fenced to that session, and a backup hands the
 uploader the session's revision. Native admission checks only that
 installation's grant, so this works whether or not the plugin has started.
@@ -112,19 +153,18 @@ through the development broker (unless `BUZZ_BUILDERLAB_URL` is empty), but
 first run never uses that sign-in. The answer applies only to the lookup that
 asked: Cancel, another address or leaving the screen discards it. Such a
 community requires Builderlab sign-in, so it starts at once there, exactly as
-the welcome screen's own button does, and the welcome screen shows it pending
-(**Cancel sign-in**, with the field disabled); setup then lands on **Join
+the welcome screen's own button does, and the waiting page (above) shows while
+the browser has it; setup then lands on **Join
 Community** for the address, and it is never offered a key of the user's own
-instead. Cancel sign-in, **Back** from a sign-in failure, and **Use a
-different account** from a setup failure, return to the welcome screen with the address kept and do not look it up again. A
-canceled sign-in that finishes later is ignored: it cannot restart setup or use
-a later sign-in's account. Any other found community, including one run by
+instead. The waiting page's **Cancel** returns to the **Other options** page,
+and **Back** from a sign-in failure and **Use a
+different account** from a setup failure return to the welcome screen; each keeps the address and none looks it up again. Any other found community, including one run by
 another Builderlab deployment, pauses on **Connect to {host}**: nothing a relay publishes names its sign-in portal, so the user
 chooses. The page says only that Buzz relies on a key for the user's identity; its choices are
 **Sign in with Builderlab**, which signs in at `BUZZ_BUILDERLAB_URL` and
-continues exactly as the welcome screen's own button does (the landing shows
-the sign-in pending with the address held; the key it creates is linked to that
-account and backed up there), and setup then lands on **Join Community** for
+continues exactly as the welcome screen's own button does (the waiting page
+shows with the address held, and its **Cancel** returns to this page; the key
+it creates is linked to that account and backed up there), and setup then lands on **Join Community** for
 the address;
 **I already have a key** opens **Enter your private key** and, with no account
 signed in, continues from there with no link step and no backup offer (once the
@@ -153,11 +193,14 @@ without one, a row with the community's icon, name and host (the row **Join
 Community** uses, `FoundCommunityRow.tsx`), one line saying an
 account is needed and that the browser will open and return to Buzz to join,
 and the welcome screen's two account actions in its order (**Create account**
-opens the sign-up form) above **Not now**. The page stays while the browser
-completes the sign-in the person started there; **Open Buzz** from the account
-pages signs in from it too. **Not now** drops the link and any waiting sign-in
-and returns to the plain welcome screen. A sign-in that times out or fails
-shows the usual page, whose **Back** also returns there. Any other found
+opens the sign-up form) above **Not now**. The waiting page (above) replaces
+it while the browser completes the sign-in the person started there, and its
+**Cancel** returns here with the invite held; **Open Buzz** from the account
+pages signs in from it too. **Not now** drops the link
+and returns to the plain welcome screen. A sign-in that fails shows
+*Couldn’t sign in*, whose **Back** also returns there; one that times out
+shows **Finish in your browser**, whose **Back** returns to the invited page
+with the invite held. Any other found
 community keeps **Connect to your community** (or **Enter your private key**
 in a build without a sign-in server), exactly as for a typed address.
 
@@ -168,10 +211,11 @@ is claimed only by **Join**. Unlike a typed address, a link never joins at
 once, even where the account's consent would allow it: opening a link claims,
 joins and accepts nothing.
 
-While the lookup, the invited page or a failed sign-in shows, a newer link
+While the lookup, the invited page, a failed sign-in or **Finish in your
+browser** shows, a newer link
 replaces the current one and is looked up afresh, including the same link
-opened again; a link taken over a failed sign-in drops what that sign-in was
-for, as **Back** to the welcome screen does. Once a sign-in is waiting on the
+opened again; a link taken over a failed or timed-out sign-in drops what that
+sign-in was for, as **Back** to the welcome screen does. Once a sign-in is waiting on the
 browser or setup is under way, the same link opened again is consumed and
 changes nothing, so it cannot open the join dialog for a community first run
 then joins; a different link is not taken and waits with the deep-link owner

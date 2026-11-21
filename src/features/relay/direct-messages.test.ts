@@ -234,6 +234,46 @@ it("a refusal that needs the history choice is told apart from other refusals", 
     t.owner.dispose();
   }
 });
+it("names the agent whose add policy refused an open or an addition", async () => {
+  const t = setup();
+  try {
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:owner_only (agent ${t.other.pubkey})`),
+    );
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("Only Other’s owner can add it to a DM.");
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:nobody (agent ${t.other.pubkey})`),
+    );
+    const refused = t.dm.add(
+      id,
+      [t.other.pubkey],
+      "ask",
+      new AbortController().signal,
+    );
+    await expect(refused).rejects.toThrow(
+      "Couldn’t add them. Other can’t be added to a DM.",
+    );
+    await expect(refused).rejects.not.toBeInstanceOf(NeedsHistoryChoice);
+  } finally {
+    t.owner.dispose();
+  }
+});
+it("refuses without the agent's name when its profile cannot be read", async () => {
+  const t = setup();
+  try {
+    const unknown = "e".repeat(64);
+    t.openDirectMessage.mockRejectedValueOnce(
+      new Error(`policy:owner_only (agent ${unknown})`),
+    );
+    await expect(
+      t.dm.open([t.other.pubkey], new AbortController().signal),
+    ).rejects.toThrow("Only this agent’s owner can add it to a DM.");
+  } finally {
+    t.owner.dispose();
+  }
+});
 it("refuses an addition the signed membership does not show", async () => {
   const t = setup({ badRoster: true });
   try {

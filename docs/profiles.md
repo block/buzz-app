@@ -128,8 +128,10 @@ session's shared live status owner, including expiration and clear events.
 Statuses the session shows are saved with the saved profiles, for as many
 people as those keep, and appear at once on the next start. Each row still reads
 its author's status, so a newer one replaces the saved copy and one the relay
-no longer returns is dropped. Expired and empty statuses are not saved, and
-statuses use only the room the saved names leave. A channel access change keeps statuses shown, because
+no longer returns is dropped. Expired and empty statuses are not saved.
+Statuses use only the room the saved names and the startup store's other saved
+data leave; when not all fit, the least recently changed are left out, never cut.
+A channel access change keeps statuses shown, because
 they belong to the person rather than a channel, and reads them again.
 Channel timelines and threads read bylines' statuses in the same request as
 their profiles, or alone when the profile is already known, so a new author's

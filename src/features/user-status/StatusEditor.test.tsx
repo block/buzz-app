@@ -56,15 +56,18 @@ it("calculates the selected preset at save time after a quick choice is edited",
     await screen.findByRole("menuitemradio", { name: "Don’t clear" }),
   ).toBeVisible();
   await user.click(
-    await screen.findByRole("menuitemradio", { name: "8 hours" }),
+    await screen.findByRole("menuitemradio", { name: "30 minutes" }),
   );
+  expect(
+    screen.getByRole("button", { name: "Duration: 30 minutes" }),
+  ).toBeVisible();
   now += 600_000;
   await user.click(screen.getByRole("button", { name: "Save status" }));
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
   expect(save).toHaveBeenCalledWith({
     text: "Design review",
     emoji: "🗣️",
-    expiresAt: now / 1000 + 28800,
+    expiresAt: now / 1000 + 1800,
   });
 });
 it("saves a new status without an expiry when Don’t clear is chosen", async () => {

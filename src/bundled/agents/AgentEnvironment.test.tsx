@@ -141,18 +141,21 @@ it("locks the list until a restart finishes", async () => {
   );
   await user.click(screen.getByRole("button", { name: "Restart" }));
   const value = screen.getByLabelText("Value of SAVED_KEY");
-  expect(value).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Add variable" })).toBeDisabled();
-  expect(
-    screen.getByRole("button", { name: "Remove SAVED_KEY" }),
-  ).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
-  await user.type(value, "new");
-  expect(value).toHaveValue("");
-  finish();
+  try {
+    expect(value).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add variable" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Remove SAVED_KEY" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await user.type(value, "new");
+    expect(value).toHaveValue("");
+  } finally {
+    finish();
+  }
   await waitFor(() => expect(value).toBeEnabled());
   await user.type(value, "new");
   await user.click(screen.getByRole("button", { name: "Save" }));

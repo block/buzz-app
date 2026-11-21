@@ -424,13 +424,13 @@ async function dismissFace(
   return edited(h.published[0]);
 }
 
-it("rewrites the complete message when a chat card is drawn apart from its text", async () => {
+it("rewrites the complete message around a chat link", async () => {
   const h = await fixture("viewer", "none", 1, `${chat}\n\nSee ${url}`);
   expect(await dismissFace(h, url)).toBe(`${chat}\n\nSee <${url}>`);
   expect(face("buzz://channel/session-id")?.dismiss).toBeUndefined();
 });
 
-it("counts links past a chat card that shares their address", async () => {
+it("counts links past a chat link that shares their address", async () => {
   const target = "buzz://channel/c";
   const h = await fixture(
     "viewer",
@@ -528,7 +528,7 @@ it.each([
     `||${url}|| <${url}>`,
   ],
   [
-    "follows a card drawn apart from the text",
+    "counts it among the message's links past a chat link",
     `${chat}\n\nSee ${url}`,
     `${chat}\n\nSee <${url}>`,
   ],

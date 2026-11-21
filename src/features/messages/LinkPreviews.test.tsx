@@ -118,7 +118,7 @@ it("lets a card open its plugin's own target while its link opens as before", ()
       open={openTarget}
     >
       <LinkPreviews
-        urls={["https://item.example/7"]}
+        links={[{ url: "https://item.example/7" }]}
         messageId="m"
         registry={reader([entry("item", () => true, 0, Card)])}
         onOpenLink={onOpenLink}
@@ -152,7 +152,7 @@ it("closes a card's opener once its contribution is removed or outside a convers
   const { unmount } = render(
     <TargetOpenerProvider canOpen={() => true} open={openTarget}>
       <LinkPreviews
-        urls={["https://item.example/7"]}
+        links={[{ url: "https://item.example/7" }]}
         messageId="m"
         registry={reader(live)}
         onOpenLink={() => true}
@@ -169,7 +169,7 @@ it("closes a card's opener once its contribution is removed or outside a convers
 
   render(
     <LinkPreviews
-      urls={["https://item.example/7"]}
+      links={[{ url: "https://item.example/7" }]}
       messageId="m"
       registry={reader([entry("item", () => true, 0, Card)])}
       onOpenLink={() => true}

@@ -15,12 +15,9 @@ export function useIncomingHuddle(
   }>();
   useEffect(() => {
     if (!session) return;
-    // Only a room started within the hour is offered (see below), and its
-    // joins and leaves come after its start.
-    const since = Math.floor(Date.now() / 1000) - 3600;
     const view = session.observe([
-      { kinds: [48100], "#h": [parent], since, limit: 30 },
-      { kinds: [48101, 48102, 48103], "#h": [parent], since, limit: 200 },
+      { kinds: [48100], "#h": [parent], limit: 30 },
+      { kinds: [48101, 48102, 48103], "#h": [parent], limit: 200 },
     ]);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const update = () => {

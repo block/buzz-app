@@ -10,7 +10,6 @@ import {
   message,
   roster,
   scriptedTransport,
-  signed,
 } from "./testing";
 
 function setup() {
@@ -287,16 +286,8 @@ it("opening a channel with live messages but no saved page shows nothing until t
   }
 });
 
-function huddleCard(h: ReturnType<typeof setup>, created_at: number) {
-  return signed(h.relay, {
-    kind: 48100,
-    created_at,
-    tags: [["h", "z"]],
-    content: JSON.stringify({ ephemeral_channel_id: crypto.randomUUID() }),
-  });
-}
-/** A side read of a channel's rows (the huddle launcher's cards, an agent's
- * messages) as the channel opens. */
+/** A side read of a channel's rows, such as an agent's messages, as the
+ * channel opens. */
 async function readBeside(
   h: ReturnType<typeof setup>,
   kind: number,
@@ -325,13 +316,13 @@ const headRead = (h: ReturnType<typeof setup>) =>
   );
 
 it("a catch-up does not page back for rows a cold window held before its first page", async () => {
-  // An old Huddle card read before the first page was never shown, so the
-  // head the stream's catch-up reads shows at once.
+  // An old row read before the first page was never shown, so the head the
+  // stream's catch-up reads shows at once.
   const h = setup();
   try {
     h.owner.session.channels.ensure("z");
     const beforeStream = h.wire.next();
-    await readBeside(h, 48100, [huddleCard(h, 1600000000)]);
+    await readBeside(h, 9, [message(keypair(), "z", "old", 1600000000)]);
     expect(h.owner.session.channels.window("z").rows).toEqual([]);
     h.live.state({ status: "connected", routes: [] });
     h.live.established("z");

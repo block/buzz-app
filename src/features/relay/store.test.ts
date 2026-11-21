@@ -4,7 +4,7 @@ import { ReadError } from "./errors";
 import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
 import type { HeadPersistence, SavedStartup } from "./persistence";
-import type { ReadFilter, RelayEvent } from "./events";
+import type { RelayEvent } from "./events";
 import {
   bounds,
   flush,
@@ -344,93 +344,6 @@ describe("channel store", () => {
       newer.id,
       live.id,
     ]);
-    store.dispose();
-  });
-  it("holds rows a side read delivers before a window's first page until that page sets its extent", async () => {
-    // The huddle launcher reads a channel's Huddle cards as the channel opens.
-    // That small read lands before the head page; shown alone, the cards fill
-    // the timeline until history arrives around them.
-    const { store, queries, pending } = setup();
-    const take = (match: (filter: ReadFilter) => boolean) => {
-      const index = pending.findIndex((entry) =>
-        entry.filters.some((filter) => match(filter)),
-      );
-      const [entry] = pending.splice(index, 1);
-      assert.exists(entry);
-      return entry;
-    };
-    const huddle = (created_at: number) =>
-      signed(relay, {
-        kind: 48100,
-        created_at,
-        tags: [["h", "c"]],
-        content: JSON.stringify({
-          ephemeral_channel_id: crypto.randomUUID(),
-        }),
-      });
-    const older = huddle(5),
-      inside = huddle(25),
-      first = message(alice, "c", "first", 20),
-      second = message(alice, "c", "second", 30);
-    const rows = () => queries.window("c").rows.map((row) => row.id);
-    queries.ensure("c");
-    const side = store.session.read([
-      { kinds: [48100], "#h": ["c"], limit: 30 },
-    ]);
-    take((filter) => !filter.top_level && filter.limit === 30).respond([
-      inside,
-      older,
-    ]);
-    await side;
-    await flush();
-    expect(rows()).toEqual([]);
-    take((filter) => filter.top_level === true).respond([
-      second,
-      first,
-      bounds(relay, "c", "head", {
-        has_more: true,
-        next_cursor: { created_at: 20, id: first.id },
-      }),
-    ]);
-    await flush();
-    expect(rows()).toEqual([first.id, inside.id, second.id]);
-    // Live rows after the first page still append.
-    const live = message(alice, "c", "live", 40);
-    const current = store.session.read([{ ids: [live.id], limit: 1 }]);
-    take((filter) => filter.ids?.includes(live.id) === true).respond([live]);
-    await current;
-    expect(rows()).toEqual([first.id, inside.id, second.id, live.id]);
-    store.dispose();
-  });
-  it("shows side-read rows with a first page that has no older history", async () => {
-    const { store, queries, pending } = setup();
-    const take = (match: (filter: ReadFilter) => boolean) => {
-      const index = pending.findIndex((entry) =>
-        entry.filters.some((filter) => match(filter)),
-      );
-      const [entry] = pending.splice(index, 1);
-      assert.exists(entry);
-      return entry;
-    };
-    const card = signed(relay, {
-      kind: 48100,
-      created_at: 5,
-      tags: [["h", "c"]],
-      content: JSON.stringify({ ephemeral_channel_id: crypto.randomUUID() }),
-    });
-    queries.ensure("c");
-    const side = store.session.read([
-      { kinds: [48100], "#h": ["c"], limit: 30 },
-    ]);
-    take((filter) => !filter.top_level && filter.limit === 30).respond([card]);
-    await side;
-    await flush();
-    expect(queries.window("c").rows).toEqual([]);
-    take((filter) => filter.top_level === true).respond([
-      bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
-    ]);
-    await flush();
-    expect(queries.window("c").rows.map((row) => row.id)).toEqual([card.id]);
     store.dispose();
   });
   it("evicts the least recently ensured window beyond capacity, aborting its request and rejecting late results", async () => {

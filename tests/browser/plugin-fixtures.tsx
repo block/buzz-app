@@ -665,5 +665,38 @@ export const fixturePlugins: readonly BundledPlugin[] = [
       },
     },
   },
+  {
+    manifest: {
+      id: "fixture.link-previews",
+      name: "Link preview fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["conversation", "panels"],
+      apply(ctx) {
+        const ours = (url: string) =>
+          url.startsWith("https://previews.example/");
+        ctx.conversation.registerLinkPreview({
+          id: "card",
+          title: "Fixture card",
+          matches: ours,
+          order: 0,
+          component: ({ url, open }) => (
+            <button type="button" onClick={open}>
+              Preview of {url}
+            </button>
+          ),
+        });
+        ctx.panels.register({
+          id: "paneled",
+          title: "Paneled preview",
+          matches: (url) => url === "https://previews.example/paneled",
+          order: -20,
+          component: () => <p>Paneled preview panel</p>,
+        });
+      },
+    },
+  },
   ...companionPlugins,
 ];

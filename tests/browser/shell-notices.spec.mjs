@@ -45,6 +45,7 @@ test("a plugin's notice shows on any page and takes the owner's answer over Sett
 });
 
 async function returnedFocus(page) {
+  await expect(settingsDialog(page).locator(":focus")).toHaveCount(1);
   return page.evaluate(async () => {
     const frame = () => new Promise(requestAnimationFrame);
     const toaster = document.querySelector("[data-sonner-toaster]");

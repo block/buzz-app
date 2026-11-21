@@ -140,6 +140,7 @@ function setup({
   initial = undefined as unknown,
   mounted = [] as { id: string; y: number }[],
   initialRows = undefined as ChannelMessage[] | undefined,
+  clientHeight = 668,
 } = {}) {
   Object.assign(hooks, {
     refs: [],
@@ -220,13 +221,15 @@ function setup({
   };
   const element = {
     clientWidth: 1124,
-    clientHeight: 668,
+    clientHeight,
     scrollHeight: 3706,
     scrollTop: 2388,
     ownerDocument: Object.assign(new EventTarget(), {
       defaultView: new EventTarget(),
     }),
     focus: vi.fn(),
+    setAttribute: vi.fn(),
+    removeAttribute: vi.fn(),
     getBoundingClientRect: () => ({ top: 0 }),
     querySelector: () => list,
     querySelectorAll: () =>
@@ -576,6 +579,56 @@ it("pins only the focused message by identity across prepend and releases on foc
   h.unmount();
 });
 
+it("paints an opening's history only once it is positioned, and only hides it once", () => {
+  const h = setup();
+  const set = vi.mocked(h.element.setAttribute);
+  const remove = vi.mocked(h.element.removeAttribute);
+  expect(set).toHaveBeenCalledWith("data-positioning", "");
+  expect(remove).toHaveBeenCalledWith("data-positioning");
+  expect(set.mock.invocationCallOrder[0]).toBeLessThan(
+    remove.mock.invocationCallOrder[0] ?? 0,
+  );
+  // Positioned before the bottom correction's frame ran.
+  expect(h.handle.scrollToIndex.mock.invocationCallOrder[0]).toBeLessThan(
+    remove.mock.invocationCallOrder[0] ?? 0,
+  );
+  set.mockClear();
+  h.measureRows();
+  h.gesture();
+  expect(set).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("hides a first visit's history when its rows arrive from the relay", () => {
+  const h = setup({ initialRows: [] });
+  const set = vi.mocked(h.element.setAttribute);
+  const remove = vi.mocked(h.element.removeAttribute);
+  expect(set).not.toHaveBeenCalled();
+  h.setRows([timelineMessage("first"), timelineMessage("last")], false);
+  expect(set).toHaveBeenCalledWith("data-positioning", "");
+  expect(remove).not.toHaveBeenCalled();
+  h.flush();
+  h.flush();
+  expect(remove).toHaveBeenCalledWith("data-positioning");
+  h.unmount();
+});
+it("paints a revisit with saved geometry in place, without hiding it", () => {
+  const h = setup();
+  h.navigate("other");
+  const set = vi.mocked(h.element.setAttribute);
+  set.mockClear();
+  h.navigate("channel");
+  expect(set).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("presents a positioning history when focus enters it", () => {
+  // An unmeasured viewport cannot be positioned yet.
+  const h = setup({ clientHeight: 0 });
+  const remove = vi.mocked(h.element.removeAttribute);
+  expect(remove).not.toHaveBeenCalled();
+  h.focus("last");
+  expect(remove).toHaveBeenCalledWith("data-positioning");
+  h.unmount();
+});
 it("persists the event target's reading position at real component cleanup, not the previous virtualizer offset", () => {
   const h = setup();
   h.scroll();

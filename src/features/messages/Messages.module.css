@@ -4372,3 +4372,9 @@ html[data-keyboard-navigation]
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+
+/* An opening keeps its rows unpainted until they take the reader's place,
+   so measuring and scroll corrections never show as the history jumping. */
+.feed[data-positioning] > * {
+  opacity: 0;
+}

@@ -157,6 +157,8 @@ function subscribeDocumentActive(listener: () => void) {
 const TIMELINE_PLACE = "timeline";
 // Older pages a visit reads unasked to fill a screen its head leaves empty.
 const FILL_PAGES = 5;
+// The longest an opening's history stays unpainted while it is positioned.
+const POSITIONING_LIMIT_MS = 300;
 // A row's content sits below its day divider and byline, and its virtual item
 // adds group spacing. All depend on the row before it, so older rows landing
 // above can remove them. Offsets of the content from the row and item tops.
@@ -1597,6 +1599,50 @@ function Timeline({
     element.ownerDocument.addEventListener("pointercancel", done);
     return () => release(true);
   }, [rows, prepend, containedOwners, newMessageBoundaryId]);
+  // An opening without saved geometry paints once it is positioned. Until then
+  // Virtua shows an empty or estimated range at the top, and each correction
+  // toward the reader's place would show as the history jumping. Reader input,
+  // or a placement that takes too long, presents it as it is.
+  const positioning = useRef<{
+    frame: number;
+    timer: ReturnType<typeof setTimeout>;
+  }>(undefined);
+  const positioningArmed = useRef(false);
+  const presentPositioned = useCallback(() => {
+    const pending = positioning.current;
+    if (!pending) return;
+    positioning.current = undefined;
+    cancelAnimationFrame(pending.frame);
+    clearTimeout(pending.timer);
+    scroller.current?.removeAttribute("data-positioning");
+  }, []);
+  // Present one frame after the last correction, once its rows have measured.
+  const presentAfterFrame = useCallback(() => {
+    const pending = positioning.current;
+    if (!pending) return;
+    cancelAnimationFrame(pending.frame);
+    pending.frame = requestAnimationFrame(presentPositioned);
+  }, [presentPositioned]);
+  // Hide when the first rows land, whether they were stored or read from the
+  // relay. Saved geometry lays them out in place, so they need no hiding.
+  const armPositioning = useCallback(() => {
+    if (positioningArmed.current) return;
+    positioningArmed.current = true;
+    if (initialCache.current) return;
+    scroller.current?.setAttribute("data-positioning", "");
+    positioning.current = {
+      frame: 0,
+      timer: setTimeout(presentPositioned, POSITIONING_LIMIT_MS),
+    };
+  }, [presentPositioned]);
+  useLayoutEffect(
+    () => () => {
+      // A StrictMode remount arms again with its first rows.
+      positioningArmed.current = false;
+      presentPositioned();
+    },
+    [presentPositioned],
+  );
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
@@ -1733,6 +1779,9 @@ function Timeline({
     ) {
       setNewMessageCount((count) => count + arrivals);
     }
+    // History without rows has no place to take.
+    if (!rows.length) presentPositioned();
+    else armPositioning();
     if (
       (targetId && targetSignal && revealedSignal !== targetSignal) ||
       !size.width ||
@@ -1858,10 +1907,12 @@ function Timeline({
           recordPosition(scroller.current);
         if (!restore && !follow.current) {
           settled.current = true;
+          presentPositioned();
           readingPositioned(scroller.current);
           return;
         }
         restorePosition();
+        presentAfterFrame();
         // Width changes can measure after Virtua's imperative-scroll scheduler
         // expires. Retain the same reading anchor (or bottom intent) through
         // those late measurements, never through a new reader gesture.
@@ -1890,7 +1941,13 @@ function Timeline({
               layoutCorrection.current = true;
             }
             cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(restorePosition);
+            // Rows measured since the last correction: present after the next.
+            if (positioning.current)
+              cancelAnimationFrame(positioning.current.frame);
+            frame = requestAnimationFrame(() => {
+              restorePosition();
+              presentAfterFrame();
+            });
           });
           observer.observe(list, {
             attributes: true,
@@ -1913,6 +1970,8 @@ function Timeline({
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
+      // A rerun corrects again before presenting; the cap covers one that won't.
+      if (positioning.current) cancelAnimationFrame(positioning.current.frame);
       // A row refresh can arrive before the first deferred measurement or
       // cancel its correction. Keep restoration until newer reader input.
       if (restore && !follow.current && intent.current === scheduledIntent) {
@@ -1941,6 +2000,9 @@ function Timeline({
     latestRequest,
     containedOwners,
     newMessageBoundaryId,
+    presentPositioned,
+    presentAfterFrame,
+    armPositioning,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
@@ -2044,6 +2106,7 @@ function Timeline({
     };
   }, [scheduleFill, size]);
   const gesture = (upward = false) => {
+    presentPositioned();
     const restoring = pendingRestore.current === intent.current;
     restoredAnchor.current = undefined;
     layoutCorrection.current = false;
@@ -2138,6 +2201,8 @@ function Timeline({
         savePosition();
       }}
       onFocus={(event) => {
+        // A focused row must be visible, whether a reveal or Tab put it there.
+        presentPositioned();
         setFocusedActivityId(
           event.target.closest<HTMLElement>("[data-activity-group-id]")?.dataset
             .activityGroupId,

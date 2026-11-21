@@ -1284,6 +1284,44 @@ Quitting Buzz also turns it off.
   the Activity list and a conversation) works the same way. Each page remembers
   its own width within the same community and identity; double-click to reset.
 
+## Docs
+
+Docs is a bundled plugin for live Markdown documents shared with people and
+agents. Open Docs from the dock. Auto-save waits until you pause typing. You can
+keep editing while a save is in progress. If a save fails, use Retry save.
+Unsaved drafts survive browsing within the connected session and are cleared
+when you restart the app.
+
+The collection shows the docs you can read. Search by title or content. Each
+doc row shows its last editor’s avatar beside the relative save time. Hover for
+their name.
+Loaded collections follow saved revisions and access changes. Revoked docs are
+removed. Use **Filter docs → Show Trash** to browse or search only
+trashed docs. Select the **Trash** chip in the search bar to return to the main list.
+The list and open docs check for edits automatically. If **Refresh docs** or
+**Refresh doc** appears, use it to check again.
+
+New docs are private. After the first save, open **Share doc** to grant access
+or choose **Copy link**. View only allows community members to read. A link
+grants no access. Sharing includes retained revisions, and the relay operator
+can read content. Doc actions offers revision history with each revision’s
+author and avatar. Use **Move to Trash** to hide a doc from the main list. A doc in Trash shows its
+title with “(in Trash)”. Readers can view earlier versions under **Doc actions →
+Revision history**. Editors can choose **Restore** or restore a specific version
+from the revision preview.
+Revision times are relative; hover to see the exact date and time.
+Restore saves a new revision.
+Conflicting edits preserve the draft until you reconcile the newer revision.
+
+Doc references open beside the conversation, with normal Back/Forward and tab
+close behavior. Choose **Open in Docs** from the tab’s context menu or Doc
+actions to see the same doc in the main Docs view. Tables display as grids in
+Viewing and formatted Editing. Use Markdown source to change table cells.
+Agents can call `page_help`, create and verify a Doc,
+post its returned reference, then update the same document on follow-ups. The execution
+host must have Docs enabled. Saving requires relay support for NIP-AR doc
+records. Docs does not migrate Canvas or the separate Shared notes format.
+
 ## Saved Solo follow-ups
 
 Messages queued behind a working agent are saved on this device for the current

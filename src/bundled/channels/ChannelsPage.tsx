@@ -1960,7 +1960,15 @@ function ChannelWorkspace({
         tabState.select(id);
         return true;
       }
-      if (isBuzzLink(url) && navigator && viewer) {
+      // A plugin may expose the same document as a page and an addressable
+      // panel. Only its own panel can keep its link beside this conversation.
+      const linkedPanel =
+        parsed?.format === "plugin" ? panels.resolve(url) : undefined;
+      const pluginPanel =
+        parsed?.format === "plugin" &&
+        linkedPanel?.pluginId === parsed.pluginId &&
+        linkedPanel.addressable;
+      if (isBuzzLink(url) && navigator && viewer && !pluginPanel) {
         const target = buzzLinkTarget(url, {
           viewer,
           communityOrigin: scope.slice(0, -(viewer.length + 1)),

@@ -1774,6 +1774,19 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   the team. Teams made before teams synced move to their agents' community
   automatically once it syncs teams; a team whose agents are in different
   communities stays on this Mac.
+- **Settings → Agent details → Environment variables** sets variables one
+  local Claude Code, Codex, Goose or Pi agent starts with, such as API keys.
+  They're kept in the OS credential store on this computer, never synced, and
+  values aren't shown again after saving. Protected agents don't get them, and
+  a harness's own variables win, except that a saved `ANTHROPIC_API_KEY` wins
+  over the shared Claude key. Names that choose a model, provider or
+  endpoint, `PATH`, and `BUZZ_*`/`NOSTR_*` are refused. A save applies to agent
+  processes started afterward; running ones keep the old list until
+  **Restart agent**, which stops only that agent's processes in every
+  community so its next message starts them with the saved list. It asks
+  first, and it's refused while the agent is answering or in a call. A Codex or Pi agent
+  with its own list runs in its own process. Removing the agent from its last
+  community on this computer deletes its list.
 - Each Claude agent running on this computer keeps its own `claude` process for
   each active conversation. While an unprotected one runs here, Buzz also keeps
   one shared process ready for the next new conversation. Each of these starts

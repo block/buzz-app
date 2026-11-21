@@ -750,6 +750,8 @@ export class AgentRunners {
   private readonly runners = new Map<string, Runner>();
   /** Holds newly joined memberships while their global provider/policy changes. */
   private readonly transitions = new Set<string>();
+  /** Voice seats opening or live, by agent key. */
+  private readonly seats = new Map<string, number>();
   /** Each agent's last claim or release, which its next waits for. */
   private readonly custody = new Map<string, Promise<void>>();
   /** Agents whose community was live at the last resume. */
@@ -1089,6 +1091,37 @@ export class AgentRunners {
     voice: NonNullable<AgentType["voice"]>,
     pluginId?: string,
   ) {
+    const end = this.reserveVoice(seat.agent.key);
+    // The host aborts the seat's signal when its call ends.
+    seat.signal.addEventListener("abort", end, { once: true });
+    try {
+      return await this.connectVoice(seat, voice, pluginId);
+    } catch (error) {
+      end();
+      throw error;
+    }
+  }
+  /** Counts a voice seat from before its call opens, so a restart refuses
+   * it; refused while the agent restarts or changes type. Returns its end. */
+  reserveVoice(key: AgentKey) {
+    const pubkey = this.runners.get(key)?.member.pubkey;
+    if (pubkey && this.transitions.has(pubkey))
+      throw new Error("This agent is restarting or changing provider");
+    this.seats.set(key, (this.seats.get(key) ?? 0) + 1);
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      const left = (this.seats.get(key) ?? 1) - 1;
+      if (left) this.seats.set(key, left);
+      else this.seats.delete(key);
+    };
+  }
+  private async connectVoice(
+    seat: AgentVoicePipe,
+    voice: NonNullable<AgentType["voice"]>,
+    pluginId?: string,
+  ) {
     const agent = this.host.ready(seat.agent.key);
     const handle = agent && this.handle(agent.key, pluginId);
     const type = this.runners.get(seat.agent.key)?.type;
@@ -1202,37 +1235,69 @@ export class AgentRunners {
    * every community it is in, as its type is theirs: no turn starts
    * meanwhile, and their queues resume after. Refused while a turn is
    * working, and unless this copy of the app holds the agent. */
-  async retype<T>(
+  retype<T>(key: AgentKey, name: string, change: () => Promise<T>) {
+    return this.hold(key, change, {
+      busy: () => `${name} is answering; change its type when it finishes`,
+      absent:
+        "This agent is not running in this copy of Buzz. Change its provider in the Buzz app that runs it.",
+      changing: `${name}'s provider is already changing`,
+      elsewhere:
+        "Another copy of Buzz is running this agent. Change its provider there, or quit that copy of Buzz and try again.",
+    });
+  }
+  /** Runs `change`, which stops the agent's processes, as `retype` holds it,
+   * and also refused while it has a voice seat opening or live. */
+  restart<T>(key: AgentKey, name: string, change: () => Promise<T>) {
+    return this.hold(key, change, {
+      busy: (pubkey) =>
+        this.inCall(pubkey)
+          ? `${name} is in a call; restart it when the call ends`
+          : `${name} is answering; restart it when it finishes`,
+      absent:
+        "This agent is not running in this copy of Buzz. Restart it in the Buzz app that runs it.",
+      changing: `${name} is already restarting or changing provider`,
+      elsewhere:
+        "Another copy of Buzz is running this agent. Restart it there, or quit that copy of Buzz and try again.",
+      call: true,
+    });
+  }
+  private inCall(pubkey: string) {
+    return [...this.runners.values()].some(
+      (runner) => runner.member.pubkey === pubkey && this.seats.has(runner.key),
+    );
+  }
+  private async hold<T>(
     key: AgentKey,
-    name: string,
     change: () => Promise<T>,
+    refusals: Readonly<{
+      busy: (pubkey: string) => string;
+      absent: string;
+      changing: string;
+      elsewhere: string;
+      call?: boolean;
+    }>,
   ): Promise<T> {
     const runner = this.runners.get(key);
     const held = [...this.runners.values()].filter(
       (other) => other.member.pubkey === runner?.member.pubkey,
     );
-    const answering = () =>
-      new Error(`${name} is answering; change its type when it finishes`);
-    const working = () => held.some((other) => other.working);
-    if (working()) throw answering();
-    if (!runner)
-      throw new Error(
-        "This agent is not running in this copy of Buzz. Change its provider in the Buzz app that runs it.",
-      );
+    const busy = () =>
+      held.some((other) => other.working) ||
+      (!!refusals.call && !!runner && this.inCall(runner.member.pubkey));
+    if (busy()) throw new Error(refusals.busy(runner?.member.pubkey ?? ""));
+    if (!runner) throw new Error(refusals.absent);
     const pubkey = runner.member.pubkey;
     if (
       this.transitions.has(pubkey) ||
       held.some((other) => other.transitioning)
     )
-      throw new Error(`${name}'s provider is already changing`);
+      throw new Error(refusals.changing);
     this.transitions.add(pubkey);
     for (const other of held) other.transitioning = true;
     try {
       if (!(await this.claimForRetype(runner)))
-        throw new Error(
-          "Another copy of Buzz is running this agent. Change its provider there, or quit that copy of Buzz and try again.",
-        );
-      if (working()) throw answering();
+        throw new Error(refusals.elsewhere);
+      if (busy()) throw new Error(refusals.busy(pubkey));
       return await change();
     } finally {
       this.transitions.delete(pubkey);

@@ -406,6 +406,13 @@ Quitting Buzz also turns it off.
   with that name, or a neutral smiley when there is none or its image can't load.
 - In the fullscreen video viewer, comments and emoji reactions at the current
   frame stay attached to that video when you move through a thread's media.
+- A video's speed control opens a menu of playback speeds. Option-click
+  (Alt-click) it to toggle the speed instead of picking from the menu: 2x
+  from normal speed, or back to 1x from any other speed. An Option-click
+  closes the menu if it was showing, and resting the pointer on the control
+  does not open it again until the pointer has left and come back, or while
+  Option is held. A plain click or key press still opens it. This works the
+  same in the inline player and the fullscreen viewer.
 - Right-click an uploaded image to **Copy image**, **Copy image URL**, or
   **Download image**. Videos offer **Copy video URL** and **Download video**.
   **Open image** or **Open video** opens the preview in the fullscreen gallery.

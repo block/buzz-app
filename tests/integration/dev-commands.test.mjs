@@ -130,6 +130,7 @@ if (process.argv[2] === "tauri") console.log("ENV:" + JSON.stringify({ fi: proce
           BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE: undefined,
           BUZZ_DEV_HELPER_SIGNING: undefined,
           CARGO_TARGET_AARCH64_APPLE_DARWIN_RUNNER: undefined,
+          CARGO_TARGET_DIR: undefined,
           ...settings.env,
         },
         encoding: "utf8",
@@ -419,6 +420,20 @@ test("desktop-bundle --launch builds and opens the macOS app bundle", {
   assert.match(result.stderr, /bundle is ad-hoc signed/);
 });
 
+test("desktop-bundle --launch opens the bundle under an absolute CARGO_TARGET_DIR", {
+  skip: process.platform !== "darwin",
+}, () => {
+  const target = path.join(tmpdir(), "shared-cargo-target");
+  const result = launched(
+    "desktop-bundle",
+    { env: { CARGO_TARGET_DIR: target } },
+    "--launch",
+  );
+  assert.deepEqual(result.opened, [
+    [path.join(target, "debug/bundle/macos/Buzz.app")],
+  ]);
+});
+
 test("desktop-bundle --launch does not warn for configured certificate signing", {
   skip: process.platform !== "darwin",
 }, () => {
@@ -449,7 +464,7 @@ test("desktop-bundle --launch rejects bundle and artifact overrides", () => {
       /custom app artifact from --config/,
     ],
     [
-      { env: { CARGO_TARGET_DIR: "somewhere-else" } },
+      { env: { CARGO_TARGET_DIR: "relative-target" } },
       ["--launch"],
       /custom app artifact from CARGO_TARGET_DIR/,
     ],

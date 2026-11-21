@@ -142,6 +142,9 @@ export type InlineRenderer = Readonly<{
     }
   >;
 }>;
+/** How a link appeared in the message source. */
+export type LinkWritten = "bare" | "angle" | "labeled";
+
 /** Link presentation only. The host retains the anchor, destination and activation. */
 export type LinkRenderer = Readonly<{
   id: string;
@@ -150,7 +153,19 @@ export type LinkRenderer = Readonly<{
   /** Claim strength when several renderers match a URL; see `MatchOrder`. */
   order?: MatchOrder | undefined;
   className?: string | undefined;
-  component: ComponentType<{ url: string }>;
+  /** `written` is how the author wrote the link: bare, in angle brackets, or
+   * with a label. Angle brackets mean no preview was asked for, so draw the link
+   * inline with no card. `messageId` names the message holding the link, absent
+   * outside one. `interactive` is false for a composer decoration or preview.
+   * `dismiss` is present only when the viewer may edit that message and the
+   * link can be rewritten to angle brackets; it publishes that single edit. */
+  component: ComponentType<{
+    url: string;
+    written: LinkWritten;
+    messageId?: string | undefined;
+    interactive: boolean;
+    dismiss?: (() => Promise<void>) | undefined;
+  }>;
 }>;
 export type LinkPreviewProps = Readonly<{
   url: string;
@@ -162,6 +177,12 @@ export type LinkPreviewProps = Readonly<{
   /** The message's `TargetOpener`, for targets other than `url`, such as the
    * plugin's own panel. Absent on hosts that predate it. */
   opener?: TargetOpener | undefined;
+  /** Present only when the viewer may edit the message and the link that
+   * earned this card can be rewritten without losing anything the author wrote.
+   * Publishes one edit that rewrites that link to `<url>`, which asks for no
+   * preview, and rejects with an `Error` if the message has changed so that the
+   * link is no longer there as drawn. */
+  dismiss?: (() => Promise<void>) | undefined;
 }>;
 /** A card below a message for one of its links. The lowest `order` among
  * matches draws it, so a plugin can claim its own URLs ahead of the default

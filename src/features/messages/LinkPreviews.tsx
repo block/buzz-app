@@ -1,15 +1,23 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { resolveMatch, type Contribution } from "../../plugins/contributions";
 import {
   ContributionBoundary,
   contributionKey,
 } from "../conversation/ContributionBoundary";
+import { LinkDismissContext } from "../conversation/LinkLabelContext";
 import type {
   ContributionReader,
   LinkPreviewRenderer,
 } from "../conversation/contracts";
 import { useTargetOpener } from "../conversation/opener";
 import { Button } from "../../shared/design-system/ui/Button";
+import type { PreviewLink } from "./preview-links";
 import styles from "./LinkPreviews.module.css";
 
 /** A message shows this many cards before the rest fold behind one button. */
@@ -26,27 +34,35 @@ function LinkPreviewCard({
   registry,
   renderer,
   open,
+  dismiss,
 }: {
   url: string;
   messageId: string;
   registry: ContributionReader<LinkPreviewRenderer>;
   renderer: Contribution<LinkPreviewRenderer>;
   open(): boolean;
+  dismiss: (() => Promise<void>) | undefined;
 }) {
   const opener = useTargetOpener(registry, renderer);
   const Preview = renderer.component;
   return (
-    <Preview url={url} messageId={messageId} open={open} opener={opener} />
+    <Preview
+      url={url}
+      messageId={messageId}
+      open={open}
+      opener={opener}
+      dismiss={dismiss}
+    />
   );
 }
 
 export function LinkPreviews({
-  urls,
+  links,
   messageId,
   registry,
   onOpenLink,
 }: {
-  urls: readonly string[];
+  links: readonly PreviewLink[];
   messageId: string;
   registry: ContributionReader<LinkPreviewRenderer> | undefined;
   onOpenLink(url: string): boolean;
@@ -64,16 +80,17 @@ export function LinkPreviews({
       live.current = false;
     };
   }, []);
-  const cards = urls.flatMap((url) => {
+  const dismissLink = useContext(LinkDismissContext);
+  const cards = links.flatMap(({ url, at }) => {
     const renderer = resolveMatch(renderers, url);
-    return renderer ? [{ url, renderer }] : [];
+    return renderer ? [{ url, at, renderer }] : [];
   });
   if (!registry || !cards.length) return null;
   const shown = open ? cards : cards.slice(0, FOLD_AFTER);
   const hidden = cards.length - shown.length;
   return (
     <div className={styles.previews} data-link-previews>
-      {shown.map(({ url, renderer }) => {
+      {shown.map(({ url, at, renderer }) => {
         const key = contributionKey(renderer);
         return (
           <ContributionBoundary
@@ -90,6 +107,11 @@ export function LinkPreviews({
                 live.current && registry.snapshot().includes(renderer)
                   ? onOpenLink(url)
                   : false
+              }
+              dismiss={
+                dismissLink && at !== undefined
+                  ? () => dismissLink({ url, at })
+                  : undefined
               }
             />
           </ContributionBoundary>

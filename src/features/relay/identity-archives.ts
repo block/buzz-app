@@ -1,4 +1,5 @@
-import { retryRead } from "./read-retry";
+import { isRetryableRead, retryRead } from "./read-retry";
+import { ReadError } from "./errors";
 import { getEventHash } from "nostr-tools";
 import { authTagOwner, withinTimeBounds } from "../agents/owner-attestation";
 import { byteSize } from "./budget";
@@ -18,6 +19,9 @@ export type IdentityArchiveSnapshot = Readonly<{
   createdAt?: number;
   readAt?: number;
   error?: string;
+  transient?: true;
+  /** Earliest automatic retry after the relay's admission delay. */
+  retryAt?: number;
 }>;
 export type IdentityArchives = ReturnType<
   typeof createIdentityArchives
@@ -75,6 +79,10 @@ export function createIdentityArchives(
   const requests = new Set<AbortController>();
   const listeners = new Set<() => void>();
   let closed = false;
+  // Recovery may defer sidebar work; active consumers can claim the same read.
+  let backgroundRead = false;
+  // A read that crossed a reconnect may predate a change; ensure rereads once.
+  let owed = false;
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
   // Keep only the ordering fence across cache clears; never revive old contents.
@@ -88,9 +96,13 @@ export function createIdentityArchives(
     snapshot = Object.freeze(next);
     for (const listener of listeners) notify(listener);
   }
-  function refresh(): Promise<void> {
+  function refresh(background = false): Promise<void> {
     if (closed || !available || !authority) return Promise.resolve();
+    // An active consumer also claims recovery of an already failed read.
+    if (!background) backgroundRead = false;
     if (pending) return pending;
+    owed = false;
+    backgroundRead = background;
     const owned = new AbortController();
     controller = owned;
     let finish!: () => void;
@@ -100,7 +112,7 @@ export function createIdentityArchives(
     pending = completion;
     // Rereads keep the last known archives until the new snapshot replaces
     // them, so a known-archived identity never briefly looks live.
-    const { error: _, ...known } = snapshot;
+    const { error: _, transient: __, retryAt: ___, ...known } = snapshot;
     publish({ ...known, status: "loading" });
     void (async () => {
       try {
@@ -157,13 +169,22 @@ export function createIdentityArchives(
           createdAt: event.created_at,
           readAt: Date.now(),
         });
-      } catch {
+      } catch (error) {
         if (!closed && !owned.signal.aborted)
           publish({
             ...snapshot,
             status: "error",
             error:
               "Archive visibility is unknown. Retry to obtain a valid current relay snapshot (2 MiB limit).",
+            ...(isRetryableRead(error)
+              ? {
+                  transient: true as const,
+                  ...(error instanceof ReadError &&
+                  error.retryAfterMs !== undefined
+                    ? { retryAt: Date.now() + error.retryAfterMs }
+                    : {}),
+                }
+              : {}),
           });
       } finally {
         if (controller === owned) {
@@ -310,20 +331,33 @@ export function createIdentityArchives(
   }
   function stop() {
     for (const owned of requests) owned.abort();
+    stopRead();
+    return closed || !available ? "unavailable" : "idle";
+  }
+  function stopRead() {
+    owed = false;
     controller?.abort();
     controller = undefined;
     pending = undefined;
-    return closed || !available ? "unavailable" : "idle";
   }
-  /** Forgets everything known, for a new identity or access. */
+  /** Forgets known visibility on full cache clear or session retirement. */
   function clear() {
     publish({ status: stop(), archived: empty });
   }
-  /** After a reconnect: the next ensure() rereads, and until it replaces them
-   * the last known archives stay known. */
+  /** Reconnect retires settled evidence, retaining visibility. A finite HTTP
+   * read already in flight may finish; the next ensure() then rereads once.
+   * Failures retain their recovery deadline. */
   function stale() {
-    const { error: _, ...known } = snapshot;
-    publish({ ...known, status: stop() });
+    if (pending) {
+      owed = true;
+      return;
+    }
+    if (snapshot.transient) return;
+    const { error: _, transient: __, retryAt: ___, ...known } = snapshot;
+    publish({
+      ...known,
+      status: closed || !available ? "unavailable" : "idle",
+    });
   }
   return {
     queries: Object.freeze({
@@ -336,9 +370,13 @@ export function createIdentityArchives(
         };
       },
       state,
-      ensure: () =>
-        snapshot.status === "idle" ? refresh() : (pending ?? Promise.resolve()),
-      refresh,
+      ensure: ({ background = false }: { background?: boolean } = {}) => {
+        if (!background) backgroundRead = false;
+        if (pending) return pending;
+        if (snapshot.status !== "idle" && !owed) return Promise.resolve();
+        return refresh(background);
+      },
+      refresh: () => refresh(),
       /** Whether this community advertises an archive authority; fixed per session. */
       supported: available,
       writable: !!writer,
@@ -347,6 +385,11 @@ export function createIdentityArchives(
     }),
     clear,
     stale,
+    // The session owns socket readiness and admission timing for new retries.
+    retry: (connected: boolean) =>
+      !backgroundRead || connected
+        ? refresh(backgroundRead)
+        : Promise.resolve(),
     dispose() {
       closed = true;
       clear();

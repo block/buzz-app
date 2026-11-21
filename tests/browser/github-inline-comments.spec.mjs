@@ -788,6 +788,53 @@ test("preloads diff and threads from Summary without tab-triggered reads", async
   ).toBe(reads);
 });
 
+// Proves the menu portal can be used from a comment inside Pierre's shadow DOM.
+test("comment reaction picker adds and removes server-owned counts", async ({
+  page,
+}) => {
+  await open(page);
+  const field = await line(page);
+  await field.fill("**Review** with `Markdown`");
+  await page
+    .getByRole("button", { name: "Post to GitHub", exact: true })
+    .click();
+  const comment = page
+    .getByRole("article")
+    .filter({ hasText: "Review with Markdown" });
+  await expect(comment.locator("strong")).toHaveText("Review");
+  await expect(comment.locator("code")).toHaveText("Markdown");
+  const reply = comment
+    .locator("..")
+    .getByRole("button", { name: "Reply", exact: true });
+  await expect
+    .poll(async () => {
+      const button = await reply.boundingBox();
+      const thread = await comment.locator("..").boundingBox();
+      return !!button && !!thread && button.width < thread.width / 2;
+    })
+    .toBe(true);
+  await comment.getByRole("button", { name: "React" }).click();
+  await expect(
+    page.getByRole("button", { name: "Heart", exact: true }),
+  ).toHaveText("❤️");
+  await page.getByRole("button", { name: "Heart", exact: true }).click();
+  const heart = comment.getByRole("button", { name: "Heart, 1", exact: true });
+  await expect(heart).toHaveAttribute("aria-pressed", "true");
+  await heart.click();
+  await expect(heart).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        window.inlineFixture.state.calls.filter(
+          (call) =>
+            call.id === "graphql" &&
+            String(call.input.query).startsWith("mutation"),
+        ).length,
+    ),
+  ).toBe(2);
+  expect(await posts(page)).toBe(1);
+});
+
 test("opening one composer preserves code in 49 other commented files", async ({
   page,
 }, testInfo) => {

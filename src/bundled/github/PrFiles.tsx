@@ -17,6 +17,7 @@ import {
   type DiffLine,
 } from "../diffs/DiffViewer";
 import { parsePatch } from "../diffs/parse";
+import { GitHubReactions } from "./GitHubReactions";
 import { GitHubComment } from "./GitHubComment";
 import { InlineCommentForm } from "./InlineCommentForm";
 import type { InlineDeliveryStore } from "./inline-delivery";
@@ -483,7 +484,15 @@ export function PrFiles({
             </p>
           )}
           {thread.comments.map((comment) => (
-            <GitHubComment key={comment.id} comment={comment} />
+            <GitHubComment key={comment.id} comment={comment}>
+              {api.reactions && snapshot && (
+                <GitHubReactions
+                  api={api.reactions}
+                  snapshot={snapshot}
+                  comment={comment}
+                />
+              )}
+            </GitHubComment>
           ))}
           <div className={styles.actions}>
             {!thread.commentsComplete && (
@@ -519,7 +528,7 @@ export function PrFiles({
         </section>
       );
     },
-    [snapshot, loading, status.busy, status.unknown, choose, more],
+    [api, snapshot, loading, status.busy, status.unknown, choose, more],
   );
   const renderedThreads = useMemo(
     () =>

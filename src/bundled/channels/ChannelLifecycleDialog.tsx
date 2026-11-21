@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
+  ChannelLifecycleStale,
   ChannelLifecycleUnconfirmed,
   type ChannelLifecycleCapability,
 } from "../../features/relay/channel-lifecycle";
@@ -18,6 +19,18 @@ export type LifecycleNoun = "channel" | "chat";
 export const lifecycleNoun = (
   channel: Readonly<{ channelType?: string | undefined }> | undefined,
 ): LifecycleNoun => (channel?.channelType === "solo" ? "chat" : "channel");
+
+/** Where focus goes when a lifecycle trigger is retired. Settings actions can
+ * remount after an archive-state or role change; the tab header lives outside
+ * the settings aside. */
+export const lifecycleFocusFallback = (trigger: HTMLElement) =>
+  trigger
+    .closest("[data-panel-workspace]")
+    ?.querySelector<HTMLElement>(
+      'button[aria-label="Close Channel settings tab"]',
+    ) ??
+  trigger.closest("aside")?.querySelector<HTMLElement>("button") ??
+  undefined;
 
 const details = {
   channel: {
@@ -100,8 +113,14 @@ export function ChannelLifecycleDialog({
   onSubmit?(): void;
   finalFocus?: DialogProps["finalFocus"];
   /** `unconfirmed`: the relay may have applied it anyway
-   * (`ChannelLifecycleUnconfirmed`). */
-  failed?(title: string, message: string, unconfirmed: boolean): void;
+   * (`ChannelLifecycleUnconfirmed`). `refresh`: refreshing channels is the
+   * recovery (`ChannelLifecycleStale`, which every unconfirmed failure is). */
+  failed?(
+    title: string,
+    message: string,
+    unconfirmed: boolean,
+    refresh: boolean,
+  ): void;
   /** Already chosen without a dialog, as Undo is: run it on mount. */
   confirmed?: boolean;
   /** Offered from an immediate archive's result toast. */
@@ -206,6 +225,7 @@ export function ChannelLifecycleDialog({
             `${copy.title} failed`,
             message,
             error instanceof ChannelLifecycleUnconfirmed,
+            error instanceof ChannelLifecycleStale,
           );
         else setError(message);
       }

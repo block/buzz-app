@@ -21,6 +21,11 @@ const history = Array.from({ length: 5001 }, (_, n) =>
 const discovery = [
   metadata(relay, "crew", "crew"),
   roster(relay, "crew", [viewer.pubkey, author.pubkey]),
+  metadata(relay, "lab", "lab"),
+  roster(relay, "lab", [viewer.pubkey, author.pubkey]),
+  // Readable but not joined: its messages stay out of the index.
+  metadata(relay, "away", "away"),
+  roster(relay, "away", [author.pubkey]),
 ];
 const dispose: (() => void)[] = [];
 afterEach(() => {
@@ -29,17 +34,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function fixture(messages = history) {
+async function fixture(
+  messages = history,
+  { warm, settle = true }: { warm?: () => string[]; settle?: boolean } = {},
+) {
   const reads: Parameters<typeof queryEvents>[1][number][] = [];
-  const control = { failures: 0 };
+  // Every channel-history read, by channel, never reset.
+  const channelReads: Parameters<typeof queryEvents>[1][number][] = [];
+  const control = { failures: 0, latency: 0 };
   const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     media: () => undefined,
     async query(filters) {
-      for (const filter of filters)
+      for (const filter of filters) {
         if (filter["#h"]?.includes("crew") && filter.kinds?.includes(9))
           reads.push(filter);
+        if (filter["#h"]?.length === 1 && filter.kinds?.includes(9))
+          channelReads.push(filter);
+      }
       if (
         filters.some(
           (filter) =>
@@ -50,6 +63,8 @@ async function fixture(messages = history) {
         control.failures--;
         throw new Error("History unavailable");
       }
+      if (control.latency)
+        await new Promise((resolve) => setTimeout(resolve, control.latency));
       return queryEvents([...discovery, ...messages], filters);
     },
   });
@@ -62,13 +77,16 @@ async function fixture(messages = history) {
     session: owner.session,
     corpus,
     changed() {},
+    ...(warm && { warm }),
   });
   dispose.push(sync.dispose);
-  // Complete the separate initial account fill before counting scope reads.
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(sync.status().phase).toBe("ready");
-  reads.length = 0;
-  return { corpus, sync, reads, control };
+  if (settle) {
+    // Complete the separate initial account fill before counting scope reads.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(sync.status().phase).toBe("ready");
+    reads.length = 0;
+  }
+  return { corpus, sync, reads, channelReads, control };
 }
 
 test("reads ten pages, keeps its cursor and budget across edits and scope switches, and resumes on Keep going", async () => {
@@ -193,4 +211,65 @@ test("retries the same older page with capped backoff and recovers without losin
     loading: false,
   });
   expect(corpus.size).toBe(501);
+});
+
+test("reads ahead the newest pages of wanted channels and shares the cursor with This channel", async () => {
+  const lab = Array.from({ length: 600 }, (_, n) =>
+    message(author, "lab", `Lab note ${n}`, 1_700_000_000),
+  );
+  const away = [message(author, "away", "Away note", 1_700_000_000)];
+  const crew = history.slice(0, 1400);
+  const { corpus, sync, channelReads, control } = await fixture(
+    [...crew, ...lab, ...away],
+    { warm: () => ["away", "crew", "lab"], settle: false },
+  );
+  const of = (id: string) => channelReads.filter((f) => f["#h"]?.[0] === id);
+  // The fill is done and the first read-ahead page is waiting on its pace.
+  await vi.advanceTimersByTimeAsync(0);
+  expect(sync.status().phase).toBe("ready");
+  expect(channelReads).toHaveLength(0);
+  // Slow pages keep This channel's first read open while the read-ahead
+  // reaches the same channel.
+  control.latency = 400;
+  const reader = sync.searchChannel(
+    "crew",
+    () => true,
+    () => {},
+  );
+  dispose.push(reader.dispose);
+  await vi.advanceTimersByTimeAsync(20_000);
+  // Three pages cover crew; no page was read twice or skipped.
+  expect(of("crew")).toHaveLength(3);
+  expect(new Set(of("crew").map((f) => f.before_id)).size).toBe(3);
+  expect(corpus.search("note", 1, "crew").total).toBe(1400);
+  // Lab gets its newest page only; away was never read.
+  expect(of("lab")).toHaveLength(1);
+  expect(of("away")).toHaveLength(0);
+  expect(corpus.size).toBe(1900);
+});
+
+test("reads ahead one page in each of at most 16 channels", async () => {
+  const ids = Array.from({ length: 18 }, (_, n) => `room${n}`);
+  const rooms = ids.flatMap((id) => [
+    metadata(relay, id, id),
+    roster(relay, id, [viewer.pubkey, author.pubkey]),
+    message(author, id, `${id} note`, 1_700_000_000),
+  ]);
+  const { channelReads } = await fixture(rooms, {
+    warm: () => ids,
+    settle: false,
+  });
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(channelReads.map((filter) => filter["#h"]?.[0])).toEqual(
+    ids.slice(0, 16),
+  );
+});
+
+test("reads ahead one page per channel", async () => {
+  const { channelReads } = await fixture(history, {
+    warm: () => ["crew"],
+    settle: false,
+  });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(channelReads).toHaveLength(1);
 });

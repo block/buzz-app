@@ -1,8 +1,10 @@
 import { lazy, Suspense, useRef, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
+import { relayPartition } from "../../features/relay/partition";
 import { activeModal } from "../../shared/design-system/overlayLayer";
 import { createCorpus } from "./corpus.ts";
+import { noteInterest, topInterest } from "./interest";
 import type { FinderScope } from "./FinderDialog";
 import {
   type FinderSync,
@@ -44,6 +46,34 @@ export const apply: PluginModule["apply"] = (ctx) => {
     snapshot: () => state,
   };
 
+  // Interest in the conversation on screen: 1 per visit, and more when you
+  // search in it or open a message from Finder.
+  const interested = (weight: number) => {
+    const { entry } = ctx.navigation.snapshot();
+    if (entry.target.kind !== "conversation") return;
+    const { viewer, communityOrigin } = entry.target.scope;
+    noteInterest(
+      relayPartition(communityOrigin, viewer),
+      entry.target.channelId,
+      weight,
+    );
+  };
+  const chooseScope = (scope: FinderScope | undefined) => {
+    if (scope === "channel") interested(2);
+    set({ open: true, scope });
+  };
+  ctx.effect(() => {
+    let visit: string | undefined;
+    const visited = () => {
+      const { entry } = ctx.navigation.snapshot();
+      if (entry.id === visit) return;
+      visit = entry.id;
+      interested(1);
+    };
+    visited();
+    return ctx.navigation.subscribe(visited);
+  });
+
   // One index per connected session: a new community, account, reconnect
   // generation or Clear cache starts over, and the old one is dropped.
   ctx.effect(() => {
@@ -70,6 +100,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         corpus,
         changed: () =>
           set({ revision: state.revision + 1, status: running.status() }),
+        warm: () => (snapshot.scope ? topInterest(snapshot.scope, 24) : []),
       });
       current = { key, dispose: running.dispose };
       set({
@@ -111,7 +142,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     when: () =>
       (state.open || !activeModal(document)) &&
       ctx.navigation.snapshot().entry.target.kind === "conversation",
-    run: () => set({ open: true, scope: "channel" }),
+    run: () => chooseScope("channel"),
   });
 
   ctx.pages.registerOverlay({
@@ -140,7 +171,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
             sync={sync}
             currentChannelId={currentChannelId}
             scope={scope === "channel" && !currentChannelId ? undefined : scope}
-            onScopeChange={(scope) => set({ scope })}
+            onScopeChange={chooseScope}
             status={
               !session ? (
                 <p className="px-3 text-body-sm text-subtle">
@@ -163,6 +194,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
             openMessage={(doc) => {
               const { viewer, scope } = relay.snapshot();
               if (!viewer || !scope?.endsWith(`:${viewer}`)) return;
+              // The visit adds 1; finding it here is worth more.
+              noteInterest(scope, doc.channelId, 2);
               void ctx.navigation.open({
                 version: 1,
                 kind: "conversation",

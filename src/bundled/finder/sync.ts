@@ -12,6 +12,12 @@ const PAGE = 500;
 const PACE_MS = 300;
 const BACKOFF_MS = 2_000;
 const BACKOFF_CAP_MS = 60_000;
+/** After the first fill, the newest page of each channel you visit and
+ * search most: at most 16 background reads per session. Many channels one
+ * page deep find more than a few channels read deeper, since most searches
+ * are for recent messages (src/bundled/finder/readahead-bench.ts). */
+const WARM_CHANNELS = 16;
+const WARM_PAGES = 1;
 
 export type FinderSyncStatus = Readonly<{
   phase: "waiting" | "filling" | "ready" | "error";
@@ -29,6 +35,16 @@ export type ChannelSearchStatus = Readonly<{
 }>;
 
 type ChannelCursor = { until: number; before_id: string };
+type ChannelProgress = {
+  cursor?: ChannelCursor;
+  complete: boolean;
+  opening?: object;
+  pages: number;
+  budget: number;
+  /** The page read under way; the next waits for it, so readers share one
+   * cursor without skipping or repeating a page. */
+  reading?: Promise<unknown>;
+};
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -56,11 +72,14 @@ export function startFinderSync({
   session,
   corpus,
   changed,
+  warm = () => [],
 }: {
   session: RelaySession;
   corpus: FinderCorpus;
   /** The corpus or the status changed. */
   changed: () => void;
+  /** Channel ids worth reading ahead, most wanted first. */
+  warm?: () => readonly string[];
 }) {
   // A session always has its viewer; the type allows none before sign-in.
   const viewer = session.viewer ?? "";
@@ -68,16 +87,15 @@ export function startFinderSync({
   const { signal } = controller;
   const since = Math.floor(Date.now() / 1000) - DAYS * 86_400;
   const docs = new Map<string, FinderDoc>();
-  const cursors = new Map<
-    string,
-    {
-      cursor?: ChannelCursor;
-      complete: boolean;
-      opening?: object;
-      pages: number;
-      budget: number;
+  const cursors = new Map<string, ChannelProgress>();
+  const progressOf = (channelId: string) => {
+    let progress = cursors.get(channelId);
+    if (!progress) {
+      progress = { complete: false, pages: 0, budget: 10 };
+      cursors.set(channelId, progress);
     }
-  >();
+    return progress;
+  };
   // Threads the viewer took part in, by root id.
   const roots = new Set<string>();
   let status: FinderSyncStatus = { phase: "waiting", indexed: 0 };
@@ -149,6 +167,41 @@ export function startFinderSync({
     remember(added);
   };
 
+  /** The next older page of one channel, into the index. */
+  const readOlder = (
+    channelId: string,
+    progress: ChannelProgress,
+    bound: AbortSignal,
+  ) => {
+    const read = (progress.reading ?? Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        if (progress.complete) return;
+        const page = await session.readRemote(
+          [
+            {
+              kinds: KINDS,
+              "#h": [channelId],
+              limit: PAGE,
+              ...progress.cursor,
+            },
+          ],
+          { signal: bound, priority: "background" },
+        );
+        bound.throwIfAborted();
+        // Resolve ties in the relay's newest-first ID order.
+        const oldest = [...page].sort(
+          (a, b) => a.created_at - b.created_at || b.id.localeCompare(a.id),
+        )[0];
+        if (oldest)
+          progress.cursor = { until: oldest.created_at, before_id: oldest.id };
+        progress.complete = page.length < PAGE;
+        take(page, true);
+      });
+    progress.reading = read;
+    return read;
+  };
+
   /** One opening owns its budget and cancellation; only cursors outlive it.
    * Query edits wake the same reader instead of resetting its cursor or cap. */
   const searchChannel = (
@@ -157,17 +210,12 @@ export function startFinderSync({
     report: (status: ChannelSearchStatus) => void,
     opening: object = {},
   ) => {
-    const progress = cursors.get(channelId) ?? {
-      complete: false,
-      pages: 0,
-      budget: 10,
-    };
+    const progress = progressOf(channelId);
     if (progress.opening !== opening) {
       progress.opening = opening;
       progress.pages = 0;
       progress.budget = 10;
     }
-    cursors.set(channelId, progress);
     const lifetime = new AbortController();
     const bound = AbortSignal.any([signal, lifetime.signal]);
     let running = false;
@@ -199,20 +247,8 @@ export function startFinderSync({
         while (!bound.aborted && needed()) {
           await sleep(delay, bound);
           if (!needed()) break;
-          let page: readonly RelayEvent[];
           try {
-            page = await session.readRemote(
-              [
-                {
-                  kinds: KINDS,
-                  "#h": [channelId],
-                  limit: PAGE,
-                  ...progress.cursor,
-                },
-              ],
-              { signal: bound, priority: "background" },
-            );
-            bound.throwIfAborted();
+            await readOlder(channelId, progress, bound);
           } catch (failure) {
             if (bound.aborted) throw failure;
             error = true;
@@ -224,18 +260,7 @@ export function startFinderSync({
           error = false;
           backoff = BACKOFF_MS;
           delay = PACE_MS;
-          // Resolve ties in the relay's newest-first ID order.
-          const oldest = [...page].sort(
-            (a, b) => a.created_at - b.created_at || b.id.localeCompare(a.id),
-          )[0];
-          if (oldest)
-            progress.cursor = {
-              until: oldest.created_at,
-              before_id: oldest.id,
-            };
-          progress.complete = page.length < PAGE;
           progress.pages++;
-          take(page, true);
           notify();
         }
       })()
@@ -309,6 +334,24 @@ export function startFinderSync({
       await readAll({ kinds: KINDS, ids });
     }
     publish({ phase: "ready" });
+    // ponytail: a failed read ends the read-ahead; it is a head start, and
+    // "This channel" reads the rest on demand.
+    // Direct messages were read in full above.
+    const wanted = warm().filter(
+      (id) => relevant(id) && channel(id)?.channelType !== "dm",
+    );
+    for (const id of wanted.slice(0, WARM_CHANNELS)) {
+      const progress = progressOf(id);
+      for (let n = 0; n < WARM_PAGES && !progress.complete; n++) {
+        await sleep(PACE_MS + Math.random() * PACE_MS, signal);
+        try {
+          await readOlder(id, progress, signal);
+        } catch (error) {
+          if (signal.aborted) throw error;
+          return;
+        }
+      }
+    }
   }
 
   // New messages the session receives anyway: live traffic and other reads.

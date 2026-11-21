@@ -23,6 +23,9 @@ where it was said.
   you. The first time, it reads them from the community, which can take a
   minute. It also adds every message Buzz shows or receives from channels
   you're in while it's open, such as a channel you scroll through.
+- It also reads the newest 500 messages of the channels you visit and search
+  most, up to 16. It keeps count of those visits on this device, as channel
+  IDs and numbers only, and older visits count for less.
 - `'word` matches those exact letters together, `!word` leaves out messages
   with that word, and a capital letter makes a word match case.
 - The index is kept in memory on this device and never sent anywhere. It is

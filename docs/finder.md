@@ -22,6 +22,7 @@ The finder is off by default. Enable it in Settings → Plugins.
 | Filling the index from your account (`sync.ts`) | Done; channel paging has tests |
 | This channel | Done, with older history read as needed |
 | All of Buzz | Done, after a typing pause, with retry and public previews |
+| Reading ahead in the channels you use most | Done, with tests and a model of how much it finds |
 | Saving the index between launches | Not started: it is rebuilt each launch |
 | Clear cache empties the index at once | Not yet: it empties on the next reconnect or restart |
 | Edited messages | Not yet: the finder shows the original text |
@@ -77,11 +78,14 @@ sentences, not file names:
 
 ## What it searches
 
-The index starts with two sources from the last 90 days:
+The index starts with three sources:
 
-- **Your own conversations**, read from the relay when the finder starts:
-  messages you wrote, threads you replied in, direct messages, and messages
-  that mention you.
+- **Your own conversations** from the last 90 days, read from the relay when
+  the finder starts: messages you wrote, threads you replied in, direct
+  messages, and messages that mention you.
+- **The channels you use most.** After that first read, the finder reads the
+  newest 500 messages of up to 16 channels you visit and search most. See
+  [Reading ahead](#reading-ahead).
 - **Everything else Buzz receives from channels you're in** while it's open:
   new messages as they arrive, and older ones as you scroll past them. These
   cost no extra relay reads; the app already fetched them.
@@ -97,12 +101,58 @@ to a channel, its messages leave the index.
 
 The first time it runs, the finder reads your history from the relay in pages
 of 500, newest first, with pauses between pages, until it reaches 90 days back.
-That happens each time the session starts. After that it adds messages the
-app already receives while it's open, plus messages found in the two scopes.
+That happens each time the session starts, followed by the read-ahead. After
+that it adds messages the app already receives while it's open, plus messages
+found in the two scopes.
 It does not poll.
 
 Because the first fill can read a lot of messages, the plugin starts **off** for now. That
 lets us measure the first fill on real accounts before it reaches everyone.
+
+## Reading ahead
+
+Most of the time, what you're looking for was said recently, in a channel you
+keep going back to. Your own messages don't cover that, and the app only loads
+the newest messages of a channel when you open it. So the finder keeps track
+of which channels you use:
+
+- Opening a channel counts 1.
+- Searching it with **This channel**, or opening a message from Finder, counts 2.
+- Older activity counts for less: a visit is worth half as much a week later.
+
+These counts stay on this device, kept apart for each community and account,
+like ⌘K's recent searches. They hold channel IDs and numbers, no message
+text. Leaving the community, or signing out and wiping this device's data,
+removes them.
+
+When the finder starts, after reading your own conversations, it reads the
+newest page (500 messages) of each of your top 16 joined channels, one page
+every 300–600 ms. That is at most 16 background reads per session. **This
+channel** later continues from where the read-ahead stopped, so no page is read
+twice.
+
+Why 16 channels one page deep, and not fewer channels read deeper: most
+searches are for recent messages, so a second page of a channel finds much less
+than a first page of another channel. `bin/node src/bundled/finder/readahead-bench.ts <messages>`
+models a 60-channel community and someone who visits a few channels much more
+than others. The share of searches whose message is already indexed when you
+start typing:
+
+| Messages in 90 days | No read-ahead | 8 channels × 2 pages | 16 channels × 1 page |
+| --- | --- | --- | --- |
+| 20,000 | 54% | 69% | 76% |
+| 60,000 | 37% | 66% | 74% |
+| 200,000 | 21% | 58% | 61% |
+
+It's a model: real numbers depend on how you use Buzz. It does show the shape.
+Reading ahead roughly doubles what's already there in a busy community, and
+spreading the same reads over more channels beats reading deeper.
+
+The read-ahead adds at most 8,000 messages. For a 25,000-message index, that
+is about 4 MB more memory and a little over 1 ms more per keystroke.
+
+The counts start empty, so the first session after you turn Finder on reads
+ahead nothing. They build up as you use Buzz.
 
 ## How fast it is
 
@@ -141,7 +191,10 @@ never waits) and splitting the search across several workers.
 | `src/bundled/finder/match.ts` | fzf's matching and scoring, ported to TypeScript |
 | `src/bundled/finder/corpus.ts` | The in-memory index and search. No UI, so other tools can use it |
 | `src/bundled/finder/FinderDialog.tsx` | The dialog, built from the same parts as ⌘K search |
-| `src/bundled/finder/bench.ts` | The benchmark |
+| `src/bundled/finder/sync.ts` | Fills the index and keeps it current, including the read-ahead |
+| `src/bundled/finder/interest.ts` | Which channels you use most |
+| `src/bundled/finder/bench.ts` | The search benchmark |
+| `src/bundled/finder/readahead-bench.ts` | The read-ahead model |
 | `tests/fixtures/finder.html` | The dialog on fake data, for trying it without an account |
 
 The matcher is ported from fzf, which is MIT licensed. Its license is in

@@ -579,7 +579,8 @@ Quitting Buzz also turns it off.
   not change.
   Chats reorder by recent activity with the same short slides and fades as Team
   channels. Reduced motion applies the new order immediately.
-  A Solo chat name you save here changes immediately. Title changes that arrive
+  A Solo chat name you save here changes immediately. If Buzz chooses an automatic
+  title while you type, you can still save your own name. Title changes that arrive
   from an agent or another device animate unless reduced motion is enabled.
   Deleting or archiving the open chat keeps you in Solo and opens another chat
   or a new draft.

@@ -56,6 +56,8 @@ export function useLifetime({
   // Persisted automatic-name provenance is deferred. Blank preserves the current title.
   const normalized = canonicalDetailsName(name) || confirmedName.current;
   const nameChanged = normalized !== confirmedName.current;
+  const automaticSaving = attempt?.automaticName && attempt.status === "saving";
+  const blockingAttempt = nameChanged && automaticSaving ? undefined : attempt;
   const nameError =
     base && normalized
       ? detailsDraftErrors({ ...base, name: normalized }).name
@@ -83,7 +85,8 @@ export function useLifetime({
       .then((next) => {
         if (!active.aborted) {
           setBase(next);
-          const saved = details.snapshot(id);
+          const pending = details.snapshot(id);
+          const saved = pending?.automaticName ? undefined : pending;
           confirmedTtl.current = next.ttlSeconds;
           confirmedName.current = next.name;
           setName(
@@ -126,7 +129,8 @@ export function useLifetime({
         const next = await details.load(id, active);
         if (!active.aborted) {
           if (!base) {
-            const saved = details.snapshot(id);
+            const pending = details.snapshot(id);
+            const saved = pending?.automaticName ? undefined : pending;
             const ttl = matchesLifetime(next, saved?.draft)
               ? saved?.draft.ttlSeconds
               : next.ttlSeconds;
@@ -147,9 +151,32 @@ export function useLifetime({
       } else {
         if (action === "check") {
           if (!matchingAttempt || attempt?.status !== "unconfirmed") return;
-          await details.check(id, active);
+          const confirmed = await details.check(id, active);
+          active.throwIfAborted();
+          if (attempt.automaticName) {
+            if (!confirmed) return;
+            if (
+              ttl !== confirmedTtl.current &&
+              confirmed.ttlSeconds !== confirmedTtl.current
+            )
+              throw new Error(
+                "The chat lifetime changed. Reload chat details before saving your edits.",
+              );
+            if (ttl === confirmedTtl.current) {
+              setTtl(confirmed.ttlSeconds);
+              setTemporaryTtl(
+                confirmed.ttlSeconds ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
+              );
+            }
+            refreshBeforeSave.current = false;
+            setBase(confirmed);
+            confirmedTtl.current = confirmed.ttlSeconds;
+            confirmedName.current = confirmed.name;
+            if (!nameChanged) setName(confirmed.name);
+            return;
+          }
         } else {
-          if (!base || !eligible || attempt || invalid) return;
+          if (!base || !eligible || blockingAttempt || invalid) return;
           if (ttl !== confirmedTtl.current || nameChanged) {
             const current = refreshBeforeSave.current
               ? await details.load(id, active)
@@ -208,8 +235,12 @@ export function useLifetime({
     eligible,
     changed: !!base && (ttl !== confirmedTtl.current || nameChanged),
     checkOnly: matchingAttempt && attempt?.status === "unconfirmed",
-    blocked: !!attempt || !eligible || !!signal?.aborted,
-    unrelatedAttempt: !!attempt && !matchingAttempt,
+    checkingAutomatic:
+      attempt?.automaticName && attempt.status === "unconfirmed",
+    blocked: !!blockingAttempt || !eligible || !!signal?.aborted,
+    nameBlocked:
+      (!!attempt && !automaticSaving) || !eligible || !!signal?.aborted,
+    unrelatedAttempt: !!blockingAttempt && !matchingAttempt,
     run,
     change(next: number | undefined) {
       setTtl(next);

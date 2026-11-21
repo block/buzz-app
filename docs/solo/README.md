@@ -349,6 +349,8 @@ name is selected; Enter or clicking away saves, and Escape cancels. Empty or
 unchanged names keep the confirmed title. Errors retain the draft below the field;
 uncertain saves offer **Check save status** without republishing. This uses the
 same signed details owner as Chat settings, retaining lifetime and other labels.
+A manual name can save over an automatic title that this session just confirmed
+while the editor was open. Other edits still require reloading fresh details.
 
 New and saved Solo chats use the same Chat settings form. A blank new name retains
 the first-prompt automatic title (80 code points, canonicalized like relay names).

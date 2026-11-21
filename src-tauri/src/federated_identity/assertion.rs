@@ -853,10 +853,16 @@ impl FederatedIdentity {
         }
         let proof = &proof;
         let (issued, request_start): (Issued, _) = protocol::json_with(move || async move {
-            Ok(client
-                .post(endpoint.clone())
-                .bearer_auth(token)
-                .header("Nostr-Authorization", proof().await?)
+            let proof = proof().await?;
+            // The proof binds this session's token; a session replaced since
+            // the call started refuses instead of sending the new one.
+            let (auth, current) = self.authorization().ok_or("session-changed")?;
+            if current != revision || auth.token.as_str() != token {
+                return Err("session-changed".into());
+            }
+            Ok(auth
+                .authorize(client.post(endpoint.clone()), "POST", endpoint)?
+                .header("Nostr-Authorization", proof)
                 .header("Content-Type", "application/json")
                 .body(body.clone()))
         })
@@ -910,6 +916,7 @@ fn refused(failure: &Failure) -> bool {
     matches!(
         failure.code,
         "adapter-refused"
+            | "fresh-authentication-required"
             | "authorization-denied"
             | "binding-mismatch"
             | "clock-skew"
@@ -1647,6 +1654,56 @@ mod tests {
         assert_eq!(requests.load(Ordering::SeqCst), 2);
     }
     #[tokio::test]
+    async fn human_issuance_retry_after_lost_response_signs_a_new_body_bound_proof() {
+        use super::super::tests::{adapter_with_status, at_adapter, Memory};
+        let identity = IdentityHost::fixture();
+        let viewer = identity.viewer().await.unwrap();
+        let relay = "wss://relay.example:8443";
+        let minted = now().unwrap() as u64;
+        let expires = minted + 86400;
+        let (base, server) = adapter_with_status(vec![
+            (0, serde_json::json!({})),
+            (200, serde_json::json!({"assertion":jwt(&viewer,relay,minted,expires),"nostr_pubkey":viewer,"expires_at":expires})),
+        ]).await;
+        let host = at_adapter(Arc::new(Memory::default()), base);
+        host.install_session(&mut host.state(), super::super::tests::record());
+        host.issue(
+            &identity,
+            relay,
+            &viewer,
+            &host.snapshot().revision,
+            "fixture-session-token",
+            expires + 100,
+        )
+        .await
+        .unwrap();
+        let seen = server.await.unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].body, seen[1].body);
+        let events: Vec<nostr::event::Event> = seen
+            .iter()
+            .map(|wire| {
+                let header = &wire
+                    .headers
+                    .iter()
+                    .find(|(name, _)| name == "nostr-authorization")
+                    .unwrap()
+                    .1;
+                serde_json::from_slice(
+                    &STANDARD
+                        .decode(header.strip_prefix("Nostr ").unwrap())
+                        .unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        for event in &events {
+            event.verify().unwrap();
+        }
+        assert_ne!(events[0].id, events[1].id);
+    }
+
+    #[tokio::test]
     async fn issuance_wire_has_separate_session_and_body_bound_same_key_nostr_proof() {
         use super::super::tests::{adapter, at_adapter, Memory};
         let identity = IdentityHost::fixture();
@@ -1657,6 +1714,7 @@ mod tests {
         let (base,server)=adapter(vec![serde_json::json!({"assertion":jwt(&viewer,relay,minted,expires),"nostr_pubkey":viewer,"expires_at":expires})]).await;
         let endpoint = format!("{base}/v1/identity/assertions");
         let host = at_adapter(Arc::new(Memory::default()), base);
+        host.install_session(&mut host.state(), super::super::tests::record());
         let assertion = host
             .issue(
                 &identity,

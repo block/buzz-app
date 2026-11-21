@@ -54,6 +54,13 @@ impl Reply {
 }
 
 async fn server(replies: Vec<Reply>, prefix: &str) -> (Client, JoinHandle<Vec<Request>>) {
+    server_authorized(replies, prefix, None).await
+}
+async fn server_authorized(
+    replies: Vec<Reply>,
+    prefix: &str,
+    authorizer: Option<buzz_nsec_backup::Authorizer>,
+) -> (Client, JoinHandle<Vec<Request>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}{prefix}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -118,7 +125,13 @@ async fn server(replies: Vec<Reply>, prefix: &str) -> (Client, JoinHandle<Vec<Re
         .await
         .unwrap()
     });
-    (Client::new(&url, SESSION).unwrap(), task)
+    (
+        match authorizer {
+            Some(auth) => Client::authorized(&url, auth).unwrap(),
+            None => Client::new(&url, SESSION).unwrap(),
+        },
+        task,
+    )
 }
 
 fn backup(id: &str, secret: Value) -> Value {
@@ -518,4 +531,54 @@ fn loopback_http_bypasses_environment_proxies() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[tokio::test]
+async fn each_attempt_gets_native_authorization_and_freshness_or_proof_denial_preserves_session() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let count = Arc::new(AtomicUsize::new(0));
+    let next = count.clone();
+    let authorize = Arc::new(
+        move |request: reqwest::RequestBuilder, method: &str, target: &url::Url| {
+            assert_eq!(method, "POST");
+            assert!(target.path().ends_with("/nsec-backups/recovery"));
+            let attempt = next.fetch_add(1, Ordering::SeqCst);
+            Ok(request
+                .header("Authorization", "DPoP fixture-bound-token")
+                .header("DPoP", format!("proof-{attempt}")))
+        },
+    );
+    let (client, seen) = server_authorized(
+        vec![
+            Reply::body(
+                401,
+                br#"{"error":"fresh_authentication_required"}"#.to_vec(),
+            ),
+            Reply::body(401, br#"{"error":"invalid_dpop_proof"}"#.to_vec()),
+            Reply::body(401, br#"{"error":"unknown"}"#.to_vec()),
+            Reply::body(401, br#"{"error":"session_required"}"#.to_vec()),
+        ],
+        "/api/",
+        Some(authorize),
+    )
+    .await;
+    assert!(matches!(
+        client.recover().await,
+        Err(Error::FreshAuthenticationRequired)
+    ));
+    assert!(matches!(client.recover().await, Err(Error::InvalidProof)));
+    assert!(matches!(client.recover().await, Err(Error::InvalidProof)));
+    assert!(matches!(
+        client.recover().await,
+        Err(Error::HttpStatus(401))
+    ));
+    let seen = seen.await.unwrap();
+    assert_eq!(seen.len(), 4);
+    for (index, request) in seen.iter().enumerate() {
+        assert!(request.headers.contains(&format!("dpop: proof-{index}")));
+        assert!(!request.headers.contains("x-bb-session-credential"));
+    }
 }

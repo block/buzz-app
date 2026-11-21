@@ -37,28 +37,35 @@ vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
     onmessage = () => {};
   },
 }));
-vi.mock("../bundled", async () => ({
-  bundledPlugins: [
-    {
-      manifest: { id: "buzz.channels", name: "Channels", apiVersion: 1 },
-      module: await import("../bundled/channels"),
-    },
-  ],
+// Named, so a test that loads the app again loads these from the same modules.
+const mocked = vi.hoisted(() => ({
+  bundled: async () => ({
+    bundledPlugins: [
+      {
+        manifest: { id: "buzz.channels", name: "Channels", apiVersion: 1 },
+        module: await import("../bundled/channels"),
+      },
+    ],
+  }),
+  // The NIP-FI sign-in, whose seeded account below never sends anywhere.
+  firstRun: async (
+    importOriginal: () => Promise<
+      typeof import("../bundled/builderlab/oauth/first-run")
+    >,
+  ) => ({
+    ...(await importOriginal()),
+    firstRunCredential: vi.fn(async () => ({
+      revision: "private-token",
+      account: {
+        subject: "user",
+        email: "a@example.com",
+        canUseRemoteAgents: false,
+      },
+    })),
+  }),
 }));
-// The NIP-FI sign-in, whose seeded account below never sends anywhere.
-vi.mock("../bundled/builderlab/oauth/first-run", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("../bundled/builderlab/oauth/first-run")
-  >()),
-  firstRunCredential: vi.fn(async () => ({
-    revision: "private-token",
-    account: {
-      subject: "user",
-      email: "a@example.com",
-      canUseRemoteAgents: false,
-    },
-  })),
-}));
+vi.mock("../bundled", mocked.bundled);
+vi.mock("../bundled/builderlab/oauth/first-run", mocked.firstRun);
 // jsdom has no IndexedDB.
 vi.mock("../features/relay/outbox-storage", () => ({
   browserOutboxStorage: () => ({ load: () => [], save: () => {} }),
@@ -241,10 +248,11 @@ async function firstRunWithAddress(
   user: ReturnType<typeof userEvent.setup>,
   address = "relay-b.example",
   code = "",
+  app = { App, createServices },
 ) {
-  const current = createServices();
+  const current = app.createServices();
   services = current;
-  render(<App services={current} />);
+  render(<app.App services={current} />);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(15_000);
   });
@@ -352,8 +360,16 @@ it("closing the handed-off dialog clears the intent and stays on the restored co
 });
 
 /** First run with its handed-off dialog closed: the restored community's page. */
-async function onRestoredCommunity(user: ReturnType<typeof userEvent.setup>) {
-  const { current, dialog } = await firstRunWithAddress(user);
+async function onRestoredCommunity(
+  user: ReturnType<typeof userEvent.setup>,
+  app?: Parameters<typeof firstRunWithAddress>[3],
+) {
+  const { current, dialog } = await firstRunWithAddress(
+    user,
+    undefined,
+    undefined,
+    app,
+  );
   await user.click(within(dialog).getByRole("button", { name: "Back" }));
   await waitFor(() => expect(joinDialog()).toBeNull());
   return current;
@@ -1132,3 +1148,56 @@ it("finishing a join leaves an older opening edited to another community", async
     ).getByLabelText("Community URL"),
   ).toHaveValue("https://relay-c.example");
 });
+
+// Kept last: it loads the app's modules again, as a build with a relay policy.
+it.each([
+  ["submitted by the app", true],
+  ["left for the viewer to Continue", false],
+])(
+  "an invite to a relay the build policy blocks, %s, is refused in the dialog before any request",
+  async (_, submitted) => {
+    vi.stubEnv(
+      "VITE_BUZZ_RELAY_POLICY",
+      JSON.stringify({
+        pinned: "relay-a.example",
+        allowlist: ["relay-b.example"],
+      }),
+    );
+    // A build reads its policy once, as its modules load.
+    vi.resetModules();
+    vi.doMock("../bundled", mocked.bundled);
+    vi.doMock("../bundled/builderlab/oauth/first-run", mocked.firstRun);
+    const app = { ...(await import("./App")), ...(await import("./services")) };
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const current = await onRestoredCommunity(user, app);
+    const blocked = "https://relay-c.example";
+    act(() =>
+      current.invites.open(
+        { community: blocked, code: "", submitted },
+        member.pubkey,
+      ),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Join a community",
+    });
+    if (!submitted) {
+      expect(within(dialog).getByLabelText("Community URL")).toHaveValue(
+        blocked,
+      );
+      await user.click(
+        within(dialog).getByRole("button", { name: "Continue" }),
+      );
+    }
+    // The refusal ends the address step, so nothing is left to send later.
+    expect(
+      await within(dialog).findByText(
+        "This relay is not allowed by this build's relay policy.",
+      ),
+    ).toBeInTheDocument();
+    expect(requests.filter((r) => r.community === blocked)).toEqual([]);
+    expect(current.communities.snapshot()).toMatchObject({
+      memberships: [{ id: relayA }],
+      selected: relayA,
+    });
+  },
+);

@@ -28,7 +28,10 @@ import {
   createRejectedLinks,
 } from "../features/navigation/deep-links";
 import { bindSearchUsage } from "../features/search/usage";
-import { communityDestination } from "../features/communities/destination";
+import {
+  communityDestination,
+  resolveCommunity,
+} from "../features/communities/destination";
 import { NotificationsService } from "../features/notifications/service";
 import {
   bindMessageNotifications,
@@ -262,11 +265,11 @@ export function createServices() {
     // opens its community.
     open(invite: JoinRequest, viewer: string) {
       const { memberships } = communities.snapshot();
-      const id = communityDestination(invite.community).id;
+      const id = resolveCommunity(invite.community).id;
       if (invite.code || !memberships.some((m) => m.id === id)) {
         openJoin(viewer, {
           viewer,
-          community: communityDestination(invite.community).url,
+          community: resolveCommunity(invite.community).url,
           code: invite.code,
           connect: invite.submitted === true,
         });

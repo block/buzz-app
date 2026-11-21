@@ -12,43 +12,43 @@ have to be next to each other, so `dplyrlbk` finds "deploy rollback".
 
 ## Status
 
-This is a work in progress on the `noah/finder` branch.
+The finder is off by default. Enable it in Settings → Plugins.
 
 | Part | State |
 | --- | --- |
 | Matching and ranking (`match.ts`, `corpus.ts`) | Done, with tests and a benchmark |
 | The dialog (`FinderDialog.tsx`) | Done, tried on a fixture page with fake data |
 | ⌘P in the app (`index.tsx`) | Done; the plugin is off until you enable it |
-| Filling the index from your account (`sync.ts`) | Done, without tests yet |
+| Filling the index from your account (`sync.ts`) | Done; channel paging has tests |
+| This channel | Done, with older history read as needed |
+| All of Buzz | Done, after a typing pause, with retry and public previews |
 | Saving the index between launches | Not started: it is rebuilt each launch |
 | Clear cache empties the index at once | Not yet: it empties on the next reconnect or restart |
 | Edited messages | Not yet: the finder shows the original text |
-| Relay search when you pause typing | Not started; next |
 | A tool other programs (Neovim) can call | Not started |
 
-## Where this is going
+## Search scopes
 
-The finder will search in two waves:
+The default search stays on this device. It never sends your query to the relay.
+Two scopes let you look further. Remove the scope chip to return to the index.
 
-1. **On this device, as you type.** Fuzzy matching over the local index, in a
-   few milliseconds. This is what exists today.
-2. **On the relay, when you pause.** About 300 ms after you stop typing, it
-   also runs the relay's message search, the one ⌘K uses. That search covers
-   every channel you can read, all the way back, but it only matches whole
-   words by their start and needs three letters. Its results appear in a
-   second section below the local ones. They never move the local rows, and
-   each one is added to the local index, so the next search finds it
-   instantly.
+- **This channel.** Press ⌥⌘P (Ctrl+Alt+P on Windows and Linux), or choose
+  **Search this channel** in the finder while looking at a conversation. It
+  fuzzy-searches only that channel. With fewer than 20 matches, it reads older
+  messages in pages of 500, up to 5,000 per opening. **Keep going** allows
+  another 5,000. It shows how far back it searched, or when it searched the
+  whole channel. Closing or switching scope stops the read. Reopening resumes
+  where it left off. Join a public preview before searching its history here.
+- **All of Buzz.** Type at least three letters in the last word, then choose
+  **Search all of Buzz for “…”**. After a short pause, it searches every message
+  the relay lets you read, including public channels you haven't joined.
+  Results use the same fuzzy ranking; other relay hits follow in their relay
+  order. Earlier results stay visible while the next search runs. Use **Retry**
+  after a failed read, or **More messages** for the next page.
 
-The two waves split the work: local search handles scattered letters and
-speed, and the relay reaches messages the device has never seen. Because the
-relay covers the rest on demand, the finder doesn't need to download every
-channel's history up front. That keeps the load on the relay low across the
-fleet: one relay search per pause, only while the finder is open, and none
-when the local results already contain every word typed.
-
-After that, the index will be saved on the device, so a restart doesn't
-start it over.
+Older channel messages and relay hits from joined channels stay in the index
+for this session. Public previews stay out; their access is checked on each read.
+The index is still rebuilt at each launch. Saving it between launches is next.
 
 ## How to search
 
@@ -77,7 +77,7 @@ sentences, not file names:
 
 ## What it searches
 
-Two sources, both limited to the last 90 days:
+The index starts with two sources from the last 90 days:
 
 - **Your own conversations**, read from the relay when the finder starts:
   messages you wrote, threads you replied in, direct messages, and messages
@@ -88,19 +88,20 @@ Two sources, both limited to the last 90 days:
 
 Channels you haven't joined, which you can preview, stay out.
 
-The index lives in memory and, once that part is built, in a database on this
-device. It is never sent anywhere. Signing out or using **Clear cache** deletes
-it. When you lose access to a channel, its messages leave the index.
+The index lives in memory on this device. It is never sent anywhere. Scoped
+searches can add older messages. Signing out or changing session drops it.
+**Clear cache** drops it on the next reconnect or restart. When you lose access
+to a channel, its messages leave the index.
 
 ## How it stays current
 
 The first time it runs, the finder reads your history from the relay in pages
 of 500, newest first, with pauses between pages, until it reaches 90 days back.
-That happens once per device. After that it only adds new messages: the ones
-the app already receives while it's open, plus a short catch-up from where it
-left off after a reconnect. It does not poll.
+That happens each time the session starts. After that it adds messages the
+app already receives while it's open, plus messages found in the two scopes.
+It does not poll.
 
-Because every device does this once, the plugin starts **off** for now. That
+Because the first fill can read a lot of messages, the plugin starts **off** for now. That
 lets us measure the first fill on real accounts before it reaches everyone.
 
 ## How fast it is
@@ -156,3 +157,11 @@ bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs --port 1461
 
 Open `http://127.0.0.1:1461/tests/fixtures/finder.html`. Add `?extra=200000`
 to search 200,000 more synthetic messages, and `&theme=dark` for dark mode.
+
+Use `?channel=c0` to make **This channel** available. Search for `quartz`, then
+choose **Search this channel** to find notes among 3,000 signed messages; only
+the newest 300 start in the index. Try a word with no matches to reach the end.
+Use `?channel=c0&history=6000` with a word that has no matches to reach the
+5,000-message cap and try **Keep going**.
+Remove the chip, type `quartz`, and choose **Search all of Buzz** to try relay
+search. Both scopes support the same arrows, Enter and Escape keys.

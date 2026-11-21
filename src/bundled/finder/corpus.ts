@@ -67,7 +67,14 @@ export function createCorpus() {
   let version = 0;
   let dead = 0;
   let sorted = true;
-  let last: { query: string; version: number; matched: number[] } | undefined;
+  let last:
+    | {
+        query: string;
+        channelId: string | undefined;
+        version: number;
+        matched: number[];
+      }
+    | undefined;
 
   function entryOf(doc: FinderDoc): Entry {
     const prefix = `${doc.author} ${doc.place} `;
@@ -154,19 +161,24 @@ export function createCorpus() {
       sorted = true;
       changed();
     },
-    search(query: string, limit = 50): FinderResults {
+    search(query: string, limit = 50, channelId?: string): FinderResults {
       const terms = parseQuery(query);
       order();
       // Newest first when nothing is typed, as a place to start.
-      if (!terms.length)
+      if (!terms.length) {
+        const recent = entries.filter(
+          (entry) =>
+            entry.live &&
+            (channelId === undefined || entry.doc.channelId === channelId),
+        );
         return {
-          hits: entries
-            .filter((entry) => entry.live)
+          hits: recent
             .slice(-limit)
             .reverse()
             .map(({ doc }) => ({ doc, score: 0, positions: [] })),
-          total: entries.length - dead,
+          total: recent.length,
         };
+      }
       let mask = 0;
       for (const term of terms) if (!term.negate) mask |= charMask(term.text);
       const best = bestScore(terms);
@@ -175,6 +187,7 @@ export function createCorpus() {
       const narrowed =
         last &&
         last.version === version &&
+        last.channelId === channelId &&
         query.startsWith(last.query) &&
         !query.includes("!")
           ? last.matched
@@ -187,6 +200,7 @@ export function createCorpus() {
         const entry = entries[at] as Entry;
         if (
           !entry.live ||
+          (channelId !== undefined && entry.doc.channelId !== channelId) ||
           (entry.mask & mask) !== mask ||
           !termsMatch(terms, entry.haystack, entry.lower)
         )
@@ -205,7 +219,7 @@ export function createCorpus() {
       };
       if (narrowed) for (const at of narrowed) consider(at);
       else for (let at = entries.length - 1; at >= 0; at--) consider(at);
-      last = { query, version, matched };
+      last = { query, channelId, version, matched };
       return {
         total: matched.length,
         hits: top.map(({ at, score }) => {

@@ -131,6 +131,27 @@ test("removed channels stop matching", () => {
   expect(corpus.size).toBe(1);
 });
 
+test("channel searches narrow only within the same channel and reset on additions", () => {
+  const corpus = createCorpus();
+  corpus.add([
+    doc("roadmap draft", { channelId: "design" }),
+    doc("roadmap review", { channelId: "release" }),
+    doc("roadmap done", { channelId: "design" }),
+  ]);
+  expect(corpus.search("road", 50, "design").total).toBe(2);
+  expect(
+    corpus.search("roadm", 50, "release").hits.map(({ doc }) => doc.text),
+  ).toEqual(["roadmap review"]);
+  expect(corpus.search("roadma").total).toBe(3);
+  expect(corpus.search("", 1, "release").hits[0]?.doc.text).toBe(
+    "roadmap review",
+  );
+  expect(corpus.search("", 1, "design").total).toBe(2);
+  corpus.add([doc("roadmap ready", { channelId: "release" })]);
+  expect(corpus.search("roadmap", 50, "release").total).toBe(2);
+  expect(corpus.search("roadmap", 50, "missing").total).toBe(0);
+});
+
 test("underlines matched letters of the text by code point", () => {
   const corpus = createCorpus();
   corpus.add([doc("🚀 ship it")]);

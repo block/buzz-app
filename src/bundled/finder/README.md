@@ -10,6 +10,9 @@ where it was said.
    `dplyrlbk` finds "deploy rollback". Words can match who wrote it or where.
 3. Use ↑ and ↓ to look through matches, with a preview of each in context, and
    press Enter to open one.
+4. To look further, choose **Search this channel** while in a conversation, or
+   type at least three letters in the last word and choose **Search all of Buzz**.
+   Remove the scope chip to return to the local index.
 
 ---
 
@@ -23,6 +26,15 @@ where it was said.
 - `'word` matches those exact letters together, `!word` leaves out messages
   with that word, and a capital letter makes a word match case.
 - The index is kept in memory on this device and never sent anywhere. It is
-  built again each time Buzz starts. Signing out, switching community, or using
-  Clear cache starts it over.
-- Change the shortcut in **Settings → Shortcuts**.
+  built again each time Buzz starts. Signing out or switching community starts
+  it over. Clear cache takes effect at the next reconnect or restart.
+- **This channel** also opens with ⌥⌘P (Ctrl+Alt+P on Windows and Linux).
+  With fewer than 20 matches, it reads older pages, up to 5,000 messages per
+  opening. **Keep going** allows another 5,000. It remembers its place for this
+  session and stops when you close or switch scope. Join a public preview to
+  search its history here.
+- **All of Buzz** searches the relay after you pause typing. Earlier results
+  stay visible while it searches. Use **Retry** if a read fails, or **More
+  messages** for the next page. Hits from joined channels enter the local
+  index. Public previews stay out.
+- Change the shortcuts in **Settings → Shortcuts**.

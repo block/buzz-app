@@ -1,8 +1,14 @@
 import { lazy, Suspense, useRef, useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
+import { activeModal } from "../../shared/design-system/overlayLayer";
 import { createCorpus } from "./corpus.ts";
-import { type FinderSyncStatus, startFinderSync } from "./sync";
+import type { FinderScope } from "./FinderDialog";
+import {
+  type FinderSync,
+  type FinderSyncStatus,
+  startFinderSync,
+} from "./sync";
 
 // Loaded on first open, so the plugin list doesn't pull the dialog and its
 // styles into every page that imports it.
@@ -17,6 +23,8 @@ type State = Readonly<{
   revision: number;
   session?: RelaySession | undefined;
   status?: FinderSyncStatus | undefined;
+  sync?: FinderSync | undefined;
+  scope?: FinderScope;
 }>;
 
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -49,7 +57,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       if (key === current?.key) return;
       current?.dispose();
       current = undefined;
-      if (!key) return set({ session: undefined, status: undefined });
+      if (!key)
+        return set({
+          session: undefined,
+          status: undefined,
+          sync: undefined,
+          scope: undefined,
+          revision: state.revision + 1,
+        });
       const running = startFinderSync({
         session: snapshot.session,
         corpus,
@@ -57,7 +72,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
           set({ revision: state.revision + 1, status: running.status() }),
       });
       current = { key, dispose: running.dispose };
-      set({ session: snapshot.session, status: running.status() });
+      set({
+        session: snapshot.session,
+        status: running.status(),
+        sync: running,
+        scope: undefined,
+        revision: state.revision + 1,
+      });
     };
     const stop = relay.subscribe(sync);
     sync();
@@ -73,16 +94,37 @@ export const apply: PluginModule["apply"] = (ctx) => {
     binding: { key: "p", mod: true },
     order: 10,
     allowInEditable: true,
-    run: () => set({ open: true }),
+    run: () => set({ open: true, scope: undefined }),
+  });
+
+  ctx.shortcuts.register({
+    id: "channel",
+    title: "Find in this channel",
+    binding: [
+      { key: "p", mod: true, alt: true },
+      // Option+P can report π on an Apple keyboard.
+      { key: "π", mod: true, alt: true },
+    ],
+    order: 11,
+    allowInEditable: true,
+    allowInModal: true,
+    when: () =>
+      (state.open || !activeModal(document)) &&
+      ctx.navigation.snapshot().entry.target.kind === "conversation",
+    run: () => set({ open: true, scope: "channel" }),
   });
 
   ctx.pages.registerOverlay({
     id: "finder",
     component: function Finder() {
-      const { open, revision, session, status } = useSyncExternalStore(
-        store.subscribe,
-        store.snapshot,
-      );
+      const { open, revision, session, status, sync, scope } =
+        useSyncExternalStore(store.subscribe, store.snapshot);
+      const target = useSyncExternalStore(
+        ctx.navigation.subscribe,
+        ctx.navigation.snapshot,
+      ).entry.target;
+      const currentChannelId =
+        target.kind === "conversation" ? target.channelId : undefined;
       const opened = useRef(false);
       if (open) opened.current = true;
       if (!opened.current) return null;
@@ -95,6 +137,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
             corpus={corpus}
             revision={revision}
             session={session}
+            sync={sync}
+            currentChannelId={currentChannelId}
+            scope={scope === "channel" && !currentChannelId ? undefined : scope}
+            onScopeChange={(scope) => set({ scope })}
             status={
               !session ? (
                 <p className="px-3 text-body-sm text-subtle">
@@ -110,8 +156,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
                 </p>
               ) : (
                 <p className="px-3 text-body-sm text-subtle">
-                  {count} messages from the last 90 days. Channels you open add
-                  theirs.
+                  {count} messages indexed. Channels you open add theirs.
                 </p>
               )
             }

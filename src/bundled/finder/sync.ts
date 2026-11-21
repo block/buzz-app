@@ -19,19 +19,30 @@ export type FinderSyncStatus = Readonly<{
   error?: string | undefined;
 }>;
 
-type Raw = { event: RelayEvent; rootId?: string | undefined };
+export type ChannelSearchStatus = Readonly<{
+  oldest?: number | undefined;
+  complete: boolean;
+  capped: boolean;
+  loading: boolean;
+  error: boolean;
+  available: boolean;
+}>;
+
+type ChannelCursor = { until: number; before_id: string };
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        reject(signal.reason);
-      },
-      { once: true },
-    );
+    signal.throwIfAborted();
+    const done = () => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
   });
 
 const chunks = <T>(items: readonly T[], size: number) =>
@@ -56,7 +67,17 @@ export function startFinderSync({
   const controller = new AbortController();
   const { signal } = controller;
   const since = Math.floor(Date.now() / 1000) - DAYS * 86_400;
-  const raw = new Map<string, Raw>();
+  const docs = new Map<string, FinderDoc>();
+  const cursors = new Map<
+    string,
+    {
+      cursor?: ChannelCursor;
+      complete: boolean;
+      opening?: object;
+      pages: number;
+      budget: number;
+    }
+  >();
   // Threads the viewer took part in, by root id.
   const roots = new Set<string>();
   let status: FinderSyncStatus = { phase: "waiting", indexed: 0 };
@@ -77,10 +98,10 @@ export function startFinderSync({
   };
   const nameOf = (pubkey: string) =>
     session.profiles.snapshot().get(pubkey)?.name ?? pubkey.slice(0, 10);
-  const docOf = ({ event, rootId }: Raw): FinderDoc => ({
+  const docOf = (event: RelayEvent): FinderDoc => ({
     id: event.id,
     channelId: event.tags.find(([name]) => name === "h")?.[1] ?? "",
-    threadRootId: rootId,
+    threadRootId: threadReference(event)?.rootId,
     authorId: event.pubkey,
     createdAt: event.created_at,
     author: event.pubkey === viewer ? "You" : nameOf(event.pubkey),
@@ -91,29 +112,152 @@ export function startFinderSync({
   /** Anything the app receives from a conversation you belong to: live
    * traffic and what you scroll past, at no extra relay cost. Previews of
    * channels you haven't joined and huddle rooms stay out. */
-  const relevant = (event: RelayEvent) => {
-    const found = channel(event.tags.find(([name]) => name === "h")?.[1] ?? "");
-    return !!found && !found.readOnly && !found.huddle;
+  const relevant = (channelId: string) => {
+    const found = channel(channelId);
+    return (
+      !!found &&
+      !found.huddle &&
+      !found.cached &&
+      (!found.readOnly || found.viewerRole === "guest")
+    );
   };
-  const take = (events: readonly RelayEvent[], force = false) => {
+  const remember = (added: readonly FinderDoc[]) => {
+    if (signal.aborted || !added.length) return;
+    // The search hook has no thread root. Keep fuller observed documents.
+    const joined = added.filter(
+      (doc) => relevant(doc.channelId) && !docs.has(doc.id),
+    );
+    if (!joined.length) return;
+    for (const doc of joined) docs.set(doc.id, doc);
+    corpus.add(joined);
+    void session.profiles
+      .ensure([...new Set(joined.map((doc) => doc.authorId))], "background")
+      .catch(() => {});
+    publish({});
+  };
+  const take = (events: readonly RelayEvent[], older = false) => {
     const added: FinderDoc[] = [];
     for (const event of events) {
-      if (!KINDS.includes(event.kind) || event.created_at < since) continue;
-      if (raw.has(event.id)) continue;
-      const rootId = threadReference(event)?.rootId;
-      if (event.pubkey === viewer && rootId) roots.add(rootId);
-      if (!force && !relevant(event)) continue;
-      const entry = { event, rootId };
-      raw.set(event.id, entry);
-      added.push(docOf(entry));
+      if (!KINDS.includes(event.kind) || (!older && event.created_at < since))
+        continue;
+      if (docs.has(event.id)) continue;
+      const doc = docOf(event);
+      if (event.pubkey === viewer && doc.threadRootId)
+        roots.add(doc.threadRootId);
+      added.push(doc);
     }
-    if (added.length) {
-      corpus.add(added);
-      void session.profiles
-        .ensure([...new Set(added.map((doc) => doc.authorId))], "background")
-        .catch(() => {});
-      publish({});
+    remember(added);
+  };
+
+  /** One opening owns its budget and cancellation; only cursors outlive it.
+   * Query edits wake the same reader instead of resetting its cursor or cap. */
+  const searchChannel = (
+    channelId: string,
+    needsMore: () => boolean,
+    report: (status: ChannelSearchStatus) => void,
+    opening: object = {},
+  ) => {
+    const progress = cursors.get(channelId) ?? {
+      complete: false,
+      pages: 0,
+      budget: 10,
+    };
+    if (progress.opening !== opening) {
+      progress.opening = opening;
+      progress.pages = 0;
+      progress.budget = 10;
     }
+    cursors.set(channelId, progress);
+    const lifetime = new AbortController();
+    const bound = AbortSignal.any([signal, lifetime.signal]);
+    let running = false;
+    let error = false;
+    let delay = Math.random() * PACE_MS;
+    const snapshot = (): ChannelSearchStatus => ({
+      oldest: progress.cursor?.until,
+      complete: progress.complete,
+      capped: progress.pages >= progress.budget,
+      loading: running,
+      error,
+      available: relevant(channelId),
+    });
+    const notify = () => {
+      if (!bound.aborted) report(snapshot());
+    };
+    const wake = () => {
+      if (running || bound.aborted) return;
+      const needed = () =>
+        relevant(channelId) &&
+        !progress.complete &&
+        progress.pages < progress.budget &&
+        needsMore();
+      if (!needed()) return notify();
+      running = true;
+      notify();
+      void (async () => {
+        let backoff = BACKOFF_MS;
+        while (!bound.aborted && needed()) {
+          await sleep(delay, bound);
+          if (!needed()) break;
+          let page: readonly RelayEvent[];
+          try {
+            page = await session.readRemote(
+              [
+                {
+                  kinds: KINDS,
+                  "#h": [channelId],
+                  limit: PAGE,
+                  ...progress.cursor,
+                },
+              ],
+              { signal: bound, priority: "background" },
+            );
+            bound.throwIfAborted();
+          } catch (failure) {
+            if (bound.aborted) throw failure;
+            error = true;
+            notify();
+            delay = backoff + Math.random() * 1000;
+            backoff = Math.min(backoff * 2, BACKOFF_CAP_MS);
+            continue;
+          }
+          error = false;
+          backoff = BACKOFF_MS;
+          delay = PACE_MS;
+          // Resolve ties in the relay's newest-first ID order.
+          const oldest = [...page].sort(
+            (a, b) => a.created_at - b.created_at || b.id.localeCompare(a.id),
+          )[0];
+          if (oldest)
+            progress.cursor = {
+              until: oldest.created_at,
+              before_id: oldest.id,
+            };
+          progress.complete = page.length < PAGE;
+          progress.pages++;
+          take(page, true);
+          notify();
+        }
+      })()
+        .catch(() => {
+          // Cancellation retires this opening, including a pending backoff.
+        })
+        .finally(() => {
+          running = false;
+          notify();
+        });
+    };
+    wake();
+    return {
+      wake,
+      keepGoing() {
+        progress.budget += 10;
+        wake();
+      },
+      dispose() {
+        lifetime.abort();
+      },
+    };
   };
 
   /** Every page of `filter` back to the horizon, newest first. */
@@ -134,7 +278,7 @@ export function startFinderSync({
         continue;
       }
       delay = BACKOFF_MS;
-      take(page, true);
+      take(page);
       const oldest = [...page].sort(
         (a, b) => a.created_at - b.created_at || b.id.localeCompare(a.id),
       )[0];
@@ -176,16 +320,14 @@ export function startFinderSync({
         .filter((event) => event.kind === 5)
         .flatMap((event) =>
           event.tags.flatMap(([name, value]) =>
-            name === "e" &&
-            value &&
-            raw.get(value)?.event.pubkey === event.pubkey
+            name === "e" && value && docs.get(value)?.authorId === event.pubkey
               ? [value]
               : [],
           ),
         ),
     );
     if (deleted.size) {
-      for (const id of deleted) raw.delete(id);
+      for (const id of deleted) docs.delete(id);
       corpus.remove((doc) => deleted.has(doc.id));
       publish({});
     }
@@ -197,18 +339,24 @@ export function startFinderSync({
     const list = session.channels.list();
     if (list.status === "ready") {
       const gone = new Set(
-        [...raw.values()]
-          .map(({ event }) => event.tags.find(([n]) => n === "h")?.[1] ?? "")
-          .filter((id) => !channel(id)),
+        [...docs.values()]
+          .filter((doc) => !relevant(doc.channelId))
+          .map((doc) => doc.channelId),
       );
       if (gone.size) {
-        for (const [id, entry] of raw)
-          if (gone.has(entry.event.tags.find(([n]) => n === "h")?.[1] ?? ""))
-            raw.delete(id);
+        for (const [id, doc] of docs)
+          if (gone.has(doc.channelId)) docs.delete(id);
         corpus.remove((doc) => gone.has(doc.channelId));
+        for (const id of gone) cursors.delete(id);
       }
     }
-    corpus.add([...raw.values()].map(docOf));
+    const relabeled = [...docs.values()].map((doc) => ({
+      ...doc,
+      author: doc.authorId === viewer ? "You" : nameOf(doc.authorId),
+      place: placeOf(doc.channelId),
+    }));
+    for (const doc of relabeled) docs.set(doc.id, doc);
+    corpus.add(relabeled);
     publish({});
   };
   let pending: ReturnType<typeof setTimeout> | undefined;
@@ -229,6 +377,8 @@ export function startFinderSync({
 
   return {
     status: () => status,
+    searchChannel,
+    remember,
     dispose() {
       controller.abort();
       clearTimeout(pending);
@@ -240,3 +390,5 @@ export function startFinderSync({
     },
   };
 }
+
+export type FinderSync = ReturnType<typeof startFinderSync>;

@@ -2,9 +2,11 @@
 // ?extra=200000 adds unsigned synthetic messages to search (their previews
 // show nearby signed messages); ?theme=dark switches theme.
 import "../../src/shared/styles/globals.css";
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource/jetbrains-mono/400.css";
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { ReadFilter, RelayEvent } from "../../src/features/relay/events";
+import type { RelayEvent } from "../../src/features/relay/events";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
   keypair,
@@ -17,8 +19,16 @@ import {
   createCorpus,
   type FinderDoc,
 } from "../../src/bundled/finder/corpus.ts";
-import { FinderDialog } from "../../src/bundled/finder/FinderDialog";
+import {
+  FinderDialog,
+  type FinderScope,
+} from "../../src/bundled/finder/FinderDialog";
+import { startFinderSync } from "../../src/bundled/finder/sync";
 import { syntheticDocs } from "../../src/bundled/finder/synthetic.ts";
+
+import { queryEvents } from "./finder-data";
+
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.colorMode = params.get("theme") ?? "light";
@@ -59,13 +69,26 @@ const messages: RelayEvent[] = sample.map((doc, n) => {
     tags: [["h", channel.id]],
   });
 });
+// Only the newest 300 start in the index. Search "quartz" in c0 to read back.
+const history = Array.from(
+  { length: Number(params.get("history") ?? 3000) },
+  (_, n) =>
+    signed(people[0] as typeof viewer, {
+      kind: 9,
+      content:
+        n >= 2500 ? `Quartz archive notes ${n}` : `Daily channel notes ${n}`,
+      created_at: Math.floor(Date.now() / 1000) - n * 3600,
+      tags: [["h", "c0"]],
+    }),
+);
 const events: RelayEvent[] = [
+  ...history,
   ...messages,
   ...[viewer, ...people].map((key) =>
     profile(key, { name: nameOf.get(key.pubkey) ?? "Someone" }),
   ),
   ...channels.flatMap((channel) => [
-    metadata(relay, channel.id, channel.name),
+    metadata(relay, channel.id, channel.name, 1_700_000_000, [["t", "stream"]]),
     roster(relay, channel.id, [viewer.pubkey, ...people.map((p) => p.pubkey)]),
   ]),
 ];
@@ -73,34 +96,11 @@ console.log(
   `signed ${events.length} events in ${(performance.now() - started).toFixed(0)} ms`,
 );
 
-const matches = (event: RelayEvent, filter: ReadFilter) => {
-  const tagged = (name: string, values: readonly string[] | undefined) =>
-    !values ||
-    event.tags.some(
-      ([key, value]) => key === name && values.includes(value ?? ""),
-    );
-  return (
-    (!filter.ids || filter.ids.includes(event.id)) &&
-    (!filter.kinds || filter.kinds.includes(event.kind)) &&
-    (!filter.authors || filter.authors.includes(event.pubkey)) &&
-    (filter.since === undefined || event.created_at >= filter.since) &&
-    (filter.until === undefined || event.created_at <= filter.until) &&
-    tagged("h", filter["#h"]) &&
-    tagged("d", filter["#d"]) &&
-    tagged("p", filter["#p"]) &&
-    tagged("e", filter["#e"])
-  );
-};
 const owner = createRelaySession({
   viewer: viewer.pubkey,
   relayAuthor: relay.pubkey,
   async query(filters) {
-    return filters.flatMap((filter) =>
-      events
-        .filter((event) => matches(event, filter))
-        .sort((a, b) => b.created_at - a.created_at)
-        .slice(0, filter.limit),
-    );
+    return queryEvents(events, filters);
   },
 });
 const session = owner.session;
@@ -109,7 +109,7 @@ void session.channels.ensureList?.();
 const corpus = createCorpus();
 const channelName = new Map(channels.map((c) => [c.id, `#${c.name}`]));
 corpus.add(
-  messages.map((event) => ({
+  [...messages, ...history.slice(0, 300)].map((event) => ({
     id: event.id,
     channelId: event.tags[0]?.[1] ?? "",
     authorId: event.pubkey,
@@ -141,18 +141,33 @@ if (extra) {
 }
 
 function App() {
+  useKeyboardFocusVisibility();
   const [open, setOpen] = useState(true);
   const [opened, setOpened] = useState<FinderDoc>();
+  const [scope, setScope] = useState<FinderScope>();
+  const [revision, setRevision] = useState(0);
+  const [sync, setSync] = useState<ReturnType<typeof startFinderSync>>();
+  const currentChannelId = params.get("channel") ?? undefined;
+  useEffect(() => {
+    const running = startFinderSync({
+      session,
+      corpus,
+      changed: () => setRevision((n) => n + 1),
+    });
+    setSync(running);
+    return running.dispose;
+  }, []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() === "p" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
+        setScope(event.altKey && currentChannelId ? "channel" : undefined);
         setOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [currentChannelId]);
   return (
     <main style={{ padding: "var(--space-panel-inset)", minHeight: "100vh" }}>
       <h1>Finder fixture</h1>
@@ -170,8 +185,12 @@ function App() {
         open={open}
         onOpenChange={setOpen}
         corpus={corpus}
-        revision={0}
+        revision={revision}
         session={session}
+        sync={sync}
+        currentChannelId={currentChannelId}
+        scope={scope}
+        onScopeChange={setScope}
         openMessage={setOpened}
       />
     </main>

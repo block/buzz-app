@@ -240,3 +240,47 @@ it("selecting an already queued background catch-up promotes it without releasin
     h.owner.dispose();
   }
 });
+
+it("opening a channel with live messages but no saved page shows nothing until the head page lands", async () => {
+  // The live tail of an unopened channel predates its loaded history: shown
+  // before the head page, it appears alone and the rest pops in around it.
+  const h = setup();
+  try {
+    h.live.state({ status: "connected", routes: [] });
+    h.live.established("z");
+    await flush();
+    const alice = keypair();
+    const older = message(alice, "z", "older", 1700000001);
+    const arrived = message(alice, "z", "arrived live", 1700000002);
+    h.live.receive([arrived]);
+    await flush();
+    for (const entry of h.wire.pending.splice(0)) entry.respond([]);
+    h.owner.session.channels.ensure("z");
+    await flush();
+    expect(h.owner.session.channels.window("z")).toMatchObject({
+      status: "loading",
+      rows: [],
+    });
+    const head = h.wire.pending.find(
+      ({ filters }) => filters[0]?.["#h"]?.[0] === "z" && filters[0]?.top_level,
+    );
+    expect(head).toBeDefined();
+    head?.respond([
+      arrived,
+      older,
+      bounds(h.relay, "z", "head", {
+        has_more: true,
+        next_cursor: { created_at: older.created_at, id: older.id },
+      }),
+    ]);
+    await flush();
+    expect(h.owner.session.channels.window("z")).toMatchObject({
+      status: "ready",
+    });
+    expect(
+      h.owner.session.channels.window("z").rows.map((row) => row.id),
+    ).toEqual([older.id, arrived.id]);
+  } finally {
+    h.owner.dispose();
+  }
+});

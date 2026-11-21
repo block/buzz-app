@@ -950,7 +950,6 @@ export function createRelaySession(
     ) => void,
     signal?: AbortSignal,
     incomingPhase?: "replay" | "live",
-    live = false,
   ): readonly RelayEvent[] {
     if (closed) return [];
     // Authority precedes every projection, even in a batch containing both a
@@ -1019,7 +1018,7 @@ export function createRelaySession(
         if (epoch !== accessEpoch) return;
         statuses.accept(visible);
         if (epoch !== accessEpoch) return;
-        if (channelTraffic) channels.accept(visible, live);
+        if (channelTraffic) channels.accept(visible);
         for (const listener of observations) {
           if (closed || epoch !== accessEpoch) return;
           listener(visible);
@@ -4117,7 +4116,6 @@ export function createRelaySession(
         undefined,
         undefined,
         provenance?.channelId ? provenance.phase : undefined,
-        true,
       );
       // Completion subscribers can synchronously clear, revoke or retire this
       // live delivery. Do not admit its remaining pulses into the new lifetime.

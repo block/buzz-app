@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   getFiletypeFromFileName,
   getHighlighterIfLoaded,
   parsePatchFiles,
   preloadHighlighter,
+  type DiffLineAnnotation,
   type FileDiffMetadata,
+  type SelectedLineRange,
 } from "@pierre/diffs";
 import { FileDiff as ReactFileDiff } from "@pierre/diffs/react";
 import { bundledLanguages } from "./grammars";
@@ -12,6 +14,16 @@ import { gitPatch, type FileData } from "./parse";
 import styles from "./Diffs.module.css";
 
 const theme = { light: "pierre-light", dark: "pierre-dark" } as const;
+
+/** Rows under lines and a selectable line range, for diffs whose lines take
+ * comments. Each annotation's metadata names what it shows. */
+export type DiffAnnotations = {
+  lineAnnotations: DiffLineAnnotation<string>[];
+  renderAnnotation(annotation: DiffLineAnnotation<string>): ReactNode;
+  selectedLines: SelectedLineRange | null;
+  /** A range chosen by its line numbers or the gutter's add button. */
+  onSelect(range: SelectedLineRange | null): void;
+};
 
 /** The grammar that highlights a file: "text" keeps the diff view without
  * tokens. @pierre/diffs stores partial patches compactly, so absolute line
@@ -52,11 +64,13 @@ export function DiffViewer({
   files,
   filePath,
   viewType = "unified",
+  annotate,
 }: {
   content: string;
   files: FileData[] | undefined;
   filePath?: string | undefined;
   viewType?: "unified" | "split";
+  annotate?: DiffAnnotations | undefined;
 }) {
   if (!files) return <RawDiff content={content} />;
   if (!files.length) return <p className="text-body-sm">No diff content</p>;
@@ -69,6 +83,7 @@ export function DiffViewer({
       files={files}
       filePath={filePath}
       viewType={viewType}
+      annotate={annotate}
     />
   );
 }
@@ -78,11 +93,13 @@ function ParsedDiff({
   files,
   filePath,
   viewType,
+  annotate,
 }: {
   content: string;
   files: FileData[];
   filePath?: string | undefined;
   viewType: "unified" | "split";
+  annotate: DiffAnnotations | undefined;
 }) {
   const parsed = useMemo(() => {
     try {
@@ -165,6 +182,7 @@ function ParsedDiff({
           onFailure={() => setFailed(true)}
           themeType={themeType}
           viewType={viewType}
+          annotate={parsed.length === 1 ? annotate : undefined}
         />
       ))}
     </div>
@@ -178,6 +196,7 @@ function PierreFile({
   onFailure,
   themeType,
   viewType,
+  annotate,
 }: {
   file: FileDiffMetadata;
   filePath?: string | undefined;
@@ -185,6 +204,7 @@ function PierreFile({
   onFailure: () => void;
   themeType: "light" | "dark";
   viewType: "unified" | "split";
+  annotate: DiffAnnotations | undefined;
 }) {
   return (
     <section
@@ -195,7 +215,19 @@ function PierreFile({
     >
       <ReactFileDiff
         fileDiff={file}
+        {...(annotate && {
+          lineAnnotations: annotate.lineAnnotations,
+          renderAnnotation: annotate.renderAnnotation,
+          selectedLines: annotate.selectedLines,
+        })}
         options={{
+          ...(annotate && {
+            enableLineSelection: true,
+            controlledSelection: true,
+            onLineSelected: annotate.onSelect,
+            enableGutterUtility: true,
+            onGutterUtilityClick: annotate.onSelect,
+          }),
           theme,
           themeType,
           diffStyle: viewType,

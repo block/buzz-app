@@ -1218,9 +1218,13 @@ Quitting Buzz also turns it off.
 - **Changesets** is an optional desktop plugin, off by default. When a local
   agent finishes a turn in a chat with project folders, a card under its last
   message lists the files it changed, with added and removed lines. Only you
-  see it. Choose a file to open its diff beside the chat. It skips agents on
-  other computers and remote agents, and keeps the latest 300 turns on this
-  device.
+  see it. Choose a file to open its diff beside the chat. In the diff, choose
+  a line number, or the **+** beside a line, to comment on it; drag or
+  Shift-click to cover more lines. **Send** posts the comment to that agent right away, in
+  the chat or thread where it worked, with the file, lines and code it points
+  at. It
+  skips agents on other computers and remote agents, and keeps the latest 300
+  turns on this device.
 - **Activity preview**: with a mouse or trackpad, rest the pointer on
   **Activity** in the Messages sidebar to see recent mentions, DMs, thread replies, and reactions
   without opening the Activity page. Clicking a conversation opens it directly;

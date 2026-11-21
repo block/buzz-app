@@ -4,6 +4,7 @@ import type { ComposerAccessoryProps } from "../../src/features/conversation/con
 import type { LocalWork } from "../../src/features/agents/local-activity";
 import type { RelaySession } from "../../src/features/relay/session";
 import { TurnCards } from "../../src/bundled/changesets/Card";
+import { createComments } from "../../src/bundled/changesets/comments";
 import type { Git } from "../../src/bundled/changesets/git";
 import { ChangesetPanel } from "../../src/bundled/changesets/Panel";
 import { createTurns } from "../../src/bundled/changesets/turns";
@@ -178,6 +179,10 @@ function Row({
 }
 
 let opened: (target: string) => void = () => {};
+const comments = createComments();
+/** Messages the panel sent to agents, for the journey to check. */
+const sent: string[] = [];
+(window as unknown as { sent: string[] }).sent = sent;
 function Fixture() {
   const [target, setTarget] = useState<string>();
   opened = setTarget;
@@ -189,7 +194,14 @@ function Fixture() {
       </main>
       {target && (
         <aside aria-label="Changes">
-          <ChangesetPanel target={target} turns={turns} />
+          <ChangesetPanel
+            target={target}
+            turns={turns}
+            comments={comments}
+            send={(_, text) => {
+              sent.push(text);
+            }}
+          />
         </aside>
       )}
     </div>

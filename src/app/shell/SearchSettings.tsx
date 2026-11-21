@@ -230,11 +230,12 @@ export function useSearchSettings({
             const restricted =
               plugin.source === "bundled" &&
               (plugin.manifest.id === "buzz.moderation" ||
+                plugin.manifest.id === "buzz.community-appearance" ||
                 plugin.manifest.id === "buzz.relay-staff");
             const access =
-              plugin.manifest.id === "buzz.moderation"
-                ? moderationAccess
-                : staffAccess;
+              plugin.manifest.id === "buzz.relay-staff"
+                ? staffAccess
+                : moderationAccess;
             const blocked =
               pluginState.busy ||
               (!plugin.enabled && restricted && access !== "allowed");

@@ -11,6 +11,7 @@ import { joinPolicy as readJoinPolicy } from "./join-policy";
 import { leaveRefusal, leaveRequestTemplate } from "./leave-protocol";
 import {
   adminReason,
+  iconCommand,
   inviteListPath,
   inviteRequest,
   memberCommand,
@@ -216,17 +217,19 @@ export async function nativeCommunityRequest(
       throw new Error("Profile publication was not confirmed");
     return result;
   }
-  if (route === "member") {
+  if (route === "member" || route === "icon") {
     // The relay decides each change; only its allowed refusals come back verbatim.
     const event = await nativeRelaySigner(community).signEvent(
-      memberCommand(body),
+      route === "icon" ? iconCommand(body) : memberCommand(body),
     );
     const result = await readResponse(
       await nativeRelayRequest(community, "/events", event, signal),
       adminReason,
     );
     if (result.event_id !== event.id || typeof result.accepted !== "boolean")
-      throw new Error("Member change could not be confirmed");
+      throw new Error(
+        `${route === "icon" ? "Icon" : "Member"} change could not be confirmed`,
+      );
     return result;
   }
   if (route === "leave") {

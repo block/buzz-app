@@ -1,0 +1,7 @@
+{
+  "id": "buzz.community-appearance",
+  "name": "Community appearance",
+  "apiVersion": 1,
+  "description": "Set the icon everyone sees for your community.",
+  "discovery": { "category": "people-and-communities", "tags": ["people"] }
+}

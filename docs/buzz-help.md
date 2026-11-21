@@ -282,6 +282,13 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   **Links** lists the community's invite links with their status, uses and
   expiry; **Revoke** on a row, or paste a link into **Revoke a link**, stops
   anyone new from joining with it. People who already joined stay in.
+- Community owners and admins set the picture everyone sees for the community
+  in Settings → **Community icon**, under Community admin. **Choose image…**
+  crops it to a square and resizes it to fit; **Remove icon** clears it. The
+  card shows the icon the community publishes once the change is accepted.
+  The community list picks up the new icon the next time Buzz starts. The
+  bundled **Community appearance** plugin provides this card, separately from
+  Membership.
 - To use Buzz on your phone, open Settings → **Mobile app** (**Pair mobile**
   in builds without Builderlab). When you're signed in with Builderlab and your
   account holds this identity's backup, it says to install the app (with store

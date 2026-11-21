@@ -66,7 +66,11 @@ const PENDING_MAX = 16;
 const SETTLED_MAX = 64;
 const REASON_MAX = 500;
 /** Settings enables these only after checking admin access. */
-const ADMIN_PLUGINS = ["buzz.moderation", "buzz.relay-staff"];
+const ADMIN_PLUGINS = [
+  "buzz.moderation",
+  "buzz.community-appearance",
+  "buzz.relay-staff",
+];
 /** The native import signs a Buzz-hosted repository's read with the owner's
  * key (see `relay::git_repository`), which an agent must not trigger. */
 const BUZZ_HOSTED = /^\/git\/[0-9a-f]{64}\/[^/]+\/?$/i;

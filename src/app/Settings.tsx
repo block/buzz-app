@@ -284,6 +284,7 @@ function restrictedPlugin(plugin: PluginInfo) {
   return (
     plugin.source === "bundled" &&
     (plugin.manifest.id === "buzz.moderation" ||
+      plugin.manifest.id === "buzz.community-appearance" ||
       plugin.manifest.id === "buzz.relay-staff")
   );
 }
@@ -308,9 +309,9 @@ function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
     case "unavailable":
       return "Access is unavailable in this build or on this relay.";
     case "denied":
-      return plugin.manifest.id === "buzz.moderation"
-        ? "Select a community where you’re an owner or admin."
-        : "Select a community on a relay where you have staff access.";
+      return plugin.manifest.id === "buzz.relay-staff"
+        ? "Select a community on a relay where you have staff access."
+        : "Select a community where you’re an owner or admin.";
   }
 }
 
@@ -769,9 +770,9 @@ export function Settings({
     () => adminAccess?.status("buzz.relay-staff") ?? "unavailable",
   );
   const pluginAccess = (plugin: PluginInfo) =>
-    plugin.manifest.id === "buzz.moderation"
-      ? membershipAccess
-      : moderationAccess;
+    plugin.manifest.id === "buzz.relay-staff"
+      ? moderationAccess
+      : membershipAccess;
   useEffect(() => communities.retainPresentation(), [communities]);
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const decisionProviders = useSyncExternalStore(

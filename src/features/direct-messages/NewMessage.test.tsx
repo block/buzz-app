@@ -196,6 +196,7 @@ function setup({ archived = [] as string[] } = {}) {
   } as unknown as RelaySession;
   const onOpenThread = vi.fn();
   const onStarted = vi.fn();
+  const onOpenChat = vi.fn();
   let controlState: LocalAgentsSnapshot = {
     status: "ready",
     agents: [
@@ -273,6 +274,7 @@ function setup({ archived = [] as string[] } = {}) {
       visit={visit}
       onOpenThread={onOpenThread}
       onStarted={onStarted}
+      onOpenChat={onOpenChat}
     />
   );
   const mount = (
@@ -298,6 +300,7 @@ function setup({ archived = [] as string[] } = {}) {
     sidebarPreferences,
     onOpenThread,
     onStarted,
+    onOpenChat,
     mount,
     control,
     setArchived(keys: readonly string[]) {
@@ -321,6 +324,62 @@ function setup({ archived = [] as string[] } = {}) {
 const recipient = () =>
   screen.getByRole("combobox", { name: "Message recipients" });
 const send = () => screen.getByRole("button", { name: "Send message" });
+
+it("lists the group's named conversations beside their history, whatever agents are in them", async () => {
+  const t = setup();
+  const [one, agent, three] = people;
+  assert(one && agent && three);
+  const viewer = "f".repeat(64);
+  t.directMessages.people.mockResolvedValue({ people, hasMore: false });
+  // Profiles say who is an agent.
+  t.profiles.set(agent.pubkey, { name: agent.name, isAgent: true });
+  t.channels.channels = [
+    {
+      id: "launch",
+      name: "Launch checklist",
+      channelType: "stream",
+      members: [viewer, one.pubkey, three.pubkey],
+      lastActivityAt: 100,
+    },
+    {
+      id: "trip",
+      name: "Trip planning",
+      channelType: "solo",
+      members: [viewer, one.pubkey, three.pubkey, agent.pubkey],
+      lastActivityAt: 200,
+    },
+    {
+      id: "other",
+      name: "Just us",
+      channelType: "solo",
+      members: [viewer, one.pubkey],
+      lastActivityAt: 300,
+    },
+  ] as ChannelSummary[];
+  t.mount();
+  for (const person of [one, three]) {
+    await t.user.type(recipient(), person.name);
+    await t.user.click(
+      await screen.findByRole("option", { name: person.name }),
+    );
+  }
+  const list = await screen.findByRole("complementary", {
+    name: "With Person 1 and Person 3",
+  });
+  expect(
+    within(list)
+      .getAllByRole("button")
+      .map((row) => row.textContent),
+  ).toEqual([
+    expect.stringContaining("Trip planning"),
+    expect.stringContaining("Launch checklist"),
+  ]);
+  await t.user.click(
+    within(list).getByRole("button", { name: /Trip planning/ }),
+  );
+  expect(t.onOpenChat).toHaveBeenCalledWith("trip");
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+});
 
 it("finds a hosted agent by its owned name and sends without local custody", async () => {
   const t = setup();

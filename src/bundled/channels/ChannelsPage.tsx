@@ -3040,6 +3040,10 @@ function ChannelWorkspace({
               extensions={extensions}
               onPreparing={(pubkeys) => handoff?.prepareDm(pubkeys)}
               onOpenThread={openChannelThread}
+              onOpenChat={(channelId) => {
+                if (behindSettings()) return;
+                select(channelId);
+              }}
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
                 if (behindSettings()) return;

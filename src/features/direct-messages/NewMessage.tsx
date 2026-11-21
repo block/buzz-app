@@ -36,6 +36,17 @@ import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import type { MessageIntent } from "../channel-navigation/routes";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { NavigationSection } from "../../shared/design-system/ui/NavigationSection";
+import {
+  MenuItem,
+  MenuPopup,
+  MenuRoot,
+  MenuTrailing,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
+import { CaretDownIcon } from "../../shared/design-system/icons";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -155,11 +166,14 @@ export function NewMessage({
   host,
   onOpenThread,
   onStarted,
+  onOpenChat,
   visit,
   intent,
   workspace,
   starred,
 }: {
+  /** Open one of the picked group's named conversations instead. */
+  onOpenChat?: ((channelId: string) => void) | undefined;
   session: RelaySession;
   scope: string;
   /** The person this visit was opened from, such as by their profile's Message. */
@@ -566,6 +580,71 @@ export function NewMessage({
     }
     return match;
   }, [channels, recipients, session.viewer, profiles]);
+  // Named conversations with exactly these people, newest first. Like a DM,
+  // a conversation is known by its people: agents in it never change whose
+  // it is.
+  const namedConversations = useMemo(() => {
+    const viewer = session.viewer;
+    if (!viewer || !onOpenChat) return [];
+    const agentKey = (key: string) =>
+      recipients.some((person) => person.pubkey === key && person.isAgent) ||
+      !!profiles.get(key)?.isAgent;
+    const group = new Set(
+      recipients.map((person) => person.pubkey).filter((key) => !agentKey(key)),
+    );
+    if (!group.size) return [];
+    return channels
+      .filter((channel) => {
+        if (
+          (channel.channelType !== "solo" &&
+            channel.channelType !== "stream") ||
+          !channel.name ||
+          channel.archived ||
+          channel.cached ||
+          channel.pending ||
+          channel.huddle ||
+          !channel.members?.includes(viewer)
+        )
+          return false;
+        const people = new Set(
+          channel.members.filter((key) => key !== viewer && !agentKey(key)),
+        );
+        return (
+          people.size === group.size &&
+          [...people].every((key) => group.has(key))
+        );
+      })
+      .sort(
+        (left, right) =>
+          (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0),
+      );
+  }, [channels, recipients, session.viewer, profiles, onOpenChat]);
+  // Who is an agent comes from profiles, so load the unknown members of rooms
+  // that could be this group's before matching them.
+  useEffect(() => {
+    const viewer = session.viewer;
+    if (!viewer || !onOpenChat || !recipients.length) return;
+    const picked = recipients.map((person) => person.pubkey);
+    const unknown = new Set<string>();
+    for (const channel of channels) {
+      if (
+        (channel.channelType !== "solo" && channel.channelType !== "stream") ||
+        !channel.members?.includes(viewer) ||
+        !picked.every((key) => channel.members?.includes(key))
+      )
+        continue;
+      for (const key of channel.members)
+        if (key !== viewer && !profiles.has(key)) unknown.add(key);
+    }
+    if (unknown.size)
+      void session.profiles.ensure([...unknown]).catch(() => {});
+  }, [channels, recipients, session, profiles, onOpenChat]);
+  const namedLabel = `With ${new Intl.ListFormat(undefined, {
+    type: "conjunction",
+  }).format(named.map((person) => person.name))}`;
+  const openNamed = (channelId: string) => {
+    if (!locked) onOpenChat?.(channelId);
+  };
   // Agents named for an existing DM of these people join it, with its history.
   const joining = existing
     ? named.filter((person) => !existing.members?.includes(person.pubkey))
@@ -588,34 +667,91 @@ export function NewMessage({
         onTyped={setTyped}
       />
       <div className={styles.blank} data-new-message-body="">
-        {existing ? (
-          <ExistingDiscussion
-            key={existing.id}
-            session={session}
-            scope={scope}
-            channel={existing}
-            extensions={extensions}
-            host={host}
-            onRecovered={focusComposer}
-            onOpen={(messageId, threadRootId, intent) =>
-              onOpenThread(existing.id, messageId, threadRootId, intent)
-            }
-          />
-        ) : recipients.length > 0 ? (
-          <div className={styles.introduction}>
-            <AvatarStack
-              animateEntrance
-              size="hero-large"
-              max={5}
-              items={named.map((person) => ({
-                id: person.pubkey,
-                name: person.name,
-                src: avatarMedia(person.picture, session.media),
-                shape: person.isAgent ? "squircle" : "circle",
-              }))}
-            />
+        {recipients.length > 0 && (
+          <div className={styles.discussion}>
+            {namedConversations.length > 0 && (
+              <div className={styles.namedMenu}>
+                <MenuRoot>
+                  <MenuTrigger
+                    render={
+                      <Button size="sm" variant="ghost">
+                        {namedConversations.length === 1
+                          ? "1 named conversation"
+                          : `${namedConversations.length} named conversations`}
+                        <CaretDownIcon size="1rem" aria-hidden="true" />
+                      </Button>
+                    }
+                  />
+                  <MenuPopup
+                    aria-label={namedLabel}
+                    style={{ maxHeight: "var(--available-height)" }}
+                  >
+                    {namedConversations.map((channel) => (
+                      <MenuItem
+                        key={channel.id}
+                        onClick={() => openNamed(channel.id)}
+                      >
+                        {channel.name}
+                        {channel.lastActivityAt ? (
+                          <MenuTrailing>
+                            {relativeTimestamp(channel.lastActivityAt)}
+                          </MenuTrailing>
+                        ) : null}
+                      </MenuItem>
+                    ))}
+                  </MenuPopup>
+                </MenuRoot>
+              </div>
+            )}
+            {existing ? (
+              <ExistingDiscussion
+                key={existing.id}
+                session={session}
+                scope={scope}
+                channel={existing}
+                extensions={extensions}
+                host={host}
+                onRecovered={focusComposer}
+                onOpen={(messageId, threadRootId, intent) =>
+                  onOpenThread(existing.id, messageId, threadRootId, intent)
+                }
+              />
+            ) : recipients.length > 0 ? (
+              <div className={styles.introduction}>
+                <AvatarStack
+                  animateEntrance
+                  size="hero-large"
+                  max={5}
+                  items={named.map((person) => ({
+                    id: person.pubkey,
+                    name: person.name,
+                    src: avatarMedia(person.picture, session.media),
+                    shape: person.isAgent ? "squircle" : "circle",
+                  }))}
+                />
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        )}
+        {namedConversations.length > 0 && (
+          <aside className={styles.named} aria-label={namedLabel}>
+            <NavigationSection label={namedLabel}>
+              {namedConversations.map((channel) => (
+                <NavigationItem
+                  key={channel.id}
+                  label={channel.name}
+                  disabled={locked}
+                  trailing={
+                    channel.lastActivityAt
+                      ? relativeTimestamp(channel.lastActivityAt)
+                      : undefined
+                  }
+                  onClick={() => openNamed(channel.id)}
+                />
+              ))}
+            </NavigationSection>
+          </aside>
+        )}
       </div>
       <div className={styles.feedback}>
         {joining.length > 0 && (

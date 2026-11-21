@@ -92,10 +92,12 @@ export function rememberOpeningFrame(
  * show in several places at once (a channel row and its open thread), so each
  * source keeps one element per detached display. Only the retaining owner
  * (session) can claim one. Bounded by decoded size; disposing session media
- * forgets them and refuses retention that began before. */
-const DECODED_IMAGE_BUDGET = 512 * 1024 * 1024;
-// 16 MP; a larger original would push out many smaller ones.
-const DECODED_IMAGE_LIMIT = 64 * 1024 * 1024;
+ * or hiding the document for `HIDDEN_RELEASE_MS` forgets them and refuses
+ * retention that began before. The HTTP cache still holds the bytes. */
+const DECODED_IMAGE_BUDGET = 128 * 1024 * 1024;
+// 8 MP (a 4K screenshot fits); a larger original would push out many smaller ones.
+const DECODED_IMAGE_LIMIT = 32 * 1024 * 1024;
+const HIDDEN_RELEASE_MS = 5 * 60_000;
 const decodedImages = new Map<
   string,
   { owner: WeakRef<object>; images: HTMLImageElement[]; bytes: number }
@@ -127,6 +129,28 @@ function forgetDecodedImages(source: string) {
   decodedImages.delete(source);
   decodedImageBytes -= entry.bytes * entry.images.length;
 }
+// A background window keeps no decoded bitmaps for long. The listener exists
+// only while the pool holds something, and releasing the pool (including
+// disposing session media) removes it.
+let hiddenTimer: ReturnType<typeof setTimeout> | undefined;
+let watchingVisibility = false;
+function onVisibility() {
+  clearTimeout(hiddenTimer);
+  hiddenTimer =
+    document.visibilityState === "hidden"
+      ? setTimeout(releaseDecodedImages, HIDDEN_RELEASE_MS)
+      : undefined;
+}
+function releaseDecodedImages() {
+  decodedImages.clear();
+  decodedImageBytes = 0;
+  decodedImageScope++;
+  clearTimeout(hiddenTimer);
+  hiddenTimer = undefined;
+  if (!watchingVisibility) return;
+  watchingVisibility = false;
+  document.removeEventListener("visibilitychange", onVisibility);
+}
 export function retainDecodedImage(
   owner: object,
   source: string,
@@ -143,6 +167,11 @@ export function retainDecodedImage(
   images.push(image);
   decodedImages.set(source, { owner: new WeakRef(owner), images, bytes });
   decodedImageBytes += bytes * images.length;
+  if (!watchingVisibility && typeof document !== "undefined") {
+    watchingVisibility = true;
+    document.addEventListener("visibilitychange", onVisibility);
+    onVisibility();
+  }
   for (const oldest of decodedImages.keys()) {
     if (decodedImageBytes <= DECODED_IMAGE_BUDGET) break;
     forgetDecodedImages(oldest);
@@ -273,9 +302,7 @@ export function createMediaPreparation() {
       openingFrames.clear();
       openingFrameBytes = 0;
       openingFrameScope++;
-      decodedImages.clear();
-      decodedImageBytes = 0;
-      decodedImageScope++;
+      releaseDecodedImages();
       queue = [];
       for (const image of active) {
         image.src = "";

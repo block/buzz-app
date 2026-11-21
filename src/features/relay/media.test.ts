@@ -190,13 +190,14 @@ it("bounds opening frames by encoded size and forgets them with session media", 
 });
 
 it("bounds decoded images by size and owner and forgets them with session media", () => {
-  // 64 MiB decoded each, the largest retained; the 512 MiB budget holds eight.
-  const image = (side = 4096) =>
+  // 16 MiB decoded each; the 128 MiB budget holds eight. 32 MiB is the largest
+  // retained original.
+  const image = (side = 2048) =>
     ({ naturalWidth: side, naturalHeight: side }) as HTMLImageElement;
   const owner = {};
   createMediaPreparation().dispose();
   const capture = decodedImageCapture();
-  retainDecodedImage(owner, "oversized", image(4097), capture);
+  retainDecodedImage(owner, "oversized", image(2897), capture);
   retainDecodedImage(owner, "empty", image(0), capture);
   expect(hasDecodedImage(owner, "oversized")).toBe(false);
   expect(hasDecodedImage(owner, "empty")).toBe(false);
@@ -226,7 +227,7 @@ it("bounds decoded images by size and owner and forgets them with session media"
 
 it("retains one decoded element per display of a shared source", () => {
   const image = () =>
-    ({ naturalWidth: 4096, naturalHeight: 4096 }) as HTMLImageElement;
+    ({ naturalWidth: 2048, naturalHeight: 2048 }) as HTMLImageElement;
   const owner = {};
   createMediaPreparation().dispose();
   const capture = decodedImageCapture();
@@ -248,4 +249,69 @@ it("retains one decoded element per display of a shared source", () => {
   expect(hasDecodedImage(owner, "shared")).toBe(false);
   expect(hasDecodedImage(owner, "newest")).toBe(true);
   createMediaPreparation().dispose();
+});
+
+it("releases decoded images after the document is hidden for five minutes", () => {
+  vi.useFakeTimers();
+  createMediaPreparation().dispose();
+  const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+  vi.stubGlobal("document", doc);
+  const setVisibility = (state: "hidden" | "visible") => {
+    doc.visibilityState = state;
+    doc.dispatchEvent(new Event("visibilitychange"));
+  };
+  const image = () =>
+    ({ naturalWidth: 100, naturalHeight: 100 }) as HTMLImageElement;
+  const owner = {};
+  try {
+    const capture = decodedImageCapture();
+    retainDecodedImage(owner, "kept", image(), capture);
+
+    // Visible again before five minutes: the pool stays.
+    setVisibility("hidden");
+    vi.advanceTimersByTime(5 * 60_000 - 1);
+    setVisibility("visible");
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(hasDecodedImage(owner, "kept")).toBe(true);
+
+    // Hidden for five minutes: the pool is released and stale retention is refused.
+    setVisibility("hidden");
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(hasDecodedImage(owner, "kept")).toBe(false);
+    retainDecodedImage(owner, "late", image(), capture);
+    expect(hasDecodedImage(owner, "late")).toBe(false);
+
+    // Retained while already hidden: the same five minutes apply.
+    retainDecodedImage(owner, "current", image(), decodedImageCapture());
+    expect(hasDecodedImage(owner, "current")).toBe(true);
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(hasDecodedImage(owner, "current")).toBe(false);
+  } finally {
+    createMediaPreparation().dispose();
+    vi.useRealTimers();
+  }
+});
+
+it("watches visibility only while the pool holds images, and disposing session media stops it", () => {
+  createMediaPreparation().dispose();
+  const doc = new EventTarget();
+  const add = vi.spyOn(doc, "addEventListener");
+  const remove = vi.spyOn(doc, "removeEventListener");
+  vi.stubGlobal("document", doc);
+  const media = createMediaPreparation();
+  expect(add).not.toHaveBeenCalled();
+  const image = () =>
+    ({ naturalWidth: 100, naturalHeight: 100 }) as HTMLImageElement;
+  const owner = {};
+  retainDecodedImage(owner, "a", image(), decodedImageCapture());
+  retainDecodedImage(owner, "b", image(), decodedImageCapture());
+  expect(add).toHaveBeenCalledTimes(1);
+  expect(add).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+  expect(remove).not.toHaveBeenCalled();
+  media.dispose();
+  expect(remove).toHaveBeenCalledTimes(1);
+  expect(remove).toHaveBeenCalledWith(
+    "visibilitychange",
+    add.mock.calls[0]?.[1],
+  );
 });

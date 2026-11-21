@@ -549,6 +549,104 @@ it("keeps a dispatch readable after its sender finishes, while the helper works 
     f.dispose();
   }
 });
+it("resolves full-size media only while the displayed single agent is working", () => {
+  const group = activityPresentation([step], undefined, new Set(["agent"]))
+    .groups[0];
+  if (!group) throw new Error("Missing activity group");
+  const url = `https://community.test/media/${"a".repeat(64)}.webp`;
+  const profiles = new Map([["agent", { name: "Agent", picture: url }]]);
+  const media = vi.fn((source: string, size?: "small") =>
+    size ? `thumb:${source}` : `full:${source}`,
+  );
+  const view = (working: boolean, followed = false) => (
+    <ActivityGroupPreview
+      group={{
+        ...group,
+        working,
+        followingMessage: followed ? step : undefined,
+      }}
+      profiles={profiles}
+      media={media}
+      expanded={false}
+      onToggle={() => {}}
+    />
+  );
+  const ui = render(view(false));
+  expect(media).not.toHaveBeenCalledWith(url);
+  ui.rerender(view(true));
+  expect(media).toHaveBeenCalledWith(url);
+  media.mockClear();
+  ui.rerender(view(true, true));
+  expect(media).not.toHaveBeenCalledWith(url);
+  ui.rerender(view(false));
+  expect(media).not.toHaveBeenCalledWith(url);
+});
+
+it.each(["group", "row"])(
+  "plays the %s portrait while only typing evidence reports active work",
+  (surface) => {
+    const url = `https://community.test/media/${"a".repeat(64)}.webp`;
+    const profile = { name: "Agent", isAgent: true as const, picture: url };
+    const media = vi.fn((source: string, size?: "small") =>
+      size ? `thumb:${source}` : `full:${source}`,
+    );
+    const owner = createRelaySession({
+      viewer: keypair().pubkey,
+      relayAuthor: keypair().pubkey,
+      media,
+      query: async () => [],
+    });
+    const typing = [
+      {
+        channelId: step.channelId,
+        threadRootId: "request",
+        pubkey: step.authorId,
+      },
+    ];
+    const session = {
+      ...owner.session,
+      typing: { ...owner.session.typing, snapshot: () => typing },
+    };
+    const presentation = activityPresentation(
+      [step],
+      undefined,
+      new Set([step.authorId]),
+    );
+    const group = presentation.groups[0];
+    if (!group) throw new Error("Missing activity group");
+    expect(group.working).toBe(false);
+    try {
+      render(
+        surface === "group" ? (
+          <ActivityGroupPreview
+            group={group}
+            session={session}
+            profiles={new Map([[step.authorId, profile]])}
+            media={media}
+            expanded={false}
+            onToggle={() => {}}
+          />
+        ) : (
+          <MessageRow
+            row={step}
+            recordedActivity={presentation.byRow.get(step.id)}
+            session={session}
+            profile={profile}
+            media={media}
+            onOpenLink={() => false}
+            day={false}
+            retry={undefined}
+          />
+        ),
+      );
+      expect(media).toHaveBeenCalledWith(url);
+    } finally {
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
 it("shimmers a standalone working step and stops when that request finishes", () => {
   const f = fixture();
   const owner = createRelaySession({

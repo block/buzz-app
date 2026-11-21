@@ -19,6 +19,8 @@ import { createRelaySession, type RelaySession } from "../relay/session";
 import { PREVIEW_REST_MS } from "../../shared/design-system/ui/hoverIntent";
 import { newMessageLink } from "../direct-messages/message-person";
 import { ProfilePeek } from "./ProfilePeek";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { stubAvatarAnimationFetch } from "./avatar-animation-testing";
 
 beforeEach(() => {
   vi.spyOn(document.documentElement, "clientWidth", "get").mockReturnValue(
@@ -40,6 +42,111 @@ afterEach(() => {
 });
 const person = "a".repeat(64);
 const viewer = "b".repeat(64);
+
+it.each(["escape", "blur", "pointer-leave"])(
+  "plays the conversation portrait and open preview, then restores the still on %s",
+  async (dismissal) => {
+    const owner = createRelaySession(null);
+    const source = `https://community.test/media/${"1".repeat(64)}.webp`;
+    const media = (url: string, size?: "small") =>
+      size ? "still" : `protected:${url}`;
+    const transfer = stubAvatarAnimationFetch();
+    const loads: Array<{ src: string; onload: (() => void) | null }> = [];
+    let motion = true;
+    const motionListeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", () => ({
+      get matches() {
+        return motion;
+      },
+      addEventListener: (_event: string, listener: () => void) =>
+        motionListeners.add(listener),
+      removeEventListener: (_event: string, listener: () => void) =>
+        motionListeners.delete(listener),
+    }));
+    vi.stubGlobal(
+      "Image",
+      class {
+        src = "";
+        onload = null;
+        constructor() {
+          loads.push(this);
+        }
+      },
+    );
+    const view = render(
+      <>
+        <ProfilePeek
+          trigger={(src) => (
+            <button type="button" aria-label="Avatar">
+              <Avatar src={src} fallbackSrc="still" alt="" fallback="Agent" />
+            </button>
+          )}
+          name="Agent"
+          picture="still"
+          avatarSource={source}
+          pubkey={person}
+          agent
+          session={{ ...owner.session, media }}
+          viewer={viewer}
+          channelId="channel"
+          target="profile"
+          onOpen={() => true}
+        />
+        <button type="button">Next</button>
+      </>,
+    );
+    try {
+      const trigger = screen.getByRole("button", { name: "Avatar" });
+      vi.spyOn(trigger, "getBoundingClientRect").mockReturnValue(
+        new DOMRect(100, 100, 40, 40),
+      );
+      expect(loads).toHaveLength(0);
+      const user = userEvent.setup();
+      if (dismissal === "pointer-leave") await user.hover(trigger);
+      else await user.tab();
+      await screen.findByRole("dialog", { name: "Agent profile preview" });
+      await waitFor(() => expect(loads).toHaveLength(1));
+      expect(transfer.fetch).toHaveBeenCalledWith(`protected:${source}`, {
+        signal: expect.any(AbortSignal),
+      });
+      expect(loads[0]?.src).toBe("blob:avatar-1");
+      expect(document.querySelector('img[src^="blob:avatar-"]')).toBeNull();
+      act(() => loads[0]?.onload?.());
+      expect(
+        document.querySelectorAll('img[src="blob:avatar-1"]'),
+      ).toHaveLength(2);
+      act(() => {
+        motion = false;
+        for (const listener of motionListeners) listener();
+      });
+      expect(document.querySelector('img[src^="blob:avatar-"]')).toBeNull();
+      expect(transfer.revoke).toHaveBeenCalledWith("blob:avatar-1");
+      act(() => {
+        motion = true;
+        for (const listener of motionListeners) listener();
+      });
+      await waitFor(() => expect(loads).toHaveLength(2));
+      expect(loads[1]?.src).toBe("blob:avatar-2");
+      // A missing or failed animation never replaces the still.
+      expect(trigger.querySelector('img[src="still"]')).not.toBeNull();
+      if (dismissal === "escape") await user.keyboard("{Escape}");
+      else if (dismissal === "pointer-leave") await user.unhover(trigger);
+      else {
+        await user.tab();
+        await user.tab();
+      }
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(loads[1]?.onload).toBeNull();
+      expect(loads[1]?.src).toBe("");
+      expect(transfer.revoke).toHaveBeenCalledWith("blob:avatar-2");
+      expect(document.querySelector('img[src^="blob:avatar-"]')).toBeNull();
+      expect(trigger.querySelector('img[src="still"]')).not.toBeNull();
+    } finally {
+      view.unmount();
+      owner.dispose();
+    }
+  },
+);
 /** Without `dm`, the viewer has no DM with the person yet. */
 function fixture(
   agent = false,

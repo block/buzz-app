@@ -625,6 +625,11 @@ remain enforced. This exception is not an accessibility pass. Dark Away meets
 3:1 on these opaque surfaces. Offline stays unoutlined. Keep badge footprints, Bézier
 artwork cutouts, presence behavior, and accessible names with the shared Avatar owner.
 
+For alternate artwork such as an uploaded animation, pass the still portrait as
+`fallbackSrc`. Avatar keeps that image mounted while the alternate loads or
+fails, and hides it only after the displayed alternate is ready. Returning to
+the still does not reload it. Features own playback eligibility and Reduce Motion.
+
 For a separate trailing action attached to a row, use `IconButton shape="row-end"`
 in a stretched flex slot. It keeps the size-selected width, fills the row height,
 and rounds only the right corners with `radius-row`. Decorative inverse corners

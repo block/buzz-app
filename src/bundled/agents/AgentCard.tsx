@@ -1,9 +1,11 @@
 // An agent as a card: its portrait large, its name, and one line about it.
-// Pack avatars play their animation; any other picture shows still.
-import type { ComponentProps, ReactNode } from "react";
+// Pack avatars play their animation; uploaded loops opt in on the detail portrait.
+import { useMemo, type ComponentProps, type ReactNode } from "react";
 import { agentAvatars } from "../../features/agents/avatar-packs";
 import { StarFilledIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
+import { useChatAvatar } from "../../features/profiles/use-chat-avatar";
+import { communityMedia } from "../../features/profiles/avatar-upload";
 import { useAvatarPreview } from "../../features/profiles/use-avatar-preview";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -28,15 +30,25 @@ export function useAgentPortraitSource(agent: Portrayed, community?: string) {
 export function AgentPortrait({
   agent,
   community,
+  animate = false,
 }: {
   agent: Portrayed;
   community?: string | undefined;
+  /** Play uploaded loops in the expanded profile, keeping cards and tabs still. */
+  animate?: boolean;
 }) {
   const { pack, src } = useAgentPortraitSource(agent, community);
+  const media = useMemo(
+    () => (community && src ? communityMedia(community) : undefined),
+    [community, src],
+  );
+  // useAvatarPreview gates original playback on the protected destination being ready.
+  const animated = useChatAvatar(agent.picture, media, animate && !pack);
   if (pack) return <PackedAgentAvatar avatar={pack} />;
   return (
     <Avatar
-      src={src}
+      src={animate ? (animated ?? src) : src}
+      fallbackSrc={animate ? src : undefined}
       alt=""
       fallback={agent.name}
       size="fill"

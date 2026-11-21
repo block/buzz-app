@@ -346,6 +346,9 @@ comes from that app. Protected agents cannot use this connection. Keep Buzz
 open. An unavailable agent cannot authorize access. Enable its runtime plugin
 or use the Buzz copy that runs it.
 
+If an external app reports that it cannot see the channel in a Buzz message
+link, check the link and the selected agent's access to that channel.
+
 Use **Settings → External apps → Revoke access** to stop it; it asks you to
 confirm first. Changing community or identity also ends access. If a
 connection ends, start setup in the external app again. Never put connection

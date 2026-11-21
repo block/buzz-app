@@ -3271,7 +3271,8 @@ the browser test's temporary profile.
 the message list: `itemTimestamp(seconds, { withTime })` for bylines ("9:05 AM",
 "Yesterday at 9:05 AM"), `dayGroupLabel(seconds)` for day dividers ("Today",
 "Monday"), `fullTimestamp(seconds)` for the full hover date, and
-`relativeTimestamp(seconds)` for link previews ("5 minutes ago"). They use the
+`relativeTimestamp(seconds)` for link previews ("5 minutes ago", then "on Jun 20"
+after a week, or "on Jun 20, 2025" outside the current year). They use the
 current locale and time zone; all but `fullTimestamp` take an optional `now`
 for tests. They compute the label when called. `conversation.ui.Message` and
 the host's day dividers re-render at local midnight; a plugin that shows these

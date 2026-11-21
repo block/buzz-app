@@ -2140,6 +2140,13 @@ is unknown, not zero; `input` excludes cache counts, and `cacheWrite1h` is the
 subset of `cacheWrite` cached for an hour. Usage groups the observations into
 days itself. Reading never starts, stops or changes a session.
 
+A harness that reports only running totals sends what they grew by since the
+previous observation, with no request id, and a `model` that names no model,
+such as "Session totals (model unknown)". Usage adds up a session's
+observations, so a running total sent as is would count earlier usage again. A
+`model` with no published prices leaves the cost unavailable, unless the
+harness recorded one. The harness names the split it lacks in `limits`.
+
 A snapshot covers the session's descendants too, such as Claude Code and Codex
 subagents, so a consumer never adds a child session again. It also carries:
 
@@ -2148,11 +2155,18 @@ subagents, so a consumer never adds a child session again. It also carries:
 - `gaps`, what the read could not see, such as a subagent file that has since
   vanished or a finished line that is not JSON. A partial last line is still
   being written and is not a gap.
+- `limits`, optional: what the harness never reports for the session, such as
+  a per-request or per-model split. Every read of the session has them.
 
 A consumer that keeps snapshots follows these rules:
 
-- A snapshot without gaps replaces whatever it kept for that session.
-- An incomplete snapshot leaves the previous one in place and reports the gap.
+- A snapshot without gaps replaces whatever it kept for that session, even
+  when its `limits` leave the usage partial.
+- A snapshot with gaps leaves the previous one in place and reports the gaps.
+- A session with gaps or limits counts as partial. Usage marks its totals
+  partial, and its harness's daily cost partial from the session's start:
+  through today for gaps, because the missed usage may be newer, and through
+  its last activity for limits alone.
 - A session missing from a later read is not deleted: its source may be gone,
   not its usage.
 - `since` only bounds activity time. It is not a checkpoint, so it cannot find

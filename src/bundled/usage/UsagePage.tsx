@@ -35,6 +35,7 @@ import { amount, cost, count, percent } from "./format";
 import { loadPrices } from "./pricing";
 import {
   type AgentUsage,
+  incomplete,
   merge,
   modelName,
   since,
@@ -822,7 +823,7 @@ function Dashboard({
                               undefined,
                               { month: "short", day: "numeric" },
                             ),
-                            session.gaps.length > 0 && "partly read",
+                            incomplete(session) && "partly read",
                           ]
                             .filter(Boolean)
                             .join(" · ")}
@@ -835,7 +836,7 @@ function Dashboard({
                           <NavigationItem
                             label={label}
                             trailing={<Amount total={total} />}
-                            aria-label={`${name}, ${agent.name}, ${costLabel(total)}. Open conversation`}
+                            aria-label={`${name}, ${agent.name}, ${costLabel(total)}${incomplete(session) ? ", partly read" : ""}. Open conversation`}
                             onClick={() =>
                               void open({
                                 version: 1,

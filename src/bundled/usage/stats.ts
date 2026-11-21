@@ -124,9 +124,15 @@ export const since = (now: number) => dayStart(now, READ_DAYS - 1);
 /** Whether the `days` before a period of `days` were read too. */
 export const comparable = (days: number) => 2 * days <= READ_DAYS;
 
+/** Whether a session's usage may be incomplete: its read missed some, or its
+ * harness never reports some. */
+export const incomplete = (session: SessionUsage) =>
+  session.gaps.length > 0 || (session.limits?.length ?? 0) > 0;
+
 /** A new read's snapshots over those kept from earlier, as `SessionUsage`
- * says: a complete snapshot replaces the session's earlier one; an incomplete
- * one leaves it, with the new read's gaps; sessions the read missed stay. */
+ * says: a snapshot without gaps replaces the session's earlier one, even with
+ * limits; one with gaps leaves it, with the new read's gaps; sessions the read
+ * missed stay. */
 export function merge(
   kept: readonly SessionUsage[],
   read: readonly SessionUsage[],
@@ -164,9 +170,8 @@ export function stats(
     return index;
   };
   const dayOf = (at: number) => dayCosts[dayIndex(at)];
-  /** Marks `harness`'s cost partial on each day from the one `at` is in. */
-  const uncertain = (harness: string, at = start) => {
-    for (const day of dayCosts.slice(dayIndex(at))) {
+  const uncertain = (harness: string, at = start, until = now) => {
+    for (const day of dayCosts.slice(dayIndex(at), dayIndex(until) + 1)) {
       const spent = day.get(harness) ?? new Sum();
       spent.partial = true;
       day.set(harness, spent);
@@ -188,7 +193,7 @@ export function stats(
     let agentSessions = 0;
     for (const session of list) {
       const active = session.lastAt >= start;
-      const gap = session.gaps.length > 0;
+      const gap = incomplete(session);
       const sessionCost = new Sum();
       let count = 0;
       for (const observation of session.observations) {
@@ -235,7 +240,11 @@ export function stats(
         // What the read missed may be in the period.
         for (const sum of [sessionCost, tokens, output, read])
           sum.partial = true;
-        uncertain(harness, session.startedAt);
+        uncertain(
+          harness,
+          session.startedAt,
+          session.gaps.length > 0 ? now : session.lastAt,
+        );
       }
       agentSessions += 1;
       agentCost.include(sessionCost);

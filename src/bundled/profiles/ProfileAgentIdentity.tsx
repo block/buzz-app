@@ -1,13 +1,9 @@
-import { useProfileGeneration } from "../../features/relay/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { useIdentityNames } from "../../features/identity-names/react";
 import type { PanelProps } from "../../features/panels/service";
 import { profileTarget } from "../../features/profiles/target";
-import { selectProfiles } from "../../features/relay/profile-selection";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
-import { formatPublicKey } from "../../shared/identity/public-key";
 import styles from "./Profiles.module.css";
+import { useProfileName } from "./useProfileName";
 
 export function ProfileAgentIdentity({
   session,
@@ -44,25 +40,7 @@ function OwnerLink({
   self: boolean;
   context: PanelProps["context"];
 }) {
-  const selection = useMemo(
-    () => selectProfiles(session.profiles, [owner]),
-    [session.profiles, owner],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  const profileGeneration = useProfileGeneration(session.profiles);
-  useEffect(() => {
-    void profileGeneration;
-    void session.profiles.ensure([owner], "background").catch(() => {});
-  }, [session, owner, profileGeneration]);
-  const identityName = useIdentityNames(session.names);
-  const shown = identityName(
-    owner,
-    profiles.get(owner)?.name ?? formatPublicKey(owner) ?? owner,
-  );
+  const shown = useProfileName(session, owner);
   const name = self ? `${shown} (you)` : shown;
   const target = profileTarget(owner);
   return (

@@ -1457,8 +1457,24 @@ As in base Buzz, mention autocomplete, the
 mention picker and member-add omit archived identities: fail-open while the
 snapshot is unknown, never hiding the viewer from themself, and never touching
 history or channel membership. `not-archived` means absent from the read snapshot, not online,
-owned, authorized or guaranteed current at a later write. Delta processing and
-packaged/live acceptance remain separate.
+owned, authorized or guaranteed current at a later write. Packaged/live
+acceptance remains separate.
+
+The profile notice takes "archived" and "replaced by" from the same 13535
+snapshot: a `p` entry's third element names the key's replacement. The app
+reads no 8002/8003 deltas. A replacement counts only when it is a valid key,
+differs from the archived key, and every entry for that key agrees; otherwise
+the notice names none. A relay that lists bare keys gives the plain notice.
+Each profile opening rereads the snapshot, and so does showing a retained
+profile tab again: selecting its tab, opening its collapsed dock, closing the
+dock that covered it, or returning to the Agents tab that keeps it. A hidden
+tab reads nothing. After a dropped connection is established again, the store
+rereads the snapshot once, if a consumer read it since the last access change;
+a session that never needed archive data reads nothing at startup or
+reconnect. A request whose confirming read a reconnect restarts confirms from
+the restarted read, within the request's deadline. A failed reread keeps the
+last known notice and link, as every archive surface keeps its last snapshot.
+The replacement is presentation, never access or proof.
 
 `session.archives.request("archive" | "unarchive", pubkey)` sends exact 9035/9036
 requests (`["-"]`, one `p`, optional `auth`) through the session's signer and

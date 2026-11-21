@@ -73,6 +73,7 @@ import {
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
+import { ProfileArchiveNotice } from "./ProfileArchiveNotice";
 import styles from "./Profiles.module.css";
 import { ProfileBackdrop } from "../../features/profiles/ProfileBackdrop";
 import hero from "../../features/profiles/ProfileHero.module.css";
@@ -299,6 +300,9 @@ function OwnedAgentProfile({
   const [unsaved, reportUnsaved] = useAgentSaveReports();
   const [leaving, setLeaving] = useState<string>();
   if (leaving && !unsaved.dirty) setLeaving(undefined);
+  // A host that opens the link as a new tab keeps this one, so discarded
+  // edits are reset here rather than by leaving.
+  const [discards, setDiscards] = useState(0);
   if (!owned) return null;
   const address = navigation?.snapshot().entry.target;
   const conversationTarget = (link: string) => {
@@ -323,6 +327,7 @@ function OwnedAgentProfile({
   return (
     <AgentSaveState value={reportUnsaved}>
       <AgentDetails
+        key={discards}
         historyPresentation={
           navigation &&
           address?.kind === "conversation" &&
@@ -357,6 +362,15 @@ function OwnedAgentProfile({
         openLink={context && openLink}
         canOpenLink={context && ((link) => context.canOpen(link))}
         conversation={openedFrom(session, context)}
+        notice={(hidden) => (
+          <ProfileArchiveNotice
+            session={session}
+            pubkey={pubkey}
+            canOpen={context && ((link) => context.canOpen(link))}
+            open={openLink}
+            hidden={hidden}
+          />
+        )}
         messageAction={(variant) => (
           <AgentMessageButton
             variant={variant}
@@ -378,6 +392,7 @@ function OwnedAgentProfile({
           onKeep={() => setLeaving(undefined)}
           onDiscard={() => {
             setLeaving(undefined);
+            setDiscards((count) => count + 1);
             go(leaving);
           }}
         />
@@ -677,6 +692,12 @@ function ProfileDetails({
                   `· @${profile.verified.username}`}
               </p>
             )}
+            <ProfileArchiveNotice
+              session={session}
+              pubkey={pubkey}
+              canOpen={context && ((link) => context.canOpen(link))}
+              open={context && (context.push ?? context.open)}
+            />
             {presence !== "unknown" && (
               <p className="text-body-sm text-primary">
                 {

@@ -20,6 +20,7 @@ import {
   type TabAction,
 } from "../../shared/design-system/ui/Tabs";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { PaneShownScope } from "./pane-shown";
 import styles from "./Panels.module.css";
 import type { TabDragHost } from "./useTabDrag";
 
@@ -546,7 +547,9 @@ export function PanelWorkspace({
               inert={selected !== item.id}
               aria-hidden={selected !== item.id || undefined}
             >
-              {item.content}
+              <PaneShownScope shown={selected === item.id}>
+                {item.content}
+              </PaneShownScope>
             </div>
           </TabScope>
         ))}

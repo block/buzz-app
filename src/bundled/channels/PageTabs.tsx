@@ -24,6 +24,7 @@ import { useChannelList } from "../../features/relay/react";
 import { channelIcon } from "../../features/channels/channel-icon";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { PanelDock } from "../../features/panels/PanelDock";
+import { PaneShownScope } from "../../features/panels/pane-shown";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -472,115 +473,117 @@ export function PageTabs({
             inert={covered}
             aria-hidden={covered || undefined}
           >
-            <PanelWorkspace
-              main
-              tabMenu={tabMenu}
-              drag={secondary.drag.main}
-              label={`${label} tabs`}
-              focusOnMount={false}
-              adoptSelection={closes}
-              value={secondary.selectedMain}
-              select={(tab) =>
-                tabState.selectMain(tab === "conversation" ? undefined : tab)
-              }
-              actions={
-                hasTabs &&
-                !showingPanel && (
-                  <span className={panelStyles.paneToggle}>
-                    {paneToggle(
-                      () => tabState.setPaneOpen(true),
-                      secondary.splitTrigger,
-                    )}
-                  </span>
-                )
-              }
-              items={[
-                {
-                  id: "conversation",
-                  label,
-                  icon,
-                  toolbar: !!workspace?.actions?.length && (
-                    <MenuRoot>
-                      <MenuTrigger
-                        render={
-                          <IconButton
-                            hint="familiar"
-                            size="sm"
-                            aria-label="Conversation actions"
-                            title="Conversation actions"
-                            icon={
-                              <DotsThreeIcon size="1rem" aria-hidden="true" />
-                            }
-                          />
-                        }
-                      />
-                      <MenuPopup align="end">
-                        {workspace.actions.map((action) => (
-                          <MenuItem
-                            key={action.label}
-                            onClick={() => action.run()}
-                          >
-                            {action.label}
-                          </MenuItem>
-                        ))}
-                      </MenuPopup>
-                    </MenuRoot>
-                  ),
-                  actions: workspace?.actions,
-                  content: workspace ? (
-                    <div className={styles.conversation}>
-                      <div className={styles.workspaceReader}>
-                        {primaryTab &&
-                        primaryChannel &&
-                        secondary.canOpenConversation(primaryChannel.id) ? (
-                          <ConversationReader
-                            key={JSON.stringify(primaryTarget)}
-                            tab={primaryTab}
-                            intro={workspace.intro}
-                            subthreadId={primaryTarget?.subthreadId}
-                            latestRequest={latestRequest}
-                            active={
-                              secondary.selectedMain === "conversation" &&
-                              !covered
-                            }
-                            channel={primaryChannel}
-                            session={session}
-                            scope={scope}
-                            extensions={extensions}
-                            openLink={(url, origin) =>
-                              secondary.openConversationLink(
-                                primaryChannel.id,
-                                url,
-                                origin,
-                              )
-                            }
-                            canOpenLink={(target) =>
-                              !!host.panels.resolve(target)
-                            }
-                            openThread={(messageId, rootId, intent) =>
-                              secondary.openConversationThread(
-                                primaryChannel.id,
-                                messageId,
-                                rootId,
-                                intent,
-                              )
-                            }
-                            close={() => {}}
-                          />
-                        ) : (
-                          <p role="status" className={styles.empty}>
-                            This conversation is no longer available.
-                          </p>
-                        )}
+            <PaneShownScope shown={!covered}>
+              <PanelWorkspace
+                main
+                tabMenu={tabMenu}
+                drag={secondary.drag.main}
+                label={`${label} tabs`}
+                focusOnMount={false}
+                adoptSelection={closes}
+                value={secondary.selectedMain}
+                select={(tab) =>
+                  tabState.selectMain(tab === "conversation" ? undefined : tab)
+                }
+                actions={
+                  hasTabs &&
+                  !showingPanel && (
+                    <span className={panelStyles.paneToggle}>
+                      {paneToggle(
+                        () => tabState.setPaneOpen(true),
+                        secondary.splitTrigger,
+                      )}
+                    </span>
+                  )
+                }
+                items={[
+                  {
+                    id: "conversation",
+                    label,
+                    icon,
+                    toolbar: !!workspace?.actions?.length && (
+                      <MenuRoot>
+                        <MenuTrigger
+                          render={
+                            <IconButton
+                              hint="familiar"
+                              size="sm"
+                              aria-label="Conversation actions"
+                              title="Conversation actions"
+                              icon={
+                                <DotsThreeIcon size="1rem" aria-hidden="true" />
+                              }
+                            />
+                          }
+                        />
+                        <MenuPopup align="end">
+                          {workspace.actions.map((action) => (
+                            <MenuItem
+                              key={action.label}
+                              onClick={() => action.run()}
+                            >
+                              {action.label}
+                            </MenuItem>
+                          ))}
+                        </MenuPopup>
+                      </MenuRoot>
+                    ),
+                    actions: workspace?.actions,
+                    content: workspace ? (
+                      <div className={styles.conversation}>
+                        <div className={styles.workspaceReader}>
+                          {primaryTab &&
+                          primaryChannel &&
+                          secondary.canOpenConversation(primaryChannel.id) ? (
+                            <ConversationReader
+                              key={JSON.stringify(primaryTarget)}
+                              tab={primaryTab}
+                              intro={workspace.intro}
+                              subthreadId={primaryTarget?.subthreadId}
+                              latestRequest={latestRequest}
+                              active={
+                                secondary.selectedMain === "conversation" &&
+                                !covered
+                              }
+                              channel={primaryChannel}
+                              session={session}
+                              scope={scope}
+                              extensions={extensions}
+                              openLink={(url, origin) =>
+                                secondary.openConversationLink(
+                                  primaryChannel.id,
+                                  url,
+                                  origin,
+                                )
+                              }
+                              canOpenLink={(target) =>
+                                !!host.panels.resolve(target)
+                              }
+                              openThread={(messageId, rootId, intent) =>
+                                secondary.openConversationThread(
+                                  primaryChannel.id,
+                                  messageId,
+                                  rootId,
+                                  intent,
+                                )
+                              }
+                              close={() => {}}
+                            />
+                          ) : (
+                            <p role="status" className={styles.empty}>
+                              This conversation is no longer available.
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    children(open, close, isOpen)
-                  ),
-                },
-                ...secondary.mainItems,
-              ]}
-            />
+                    ) : (
+                      children(open, close, isOpen)
+                    ),
+                  },
+                  ...secondary.mainItems,
+                ]}
+              />
+            </PaneShownScope>
           </div>
           {secondary.drag.feedback}
           {secondary.hosts}

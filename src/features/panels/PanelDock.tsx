@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { PaneShownScope } from "./pane-shown";
 import styles from "./Panels.module.css";
 
 /** Layout owns overlay breakpoints; CSS owns motion and input preferences.
@@ -60,7 +61,9 @@ export function PanelDock({
       aria-hidden={!open || undefined}
     >
       {open && resizeHandle}
-      {open || keepMounted ? children : retained?.children}
+      <PaneShownScope shown={open}>
+        {open || keepMounted ? children : retained?.children}
+      </PaneShownScope>
     </div>
   );
 }

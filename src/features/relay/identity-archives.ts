@@ -14,6 +14,8 @@ import type { RelayWriter } from "./transport";
 export type IdentityArchiveSnapshot = Readonly<{
   status: "unavailable" | "idle" | "loading" | "ready" | "error";
   archived: readonly string[];
+  /** The replacement key each archived key's snapshot entry names, if any. */
+  replacements?: Readonly<Record<string, string>>;
   eventId?: string;
   createdAt?: number;
   readAt?: number;
@@ -58,6 +60,31 @@ const archivedSets = new WeakMap<readonly string[], ReadonlySet<string>>();
 const empty: readonly string[] = Object.freeze([]);
 const HEX = /^[0-9a-f]{64}$/;
 const MAX_BYTES = 2 * 1024 * 1024;
+const noReplacements: Readonly<Record<string, string>> = Object.freeze({});
+
+/** NIP-IA: an archived key's snapshot entry may name its replacement as a
+ * third element. One that is not another valid key names none, and so does a
+ * key whose entries disagree. */
+function replacements(event: RelayEvent): Readonly<Record<string, string>> {
+  const named = new Map<string, string | undefined>();
+  for (const [name, key, next] of event.tags) {
+    if (name !== "p" || !key || !HEX.test(key)) continue;
+    const replacement =
+      next && HEX.test(next) && next !== key ? next : undefined;
+    named.set(
+      key,
+      named.has(key) && named.get(key) !== replacement
+        ? undefined
+        : replacement,
+    );
+  }
+  const found = [...named].filter(
+    (entry): entry is [string, string] => !!entry[1],
+  );
+  return found.length
+    ? Object.freeze(Object.fromEntries(found))
+    : noReplacements;
+}
 
 /** Relay-scoped NIP-IA visibility, never access, membership or liveness evidence.
  * The caller supplies only explicit NIP-11 self, never the contact-key fallback.
@@ -77,6 +104,9 @@ export function createIdentityArchives(
   let closed = false;
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
+  // Whether a consumer read the snapshot since the last clear; only then does
+  // a reconnect read it again.
+  let demanded = false;
   // Keep only the ordering fence across cache clears; never revive old contents.
   // This is session-local rollback resistance, not a cross-device durable fence.
   let head: Pick<RelayEvent, "id" | "created_at"> | undefined;
@@ -90,6 +120,7 @@ export function createIdentityArchives(
   }
   function refresh(): Promise<void> {
     if (closed || !available || !authority) return Promise.resolve();
+    demanded = true;
     if (pending) return pending;
     const owned = new AbortController();
     controller = owned;
@@ -153,6 +184,7 @@ export function createIdentityArchives(
         publish({
           status: "ready",
           archived: Object.freeze(archived),
+          replacements: replacements(event),
           eventId: event.id,
           createdAt: event.created_at,
           readAt: Date.now(),
@@ -294,7 +326,27 @@ export function createIdentityArchives(
     }
     // A read started before acceptance cannot confirm it; a failed re-read stays unknown.
     await pending;
-    await refresh();
+    const confirming = refresh();
+    await confirming;
+    // A reconnect restarts that read; within this request's deadline, wait
+    // for the read that replaced it.
+    if (snapshot.status === "loading" && pending && pending !== confirming) {
+      let read = confirming;
+      const deadline = new Promise<void>((resolve) => {
+        if (signal.aborted) resolve();
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      while (
+        !closed &&
+        !signal.aborted &&
+        snapshot.status === "loading" &&
+        pending &&
+        pending !== read
+      ) {
+        read = pending;
+        await Promise.race([read, deadline]);
+      }
+    }
     if (closed) throw new Error("Archive request was interrupted");
     const expected = action === "archive" ? "archived" : "not-archived";
     if (state(target) !== expected)
@@ -317,6 +369,7 @@ export function createIdentityArchives(
   }
   /** Forgets everything known, for a new identity or access. */
   function clear() {
+    demanded = false;
     publish({ status: stop(), archived: empty });
   }
   /** After a reconnect: the next ensure() rereads, and until it replaces them
@@ -324,6 +377,21 @@ export function createIdentityArchives(
   function stale() {
     const { error: _, ...known } = snapshot;
     publish({ ...known, status: stop() });
+  }
+  /** Once a dropped connection is back: a snapshot that a view subscribes to
+   * is read again, since a change during the drop would otherwise wait for
+   * that view's next opening. A read still retrying from the drop starts
+   * over. Only a session whose consumers read the snapshot since the last
+   * clear reads it again, so startup stays lazy: at most one snapshot read per
+   * reconnect, beside the session's other reconnect repairs. */
+  function reconnect() {
+    if (closed || !demanded || !listeners.size) return;
+    if (snapshot.status === "loading") {
+      controller?.abort();
+      controller = undefined;
+      pending = undefined;
+    }
+    void refresh();
   }
   return {
     queries: Object.freeze({
@@ -347,6 +415,7 @@ export function createIdentityArchives(
     }),
     clear,
     stale,
+    reconnect,
     dispose() {
       closed = true;
       clear();

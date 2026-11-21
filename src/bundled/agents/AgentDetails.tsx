@@ -97,6 +97,7 @@ export function AgentDetails({
   memoryLinks,
   onRemoved,
   messageAction,
+  notice,
   conversation,
   initialActivity,
   initialTranscript,
@@ -118,6 +119,10 @@ export function AgentDetails({
   memoryLinks?: MemoryLinks | undefined;
   onRemoved(): void;
   messageAction: (variant: "glass" | "subtle") => ReactNode;
+  /** Status text under the name, such as an archive notice. It stays
+   * mounted while the name is edited, with `hidden` set, so editing does not
+   * reread it; it renders nothing when there is nothing to say. */
+  notice?: ((hidden: boolean) => ReactNode) | undefined;
   conversation?: AgentConversation | undefined;
   initialActivity?: boolean;
   initialTranscript?: TranscriptRequest | undefined;
@@ -407,6 +412,7 @@ export function AgentDetails({
                 </div>
               )}
             </motion.div>
+            {notice?.(editingName)}
             <div className={hero.actions}>
               {!editingName && messageAction(backdrop ? "glass" : "subtle")}
               <ProfileActions

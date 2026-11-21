@@ -441,8 +441,8 @@ To update Goose, verify every target archive against the exact release identity:
 ```sh
 gh attestation verify <archive> --repo aaif-goose/goose \
   --signer-workflow aaif-goose/goose/.github/workflows/release.yml \
-  --source-ref refs/tags/v1.60.1 \
-  --source-digest b4e789ef5fd0243415243d7dfd9113c91b517c3c \
+  --source-ref refs/tags/v1.60.2 \
+  --source-digest fb55b5a6d7f5b5df96c8f817f1cde6a81880d9f1 \
   --cert-oidc-issuer https://token.actions.githubusercontent.com \
   --deny-self-hosted-runners
 ```
@@ -465,7 +465,7 @@ packaged signing/installers.
 The candidate is known to fail the MCP credential non-persistence check: the
 client HTTP URL and bearer header are stored in session data and export.
 An isolated canary probe reproduced this in both the old source-built 1.56.0
-executable and v1.57.0; upstream #12908 was closed unmerged, so v1.60.1 does
+executable and v1.57.0; upstream #12908 was closed unmerged, so v1.60.2 does
 not include it either. This
 remains a separate existing acceptance failure, not a distribution regression.
 

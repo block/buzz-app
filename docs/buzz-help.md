@@ -2059,6 +2059,15 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   whether supported GitHub links and the linked-PR shortcut open in a side
   panel or your browser. It starts on and is saved on this device across all
   communities. Turning it off keeps pull request indicators and agent tools enabled.
+- A channel can follow a GitHub repository: in a channel you can post in, open
+  the channel menu and choose **GitHub repositories**. Following needs the
+  desktop app with `gh` signed in. The follower's Buzz then reads the
+  repository about once a minute and posts each pull request that changes
+  after the follow as a message, under the follower's own name, with a card
+  showing its state, checks and reviews. The thread gets a reply when it is
+  approved, merged or closed. Cards update only while the follower's Buzz is
+  open; there is no webhook or server-side publisher. Anyone who can post in
+  the channel can unfollow.
 - The **GitHub** plugin’s pull request panel offers **Queue for merge** when
   the target branch requires a merge queue. After confirmation, it queues the
   displayed commit and shows **Queued for merge**; GitHub controls when it merges.

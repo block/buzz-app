@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { WarningCircleIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -8,11 +9,14 @@ import { WireframePanel } from "./Wireframe";
  * The replacement is automatically backed up after linking. */
 export function KeyLost({
   owned,
+  next,
   onBack,
   onStartOver,
 }: {
   /** The communities the old key owns; `undefined` when the list could not be loaded. */
   owned: readonly OwnedCommunity[] | undefined;
+  /** What first run does after this choice, shown above the actions. */
+  next?: ReactNode;
   onBack: () => void;
   onStartOver: () => void;
 }) {
@@ -69,6 +73,7 @@ export function KeyLost({
         title="Your old key can’t be linked again"
         subtitle="Starting over permanently unlinks your old key."
       />
+      {next}
       {/* Footer order: secondary first, primary last. */}
       <div data-onboarding-actions="">
         <Button size="lg" onClick={onBack}>

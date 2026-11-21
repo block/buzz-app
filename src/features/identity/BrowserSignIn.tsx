@@ -1,6 +1,5 @@
+import type { ReactNode } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
-import type { FoundCommunity } from "../communities/find-community";
-import { FoundCommunityRow } from "../communities/FoundCommunityRow";
 import { OnboardingBack } from "./OnboardingBack";
 
 /**
@@ -11,19 +10,19 @@ import { OnboardingBack } from "./OnboardingBack";
  * verifying their email there: not a failure, and Continue picks it up.
  * The page changes state in place, so its line is a polite status: the
  * change is announced without moving focus, and never as an alert. Either
- * way a community first run joins afterwards is named as the next step, so
- * signing in and joining read as two.
+ * way `next` names a community first run joins afterwards (`NextCommunity`),
+ * above these actions.
  */
 export function BrowserSignIn({
   timedOut,
-  community,
+  next,
   onOpen,
   onLeave,
 }: {
   /** Buzz stopped waiting on the browser. */
   timedOut: boolean;
-  /** The community joined after sign-in, as far as first run knows it. */
-  community?: Pick<FoundCommunity, "host" | "name" | "icon"> | undefined;
+  /** What first run does after the sign-in, shown above the actions. */
+  next?: ReactNode;
   /** Opens the browser on the sign-in again. */
   onOpen: () => void;
   /** Cancel while waiting, Back once timed out: the page that started it. */
@@ -45,14 +44,7 @@ export function BrowserSignIn({
             : "Create your account or sign in there. Buzz is waiting, and carries on here when you’re done."}
         </p>
       </div>
-      {community && (
-        <div className="flex flex-col gap-2">
-          <p className="m-0 text-body text-subtle">
-            Next, you’ll join this community.
-          </p>
-          <FoundCommunityRow found={community} address={community.host} />
-        </div>
-      )}
+      {next}
       {/* Footer order: secondary first, primary last. */}
       <div data-onboarding-actions="">
         <OnboardingBack

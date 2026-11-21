@@ -202,7 +202,23 @@ export type HostRepositoryFolder = Readonly<{
   path: string;
   displayPath: string;
 }>;
+export type HostSecretStatus = "saved" | "missing" | "unreadable";
+export interface HostSecrets {
+  /** Recorded status, not continuity or permission to dispatch a request. */
+  status(slot: string): Promise<HostSecretStatus>;
+  /** Failure may leave saving in progress; do not automatically retry. */
+  set(slot: string, value: string): Promise<void>;
+  /** Native-private replacement entry. The old enrollment is retired before
+   * input; cancel leaves it missing. Disposing the scope waits for retirement.
+   * Desktop support is checked natively; never fall back to renderer entry. */
+  enroll?(slot: string): Promise<HostSecretStatus>;
+  /** Failure does not promise the credential remains usable or rolled back. */
+  clear(slot: string): Promise<void>;
+}
 export interface Host {
+  /** Feature-detect only: presence does not promise usable desktop storage.
+   * No value readback, fallback, retry or cancellation of native work. */
+  readonly secrets?: HostSecrets;
   externalMcpPairing?(
     operation: "get" | "resume" | "revoke",
     request?: McpAuthorization,
@@ -372,6 +388,45 @@ const callContexts = new WeakMap<
 export class HostService extends Service implements Host {
   constructor(context: Context) {
     super(context, "host");
+  }
+
+  get secrets(): HostSecrets {
+    // Cordis scopes this accessor's receiver, not the plain nested result.
+    const ctx = this.ctx;
+    const call = async (command: string, slot: string, value?: string) => {
+      const owner = ctx.pluginOwner;
+      if (!owner || !isTauri())
+        throw new Error(
+          "Saved credentials require an installed desktop plugin",
+        );
+      return invoke<unknown>(`plugin_host_secret_${command}`, {
+        id: owner.id,
+        revision: owner.revision,
+        slot,
+        ...(value === undefined ? {} : { value }),
+      }).catch(rethrow);
+    };
+    return {
+      async status(slot) {
+        const status = await call("status", slot);
+        if (
+          status !== "saved" &&
+          status !== "missing" &&
+          status !== "unreadable"
+        )
+          throw new Error("Invalid saved credential status");
+        return status;
+      },
+      async set(slot, value) {
+        await call("set", slot, value);
+      },
+      enroll(slot) {
+        return enrollSecret(ctx, slot);
+      },
+      async clear(slot) {
+        await call("clear", slot);
+      },
+    };
   }
 
   prepareRemoteAgentAuthorization(agentPubkey: string, signal?: AbortSignal) {
@@ -981,6 +1036,66 @@ async function protectedCall<T>(
   }).catch(rethrow);
   active();
   return result;
+}
+
+async function enrollSecret(
+  ctx: Context,
+  slot: string,
+): Promise<HostSecretStatus> {
+  const owner = ctx.pluginOwner;
+  if (!owner || !isTauri() || ctx.fiber.uid === null)
+    throw new Error("Saved credentials require an installed desktop plugin");
+  const callId = crypto.randomUUID();
+  let completed = false;
+  let retiring = false;
+  let confirmRetired!: () => void;
+  const retired = new Promise<void>((resolve) => {
+    confirmRetired = resolve;
+  });
+  const release = ctx.effect(
+    () => () => {
+      if (completed) return;
+      if (!retiring) {
+        retiring = true;
+        // A failed acknowledgement cannot release the cleanup barrier or authorize
+        // another attempt. Native retains the owner through late secure-store work.
+        void invoke<void>("plugin_host_reviewed_retire", { callId }).then(
+          () => {
+            confirmRetired();
+          },
+          () => {},
+        );
+      }
+      return retired;
+    },
+    "private credential enrollment",
+  );
+  try {
+    const status = await protectedCall(ctx, callId, undefined, (once) =>
+      invoke<unknown>("plugin_host_secret_enroll", {
+        id: owner.id,
+        revision: owner.revision,
+        slot,
+        once,
+      }).then((status): HostSecretStatus => {
+        if (
+          status !== "saved" &&
+          status !== "missing" &&
+          status !== "unreadable"
+        )
+          throw new Error("Invalid saved credential status");
+        // Observe the terminal answer on this exact call before protectedCall
+        // suppresses a disposed scope's late response. It also settles cleanup
+        // when the separate retirement IPC's acknowledgement was lost.
+        completed = true;
+        confirmRetired();
+        return status;
+      }),
+    );
+    return status;
+  } finally {
+    release();
+  }
 }
 
 const BYTE_LIMIT = 16 * 1024 * 1024;

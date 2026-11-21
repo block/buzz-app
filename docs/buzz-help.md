@@ -1967,6 +1967,12 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   credentials in the same data. Each signs out only its own; erasing is refused
   while the other build still keeps credentials in data it would erase. On macOS,
   Keychain may ask to let one build check the other's setup.
+- Experimental macOS plugins may offer native-private credential entry. Where
+  supported, Buzz saves that credential in this build's OS secure storage, not
+  chat or plugin JavaScript. Provider **Clear** retires that provider's key;
+  sign-out also attempts tracked credential cleanup. Missing or inconsistent
+  storage history can disable saving rather than silently reconnecting it.
+  Availability does not mean a provider operation or paid request is enabled.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Unsigned external plugins can install and run by default. Launch Buzz
   with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with

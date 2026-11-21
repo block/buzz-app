@@ -3942,7 +3942,7 @@ and reads one registry at a time through the 8 MiB limit plus one detection byte
 Any uncertainty means no affirmation, never `missing` or clean. Ordinary launch
 and existing migration/seeding still proceed under their existing rules on all
 platforms; scanner failure alone never vetoes them. A launch-local sticky unknown
-result prevents the callable native count/journal adapters from establishing state
+result prevents the callable native set/count/journal adapters from establishing state
 and prevents a no-journal destructive sign-out from using later clean-looking
 paths as sufficient evidence. Prepare and pending destructive completion inspect
 afresh under their existing ownership. No persistent unknown index or live status
@@ -3960,7 +3960,7 @@ A public Manager/CLI writer can retain an old v3 snapshot and recreate its home
 by pathname after a completed clean-looking scan, including after a historical
 wipe. Native admission does not exclude that writer. Reinspection then refuses;
 with broken inventory continuity the reappearing generation remains unreadable,
-available cleanup debt is retained, and
+set is refused with no new store adds, available cleanup debt is retained, and
 cleanup is unknown. This is fail-closed **reappearance**, not exclusion. Path
 replacement between metadata checks and opens is likewise not a filesystem
 snapshot guarantee. Coherent registry/inventory rollback is not detectable, and
@@ -3974,7 +3974,7 @@ and positive OS-witness absence, durable ancestry, an uncommitted inventory
 intent, a create-only witness, full scope/intent revalidation, then commit. A
 pre-existing v3/count-only inventory or partial/missing/mismatched pair is never
 automatically adopted or repaired. The stable installation UUID/build/scope
-binding survives sign-out and app-home wipe; it is not a namespace
+binding survives provider Clear, sign-out and app-home wipe; it is not a namespace
 membership digest or rollback detector. Changing the declared scope refuses the
 old pair. Typed established observations use the same complete filesystem walker
 and strict registry validation, not root/store availability.
@@ -4021,7 +4021,8 @@ Boot attempts readable committed journal cleanup before continuity qualification
 The bounded-wait native qualification worker retains K/A/other-build ownership
 until actual OS completion even if the launch stops waiting. Count observation
 precedes exposing the store to the Manager; a failed observation disables custody
-for that launch. Sign-out journals the same qualified root before
+for that launch. Native enrollment rechecks admission before retiring an old key
+and before opening private input. Sign-out journals the same qualified root before
 its marker. No caller-selected root or credential getter is exposed over IPC.
 This caller wiring is under offline qualification, not installation or live
 Keychain/AppKit/provider acceptance; status/notice UI and complete transport/result
@@ -4029,7 +4030,8 @@ integration remain separate work.
 
 **Other platforms:** this native-private production custody wiring is macOS-only;
 other desktop hosts retain conservative read-only sign-out inspection without
-selecting a production plugin store or writing its journal/count. Non-macOS execution and target compilation were not available
+selecting a production plugin store or writing its journal/count. Non-Unix Set
+remains unavailable. Non-macOS execution and target compilation were not available
 locally. Older binaries do not clean H1 items at their own sign-out; newer tracked
 cleanup requires intact evidence and can remain incomplete or unknown after
 evidence loss or denied access.

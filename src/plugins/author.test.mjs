@@ -33,7 +33,7 @@ test("generated author package exposes shared messages, captured-read Undo, host
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, Seen } from "@buzz/author";
+import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostSecrets, HostSecretStatus, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, Seen } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -42,6 +42,7 @@ export const manifest: PluginManifest = {
     managedFiles: true,
     publicImages: true,
     publicPages: true,
+    secrets: [{ id: "api-key", label: "API key", origins: ["https://api.example.com"], header: "Authorization", scheme: "Bearer" }],
   },
 };
 const ExampleSidebar = ({ target, children }: PageSidebarProps) => {
@@ -114,6 +115,36 @@ export function apply(ctx: Context) {
   const host: Host = ctx.host;
   const upload: HostByteUpload = { url: "https://api.example.com/upload", field: "image", name: "image.png", contentType: "image/png" };
   void host.uploadBytesOnce?.(new Uint8Array([1]), upload, { callId: crypto.randomUUID() });
+
+  // Older structural hosts need not implement saved credentials.
+  const oldHost: Host = { runCommand: host.runCommand, request: host.request };
+  void oldHost;
+  if (host.secrets) {
+    const secrets: HostSecrets = host.secrets;
+    const status: Promise<HostSecretStatus> = secrets.status("api-key");
+    const saved: Promise<void> = secrets.set("api-key", "value");
+    const cleared: Promise<void> = secrets.clear("api-key");
+    const enrolled: Promise<HostSecretStatus> | undefined = secrets.enroll?.("api-key");
+    void enrolled;
+    // @ts-expect-error Private entry accepts a slot, never a credential value.
+    secrets.enroll?.("api-key", "value");
+    const statuses: readonly HostSecretStatus[] = ["saved", "missing", "unreadable"];
+    void [status, saved, cleared, statuses];
+    // @ts-expect-error Clearing returns no credential value.
+    const clearedValue: Promise<string> = secrets.clear("api-key");
+    void clearedValue;
+    // @ts-expect-error Saved credentials never expose values.
+    secrets.read("api-key");
+    // @ts-expect-error Saved credentials never export values.
+    secrets.export("api-key");
+    // @ts-expect-error Saved credentials never peek at values.
+    secrets.peek("api-key");
+    // @ts-expect-error A write returns no credential value.
+    const value: Promise<string> = secrets.set("api-key", "value");
+    // @ts-expect-error Status is the exact three-value union.
+    const invalid: HostSecretStatus = "unknown";
+    void [value, invalid];
+  }
   const tool: AddedTool = { name: "example_image", description: "Read an image", inputSchema: {},
     async call(client: BuzzClient, context: AddedToolContext): Promise<AddedToolReply> {
       void [context.channel, context.root, context.topLevel, context.wholeChannel];

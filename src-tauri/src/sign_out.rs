@@ -525,6 +525,46 @@ impl Instance {
         manager.with_secret_storage(root.to_owned(), store)
     }
 
+    pub(crate) fn check_secret_admission(&self) -> Result<(), String> {
+        self.creator().map(drop)
+    }
+
+    /// Concrete native enrollment boundary; callers snapshot identity first.
+    /// Blocking caller wait; a timeout is outcome-unknown, not cancellation.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn set_secret(
+        &self,
+        manager: buzzodz_plugins::Manager,
+        identity: crate::identity::IdentityHost,
+        snapshot: String,
+        plugin: String,
+        revision: String,
+        slot: String,
+        value: zeroize::Zeroizing<String>,
+        still_current: Arc<dyn Fn() -> bool + Send + Sync>,
+        wait: Duration,
+    ) -> Result<(), String> {
+        if !cfg!(unix) || self.h1_unknown() {
+            return Err(H1_UNKNOWN.into());
+        }
+        let lease = self.creator()?;
+        let (done, result) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("plugin credential set".into())
+            .spawn(move || {
+                let result =
+                    manager.secret_set(&plugin, &revision, &slot, &snapshot, &value, &|| {
+                        still_current()
+                            && identity.current_viewer().ok().flatten().as_deref()
+                                == Some(snapshot.as_str())
+                    });
+                drop(lease); // Includes promotion/revalidation and the operation's own cleanup.
+                let _ = done.send(result);
+            })
+            .map_err(|_| SAVING.to_owned())?;
+        result.recv_timeout(wait).map_err(|_| SAVING.to_owned())?
+    }
+
     pub(crate) fn observe_sign_outs(&self, root: Option<&Path>) -> Result<(), String> {
         #[cfg(not(unix))]
         let root = {
@@ -1708,3 +1748,40 @@ pub(crate) async fn finish_credential_setup<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod tests;
+
+/// A genuinely absence-qualified temporary launch, never machine-resolved paths.
+#[cfg(test)]
+pub(crate) fn fixture_instance(root: &Path) -> Instance {
+    let paths = tests::paths_for(root, "identity");
+    boot(
+        &paths,
+        None,
+        |_| panic!("no agents"),
+        || panic!("no marker"),
+    )
+    .unwrap()
+}
+
+/// Exercise production caller construction with temporary paths and an injected store.
+#[cfg(test)]
+pub(crate) fn fixture_instance_with_custody(
+    root: &Path,
+    home: &Path,
+    store: Arc<dyn buzzodz_plugins::SecretStore>,
+) -> Instance {
+    let mut paths = tests::paths_for(root, "identity");
+    paths.plugin_home = Some(
+        fs::canonicalize(root)
+            .unwrap()
+            .join(home.strip_prefix(root).unwrap()),
+    );
+    let inventory = paths.plugin_inventory().unwrap();
+    let slots = paths.plugin_slots(&inventory, store).unwrap();
+    boot(
+        &paths,
+        Some(slots),
+        |_| panic!("no agents"),
+        || panic!("no marker"),
+    )
+    .unwrap()
+}

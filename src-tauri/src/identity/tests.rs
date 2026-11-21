@@ -1004,3 +1004,8 @@ fn current_viewer_is_try_only_nonrestoring_and_distinguishes_known_absence() {
     assert!(host.current_viewer().is_err());
     assert_eq!(*store.reads.lock().unwrap(), 0);
 }
+
+pub(crate) fn while_fixture_busy(host: &IdentityHost, call: impl FnOnce()) {
+    let _guard = host.0.lock().unwrap();
+    call();
+}

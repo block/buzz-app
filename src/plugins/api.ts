@@ -44,6 +44,15 @@ export type PluginManifest = Readonly<{
       }>;
     }>[];
     networkOrigins?: readonly string[];
+    /** Installed-plugin metadata, not authority; native validates origins/header.
+     * Empty scheme sends the raw value. Requires a compatible desktop host. */
+    secrets?: readonly Readonly<{
+      id: string;
+      label: string;
+      origins: readonly string[];
+      header: string;
+      scheme: string;
+    }>[];
     /** Separate authority access; ordinary HTTPS grants never authorize a session. */
     federatedIdentity?: Readonly<{
       authority: string;

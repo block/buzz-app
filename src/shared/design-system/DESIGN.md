@@ -541,6 +541,7 @@ Use `disclosure` when the label is the feature's own collapse trigger, and
 `revealActions` or `data-navigation-reveal` for quiet parts such as the chevron.
 Workspace and channel headings can opt into `overlay` on pointer devices.
 Quiet actions then overlay the trailing edge without shrinking the label.
+The caret stays before the title to leave both click targets clear.
 Use `in-flow` to keep actions clear of the title or accessory. These actions
 keep their size when hidden and replace passive
 metadata on heading hover. When the trailing metadata owns an overlay, the

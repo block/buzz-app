@@ -129,9 +129,10 @@ test("segmented selections slide but window resizing follows the selected tab im
 });
 
 test.describe("workspace heading resize", () => {
+  const title = "Workspace planning and collaboration across multiple teams";
   test.use({
     largeSidebar: false,
-    savedSidebar: true,
+    savedSidebar: [{ id: "planning", name: title, order: 1 }],
     productionBroker: true,
   });
 
@@ -141,10 +142,12 @@ test.describe("workspace heading resize", () => {
     app,
   }) => {
     await open(page, app);
-    const workspace = page.locator('[data-sidebar-section="group:work"]');
+    const workspace = page.locator('[data-sidebar-section="group:planning"]');
     const heading = workspace.locator(".navigation-section-heading");
+    const disclosure = heading.locator("details");
+    const caret = disclosure.locator("summary > [data-navigation-reveal]");
     const arrow = workspace.getByRole("button", {
-      name: "New options in Work",
+      name: `New options in ${title}`,
     });
     const handle = page.getByRole("separator", { name: "Resize sidebar" });
     await expect(
@@ -159,7 +162,7 @@ test.describe("workspace heading resize", () => {
       }, scale);
       for (const width of ["Home", "End"]) {
         await handle.press(width);
-        const label = heading.getByText("Work", { exact: true });
+        const label = heading.getByText(title, { exact: true });
         const resting = await label.boundingBox();
         await heading.hover();
         await expect(arrow).toBeVisible();
@@ -180,6 +183,20 @@ test.describe("workspace heading resize", () => {
           .toBe(true);
       }
     }
+    await handle.press("Home");
+    await heading.hover();
+    await expect(caret).toHaveCSS("opacity", "1");
+    await expect(disclosure).toHaveJSProperty("open", true);
+    const bounds = await caret.boundingBox();
+    await page.mouse.click(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2,
+    );
+    await expect(disclosure).toHaveJSProperty("open", false);
+    await arrow.click();
+    await expect(
+      page.getByRole("menuitem", { name: "New channel" }),
+    ).toBeVisible();
   });
 });
 

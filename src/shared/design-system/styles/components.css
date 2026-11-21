@@ -1857,6 +1857,37 @@
       position: absolute;
       inset-block: 0;
       inset-inline-end: 0;
+      background: var(--surface-sidebar, var(--surface-popover));
+    }
+
+    /* Keep the caret outside the action overlay when the title truncates. */
+    :where(
+        .navigation-section-heading[data-disclosure]:has(
+          > .navigation-section-heading-actions[data-navigation-reveal="overlay"]:not(
+              :empty
+            )
+        )
+      )
+      > .navigation-section-heading-label
+      :is(button, summary)
+      > [data-navigation-reveal] {
+      order: -1;
+    }
+
+    /* Leave room for the disclosure inset and caret at large text sizes. */
+    .navigation-section-heading[data-disclosure]
+      > .navigation-section-heading-actions[data-navigation-reveal="overlay"] {
+      max-inline-size: calc(
+        100% -
+        var(--space-2) -
+        var(--space-4) -
+        var(--space-1)
+      );
+
+      > :is([data-icon-variant], .buzz-split-button) {
+        flex-shrink: 1;
+        min-inline-size: 0;
+      }
     }
 
     /* In-flow actions can replace metadata from anywhere on the heading. */
@@ -1909,8 +1940,11 @@
           [data-has-metadata] > .navigation-section-heading-buttons
         ) {
         opacity: 1;
-        max-width: none;
-        overflow: visible;
+
+        &.navigation-section-heading-actions[data-navigation-reveal="true"] {
+          max-width: none;
+          overflow: visible;
+        }
 
         &.navigation-section-heading-actions > *,
         &.navigation-section-heading-buttons {

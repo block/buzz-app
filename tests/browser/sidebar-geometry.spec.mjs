@@ -2,6 +2,7 @@ import { generateSecretKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { newChat } from "./navigation.mjs";
 import { openChannelDetails } from "./channel-details.mjs";
+import { peerPresenceAdmitted } from "./presence.mjs";
 
 const solo = "33333333-3333-4333-8333-333333333333";
 test.use({
@@ -395,13 +396,7 @@ test("a presence badge preserves the sidebar avatar center and header insets", a
   await page.goto(app.origin);
   const row = page.locator('button[data-channel-id="dm-peer"]');
   await row.click();
-  await expect
-    .poll(() =>
-      app.report.presenceSnapshots.some((snapshot) =>
-        snapshot.filter.authors.includes(app.participants[0]),
-      ),
-    )
-    .toBe(true);
+  await peerPresenceAdmitted(app);
   // Snapshot admission precedes the separate live presence REQ.
   await expect
     .poll(() => app.relay.hasPresenceRoute("primary", app.participants[0]))

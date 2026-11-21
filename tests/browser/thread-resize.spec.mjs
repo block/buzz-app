@@ -44,12 +44,21 @@ test("thread stays beside the channel whenever both panes fit", async ({
     exact: true,
   });
   await expect(thread).toBeVisible();
+  const resize = page.getByRole("separator", {
+    name: "Resize main and secondary panels",
+  });
+  await resize.focus();
+  await resize.press("End");
+  await thread
+    .getByRole("textbox", { name: "Reply to thread", exact: true })
+    .fill("A thread draft");
 
   for (const [width, scale, mode] of [
     [1000, 1, "light"],
     [900, 0.8, "dark"],
     [1440, 1.5, "light"],
   ]) {
+    const layout = `${width}px, scale ${scale}, ${mode} mode`;
     await page.evaluate(
       ({ scale, mode }) => {
         localStorage.setItem("buzz-font-scale.v1", String(scale));
@@ -65,9 +74,21 @@ test("thread stays beside the channel whenever both panes fit", async ({
       "font-size",
       `${16 * scale}px`,
     );
+    await frames(page);
+    await animationsSettled(page.locator(":has(> [data-panel-dock])"));
     const bounds = await channel.boundingBox();
     const pane = await thread.boundingBox();
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(pane.x);
+    expect(
+      bounds.x + bounds.width,
+      `Channel and thread separation at ${layout}`,
+    ).toBeLessThanOrEqual(pane.x);
+    expect(
+      pane.x + pane.width,
+      `Thread right edge at ${layout}`,
+    ).toBeLessThanOrEqual(width);
+    await thread
+      .getByRole("button", { name: "Send message", exact: true })
+      .click({ trial: true });
     await expect(input).toHaveText(draft.trimEnd());
     await channel
       .getByRole("button", { name: "Send message", exact: true })

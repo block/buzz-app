@@ -360,6 +360,9 @@ export function createVerifiedProfileDirectory(
     /** Whether a head is held for `subject`: its snapshot entry, or its absence
      * for an inactive or malformed head, is then the answer. */
     holds: (subject: string) => enabled && !!heads.peek(subject),
+    /** Whether a sync under this authority answered for `subject`. It holds
+     * after a disable, so an answered absence outranks a saved head. */
+    answered: (subject: string) => answered.has(subject),
     /** Up to `count` held heads, most recently ensured last, for the device mirror. */
     heads: (count: number) =>
       [...wanted.keys()]

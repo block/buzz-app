@@ -59,7 +59,7 @@ function fixture() {
     });
     return publish;
   };
-  function mount(agents?: Agents) {
+  function mount(agents?: Agents, agentName?: (pubkey: string) => string) {
     render(
       <AgentsContext.Provider value={agents}>
         <input aria-label="Composer" />
@@ -69,6 +69,7 @@ function fixture() {
           channelId="chat"
           disabled={false}
           focusComposer={() => screen.getByRole("textbox").focus()}
+          {...(agentName ? { agentName } : {})}
         />
       </AgentsContext.Provider>,
     );
@@ -100,7 +101,7 @@ it("keeps queued Send focused when compaction finishes, then sends with Enter", 
   } as unknown as Agents;
   h.mount(agents);
   const user = userEvent.setup();
-  const send = screen.getByRole("button", { name: "Send" });
+  const send = screen.getByRole("button", { name: "Send now" });
   send.focus();
   expect(send).toHaveAttribute("aria-disabled", "true");
   await user.keyboard("{Enter}");
@@ -109,7 +110,7 @@ it("keeps queued Send focused when compaction finishes, then sends with Enter", 
     compacting = false;
     for (const listener of listeners) listener();
   });
-  expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Send now" })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(publish).toHaveBeenCalledOnce();
 });
@@ -135,7 +136,7 @@ it("keeps focus on failed Send and restores it after successful retry", async ()
   });
   h.mount();
   const user = userEvent.setup();
-  const send = screen.getByRole("button", { name: "Send" });
+  const send = screen.getByRole("button", { name: "Send now" });
   send.focus();
   await user.keyboard("{Enter}");
   expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
@@ -153,7 +154,7 @@ it("does not steal focus moved outside a row during validation", async () => {
   h.mount();
   const user = userEvent.setup();
   const send = within(screen.getByRole("region")).getByRole("button", {
-    name: "Send",
+    name: "Send now",
   });
   send.focus();
   await user.keyboard("{Enter}");
@@ -171,10 +172,10 @@ it("preserves Send focus so consecutive Enter presses send both queued messages"
   const second = h.add("second");
   h.mount();
   const user = userEvent.setup();
-  screen.getAllByRole("button", { name: "Send" })[0]?.focus();
+  screen.getAllByRole("button", { name: "Send now" })[0]?.focus();
   await user.keyboard("{Enter}");
   expect(first).toHaveBeenCalledOnce();
-  expect(screen.getByRole("button", { name: "Send" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Send now" })).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(second).toHaveBeenCalledOnce();
   expect(screen.getByRole("textbox")).toHaveFocus();
@@ -222,4 +223,67 @@ it("does not steal external focus when a previously focused preview releases", a
   screen.getByRole("button", { name: "Elsewhere" }).focus();
   await act(async () => h.finish());
   expect(screen.getByRole("button", { name: "Elsewhere" })).toHaveFocus();
+});
+
+it("shows a Stop pause, keeps rows held, and releases them with Resume queue", async () => {
+  const h = fixture();
+  const first = h.add("first");
+  const second = h.add("second");
+  h.mount();
+  await act(() => h.queue.pause("chat"));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Queued (2) · paused after Stop",
+  );
+  act(() => h.finish());
+  expect(first).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Resume queue" }));
+  expect(first).toHaveBeenCalledOnce();
+  expect(second).not.toHaveBeenCalled();
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+it("keeps keyboard focus in the chat when Resume queue is pressed with Enter", async () => {
+  const h = fixture();
+  h.add("first");
+  h.add("second");
+  h.mount();
+  await act(() => h.queue.pause("chat"));
+  const user = userEvent.setup();
+  screen.getByRole("button", { name: "Resume queue" }).focus();
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("button", { name: "Resume queue" })).toBeNull();
+  expect(screen.getByRole("textbox")).toHaveFocus();
+});
+
+it("explains Send now in its tooltip, naming the agent", async () => {
+  const h = fixture();
+  h.add("first");
+  h.mount(undefined, () => "Bestie");
+  const user = userEvent.setup();
+  await user.hover(screen.getByRole("button", { name: "Send now" }));
+  expect(
+    await screen.findByText(
+      "Send now. If Bestie is busy, it may add this to its current task.",
+    ),
+  ).toBeInTheDocument();
+});
+
+it("keeps the compaction explanation on a disabled Send now", async () => {
+  const h = fixture();
+  h.add("first");
+  const types: readonly never[] = [];
+  const agents = {
+    types: () => types,
+    find: (pubkey: string) => ({ key: pubkey }),
+    sessionState: () => "compacting",
+    subscribe: () => () => {},
+  } as unknown as Agents;
+  h.mount(agents, () => "Bestie");
+  const user = userEvent.setup();
+  await user.hover(screen.getByRole("button", { name: "Send now" }));
+  expect(
+    await screen.findByText("Wait for compaction to finish, or interrupt it."),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/If Bestie is busy/)).toBeNull();
 });

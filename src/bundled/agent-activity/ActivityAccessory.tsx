@@ -48,7 +48,11 @@ import {
 import { currentActivity } from "./current-activity";
 import { messageWork } from "./message-activity";
 import type { ActivityTurn } from "../../features/agents/activity";
-import { workStop, type WorkStopAgents } from "../../features/agents/work-stop";
+import {
+  queuePause,
+  workStop,
+  type WorkStopAgents,
+} from "../../features/agents/work-stop";
 import { useWorkStops } from "../../features/agents/use-work-stops";
 import {
   requestWork,
@@ -403,9 +407,11 @@ function ActivityBubble({
             channelId: props.channelId,
             messageId: message.id,
             threadRootId: message.threadRootId ?? message.id,
+            topLevel: !message.threadRootId,
           },
           props.session.agentActivity,
           agents,
+          queuePause(props.session),
         );
       return control ? [[entry.agent, control] as const] : [];
     }),

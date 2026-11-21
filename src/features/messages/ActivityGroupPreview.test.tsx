@@ -26,6 +26,7 @@ import {
   useStableRowActivity,
 } from "./activity-presentation";
 import { MessageRow } from "./MessageRow";
+import { followUpQueue } from "./follow-up-queue";
 
 stubAvatarBrowserApis();
 afterEach(() => {
@@ -814,3 +815,54 @@ it("follows live work for collapsed request controls only once they are shown", 
     owner.dispose();
   }
 });
+
+it.each([
+  ["a top-level request pauses the queue", undefined, true],
+  ["a thread reply request leaves the queue alone", true as const, false],
+])(
+  "scopes grouped Stop from the request's own work, not its threaded update: %s",
+  (_label, thread, pauses) => {
+    const f = fixture();
+    const owner = createRelaySession({
+      viewer: keypair().pubkey,
+      relayAuthor: keypair().pubkey,
+      media: () => undefined,
+      query: async () => [],
+    });
+    try {
+      // The update `step` is threaded under "request" either way.
+      const work = f.local.begin({
+        scope: "test",
+        agent: "agent",
+        channelId: "channel",
+        messageId: "request",
+        threadRootId: "request",
+        ...(thread ? { thread } : {}),
+      });
+      work.started();
+      work.interruptible(async () => {});
+      const session = { ...owner.session, agentActivity: f.activity };
+      const pause = vi
+        .spyOn(followUpQueue(session), "pause")
+        .mockResolvedValue(undefined);
+      const group = activityPresentation([step], undefined, new Set(["agent"]))
+        .groups[0];
+      if (!group) throw new Error("Missing activity group");
+      render(
+        <ActivityGroupActions
+          session={session}
+          group={group}
+          profiles={new Map()}
+          returnFocus={{ current: null }}
+          active
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /^Stop / }));
+      if (pauses) expect(pause).toHaveBeenCalledExactlyOnceWith("channel");
+      else expect(pause).not.toHaveBeenCalled();
+    } finally {
+      owner.dispose();
+      f.dispose();
+    }
+  },
+);

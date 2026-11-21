@@ -1281,15 +1281,24 @@ Quitting Buzz also turns it off.
 ## Saved Solo follow-ups
 
 Messages queued behind a working agent are saved on this device for the current
-account and community. Saved text, recipients, uploaded attachments, references,
+account and community. With **Queue** follow-up behavior, your DMs with your own
+agents queue too: a message with no mention is for that agent. A DM holds up to 20
+queued messages. Saved text, recipients, uploaded attachments, references,
 and model choices survive a reload or restart; uploads still in progress are not
 queued yet.
 
 Use the pencil button to edit queued text in the message composer. Save changes
 or cancel to return to your previous draft; attachments and recipients stay with
-the queued message. The X button removes it, and the up-arrow sends it.
+the queued message. The X button removes it, and the up-arrow (**Send now**)
+sends it at once. If the agent is busy, it may add that message to its current task.
 
-After restart, saved messages stay paused. **Send** sends a selected row, and
+**Stop** also pauses the chat's queue, so the next queued message doesn't start
+on its own. A message that was already going out may still send; Buzz says it was
+already being sent and may still go out. **Send now** sends one paused message
+and keeps the rest paused. **Resume queue** sends the rest in order. After a restart, if an earlier message may still be sending, choose **Send now** on each message held behind it. Stopping work in a thread
+doesn't pause the chat's queue.
+
+After restart, saved messages stay paused. **Send now** sends a selected row, and
 **Remove** discards an unsent row. **Resume** restarts supported interrupted turns
 and unpauses saved follow-ups in those chats, sending them in order as turns finish.
 **Don’t resume** leaves them paused. Chats outside that recovery stay paused too.

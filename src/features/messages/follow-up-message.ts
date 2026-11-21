@@ -1,9 +1,10 @@
 import { resolveForward, type ResolvedForward } from "./resolve-forward";
 import type { RelaySession } from "../relay/session";
 import type { OutboxRecovery } from "../relay/outbox";
+import { ownAgentDm } from "../agents/own-agent-dm";
 import { ownSolo } from "../solo/labels";
 import { archivedMention } from "./mention-admission";
-import type { FollowUpMessage } from "./follow-up-storage";
+import { followUpTargets, type FollowUpMessage } from "./follow-up-storage";
 import { signMessageTokens } from "./message-tokens";
 import { sendWithOwnerMentions } from "../relay/owner-mentions";
 
@@ -13,12 +14,13 @@ export function followUpMessage(
   message: FollowUpMessage,
   source?: Pick<ResolvedForward, "row" | "name">,
 ) {
+  const targets = followUpTargets(message, session.viewer);
   return {
     ready() {
       const choices = session.agentChoices.snapshot();
       return (
         choices.complete !== false ||
-        message.recipients.every((key) =>
+        targets.every((key) =>
           choices.selectable.some((agent) => agent.pubkey === key),
         )
       );
@@ -37,6 +39,18 @@ export function followUpMessage(
         throw new Error(
           "A queued recipient is no longer a member of this chat.",
         );
+      // A DM row is for the owner and their agent alone. Anyone joining, or
+      // the agent leaving, leaves it queued with an error; it never sends.
+      if (
+        message.dmAgent &&
+        (channel.members?.length !== 2 ||
+          !channel.members.includes(message.dmAgent) ||
+          !session.viewer ||
+          !channel.members.includes(session.viewer))
+      )
+        throw new Error(
+          "This DM's members changed. Check the chat before sending.",
+        );
     },
     publish(recovery?: OutboxRecovery) {
       const channel = session.channels
@@ -44,19 +58,35 @@ export function followUpMessage(
         .channels.find((row) => row.id === message.channelId);
       if (!channel || channel.archived || channel.readOnly)
         throw new Error("This chat is no longer available for sending.");
-      if (
+      const choices = session.agentChoices.snapshot();
+      if (message.dmAgent) {
+        if (
+          !targets.length ||
+          ownAgentDm(channel, session.viewer, choices) !== message.dmAgent ||
+          targets.some((key) => archivedMention(session, key))
+        )
+          throw new Error(
+            "This DM or its agent is no longer available for queued messages.",
+          );
+      } else if (
+        !targets.length ||
         !ownSolo(channel, session.viewer) ||
         message.recipients.some(
           (key) =>
             archivedMention(session, key) ||
-            !session.agentChoices
-              .snapshot()
-              .selectable.some((agent) => agent.pubkey === key),
+            !choices.selectable.some((agent) => agent.pubkey === key),
         )
       )
         throw new Error(
           "This Solo chat or its recipients are no longer available.",
         );
+      // The transport recipient of a DM row is its validated agent, not the
+      // profile cache: a cold cache would leave the event without the `p` tag
+      // that wakes a hosted agent. Owner-mention evidence stays the typed one.
+      const mentions =
+        message.dmAgent && !message.recipients.includes(message.dmAgent)
+          ? [...message.recipients, message.dmAgent]
+          : message.recipients;
       return sendWithOwnerMentions(
         session,
         message.explicitRecipientIds,
@@ -75,7 +105,7 @@ export function followUpMessage(
                 message.text,
                 recovery,
                 {
-                  mentions: message.recipients,
+                  mentions,
                   attachments: message.attachments,
                   references: message.references,
                   picks: message.picks,
@@ -90,7 +120,7 @@ export function followUpMessage(
               session.messages.send(
                 message.channelId,
                 message.text,
-                message.recipients,
+                mentions,
                 message.attachments,
                 recovery,
                 message.references,
@@ -105,13 +135,13 @@ export function followUpMessage(
             return session.messages.send(
               message.channelId,
               message.text,
-              message.recipients,
+              mentions,
               message.attachments,
             );
           return session.messages.send(
             message.channelId,
             message.text,
-            message.recipients,
+            mentions,
             message.attachments,
             recovery,
             message.references,

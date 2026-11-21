@@ -325,7 +325,8 @@ it("only releases a failed Outbox wait after durable dismissal", async () => {
       publish: () =>
         owner.outbox.send({ kind: 9, content: "first", tags: [["h", "chat"]] }),
     };
-    const id = h.queue.submit(first) ?? "missing";
+    const id = h.queue.submit(first);
+    if (typeof id !== "string") throw new Error("Expected an immediate send");
     await vi.waitFor(() =>
       expect(owner.outbox.snapshot()[0]?.delivery).toBe("failed"),
     );
@@ -358,16 +359,16 @@ it.each(["unknown", "accepted"] as const)(
     const h = fixture({ outbox: owner.outbox });
     try {
       await owner.ready;
-      const id =
-        h.queue.submit({
-          ...h.entry("first"),
-          publish: () =>
-            owner.outbox.send({
-              kind: 9,
-              content: "first",
-              tags: [["h", "chat"]],
-            }),
-        }) ?? "missing";
+      const id = h.queue.submit({
+        ...h.entry("first"),
+        publish: () =>
+          owner.outbox.send({
+            kind: 9,
+            content: "first",
+            tags: [["h", "chat"]],
+          }),
+      });
+      if (typeof id !== "string") throw new Error("Expected an immediate send");
       await vi.waitFor(() =>
         expect(owner.outbox.snapshot()[0]?.delivery).toBe(delivery),
       );

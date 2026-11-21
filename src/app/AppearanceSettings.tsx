@@ -432,7 +432,7 @@ export function AppearanceSettings({
             )}
             <PreferenceRow
               title="Follow-up behavior"
-              subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
+              subtitle="In Solo and your agent DMs, send follow-ups immediately or queue them until the agent finishes its previous response."
               trailing={
                 <Select
                   variant="compact"

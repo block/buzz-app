@@ -42,7 +42,7 @@ import { NavigationCard } from "../../shared/design-system/ui/NavigationItem";
 import { OctagonIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentsContext, useAgentsSnapshot } from "../agents/react";
-import { conversationWorkStops } from "../agents/work-stop";
+import { conversationWorkStops, queuePause } from "../agents/work-stop";
 import { useWorkStops } from "../agents/use-work-stops";
 import activityStyles from "../agents/ActivityRows.module.css";
 import {
@@ -51,7 +51,7 @@ import {
   PopoverPopup,
 } from "../../shared/design-system/ui/Popover";
 import type { RelaySession } from "../relay/session";
-import type { ComposerSession } from "./composer-session";
+import { fullSession, type ComposerSession } from "./composer-session";
 import type { MessageLinkOrigin } from "./MessageRow";
 import styles from "./TypingIndicator.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -347,6 +347,7 @@ export function TypingIndicator({
         threadRootId,
         session.agentActivity,
         hostedAgents,
+        queuePause(fullSession(session)),
       ),
     ]),
   );

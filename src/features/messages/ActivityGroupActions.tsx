@@ -13,7 +13,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { InfoIcon, StopIcon, XIcon } from "../../shared/design-system/icons";
 import { AgentsContext, useAgentsSnapshot } from "../agents/react";
 import { requestWork } from "../agents/request-work";
-import { workStop } from "../agents/work-stop";
+import { queuePause, requestTopLevel, workStop } from "../agents/work-stop";
 import { useWorkStops } from "../agents/use-work-stops";
 import {
   openProfileTranscript,
@@ -105,9 +105,21 @@ export function ActivityGroupActions({
         channelId: latest.channelId,
         messageId: requestId,
         threadRootId: latest.threadRootId ?? requestId,
+        // The request's own scope decides, not the update's: an update
+        // threaded under a top-level request is still top-level work.
+        topLevel:
+          (snapshot &&
+            requestTopLevel(
+              snapshot,
+              entry.agent,
+              latest.channelId,
+              requestId,
+            )) ??
+          (!latest.threadRootId || latest.threadRootId === requestId),
       },
       session.agentActivity,
       agents,
+      queuePause(session),
     );
     return control ? [{ control, agent: entry.agent }] : [];
   });

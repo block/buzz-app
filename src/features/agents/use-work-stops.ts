@@ -42,7 +42,22 @@ export function useWorkStops(controls: readonly WorkStop[]) {
     attempts.current.set(key, attempt);
     setPending((prior) => new Set(prior).add(key));
     try {
-      const running = await control.interrupt();
+      // Pause the queue first, synchronously, then interrupt with no wait:
+      // saving the pause never delays Stop, and a failed save is its own report.
+      let paused: Promise<void> | undefined;
+      try {
+        paused = control.pauseQueue?.();
+      } catch (error) {
+        paused = Promise.reject(error);
+      }
+      const interrupted = control.interrupt();
+      paused?.catch(() =>
+        notify(
+          "Queue paused in this window only. Couldn’t save the pause, so other windows or a restart may not keep it.",
+          "error",
+        ),
+      );
+      const running = await interrupted;
       const current = attempts.current.get(key);
       if (current && current !== attempt) return;
       // Local completion can retire the preview before its promise resolves.

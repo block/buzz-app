@@ -54,7 +54,7 @@ export function setFollowUpBehaviorPreference(value: FollowUpBehavior): void {
 export const followUpBehaviorSetting: DeviceSetting = {
   key: "conversations.follow_up_behavior",
   description:
-    "In Solo, send follow-ups immediately or queue them until the agent finishes its previous response.",
+    "In Solo and your agent DMs, send follow-ups immediately or queue them until the agent finishes its previous response.",
   schema: { type: "string", enum: ["immediate", "queue"] },
   read: () => ({
     value: followUpBehaviorPreference(),

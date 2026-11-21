@@ -33,7 +33,10 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
     await page.emulateMedia({ colorScheme });
     for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 950 });
-      const button = queue.getByRole("button", { name: "Send", exact: true });
+      const button = queue.getByRole("button", {
+        name: "Send now",
+        exact: true,
+      });
       await expect(button).toBeVisible();
       const contrast = () =>
         button.evaluate((element) => {
@@ -141,7 +144,7 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
     document.documentElement.style.fontSize = "20px";
   });
   await expect(
-    queue.getByRole("button", { name: "Send", exact: true }),
+    queue.getByRole("button", { name: "Send now", exact: true }),
   ).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("queue-enlarged.png") });
   await page.evaluate(() => {
@@ -159,15 +162,15 @@ test("Solo queues follow-ups, keeps typing intact, and offers Send now", async (
   await editor.press("Enter");
   await expect(queue).toContainText("Next keyboard send");
   await queue
-    .getByRole("button", { name: "Send", exact: true })
+    .getByRole("button", { name: "Send now", exact: true })
     .first()
     .focus();
   await page.keyboard.press("Enter");
   await expect(
-    queue.getByRole("button", { name: "Send", exact: true }),
+    queue.getByRole("button", { name: "Send now", exact: true }),
   ).toHaveCount(1);
   await expect(
-    queue.getByRole("button", { name: "Send", exact: true }),
+    queue.getByRole("button", { name: "Send now", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(queue).toHaveCount(0);
@@ -268,7 +271,7 @@ test("queued message actions edit text without changing the current draft", asyn
   await edit.fill("Discard this edit");
   await page.getByRole("button", { name: "Cancel edit", exact: true }).click();
   await expect(queue).toContainText("Updated queued text");
-  await queue.getByRole("button", { name: "Send", exact: true }).click();
+  await queue.getByRole("button", { name: "Send now", exact: true }).click();
   await expect(queue).toHaveCount(0);
   await expect(
     page.getByText("Updated queued text", { exact: true }),
@@ -383,7 +386,7 @@ test("Solo queued rows survive reload and Send or Remove stays durable", async (
     for (const width of [390, 1440]) {
       await page.setViewportSize({ width, height: 950 });
       await expect(
-        queue.getByRole("button", { name: "Send", exact: true }).first(),
+        queue.getByRole("button", { name: "Send now", exact: true }).first(),
       ).toBeInViewport();
       await page.screenshot({
         path: testInfo.outputPath(`restored-queue-${colorScheme}-${width}.png`),
@@ -395,7 +398,7 @@ test("Solo queued rows survive reload and Send or Remove stays durable", async (
     document.documentElement.style.fontSize = "20px";
   });
   await expect(
-    queue.getByRole("button", { name: "Send", exact: true }).first(),
+    queue.getByRole("button", { name: "Send now", exact: true }).first(),
   ).toBeInViewport();
   await page.screenshot({
     path: testInfo.outputPath("restored-queue-enlarged.png"),
@@ -412,7 +415,7 @@ test("Solo queued rows survive reload and Send or Remove stays durable", async (
   await queue
     .getByRole("listitem")
     .first()
-    .getByRole("button", { name: "Send", exact: true })
+    .getByRole("button", { name: "Send now", exact: true })
     .click();
   await expect.poll(() => sent().length).toBe(1);
   await expect(queue.getByRole("listitem")).toHaveCount(1);

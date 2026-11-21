@@ -19,6 +19,11 @@ export type FollowUpMessage = {
   text: string;
   recipients: readonly string[];
   explicitRecipientIds?: readonly string[];
+  /** In the owner's DM with their agent: the agent this row waits on and
+   * revalidates. Publication tags it as the transport recipient, as the
+   * relay layer tags an immediate DM send's agent partner; the owner's
+   * mention evidence stays `explicitRecipientIds`. */
+  dmAgent?: string;
   attachments: readonly UploadedAttachment[];
   references: readonly string[];
   picks: MentionPicks;
@@ -37,7 +42,38 @@ export type FollowUpHandoff = {
   complete?: true;
   owner?: string;
 };
+/**
+ * A chat's saved pause. `seq` counts every intent saved under the chat lock;
+ * `lastStopSeq` is the latest Stop's; `generation` moves on each time the
+ * chat's queue empties.
+ */
+export type FollowUpPauseState = Readonly<{
+  seq: number;
+  paused: boolean;
+  lastStopSeq: number;
+  generation: number;
+}>;
+const NO_PAUSE: FollowUpPauseState = {
+  seq: 0,
+  paused: false,
+  lastStopSeq: 0,
+  generation: 0,
+};
 const prefix = "follow-up:";
+/** The agents a queued row waits on: its mentions, plus a DM's agent. The
+ * viewer never answers a turn, so a self-mention is never a target. */
+export const followUpTargets = (
+  message: Pick<FollowUpMessage, "recipients" | "dmAgent">,
+  viewer?: string,
+): readonly string[] => {
+  const targets =
+    message.dmAgent && !message.recipients.includes(message.dmAgent)
+      ? [...message.recipients, message.dmAgent]
+      : message.recipients;
+  return viewer && targets.includes(viewer)
+    ? targets.filter((key) => key !== viewer)
+    : targets;
+};
 export const followUpRecovery = (id: string) => ({
   key: prefix + id,
   value: id,
@@ -131,6 +167,15 @@ export function followUpStorage(scope: string) {
     },
     remove(id: string) {
       clearView(scope, key(id));
+      clearView(scope, `follow-up-held:${id}`);
+    },
+    /** A row behind an unresolved hand-off waits for its own Send, across restarts. */
+    held(id: string) {
+      return readView<unknown>(scope, `follow-up-held:${id}`, null) === true;
+    },
+    hold(id: string) {
+      if (!writeView(scope, `follow-up-held:${id}`, true))
+        throw new Error("Could not save the hold on a queued message.");
     },
     handoff(channelId: string): FollowUpHandoff | null {
       const name = `follow-up-handoff:${channelId}`;
@@ -152,6 +197,24 @@ export function followUpStorage(scope: string) {
       )
         throw new Error("Queued message ordering is unavailable. Try again.");
       return value as FollowUpHandoff;
+    },
+    /**
+     * The chat's pause record. Every change is written under the chat lock
+     * and takes the next `seq`, so the lock orders all pause intents.
+     */
+    pauseState(channelId: string): FollowUpPauseState {
+      const name = `follow-up-pause:${channelId}`;
+      const revision = viewRevision(scope, name);
+      if (revision === null) return NO_PAUSE;
+      const value = readView<unknown>(scope, name, null);
+      if (revision === undefined || !pauseState(value))
+        throw new Error("The queue pause is unavailable. Try again.");
+      return value;
+    },
+    /** Call only under the chat lock. */
+    savePauseState(channelId: string, state: FollowUpPauseState) {
+      if (!writeView(scope, `follow-up-pause:${channelId}`, state))
+        throw new Error("Could not save the queue pause.");
     },
     claim(channelId: string, handoff: FollowUpHandoff) {
       if (!writeView(scope, `follow-up-handoff:${channelId}`, handoff))
@@ -187,6 +250,17 @@ export function followUpStorage(scope: string) {
   };
 }
 
+function pauseState(value: unknown): value is FollowUpPauseState {
+  if (!value || typeof value !== "object") return false;
+  const v = value as FollowUpPauseState;
+  return (
+    Number.isSafeInteger(v.seq) &&
+    typeof v.paused === "boolean" &&
+    Number.isSafeInteger(v.lastStopSeq) &&
+    Number.isSafeInteger(v.generation) &&
+    v.lastStopSeq <= v.seq
+  );
+}
 function strings(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -216,6 +290,8 @@ function valid(value: unknown): value is SavedFollowUp {
       (strings(v.explicitRecipientIds) &&
         v.explicitRecipientIds.length <= 32 &&
         v.explicitRecipientIds.every((id) => v.recipients.includes(id)))) &&
+    (v.dmAgent === undefined ||
+      (typeof v.dmAgent === "string" && /^[0-9a-f]{64}$/.test(v.dmAgent))) &&
     strings(v.references) &&
     Array.isArray(v.attachments) &&
     v.attachments.every(isUploadedAttachment) &&

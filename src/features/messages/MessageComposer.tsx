@@ -82,6 +82,7 @@ import { matches } from "../shortcuts/bindings";
 import { isApplePlatform } from "../shortcuts/format";
 import { useChosenAgent } from "../solo/default-agent";
 import { agentUnavailable } from "../agents/choices";
+import { ownAgentDm } from "../agents/own-agent-dm";
 import { useAgentChoices } from "../agents/use-choices";
 import {
   soloAgentsOnly,
@@ -208,6 +209,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { followUpMessage } from "./follow-up-message";
+import type { FollowUpMessage } from "./follow-up-storage";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
@@ -3178,9 +3180,18 @@ function Composer({
     const fromPill =
       routing &&
       captured.recipients.every((person) => referenced(person.pubkey));
+    // The owner's DM with their own agent queues as their Solo chats do.
+    const dmAgent =
+      host && !ownSoloConversation && !threadRootId
+        ? ownAgentDm(
+            host.channels.list().channels.find((row) => row.id === channelId),
+            host.viewer,
+            host.agentChoices.snapshot(),
+          )
+        : undefined;
     const queueable =
       !!host &&
-      ownSoloConversation &&
+      (ownSoloConversation || !!dmAgent) &&
       !threadRootId &&
       followUpBehaviorPreference() === "queue";
     try {
@@ -3525,11 +3536,14 @@ function Composer({
         // a shared chat, go out now; recipients still being classified keep
         // the owner's queue preference. The recipients are the fresh ones,
         // without references: someone may have joined or left since.
+        // In the owner's agent DM an untagged message (plain text, a removed
+        // mention, references only) is for that agent: the row waits on it.
+        // Publication keeps the typed mentions, as an immediate DM send does.
         const profiles = session.profiles.snapshot();
         if (
           !queueable ||
           !host ||
-          !recipients.length ||
+          (!recipients.length && !dmAgent) ||
           soloHasPeople(
             recipients,
             session.viewer,
@@ -3538,11 +3552,12 @@ function Composer({
           )
         )
           return publishNow(uploaded, session);
-        const message = {
+        const message: FollowUpMessage = {
           channelId,
           ...(captured.forward ? { forward: captured.forward } : {}),
           text: content,
           recipients,
+          ...(dmAgent ? { dmAgent } : {}),
           attachments: uploaded,
           references,
           picks: sentPicks,
@@ -3932,6 +3947,7 @@ function Composer({
           disabled={disabled || !active || !!editing.target}
           onEdit={startQueuedEdit}
           focusComposer={() => input.current?.focus()}
+          agentName={(pubkey) => session.profiles.snapshot().get(pubkey)?.name}
         />
       )}
       {/* Stay inside a modal host, but outside workspace modal-isolation boundaries. */}

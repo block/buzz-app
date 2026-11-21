@@ -647,6 +647,12 @@ Quitting Buzz also turns it off.
   does not choose where the agent works. A chip someone else
   sends, or a folder no longer in your repositories folder, grants nothing.
   A bare **!**, or **!** before a space, stays text.
+- **Skill chips.** In the desktop app, when a message addresses one of your own
+  local agents whose harness declares skill folders, type **/** and part of a
+  skill name in the composer to list matching skills from those folders on this
+  device. Choosing one adds a skill chip targeted at that agent; if a message
+  addresses more than one agent, the picker asks you to mention one agent first.
+  A query that matches no skill stays plain text.
 - **Activity** (the bell at the top of the Messages sidebar) collects DMs, ordinary responses in Solo chats, mentions of you, and
   replies in threads you started, replied in, or follow. Solo chats appear under All, not DMs; their nested
   threads stay separate. Agent-only coordination stays out. The tabs (All, Threads, Mentions, DMs, Reactions) narrow it by
@@ -1677,11 +1683,11 @@ If an agent reports incompatible synced settings, choose the **Previous Versions
   from this device only; it may stay in that community's channels.
 - **Settings → Agent setup → Base instructions** shows what Buzz tells every
   agent on this device before the agent's own instructions, one section per
-  topic. For Publishing, Progress, Etiquette, Agent Memory, Engineering
-  Discipline, Commit identity and Autonomy, choose **Default**, **Off**, or
-  **Custom** with your own text of up to 4 KiB, then **Save**. Default shows
-  the section's text to read and copy; choose Custom to edit it. The other
-  sections are always on, or Buzz sets them for the conversation; **All
+  topic. For Publishing, Progress, Etiquette, Agent Memory, Commit identity
+  and Autonomy, choose **Default**, **Off**, or **Custom** with your own text
+  of up to 4 KiB, then **Save**. Default shows the section's text to read and
+  copy; choose Custom to edit it. The other sections are always on, or Buzz
+  sets them for the conversation; **All
   sections** shows the default text of each. A plugin that is on can declare
   sections that it replaces in the chats it manages: its install review lists
   them. For example, such a plugin can set where an agent's work happens in a
@@ -2079,7 +2085,7 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   development** plugin is on (it is by default). It gives them
   `plugin_authoring_guide`, `plugin_status` and `plugin_reload`. The person
   installs a new plugin first: **Manage plugins → Add → Browse** under Add from
-  folder. After that the agent can reload it from that folder. A reload that
+  folder, or by approving the agent's install request for the folder. After that the agent can reload it from that folder. A reload that
   fails to start restores the previous version. Changed host access still needs
   the person's review through the plugin's **Update**.
 - **Performance diagnostics** starts off and is unlisted in the Plugins catalog.
@@ -2096,7 +2102,10 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   message in the conversation shows a card with **Review** and **Decline**, and the
   change waits until the person reviews and confirms it there (or under **Requested
   by agents** in **Settings → Plugins → Manage plugins**). A restart discards it. An agent cannot
-  install plugin code by itself.
+  install plugin code by itself. An install request can name a Git repository or
+  a local folder; a folder installs linked, as **Browse** does, so anything that
+  can write to the folder can change the plugin's code and reload it without
+  another review while its access stays the same.
 - A `buzz://plugin-install` link, or a plugin's request to install another
   plugin from a URL, can update a plugin with that ID installed from Git in
   place: review the source change and choose **Update**, with no removal. It is

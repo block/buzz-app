@@ -242,13 +242,20 @@ const MAX_NOTICES = 2000;
 /** Relay query order: time descending, then ID ascending at ties. */
 const newestFirst = (a: RelayEvent, b: RelayEvent) =>
   b.created_at - a.created_at || a.id.localeCompare(b.id);
-/** Rows a page read can reach again, which notices are not. */
-const rowIds = (state: WindowState) =>
-  new Set(
+/** Rows a page read can reach again, which notices are not. Rows the window
+ * holds back (read before its first page, or below its floor) were never
+ * shown, so a catch-up has no need to reach them. */
+const rowIds = (state: WindowState) => {
+  const floor = state.floor ?? (state.snapshot.hasMore ? Infinity : -Infinity);
+  return new Set(
     state.events
-      .filter((event) => WINDOW_KINDS.includes(event.kind))
+      .filter(
+        (event) =>
+          WINDOW_KINDS.includes(event.kind) && event.created_at >= floor,
+      )
       .map((event) => event.id),
   );
+};
 
 /** Session-owned read model. Broad byte-bounded heads are separate from the small history LRU.
  * Preparing a head never mounts a timeline or evicts a subscribed history window. */
@@ -563,18 +570,21 @@ export function createChannelStore(
       // viewer's own confirmed sends can carry rows from before the loaded
       // history. Showing one leaves a gap that a later page fills mid-list,
       // where the timeline can neither anchor the reader nor tell it from new
-      // arrivals. That page shows them instead.
+      // arrivals. That page shows them instead. Until a page sets the floor,
+      // history's extent is unknown, not unbounded: every row, read (a Huddle
+      // card, say), live or replayed, waits for the first page, so the view
+      // loads in one piece.
       const more = patch.hasMore ?? state.snapshot.hasMore;
-      const shown =
-        (floor: number | undefined) => (event: import("./events").EventData) =>
-          !channelRowKind(event.kind) ||
-          ((floor === undefined || event.created_at >= floor) &&
-            (state.ceiling === undefined || event.created_at < state.ceiling));
+      const floor = more ? (state.floor ?? Infinity) : undefined;
+      const shown = (event: import("./events").EventData) =>
+        !channelRowKind(event.kind) ||
+        ((floor === undefined || event.created_at >= floor) &&
+          (state.ceiling === undefined || event.created_at < state.ceiling));
       // Notices read beside a head wait for a page to land (see `adoptHead`).
       const notices = state.floor === undefined ? [] : state.notices.values();
       const combined = new Map(
         [...state.events, ...notices, ...state.traffic.values()]
-          .filter(shown(more ? state.floor : undefined))
+          .filter(shown)
           .map((event) => [event.id, event as import("./events").EventData]),
       );
       const ids = new Set(combined.keys());
@@ -590,12 +600,9 @@ export function createChannelStore(
           )
           .map(({ event }) => event.id),
       );
-      // Until a page sets the floor, history's extent is unknown, not
-      // unbounded: a confirmed send waits for the page that holds it.
+      // Likewise a confirmed send waits for the page that holds it.
       const own = outbox.filter(
-        ({ event }) =>
-          state.sent.has(event.id) ||
-          shown(more ? (state.floor ?? Infinity) : undefined)(event),
+        ({ event }) => state.sent.has(event.id) || shown(event),
       );
       for (const item of own)
         if (
@@ -4439,9 +4446,13 @@ export function createChannelStore(
         visible([...state.notices.values()]).map((event) => [event.id, event]),
       );
       state.traffic.clear();
+      // Before its first page a window shows none of its rows (see
+      // `setWindow`): ready would leave it blank with no read owed. It goes
+      // idle so its next ensure() reads the page, and an open one reads it now.
+      const paged = state.floor !== undefined || !state.snapshot.hasMore;
       setWindow(state, {
         loadingOlder: false,
-        status: state.events.length ? "ready" : "idle",
+        status: paged && state.events.length ? "ready" : "idle",
       });
     }
     // Disk heads also carry profile and cross-channel auxiliary evidence. Drop
@@ -4449,6 +4460,9 @@ export function createChannelStore(
     if (hadHydration) void persistence?.retain([]).catch(() => {});
     setList(list);
     resetReferences();
+    const open = current ? windows.get(current) : undefined;
+    if (open?.snapshot.status === "idle" && authorized(open.channelId))
+      queries.ensure(open.channelId);
   }
   function dispose() {
     disposed = true;

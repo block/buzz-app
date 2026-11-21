@@ -74,6 +74,7 @@ import type { TeamResult, TeamSent } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
+import { TranscriptPanel } from "./TranscriptPanel";
 import { isBundledOwner } from "../../plugins/provenance";
 import {
   awaitRecommendation,
@@ -1236,6 +1237,10 @@ export type AgentType<Config = unknown> = {
    * left for it. Without it, support is unadvertised: a harness that builds
    * its turns with `turnPrompt` still shows them, and another one never does. */
   notes?: true;
+  /** Up to 8 folders, each absolute, `~/…` or starting with `$CODEX_HOME`,
+   * whose `<name>/SKILL.md` skills the composer's `/` offers for its local
+   * agents. */
+  skillFolders?: readonly string[];
   /** Why protected runs must stop when this runtime cannot enforce the contract. */
   protectionUnavailable?: string;
   /** Fully retires native sessions for this membership key before policy changes. */
@@ -1729,6 +1734,13 @@ export type Agents = {
    * delivery goes, the bundled harnesses' prompts, the agent's Buzz tools as
    * an MCP handler, and its replies. */
   readonly harness: HarnessKit;
+  /** Host presentation for an agent type's tabs, available through injection. */
+  readonly ui?: Readonly<{
+    /** Renders one conversation's transcript with Refresh, live step-driven
+     * updates while working, View-activity focus, Markdown, file diffs and
+     * prompt sections. Feature-detect on older hosts. */
+    Transcript: typeof TranscriptPanel;
+  }>;
   /** Wakes an agent this copy of the app runs in one of its conversations,
    * as a mention there would, but with no message: the agent is told `text`
    * comes from this plugin, not its owner, and is data. Throws when this copy does not run the agent or its queue is full;
@@ -3517,6 +3529,19 @@ export class AgentsService extends Service implements Agents {
       throw new Error(
         `Agent type timeoutMs must be a whole number from 1 to ${TIMEOUT_LIMIT_MS}`,
       );
+    const folders = type.skillFolders;
+    if (
+      folders !== undefined &&
+      !(
+        Array.isArray(folders) &&
+        folders.length <= 8 &&
+        Array.from(folders).every((folder) => typeof folder === "string")
+      )
+    )
+      throw new Error("Agent type skillFolders must be up to 8 folders");
+    const skillFolders = folders
+      ? Object.freeze(folders.map((folder) => folder.trim()).filter(Boolean))
+      : undefined;
     const { remote } = type;
     if (
       remote &&
@@ -3535,6 +3560,7 @@ export class AgentsService extends Service implements Agents {
     const pluginId = this.ctx.pluginOwner?.id;
     this.contributions.register(this.ctx, {
       ...type,
+      ...(skillFolders && { skillFolders }),
       ...(models && {
         models: async (agent: Agent<Config>) => {
           await this.checkExecution(agent.key, agent.type);
@@ -4238,6 +4264,9 @@ export class AgentsService extends Service implements Agents {
     core: (key) => this.core(key),
     added: () => this.tools(),
     repositories: repositoriesContext,
+  });
+  readonly ui: NonNullable<Agents["ui"]> = Object.freeze({
+    Transcript: TranscriptPanel,
   });
   readonly supportsGuardedWake = true as const;
   wake(key: AgentKey, wake: AgentWake): void;

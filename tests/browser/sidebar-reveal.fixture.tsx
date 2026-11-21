@@ -5,6 +5,7 @@ import { ChannelSidebarRow } from "../../src/bundled/channels/ChannelSidebarRow"
 import { SidebarSection } from "../../src/bundled/channels/SidebarSection";
 import { SidebarUnread } from "../../src/bundled/channels/SidebarUnread";
 import { SidebarContributionSection } from "../../src/features/channel-navigation/SidebarContributionSection";
+import { SidebarList } from "../../src/features/channel-navigation/SidebarList";
 import { ChannelSidebarDnd } from "../../src/features/channel-navigation/ChannelSidebarDnd";
 import { ChannelSidebarRows } from "../../src/features/channel-navigation/ChannelSidebarRows";
 import type { Navigation } from "../../src/features/navigation/controller";
@@ -167,7 +168,7 @@ function Harness() {
   };
   if (state.relocated !== undefined)
     return (
-      <nav aria-label="Sidebar">
+      <SidebarList navigation={{ label: "Sidebar" }}>
         {["channels", "starred"].map((section) => (
           <SidebarSection
             key={section}
@@ -195,7 +196,7 @@ function Harness() {
             ))}
           </SidebarSection>
         ))}
-      </nav>
+      </SidebarList>
     );
   return state.mounted ? (
     <Sidebar

@@ -40,6 +40,10 @@ import type { Navigation } from "../navigation/controller";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { conversationTarget, matchesConversation } from "./routes";
+import {
+  captureSidebarDeparture,
+  recoverSidebarFocus,
+} from "./sidebar-focus-recovery";
 import { soloSuccessor } from "./solo-successor";
 import type {
   SoloCardProps,
@@ -500,6 +504,8 @@ function useDestinationFocus(
 ) {
   const focused = useRef(false);
   const neighbors = useRef<string[]>([]);
+  const departure =
+    useRef<ReturnType<typeof captureSidebarDeparture>>(undefined);
   const rememberNeighbors = useCallback(() => {
     const region = root.current?.closest("[data-sidebar-section]");
     if (region)
@@ -510,7 +516,18 @@ function useDestinationFocus(
   const attach = useCallback(
     (node: HTMLDivElement | null) => {
       // The source can reorder siblings without rendering this destination.
-      if (!node && focused.current) rememberNeighbors();
+      if (!node && focused.current && root.current) {
+        rememberNeighbors();
+        // A roster change can detach the row before its effect cleans up.
+        const active = root.current.ownerDocument.activeElement;
+        departure.current = captureSidebarDeparture(
+          active instanceof HTMLElement && root.current.contains(active)
+            ? active
+            : root.current,
+        );
+      } else if (node) {
+        departure.current = undefined;
+      }
       root.current = node;
     },
     [rememberNeighbors, root],
@@ -519,13 +536,14 @@ function useDestinationFocus(
     if (!visible) return;
     const node = root.current;
     const region = node?.closest("[data-sidebar-section]");
-    const viewport = node?.closest("nav[data-scroll-fade]");
     return () => {
-      const owner = document.activeElement?.closest(
-        "[data-solo-destination-root]",
-      );
+      const active = document.activeElement;
+      const owner = active?.closest("[data-solo-destination-root]");
       if (!node || (owner ? owner !== node : !focused.current)) return;
-      const restoreFocus = () => {
+      const departing =
+        owner === node && active instanceof HTMLElement ? active : node;
+      const position = departure.current ?? captureSidebarDeparture(departing);
+      const candidates = () => {
         if (document.activeElement !== document.body) return;
         // The ref can capture the final order after this effect cleans up.
         const rows = neighbors.current;
@@ -538,13 +556,13 @@ function useDestinationFocus(
         const section = document.querySelector(
           `[data-sidebar-section="${CSS.escape(region?.getAttribute("data-sidebar-section") ?? "")}"]`,
         );
-        const candidates = [
-          ...ids.map(
-            (id) =>
-              id &&
-              document.querySelector<HTMLElement>(
-                `[data-solo-destination-id="${CSS.escape(id)}"]`,
-              ),
+        return [
+          ...ids.map((id) =>
+            id
+              ? document.querySelector<HTMLElement>(
+                  `[data-solo-destination-id="${CSS.escape(id)}"]`,
+                )
+              : null,
           ),
           ...(section?.querySelectorAll<HTMLElement>(
             "[data-solo-destination-id]",
@@ -555,37 +573,8 @@ function useDestinationFocus(
             '[data-sidebar-section^="solo-region:"] summary',
           ),
         ];
-        const available = candidates.filter(
-          (candidate): candidate is HTMLElement =>
-            !!candidate && !candidate.closest("[hidden], [inert]"),
-        );
-        const frame = viewport?.getBoundingClientRect();
-        const inView =
-          frame &&
-          available.find((candidate) => {
-            if (
-              !candidate.hasAttribute("data-solo-destination-id") ||
-              !viewport?.contains(candidate)
-            )
-              return false;
-            const box = candidate.getBoundingClientRect();
-            return (
-              box.height > 0 &&
-              box.top >= frame.top &&
-              box.bottom <= frame.bottom
-            );
-          });
-        // Prefer a visible surviving row. Headings keep their fallback order.
-        inView?.focus({ preventScroll: true });
-        if (document.activeElement !== document.body) return;
-        for (const candidate of available) {
-          candidate.focus();
-          if (document.activeElement === candidate) break;
-        }
       };
-      // Cleanup can queue focus recovery before the rest of the commit mutates
-      // the sidebar. Let its mutation observer correct the viewport first.
-      queueMicrotask(() => queueMicrotask(restoreFocus));
+      recoverSidebarFocus(position, candidates, { preferVisibleRows: true });
     };
   }, [root, channelId, visible]);
   return {

@@ -1,5 +1,10 @@
 import { useChannelIdentityNames } from "../identity-names/react";
-import { useMemo, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useMemo,
+  useSyncExternalStore,
+  type ComponentPropsWithRef,
+  type ReactNode,
+} from "react";
 import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
@@ -39,9 +44,30 @@ export function MentionLabel({
   );
 }
 
+/** Who a bound profile mention names: its key, whether it is an agent, and
+ * its name resolved for the channel, without a namesake qualifier. */
+export function profileMentionIdentity(
+  text: string,
+  target: string,
+  profiles: ReadonlyMap<string, Profile>,
+  agents: AgentLibrary["identities"],
+  resolveName: (pubkey: string, fallback: string) => string,
+) {
+  const key = profileKey(target);
+  const agent =
+    !!key &&
+    (agents.some((entry) => entry.pubkey === key) ||
+      !!profiles.get(key)?.isAgent);
+  // A namesake-qualified span shows its name; its target is the key.
+  const shown = text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, "");
+  return { key, agent, label: key ? resolveName(key, shown) : shown };
+}
+
 /** A bound profile mention's chip, as messages and their previews show it:
  * its name resolved for the channel, without a namesake qualifier, and
- * marked as an agent or the viewer. A button when it opens the profile. */
+ * marked as an agent or the viewer. A button when it opens the profile.
+ * Other button props reach the element, so a profile preview can use the
+ * chip as its trigger; the preview's own click then opens the profile. */
 export function ProfileMention({
   text,
   target,
@@ -50,6 +76,7 @@ export function ProfileMention({
   viewer,
   resolveName,
   onOpen,
+  ...trigger
 }: {
   text: string;
   target: string;
@@ -58,15 +85,14 @@ export function ProfileMention({
   viewer: string | undefined;
   resolveName: (pubkey: string, fallback: string) => string;
   onOpen?: ((target: string) => unknown) | undefined;
-}) {
-  const key = profileKey(target);
-  const agent =
-    !!key &&
-    (agents.some((entry) => entry.pubkey === key) ||
-      !!profiles.get(key)?.isAgent);
-  // A namesake-qualified span shows its name; its target is the key.
-  const shown = text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, "");
-  const label = key ? resolveName(key, shown) : shown;
+} & Omit<ComponentPropsWithRef<"button">, "children">) {
+  const { key, agent, label } = profileMentionIdentity(
+    text,
+    target,
+    profiles,
+    agents,
+    resolveName,
+  );
   const Mention = onOpen ? "button" : "span";
   // Selection copy reads the identity and the whole label (selection-copy.ts).
   return (
@@ -79,13 +105,14 @@ export function ProfileMention({
       data-mention-name={label}
       aria-label={onOpen ? `View ${label} profile` : undefined}
       onClick={
-        onOpen
+        onOpen && !trigger.onClick
           ? (event) => {
               event.currentTarget.focus();
               onOpen(target);
             }
           : undefined
       }
+      {...trigger}
     >
       <MentionLabel agent={agent} label={label} />
     </Mention>

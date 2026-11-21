@@ -5502,7 +5502,19 @@ it.each(["cancel", "fail"])(
   },
 );
 
+// Up to three search debounces chain before an ambiguous author picker
+// answers: useSearchMessages' first resolution, its re-resolution once the
+// member's verified name lands, then SearchResults' author lookup. In real
+// time they fill a wait's one-second default, so callers control the clock.
+async function settleSearchDebounces(steps = 3) {
+  for (let step = 0; step < steps; step += 1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+    });
+}
+
 it("offers every scoped alias match when completion is ambiguous", async () => {
+  vi.useFakeTimers();
   const { owner, person, reads } = verifiedAuthorSession({
     profileName: "alice",
     namesakeName: "alice",
@@ -5523,13 +5535,18 @@ it("offers every scoped alias match when completion is ambiguous", async () => {
         openConversation={() => {}}
       />,
     );
-    await waitFor(() =>
-      expect(
-        within(screen.getByRole("group", { name: "People" })).getAllByRole(
-          "option",
-        ),
-      ).toHaveLength(2),
-    );
+    // Pins the current phases: after two SEARCH_DEBOUNCE_MS windows People is
+    // still pending, and the options arrive within the third.
+    await settleSearchDebounces(2);
+    const people = screen.getByRole("group", { name: "People" });
+    expect(people).toHaveTextContent("Searching people…");
+    expect(within(people).queryAllByRole("option")).toHaveLength(0);
+    await settleSearchDebounces(1);
+    expect(
+      within(screen.getByRole("group", { name: "People" })).getAllByRole(
+        "option",
+      ),
+    ).toHaveLength(2);
     expect(reads).toEqual([]);
     fireEvent.click(
       screen.getByRole("option", {
@@ -5622,15 +5639,9 @@ it.each(
 )(
   "completes verified alias $alias in $scope with $preference and namesake $namesake",
   async ({ scope, preference, alias, namesake }) => {
-    // A controlled clock: the namesake lands after up to three chained search
-    // debounces, which in real time sits at a wait's one-second default.
+    // The namesake lands after the chained debounces settleSearchDebounces
+    // names.
     vi.useFakeTimers();
-    const settle = async () => {
-      for (let step = 0; step < 3; step += 1)
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
-        });
-    };
     const previous = namePreference();
     setNamePreference(preference as "username" | "full-name");
     const { owner, person, reads } = verifiedAuthorSession(
@@ -5656,13 +5667,13 @@ it.each(
           query={alias === "robinz" ? `from:@${alias}` : completed}
         />,
       );
-      await settle();
+      await settleSearchDebounces();
       if (alias === "robinz") {
         screen.getByRole("option", {
           name: new RegExp(person.pubkey.slice(0, 12)),
         });
         mounted.rerender(<SearchResults {...props} query={completed} />);
-        await settle();
+        await settleSearchDebounces();
       }
       if (namesake) {
         expect(

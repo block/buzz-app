@@ -178,7 +178,7 @@ export function RequestReview({
         name: request.requester.name,
         reason: request.reason,
       }}
-      recheck={(id) => plugins.requests.conflict(id)}
+      recheck={() => plugins.requests.conflict(request.pluginId)}
       returnFocus={returnFocus}
       onInstalled={() => plugins.requests.settle(request.id, "approved")}
       onClose={onClose}

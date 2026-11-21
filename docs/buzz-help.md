@@ -2097,11 +2097,9 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   change waits until the person reviews and confirms it there (or under **Requested
   by agents** in **Settings → Plugins → Manage plugins**). A restart discards it. An agent cannot
   install plugin code by itself. An install request can name a Git repository or
-  a local folder. The card for a folder names only the folder; **Review** reads
-  it and shows the plugin, its access and the folder it read. It installs
-  linked, as **Browse** does, so anything that can write to the folder can
-  change the plugin's code and reload it without another review while its
-  access stays the same.
+  a local folder; a folder installs linked, as **Browse** does, so anything that
+  can write to the folder can change the plugin's code and reload it without
+  another review while its access stays the same.
 - A `buzz://plugin-install` link, or a plugin's request to install another
   plugin from a URL, can update a plugin with that ID installed from Git in
   place: review the source change and choose **Update**, with no removal. It is

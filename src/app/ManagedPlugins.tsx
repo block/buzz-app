@@ -26,8 +26,7 @@ type Authorize = (
   repository: string,
 ) => Promise<{ repository: string; token: string } | null>;
 
-/** An agent's request for a local folder, which only this review reads. An
- * install's `id` and `path` are empty unless the agent named them. */
+/** An agent's request for a local folder, which the review reads again. */
 type FolderEntry = Readonly<{
   id: string;
   folder: string;
@@ -36,14 +35,16 @@ type FolderEntry = Readonly<{
 }>;
 type ReviewEntry = ManagedEntry | FolderEntry;
 
-const location = (entry: ManagedEntry) =>
+const location = (entry: ReviewEntry) =>
   "url" in entry
     ? entry.url
-    : [
-        entry.repository,
-        entry.reference,
-        ...(entry.path === "." ? [] : [entry.path]),
-      ].join(" · ");
+    : "folder" in entry
+      ? importLocation({ source: entry.folder, commit: null }, entry.path)
+      : [
+          entry.repository,
+          entry.reference,
+          ...(entry.path === "." ? [] : [entry.path]),
+        ].join(" · ");
 
 export function ManagedPlugins({
   plugins,
@@ -313,9 +314,8 @@ export function ManagedPluginReview({
   requestedBy?: Readonly<{ name: string; reason: string }> | undefined;
   /** Refuses the install as the review opens, before downloading anything. */
   refusal?: string | undefined;
-  /** Run with the reviewed plugin's id as the owner confirms; a returned
-   * reason refuses the install. */
-  recheck?: ((id: string) => string | undefined) | undefined;
+  /** Run as the owner confirms; a returned reason refuses the install. */
+  recheck?: (() => string | undefined) | undefined;
   /** Marks the install as confirmed until the returned function runs. */
   confirm?: (() => () => void) | undefined;
   returnFocus: () => HTMLElement | null;
@@ -342,20 +342,12 @@ export function ManagedPluginReview({
   const working = useRef(false);
   const latest = useRef({ catalog, entry });
   latest.current = { catalog, entry };
+  const live = entry
+    ? catalog.plugins.find((plugin) => plugin.manifest.id === entry.id)
+    : undefined;
+  const existing = frozen === undefined ? live : (frozen ?? undefined);
   const discard = (value: string) =>
     void imports?.discard(value).catch(() => {});
-  // A folder install learns which plugin it is only here, so its refusals
-  // apply once the folder is read, and again as the owner confirms.
-  const folderRefusal = (wanted: ReviewEntry, id: string) => {
-    if (!("folder" in wanted) || wanted.state !== "missing") return undefined;
-    const installed = latest.current.catalog.plugins.find(
-      (plugin) => plugin.manifest.id === id,
-    );
-    if (installed?.source === "bundled") return "That plugin id is reserved.";
-    if (installed)
-      return `${installed.manifest.name} is already installed. Ask the agent to request an update instead.`;
-    return recheck?.(id);
-  };
   const acquire = useEffectEvent(
     async (current: { active: boolean }, wanted: ReviewEntry) => {
       if (!imports) return;
@@ -409,25 +401,15 @@ export function ManagedPluginReview({
             `The repository returned commit ${preview.commit ?? "unknown"}, not the recommended commit ${wanted.commit}.`,
           );
         }
-        // A folder install learns its plugin from the folder read here.
-        const unnamed = folder && !wanted.path;
-        const candidate = unnamed
-          ? preview.candidates.length === 1
-            ? preview.candidates[0]
-            : undefined
-          : preview.candidates.find((item) => item.path === wanted.path);
-        const found = candidate?.manifest.id;
-        const matches = !!candidate && (!wanted.id || found === wanted.id);
-        const refusal =
-          candidate && matches
-            ? folderRefusal(wanted, candidate.manifest.id)
-            : undefined;
-        if (candidate && matches && !refusal) {
+        const candidate = preview.candidates.find(
+          (item) => item.path === wanted.path,
+        );
+        if (candidate?.manifest.id === wanted.id) {
           token.current = preview.token;
           setReview({
             status: "ready",
             preview,
-            path: candidate.path,
+            path: wanted.path,
             key: entryKey(wanted),
           });
           return;
@@ -435,21 +417,13 @@ export function ManagedPluginReview({
         discard(preview.token);
         const prefix =
           wanted.path === "." ? "Selected folder:" : `${wanted.path}:`;
-        const paths = preview.candidates.map((item) => item.path).join(", ");
         throw new Error(
-          refusal ??
-            (candidate
-              ? `The plugin at ${candidate.path} is ${found}, not ${wanted.id}.`
-              : unnamed
-                ? paths
-                  ? `This folder has several plugins (${paths}). Ask the agent to request one by path.`
-                  : ["No built plugins found.", ...preview.warnings].join(" ")
-                : (preview.warnings.find((warning) =>
-                    warning.startsWith(prefix),
-                  ) ??
-                  (folder
-                    ? `This folder has no plugin at ${wanted.path}.`
-                    : `This commit has no plugin at ${wanted.path}.`))),
+          candidate
+            ? `The plugin at ${wanted.path} is ${candidate.manifest.id}, not ${wanted.id}.`
+            : (preview.warnings.find((warning) => warning.startsWith(prefix)) ??
+                (folder
+                  ? `This folder has no plugin at ${wanted.path}.`
+                  : `This commit has no plugin at ${wanted.path}.`)),
         );
       } catch (reason) {
         if (current.active)
@@ -487,11 +461,6 @@ export function ManagedPluginReview({
   const candidate = ready
     ? review.preview.candidates.find((item) => item.path === review.path)
     : undefined;
-  const id = candidate?.manifest.id ?? entry?.id;
-  const live = id
-    ? catalog.plugins.find((plugin) => plugin.manifest.id === id)
-    : undefined;
-  const existing = frozen === undefined ? live : (frozen ?? undefined);
   const updating = !!existing;
   const sameRevision = !!candidate && candidate.revision === existing?.revision;
   const rollbackWarning =
@@ -509,18 +478,17 @@ export function ManagedPluginReview({
       entryKey(wanted) !== review.key
     )
       return;
-    const { id } = candidate.manifest;
-    const refusal = folderRefusal(wanted, id) ?? recheck?.(id);
+    const refusal = recheck?.();
     if (refusal) {
       setReview({ status: "error", reason: refusal });
       return;
     }
     const alreadyInstalled = latest.current.catalog.plugins.some(
-      (plugin) => plugin.manifest.id === id,
+      (plugin) => plugin.manifest.id === wanted.id,
     );
     setFrozen(
       latest.current.catalog.plugins.find(
-        (plugin) => plugin.manifest.id === id,
+        (plugin) => plugin.manifest.id === wanted.id,
       ) ?? null,
     );
     setInstalling(true);
@@ -541,7 +509,8 @@ export function ManagedPluginReview({
       }
       token.current = "";
       await imports?.discard(value).catch(() => {});
-      if (!alreadyInstalled && enable) await plugins.change("enable", id);
+      if (!alreadyInstalled && enable)
+        await plugins.change("enable", wanted.id);
       onInstalled?.(alreadyInstalled ? "updated" : "installed");
       onClose();
     } finally {
@@ -552,7 +521,7 @@ export function ManagedPluginReview({
   }
 
   const busy = installing || managing || !ready;
-  const name = candidate?.manifest.name ?? (entry?.id || "plugin");
+  const name = candidate?.manifest.name ?? entry?.id ?? "plugin";
   if ((refusal || opened) && !installing)
     return (
       <Dialog
@@ -606,7 +575,7 @@ export function ManagedPluginReview({
             </>
           )
         ) : (
-          `Review ${entry?.id || "plugin"}`
+          `Review ${entry?.id ?? "plugin"}`
         )
       }
       description={
@@ -687,7 +656,7 @@ export function ManagedPluginReview({
               </p>
             )}
           <code className={`${importStyles.sourcePath} break-all`}>
-            {/* The folder as this review read it, which is what installs. */}
+            {/* A folder as this review read it, which is what installs. */}
             {"folder" in entry
               ? importLocation(review.preview, review.path)
               : location(entry)}

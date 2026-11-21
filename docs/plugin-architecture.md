@@ -3234,6 +3234,33 @@ Cards sit between the message bubble and its attachments. After three, the rest
 fold behind "Show N more previews". A render failure drops only that card.
 Registration follows the existing plugin lifetime.
 
+A renderer that can't draw until the viewer sets something up, such as signing
+in to a local tool, adds `status()`, `subscribe(listener)` and `settings`, the id
+of a Settings card it registers (the same grammar as a Settings card id). `status()` is side-effect free, like a decision
+provider's, and returns `"checking"`, `"ready"` or `"needs-setup"`; a throw or an
+unknown value counts as ready. The host asks once per registration, not per link,
+and listens while any message shows its links, folded or not. Until that listener
+has read the provider, and while it is `checking`, its links have no card and don't
+count toward the fold. While it is `needs-setup`, the host draws a compact card for
+each link, labelled with the renderer's title and the link's host; the visible text
+is its accessible name. The host draws that card only while the plugin's
+Settings card is registered and visible to the viewer, and outside the plugin's error boundary, so a
+preview that failed to render can still ask for setup later. When a status
+change removes a focused setup card, focus moves to another setup card, the
+first focusable preview, or the message's "Link previews" group, which shows a
+focus ring, rather than the page. A renderer whose `subscribe` throws
+can't report changes, so its links draw as if it had no status until they mount
+again.
+Clicking it opens that plugin's
+Settings card (`plugin/settings`); it passes no message content to the plugin and
+runs nothing, so the person who sent the link can't start setup. When status turns
+`ready`, every card from that renderer mounts at once. A registration that has
+left the registry is no longer asked or heard. A host without Settings navigation
+draws no setup card. Setup itself, and recovering
+from an expired sign-in, belongs in the plugin's Settings card. A renderer that
+would rather leave a link to the next match while it can't draw stops matching
+it instead of reporting `needs-setup`.
+
 `registerCodeBlock({ id, title, matches, component, action? })` contributes optional
 presentation for a fenced code block. `matches(language)` receives the fence's
 info-string language as written; `component` and `action` receive `{ code, language }`. The

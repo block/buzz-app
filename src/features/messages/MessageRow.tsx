@@ -1731,6 +1731,7 @@ function MessageRowContent({
                   messageId={row.id}
                   registry={linkPreviewRegistry}
                   onOpenLink={openLink}
+                  settings={extensions?.settings}
                 />
               )}
               {attachmentContent()}

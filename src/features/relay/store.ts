@@ -15,12 +15,7 @@ import type {
   PublicChannelSearch,
   ChannelWindow,
 } from "./contracts";
-import {
-  DiscoveryState,
-  metadataName,
-  openMetadata,
-  soloChannelMetadata,
-} from "./discovery";
+import { DiscoveryState, metadataName, openMetadata } from "./discovery";
 import {
   channelIdentity,
   channelIdentityUnsupported,
@@ -194,9 +189,6 @@ const CREATION_RETRY_MAX_MS = 3_600_000;
 // Public channel metadata for name search, read a page at a time up to a
 // bound; matches resolve exactly.
 const PUBLIC_CHANNEL_PAGE = 500;
-/** Channel metadata events `anyChannel` reads: room for a new owner's Solo
- * chats ahead of a first channel. */
-const ANY_CHANNEL_BATCH = 20;
 /** Rosters per member-count read: one can run to hundreds of KB. */
 const MEMBER_COUNT_CHUNK = 10;
 // One exact resolution can consume the reader's full response byte budget.
@@ -2957,48 +2949,6 @@ export function createChannelStore(
       throw error;
     }
   }
-  /** Whether the relay holds any stream or forum channel, Solo chats left
-   * out, from one small capped read. Cheaper than the directory when only
-   * existence matters. A full batch of Solo chats counts as not new. */
-  async function anyChannel(settings?: {
-    signal?: AbortSignal | undefined;
-  }): Promise<boolean> {
-    if (disposed || !transport || options.cachedOnly)
-      throw new Error("Relay is unavailable");
-    const relay = transport;
-    const generation = epoch;
-    const signal = settings?.signal;
-    signal?.throwIfAborted();
-    // DMs and system channels carry their own `t`; Solo chats are streams
-    // with a Solo label, so they are skipped here.
-    const events = await relay.read(
-      [
-        {
-          kinds: [39000],
-          authors: [relay.relayAuthor],
-          "#t": ["stream", "forum"],
-          limit: ANY_CHANNEL_BATCH,
-        },
-      ],
-      { ...(signal ? { signal } : {}), priority: "foreground", fresh: true },
-    );
-    if (disposed || generation !== epoch)
-      throw new DOMException("Stale channel check", "AbortError");
-    const channels = events.filter(
-      (event) => event.kind === 39000 && event.pubkey === relay.relayAuthor,
-    );
-    if (
-      channels.some(
-        (event) =>
-          (tag(event, "t") === "stream" || tag(event, "t") === "forum") &&
-          !soloChannelMetadata(event),
-      )
-    )
-      return true;
-    // A full batch of Solo chats is not an empty community either: settle
-    // rather than read again on every launch.
-    return events.length >= ANY_CHANNEL_BATCH;
-  }
   /** Recent member counts, by channel, for this epoch. */
   let memberCounts:
     | { generation: number; counts: Map<string, { count: number; at: number }> }
@@ -3817,7 +3767,6 @@ export function createChannelStore(
     findLabeled,
     matchPublic,
     readDirectory,
-    anyChannel,
     readMemberCounts,
     directoryComplete: () =>
       publicDirectory?.generation === epoch &&

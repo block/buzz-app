@@ -35,6 +35,7 @@ import { WorkflowWebhookSecrets } from "./WorkflowWebhookSecrets";
 import { WorkflowLanding, workflowOperationLocked } from "./WorkflowLanding";
 import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
+import { WorkflowRunsCovered } from "./useWorkflowRunList";
 import "./workflows.css";
 
 export function WorkflowsPage({ relay }: { relay: RelayData }) {
@@ -268,24 +269,30 @@ export function WorkflowCommunity({
                 <p className="text-secondary">The channel list is partial.</p>
               )}
               {eligible.length > 0 && (
-                <WorkflowLanding
-                  session={session}
-                  capability={capability}
-                  channels={eligible}
-                  filter={filter}
-                  onFilterChange={setFilter}
-                  detailTarget={detailTarget}
-                  selected={detail?.key}
-                  onSelect={selectDetail}
-                  onCreate={beginCreate}
-                  onDelete={deleteWorkflow}
-                  onOpen={(definition, nextChannel) =>
-                    openChannel(nextChannel.id, definition)
-                  }
-                  refreshRequest={refreshRequest}
-                  saveReadback={saveReadback}
-                  viewer={viewer}
-                />
+                // The editor is a dialog over this page: a detail pane's run
+                // history under it reads nothing until the dialog closes.
+                <WorkflowRunsCovered.Provider
+                  value={!!(channel && selectedDefinition) || createOpen}
+                >
+                  <WorkflowLanding
+                    session={session}
+                    capability={capability}
+                    channels={eligible}
+                    filter={filter}
+                    onFilterChange={setFilter}
+                    detailTarget={detailTarget}
+                    selected={detail?.key}
+                    onSelect={selectDetail}
+                    onCreate={beginCreate}
+                    onDelete={deleteWorkflow}
+                    onOpen={(definition, nextChannel) =>
+                      openChannel(nextChannel.id, definition)
+                    }
+                    refreshRequest={refreshRequest}
+                    saveReadback={saveReadback}
+                    viewer={viewer}
+                  />
+                </WorkflowRunsCovered.Provider>
               )}
             </div>
           </WorkflowsPanel>

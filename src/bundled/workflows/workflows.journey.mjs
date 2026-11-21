@@ -474,7 +474,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   expect([...errors.unexplained(), ...consoleErrors]).toEqual([]);
 });
 
-test("history stays lazy and paged; an unknown run never repeats or locks", async ({
+test("history stays lazy; an unknown run never repeats or locks", async ({
   page,
 }) => {
   await page.goto(url);
@@ -483,22 +483,34 @@ test("history stays lazy and paged; an unknown run never repeats or locks", asyn
   await editor.open("Message helper");
   expect(await page.evaluate(() => window.workflowFixture.calls.runs)).toBe(0);
   await editor.tab("Runs").click();
-  await expect(page.getByText("Current step: 1")).toBeVisible();
-  await button("Older runs").click();
-  await expect(page.getByText("No runs returned on this page.")).toBeVisible();
-  expect(await page.evaluate(() => window.workflowFixture.runCursor())).toEqual(
-    {
+  await expect(page.getByText("Completed", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Current step:/)).toHaveCount(0);
+  // The end of this short list is on screen, so the page after it is read
+  // with the relay's exact cursor. It holds nothing, which ends the list.
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.runCursor()))
+    .toEqual({
       before: "2026-09-12T12:00:00.123456Z",
       beforeId: "77777777-7777-4777-8777-777777777777",
-    },
-  );
-  expect(
-    await page.evaluate(() =>
-      window.workflowFixture.runViews
-        .slice(0, -1)
-        .every((view) => view.disposed()),
-    ),
-  ).toBe(true);
+    });
+  await expect(page.getByText("No older runs.")).toBeVisible();
+  for (const name of [
+    "Refresh runs",
+    "Older runs",
+    "Newest runs",
+    "Load older runs",
+  ])
+    await expect(button(name)).toHaveCount(0);
+  // Only the newest page stays open; an older page is one read.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          window.workflowFixture.runViews.filter((view) => !view.disposed())
+            .length,
+      ),
+    )
+    .toBe(1);
   await editor.tab("Form").click();
   expect(
     await page.evaluate(() =>
@@ -521,6 +533,217 @@ test("history stays lazy and paged; an unknown run never repeats or locks", asyn
   expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
     1,
   );
+});
+
+// Browser-only: the end of the list is reached in the dialog's own scroll
+// container and the rows a page adds move it out of reach again, a row keeps
+// its place on screen while runs arrive above it, and an open disclosure
+// survives the list's rereads.
+test("run history loads older runs at its end and keeps itself current", async ({
+  page,
+}) => {
+  // The list's rereads are timed, so the journey owns the clock.
+  await page.clock.install();
+  await page.goto(url);
+  const editor = editorControls(page);
+  const rows = page.locator(".workflow-runs article");
+  const statuses = rows.locator("strong");
+  const older = editor.button("Load older runs");
+  // Puts runs above the newest page of 20, as the relay would for new runs.
+  const prepend = (added) =>
+    page.evaluate((runs) => {
+      const pages = window.workflowFixture.runPages;
+      const [template] = pages.newest.runs;
+      pages.newest = {
+        runs: [
+          ...runs.map(([id, status]) => ({
+            ...template,
+            id: `22222222-2222-4222-8222-${`${id}`.padStart(12, "0")}`,
+            status,
+          })),
+          ...pages.newest.runs,
+        ].slice(0, 20),
+        next: pages.newest.next,
+      };
+    }, added);
+  // A full newest page and a full older page behind its cursor. The fixture
+  // answers every cursor with that page, like a relay whose cursor is stuck.
+  await prepend(Array.from({ length: 19 }, (_, index) => [index, "completed"]));
+  await page.evaluate(() => {
+    const pages = window.workflowFixture.runPages;
+    const runs = Array.from({ length: 20 }, (_, index) => ({
+      ...pages.newest.runs[0],
+      id: `11111111-1111-4111-8111-${`${index}`.padStart(12, "0")}`,
+      status: "cancelled",
+    }));
+    pages.older = {
+      runs,
+      next: { before: "2026-09-11T12:00:00.123456Z", beforeId: runs[19].id },
+    };
+  });
+  const reads = () =>
+    page.evaluate(() => window.workflowFixture.calls.runReads);
+  // Resolves after the browser has reported where the end of the list is now
+  // and the list has had its turn to act on that. Observers are told in the
+  // order they were made, and this one is made after the list's.
+  const endSeen = () =>
+    older.evaluate(
+      (button) =>
+        new Promise((resolve) => {
+          new IntersectionObserver((_, observer) => {
+            observer.disconnect();
+            let turns = 3;
+            const channel = new MessageChannel();
+            channel.port1.onmessage = () =>
+              turns-- ? channel.port2.postMessage(0) : resolve();
+            channel.port2.postMessage(0);
+          }).observe(button);
+        }),
+    );
+  await editor.open("Message helper");
+  await editor.tab("Runs").click();
+  await expect(rows).toHaveCount(20);
+  // The end is below the dialog's fold, so nothing older has been read.
+  await expect(older).toBeVisible();
+  await expect(older).not.toBeInViewport();
+  expect(await page.evaluate(() => window.workflowFixture.runCursor())).toBe(
+    undefined,
+  );
+  // Scrolled into reach, one older page follows without a click. Only one:
+  // its rows put the end of the list back below the fold.
+  const before = await reads();
+  await older.scrollIntoViewIfNeeded();
+  await expect(rows).toHaveCount(40);
+  await expect(statuses.last()).toHaveText("Cancelled");
+  await expect(older).not.toBeInViewport();
+  await endSeen();
+  expect(await reads()).toBe(before + 1);
+  // Reached again, the page read holds only runs already shown. That ends the
+  // list instead of following a cursor that leads back to the same page.
+  await older.scrollIntoViewIfNeeded();
+  await expect(page.getByText("No older runs.")).toBeVisible();
+  await expect(older).toHaveCount(0);
+  await expect(rows).toHaveCount(40);
+  expect(await reads()).toBe(before + 2);
+
+  // The reader is at the oldest run with its details open.
+  const last = rows.last();
+  const details = last.locator("details");
+  await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+  await last.scrollIntoViewIfNeeded();
+  const scrolled = () =>
+    last.evaluate((row) => {
+      for (let node = row.parentElement; node; node = node.parentElement)
+        if (node.scrollTop > 0) return node.scrollTop;
+      return 0;
+    });
+  expect(await scrolled()).toBeGreaterThan(0);
+  const top = async () => (await last.boundingBox()).y;
+  const place = await top();
+
+  // A new run appears on top at the settled interval. The reader's row stays
+  // where it is on screen and its details stay open.
+  await prepend([[100, "running"]]);
+  await page.clock.fastForward(34_000);
+  await expect(rows).toHaveCount(41);
+  await expect(statuses.first()).toHaveText("Running");
+  expect(Math.abs((await top()) - place)).toBeLessThan(1);
+  await expect(details).toHaveAttribute("open", "");
+
+  // An active run brings the next read sooner and changes in place.
+  await page.evaluate(() => {
+    const pages = window.workflowFixture.runPages;
+    const [first, ...rest] = pages.newest.runs;
+    pages.newest = {
+      ...pages.newest,
+      runs: [{ ...first, status: "failed" }, ...rest],
+    };
+  });
+  await page.clock.fastForward(6_000);
+  await expect(statuses.first()).toHaveText("Failed");
+  await expect(rows).toHaveCount(41);
+
+  // A run started with the dialog's button shows at once: a read was just
+  // made, so the next timed one is half a minute away.
+  await prepend([[101, "pending"]]);
+  await editor.run.click();
+  await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await expect(rows).toHaveCount(42);
+  await expect(statuses.first()).toHaveText("Pending");
+  await expect(details).toHaveAttribute("open", "");
+});
+
+// Browser-only: a wheel scrolls the container under the pointer and, once that
+// is at its end, the next one that can scroll; and a line hidden by absolute
+// positioning is laid out against the nearest positioned ancestor, past any
+// scroller in between. jsdom has neither.
+test("wheeling to the end of run history leaves the editor dialog in place", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const editor = editorControls(page);
+  const rows = page.locator(".workflow-runs article");
+  const end = page.getByText("No older runs.");
+  // A full newest page and a full older one. Every cursor reads the older
+  // page, so the second read adds nothing and ends the history.
+  await page.evaluate(() => {
+    const pages = window.workflowFixture.runPages;
+    const full = (prefix, status) =>
+      Array.from({ length: 20 }, (_, index) => ({
+        ...pages.newest.runs[0],
+        id: `${prefix}-${`${index}`.padStart(12, "0")}`,
+        status,
+      }));
+    const older = full("11111111-1111-4111-8111", "cancelled");
+    pages.newest = {
+      runs: full("22222222-2222-4222-8222", "completed"),
+      next: pages.newest.next,
+    };
+    pages.older = {
+      runs: older,
+      next: { before: "2026-09-11T12:00:00.123456Z", beforeId: older[19].id },
+    };
+  });
+  await editor.open("Message helper");
+  await editor.tab("Runs").click();
+  await expect(rows).toHaveCount(20);
+  await settleDialogMotion(editorDialog(page));
+  const body = editorDialog(page).locator(".buzz-dialog-body");
+  const tabs = editorDialog(page).getByRole("tablist");
+  const place = await tabs.boundingBox();
+
+  // Each step is far longer than the list. A step the list cannot take goes
+  // to whatever else can scroll.
+  await rows.first().hover();
+  await page.mouse.wheel(0, 10_000);
+  await expect(rows).toHaveCount(40);
+  await page.mouse.wheel(0, 10_000);
+  await expect(end).toBeInViewport();
+  // One more at the end of the list, seen by the page and painted.
+  await page.evaluate(() => {
+    window.wheeled = new Promise((resolve) =>
+      addEventListener(
+        "wheel",
+        () => requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        { once: true },
+      ),
+    );
+  });
+  await page.mouse.wheel(0, 10_000);
+  await page.evaluate(() => window.wheeled);
+
+  // The dialog body has not moved and has nothing to scroll, so no step still
+  // on its way can move it either. The tabs and the end of the list are where
+  // a reader left them.
+  expect(
+    await body.evaluate((node) => ({
+      top: node.scrollTop,
+      overflow: node.scrollHeight - node.clientHeight,
+    })),
+  ).toEqual({ top: 0, overflow: 0 });
+  expect(await tabs.boundingBox()).toEqual(place);
+  await expect(end).toBeInViewport();
 });
 
 test("real session page under StrictMode fences community changes, warns before discarding a dirty draft and purges access", async ({

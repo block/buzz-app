@@ -415,6 +415,26 @@ it("delivers a late webhook secret on the landing page after confirmed navigatio
   );
 });
 
+it("stops the detail pane's run history polling while the editor dialog covers it", async () => {
+  const fixture = mount();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /^Open Message helper:/ }),
+  );
+  await waitFor(() => expect(fixture.calls.runReads).toBe(1));
+  fireEvent.click(detailPane().getByRole("button", { name: "Edit workflow" }));
+  await screen.findByRole("button", { name: "Close editor" });
+  // The person's own run is read at once by a list that is on screen. The
+  // read starts in the same turn, so its absence here is settled.
+  act(() => {
+    fixture.capability.trigger(fixtureDefinition);
+    fixture.finish("succeeded");
+  });
+  expect(fixture.calls.runReads).toBe(1);
+  // Uncovered, the pane's list catches up without waiting out its interval.
+  fireEvent.click(screen.getByRole("button", { name: "Close editor" }));
+  await waitFor(() => expect(fixture.calls.runReads).toBe(2));
+});
+
 it("labels landing controls as configuration and retains the runtime caveat in detail", async () => {
   mount();
   expect(

@@ -1,4 +1,5 @@
 import { WORKFLOW_CHANNEL_BATCH, WORKFLOW_DEFINITION_LIMIT } from "./queries";
+import { ReadError } from "../relay/errors";
 import type { EventData } from "../relay/events";
 import type { RelayReader } from "../relay/reader";
 import type { ProfileQueries } from "../relay/profile-directory";
@@ -330,7 +331,7 @@ export function createWorkflows({
             accept?.(data);
             emit();
           })
-          .catch(() => {
+          .catch((error: unknown) => {
             if (
               closed ||
               disposed ||
@@ -342,6 +343,11 @@ export function createWorkflows({
               status: "error",
               data: empty,
               error: "Couldn't read workflow data. Try again.",
+              // The host's own classification of the relay's status, which
+              // can precede this session learning that access was lost.
+              ...(error instanceof ReadError && error.kind === "denied"
+                ? { denied: true as const }
+                : {}),
             });
             emit();
           })

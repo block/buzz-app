@@ -585,17 +585,6 @@ function WorkflowCard({
       openRef.current?.focus();
     wasSelected.current = selected;
   }, [selected]);
-  // Like the editor, a created run rereads history so it is shown.
-  const createdRun = [...operations]
-    .reverse()
-    .find(
-      (operation) =>
-        operation.action === "trigger" &&
-        !!operation.runId &&
-        operation.workflow.channelId === definition.channelId &&
-        operation.workflow.owner === definition.owner &&
-        operation.workflow.id === definition.id,
-    )?.eventId;
   const fields = readWorkflowDocumentFields(definition.yaml);
   const presentation = workflowCardPresentation(definition.yaml);
   const enabled = fields.enabled !== false;
@@ -928,11 +917,7 @@ function WorkflowCard({
           />
         </SettingsGroup>
       )}
-      <WorkflowRuns
-        key={createdRun ?? ""}
-        capability={capability}
-        workflow={history}
-      />
+      <WorkflowRuns capability={capability} workflow={history} />
     </section>
   );
   return (

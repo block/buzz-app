@@ -1,5 +1,6 @@
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { createWorkflows } from "./capability";
+import { ReadError } from "../relay/errors";
 import {
   createOutbox,
   PublishRejected,
@@ -1002,4 +1003,49 @@ it("batch definitions use one bounded filter and count unique events before coor
   h.read.mockResolvedValue([{ ...first, tags: [...first.tags, ["h", other]] }]);
   await view.refresh();
   expect(view.snapshot().status).toBe("error");
+});
+
+it("marks a run read the relay refused, and no other failure, while local access still stands", async () => {
+  const failure: { current: Error } = {
+    current: new ReadError("denied", "refused", 403),
+  };
+  const workflows = createWorkflows({
+    reader: undefined,
+    viewer: keypair().pubkey,
+    outbox: undefined,
+    local: undefined,
+    host: {
+      runs: async () => {
+        throw failure.current;
+      },
+    },
+    // Membership as this session last heard it: still a member.
+    canAccess: () => true,
+  });
+  disposers.push(() => workflows.dispose());
+  const view = workflows.capability.runs({
+    id,
+    channelId,
+    owner: "a".repeat(64),
+  });
+  await view.refresh();
+  expect(view.snapshot()).toEqual({
+    status: "error",
+    data: { runs: [], next: null },
+    error: "Couldn't read workflow data. Try again.",
+    denied: true,
+  });
+  for (const error of [
+    new ReadError("unavailable", "busy", 503),
+    new ReadError("unavailable", "slow down", 429, 1000),
+    new Error("Relay read failed (403)"),
+  ]) {
+    failure.current = error;
+    await view.refresh();
+    expect(view.snapshot()).toEqual({
+      status: "error",
+      data: { runs: [], next: null },
+      error: "Couldn't read workflow data. Try again.",
+    });
+  }
 });

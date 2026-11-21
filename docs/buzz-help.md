@@ -2313,6 +2313,23 @@ Owning the agent does not grant permission to edit or run its workflow.
 
 In **Workflows**, an archived channel’s group says **Archived**, as do its workflows under **Recently updated**. Their runs would fail, so **Run now** and turning a workflow on are unavailable, and the editor saves a workflow only while it’s off. You can still turn an enabled workflow off, from its row or the editor, or delete it. **New workflow** doesn’t offer archived channels.
 
+## Workflow run history
+
+A workflow’s runs are listed newest first in the editor’s **Runs** tab and in
+its detail pane in **Workflows**. The list keeps itself current while it is on
+screen: new runs appear at the top, including one you start with **Run now**,
+and a run that is pending, running or waiting for approval changes to its next
+status in place. Updates take a few seconds while a shown run is still active
+and up to about half a minute otherwise, including for an active run that has
+not changed for about a minute. The detail pane’s list pauses while the editor
+is open over it. Scroll to the end of the list to load the next older runs, or
+use **Load older runs**; **No older runs.** marks the end. If history can’t be
+read, the runs already shown stay and **Refresh runs** retries. If the
+community refuses access to the history, the runs shown are removed and the
+list stops updating until you use **Refresh runs**. If a workflow
+starts more than 20 runs between two updates, the list starts again from the
+newest runs.
+
 ## Draft diagnostics
 
 Desktop builds save a small local trace when a draft conflict or save failure

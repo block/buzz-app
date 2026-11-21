@@ -104,7 +104,6 @@ export function WorkflowChannel({
   >(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [createdRun, setCreatedRun] = useState<string>();
   const [runRequest, setRunRequest] = useState<string>();
   const operation = draft?.operationId
     ? operations.find((item) => item.eventId === draft.operationId)
@@ -318,8 +317,6 @@ export function WorkflowChannel({
     )
       return;
     submission.current = null;
-    // A created run rereads the history behind the Runs tab.
-    if (active.runId) setCreatedRun(active.runId);
   }, [operations]);
   let blocked: string | undefined;
   if (!capability.availability.save)
@@ -444,7 +441,7 @@ export function WorkflowChannel({
               draft.original &&
               capability.availability.history && (
                 <WorkflowRuns
-                  key={`${draft.original.owner}:${draft.original.id}:${createdRun ?? ""}`}
+                  key={`${draft.original.owner}:${draft.original.id}`}
                   capability={capability}
                   workflow={draft.original}
                   heading={false}

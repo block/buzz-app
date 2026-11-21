@@ -361,6 +361,9 @@ async function relayAuthority(fetch, relay) {
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("buzz-search-sort"),
+    windowNewer:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-window-newer"),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),

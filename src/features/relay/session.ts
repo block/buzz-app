@@ -90,6 +90,7 @@ import { objectBody } from "./body";
 import { agentAudience } from "./audience";
 import type {
   ChannelList,
+  ChannelMessage,
   ChannelReadOptions,
   ChannelSummary,
 } from "./contracts";
@@ -123,6 +124,7 @@ import { attemptEnded } from "./withdraw";
 import type { ReadTransport } from "./transport";
 import type { LiveGlobal, LiveSnapshot, LiveSubscription } from "./live";
 import {
+  hasEventProof,
   hasTag,
   type ReadFilter,
   type RelayEvent,
@@ -146,9 +148,10 @@ import {
 import { createMessages, replyInvocationIntents } from "./messages";
 import { createOwnerMentionStore } from "./owner-mentions";
 import { retryRead } from "./read-retry";
-import { messageAuthor } from "./fold";
+import { foldMessages, messageAuthor } from "./fold";
+import { threadReference } from "./thread-reference";
 import { createThreadView, resumeAfter, type ThreadResume } from "./threads";
-import { ByteLru } from "./budget";
+import { ByteLru, listByteSize } from "./budget";
 import { createRelayProfiler } from "./profiling";
 import { liveRecoveryStatus } from "./live-recovery";
 import {
@@ -188,6 +191,8 @@ export const ROSTER_BACKSTOP_INTERVAL = 15 * 60_000;
  * carries every unread change; this read only backs up what it can lose with
  * no signal: a channel the relay pruned from a batch, or a dropped fan-out. */
 export const UNREAD_BACKSTOP_INTERVAL = 15 * 60_000;
+
+const RETAIN_MAX_BYTES = 8 * 1024 * 1024;
 
 /** A read of named authors' profiles, or the general statuses read with them.
  * The relay stores both per user, not per channel, so no channel access change,
@@ -352,6 +357,7 @@ export function createRelaySession(
   const pendingConfirmation = new Set<string>();
   const refreshers = new Set<() => Promise<void>>();
   const views = new Map<() => void, (clear?: boolean) => void>();
+  const holds = new Set<Map<string, RelayEvent>>();
   const threads = new Set<ReturnType<typeof createThreadView>>();
   /** Recently closed threads, so reopening one shows it at once. Memory only;
    * dropped with any access change. */
@@ -457,8 +463,14 @@ export function createRelaySession(
       canAccess(thread.channelId) ? thread.events() : [],
     );
   }
+  function heldEvent(id: string) {
+    for (const held of holds) {
+      const event = held.get(id);
+      if (event) return event;
+    }
+  }
   function retainedEvent(id: string) {
-    return retainedThreadEvent(id) ?? retainedChannelEvent(id);
+    return retainedThreadEvent(id) ?? retainedChannelEvent(id) ?? heldEvent(id);
   }
   const canReadRemote = (id: string) =>
     !options.cachedOnly && canAccess(id) && !channels.queries.get?.(id)?.cached;
@@ -1421,6 +1433,7 @@ export function createRelaySession(
     profiles: profiles.queries,
     reads,
     channels: channels.queries,
+    evidence: heldEvent,
     // Repair owns evidence only, not timeline/history ingestion. The shared
     // scheduler and verified transport stay shared; unread fences access epochs.
     reader: requests.reader,
@@ -2794,13 +2807,15 @@ export function createRelaySession(
     relayAuthor: transport?.relayAuthor,
     /** NIP-AP config artifacts: the relay's own verified answer, never merged
      * with live or local outgoing events or fed to any projection, and a
-     * kind-45010 writer when the host has one. Each read starts fresh. */
+     * kind-45010 writer when the host has one. Each read starts fresh. With
+     * `priority: "background"` a long scan queues behind foreground reads. */
     snapshotRead: transport
-      ? (((filters, { signal }) =>
-          relayRead(
-            filters,
-            signal ? { signal, fresh: true } : { fresh: true },
-          )) satisfies SnapshotRead)
+      ? (((filters, { signal, priority }) =>
+          relayRead(filters, {
+            fresh: true,
+            ...(signal ? { signal } : {}),
+            ...(priority ? { priority } : {}),
+          })) satisfies SnapshotRead)
       : undefined,
     configArtifactWriter: transport?.configArtifacts,
     workflowAuthority: transport?.archiveAuthority,
@@ -3408,6 +3423,7 @@ export function createRelaySession(
     },
     /** Whether read() search filters may ask for `search_sort: "newest"`. */
     searchSort: transport?.searchSort === true,
+    windowNewer: transport?.windowNewer === true,
     /** NIP-AR sync: an exact, kept-current set of current artifacts for a
      * filter that names its channels with `#h`. Status `unsupported` means
      * this relay has no sync; use read() with `artifact: "current"` instead.
@@ -3497,6 +3513,97 @@ export function createRelaySession(
           updateInterests();
         };
       },
+    },
+    foldRows(
+      channelId: string,
+      events: readonly EventData[],
+      rootId?: string,
+    ): readonly ChannelMessage[] {
+      if (closed || !canAccess(channelId)) return [];
+      const own = rawLocal().filter(
+        ({ event, delivery }) =>
+          event.kind !== PRODUCT_FEEDBACK_KIND &&
+          event.tags.some(([name, id]) => name === "h" && id === channelId) &&
+          (delivery !== "failed" || [9, 40002, 40008].includes(event.kind)),
+      );
+      const inputs = new Map<string, EventData>();
+      for (const event of events)
+        if (hasEventProof(event)) inputs.set(event.id, event);
+      for (const { event } of own) inputs.set(event.id, event);
+      const all = [...inputs.values()];
+      const delivered = new Map(own.map((item) => [item.event.id, item]));
+      return foldMessages(
+        channelId,
+        transport?.relayAuthor ?? "",
+        all.filter(visibility(all)),
+        {
+          includeReplies: rootId !== undefined,
+          signingAuthority: transport?.archiveAuthority,
+          agentOwner: profiles.queries.owner,
+          pendingReplies:
+            rootId === undefined
+              ? new Set(
+                  own
+                    .filter(
+                      ({ event, delivery }) =>
+                        (delivery === "sending" || delivery === "failed") &&
+                        threadReference(event)?.rootId,
+                    )
+                    .map(({ event }) => event.id),
+                )
+              : undefined,
+        },
+      )
+        .filter(
+          (row) =>
+            rootId === undefined ||
+            row.id === rootId ||
+            row.threadRootId === rootId,
+        )
+        .map((row) => {
+          const item = delivered.get(row.id);
+          return item
+            ? Object.freeze({
+                ...row,
+                delivery: item.delivery,
+                deliveryError: item.error,
+              })
+            : row;
+        });
+    },
+    retain() {
+      if (closed || views.size >= 64)
+        throw new Error("Relay view capacity unavailable");
+      const held = new Map<string, RelayEvent>();
+      holds.add(held);
+      const dispose = () => {
+        holds.delete(held);
+        held.clear();
+        views.delete(dispose);
+      };
+      views.set(dispose, (clear = false) => {
+        if (clear) held.clear();
+        else {
+          const visible = visibility([...held.values()]);
+          for (const event of [...held.values()])
+            if (!visible(event)) held.delete(event.id);
+        }
+      });
+      return Object.freeze({
+        set(events: readonly EventData[]) {
+          if (!holds.has(held)) return;
+          const proven = events.filter(hasEventProof) as RelayEvent[];
+          const visible = visibility(proven);
+          const next = new Map(
+            proven.filter(visible).map((event) => [event.id, event]),
+          );
+          if (listByteSize([...next.values()]) > RETAIN_MAX_BYTES)
+            throw new RangeError("Relay hold byte bound exceeded");
+          held.clear();
+          for (const [id, event] of next) held.set(id, event);
+        },
+        dispose,
+      });
     },
     /** An owned retained event view, not a replacement query snapshot. Limits bound
      * requests, not retained results. Ranked search/feed filters require read().

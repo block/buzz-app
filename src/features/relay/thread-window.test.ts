@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
-import { assert, afterEach, expect, it, vi } from "vitest";
+import { assert, afterEach, describe, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { connectBrokerTransport } from "./transport";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import { keypair, message, roster, signed } from "./testing";
-import { threadBinding, threadAuthority } from "./thread-window";
+import {
+  threadAuthority,
+  threadBinding,
+  verifyThreadWindows,
+} from "./thread-window";
 import { createThreadView, type ThreadResume } from "./threads";
 
 const channel = "00000000-0000-0000-0000-000000000000";
@@ -122,6 +126,182 @@ it("matches the Rust binding vector and normalized authority, including IPv6 and
     "relay.example.:8443",
   );
   expect(threadAuthority("http://[::1]:3000")).toBe("[::1]:3000");
+});
+it("keeps the older binding when direction is the explicit default", async () => {
+  const filter: ReadFilter = {
+    thread_window: true,
+    "#h": [channel],
+    "#e": ["ab".repeat(32)],
+    kinds: [9],
+    limit: 50,
+  };
+  const binding = (patch: Partial<ReadFilter>) =>
+    threadBinding(
+      { ...filter, ...patch },
+      "https://relay.example",
+      "ab".repeat(32),
+    );
+  const expected =
+    "tw:1:5252322dfd797ddb1d5f1150acd4cf914b9fc09e39bcf3048d25aed514b3546d";
+  expect(await binding({ direction: "older" })).toBe(expected);
+  expect(await binding({ direction: "newer" })).not.toBe(expected);
+});
+it("binds a forward page as the relay's vector", async () => {
+  const filter: ReadFilter = {
+    thread_window: true,
+    "#h": [channel],
+    "#e": ["cd".repeat(32)],
+    kinds: [9],
+    limit: 50,
+    direction: "newer",
+    after: 5,
+    after_id: "ef".repeat(32),
+  };
+  const canonical = `["tw",1,"newer","relay.example","${"ab".repeat(32)}","${channel}","${"cd".repeat(32)}",50,100,[9],[5,"${"ef".repeat(32)}"],false]`;
+  expect(createHash("sha256").update(canonical).digest("hex")).toBe(
+    "121bd4071006f4578547bba5c39ea6f733905fd5b67b6b09f88261e61a62075f",
+  );
+  expect(
+    await threadBinding(filter, "https://relay.example", "ab".repeat(32)),
+  ).toBe(
+    "tw:1:121bd4071006f4578547bba5c39ea6f733905fd5b67b6b09f88261e61a62075f",
+  );
+});
+describe("forward thread pages", () => {
+  const at = { created_at: 10, id: "b".repeat(64) };
+  const forward: ReadFilter = {
+    thread_window: true,
+    "#h": [channel],
+    "#e": [root.id],
+    kinds: [9],
+    limit: 50,
+    direction: "newer",
+    after: at.created_at,
+    after_id: at.id,
+  };
+  const newerBound = (filter: ReadFilter, content: Record<string, unknown>) => {
+    const digest = createHash("sha256")
+      .update(
+        JSON.stringify([
+          "tw",
+          1,
+          "newer",
+          "relay.example:8443",
+          viewer.pubkey,
+          channel,
+          root.id,
+          filter.limit,
+          100,
+          [9],
+          filter.after === undefined ? null : [filter.after, filter.after_id],
+          false,
+        ]),
+      )
+      .digest("hex");
+    return signed(relay, {
+      kind: 39007,
+      tags: [
+        ["d", `tw:1:${digest}`],
+        ["h", channel],
+        ["e", root.id],
+      ],
+      content: JSON.stringify({ version: 1, ...content }),
+    });
+  };
+  const verify = (filter: ReadFilter, bound: RelayEvent) =>
+    verifyThreadWindows([filter], [bound], origin, viewer.pubkey, relay.pubkey);
+  it("accept a newer bound that moves forward in relay order", async () => {
+    for (const next of [
+      { created_at: 11, id: "f".repeat(64) },
+      { created_at: 10, id: "a".repeat(64) },
+      null,
+    ])
+      await expect(
+        verify(
+          forward,
+          newerBound(forward, {
+            direction: "newer",
+            has_more: next !== null,
+            next_cursor: next,
+          }),
+        ),
+      ).resolves.toBeUndefined();
+    const { after: _a, after_id: _b, ...head } = forward;
+    await expect(
+      verify(
+        head,
+        newerBound(head, {
+          direction: "newer",
+          has_more: true,
+          next_cursor: at,
+        }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+  it("reject a direction mismatch either way", async () => {
+    await expect(
+      verify(
+        forward,
+        newerBound(forward, {
+          direction: "older",
+          has_more: false,
+          next_cursor: null,
+        }),
+      ),
+    ).rejects.toThrow(/bounds are invalid/);
+    const older: ReadFilter = {
+      thread_window: true,
+      "#h": [channel],
+      "#e": [root.id],
+      kinds: [9],
+      limit: 50,
+    };
+    await expect(
+      verify(older, bounds(older, null, { direction: "newer" })),
+    ).rejects.toThrow(/bounds are invalid/);
+    await expect(verify(forward, bounds(older))).rejects.toThrow(
+      /bounds are invalid/,
+    );
+  });
+  it.each([
+    { created_at: 9, id: "b".repeat(64) },
+    { created_at: 10, id: "b".repeat(64) },
+    { created_at: 10, id: "c".repeat(64) },
+  ])("reject a newer cursor that does not advance (%o)", async (next) => {
+    await expect(
+      verify(
+        forward,
+        newerBound(forward, {
+          direction: "newer",
+          has_more: true,
+          next_cursor: next,
+        }),
+      ),
+    ).rejects.toThrow(/bounds are invalid/);
+  });
+  it.each([
+    { next: { created_at: 11, id: "b".repeat(64) }, advances: false },
+    { next: { created_at: 10, id: "b".repeat(64) }, advances: false },
+    { next: { created_at: 10, id: "a".repeat(64) }, advances: false },
+    { next: { created_at: 10, id: "c".repeat(64) }, advances: true },
+    { next: { created_at: 9, id: "a".repeat(64) }, advances: true },
+  ])(
+    "keep the older advance check (next $next.created_at)",
+    async ({ next, advances }) => {
+      const older: ReadFilter = {
+        thread_window: true,
+        "#h": [channel],
+        "#e": [root.id],
+        kinds: [9],
+        limit: 50,
+        until: at.created_at,
+        before_id: at.id,
+      };
+      const result = verify(older, bounds(older, next));
+      if (advances) await expect(result).resolves.toBeUndefined();
+      else await expect(result).rejects.toThrow(/bounds are invalid/);
+    },
+  );
 });
 it("pages 303 tied replies newest-first, deduplicates live rows and repairs retained overlays", async () => {
   const rows = Array.from({ length: 303 }, (_, n) => reply(n));

@@ -209,8 +209,16 @@ export interface UnreadCapability {
   /** `rootId` names the thread a reader shows, which bounds its DM reads.
    * `visit` is one reader's stay in this conversation, across its leases:
    * a message marked unread while that visit shows it stays unread until
-   * the visit measures it away or `leave`s. Without it, the lease is the visit. */
-  reading(channelId: string, rootId?: string, visit?: object): ReadingHandle;
+   * the visit measures it away or `leave`s. Without it, the lease is the visit.
+   * A `partial` reader leaves unread rows out of what it shows: it reads
+   * only the rows it observes, never a DM through its newest message, and
+   * never catches up. */
+  reading(
+    channelId: string,
+    rootId?: string,
+    visit?: object,
+    partial?: boolean,
+  ): ReadingHandle;
   /** `visit` presents this thread in a pane, whether or not any row counts as
    * shown: the thread marked unread during it stays marked through its
    * catch-ups until `leave`. Presence reads nothing. */
@@ -420,6 +428,7 @@ export function createUnread({
   signingAuthority,
   workflowAuthority,
   profiles,
+  evidence,
   notify = (listener) => listener(),
   follows = memoryThreadFollows(),
 }: {
@@ -431,6 +440,9 @@ export function createUnread({
   signingAuthority?: string;
   workflowAuthority?: string | undefined;
   profiles?: ProfileQueries;
+  /** Events held elsewhere (the session's `retain` holds). They let a read or
+   * unread mark name a message this unread never counted, and are never counted. */
+  evidence?: (id: string) => RelayEvent | undefined;
   notify?: (listener: () => void) => void;
   follows?: ThreadFollowStorage;
 }) {
@@ -447,6 +459,7 @@ export function createUnread({
   let refresh: Promise<void> | undefined;
   const lifetime = new AbortController();
   const events = new Map<string, RelayEvent>();
+  const knownEvent = (id: string) => events.get(id) ?? evidence?.(id);
   // Per repair batch (its channel IDs): the newest created_at a complete read of
   // it returned. `events` only grows until a reset below, so a later repair needs
   // just what is newer; every path that empties or shrinks `events` clears this,
@@ -651,7 +664,8 @@ export function createUnread({
     `${target.channelId}:${targetKey(target)}`;
   /** Counted evidence, or a fetched parent/root kept only for structure. */
   const structural = (id: string) => events.get(id) ?? lookupEvents.get(id);
-  function root(event: RelayEvent): string | undefined {
+  const placing = (id: string) => structural(id) ?? evidence?.(id);
+  function root(event: RelayEvent, lookup = structural): string | undefined {
     const channel = channelOf(event);
     let current = event;
     const seen = new Set<string>();
@@ -660,7 +674,7 @@ export function createUnread({
       seen.add(current.id);
       const reference = threadReference(current);
       if (!reference) return current.id;
-      const next = structural(reference.rootId);
+      const next = lookup(reference.rootId);
       if (!next || !contentKind(next) || channelOf(next) !== channel) return;
       current = next;
     }
@@ -2911,7 +2925,7 @@ export function createUnread({
   }
   function requireMessage(target: ReadTarget, id: string) {
     targetKey(target);
-    const event = events.get(id);
+    const event = knownEvent(id);
     if (
       closed ||
       !allowed(target.channelId) ||
@@ -2922,7 +2936,7 @@ export function createUnread({
     )
       throw new Error("Verified readable message evidence unavailable");
     if (
-      (target.kind === "thread" && root(event) !== target.rootId) ||
+      (target.kind === "thread" && root(event, placing) !== target.rootId) ||
       (target.kind === "message" && target.messageId !== id)
     )
       throw new Error("Message does not belong to the read target");
@@ -2937,7 +2951,7 @@ export function createUnread({
   /** Coordination between agents has no unread state, so no unread intent
    * may be saved for it. */
   function refuseAgentCoordination(messageId: string) {
-    const event = events.get(messageId);
+    const event = knownEvent(messageId);
     if (event && agentAudience(event))
       throw new Error("Messages between agents cannot be marked unread");
   }
@@ -2967,7 +2981,7 @@ export function createUnread({
       }
     }
     return [...ids].flatMap((id) => {
-      const event = events.get(id);
+      const event = knownEvent(id);
       return event ? [event] : [];
     });
   }
@@ -3179,7 +3193,7 @@ export function createUnread({
       presenting.set(visit, targetKey({ kind: "thread", channelId, rootId }));
     },
     leave,
-    reading(channelId, rootId, visit) {
+    reading(channelId, rootId, visit, partial = false) {
       if (closed || !allowed(channelId) || handles.size >= 64)
         throw new Error("Reading handle unavailable");
       let active = true;
@@ -3216,12 +3230,13 @@ export function createUnread({
       // is no backlog to keep. A thread reader stops before unread messages it
       // does not show (`dmCut`). One lease is one earned dwell, so its catchUp
       // and observe share the first cutoff: a message arriving between them
-      // waits for the next dwell. Returns undefined outside DMs.
+      // waits for the next dwell. Returns undefined outside DMs and for a
+      // partial reader.
       let dmRead: Promise<unknown> | undefined;
       const readDm = (
         witnesses: readonly Readonly<{ target: ReadTarget; id: string }>[],
       ) => {
-        if (!isDm(channelId)) return undefined;
+        if (partial || !isDm(channelId)) return undefined;
         if (dmRead) return dmRead;
         for (const { target, id } of witnesses) {
           let event: RelayEvent;
@@ -3276,7 +3291,7 @@ export function createUnread({
               markedWhileShown.delete(id);
         },
         async catchUp(id: string, rootId?: string) {
-          if (!valid()) return;
+          if (partial || !valid()) return;
           const target = rootId
             ? { kind: "thread" as const, channelId, rootId }
             : { kind: "channel" as const, channelId };
@@ -3392,7 +3407,7 @@ export function createUnread({
                 reads.state(),
                 targetKey(target),
                 channelId,
-                threadReference(event) ? root(event) : undefined,
+                threadReference(event) ? root(event, placing) : undefined,
               ) ?? -1) >= event.created_at
             ) {
               // Shown: its own local reminder ends with no new read mark.
@@ -3535,7 +3550,7 @@ export function createUnread({
         generation === epoch &&
         (visits.get(channelId) ?? 0) === visit &&
         allowed(channelId) &&
-        rows.every((row) => events.get(row.id) === row && !deleted(row));
+        rows.every((row) => knownEvent(row.id) === row && !deleted(row));
       const finishPending = trackPendingForcedMessages(
         channelId,
         rows.map((row) => row.id),
@@ -3574,7 +3589,7 @@ export function createUnread({
           generation === epoch &&
           (visits.get(channelId) ?? 0) === visit &&
           allowed(channelId) &&
-          rows.every((row) => events.get(row.id) === row && !deleted(row));
+          rows.every((row) => knownEvent(row.id) === row && !deleted(row));
         if (!valid()) throw new Error("Unread channel visit expired");
         const forced = forcedMessages.get(channelId);
         const ids = new Set(rows.map((row) => row.id));
@@ -3586,8 +3601,8 @@ export function createUnread({
               key: `msg:${row.id}`,
               timestamp: row.created_at,
               channelId,
-              ...(threadReference(row) && root(row)
-                ? { rootId: root(row) }
+              ...(threadReference(row) && root(row, placing)
+                ? { rootId: root(row, placing) }
                 : {}),
             })),
           remaining ? undefined : messageForceKey(channelId),
@@ -3607,7 +3622,7 @@ export function createUnread({
     },
     async markCapturedMessagesRead(messageIds) {
       const selected = [...new Set(messageIds)].map((id) => {
-        const event = events.get(id);
+        const event = knownEvent(id);
         const channelId = event && channelOf(event);
         if (!channelId)
           throw new Error("Verified readable message evidence unavailable");
@@ -3642,7 +3657,7 @@ export function createUnread({
         !closed &&
         channelValid.get(channelId)?.() &&
         (visits.get(channelId) ?? 0) === visit.get(channelId) &&
-        events.get(id) === event &&
+        knownEvent(id) === event &&
         !deleted(event) &&
         channelOf(event) === channelId;
       const valid = () => generation === epoch && selected.every(messageValid);
@@ -3673,8 +3688,8 @@ export function createUnread({
         key: `msg:${id}`,
         timestamp: event.created_at,
         channelId,
-        ...(threadReference(event) && root(event)
-          ? { rootId: root(event) }
+        ...(threadReference(event) && root(event, placing)
+          ? { rootId: root(event, placing) }
           : {}),
       });
       return serializeChannels(channelIds, async () => {
@@ -3707,8 +3722,8 @@ export function createUnread({
                   ...messageKeys,
                   ...selected.flatMap(({ id, channelId, event }) => [
                     channelId,
-                    ...(threadReference(event) && root(event)
-                      ? [`thread:${root(event)}`]
+                    ...(threadReference(event) && root(event, placing)
+                      ? [`thread:${root(event, placing)}`]
                       : []),
                     `msg:${id}`,
                   ]),
@@ -3846,7 +3861,7 @@ export function createUnread({
       const channelValid = channelIntentValid(channelId);
       const valid = () =>
         channelValid() &&
-        events.get(rootId) === selected &&
+        knownEvent(rootId) === selected &&
         !deleted(selected) &&
         root(selected) === rootId &&
         rows.every(

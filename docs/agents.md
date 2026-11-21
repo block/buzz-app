@@ -1222,9 +1222,8 @@ yet checked is neither: the create waits for a complete read.
 
 - A Solo chat uses `loadChatSetup`, as **New chat** does: the default agents
   join in the create. Its Canvas starts with the full workspace block only when
-  every member, default agents included, is the owner or verifiably one of the
-  owner's agents (`ownedSoloAgents`); otherwise it gets only
-  `shareableInstructions`.
+  every member is the owner or one of the owner's agents; otherwise it gets
+  only `shareableInstructions`.
 - A team channel uses `loadChannelSetup`, which shares `channelDefaults` with
   **New channel**: its Canvas gets only `shareableInstructions`, and its default
   agents are added after.

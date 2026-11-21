@@ -74,7 +74,6 @@ import { channelTemplates } from "../channel-templates/local";
 import { eventDto, type ReadFilter, type RelayEvent } from "../relay/events";
 import { keypair, message, signed } from "../relay/testing";
 import { createRelayReader } from "../relay/reader";
-import { ownedSoloAgents } from "../relay/solo-admins";
 import type { LiveBatch } from "../relay/incoming";
 import type { RelaySession } from "../relay/session";
 import { huddleDescription } from "../huddle/lifecycle";
@@ -189,10 +188,6 @@ const records = vi.hoisted(() => ({
   remove: vi.fn(),
   removeAgent: vi.fn(),
   unshare: vi.fn(),
-}));
-vi.mock("../relay/solo-admins", async (original) => ({
-  ...(await original<typeof import("../relay/solo-admins")>()),
-  ownedSoloAgents: vi.fn(),
 }));
 vi.mock("../solo/default-agent", async (original) => ({
   ...(await original<typeof import("../solo/default-agent")>()),
@@ -17050,10 +17045,9 @@ function workspaceSession(
   return { assign, kit };
 }
 
-it("keeps a workspace's local folders out of a Solo chat with anyone not verifiably the owner's", async () => {
+it("keeps a workspace's local folders out of a Solo chat with anyone else", async () => {
   const f = await setup();
   const { kit } = workspaceSession(f);
-  const helper = "d".repeat(64);
   const marked = workspaceCanvas({ folders: ["/repo"], canvas: "Rules" });
   kit.entries = [
     {
@@ -17063,42 +17057,20 @@ it("keeps a workspace's local folders out of a Solo chat with anyone not verifia
           type: "template",
           id: await projectTemplateId("work"),
           canvas: marked,
-          agents: [helper],
+          agents: [],
           teamIds: [],
         },
       },
     },
   ];
-  // The default agent is offered, as in the Agents list; not proof it's yours.
-  const listed = {
-    identities: [{ pubkey: helper, managed: true }],
-    templates: {
-      status: "ready",
-      complete: true,
-      identities: [{ pubkey: helper, managed: true }],
-    },
-    archives: { status: "ready", archived: [] },
-  };
-  Object.assign(f.session.agentChoices, { snapshot: () => listed });
   await f.service.create({ type: "example/echo", name: "Echo" });
   const handle = await handleOf(f.run, f.emit);
   try {
-    const canvas = async (members: string[], owned: string[]) => {
-      vi.mocked(ownedSoloAgents).mockResolvedValueOnce(new Set(owned));
-      return (
-        await handle.workspaces?.defaults("work", { solo: true, members })
-      )?.canvas;
-    };
-    // Control: the default and every member are verifiably the owner's.
-    expect(await canvas([viewer, bot], [helper])).toBe(marked);
-    expect(ownedSoloAgents).toHaveBeenLastCalledWith(
-      f.session.profiles,
-      viewer,
-      [helper],
-    );
-    // A default agent not attested as the owner's joins with instructions only.
-    expect(await canvas([viewer, bot], [])).toBe("Rules");
-    expect(await canvas([viewer, other], [helper])).toBe("Rules");
+    const canvas = async (members: string[]) =>
+      (await handle.workspaces?.defaults("work", { solo: true, members }))
+        ?.canvas;
+    expect(await canvas([viewer, bot])).toBe(marked);
+    expect(await canvas([viewer, other])).toBe("Rules");
   } finally {
     await f.ctx.fiber.dispose();
   }

@@ -106,10 +106,9 @@ behavior on the label, so a rename touches copy only.
   `workspace` to `channel_create`. With `solo: true`, include the owner
   explicitly in `members`. The workspace's default agents join in the create
   (one archived or not in this community is skipped and named in the result)
-  and its Canvas starts the chat, as in **New chat**, with the full Canvas
-  (local folders included) only when every member, default agents included,
-  is the owner or verifiably one of the owner's agents; otherwise the chat
-  gets only the shareable part. Filing never changes the creator. See [agents](../agents.md#filing-conversations-in-the-owners-workspaces)
+  and its Canvas starts the chat, as in **New chat**, with local folders only
+  when every member is the owner or one of the owner's agents; filing never
+  changes the creator. See [agents](../agents.md#filing-conversations-in-the-owners-workspaces)
   for other types and `channel_move`.
   Creation and filing are not atomic. A known refusal before assignment reports
   the created ID and “created, not filed.” After assignment starts, failure reports

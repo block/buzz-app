@@ -6,7 +6,14 @@ import {
 } from "../../features/agents/attention";
 import type { Agent, AgentChange, Agents } from "../../features/agents/service";
 import { type AgentRecord, setAttention } from "../../features/agents/store";
-import { dream, memory, notes, withFeature } from "./features";
+import {
+  DREAM_V2,
+  dream,
+  memory,
+  notes,
+  selfReview,
+  withFeature,
+} from "./features";
 import {
   cannotEdit,
   featureOn,
@@ -222,6 +229,92 @@ it("turns Nightly review on and off without Hourly notes, and memory off takes b
   expect(save.mock.calls[1]?.[1].config).toEqual({ instructions: "Be brief." });
 });
 
+it("turns Self-review on as its section, an Interest and a timer at 04:00, and brings a stock Nightly review to the text that leaves mem/lessons alone", async () => {
+  vi.useFakeTimers({ now: new Date(2026, 10, 12, 14, 30) });
+  const save = vi.fn<Agents["save"]>(async () => {});
+  const agents = { save, types: () => [] };
+  const nightly = (interest: Record<string, unknown>) =>
+    ada(
+      held({
+        "interest/bestie-dream": { type: "interest", ...interest },
+        "watch/bestie-dream": { type: "timer", channel: DM, enabled: true },
+      }),
+    );
+  await saveFeature(
+    agents,
+    nightly({ instructions: DREAM_V2, paused: true }),
+    selfReview,
+    true,
+    { channel: DM },
+  );
+  const [[, timers], [, section]] = save.mock.calls as [
+    [string, AgentChange],
+    [string, AgentChange],
+  ];
+  expect(timers.attention?.["interest/bestie-self-review"]).toEqual({
+    type: "interest",
+    instructions: selfReview.timer?.interest,
+  });
+  const timer = timers.attention?.["watch/bestie-self-review"] as TimerWatch;
+  expect(timer).toMatchObject({
+    interest_id: "bestie-self-review",
+    prompt: "Self-review wake",
+    interval_secs: 86_400,
+    channel: DM,
+    enabled: true,
+  });
+  expect(new Date(timer.armed_at * 1000).getHours()).toBe(4);
+  // Nightly review, saved as v2 shipped it, gets the current text and keeps
+  // the rest, its pause too.
+  expect(timers.attention?.["interest/bestie-dream"]).toEqual({
+    type: "interest",
+    instructions: dream.timer?.interest,
+    paused: true,
+  });
+  expect(Object.keys(timers.attention ?? {})).toHaveLength(3);
+  for (const [slug, value] of Object.entries(timers.attention ?? {}))
+    expect(validateObject(slug, value)).toBeUndefined();
+  // Every turn carries its section, after memory's.
+  expect(section.config).toEqual({
+    instructions: withFeature(remembering, selfReview, true),
+  });
+
+  // A Nightly review the owner edited, or one already current, stays as it is.
+  for (const instructions of ["My own nightly steps.", dream.timer?.interest]) {
+    save.mockClear();
+    await saveFeature(agents, nightly({ instructions }), selfReview, true, {
+      channel: DM,
+    });
+    expect(Object.keys(save.mock.calls[0]?.[1].attention ?? {})).toEqual([
+      "interest/bestie-self-review",
+      "watch/bestie-self-review",
+    ]);
+  }
+
+  // Off removes its section, Interest and timer, and leaves Nightly review;
+  // memory off takes it too.
+  const on = ada(
+    held({ ...attentionOf(selfReview), ...attentionOf(dream) }),
+    withFeature(remembering, selfReview, true),
+  );
+  expect(featureOn(on, selfReview)).toBe(true);
+  for (const feature of [selfReview, memory]) {
+    save.mockClear();
+    await saveFeature(agents, on, feature, false);
+    const removed = Object.keys(save.mock.calls[0]?.[1].attention ?? {});
+    expect(removed).toEqual(
+      expect.arrayContaining([
+        "interest/bestie-self-review",
+        "watch/bestie-self-review",
+      ]),
+    );
+    expect(removed.includes("interest/bestie-dream")).toBe(feature === memory);
+    expect(save.mock.calls[1]?.[1].config).toEqual({
+      instructions: feature === memory ? "Be brief." : remembering,
+    });
+  }
+});
+
 it("reads a check-in as off unless its Interest and its timer are both there", () => {
   const timer = held({ "watch/bestie-notes": { type: "timer" } });
   const interest = held({ "interest/bestie-notes": { type: "interest" } });
@@ -275,6 +368,10 @@ it("keeps an old hourly check-in paused in Attention paused in Hourly notes and 
       for (const [slug, value] of Object.entries(made ?? {}))
         if (value !== null) expect(validateObject(slug, value)).toBeUndefined();
     }
+    // Self-review is the owner's to turn on: the upgrade never does.
+    expect(changes.some((change) => "watch/bestie-self-review" in change)).toBe(
+      false,
+    );
     // The rest of the upgrade is the same: the old check-in is taken away.
     expect(changes).toContainEqual(
       expect.objectContaining({

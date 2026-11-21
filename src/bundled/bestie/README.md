@@ -142,10 +142,11 @@ need nothing: agents read them already. Adding Bestie to new channels you
 create is not set up yet.
 
 **Check-ins** need Remembers you, and turning memory off turns them off too.
-There are two, each its own switch, and neither needs the other. A check-in is
+There are three, each its own switch, and none needs another. A check-in is
 an Attention Interest, whose instructions hold its steps, and a timer that
-wakes Bestie in your DM with it. It adds nothing to the instructions every turn
-carries, so a chat turn doesn't carry the steps. The Watching tab shows the
+wakes Bestie in your DM with it. A chat turn doesn't carry the steps: only
+Self-review adds to the instructions every turn carries, a short section that
+says where its lessons are. The Watching tab shows the
 timers. Off removes the Interest and the timer. It reads as on only while both
 are there.
 
@@ -164,7 +165,21 @@ are there.
   observations on three days and none against, retires one on a contradiction,
   keeps `mem/user` to 4 KB, organizes the cards, rebuilds the index and its
   "Now" section in `mem/memory`, and adds a short reflection to the day's
-  notes. It never sends a message. It does not need Hourly notes.
+  notes. It never sends a message. It does not need Hourly notes. It never
+  writes `mem/lessons`, and while Self-review is on it leaves lessons about how
+  Bestie works to it. Self-review sections in the notes are not notes about you.
+- **Self-review** (`bestie-self-review`, once a day, about 04:00, after the
+  review) looks back at Bestie's own recent work in the channels it is in for
+  mistakes it repeats. A lesson needs two distinct incidents; it adds or
+  changes at most three a night and keeps at most six, in `mem/lessons`
+  (2,000 bytes), with a capped read (20 calls, about 60 KB) of a window from
+  its cursor of at most 48 hours. What the cap leaves out is named, not read
+  later. Its section, `<!-- buzz:bestie/improve.daily v1 -->`, has every turn
+  read the lessons before work like theirs. It never changes core or the
+  instructions: a lesson broken twice becomes a proposal, which Bestie may
+  raise once in your DM, and applies only if you approve its exact text. It
+  never sends a message. Turning it on also brings a Nightly review saved as
+  its version 2 text to the current one; one you edited stays yours.
 
 The timers run while Buzz is open and the Watching plugin is on: this plugin
 doesn't call `controlAttention()`, so turning Watching off still turns

@@ -161,6 +161,7 @@ export const fixturePlugins: readonly BundledPlugin[] = [
           .then((answer) =>
             notices.show({ title: `Answered ${answer ?? "nothing"}` }),
           );
+        void notices?.show({ title: "Fixture is waiting" });
       },
     },
   },

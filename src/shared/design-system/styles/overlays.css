@@ -581,6 +581,15 @@
   font-family: inherit;
   pointer-events: none;
 }
+.buzz-toast-guard {
+  display: none;
+}
+body:has([aria-modal="true"]:not([data-ending-style])):has(
+    [data-sonner-toast]:focus-within [data-reachable-over-modal]
+  )
+  .buzz-toast-guard {
+  display: inline;
+}
 .buzz-toast-viewport[data-sonner-toaster][data-x-position="right"] {
   left: auto;
   right: env(safe-area-inset-right, 0px);

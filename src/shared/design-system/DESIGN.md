@@ -1590,7 +1590,7 @@ height on non-Mac shells. Mac uses a 12px top inset and an 8px right inset. Inte
 chrome aligns the card with the room/content divider. On touch,
 notices form a bounded scrolling list. Trailing actions wrap below the message
 when their intrinsic width cannot fit beside it.
-F6 enters notifications, Tab reaches actions. Modals remain above the stack. Content updates do not restart expiry; timeout changes do.
+F6 enters notifications, Tab reaches actions. Modals remain above the stack. While a modal is open, F6 moves only through notices that set `reachableOverModal` (a plugin's notice with actions), then back into the modal. Tab past a notice's last control, or Shift+Tab out of it, also returns to the modal. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead, except for the

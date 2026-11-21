@@ -38,6 +38,7 @@ export function ShellNotices({
       }
       tone="info"
       onDismiss={notice.dismiss}
+      reachableOverModal={!!notice.actions?.length}
     >
       {notice.actions?.length
         ? notice.actions.map((action) => (

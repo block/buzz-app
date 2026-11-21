@@ -14,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import { Toaster, toast } from "sonner";
 import { XIcon } from "../icons";
+import { focusWithKeyboard } from "../useKeyboardFocusVisibility";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 
@@ -93,17 +94,50 @@ export function ToastProvider({
     globalThis.navigator?.platform?.startsWith("Linux") &&
     navigator.vendor === "Apple Computer, Inc.";
   useEffect(() => {
+    const modalOpen = () =>
+      document.querySelector('[aria-modal="true"]:not([data-ending-style])');
     // Sonner's global hotkey must not bypass the host's modal focus boundary.
     const guardModal = (event: KeyboardEvent) => {
+      if (event.code !== "F6" || !modalOpen()) return;
+      event.stopPropagation();
+      const cards = [
+        ...document.querySelectorAll(
+          "[data-reachable-over-modal]:not([inert])",
+        ),
+      ].map((card) => card.closest<HTMLElement>("[data-sonner-toast]"));
+      const active = document.activeElement;
+      const current = cards.findIndex((card) => card?.contains(active));
+      const next = cards[current + 1];
+      if (next) focusWithKeyboard(next);
+      else if (current >= 0 && active instanceof HTMLElement) active.blur();
+    };
+    const keepModal = (event: FocusEvent) => {
+      const { target, relatedTarget } = event;
       if (
-        event.code === "F6" &&
-        document.querySelector('[aria-modal="true"]:not([data-ending-style])')
-      ) {
-        event.stopPropagation();
-      }
+        !(target instanceof HTMLElement) ||
+        !(relatedTarget instanceof Element)
+      )
+        return;
+      const card = target.closest("[data-sonner-toast]");
+      const from = relatedTarget.closest("[data-sonner-toast]");
+      if (
+        !card ||
+        card === from ||
+        card.querySelector("[data-reachable-over-modal]") ||
+        !from?.querySelector("[data-reachable-over-modal]") ||
+        document.documentElement.dataset.keyboardNavigation === undefined ||
+        !modalOpen()
+      )
+        return;
+      event.stopPropagation();
+      target.blur();
     };
     window.addEventListener("keydown", guardModal, true);
-    return () => window.removeEventListener("keydown", guardModal, true);
+    document.addEventListener("focusin", keepModal, true);
+    return () => {
+      window.removeEventListener("keydown", guardModal, true);
+      document.removeEventListener("focusin", keepModal, true);
+    };
   }, []);
   useEffect(
     () => () => {
@@ -117,21 +151,30 @@ export function ToastProvider({
   return (
     <ToastHost value={id}>
       {createPortal(
-        <Toaster
-          ref={attachViewport}
-          id={id}
-          position="top-right"
-          swipeDirections={["left", "right"]}
-          expand={false}
-          visibleToasts={Infinity}
-          hotkey={["F6"]}
-          customAriaLabel="App notifications"
-          className={
-            skipBlur
-              ? "buzz-toast-viewport buzz-toast-no-blur"
-              : "buzz-toast-viewport"
-          }
-        />,
+        <>
+          <Toaster
+            ref={attachViewport}
+            id={id}
+            position="top-right"
+            swipeDirections={["left", "right"]}
+            expand={false}
+            visibleToasts={Infinity}
+            hotkey={["F6"]}
+            customAriaLabel="App notifications"
+            className={
+              skipBlur
+                ? "buzz-toast-viewport buzz-toast-no-blur"
+                : "buzz-toast-viewport"
+            }
+          />
+          {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: A focus guard, as Base UI renders, returns Tab under a modal. */}
+          <span
+            className="buzz-toast-guard sr-only"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: The focus guard is a Tab stop only while a modal is open.
+            tabIndex={0}
+            aria-hidden="true"
+          />
+        </>,
         portalContainer ?? document.body,
       )}
       {children}
@@ -141,6 +184,7 @@ export function ToastProvider({
 
 type ToastCardProps = {
   exiting?: boolean;
+  reachableOverModal?: boolean | undefined;
   title: string;
   description?: string | undefined;
   /** Optional supporting detail between the message and its actions. */
@@ -154,6 +198,7 @@ type ToastCardProps = {
 
 function ToastCard({
   exiting,
+  reachableOverModal,
   title,
   description,
   details,
@@ -165,8 +210,15 @@ function ToastCard({
 }: ToastCardProps) {
   const titleId = useId();
   const descriptionId = useId();
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const item = card.current?.closest<HTMLElement>("[data-sonner-toast]");
+    if (exiting && reachableOverModal && item === document.activeElement)
+      item?.blur();
+  }, [exiting, reachableOverModal]);
   return (
     <div
+      ref={card}
       inert={exiting}
       aria-hidden={exiting}
       role="dialog"
@@ -174,6 +226,7 @@ function ToastCard({
       aria-describedby={description ? descriptionId : undefined}
       data-buzz-ui=""
       data-type={tone}
+      data-reachable-over-modal={reachableOverModal ? "" : undefined}
       className="buzz-toast floating-surface"
     >
       {navigation && (
@@ -259,6 +312,7 @@ export function ToastNotice({
   timeout = 0,
   tone = "error",
   navigation,
+  reachableOverModal,
 }: {
   title: string;
   description?: string;
@@ -270,6 +324,7 @@ export function ToastNotice({
   timeout?: number;
   tone?: Tone;
   navigation?: ToastCardProps["navigation"];
+  reachableOverModal?: boolean;
 }) {
   const id = useId();
   const toasterId = useContext(ToastHost);
@@ -320,6 +375,7 @@ export function ToastNotice({
       children,
       closeLabel,
       navigation,
+      reachableOverModal,
       onClose: dismissible
         ? () => {
             toast.dismiss(id);
@@ -338,6 +394,7 @@ export function ToastNotice({
     closeLabel,
     dismissible,
     navigation,
+    reachableOverModal,
   ]);
   return null;
 }

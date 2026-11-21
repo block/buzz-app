@@ -163,6 +163,8 @@ export type LinkPreviewProps = Readonly<{
    * plugin's own panel. Absent on hosts that predate it. */
   opener?: TargetOpener | undefined;
 }>;
+/** Whether a link preview renderer can draw its cards. */
+export type LinkPreviewStatus = "checking" | "ready" | "needs-setup";
 /** A card below a message for one of its links. The lowest `order` among
  * matches draws it, so a plugin can claim its own URLs ahead of the default
  * web card; a component that renders nothing leaves the link without a card.
@@ -174,6 +176,15 @@ export type LinkPreviewRenderer = Readonly<{
   /** Claim strength when several renderers match a URL; see `MatchOrder`. */
   order?: MatchOrder | undefined;
   component: ComponentType<LinkPreviewProps>;
+  /** Side-effect free, like a decision provider's `status()`. While it is
+   * `checking` the link has no card; while it is `needs-setup` the host draws
+   * a card that opens `settings`. Absent means always `ready`. Needs
+   * `subscribe` and `settings`. */
+  status?: (() => LinkPreviewStatus) | undefined;
+  /** Calls `listener` when `status()` may have changed. */
+  subscribe?: ((listener: () => void) => () => void) | undefined;
+  /** The id of a Settings card this plugin registers, where setup happens. */
+  settings?: string | undefined;
 }>;
 /** Presentation for a fenced code block, chosen by its info-string language.
  * The host retains the frame and copy action; failure or removal restores the code. */
@@ -304,6 +315,8 @@ export type ConversationExtensions = Readonly<{
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
+  /** Opens a Settings section, such as a link preview's setup card. */
+  openSettings?: ((section: string) => void) | undefined;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
   annotators?: ContributionReader<ComposerAnnotator>;
 }>;

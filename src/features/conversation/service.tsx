@@ -454,8 +454,33 @@ export class ConversationService extends Service implements Conversation {
       throw new Error(
         "A link preview renderer order must be a number or function",
       );
+    if (value.status !== undefined || value.subscribe !== undefined) {
+      if (
+        typeof value.status !== "function" ||
+        typeof value.subscribe !== "function"
+      )
+        throw new Error(
+          "A link preview renderer status needs both status and subscribe functions",
+        );
+      if (typeof value.settings !== "string" || !value.settings)
+        throw new Error(
+          "A link preview renderer status needs a settings card id",
+        );
+    }
+    if (
+      value.settings !== undefined &&
+      (typeof value.settings !== "string" || !value.settings)
+    )
+      throw new Error(
+        "A link preview renderer settings card id must be a string",
+      );
     this.linkPreviewEntries.register(this.ctx, value);
   }
+  readonly openSettings = (section: string) => {
+    void this.ctx.reflect
+      .get("navigation")
+      ?.open({ version: 1, kind: "settings", section });
+  };
   registerCodeBlock(value: CodeBlockRenderer) {
     validate(value);
     if (typeof value.matches !== "function")

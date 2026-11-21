@@ -10,6 +10,7 @@ import type {
 } from "../conversation/contracts";
 import { useTargetOpener } from "../conversation/opener";
 import { Button } from "../../shared/design-system/ui/Button";
+import { linkPreviewStatus } from "./link-preview-status";
 import styles from "./LinkPreviews.module.css";
 
 /** A message shows this many cards before the rest fold behind one button. */
@@ -40,16 +41,95 @@ function LinkPreviewCard({
   );
 }
 
+function hostOf(url: string) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Drawn by the host while a renderer reports `needs-setup`. It passes no
+ * message content to the plugin and runs nothing; setup happens in Settings. */
+function LinkPreviewSetup({
+  url,
+  title,
+  onOpenSettings,
+}: {
+  url: string;
+  title: string;
+  onOpenSettings(): void;
+}) {
+  const host = hostOf(url);
+  return (
+    <button
+      type="button"
+      className={styles.setup}
+      aria-label={`Set up ${title} to preview ${host}`}
+      onClick={onOpenSettings}
+      data-link-preview-setup
+    >
+      <span className={styles.setupTitle}>Set up {title} for previews</span>
+      <span className={styles.setupDetail}>{host} · Open Settings</span>
+    </button>
+  );
+}
+
+function LinkPreviewSlot({
+  url,
+  messageId,
+  registry,
+  renderer,
+  open,
+  onOpenSettings,
+}: {
+  url: string;
+  messageId: string;
+  registry: ContributionReader<LinkPreviewRenderer>;
+  renderer: Contribution<LinkPreviewRenderer>;
+  open(): boolean;
+  onOpenSettings: ((section: string) => void) | undefined;
+}) {
+  const store = linkPreviewStatus(registry, renderer);
+  const status = useSyncExternalStore(store.subscribe, store.get, store.get);
+  if (status === "checking") return null;
+  if (status === "needs-setup") {
+    if (!onOpenSettings || !renderer.settings) return null;
+    const section = `${renderer.pluginId}/${renderer.settings}`;
+    return (
+      <LinkPreviewSetup
+        url={url}
+        title={renderer.title}
+        onOpenSettings={() => {
+          if (registry.snapshot().includes(renderer)) onOpenSettings(section);
+        }}
+      />
+    );
+  }
+  return (
+    <LinkPreviewCard
+      url={url}
+      messageId={messageId}
+      registry={registry}
+      renderer={renderer}
+      open={open}
+    />
+  );
+}
+
 export function LinkPreviews({
   urls,
   messageId,
   registry,
   onOpenLink,
+  onOpenSettings,
 }: {
   urls: readonly string[];
   messageId: string;
   registry: ContributionReader<LinkPreviewRenderer> | undefined;
   onOpenLink(url: string): boolean;
+  /** Opens a Settings section; without it, renderers that need setup draw no card. */
+  onOpenSettings?: ((section: string) => void) | undefined;
 }) {
   const renderers = useSyncExternalStore(
     registry?.subscribe ?? noSubscribe,
@@ -81,11 +161,12 @@ export function LinkPreviews({
             fallback={null}
             resetIdentity={key}
           >
-            <LinkPreviewCard
+            <LinkPreviewSlot
               url={url}
               messageId={messageId}
               registry={registry}
               renderer={renderer}
+              onOpenSettings={onOpenSettings}
               open={() =>
                 live.current && registry.snapshot().includes(renderer)
                   ? onOpenLink(url)

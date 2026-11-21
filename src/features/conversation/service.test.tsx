@@ -269,16 +269,41 @@ it("registers link previews and withdraws them with their plugin", async () => {
           component: Component,
         } as never),
       ).toThrow("matcher");
+      const status = () => "ready" as const;
+      const subscribe = () => () => {};
+      for (const partial of [
+        { status },
+        { subscribe },
+        { status, subscribe },
+        { status, subscribe, settings: "" },
+        { settings: 7 },
+      ])
+        expect(() =>
+          ctx.conversation.registerLinkPreview({
+            ...base,
+            id: "partial",
+            ...partial,
+            component: Component,
+          } as never),
+        ).toThrow(/status|settings/);
       ctx.conversation.registerLinkPreview({
         ...base,
         order: 100,
+        component: Component,
+      });
+      ctx.conversation.registerLinkPreview({
+        ...base,
+        id: "needs-setup",
+        status: () => "needs-setup",
+        subscribe,
+        settings: "setup",
         component: Component,
       });
     },
   });
   h.runtime.reconcile([h.plugin]);
   await vi.waitFor(() =>
-    expect(h.service.linkPreviews.snapshot()).toHaveLength(1),
+    expect(h.service.linkPreviews.snapshot()).toHaveLength(2),
   );
   h.runtime.reconcile([]);
   await vi.waitFor(() =>

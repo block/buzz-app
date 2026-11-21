@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Contribution } from "../../plugins/contributions";
 import type {
@@ -187,4 +193,162 @@ it("drops a card whose renderer throws and keeps the rest", () => {
     />,
   );
   expect(screen.getByText("web https://ok.example/")).toBeTruthy();
+});
+
+function provider(initial: "checking" | "ready" | "needs-setup") {
+  let status = initial;
+  const listeners = new Set<() => void>();
+  return {
+    status: vi.fn(() => status),
+    subscribe: vi.fn((listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }),
+    set(next: typeof status) {
+      status = next;
+      for (const listener of [...listeners]) listener();
+    },
+    listeners,
+  };
+}
+
+function withStatus(
+  base: Contribution<LinkPreviewRenderer>,
+  state: ReturnType<typeof provider>,
+): Contribution<LinkPreviewRenderer> {
+  return {
+    ...base,
+    title: "Tracker",
+    status: state.status,
+    subscribe: state.subscribe,
+    settings: "setup",
+  } as Contribution<LinkPreviewRenderer>;
+}
+
+it("draws a setup card that opens the plugin's Settings card while a renderer needs setup", () => {
+  const state = provider("needs-setup");
+  const Card = vi.fn(card("tracker"));
+  const onOpenSettings = vi.fn();
+  const onOpenLink = vi.fn(() => true);
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1", "https://tracker.example/2"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, Card),
+          state,
+        ),
+      ])}
+      onOpenLink={onOpenLink}
+      onOpenSettings={onOpenSettings}
+    />,
+  );
+  const setups = screen.getAllByRole("button", {
+    name: "Set up Tracker to preview tracker.example",
+  });
+  expect(setups).toHaveLength(2);
+  expect(Card).not.toHaveBeenCalled();
+  expect(state.subscribe).toHaveBeenCalledTimes(1);
+  const [firstSetup] = setups;
+  if (!firstSetup) throw new Error("missing setup button");
+  fireEvent.click(firstSetup);
+  expect(onOpenSettings).toHaveBeenCalledWith("tracker/setup");
+  expect(onOpenLink).not.toHaveBeenCalled();
+});
+
+it("swaps every card from a renderer once it reports ready, and draws none while checking", () => {
+  const state = provider("checking");
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1", "https://tracker.example/2"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, card("tracker")),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      onOpenSettings={() => {}}
+    />,
+  );
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+  act(() => state.set("needs-setup"));
+  expect(
+    screen.getAllByRole("button", { name: /^Set up Tracker/ }),
+  ).toHaveLength(2);
+  act(() => state.set("ready"));
+  expect(screen.queryAllByRole("button", { name: /^Set up/ })).toHaveLength(0);
+  expect(screen.getByText("tracker https://tracker.example/1")).toBeTruthy();
+  expect(screen.getByText("tracker https://tracker.example/2")).toBeTruthy();
+});
+
+it("draws no setup card where the host cannot open Settings", () => {
+  const state = provider("needs-setup");
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, card("tracker")),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+    />,
+  );
+  expect(screen.queryAllByRole("button")).toHaveLength(0);
+});
+
+it("ignores a retired registration's updates and stops listening when its cards unmount", () => {
+  const state = provider("needs-setup");
+  const onOpenSettings = vi.fn();
+  const live = [
+    withStatus(
+      entry("tracker", () => true, 0, card("t")),
+      state,
+    ),
+  ];
+  const { unmount } = render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader(live)}
+      onOpenLink={() => true}
+      onOpenSettings={onOpenSettings}
+    />,
+  );
+  const setup = screen.getByRole("button", { name: /^Set up Tracker/ });
+  live.length = 0;
+  fireEvent.click(setup);
+  expect(onOpenSettings).not.toHaveBeenCalled();
+  const reads = state.status.mock.calls.length;
+  act(() => state.set("ready"));
+  expect(state.status.mock.calls.length).toBe(reads);
+  unmount();
+  expect(state.listeners.size).toBe(0);
+});
+
+it("treats a status that throws as ready", () => {
+  const base = entry("tracker", () => true, 0, card("tracker"));
+  const throwing = {
+    ...base,
+    status: () => {
+      throw new Error("broken");
+    },
+    subscribe: () => () => {},
+    settings: "setup",
+  } as unknown as Contribution<LinkPreviewRenderer>;
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([throwing])}
+      onOpenLink={() => true}
+      onOpenSettings={() => {}}
+    />,
+  );
+  expect(screen.getByText("tracker https://tracker.example/1")).toBeTruthy();
 });

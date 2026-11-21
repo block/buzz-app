@@ -607,6 +607,8 @@ Quitting Buzz also turns it off.
   name alone does not guarantee a notification. Selecting someone outside the
   channel does not grant access; inviting them requires an explicit decision
   from someone with permission.
+  If you mention the same person or agent more than once, the invitation
+  prompt lists them once and your message keeps every mention.
 - **Workspaces** can hold any mix of chats, channels, forums and DMs. Use **Move to…**
   in a conversation’s menu or drag the row to a workspace. Unfiled items appear
   in **Solo**, **Team** (channels and forums), or **Direct messages**. Reorder

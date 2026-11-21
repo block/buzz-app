@@ -473,6 +473,30 @@ export type AgentAddedTab = Readonly<{
   subscribe?: (listener: () => void) => () => void;
 }>;
 export type RegisteredAgentAddedTab = Contribution<AgentAddedTab>;
+/** A tab a plugin adds to the agent avatar picker, after its own tabs. The
+ * source paints the strip under the picker's preview and hands back a picture
+ * with `choose`; the host shows it, uploads it on Save and stores the uploaded
+ * URL, so a saved avatar stays an ordinary image without the plugin. */
+export type AgentAvatarSource = Readonly<{
+  id: string;
+  /** The tab's accessible name and tooltip. */
+  title: string;
+  /** The tab's icon. */
+  icon: ReactNode;
+  component: ComponentType<{
+    /** The agent's name as typed so far. */
+    name: string;
+    /** The seed this source last gave `choose` in this picker, if any. */
+    seed: string | undefined;
+    disabled: boolean;
+    /** A PNG, JPEG, GIF or WebP as a Blob or `data:` URL, plus an optional
+     * seed the host hands back. Ignored once the tab is gone. Pass a promise
+     * for an image still being made: Save waits a few seconds for the newest
+     * pick, and refuses with its error if it rejects or never settles. */
+    choose(image: Blob | string | Promise<Blob | string>, seed?: string): void;
+  }>;
+}>;
+export type RegisteredAgentAvatarSource = Contribution<AgentAvatarSource>;
 /** Standing instructions a plugin gives every turn of every agent this copy
  * of the app runs, or of those `when` accepts, while the plugin is on. */
 export type AgentInstructions = Readonly<{
@@ -1594,7 +1618,20 @@ export type NewAgent = Readonly<{
   /** Its starting config, from the type's `Create`; else the type's defaults.
    * Hosted setup retains it until the provider has applied it. */
   config?: unknown;
+  /** The community the caller prepared it for, such as where `picture` was
+   * uploaded. `create` writes nothing, with `CommunityChanged`, if another
+   * one is selected. */
+  community?: string;
 }>;
+/** The selected community is not the one a creation was prepared for. */
+export class CommunityChanged extends Error {
+  constructor() {
+    super(
+      "The community changed while saving. Save again to create the agent here.",
+    );
+    this.name = "CommunityChanged";
+  }
+}
 /** A plugin's recommended agent setup for this launch,
  * `{recommendedBy?, description?, candidates}`; see `Agents.recommend`. */
 export type RecommendedSource = (signal: AbortSignal) => unknown;
@@ -1662,6 +1699,10 @@ export type Agents = {
   registerTab(tab: AgentAddedTab): void;
   /** The tabs active plugins add now. */
   addedTabs(): readonly RegisteredAgentAddedTab[];
+  /** Adds a tab to the agent avatar picker while the plugin is on. */
+  registerAvatarSource(source: AgentAvatarSource): void;
+  /** Active avatar sources, in contribution key order. */
+  avatarSources(): readonly RegisteredAgentAvatarSource[];
   /** Says the calling plugin shows Attention. Agents' Attention runs on this
    * device only while such a plugin is on; with none, it is off for every
    * agent. */
@@ -2446,6 +2487,8 @@ export class AgentsService extends Service implements Agents {
   }
   private readonly contributions;
   private readonly tabContributions;
+  private readonly avatarSourceContributions;
+  private sortedAvatarSources: readonly RegisteredAgentAvatarSource[] = [];
   private readonly attentionControls;
   private readonly addedTools;
   private readonly operationNames = new Set<string>();
@@ -2614,6 +2657,8 @@ export class AgentsService extends Service implements Agents {
     this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
+    this.avatarSourceContributions =
+      createContributions<AgentAvatarSource>(ctx);
     this.attentionControls = createContributions<{ id: string }>(ctx);
     this.addedTools = createContributions<AddedTool & { id: string }>(ctx);
     this.addedInstructions = createContributions<AgentInstructions>(ctx);
@@ -3451,6 +3496,15 @@ export class AgentsService extends Service implements Agents {
           this.state = Object.freeze({ ...this.state });
           this.notify();
         }),
+        // Key order, so activation or re-enable order never moves a tab.
+        this.avatarSourceContributions.subscribe(() => {
+          this.sortedAvatarSources = Object.freeze(
+            [...this.avatarSourceContributions.snapshot()].sort((a, b) =>
+              a.key < b.key ? -1 : a.key > b.key ? 1 : 0,
+            ),
+          );
+          this.notify();
+        }),
         communities.subscribe(() => {
           const { viewer } = communities.snapshot();
           const kept = this.requests.filter(
@@ -3597,6 +3651,28 @@ export class AgentsService extends Service implements Agents {
       );
   }
   addedTabs = () => this.tabContributions.snapshot();
+  registerAvatarSource(source: AgentAvatarSource) {
+    const component: unknown = source?.component;
+    if (
+      typeof source?.id !== "string" ||
+      !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(source.id) ||
+      typeof source.title !== "string" ||
+      !source.title.trim() ||
+      source.title.length > 64 ||
+      // Any ComponentType: a function, or React.memo/forwardRef/lazy.
+      !(
+        typeof component === "function" ||
+        (typeof component === "object" &&
+          component !== null &&
+          "$$typeof" in component)
+      )
+    )
+      throw new Error(
+        "Avatar sources need an id and a title of up to 64 characters, and a component",
+      );
+    this.avatarSourceContributions.register(this.ctx, source);
+  }
+  avatarSources = () => this.sortedAvatarSources;
   controlAttention() {
     this.attentionControls.register(this.ctx, { id: "attention" });
   }
@@ -4709,8 +4785,15 @@ export class AgentsService extends Service implements Agents {
     return value;
   };
 
-  async create({ type, name, picture, config }: NewAgent) {
+  async create({ type, name, picture, config, community }: NewAgent) {
     if (!name.trim()) throw new Error("Name the agent");
+    // Checked against the store, not a rendered prop; every write below
+    // reads the same selection in this same turn.
+    if (
+      community !== undefined &&
+      originOf(community) !== this.selectedBinding().origin
+    )
+      throw new CommunityChanged();
     const remote = this.types().find((entry) => entry.key === type)?.remote;
     if (remote) {
       const listed = recordPicture(picture);

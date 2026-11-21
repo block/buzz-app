@@ -1164,19 +1164,32 @@
 
   /* A scrolling strip fades out on each edge that has tabs past them, so a cut
      tab reads as "more this way" rather than as clipped. Only the panel and
-     navigation lists scroll; the others never hide a tab to fade. */
+     navigation lists and icon-only segments scroll; the others never hide a
+     tab to fade. */
   .buzz-tabs-list {
     --tabs-fade: var(--space-8);
   }
-  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+  .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="segmented-icons"]
+    )
     .buzz-tabs-list[data-overflow-start] {
     mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
   }
-  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+  .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="segmented-icons"]
+    )
     .buzz-tabs-list[data-overflow-end] {
     mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
   }
-  .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+  .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="segmented-icons"]
+    )
     .buzz-tabs-list[data-overflow-start][data-overflow-end] {
     mask-image: linear-gradient(
       to right,
@@ -1187,12 +1200,20 @@
     );
   }
   [dir="rtl"]
-    .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+    .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="segmented-icons"]
+    )
     .buzz-tabs-list[data-overflow-start]:not([data-overflow-end]) {
     mask-image: linear-gradient(to left, transparent, #000 var(--tabs-fade));
   }
   [dir="rtl"]
-    .buzz-tabs:is([data-variant="panel"], [data-variant="navigation"])
+    .buzz-tabs:is(
+      [data-variant="panel"],
+      [data-variant="navigation"],
+      [data-variant="segmented-icons"]
+    )
     .buzz-tabs-list[data-overflow-end]:not([data-overflow-start]) {
     mask-image: linear-gradient(to right, transparent, #000 var(--tabs-fade));
   }
@@ -1426,6 +1447,28 @@
     border-radius: var(--radius-pill);
     background: var(--surface-control-selected);
     box-shadow: var(--shadow-xs);
+  }
+  /* Icon segments keep their size and scroll within the track when a host
+     offers more choices than fit, as plugins' avatar sources can. */
+  .buzz-tabs[data-variant="segmented-icons"] {
+    min-width: 0;
+    max-width: 100%;
+  }
+  /* As with panel tabs, scrolling clips the block axis too; the list's own
+     inset gives the focus ring room and the negative margin keeps the track's
+     geometry. */
+  .buzz-tabs[data-variant="segmented-icons"] .buzz-tabs-list {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: var(--space-1);
+    margin: calc(var(--space-1) * -1);
+    scroll-padding-inline: var(--space-1);
+  }
+  /* They still share a wide track, as segmented tabs do, but never shrink
+     below their icon: past the track's width, the list scrolls. */
+  .buzz-tabs[data-variant="segmented-icons"] .buzz-tabs-tab {
+    flex: 1 0 auto;
   }
   /* Only a new selection travels; resizing the selected tab follows layout. */
   .buzz-tabs:is([data-variant="segmented"], [data-variant="segmented-icons"])

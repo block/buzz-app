@@ -10,6 +10,7 @@ import type {
   RegisteredAgentType,
 } from "../../features/agents/service";
 import { CreationReview } from "./CreationReview";
+import { noAvatarSources } from "../../features/agents/avatar-testing";
 
 afterEach(cleanup);
 
@@ -47,6 +48,7 @@ function fixture(change: Partial<AgentCreationRequest> = {}) {
       return () => listeners.delete(listener);
     },
     types: () => types,
+    avatarSources: noAvatarSources.avatarSources,
     creationRequests: () => requests,
     approveCreation: vi.fn(async () => {
       clear();

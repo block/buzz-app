@@ -278,6 +278,10 @@ import TablerLinkIcon from "@tabler/icons-react/dist/esm/icons/IconLink.mjs";
 export const LinkIcon = defineIcon("tabler", TablerLinkIcon);
 import TablerLockIcon from "@tabler/icons-react/dist/esm/icons/IconLock.mjs";
 export const LockIcon = defineIcon("tabler", TablerLockIcon);
+import TablerLockOpenIcon from "@tabler/icons-react/dist/esm/icons/IconLockOpen2.mjs";
+export const LockOpenIcon = defineIcon("tabler", TablerLockOpenIcon);
+import TablerDiceIcon from "@tabler/icons-react/dist/esm/icons/IconDice5.mjs";
+export const DiceIcon = defineIcon("tabler", TablerDiceIcon);
 import TablerMagnifyingGlassIcon from "@tabler/icons-react/dist/esm/icons/IconSearch.mjs";
 export const MagnifyingGlassIcon = defineIcon(
   "tabler",

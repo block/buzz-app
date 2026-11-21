@@ -192,6 +192,7 @@ export type {
 export type {
   Agents,
   AgentAddedTab,
+  AgentAvatarSource,
   AgentHandle,
   AgentInstructions,
   AgentType,

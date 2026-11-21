@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+import {
+  noAvatarSources,
+  stubAvatarBrowserApis,
+} from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
   act,
@@ -33,6 +36,7 @@ import type {
   AgentCreationRequest,
   Agents,
   NewAgent,
+  RegisteredAgentAvatarSource,
   RegisteredAgentType,
 } from "../../features/agents/service";
 import {
@@ -193,7 +197,10 @@ function setup(
   community?: string,
   request?: AgentCreationRequest,
 ) {
-  const agents = { create: vi.fn(create) } as unknown as Agents & {
+  const agents = {
+    ...noAvatarSources,
+    create: vi.fn(create),
+  } as unknown as Agents & {
     create: ReturnType<typeof vi.fn>;
   };
   const onCreated = vi.fn();
@@ -1198,6 +1205,206 @@ it("groups remote and local harnesses without an inline execution hint", async (
   expect(within(dialog).queryByRole("note")).not.toBeInTheDocument();
 });
 
+it("asks for a source's pick, then introduces and creates with it as an upload", async () => {
+  motion.reduced = true;
+  HTMLImageElement.prototype.decode = () => Promise.resolve();
+  const sources: readonly RegisteredAgentAvatarSource[] = [
+    Object.freeze({
+      id: "faces",
+      key: "buzz.faces/faces",
+      pluginId: "buzz.faces",
+      revision: "bundled",
+      title: "Faces",
+      icon: <svg />,
+      component: ({ choose }) => (
+        <button
+          type="button"
+          onClick={() => choose(new Blob(["png"], { type: "image/png" }))}
+        >
+          Red face
+        </button>
+      ),
+    }),
+  ];
+  const agents = {
+    subscribe: () => () => {},
+    avatarSources: () => sources,
+    create: vi.fn(async () => made),
+  } as unknown as Agents & { create: ReturnType<typeof vi.fn> };
+  vi.mocked(uploadAvatar).mockResolvedValueOnce("https://images.example/face");
+  render(
+    <AgentCreateDialog
+      agents={agents}
+      types={[remoteEcho, echo]}
+      community="https://a.example"
+      onCreated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  const user = userEvent.setup();
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  await user.click(within(dialog).getByRole("tab", { name: "Faces" }));
+  await user.click(createButton());
+  const intro = await screen.findByRole("dialog", {
+    name: "Meet your remote agent",
+  });
+  await user.click(within(intro).getByRole("button", { name: "Let’s go" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Choose an avatar in Faces.",
+  );
+  expect(agents.create).not.toHaveBeenCalled();
+  await user.click(within(intro).getByRole("button", { name: "Back" }));
+  await user.click(
+    await within(dialog).findByRole("button", { name: "Red face" }),
+  );
+  await user.click(createButton());
+  const again = await screen.findByRole("dialog", {
+    name: "Meet your remote agent",
+  });
+  // The introduction shows the same draft Save will upload.
+  await waitFor(() =>
+    expect(
+      within(again)
+        .getByRole("img", { name: "Nova’s avatar" })
+        .querySelector("img")
+        ?.getAttribute("src"),
+    ).toMatch(/^data:image\/png;base64,/),
+  );
+  await user.click(within(again).getByRole("button", { name: "Let’s go" }));
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ picture: "https://images.example/face" }),
+    ),
+  );
+});
+
+it("never writes the agent outside the community its avatar upload went to", async () => {
+  motion.reduced = true;
+  HTMLImageElement.prototype.decode = () => Promise.resolve();
+  const sources: readonly RegisteredAgentAvatarSource[] = [
+    Object.freeze({
+      id: "faces",
+      key: "buzz.faces/faces",
+      pluginId: "buzz.faces",
+      revision: "bundled",
+      title: "Faces",
+      icon: <svg />,
+      component: ({ choose }) => (
+        <button
+          type="button"
+          onClick={() => choose(new Blob(["png"], { type: "image/png" }))}
+        >
+          Red face
+        </button>
+      ),
+    }),
+  ];
+  const agents = {
+    subscribe: () => () => {},
+    avatarSources: () => sources,
+    create: vi.fn(async () => made),
+  } as unknown as Agents & { create: ReturnType<typeof vi.fn> };
+  let land: (url: string) => void = () => {};
+  vi.mocked(uploadAvatar).mockImplementationOnce(
+    () => new Promise<string>((resolve) => (land = resolve)),
+  );
+  const dialog = (community: string) => (
+    <AgentCreateDialog
+      agents={agents}
+      types={[echo]}
+      community={community}
+      onCreated={vi.fn()}
+      onClose={vi.fn()}
+    />
+  );
+  const view = render(dialog("https://a.example"));
+  const form = screen.getByRole("dialog", { name: "Create agent" });
+  const user = userEvent.setup();
+  await user.type(within(form).getByLabelText("Name"), "Nova");
+  await user.click(within(form).getByRole("tab", { name: "Faces" }));
+  await user.click(
+    await within(form).findByRole("button", { name: "Red face" }),
+  );
+  await waitFor(() => expect(createButton()).toBeEnabled());
+  await user.click(createButton());
+  await waitFor(() => expect(uploadAvatar).toHaveBeenCalledOnce());
+  expect(vi.mocked(uploadAvatar).mock.calls[0]?.[1]).toBe("https://a.example");
+  // The scope moves while the upload is held; the write must not follow it.
+  view.rerender(dialog("https://b.example"));
+  await act(async () => land("https://images.example/face"));
+  // The upload stays in A, so saving again here would be refused.
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The community changed while saving. Switch back to it to create the agent with this avatar, or choose another avatar.",
+  );
+  expect(agents.create).not.toHaveBeenCalled();
+});
+
+it("has the service refuse the write when its community moves before the dialog rerenders", async () => {
+  motion.reduced = true;
+  HTMLImageElement.prototype.decode = () => Promise.resolve();
+  const sources: readonly RegisteredAgentAvatarSource[] = [
+    Object.freeze({
+      id: "faces",
+      key: "buzz.faces/faces",
+      pluginId: "buzz.faces",
+      revision: "bundled",
+      title: "Faces",
+      icon: <svg />,
+      component: ({ choose }) => (
+        <button
+          type="button"
+          onClick={() => choose(new Blob(["png"], { type: "image/png" }))}
+        >
+          Red face
+        </button>
+      ),
+    }),
+  ];
+  // The service's selection is already B; the dialog's prop is still A.
+  const agents = {
+    subscribe: () => () => {},
+    avatarSources: () => sources,
+    create: vi.fn(async (input: { community?: string }) => {
+      if (input.community !== "https://b.example")
+        throw Object.assign(new Error("The community changed while saving."), {
+          name: "CommunityChanged",
+        });
+      return made;
+    }),
+  } as unknown as Agents & { create: ReturnType<typeof vi.fn> };
+  vi.mocked(uploadAvatar).mockResolvedValueOnce("https://images.example/face");
+  render(
+    <AgentCreateDialog
+      agents={agents}
+      types={[echo]}
+      community="https://a.example"
+      onCreated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const form = screen.getByRole("dialog", { name: "Create agent" });
+  const user = userEvent.setup();
+  await user.type(within(form).getByLabelText("Name"), "Nova");
+  await user.click(within(form).getByRole("tab", { name: "Faces" }));
+  await user.click(
+    await within(form).findByRole("button", { name: "Red face" }),
+  );
+  await waitFor(() => expect(createButton()).toBeEnabled());
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        picture: "https://images.example/face",
+        community: "https://a.example",
+      }),
+    ),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The community changed while saving. Switch back to it to create the agent with this avatar, or choose another avatar.",
+  );
+});
+
 it("introduces remote creation with the chosen avatar and preserves the draft on Back and Escape", async () => {
   motion.reduced = true;
   let finish = (_agent: Agent) => {};
@@ -1764,7 +1971,7 @@ it("submits custom creation instructions and disables editing while saving", asy
 });
 
 it("preserves the existing avatar and requested name when saving a proposed update", async () => {
-  const agents = { create: vi.fn() } as unknown as Agents;
+  const agents = { ...noAvatarSources, create: vi.fn() } as unknown as Agents;
   const onSave = vi.fn().mockResolvedValue(undefined);
   const onCreated = vi.fn();
   const agent = {
@@ -1824,7 +2031,10 @@ it("starts from an agent card's name, picture and instructions, in each harness 
       instructions: carry.instructions ?? (config as Notes).instructions,
     }),
   });
-  const agents = { create: vi.fn(async () => made) } as unknown as Agents & {
+  const agents = {
+    ...noAvatarSources,
+    create: vi.fn(async () => made),
+  } as unknown as Agents & {
     create: ReturnType<typeof vi.fn>;
   };
   render(
@@ -1873,7 +2083,10 @@ it("keeps an agent card's draft through the remote introduction and Back", async
       instructions: carry.instructions ?? (config as Notes).instructions,
     }),
   };
-  const agents = { create: vi.fn(async () => made) } as unknown as Agents & {
+  const agents = {
+    ...noAvatarSources,
+    create: vi.fn(async () => made),
+  } as unknown as Agents & {
     create: ReturnType<typeof vi.fn>;
   };
   render(
@@ -1932,7 +2145,10 @@ it("keeps an agent card's instructions cleared when choosing another harness", a
       instructions: carry.instructions ?? (config as Notes).instructions,
     }),
   });
-  const agents = { create: vi.fn(async () => made) } as unknown as Agents & {
+  const agents = {
+    ...noAvatarSources,
+    create: vi.fn(async () => made),
+  } as unknown as Agents & {
     create: ReturnType<typeof vi.fn>;
   };
   render(
@@ -1968,7 +2184,7 @@ it("shows an agent card's pack avatar as that Gloopie", () => {
   if (!pack) throw new Error("gloopies-13 is missing from the catalog");
   render(
     <AgentCreateDialog
-      agents={{ create: vi.fn() } as unknown as Agents}
+      agents={{ ...noAvatarSources, create: vi.fn() } as unknown as Agents}
       types={[echo]}
       draft={{ name: "Tinker", picture: pack.url, instructions: "" }}
       onClose={vi.fn()}
@@ -2249,6 +2465,94 @@ describe("Recommended setup", () => {
           effort: "high",
         },
       }),
+    );
+  });
+
+  it("keeps the avatar and the agent in one community when it moves during the readiness check", async () => {
+    motion.reduced = true;
+    HTMLImageElement.prototype.decode = () => Promise.resolve();
+    // Ready when the dialog opens; Save's own check is held when asked.
+    let held: ((ready: boolean) => void) | undefined;
+    let holdNext = false;
+    const checked = harness("codex", "Codex", () => {
+      if (!holdNext) return true;
+      holdNext = false;
+      return new Promise<boolean>((resolve) => (held = resolve));
+    });
+    const sources: readonly RegisteredAgentAvatarSource[] = [
+      Object.freeze({
+        id: "faces",
+        key: "buzz.faces/faces",
+        pluginId: "buzz.faces",
+        revision: "bundled",
+        title: "Faces",
+        icon: <svg />,
+        component: ({ choose }) => (
+          <button
+            type="button"
+            onClick={() => choose(new Blob(["png"], { type: "image/png" }))}
+          >
+            Red face
+          </button>
+        ),
+      }),
+    ];
+    const agents = {
+      subscribe: () => () => {},
+      avatarSources: () => sources,
+      create: vi.fn(async () => made),
+    } as unknown as Agents & { create: ReturnType<typeof vi.fn> };
+    const dialog = (community: string) => (
+      <AgentCreateDialog
+        agents={agents}
+        types={[checked]}
+        community={community}
+        onCreated={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+    const view = render(dialog("https://a.example"));
+    const form = screen.getByRole("dialog", { name: "Create agent" });
+    const user = userEvent.setup();
+    await user.type(within(form).getByLabelText("Name"), "Nova");
+    await user.click(within(form).getByRole("tab", { name: "Faces" }));
+    await user.click(
+      await within(form).findByRole("button", { name: "Red face" }),
+    );
+    await waitFor(() => expect(createButton()).toBeEnabled());
+    holdNext = true;
+    await user.click(createButton());
+    await waitFor(() => expect(held).toBeDefined());
+    // A to B while readiness is checked: nothing uploads, nothing is written.
+    view.rerender(dialog("https://b.example"));
+    await act(async () => held?.(true));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The community changed while saving.",
+    );
+    expect(uploadAvatar).not.toHaveBeenCalled();
+    expect(agents.create).not.toHaveBeenCalled();
+    // Back in A, Save again; B and back to A during the upload keeps both in A.
+    view.rerender(dialog("https://a.example"));
+    let land: (url: string) => void = () => {};
+    vi.mocked(uploadAvatar).mockImplementationOnce(
+      () => new Promise<string>((resolve) => (land = resolve)),
+    );
+    await waitFor(() => expect(createButton()).toBeEnabled());
+    await user.click(createButton());
+    await waitFor(() => expect(uploadAvatar).toHaveBeenCalledOnce());
+    view.rerender(dialog("https://b.example"));
+    view.rerender(dialog("https://a.example"));
+    await act(async () => land("https://images.example/face"));
+    await waitFor(() =>
+      expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          picture: "https://images.example/face",
+          community: "https://a.example",
+        }),
+      ),
+    );
+    expect(vi.mocked(uploadAvatar).mock.calls[0]?.[1]).toBe(
+      "https://a.example",
     );
   });
 

@@ -1106,6 +1106,37 @@ meant only for agents running here says so in its `when`
 removed when the plugin is turned off or its scope ends. The bundled Agent
 Attention UI plugin uses it.
 
+A plugin can add an avatar source, a tab in the agent avatar picker of Create
+agent and Change avatar, with
+`ctx.agents.registerAvatarSource({ id, title, icon, component })`, where
+`component` is any React component type. Older app versions have `ctx.agents`
+without this method, so check for it before calling. Sources follow the picker's
+own tabs in contribution-key order, so activation order never moves one. The
+component paints the strip below the picker's preview and receives
+`{ name, seed, disabled, choose }`: `name` is the agent's name as typed, with
+Unicode compatibility forms, surrounding space and repeated space normalized;
+`choose(image, seed?)` hands back a PNG, JPEG, GIF or WebP `Blob` or base64
+`data:` URL of at most 380 KiB that this browser can decode (the most an avatar
+preview shows inline), plus an optional seed of 1 to 256 characters that comes
+back as `seed`. A source still making its image passes a promise of one, so a
+Save started meanwhile waits for it. Only the newest pick counts. The host owns the rest: it keeps
+the validated file and its preview, uploads the file to the agent's community
+on Save and stores the uploaded URL, so a saved avatar is an ordinary image
+that stays when the plugin is off or gone. Save never calls the source. It
+waits up to 8 seconds for the newest pick to arrive and decode, then saves it;
+a pick that rejects, fails validation or does not arrive in time refuses that
+Save with a message, and the user can pick again. A rejection without its own
+text, such as `new Error()` or `reject()`, still refuses Save and shows the host's
+image error. A pick belongs to the exact registration that made it: when
+a source is turned off, removed or replaced (even under the same id), its tab
+goes and the choice beneath returns, so an unchanged avatar stays unchanged.
+The one exception is a Save that has started: its file, preview and community
+are fixed at Save start and stay, without a tab, until the write settles, and
+a retry sends the same file to the same community or refuses. Create writes
+the agent only in the community the avatar went to. A failing component or
+icon breaks only its own tab. The bundled Bitties plugin, on by default, is
+its first consumer.
+
 A plugin that shows Attention calls `ctx.agents.controlAttention()`.
 Installed plugins may call it too. Agents' watches, timers and sources run on
 this device only while such a plugin is on, and then for every agent: there is

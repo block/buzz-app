@@ -1011,6 +1011,8 @@ Quitting Buzz also turns it off.
   is shortened with an ellipsis, hover over it or use the arrow keys to select
   it and see the full name in a tooltip. A chosen or picked emoji is followed
   by a space, unless one already follows, so you can keep typing.
+- **Mention, channel and emoji suggestions** also open when you type `@`, `#`
+  or `:` right after CJK punctuation such as `，` or `（`, without a space.
 - **Reminder counts** show how many reminders are due in a small capsule on the
   app tile's corner. It shows `99+` above 99; its accessible label keeps the
   exact count.

@@ -18,6 +18,12 @@ it("opens after two shortcode characters, at the real caret and word boundaries"
   }
 });
 
+it("opens after fullwidth and CJK punctuation", () => {
+  for (const text of ["好的，:sm", "（:sm", "「:sm"]) {
+    expect(emojiQuery(text, text.length)?.start).toBe(text.lastIndexOf(":"));
+  }
+});
+
 it("opens right after a converted emoji or a completed shortcode, without a space", () => {
   // `:smile:` converts to its glyph on the closing colon; the next shortcode starts at once.
   expect(emojiQuery("😄:wa", 5)).toEqual({ start: 2, end: 5, query: "wa" });

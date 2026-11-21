@@ -13,6 +13,14 @@ pub(super) enum Verdict {
     Deny(String),
 }
 
+const NIP42_AUTH: u16 = 22242;
+const BLOSSOM_AUTH: u16 = 24242;
+const NIP98_AUTH: u16 = 27235;
+
+/// Auth proofs, signed only when bound to the token's community and made now.
+#[cfg(test)]
+pub(super) const AUTH_PROOFS: &[u16] = &[NIP42_AUTH, NIP98_AUTH, BLOSSOM_AUTH];
+
 /// Everyday work: messages and their edits, pins, bookmarks, schedules and
 /// reminders (9, 40002–40008), reactions (7), shared notes (30023), forum posts,
 /// votes and comments (45001–45003), presence and typing (20001–20003), read
@@ -20,13 +28,18 @@ pub(super) enum Verdict {
 /// 10001, 10003, 10030, 30000, 30003, 30030), canvases (40100), artifacts
 /// (45010), git patches, pull requests, issues and statuses (1617–1633), DM
 /// open and hide (41010, 41012), archive requests (9035, 9036), workflow
-/// triggers (46020), jobs (43001–43006), agent memory (30174) and observer
-/// frames (24200).
-const ORDINARY: &[u16] = &[
-    7, 9, 1617, 1618, 1619, 1621, 1630, 1631, 1632, 1633, 9035, 9036, 10000, 10001, 10003, 10030,
-    20001, 20002, 20003, 24200, 30000, 30003, 30023, 30030, 30078, 30174, 30315, 40002, 40003,
-    40004, 40005, 40006, 40007, 40008, 40100, 41010, 41012, 43001, 43002, 43003, 43004, 43005,
-    43006, 45001, 45002, 45003, 45010, 46020,
+/// triggers (46020), jobs (43001–43006), agent memory (30174), observer
+/// frames (24200) and reports to the community's moderators (1984), which the
+/// relay queues for moderators only and never acts on. A report, like a shared
+/// note, binds to no community: one naming only a person (`p`, as
+/// `buzz messages report --pubkey` sends) can be copied to any public relay
+/// that honors NIP-56. That is accepted, as for 30023: it says no more than
+/// the person reported here.
+pub(super) const ORDINARY: &[u16] = &[
+    7, 9, 1617, 1618, 1619, 1621, 1630, 1631, 1632, 1633, 1984, 9035, 9036, 10000, 10001, 10003,
+    10030, 20001, 20002, 20003, 24200, 30000, 30003, 30023, 30030, 30078, 30174, 30315, 40002,
+    40003, 40004, 40005, 40006, 40007, 40008, 40100, 41010, 41012, 43001, 43002, 43003, 43004,
+    43005, 43006, 45001, 45002, 45003, 45010, 46020,
 ];
 
 /// Changes to who the identity is, what it controls or what others see about
@@ -35,10 +48,24 @@ const ORDINARY: &[u16] = &[
 /// moderation (9040–9044), agent and team management (30175–30177, 30179),
 /// workflow authority (30620, 46030, 46031) and repositories and projects
 /// (30617, 30618, 30621).
-const SENSITIVE: &[u16] = &[
+pub(super) const SENSITIVE: &[u16] = &[
     0, 3, 5, 9000, 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009, 9021, 9022, 9040, 9041,
     9042, 9043, 9044, 10002, 10100, 28936, 30175, 30176, 30177, 30179, 30617, 30618, 30620, 30621,
     41011, 45011, 46030, 46031,
+];
+
+/// Known kinds that no local caller has signed: relay-authored events and
+/// overlays (8000–8003, 13534, 13535, 39000–39009, 40901, 40902, 44100, 44101,
+/// 46001–46012, 48001, 48104), relay membership admin commands (9030–9033),
+/// public notes and legacy DMs (1, 4), gift wraps (1059), the app's own
+/// builderlab challenge (24243) and other Buzz kinds not opened to local tools.
+#[cfg(test)]
+pub(super) const REFUSED: &[u16] = &[
+    1, 4, 41, 1059, 1063, 8000, 8001, 8002, 8003, 9030, 9031, 9032, 9033, 13534, 13535, 24134,
+    24243, 24245, 24810, 30178, 30180, 30300, 30622, 39000, 39001, 39002, 39003, 39005, 39006,
+    39007, 39008, 39009, 40099, 40901, 40902, 41001, 42000, 44100, 44101, 44200, 46001, 46002,
+    46003, 46004, 46005, 46006, 46007, 46010, 46011, 46012, 48001, 48100, 48101, 48102, 48103,
+    48104, 48106, 49001,
 ];
 
 /// The verdict for an event of `kind` with `tags` made at `created_at`, by a
@@ -51,9 +78,9 @@ pub(super) fn classify(
     relay: &str,
 ) -> Verdict {
     let proof = match kind {
-        22242 => Some(nip42(tags, relay)),
-        27235 => Some(nip98(tags, relay)),
-        24242 => Some(blossom(tags, created_at, relay)),
+        NIP42_AUTH => Some(nip42(tags, relay)),
+        NIP98_AUTH => Some(nip98(tags, relay)),
+        BLOSSOM_AUTH => Some(blossom(tags, created_at, relay)),
         _ => None,
     };
     if let Some(bound) = proof {

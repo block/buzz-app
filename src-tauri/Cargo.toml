@@ -82,6 +82,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
+# Kept at buzz-audio-client's rev, so the signing policy is checked against the block/buzz this app ships with.
+buzz-core = { git = "https://github.com/block/buzz.git", rev = "630922a9e1f891380a61f5b7d726d05ca948cc64" }
 hex = "0.4"
 tokio = { version = "1", features = ["test-util"] }
 secp256k1 = { version = "0.31", features = ["std"] }

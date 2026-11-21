@@ -6,7 +6,7 @@ import {
 } from "../messages/message-tokens";
 import "@testing-library/jest-dom/vitest";
 import { webcrypto } from "node:crypto";
-import { projectTemplateId } from "./workspace";
+import { projectTemplateId, workspaceCanvas } from "./workspace";
 import { composerDOMFixture } from "../messages/composer-testing";
 import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mentionDraft } from "../messages/mention-draft";
@@ -333,7 +333,8 @@ it("uses restored explicit mentions, not a separate picker", async () => {
 it.each([true, false])(
   "applies verified ownership equally to workspace defaults (owned=%s)",
   async (workspaceOwned) => {
-    const test = await projectSetup(["b".repeat(64)]);
+    const marked = workspaceCanvas({ folders: ["/repo"], canvas: "Rules" });
+    const test = await projectSetup(["b".repeat(64)], marked);
     const admins = workspaceOwned
       ? ["a".repeat(64), "b".repeat(64)]
       : ["a".repeat(64)];
@@ -358,6 +359,10 @@ it.each([true, false])(
       "b".repeat(64),
     ]);
     expect(startOptions(test)).toMatchObject({ admins });
+    // Local folders only when every agent is verifiably yours.
+    expect(test.channelWrites.start.mock.calls[0]?.[5]).toMatchObject({
+      canvas: workspaceOwned ? marked : "Rules",
+    });
     expect(test.messages.send.mock.calls[0]?.[2]).toEqual(["a".repeat(64)]);
   },
 );
@@ -1625,7 +1630,7 @@ it("invalid stored draft lifetime fails visibly without a new create", async () 
   expect(h.channelWrites.delivered).not.toHaveBeenCalled();
 });
 
-async function projectSetup(agents: string[] = []) {
+async function projectSetup(agents: string[] = [], canvas?: string) {
   vi.stubGlobal("crypto", webcrypto);
   const f = setup();
   if (agents.length) {
@@ -1651,7 +1656,7 @@ async function projectSetup(agents: string[] = []) {
         value: {
           type: "template",
           id: await projectTemplateId(id),
-          canvas: `${id} instructions`,
+          canvas: canvas ?? `${id} instructions`,
           agents,
           teamIds: [],
         },

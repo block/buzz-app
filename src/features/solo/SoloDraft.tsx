@@ -17,6 +17,7 @@ import {
   defaultsRevision,
   loadChatSetup,
   parseChatSetup,
+  shareableInstructions,
   type ChatSetup,
 } from "./workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -482,6 +483,14 @@ export function SoloDraft({
         ...(await ownedSoloAgents(session.profiles, session.viewer, members)),
       ];
       if (!mounted.current) return;
+      // A workspace's local folders go only to agents verifiably yours;
+      // with anyone else in the chat it shares only its instructions.
+      if (
+        canvas === undefined &&
+        setup &&
+        members.some((key) => !admins.includes(key))
+      )
+        setup = { ...setup, canvas: shareableInstructions(setup.canvas) };
       // Read at Send: the region's source may have stopped since.
       const regionOwner = () => {
         const current = region

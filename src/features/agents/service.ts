@@ -276,6 +276,7 @@ import { readInterrupted, writeInterrupted } from "./interrupted";
 import { AttentionSources, type AttentionProducer } from "./attention-sources";
 import { type AddedTool, BUZZ_SESSION } from "../../buzz-mcp/session-tools";
 import { openMetadata } from "../relay/discovery";
+import { ownedSoloAgents } from "../relay/solo-admins";
 import { prepareSoloMove } from "../channel-navigation/solo-navigation";
 import {
   loadChannelSetup,
@@ -3336,25 +3337,20 @@ export class AgentsService extends Service implements Agents {
             }
             const setup = await loadChatSetup(session, workspace);
             check(signal);
-            // Local folders stay with the owner and their own agents, as in
-            // New chat; anyone else in the chat gets only the instructions.
-            const own = () =>
-              new Set([
-                binding.viewer,
-                agent.pubkey,
-                ...setup.agents,
-                ...session.agentChoices
-                  .snapshot()
-                  .identities.map(({ pubkey }) => pubkey),
-              ]);
-            let owned = own();
-            if (chat.members.some((key) => !owned.has(key))) {
-              await session.agentChoices.refresh();
-              check(signal);
-              owned = own();
-            }
+            // Local folders stay with the owner and agents verifiably theirs,
+            // as in New chat: every member and default that joins. Anyone
+            // else, or ownership unknown, gets only the instructions.
+            const others = [...chat.members, ...setup.agents].filter(
+              (key) => key !== binding.viewer && key !== agent.pubkey,
+            );
+            const owned = await ownedSoloAgents(
+              session.profiles,
+              binding.viewer,
+              others,
+            ).catch(() => new Set<string>());
+            check(signal);
             return {
-              canvas: chat.members.every((key) => owned.has(key))
+              canvas: others.every((key) => owned.has(key))
                 ? setup.canvas
                 : shareableInstructions(setup.canvas),
               agents: setup.agents,

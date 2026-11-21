@@ -870,14 +870,16 @@ test.describe("pages inside one second", () => {
           const start = e.scrollTop;
           let corrected = 0;
           e.dataset.scrollEnded = "";
-          e.addEventListener("virtua-scroll-correction", ({ detail }) => {
-            corrected += detail.after - detail.before;
-          });
           const ended = () => {
             if (start + corrected - e.scrollTop < 150) return;
             delete e.dataset.scrollEnded;
             e.removeEventListener("scrollend", ended);
           };
+          // A correction can be dispatched after the input's scrollend.
+          e.addEventListener("virtua-scroll-correction", ({ detail }) => {
+            corrected += detail.after - detail.before;
+            ended();
+          });
           e.addEventListener("scrollend", ended);
         });
         if (input === "drag")

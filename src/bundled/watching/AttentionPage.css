@@ -139,9 +139,6 @@
   margin: 0;
 }
 @container (max-width: 28rem) {
-  .attention-reference-label {
-    max-inline-size: 4rem;
-  }
   .attention-table-row {
     column-gap: var(--space-2);
   }
@@ -156,6 +153,10 @@
 .attention-interest-head > h4 {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* A long title shrinks before the status button does. */
+.attention-interest-head > .attention-actions {
+  flex-shrink: 0;
 }
 .attention-instructions-preview {
   min-width: 0;
@@ -582,6 +583,42 @@ html[data-keyboard-navigation] .attention-disclosure:focus-visible {
 }
 .attention-table-row > .attention-status {
   justify-self: end;
+}
+
+/* Below about 32rem the title column falls under 8rem, so each watch stacks:
+   the name and status share the first line, and the source and destination sit
+   under the name. The label stays, as it does for an interest without watches. */
+@container (max-width: 32rem) {
+  .attention-column-headings {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .attention-column-headings > :not(h5) {
+    display: none;
+  }
+  /* The first column is the icon's width, so the second line aligns with the name.
+     The padding keeps the old centred row's air: the status pill sits space-2
+     from the top edge and the second line space-2 from the divider. */
+  .attention-table-row {
+    grid-template-columns: var(--space-4) auto minmax(0, 1fr) auto;
+    padding-block: var(--space-1) var(--space-2);
+  }
+  .attention-heading {
+    grid-column: 1 / 4;
+  }
+  .attention-reference {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  .attention-reference-label {
+    max-inline-size: 7rem;
+  }
+  .attention-destination {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+  .attention-reference + .attention-destination {
+    grid-column: 3 / -1;
+  }
 }
 
 /* Disabled watches remain inspectable and can still be re-enabled. */

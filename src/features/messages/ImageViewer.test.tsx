@@ -210,6 +210,24 @@ it("signs relay media once ready, and closes when the community changes", () => 
   expect(onClose).toHaveBeenCalledOnce();
 });
 
+/** Every `src` the DOM is given until `stop`, transient ones included. */
+function srcAssignments() {
+  const sources: string[] = [];
+  const set = Element.prototype.setAttribute;
+  const spy = vi
+    .spyOn(Element.prototype, "setAttribute")
+    .mockImplementation(function (this: Element, name, value) {
+      if (name === "src") sources.push(value);
+      set.call(this, name, value);
+    });
+  return {
+    stop() {
+      spy.mockRestore();
+      return sources;
+    },
+  };
+}
+
 it.each([
   ["another community connecting", { selected: two, snapshot: connecting }],
   ["another community ready", { selected: two, snapshot: ready(two) }],
@@ -226,26 +244,40 @@ it.each([
     const onClose = vi.fn();
     const media = `${one}/media/abc.png`;
     const { relay, move } = fixtureRelay(one, ready(one));
-    const { container } = render(
-      <RelayImageViewer src={media} onClose={onClose} relay={relay} />,
-    );
-    const sources: (string | null)[] = [];
-    const record = new MutationObserver(() => {
-      for (const img of container.ownerDocument.querySelectorAll("img"))
-        sources.push(img.getAttribute("src"));
-    });
-    record.observe(container.ownerDocument.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-    });
+    render(<RelayImageViewer src={media} onClose={onClose} relay={relay} />);
+    const assigned = srcAssignments();
     move(next);
-    record.disconnect();
+    const sources = assigned.stop();
     expect(sources).not.toContain(media);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(onClose).toHaveBeenCalledOnce();
   },
 );
+
+it("signs the first community's media again on switching back, never loading it unsigned", () => {
+  const media = `${one}/media/abc.png`;
+  let open = true;
+  const onClose = vi.fn(() => {
+    open = false;
+  });
+  const { relay, move } = fixtureRelay(one, ready(one));
+  const viewer = () =>
+    open ? (
+      <RelayImageViewer src={media} onClose={onClose} relay={relay} />
+    ) : null;
+  const { rerender } = render(viewer());
+  const assigned = srcAssignments();
+  move({ selected: two, snapshot: connecting });
+  move({ selected: two, snapshot: ready(two) });
+  // A viewer the caller keeps mounted through the switch comes back signed.
+  open = true;
+  move({ selected: one, snapshot: ready(one) });
+  rerender(viewer());
+  const sources = assigned.stop();
+  expect(sources).toContain(signed(media));
+  expect(sources).not.toContain(media);
+  expect(screen.getByRole("img")).toHaveAttribute("src", signed(media));
+});
 
 it("still loads an external image directly after switching communities", () => {
   const { relay, move } = fixtureRelay(one, ready(one));

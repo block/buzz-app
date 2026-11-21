@@ -1602,7 +1602,11 @@ pull request, issue, and commit URLs and loads object details on demand. Its
 manifest declares `gh api graphql --hostname github.com --input -` as a host
 process, so on desktop it reads and changes pull requests as the user's
 signed-in `gh` account. That allows any query or mutation the account may make;
-the token stays inside `gh`. Without `gh` it reads public data only. Unsupported
+the token stays inside `gh`. Without `gh` it reads public data only. Its
+**Code viewer** link preview highlights github.com file, line and pull request
+diff-anchor links. A second process, `gh api --hostname github.com --method POST
+--input -`, posts a review comment on chosen pull request lines only when the
+person chooses **Post comment**. Unsupported
 URLs retain ordinary link behavior. A host-owned GitHub connection with narrower scopes, and agent
 execution, remain future shared capabilities.
 

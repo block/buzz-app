@@ -2074,6 +2074,20 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   **Changes** use syntax highlighting, including Kotlin, even for small changes
   deep in large files. Oversized, unsupported or unparseable patches remain
   readable without syntax colors.
+- The **GitHub** plugin's **Code viewer** adds a card below messages that link
+  to code on github.com. A file link (`…/blob/<ref>/<path>`) shows the path,
+  `repo@ref` and language, and **Open file** shows the whole file highlighted
+  with line numbers. A line or range link (`#L42`, `#L42-L60`) shows those
+  lines in the card, and **Open in viewer** opens the whole file scrolled to
+  them. A link to lines in a pull request's changes
+  (`…/pull/<n>/files#diff-…R42`) shows those lines from the pull request's
+  head (or its base for `L` lines) with review comments already on them; select
+  lines by their numbers and choose **Comment on …**, then **Post comment**, to
+  post a review comment as your GitHub account. Nothing is posted until you
+  choose **Post comment**. Pull request lines and commenting need the desktop
+  app with `gh` signed in; without it, public files are read from GitHub's
+  public API. Files over 256 KB and binary files show only a link to GitHub,
+  and languages without a bundled grammar show as plain text.
 - Some desktop plugins can upload images you provide to services they declare.
 - Plugin sharing search groups people who have not been added under **Not yet
   added**, or a heading chosen by the plugin. Its **Copy link** action appears

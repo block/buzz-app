@@ -11,7 +11,26 @@ import { bundledLanguages } from "./grammars";
 import { gitPatch, type FileData } from "./parse";
 import styles from "./Diffs.module.css";
 
-const theme = { light: "pierre-light", dark: "pierre-dark" } as const;
+export const theme = { light: "pierre-light", dark: "pierre-dark" } as const;
+
+/** The app's color mode, which can differ from the system's. */
+export function useThemeType() {
+  const [themeType, setThemeType] = useState<"light" | "dark">(() =>
+    document.documentElement.dataset.colorMode === "dark" ? "dark" : "light",
+  );
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() =>
+      setThemeType(root.dataset.colorMode === "dark" ? "dark" : "light"),
+    );
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-color-mode"],
+    });
+    return () => observer.disconnect();
+  }, []);
+  return themeType;
+}
 
 /** The grammar that highlights a file: "text" keeps the diff view without
  * tokens. @pierre/diffs stores partial patches compactly, so absolute line
@@ -115,9 +134,7 @@ function ParsedDiff({
       !!parsed && !!getHighlighterIfLoaded({ theme, langs: languages(parsed) }),
   );
   const [failed, setFailed] = useState(false);
-  const [themeType, setThemeType] = useState<"light" | "dark">(() =>
-    document.documentElement.dataset.colorMode === "dark" ? "dark" : "light",
-  );
+  const themeType = useThemeType();
   useEffect(() => {
     if (!parsed) return;
     let active = true;
@@ -137,17 +154,6 @@ function ParsedDiff({
       active = false;
     };
   }, [parsed]);
-  useEffect(() => {
-    const root = document.documentElement;
-    const observer = new MutationObserver(() =>
-      setThemeType(root.dataset.colorMode === "dark" ? "dark" : "light"),
-    );
-    observer.observe(root, {
-      attributes: true,
-      attributeFilter: ["data-color-mode"],
-    });
-    return () => observer.disconnect();
-  }, []);
   if (!parsed || failed || !ready) return <RawDiff content={content} />;
   return (
     <div className={styles.viewer}>

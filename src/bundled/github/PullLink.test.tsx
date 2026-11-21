@@ -254,6 +254,7 @@ function renderers() {
       registerChatIcon: () => {},
       registerChatMenu: () => {},
       registerLink: register("buzz.github"),
+      registerLinkPreview: () => {},
     },
     relay: {},
     agents: { addTool: () => {} },

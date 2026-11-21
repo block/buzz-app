@@ -51,6 +51,26 @@ const attachViewport = (viewport: HTMLElement | null) => {
   };
 };
 
+const tabbable =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const focusRing = 4;
+const underToast = (control: Element) => {
+  const box = control.getBoundingClientRect();
+  return [
+    ...document.querySelectorAll(
+      '[data-sonner-toast]:not([data-removed="true"])',
+    ),
+  ].some((card) => {
+    const rect = card.getBoundingClientRect();
+    return (
+      rect.left < box.right + focusRing &&
+      rect.right > box.left - focusRing &&
+      rect.top < box.bottom + focusRing &&
+      rect.bottom > box.top - focusRing
+    );
+  });
+};
+
 /** Keeps the stack below a mounted top-edge surface, such as the shell header.
  * Hidden surfaces take no room. */
 export function useToastClearance(ref: RefObject<HTMLElement | null>) {
@@ -95,7 +115,11 @@ export function ToastProvider({
     navigator.vendor === "Apple Computer, Inc.";
   useEffect(() => {
     const modalOpen = () =>
-      document.querySelector('[aria-modal="true"]:not([data-ending-style])');
+      [
+        ...document.querySelectorAll(
+          '[aria-modal="true"]:not([data-ending-style])',
+        ),
+      ].at(-1);
     // Sonner's global hotkey must not bypass the host's modal focus boundary.
     const guardModal = (event: KeyboardEvent) => {
       if (event.code !== "F6" || !modalOpen()) return;
@@ -132,11 +156,43 @@ export function ToastProvider({
       event.stopPropagation();
       target.blur();
     };
+    let noticeOver: Element | undefined;
+    const revealReturn = async (target: HTMLElement, modal: Element) => {
+      await new Promise(requestAnimationFrame);
+      if (
+        document.activeElement !== target ||
+        document.documentElement.dataset.keyboardNavigation === undefined
+      )
+        return;
+      const control = underToast(target)
+        ? [...modal.querySelectorAll<HTMLElement>(tabbable)].find(
+            (candidate) =>
+              !underToast(candidate) &&
+              !candidate.closest('[hidden], [inert], [aria-hidden="true"]') &&
+              candidate.getClientRects().length > 0,
+          )
+        : target;
+      if (control) focusWithKeyboard(control);
+    };
+    const trackReturn = ({ target }: FocusEvent) => {
+      if (!(target instanceof HTMLElement)) return;
+      const card = target.closest("[data-sonner-toast]");
+      if (card)
+        noticeOver = card.querySelector("[data-reachable-over-modal]")
+          ? modalOpen()
+          : undefined;
+      if (card || target.classList.contains("buzz-toast-guard")) return;
+      const modal = target.closest('[aria-modal="true"]');
+      if (modal && modal === noticeOver) void revealReturn(target, modal);
+      noticeOver = undefined;
+    };
     window.addEventListener("keydown", guardModal, true);
     document.addEventListener("focusin", keepModal, true);
+    document.addEventListener("focusin", trackReturn, true);
     return () => {
       window.removeEventListener("keydown", guardModal, true);
       document.removeEventListener("focusin", keepModal, true);
+      document.removeEventListener("focusin", trackReturn, true);
     };
   }, []);
   useEffect(

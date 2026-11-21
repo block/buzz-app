@@ -3,7 +3,7 @@ import {
   statusDeadline,
   statusDuration,
 } from "./status-duration";
-import { useEffect, useId, useRef, useState, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type ComponentProps } from "react";
 import { EmojiPicker } from "../../bundled/emoji/EmojiPicker";
 import { SmileyIcon } from "../../shared/design-system/icons";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -61,7 +61,7 @@ export function StatusEditor({
   /** Present for the viewer’s editor; refreshes its cached status in the background. */
   viewer?: string;
   close(): void;
-  finalFocus: RefObject<HTMLButtonElement | null>;
+  finalFocus: ComponentProps<typeof Dialog>["finalFocus"];
 }) {
   const [current, setCurrent] = useState(initialCurrent);
   const edited = useRef(false);

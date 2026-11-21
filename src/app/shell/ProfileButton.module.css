@@ -1,5 +1,38 @@
 @reference "../../shared/styles/globals.css";
 
+.trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.triggerStatus {
+  --user-status-emoji-size: var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  min-height: var(--space-6);
+  padding: var(--space-1);
+  border-radius: var(--radius-chip);
+  background: var(--surface-inset);
+}
+
+.previewName,
+.previewStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.previewName > span:first-child,
+.previewStatus > span:last-child {
+  min-width: 0;
+}
+
 .triggerAvatar {
   pointer-events: none;
   position: relative;

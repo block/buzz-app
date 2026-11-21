@@ -39,6 +39,108 @@ function view(content: string) {
   return render(<DiffViewer content={content} files={parsePatch(content)} />);
 }
 
+it("updates comment annotations without forcing an unchanged diff render", async () => {
+  const content = patch("src/a.ts");
+  const files = parsePatch(content);
+  const onSelect = vi.fn();
+  const nativeRender = vi.spyOn(pierre.FileDiff.prototype, "render");
+  try {
+    const { container, rerender } = render(
+      <DiffViewer
+        content={content}
+        files={files}
+        comments={{ annotations: [], onSelect }}
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(shadow(container)?.querySelector("pre [data-line]")).toBeTruthy(),
+    );
+    nativeRender.mockClear();
+    rerender(
+      <DiffViewer
+        content={content}
+        files={files}
+        comments={{
+          onSelect,
+          annotations: [
+            {
+              path: "src/a.ts",
+              side: "additions",
+              lineNumber: 1,
+              content: <p>New annotation</p>,
+            },
+          ],
+        }}
+      />,
+    );
+    await screen.findByText("New annotation");
+    expect(nativeRender).toHaveBeenCalled();
+    expect(
+      nativeRender.mock.calls.every(([options]) => !options.forceRender),
+    ).toBe(true);
+  } finally {
+    nativeRender.mockRestore();
+  }
+});
+
+it("retains code nodes when another file gains an annotation or content changes", async () => {
+  const content = patch("src/a.ts") + patch("src/b.ts");
+  const files = parsePatch(content);
+  const onSelect = vi.fn();
+  const initial = <p>Existing thread</p>;
+  const annotation = {
+    path: "src/b.ts",
+    side: "additions" as const,
+    lineNumber: 1,
+    content: [initial],
+  };
+  const annotations = [annotation];
+  const { container, rerender } = render(
+    <DiffViewer
+      content={content}
+      files={files}
+      comments={{ onSelect, annotations }}
+    />,
+  );
+  await screen.findByText("Existing thread");
+  const code = container
+    .querySelectorAll("diffs-container")[1]
+    ?.shadowRoot?.querySelector("[data-line]");
+  expect(code).toBeTruthy();
+  rerender(
+    <DiffViewer
+      content={content}
+      files={files}
+      comments={{
+        onSelect,
+        annotations: [
+          {
+            path: "src/a.ts",
+            side: "additions",
+            lineNumber: 1,
+            content: <p>New composer</p>,
+          },
+          { ...annotation, content: [initial] },
+        ],
+      }}
+    />,
+  );
+  await screen.findByText("New composer");
+  expect(code?.isConnected).toBe(true);
+  rerender(
+    <DiffViewer
+      content={content}
+      files={files}
+      comments={{
+        onSelect,
+        annotations: [{ ...annotation, content: <p>Updated thread</p> }],
+      }}
+    />,
+  );
+  await screen.findByText("Updated thread");
+  expect(code?.isConnected).toBe(true);
+});
+
 it.each([
   ["bare", "--- a/src/a.ts\n+++ b/src/a.ts\n"],
   [

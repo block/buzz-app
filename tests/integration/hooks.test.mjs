@@ -716,7 +716,7 @@ test("tsconfig, scripts and lockfile-metadata edits run types without the full s
   );
   const added = {
     ...scripts,
-    devDependencies: { ...scripts.devDependencies, probe: "1.0.0" },
+    devDependencies: { ...scripts.devDependencies, typescript: "0.0.0-probe" },
   };
   assert.deepEqual(
     step(

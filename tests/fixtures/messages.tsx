@@ -160,7 +160,7 @@ second
 - unordered one
 - unordered two
 
-| ${"wide-column-one-".repeat(10)} | ${"wide-column-two-".repeat(10)} | ${"wide-column-three-".repeat(10)} |
+| ${"wide_column_one_".repeat(10)} | ${"wide_column_two_".repeat(10)} | ${"wide_column_three_".repeat(10)} |
 | --- | --- | --- |
 | one | two | three |
 
@@ -618,12 +618,12 @@ function Fixture() {
             status: "ready",
             rows: (
               [
-                // Wider than any message bubble.
+                // Wider than any message bubble: its paths have no break opportunity.
                 [
                   "c",
-                  "| What | Before | After |\n| --- | --- | --- |\n| App data, local data and plugin storage | `~/.local/share/xyz.block.buzz/old` | `~/.local/share/xyz.block.buzz/new` |\n| Config | `~/.config/old` | `~/.config/new` |",
+                  "| What | Before | After |\n| --- | --- | --- |\n| App data, local data and plugin storage | `~/.local/share/xyz.block.buzz/storage/plugins/old` | `~/.local/share/xyz.block.buzz/storage/plugins/new` |\n| Config | `~/.config/old` | `~/.config/new` |",
                 ],
-                // Fits this feed, but not a narrow one.
+                // Fits this feed; wraps its prose to fit a narrow one.
                 ["d", tableMarkdown],
                 ["e", "Table follow-up"],
                 [

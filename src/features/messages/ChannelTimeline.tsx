@@ -23,6 +23,10 @@ import {
 import { DayDivider } from "./MessageTimestamp";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
+import {
+  prefetchLinkedMessagesIn,
+  watchLinkedMessages,
+} from "./linked-messages";
 import type { MessageAttention } from "../relay/unread";
 import {
   useCallback,
@@ -366,6 +370,17 @@ function Timeline({
     () => membershipRows(visibleRows),
     [visibleRows],
   );
+  // Every loaded row's linked messages read before their rows mount, so a
+  // card scrolled to already has its message; messages arriving anywhere in
+  // the session read theirs too.
+  useEffect(() => watchLinkedMessages(queries), [queries]);
+  useEffect(() => {
+    prefetchLinkedMessagesIn(
+      queries,
+      visibleRows.map((row) => row.content),
+      "background",
+    );
+  }, [queries, visibleRows]);
   const messageVisit = useMessageVisit(queries, channelId);
   const ownsMessageVisit = messageVisit !== undefined && messageVisit !== null;
   const [timelineVisit] = useState<object>(() => ({}));

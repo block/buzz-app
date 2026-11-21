@@ -472,6 +472,27 @@ export function policyRelay({
             filters.flatMap((filter) => answer(communityOf(url), filter)),
           );
         }
+        // Linked-message prefetch: the linked messages by ID, and the
+        // deletions and edits that name them.
+        if (
+          filters.length === 2 &&
+          filters[0].ids &&
+          filters[1]["#e"] &&
+          [...(filters[1].kinds ?? [])].sort().join() === "40003,5,9005"
+        ) {
+          const [byId, changes] = filters;
+          expect(byId.ids.length).toBeGreaterThan(0);
+          expect(byId.ids.length).toBeLessThanOrEqual(50);
+          expect(byId.limit).toBe(byId.ids.length);
+          expect(changes["#e"]).toEqual(byId.ids);
+          expect(changes.limit).toBe(500);
+          const community = communityOf(url);
+          for (const filter of filters)
+            report.queries.push({ community, filter, at: performance.now() });
+          return Response.json(
+            filters.flatMap((filter) => answer(community, filter)),
+          );
+        }
         if (filters.length !== 1) {
           const legacySortAndFilter =
             filters.length === 2 &&

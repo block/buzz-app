@@ -4,15 +4,25 @@ import {
   useChannelIdentityNames,
   useIdentityNames,
 } from "../identity-names/react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import { threadFailure, type ThreadView } from "../relay/threads";
-import type { ChannelReference } from "../relay/contracts";
+import type { ChannelMessage, ChannelReference } from "../relay/contracts";
 import {
   LightningIcon,
   LockIcon,
 } from "../../shared/design-system/icons/index";
-import { channelIcon } from "../channels/channel-icon";
+import { channelIcon, channelText } from "../channels/channel-icon";
+import {
+  MessageCardBody,
+  MessageCardByline,
+  messageCardTime,
+} from "../messages/MessageCard";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
@@ -33,6 +43,21 @@ export const previewFailures = {
 type FoundChannel = Extract<ChannelReference, { state: "found" }>;
 const loading = <span role="status">Loading message…</span>;
 
+/** How a card below a message shows its linked message, in place of the
+ * hover card's excerpt. */
+export type InlineMessageCard = Readonly<{
+  /** The message as its conversation renders it, or nothing when it has no
+   * text to show. */
+  body(message: ChannelMessage): ReactNode;
+  /** A link that opens the linked message, around `children`. */
+  link(children: ReactNode): ReactNode;
+  /** The message as last read, shown while a fresh read is on the way. */
+  cached?: ChannelMessage | undefined;
+  /** Keeps a read's message for the next `cached`, or forgets it once a
+   * read finds it gone. */
+  remember?(message: ChannelMessage | undefined): void;
+}>;
+
 /** Mounted only while a preview is open. The session owns access, edits and
  * deletion. Like a click, the card looks the channel up before trusting a
  * refused read: an unjoined public channel is readable once found, and one
@@ -41,10 +66,14 @@ export function BuzzLinkPreview({
   session,
   channelId,
   messageId,
+  inline,
 }: {
   session: RelaySession;
   channelId: string;
   messageId: string;
+  /** Shown without being asked for, as a card below a message: it reads
+   * behind opened conversations and renders the whole message. */
+  inline?: InlineMessageCard | undefined;
 }) {
   const reference = useChannelReference(session.channels, channelId);
   const listLoading = useSyncExternalStore(
@@ -56,6 +85,7 @@ export function BuzzLinkPreview({
   const withheld = reference.state === "withheld";
   // A channel becoming readable starts a fresh read, and a read from before
   // it is never shown; a withheld channel is never read.
+  const background = !!inline;
   const [read, setRead] = useState<{
     view: ThreadView | undefined;
     readable: boolean;
@@ -63,25 +93,44 @@ export function BuzzLinkPreview({
   useEffect(() => {
     if (withheld) return;
     try {
-      const owned = session.thread(channelId, messageId, { exact: true });
+      const owned = session.thread(channelId, messageId, {
+        exact: true,
+        ...(background && { priority: "background" as const }),
+      });
       setRead({ view: owned, readable });
       void owned.refresh();
       return () => owned.dispose();
     } catch {
       setRead({ view: undefined, readable });
     }
-  }, [session, channelId, messageId, readable, withheld]);
+  }, [session, channelId, messageId, readable, withheld, background]);
   const destination = namedChannel(reference);
-  if (withheld) return <PreviewFailure reason="withheld" />;
-  if (read?.readable !== readable) return loading;
+  if (withheld) return <PreviewFailure reason="withheld" inline={inline} />;
+  if (read?.readable !== readable)
+    return inline?.cached ? (
+      <LinkedMessage
+        message={inline.cached}
+        session={session}
+        inline={inline}
+      />
+    ) : (
+      loading
+    );
   if (!read.view)
-    return <PreviewFailure reason="unavailable" channel={destination} />;
+    return (
+      <PreviewFailure
+        reason="unavailable"
+        channel={destination}
+        inline={inline}
+      />
+    );
   return (
     <PreviewContent
       view={read.view}
       session={session}
       messageId={messageId}
       destination={destination}
+      inline={inline}
       // A lookup is on the way while one is queued or in flight, or while
       // discovery is still loading the list, which then either looks the
       // channel up or errors. Otherwise (the list errored, a failed lookup is
@@ -101,6 +150,7 @@ function PreviewContent({
   messageId,
   destination,
   looking,
+  inline,
 }: {
   view: ThreadView;
   session: RelaySession;
@@ -108,6 +158,7 @@ function PreviewContent({
   destination: FoundChannel | undefined;
   /** A channel lookup is on the way, so a refused read may yet succeed. */
   looking: boolean;
+  inline: InlineMessageCard | undefined;
 }) {
   const snapshot = useSyncExternalStore(
     view.subscribe,
@@ -115,7 +166,54 @@ function PreviewContent({
     view.snapshot,
   );
   const { message, ready, stopped } = linkedMessage(snapshot, messageId);
-  const resolveName = useChannelIdentityNames(session, message?.channelId);
+  const shown = ready ? message : undefined;
+  const remember = inline?.remember;
+  const gone = !shown && stopped && !looking;
+  useEffect(() => {
+    if (shown || gone) remember?.(shown);
+  }, [shown, gone, remember]);
+  if (!shown) {
+    if (!stopped || looking)
+      return inline?.cached ? (
+        <LinkedMessage
+          message={inline.cached}
+          session={session}
+          inline={inline}
+        />
+      ) : (
+        loading
+      );
+    // The card stops at any failed read, as navigation does at a failed root.
+    const reason =
+      threadFailure(snapshot, true) ??
+      (snapshot.status === "ready" ? "not-found" : "unavailable");
+    return (
+      <PreviewFailure reason={reason} channel={destination} inline={inline} />
+    );
+  }
+  return (
+    <LinkedMessage
+      message={shown}
+      session={session}
+      destination={destination}
+      inline={inline}
+    />
+  );
+}
+
+/** The linked message under its author, time and channel. */
+export function LinkedMessage({
+  message,
+  session,
+  destination,
+  inline,
+}: {
+  message: ChannelMessage;
+  session: RelaySession;
+  destination?: FoundChannel | undefined;
+  inline: InlineMessageCard | undefined;
+}) {
+  const resolveName = useChannelIdentityNames(session, message.channelId);
   const identityName = useIdentityNames(session.names);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -127,21 +225,12 @@ function PreviewContent({
     session.channels.list,
     session.channels.list,
   );
-  const authorId = message?.workflowOwnerId ?? message?.authorId;
+  const authorId = message.workflowOwnerId ?? message.authorId;
   const profileGeneration = useProfileGeneration(session.profiles);
   useEffect(() => {
     void profileGeneration;
-    if (authorId)
-      void session.profiles.ensure([authorId], "background").catch(() => {});
+    void session.profiles.ensure([authorId], "background").catch(() => {});
   }, [session, authorId, profileGeneration]);
-  if (!ready || !message) {
-    if (!stopped || looking) return loading;
-    // The card stops at any failed read, as navigation does at a failed root.
-    const reason =
-      threadFailure(snapshot, true) ??
-      (snapshot.status === "ready" ? "not-found" : "unavailable");
-    return <PreviewFailure reason={reason} channel={destination} />;
-  }
   const displayId = message.workflowOwnerId ?? message.authorId;
   const profile = profiles.get(displayId);
   const resolved = resolveName(
@@ -149,9 +238,27 @@ function PreviewContent({
     profile?.name ?? displayId.slice(0, 10),
   );
   const name = message.workflowOwnerId ? workflowLabel(resolved) : resolved;
+  const body = inline?.body(message);
   const date = new Date(message.createdAt * 1000);
   if (!Number.isFinite(date.getTime()))
-    return <PreviewFailure reason="unavailable" channel={destination} />;
+    return (
+      <PreviewFailure
+        reason="unavailable"
+        channel={destination}
+        inline={inline}
+      />
+    );
+  const time = (
+    <time
+      dateTime={date.toISOString()}
+      title={date.toLocaleString(undefined, {
+        dateStyle: "full",
+        timeStyle: "short",
+      })}
+    >
+      {relativeTimestamp(message.createdAt)}
+    </time>
+  );
   // An unjoined channel is never listed; its lookup names it.
   const channel =
     channels.channels.find((item) => item.id === message.channelId) ??
@@ -172,6 +279,60 @@ function PreviewContent({
     channel?.hidden || channel?.channelType === "dm"
       ? LockIcon
       : channelIcon(channel);
+  if (inline)
+    // As a forward shows its message, without the forward's label.
+    return (
+      <>
+        <MessageCardByline
+          avatar={
+            <Avatar
+              alt=""
+              fallback={name}
+              fallbackContent={
+                message.workflowOwnerId ? (
+                  <LightningIcon size={14} />
+                ) : undefined
+              }
+              size="small"
+              shape={
+                message.workflowOwnerId || profile?.isAgent
+                  ? "squircle"
+                  : "circle"
+              }
+              src={
+                message.workflowOwnerId
+                  ? null
+                  : avatarMedia(profile?.picture, session.media)
+              }
+            />
+          }
+          author={name}
+          agent={!message.workflowOwnerId && !!profile?.isAgent}
+          time={inline.link(
+            <time dateTime={date.toISOString()}>{messageCardTime(date)}</time>,
+          )}
+          source={
+            channel?.channelType === "dm" || !channel
+              ? channelName
+              : channelText(channel)
+          }
+          locked={
+            !!channel &&
+            (!!channel.hidden ||
+              !!channel.private ||
+              channel.channelType === "dm" ||
+              channel.channelType === "solo")
+          }
+        />
+        {body ? (
+          <MessageCardBody>{body}</MessageCardBody>
+        ) : (
+          <span className="text-body-sm text-subtle">
+            {message.attachments.length ? "Attachment" : "Empty message"}
+          </span>
+        )}
+      </>
+    );
   return (
     <>
       <span className={styles.byline}>
@@ -191,15 +352,7 @@ function PreviewContent({
         <span className={styles.metadata}>
           <span className={styles.author}>
             <strong>{name}</strong>
-            <time
-              dateTime={date.toISOString()}
-              title={date.toLocaleString(undefined, {
-                dateStyle: "full",
-                timeStyle: "short",
-              })}
-            >
-              {relativeTimestamp(message.createdAt)}
-            </time>
+            {time}
           </span>
           <span className={styles.channel}>
             {channel && <ChannelIcon aria-hidden="true" size={13} />}
@@ -220,16 +373,19 @@ function PreviewContent({
 function PreviewFailure({
   reason,
   channel,
+  inline,
 }: {
   reason: keyof typeof previewFailures;
   channel?: FoundChannel | undefined;
+  inline?: InlineMessageCard | undefined;
 }) {
+  const hint = <span className={styles.hint}>Open link</span>;
   return (
     <>
       {channel && <ChannelByline channel={channel} />}
       <span role="status">{previewFailures[reason]}</span>
       {/* A withheld destination's card explains why; it opens nothing. */}
-      {reason !== "withheld" && <span className={styles.hint}>Open link</span>}
+      {reason !== "withheld" && (inline ? inline.link(hint) : hint)}
     </>
   );
 }

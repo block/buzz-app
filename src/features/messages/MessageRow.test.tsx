@@ -5438,6 +5438,42 @@ it.each(["public", "agents"] as const)(
   },
 );
 
+it.each([false, true])(
+  "shows a card below a message for a Buzz message link, never for an agent envelope: %s",
+  (agentEnvelope) => {
+    const linked = `buzz://message?channel=channel&id=${"c".repeat(64)}`;
+    const session = {
+      ...styleSession("viewer"),
+      thread: () => {
+        throw new Error("Relay view capacity unavailable");
+      },
+    } as unknown as RelaySession;
+    try {
+      const { container } = renderDom(
+        <MessageRow
+          row={{
+            ...row,
+            replyCount: 0,
+            content: `See ${linked}`,
+            ...(agentEnvelope ? { agentEnvelope: true as const } : {}),
+          }}
+          session={session}
+          profile={undefined}
+          media={() => undefined}
+          onOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      const cards = container.querySelector("[data-message-link-cards]");
+      if (agentEnvelope) expect(cards).toBeNull();
+      else expect(cards).toHaveTextContent("Couldn’t load this preview.");
+    } finally {
+      cleanup();
+    }
+  },
+);
+
 it.each([true, false])(
   "renders one timestamp for a timed forward with seeking=%s",
   (canSeek) => {

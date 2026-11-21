@@ -465,6 +465,15 @@ Quitting Buzz also turns it off.
   without sharable attachment metadata (including custom emoji), show an
   explanation before sending. Forward and Copy as forward are disabled; **Copy link** is available
   in the dialog. A link still requires access to the original conversation.
+- A link to a Buzz message shows that message as a card below the bubble,
+  framed as a forward is but without its label: its author, time and channel
+  over the message, formatted as in its conversation with working links and
+  custom emoji, or why it can't be shown. A long message collapses behind
+  **Show full message**, and spoilers stay hidden until revealed. Clicking the
+  card or its time opens the message. After three cards, the rest
+  fold behind **Show more linked messages**. Write the link as
+  `<buzz://message?…>` to leave out its card. A quote's “From” link shows no
+  card, since the quote is already there.
 - Select text in a message, such as by double-clicking a word, then right-click
   the highlight and choose **Quote highlight** (or press Q) to add it to that
   conversation's draft as a quote, ready for your reply below it. Published

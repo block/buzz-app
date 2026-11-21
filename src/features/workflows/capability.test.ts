@@ -5,7 +5,8 @@ import {
   PublishRejected,
   type OutgoingEvent,
 } from "../relay/outbox";
-import { keypair, signed, flush } from "../relay/testing";
+import { keypair, signed, flush, scriptedTransport } from "../relay/testing";
+import { createRelayReader } from "../relay/reader";
 import type { RelayEvent } from "../relay/events";
 import { eventDto } from "../relay/events";
 import {
@@ -1002,4 +1003,348 @@ it("batch definitions use one bounded filter and count unique events before coor
   h.read.mockResolvedValue([{ ...first, tags: [...first.tags, ["h", other]] }]);
   await view.refresh();
   expect(view.snapshot().status).toBe("error");
+});
+
+/** A capability whose channel access the test decides, for `locate`. */
+function locating(
+  canAccess: (channel: string) => boolean = () => true,
+  author = keypair(),
+) {
+  const read = vi.fn(
+    async (_filters: unknown, _options?: { signal?: AbortSignal }) =>
+      [] as RelayEvent[],
+  );
+  const workflows = createWorkflows({
+    viewer: keypair().pubkey,
+    reader: { read },
+    outbox: undefined,
+    local: undefined,
+    host: undefined,
+    canAccess,
+  });
+  disposers.push(workflows.dispose);
+  const row = (channel = channelId, created_at = 1, key = author, d = id) =>
+    signed(key, {
+      kind: 30620,
+      created_at,
+      content: yaml,
+      tags: [
+        ["h", channel],
+        ["d", d],
+      ],
+    });
+  const coordinate = { owner: author.pubkey, id };
+  return { ...workflows, read, row, coordinate };
+}
+
+it("locates a workflow named without its channel with one single-event read, only on request", async () => {
+  const h = locating();
+  const row = h.row();
+  h.read.mockResolvedValue([row]);
+  const view = h.capability.locate(h.coordinate);
+  // Creating the lookup reads nothing and grants nothing.
+  expect(view.snapshot()).toEqual({ status: "idle", data: undefined });
+  await flush();
+  expect(h.read).not.toHaveBeenCalled();
+  await view.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  expect(h.read).toHaveBeenLastCalledWith(
+    [{ kinds: [30620], authors: [h.coordinate.owner], "#d": [id], limit: 1 }],
+    { signal: expect.any(AbortSignal) },
+  );
+  expect(view.snapshot()).toEqual({
+    status: "ready",
+    data: {
+      id,
+      owner: h.coordinate.owner,
+      channelId,
+      revision: row.id,
+      createdAt: 1,
+      yaml,
+    },
+  });
+  for (const bad of [
+    { owner: "npub1owner", id },
+    { owner: h.coordinate.owner.toUpperCase(), id },
+    { owner: h.coordinate.owner, id: "workflow" },
+    { owner: h.coordinate.owner, id: id.toUpperCase().replace("1", "A") },
+  ])
+    expect(() => h.capability.locate(bad)).toThrow(
+      "Invalid workflow coordinate",
+    );
+  expect(h.read).toHaveBeenCalledTimes(1);
+});
+
+it("locates nothing in a channel the viewer cannot access, or once the workflow is gone", async () => {
+  const other = "44444444-4444-4444-8444-444444444444";
+  // The definition exists, but in a channel this session cannot read.
+  const outside = locating((channel) => channel !== channelId);
+  outside.read.mockResolvedValue([outside.row()]);
+  const hidden = outside.capability.locate(outside.coordinate);
+  await hidden.refresh({ ifStale: true });
+  expect(hidden.snapshot()).toEqual({ status: "ready", data: undefined });
+
+  // Deleted, or never readable: the relay returns nothing.
+  const h = locating();
+  const deleted = h.capability.locate(h.coordinate);
+  await deleted.refresh({ ifStale: true });
+  expect(deleted.snapshot()).toEqual({ status: "ready", data: undefined });
+  deleted.dispose();
+
+  // A reply naming another owner, ID or a second home channel names nothing.
+  for (const rows of [
+    [h.row(channelId, 1, keypair())],
+    [h.row(channelId, 1, undefined, "55555555-5555-4555-8555-555555555555")],
+    [h.row(channelId, 1), h.row(other, 2)],
+  ]) {
+    h.read.mockResolvedValueOnce(rows);
+    const view = h.capability.locate(h.coordinate);
+    await view.refresh();
+    expect(view.snapshot()).toEqual({ status: "ready", data: undefined });
+    view.dispose();
+  }
+});
+
+it("a pending or failed lookup is no evidence; closing the lookup cancels its read", async () => {
+  const h = locating();
+  let respond!: (events: RelayEvent[]) => void;
+  let signal: AbortSignal | undefined;
+  h.read.mockImplementationOnce((_filters, options) => {
+    signal = options?.signal;
+    return new Promise<RelayEvent[]>((resolve) => {
+      respond = resolve;
+    });
+  });
+  const view = h.capability.locate(h.coordinate);
+  const changed = vi.fn();
+  view.subscribe(changed);
+  const reading = view.refresh({ ifStale: true });
+  // A second request while reading joins the same read.
+  void view.refresh({ ifStale: true });
+  await flush();
+  expect(h.read).toHaveBeenCalledTimes(1);
+  expect(view.snapshot()).toEqual({ status: "loading", data: undefined });
+  view.dispose();
+  expect(signal?.aborted).toBe(true);
+  respond([h.row()]);
+  await reading;
+  // The answer to a cancelled lookup is dropped, not retained.
+  expect(view.snapshot()).toEqual({ status: "unavailable", data: undefined });
+  const next = h.capability.locate(h.coordinate);
+  expect(next.snapshot()).toEqual({ status: "idle", data: undefined });
+
+  h.read.mockRejectedValueOnce(new Error("offline"));
+  await next.refresh({ ifStale: true });
+  expect(next.snapshot()).toMatchObject({ status: "error", data: undefined });
+  // A malformed definition is a failed lookup too.
+  h.read.mockResolvedValueOnce([
+    { ...h.row(), tags: [["d", id]] } as RelayEvent,
+  ]);
+  await next.refresh();
+  expect(next.snapshot()).toMatchObject({ status: "error", data: undefined });
+  // Nothing was retained from either failure.
+  expect(h.capability.locate(h.coordinate).snapshot().status).toBe("idle");
+});
+
+it("answers repeat lookups from what the session retains, without another read", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  let allowed = true;
+  const h = locating(() => allowed);
+  const row = h.row();
+  h.read.mockResolvedValue([row]);
+  const first = h.capability.locate(h.coordinate);
+  await first.refresh({ ifStale: true });
+  first.dispose();
+  expect(h.read).toHaveBeenCalledTimes(1);
+
+  vi.setSystemTime(9_999);
+  const again = h.capability.locate(h.coordinate);
+  expect(again.snapshot()).toMatchObject({
+    status: "ready",
+    data: { revision: row.id },
+  });
+  await again.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  again.dispose();
+  // Retained evidence is rechecked against current channel access.
+  allowed = false;
+  expect(h.capability.locate(h.coordinate).snapshot()).toEqual({
+    status: "ready",
+    data: undefined,
+  });
+  allowed = true;
+
+  // Past the freshness window the lookup starts unknown and reads once more.
+  vi.setSystemTime(10_000);
+  const stale = h.capability.locate(h.coordinate);
+  expect(stale.snapshot()).toEqual({ status: "idle", data: undefined });
+  h.read.mockResolvedValue([]);
+  await stale.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(2);
+  expect(stale.snapshot()).toEqual({ status: "ready", data: undefined });
+  stale.dispose();
+  // "Not readable" is retained too, so reopening does not ask again.
+  const absent = h.capability.locate(h.coordinate);
+  expect(absent.snapshot()).toEqual({ status: "ready", data: undefined });
+  await absent.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(2);
+  absent.dispose();
+
+  // A recovered connection or an access change retires what was retained.
+  h.capability.locate(h.coordinate).dispose();
+  h.interrupt();
+  expect(h.capability.locate(h.coordinate).snapshot().status).toBe("idle");
+});
+
+it("answers from a fresh landing batch, and hides an open answer on interruption or access loss", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(0);
+  const h = locating();
+  const row = h.row();
+  h.read.mockResolvedValue([row]);
+  const landing = h.capability.definitions([channelId]);
+  await landing.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  const view = h.capability.locate(h.coordinate);
+  expect(view.snapshot()).toMatchObject({
+    status: "ready",
+    data: { revision: row.id, channelId },
+  });
+  await view.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(1);
+  // A batch names only its own coordinates; others still need their read.
+  const unknown = h.capability.locate({
+    owner: h.coordinate.owner,
+    id: "55555555-5555-4555-8555-555555555555",
+  });
+  expect(unknown.snapshot()).toEqual({ status: "idle", data: undefined });
+  unknown.dispose();
+
+  const changed = vi.fn();
+  view.subscribe(changed);
+  h.interrupt();
+  expect(changed).toHaveBeenCalled();
+  expect(view.snapshot().status).toBe("error");
+  // Recovery reads nothing by itself.
+  await vi.advanceTimersByTimeAsync(0);
+  expect(h.read).toHaveBeenCalledTimes(1);
+  await view.refresh({ ifStale: true });
+  expect(h.read).toHaveBeenCalledTimes(2);
+  expect(view.snapshot()).toMatchObject({ status: "ready", data: {} });
+  h.clear();
+  expect(view.snapshot()).toEqual({ status: "idle", data: undefined });
+});
+
+it("equal concurrent lookups share one relay read through the session reader", async () => {
+  const author = keypair();
+  const scripted = scriptedTransport("viewer", "relay");
+  const owner = createRelayReader(scripted.transport);
+  const workflows = createWorkflows({
+    viewer: keypair().pubkey,
+    reader: owner.reader,
+    outbox: undefined,
+    local: undefined,
+    host: undefined,
+    canAccess: () => true,
+  });
+  disposers.push(() => {
+    workflows.dispose();
+    owner.dispose();
+  });
+  const coordinate = { owner: author.pubkey, id };
+  const views = Array.from({ length: 5 }, () =>
+    workflows.capability.locate(coordinate),
+  );
+  const reads = views.map((view) => view.refresh({ ifStale: true }));
+  await flush();
+  expect(scripted.pending).toHaveLength(1);
+  expect(scripted.pending[0]?.filters).toEqual([
+    { kinds: [30620], authors: [author.pubkey], "#d": [id], limit: 1 },
+  ]);
+  // One reader closing its card leaves the shared read to the others.
+  views[0]?.dispose();
+  expect(scripted.pending[0]?.signal?.aborted).toBe(false);
+  scripted.next().respond([
+    signed(author, {
+      kind: 30620,
+      created_at: 1,
+      content: yaml,
+      tags: [
+        ["h", channelId],
+        ["d", id],
+      ],
+    }),
+  ]);
+  await Promise.all(reads);
+  expect(scripted.pending).toHaveLength(0);
+  expect(views[0]?.snapshot().status).toBe("unavailable");
+  for (const view of views.slice(1))
+    expect(view.snapshot()).toMatchObject({
+      status: "ready",
+      data: { id, channelId },
+    });
+  // Later cards in the freshness window need no read at all.
+  const later = workflows.capability.locate(coordinate);
+  expect(later.snapshot().status).toBe("ready");
+  await later.refresh({ ifStale: true });
+  expect(scripted.pending).toHaveLength(0);
+});
+
+it("retires the open lookups of a workflow when its deletion is receipted", async () => {
+  const key = keypair();
+  const h = setup(undefined, key);
+  const coordinate = { owner: key.pubkey, id };
+  const row = signed(key, {
+    kind: 30620,
+    created_at: 1,
+    content: yaml,
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
+  });
+  h.capability.delete(h.definition);
+  await flush();
+  // Back at the message before the receipt, the relay still has the workflow.
+  h.read.mockResolvedValueOnce([row]);
+  const shown = h.capability.locate(coordinate);
+  const changed = vi.fn();
+  shown.subscribe(changed);
+  await shown.refresh({ ifStale: true });
+  expect(shown.snapshot()).toMatchObject({ status: "ready", data: { id } });
+  // Another lookup's read is still in flight when the receipt arrives.
+  let respond!: (events: RelayEvent[]) => void;
+  h.read.mockImplementationOnce(
+    () =>
+      new Promise<RelayEvent[]>((resolve) => {
+        respond = resolve;
+      }),
+  );
+  const reading = h.capability.locate(coordinate);
+  const pending = reading.refresh();
+  // A lookup of another workflow is not this deletion's to retire.
+  const other = h.capability.locate({
+    owner: key.pubkey,
+    id: "44444444-4444-4444-8444-444444444444",
+  });
+  await other.refresh();
+  await flush();
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(reading.snapshot().status).toBe("loading");
+  changed.mockClear();
+
+  h.settle("");
+  await flush();
+  expect(shown.snapshot()).toEqual({ status: "idle", data: undefined });
+  expect(changed).toHaveBeenCalled();
+  // The read begun before the receipt cannot answer after it.
+  respond([row]);
+  await pending;
+  await flush();
+  expect(reading.snapshot()).toEqual({ status: "idle", data: undefined });
+  expect(other.snapshot()).toEqual({ status: "ready", data: undefined });
+  // Retiring reads nothing; a later lookup reads once more.
+  expect(h.read).toHaveBeenCalledTimes(3);
+  expect(h.capability.locate(coordinate).snapshot().status).toBe("idle");
 });

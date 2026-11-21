@@ -95,6 +95,13 @@ export interface WorkflowCapability {
   definitions(
     channelId: string | readonly string[],
   ): WorkflowView<WorkflowDefinitions>;
+  /** Read-access evidence for a workflow named without its channel: data only
+   * once its definition is retained, or read, from a channel this session can
+   * access. A fresh retained answer needs no relay read; otherwise a refresh
+   * is one single-event read that equal concurrent lookups share. */
+  locate(
+    workflow: Pick<WorkflowReference, "owner" | "id">,
+  ): WorkflowView<WorkflowDefinition | undefined>;
   runs(
     workflow: WorkflowReference,
     cursor?: WorkflowRunCursor,

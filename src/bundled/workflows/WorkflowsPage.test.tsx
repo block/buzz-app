@@ -21,8 +21,23 @@ import type { RelayEvent } from "../../features/relay/events";
 import { createAgentLibrary } from "../../features/agents/library";
 import { bindNames } from "../../features/identity-names/service";
 import { agentDirectory } from "../../features/identity-names/testing";
-import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import {
+  ToastNotice,
+  ToastProvider,
+} from "../../shared/design-system/ui/Toast";
 import { WorkflowCommunity } from "./WorkflowsPage";
+import { apply } from "./index";
+import { useSyncExternalStore } from "react";
+import { workflowLink } from "../../features/workflows/route";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import { linkedPageTarget } from "../../features/pages/plugin-link";
+import { createNavigationController } from "../../features/navigation/controller";
+import { createMemoryHistory } from "../../features/navigation/history";
+import type { PageNavigation } from "../../features/navigation/service";
+import type { OpenTarget } from "../../features/navigation/targets";
+import type { Page, RegisteredPage } from "../../features/pages/service";
+import type { RelayData } from "../../features/relay/service";
+import type { WorkflowDefinition } from "../../features/workflows/types";
 import {
   createWorkflowFixture,
   fixtureChannel,
@@ -34,6 +49,7 @@ vi.stubGlobal(
   "ResizeObserver",
   class {
     observe() {}
+    unobserve() {}
     disconnect() {}
   },
 );
@@ -1801,4 +1817,1028 @@ it("keeps an open editor and its draft when its channel is archived, and blocks 
     within(editor).getByRole("button", { name: "Run now" }),
   ).toHaveAttribute("aria-disabled", "true");
   expect(fixture.calls.save).toBe(0);
+});
+
+const community = {
+  viewer: fixtureViewer,
+  communityOrigin: "https://relay.test",
+};
+const messageVisit: OpenTarget = {
+  version: 1,
+  kind: "conversation",
+  scope: community,
+  channelId: fixtureChannel,
+  messageId: "ee".repeat(32),
+};
+/** The workflow's channel, and one that holds no workflow. */
+const workflowChannel = { id: fixtureChannel, name: "Fixture channel" };
+const emptyChannel = {
+  id: "77777777-7777-4777-8777-777777777777",
+  name: "Another channel",
+};
+/** The registered Workflows page under a miniature shell: a message's
+ * conversation visit, and the page for a page visit, kept mounted across
+ * visits to it as the shell keeps it. `open` follows a workflow link the way a
+ * message's View workflow does. */
+function linkedVisit(
+  items: readonly WorkflowDefinition[] = [fixtureDefinition],
+  sessionScope = `${community.communityOrigin}:${community.viewer}`,
+  channels: ChannelList = { status: "ready", channels: [workflowChannel] },
+) {
+  const fixture = createWorkflowFixture();
+  fixture.definitions.update({
+    status: "ready",
+    data: { partial: false, items },
+  });
+  let list = channels;
+  const listListeners = new Set<() => void>();
+  const session = {
+    scope: sessionScope,
+    profiles: createProfileDirectory({ read: async () => [] }).queries,
+    workflows: fixture.capability,
+    channels: {
+      list: () => list,
+      ensureList: () => {},
+      subscribeList: (listener: () => void) => {
+        listListeners.add(listener);
+        return () => listListeners.delete(listener);
+      },
+    },
+  } as unknown as RelaySession;
+  let connection = {
+    status: "ready",
+    scope: sessionScope,
+    generation: 1,
+    session,
+    viewer: fixtureViewer,
+  };
+  const connectionListeners = new Set<() => void>();
+  const relay = {
+    snapshot: () => connection,
+    subscribe: (listener: () => void) => {
+      connectionListeners.add(listener);
+      return () => connectionListeners.delete(listener);
+    },
+  } as unknown as RelayData;
+  const controller = createNavigationController(
+    createMemoryHistory(messageVisit),
+  );
+  const navigator = controller.navigation;
+  let page: Page | undefined;
+  let withdraw = () => {};
+  void apply({
+    relay,
+    navigation: navigator,
+    pages: { register: (next: Page) => (page = next) },
+    effect: (start: () => () => void) => {
+      withdraw = start();
+    },
+  } as unknown as Parameters<typeof apply>[0]);
+  if (!page) throw new Error("The Workflows page did not register");
+  const registered = {
+    ...page,
+    pluginId: "buzz.workflows",
+    key: "buzz.workflows/workflows",
+    revision: "test",
+  } as RegisteredPage;
+  const Component = page.component;
+  function Shell() {
+    const { entry, attempt } = useSyncExternalStore(
+      navigator.subscribe,
+      navigator.snapshot,
+    );
+    return entry.target.kind === "page" ? (
+      <Component
+        navigation={
+          {
+            entryId: entry.id,
+            target: entry.target,
+            signal: attempt.signal,
+          } as PageNavigation
+        }
+      />
+    ) : (
+      <p>The message in Fixture channel</p>
+    );
+  }
+  // A notice of the test's own, mounted after the page: see `settled`.
+  let mark = 0;
+  let marked = false;
+  const markListeners = new Set<() => void>();
+  function Mark() {
+    const count = useSyncExternalStore(
+      (listener) => {
+        markListeners.add(listener);
+        return () => markListeners.delete(listener);
+      },
+      () => (marked ? mark : 0),
+    );
+    return count ? (
+      <ToastNotice key={count} title={`Settled ${count}`} />
+    ) : null;
+  }
+  render(
+    <ToastProvider>
+      <Shell />
+      <Mark />
+    </ToastProvider>,
+  );
+  return {
+    fixture,
+    navigator,
+    registered,
+    dispose: () => {
+      withdraw();
+      controller.dispose();
+    },
+    /** The channel list as the session next publishes it. */
+    setChannels(next: ChannelList) {
+      act(() => {
+        list = next;
+        for (const listener of listListeners) listener();
+      });
+    },
+    /** The barrier for "nothing opened" and "no notice": the page's pending
+     * work has run, and every notice it asked for is on screen. A notice is
+     * drawn a task after it is requested, in request order, so this requests
+     * one after the page's and waits for it. Call it once the read under
+     * test is shown to have landed. */
+    async settled() {
+      act(() => {
+        mark++;
+        marked = true;
+        for (const listener of markListeners) listener();
+      });
+      return await screen.findByText(`Settled ${mark}`);
+    },
+    /** The barrier for "the notice is still shown": `settled`, and every
+     * notice withdrawn before this call has also left the document. A
+     * withdrawn notice stays drawn while it animates out, so an immediate
+     * check would still find it. Notices leave in the order they were
+     * withdrawn, so this withdraws its own and waits for that one to go. */
+    async retained() {
+      const own = (await this.settled()).closest("[data-sonner-toast]");
+      if (!own) throw new Error("The barrier's notice is not a toast");
+      act(() => {
+        marked = false;
+        for (const listener of markListeners) listener();
+      });
+      await waitFor(() => expect(own).not.toBeInTheDocument());
+    },
+    target(reference: Pick<WorkflowDefinition, "owner" | "id">) {
+      const link = buzzLinkTarget(workflowLink(reference), community);
+      if (link?.kind !== "plugin") throw new Error("Not a plugin page link");
+      // The shell accepts link text as route params only through the page.
+      return linkedPageTarget(link, registered);
+    },
+    open(reference: Pick<WorkflowDefinition, "owner" | "id">) {
+      act(() => void navigator.open(this.target(reference)));
+    },
+    /** Opens the page plainly and holds its next read in flight: the fixture
+     * answers a read at mount, so only a mounted page can be kept waiting. */
+    async openReading() {
+      const link = buzzLinkTarget(
+        "buzz://plugin?id=buzz.workflows&page=workflows",
+        community,
+      );
+      if (link?.kind !== "plugin") throw new Error("Not a plugin page link");
+      act(() => void navigator.open(linkedPageTarget(link, registered)));
+      await screen.findByRole("button", { name: "Refresh workflows" });
+      await waitFor(() =>
+        expect(screen.queryByText("Reading workflows…")).toBeNull(),
+      );
+      act(() =>
+        fixture.definitions.update({
+          status: "loading",
+          data: { partial: false, items },
+        }),
+      );
+      expect(await screen.findByText("Reading workflows…")).toBeVisible();
+    },
+    /** The same community on a new connection, which remounts its content. */
+    reconnect() {
+      act(() => {
+        connection = { ...connection, generation: connection.generation + 1 };
+        for (const listener of connectionListeners) listener();
+      });
+    },
+  };
+}
+const detailShown = () =>
+  screen.queryByRole("region", { name: "Workflow details" });
+const notFound = "Couldn’t find this workflow. It may have been deleted.";
+/** The landing has read every channel it lists and none holds a workflow. */
+const nothingListed = () =>
+  screen.findByText("Automations that keep your community moving.");
+
+it("opens at the workflow a message links to, and Back returns to the message", async () => {
+  // Another member's workflow: the default My workflows filter would hide it.
+  const theirs = { ...fixtureDefinition, owner: "22".repeat(32) };
+  const visit = linkedVisit([theirs]);
+  const user = userEvent.setup();
+  try {
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+    visit.open(theirs);
+    expect(visit.navigator.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.workflows",
+      pageId: "workflows",
+      scope: community,
+      route: { version: 1, params: { owner: theirs.owner, id: theirs.id } },
+    });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText(/Couldn’t find this workflow/)).toBeNull();
+
+    // Passive traversal keeps the visit: Back is the message, Forward the workflow.
+    act(() => visit.navigator.back());
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+    expect(visit.navigator.snapshot().entry.target).toEqual(messageVisit);
+    act(() => visit.navigator.forward());
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+
+    // Closing the detail ends that visit without leaving the page.
+    await user.click(
+      detailPane().getByRole("button", { name: "Close Message helper tab" }),
+    );
+    expect(detailShown()).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(visit.navigator.snapshot().entry.target).toEqual({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.workflows",
+      pageId: "workflows",
+      scope: community,
+    });
+    act(() => visit.navigator.back());
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+    expect(visit.navigator.snapshot().canGoBack).toBe(false);
+    // Forward returns to the page with the detail still closed.
+    act(() => visit.navigator.forward());
+    expect(
+      await screen.findByRole("button", { name: "Refresh workflows" }),
+    ).toBeVisible();
+    expect(detailShown()).toBeNull();
+    expect(visit.navigator.snapshot().canGoForward).toBe(false);
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("selects a linked workflow once: choosing another and closing stay the reader's", async () => {
+  const other = {
+    ...fixtureDefinition,
+    id: "66666666-6666-4666-8666-666666666666",
+    revision: "bb".repeat(32),
+    yaml: fixtureYaml.replace("Message helper", "Other helper"),
+  };
+  const visit = linkedVisit([fixtureDefinition, other]);
+  const user = userEvent.setup();
+  try {
+    visit.open(other);
+    expect(
+      await detailPane().findByRole("tab", { name: "Other helper" }),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    );
+    expect(
+      detailPane().getByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    // A later read of the same definitions does not pull the reader back.
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "ready",
+        data: { partial: false, items: [fixtureDefinition, { ...other }] },
+      }),
+    );
+    expect(
+      detailPane().getByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    expect(
+      detailPane().queryByRole("tab", { name: "Other helper" }),
+    ).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+// Another member's workflow: opening it would also clear My workflows.
+const theirs = {
+  ...fixtureDefinition,
+  id: "66666666-6666-4666-8666-666666666666",
+  owner: "22".repeat(32),
+  revision: "bb".repeat(32),
+  yaml: fixtureYaml.replace("Message helper", "Other helper"),
+};
+/** The held read lands, with the linked workflow in it. */
+function landTheirs(visit: ReturnType<typeof linkedVisit>) {
+  act(() =>
+    visit.fixture.definitions.update({
+      status: "ready",
+      data: { partial: false, items: [fixtureDefinition, theirs] },
+    }),
+  );
+  return waitFor(() =>
+    expect(screen.queryByText("Reading workflows…")).toBeNull(),
+  );
+}
+
+it("keeps the workflow the reader chose while the linked workflow was still being read", async () => {
+  const visit = linkedVisit();
+  const user = userEvent.setup();
+  try {
+    await visit.openReading();
+    visit.open(theirs);
+    expect(detailShown()).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    );
+    expect(
+      detailPane().getByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await landTheirs(visit);
+    expect(
+      detailPane().getByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    expect(
+      detailPane().queryByRole("tab", { name: "Other helper" }),
+    ).toBeNull();
+    // My workflows still hides the linked workflow.
+    expect(
+      screen.getByRole("button", { name: "Owner: My workflows" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /^Open Other helper:/ }),
+    ).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("keeps the filters the reader set while the linked workflow was still being read", async () => {
+  const visit = linkedVisit();
+  const user = userEvent.setup();
+  try {
+    await visit.openReading();
+    visit.open(theirs);
+    await user.click(screen.getByRole("button", { name: "Status" }));
+    await user.click(screen.getByRole("radio", { name: "Disabled" }));
+    await user.keyboard("{Escape}");
+    await landTheirs(visit);
+    expect(detailShown()).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Status: Disabled" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Owner: My workflows" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.queryByRole("button", { name: /^Open Other helper:/ }),
+    ).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not open a linked workflow again when a reconnect remounts the page within the visit", async () => {
+  const other = { ...theirs, owner: fixtureViewer };
+  const visit = linkedVisit([fixtureDefinition, other]);
+  try {
+    visit.open(other);
+    expect(
+      await detailPane().findByRole("tab", { name: "Other helper" }),
+    ).toBeVisible();
+    // The reader chooses nothing here: only the workflow opening can have
+    // answered the visit.
+    const read = visit.fixture.definitions.created();
+    visit.reconnect();
+    // The content was rebuilt, not kept: the new connection reads the
+    // definitions again. The workflow is there to open, but this visit
+    // already opened it.
+    expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
+    const row = await screen.findByRole("button", {
+      name: /^Open Other helper:/,
+    });
+    await visit.settled();
+    expect(row).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByText("Reading workflows…")).toBeNull();
+    expect(detailShown()).toBeNull();
+    // The visit keeps its address: Back is still the message, and returning
+    // to a page that was closed meanwhile opens the workflow again.
+    expect(visit.navigator.snapshot().entry.target).toMatchObject({
+      route: { params: { owner: other.owner, id: other.id } },
+    });
+    act(() => visit.navigator.back());
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+    act(() => visit.navigator.forward());
+    expect(
+      await detailPane().findByRole("tab", { name: "Other helper" }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("keeps a linked workflow waiting through a held and a failed read, then opens it", async () => {
+  const visit = linkedVisit([]);
+  try {
+    await visit.openReading();
+    visit.open(fixtureDefinition);
+    // A read in flight is not evidence either way.
+    expect(detailShown()).toBeNull();
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "error",
+        data: { partial: false, items: [] },
+        error: "Couldn't read workflow data. Try again.",
+      }),
+    );
+    expect(await screen.findByText(/Workflow discovery paused/)).toBeVisible();
+    expect(detailShown()).toBeNull();
+    // Neither answered the visit: had one reported the workflow missing,
+    // nothing would open it now.
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "ready",
+        data: { partial: false, items: [fixtureDefinition] },
+      }),
+    );
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("says a linked workflow was not found once every channel is read, without opening anything", async () => {
+  const visit = linkedVisit([]);
+  try {
+    visit.open(fixtureDefinition);
+    // Deleted, or in a channel this page does not read: it names nothing and
+    // does not claim to know which.
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText("Message helper")).toBeNull();
+    // The visit stays, so Back still returns to the message.
+    act(() => visit.navigator.back());
+    expect(screen.getByText("The message in Fixture channel")).toBeVisible();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not report a linked workflow missing again when a reconnect remounts the page within the visit", async () => {
+  const visit = linkedVisit([]);
+  try {
+    visit.open(fixtureDefinition);
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
+    const read = visit.fixture.definitions.created();
+    visit.reconnect();
+    // The new connection reads again and still finds nothing, but this visit
+    // was already told: the page keeps the notice it has.
+    expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
+    await nothingListed();
+    // The same notice, neither withdrawn nor raised again: a withdrawn one
+    // has left the document by the barrier, and a second one is drawn.
+    await visit.retained();
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
+    expect(detailShown()).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("opens the linked workflow when a reconnect has reset the filter the reader set while it was being read", async () => {
+  const visit = linkedVisit();
+  const user = userEvent.setup();
+  try {
+    await visit.openReading();
+    visit.open(theirs);
+    await user.click(screen.getByRole("button", { name: "Status" }));
+    await user.click(screen.getByRole("radio", { name: "Disabled" }));
+    await user.keyboard("{Escape}");
+    expect(
+      screen.getByRole("button", { name: "Status: Disabled" }),
+    ).toBeVisible();
+    visit.reconnect();
+    // The next connection's read carries the linked workflow.
+    act(() =>
+      visit.fixture.definitions.update({
+        status: "ready",
+        data: { partial: false, items: [fixtureDefinition, theirs] },
+      }),
+    );
+    // The reconnect returned the page to its defaults. The filter that
+    // answered the visit is gone, so the answer is too.
+    expect(
+      await detailPane().findByRole("tab", { name: "Other helper" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Status" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /^Open Other helper:/ }),
+    ).toHaveAttribute("aria-pressed", "true");
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it.each<[string, ChannelList]>([
+  ["is still loading", { status: "loading", channels: [emptyChannel] }],
+  [
+    "has the workflow's channel waiting on its metadata",
+    {
+      status: "ready",
+      channels: [emptyChannel, { ...workflowChannel, metadataPending: true }],
+    },
+  ],
+  [
+    "has the workflow's channel from the saved list, not yet confirmed by the roster",
+    {
+      status: "ready",
+      channels: [emptyChannel, { ...workflowChannel, cached: true }],
+    },
+  ],
+])(
+  "keeps a linked workflow waiting while the channel list %s, and opens it once its channel is listed",
+  async (_state, growing) => {
+    const visit = linkedVisit([fixtureDefinition], undefined, growing);
+    try {
+      visit.open(fixtureDefinition);
+      // Every channel listed so far is read and the workflow is in none, but
+      // the list can still grow: that is not yet "not found".
+      await nothingListed();
+      await visit.settled();
+      expect(screen.queryByText(notFound)).toBeNull();
+      expect(detailShown()).toBeNull();
+      visit.setChannels({
+        status: "ready",
+        channels: [emptyChannel, workflowChannel],
+      });
+      expect(
+        await detailPane().findByRole("tab", { name: "Message helper" }),
+      ).toBeVisible();
+      await visit.settled();
+      expect(screen.queryByText(notFound)).toBeNull();
+    } finally {
+      cleanup();
+      visit.dispose();
+    }
+  },
+);
+
+it("says a linked workflow was not found once a loading channel list settles without its channel", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, {
+    status: "loading",
+    channels: [emptyChannel],
+  });
+  try {
+    visit.open(fixtureDefinition);
+    await nothingListed();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    visit.setChannels({ status: "ready", channels: [emptyChannel] });
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(detailShown()).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("still opens a linked workflow reported missing from a partial channel list, when a later page of the roster lists its channel", async () => {
+  // A roster longer than one page is published as read, and partial, before
+  // its next page arrives. The first page's definitions are read by then.
+  const visit = linkedVisit([fixtureDefinition], undefined, {
+    status: "ready",
+    coverage: "partial",
+    channels: [emptyChannel],
+  });
+  try {
+    visit.open(fixtureDefinition);
+    // A partial list may never be completed, so the reader is told now.
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    expect(detailShown()).toBeNull();
+    // The delayed second page: the visit was not spent on that notice.
+    visit.setChannels({
+      status: "ready",
+      channels: [emptyChannel, workflowChannel],
+    });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("reports a linked workflow missing once when a partial channel list completes without its channel", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, {
+    status: "ready",
+    coverage: "partial",
+    channels: [emptyChannel],
+  });
+  try {
+    visit.open(fixtureDefinition);
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
+    // The list completes without the channel: that answers the visit, and
+    // the reader is not told a second time.
+    visit.setChannels({ status: "ready", channels: [emptyChannel] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.retained();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+    // Answered for good: a reconnect lists the channel, and nothing opens.
+    visit.reconnect();
+    visit.setChannels({
+      status: "ready",
+      channels: [emptyChannel, workflowChannel],
+    });
+    // A new row fades in, so its visibility is waited for.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
+    await visit.retained();
+    expect(detailShown()).toBeNull();
+    // The reconnect neither withdrew the visit's notice nor raised another.
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("says a linked workflow was not found once the channel list settles with no channel for this page", async () => {
+  // The landing that reports a missing workflow never mounts without a channel.
+  const visit = linkedVisit([fixtureDefinition], undefined, {
+    status: "loading",
+    channels: [],
+  });
+  try {
+    visit.open(fixtureDefinition);
+    expect(screen.getByRole("status")).toHaveTextContent("Reading channels…");
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    visit.setChannels({ status: "ready", channels: [] });
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(
+      screen.getByText("No channels are available in this community."),
+    ).toBeVisible();
+    // Answered for good: a channel listed afterwards opens nothing.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    // A new row fades in, so its visibility is waited for.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
+    await visit.retained();
+    expect(detailShown()).toBeNull();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+/** A roster's first page that lists no channel for this page. */
+const partialEmpty: ChannelList = {
+  status: "ready",
+  coverage: "partial",
+  channels: [],
+};
+
+it("opens a linked workflow reported missing from a partial channel list with no channel for this page, and withdraws that notice, when a later page lists its channel", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    // The page's own notice: no landing is mounted to give one.
+    expect(await screen.findByText(notFound)).toBeVisible();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    expect(detailShown()).toBeNull();
+    // A later page with another channel only: the notice stays.
+    visit.setChannels({
+      status: "ready",
+      coverage: "partial",
+      channels: [emptyChannel],
+    });
+    await nothingListed();
+    await visit.retained();
+    expect(screen.getByText(notFound)).toBeVisible();
+    // The page that lists its channel: the visit was not spent on that notice.
+    visit.setChannels({
+      status: "ready",
+      channels: [emptyChannel, workflowChannel],
+    });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("withdraws the notice for a partial channel list with no channel for this page when the next page lists the workflow's channel", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("answers a linked visit once a partial channel list with no channel for this page completes without one", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // The list completes, still empty: the reader is not told a second time.
+    visit.setChannels({ status: "ready", channels: [] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.retained();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+    // Answered for good: a channel listed afterwards opens nothing.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    // A new row fades in, so its visibility is waited for.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /^Open Message helper:/ }),
+      ).toBeVisible(),
+    );
+    await visit.retained();
+    expect(detailShown()).toBeNull();
+    expect(screen.getAllByText(notFound)).toHaveLength(1);
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("reports a linked workflow missing once when a partial channel list with no channel for this page then lists channels without it", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
+    // The landing that now mounts finds the workflow missing as well, in a
+    // read made for this visit.
+    const read = visit.fixture.definitions.created();
+    visit.setChannels({
+      status: "ready",
+      coverage: "partial",
+      channels: [emptyChannel],
+    });
+    await nothingListed();
+    expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
+    await visit.retained();
+    // The same notice, neither withdrawn nor raised again: a withdrawn one
+    // has left the document by the barrier, and a second one is drawn.
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
+    expect(detailShown()).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not report a linked workflow missing again after the reader dismissed that notice", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // A click alone: the toast's pointer handling needs pointer capture.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    // Channels arrive without the workflow: the landing finds it missing.
+    visit.setChannels({
+      status: "ready",
+      coverage: "partial",
+      channels: [emptyChannel],
+    });
+    await nothingListed();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    // The list completes without it, which answers the visit, silently.
+    visit.setChannels({ status: "ready", channels: [emptyChannel] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    expect(detailShown()).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not report a linked workflow missing again when a dismissed partial channel list with no channel for this page completes", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // A click alone: the toast's pointer handling needs pointer capture.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    visit.setChannels({ status: "ready", channels: [] });
+    await waitFor(() =>
+      expect(screen.queryByText("The channel list is partial.")).toBeNull(),
+    );
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("does not report a linked workflow missing again when a reconnect follows the reader dismissing that notice", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    expect(await screen.findByText(notFound)).toBeVisible();
+    // A click alone: the toast's pointer handling needs pointer capture.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss notification" }),
+    );
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+    // The visit is unanswered, so the rebuilt content finds the workflow
+    // missing again, from the same partial list with no channel.
+    visit.reconnect();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    // The visit is still open: the page that lists its channel opens it.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("keeps the one missing-workflow notice through a reconnect while the linked visit is unanswered", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, partialEmpty);
+  try {
+    visit.open(fixtureDefinition);
+    const notice = await screen.findByText(notFound);
+    expect(notice).toBeVisible();
+    visit.reconnect();
+    expect(screen.getByText("The channel list is partial.")).toBeVisible();
+    await visit.retained();
+    // The same notice, neither withdrawn nor raised again: a withdrawn one
+    // has left the document by the barrier, and a second one is drawn.
+    expect(screen.getAllByText(notFound)).toEqual([notice]);
+    expect(notice).toBeVisible();
+    // Still only the workflow opening removes it.
+    visit.setChannels({ status: "ready", channels: [workflowChannel] });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+    await visit.settled();
+    await waitFor(() => expect(screen.queryByText(notFound)).toBeNull());
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("keeps a linked workflow waiting through a reconnect while the channel list is still loading", async () => {
+  const visit = linkedVisit([fixtureDefinition], undefined, {
+    status: "loading",
+    channels: [emptyChannel],
+  });
+  try {
+    visit.open(fixtureDefinition);
+    await nothingListed();
+    const read = visit.fixture.definitions.created();
+    visit.reconnect();
+    // The new connection's list is as cold as the first one's.
+    expect(visit.fixture.definitions.created()).toBeGreaterThan(read);
+    await nothingListed();
+    await visit.settled();
+    expect(screen.queryByText(notFound)).toBeNull();
+    expect(detailShown()).toBeNull();
+    visit.setChannels({
+      status: "ready",
+      channels: [emptyChannel, workflowChannel],
+    });
+    expect(
+      await detailPane().findByRole("tab", { name: "Message helper" }),
+    ).toBeVisible();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
+});
+
+it("opens nothing for another community's visit or link text the page does not accept", async () => {
+  // The session shown is not the community the visit was opened for.
+  const elsewhere = linkedVisit(
+    [fixtureDefinition],
+    `https://other.test:${fixtureViewer}`,
+  );
+  try {
+    elsewhere.open(fixtureDefinition);
+    expect(
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText(/Couldn’t find this workflow/)).toBeNull();
+  } finally {
+    cleanup();
+    elsewhere.dispose();
+  }
+  const visit = linkedVisit();
+  try {
+    const { owner, id } = fixtureDefinition;
+    for (const params of [
+      {},
+      { owner },
+      { id },
+      { owner, id, channel: fixtureChannel },
+      { owner: owner.toUpperCase().replace("1", "A"), id },
+      { owner: "npub1owner", id },
+      { owner, id: "workflow" },
+      { owner, id: `${id} ` },
+      { owner: [owner], id },
+      { owner, id: 5 },
+      [owner, id],
+      "workflow",
+      null,
+    ])
+      expect(visit.registered.route?.validate(params)).toBe(false);
+    expect(visit.registered.route?.validate({ owner, id })).toBe(true);
+    // Rejected params open the page plainly, with no route to act on.
+    const link = buzzLinkTarget(
+      `buzz://plugin?id=buzz.workflows&page=workflows&route.owner=${owner}&route.id=nope`,
+      community,
+    );
+    if (link?.kind !== "plugin") throw new Error("Not a plugin page link");
+    const plain = linkedPageTarget(link, visit.registered);
+    expect(plain).not.toHaveProperty("route");
+    act(() => void visit.navigator.open(plain));
+    expect(
+      await screen.findByRole("button", { name: /^Open Message helper:/ }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(detailShown()).toBeNull();
+    expect(screen.queryByText(/Couldn’t find this workflow/)).toBeNull();
+  } finally {
+    cleanup();
+    visit.dispose();
+  }
 });

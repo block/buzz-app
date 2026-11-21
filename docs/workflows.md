@@ -73,6 +73,58 @@ See the [capability contract](../src/features/workflows/types.ts).
   selected, the inspector shows the workflow's name, description, channel and
   enabled state; draft errors stay visible while their field is hidden. Form,
   YAML and Runs tabs switch views; save recovery stays visible.
+- The page route `{ owner, id }` (version 1) opens the page at one workflow, as
+  **View workflow** on a [workflow message](#opening-the-workflow) does. The
+  landing selects that workflow once per visit and clears the filters that hide
+  it, including the default My workflows. Once the workflow has opened or was
+  not found in a complete channel list, the visit is answered. The page holds
+  that answer above the landing while it stays open, so a reconnect, which
+  rebuilds the landing,
+  neither opens the workflow nor shows the notice again. A reader who selects
+  a workflow or changes a filter before the routed one has been read keeps
+  that choice, and the visit opens nothing while it stands. The landing holds
+  that answer beside the filters it protects: a reconnect returns them to
+  their defaults, and the visit then opens its workflow. Back returns to the
+  opener, and Forward to a page that was closed meanwhile restores the
+  selection; closing the detail retires that visit and stays on the page, so
+  Back skips it. A route is an address, not access: only a definition the
+  landing itself read can be selected, and only from a read made for the
+  visit. The session retains a batch answer for ten seconds, for the list; a
+  visit does not reuse it, because it can miss a workflow created since or
+  still hold one deleted since. A routed visit therefore reads the landing's
+  channels again, on a page it finds open as on one it mounts: the landing's
+  existing batches, once per visit, with no timer or retry. A workflow the
+  landing has not found
+  opens nothing and shows one notice, but only once every channel it reads has
+  answered and the page's channel list has settled: the list is read, and no
+  channel outside a huddle is waiting for the metadata that classifies it or,
+  after a [start from the saved channel list](#recovery-and-limits), for the
+  roster to confirm it. Until then the visit waits and shows neither, as it
+  does for a definition read that is in flight or failed, and it opens the
+  workflow once its channel is listed and confirmed. A list that is read but
+  partial counts as settled once none of its channels is waiting, because it
+  may never be completed, so the notice is shown. It may also be a roster
+  still arriving page by page, so that notice does not answer the visit: the
+  workflow opens, and the notice goes, if its channel is listed later, and
+  the visit is answered once the list is complete. A settled list with no
+  channel for the page mounts no landing; the page then shows the same notice
+  itself and answers the visit by the same rule: on a partial list the visit
+  stays unanswered, and once a later page lists a channel the landing takes
+  the visit. The page holds the one notice for a visit, whichever of the two
+  reports the workflow missing, and holds it above the content a reconnect
+  rebuilds: it stays while later channels are read and through a reconnect,
+  goes only when the workflow opens, and is not raised again once the
+  reader dismisses it, on that connection or a later one. The notice is shown once per
+  visit and says the workflow was not found and may have been deleted. It
+  does not say why: the workflow may be gone or in a channel the viewer
+  cannot read, but the landing also reads fewer channels than the
+  [lookup](#opening-the-workflow) that offered the link: it skips huddle
+  channels and channels missing from a partial channel list. The route
+  applies only in the community it was opened for. Selecting a row stays
+  local to the page and adds no visit. While the plugin is turned off there
+  is no page for the route to open: messages offer no link, and a link opened
+  some other way lands on the shell's turned-off page, as a link to any
+  turned-off plugin's page does.
 - Form editing for message/reaction/diff/schedule/webhook triggers and Send
   Message/Delay/Call Webhook actions. Basic conditions cover text, author,
   reaction and message-ID comparisons; unrepresentable expressions stay Advanced.
@@ -179,6 +231,25 @@ receipts, disconnects, access loss, cache clear and session disposal bypass or
 purge that reuse. Retention is memory-only and bounded; a finished scan is not
 proof of an exhaustive runtime inventory.
 
+A session that starts from the channel list an earlier run saved, on a
+relaunch or reload within a day and on a reconnect that builds a new session,
+publishes that list as read at once, with each channel marked cached until
+this connection's roster read confirms it. The session refuses workflow reads
+for a cached channel, and one refused batch clears the landing with nothing to
+read it again. The page therefore leaves cached channels out, as it does
+huddles and channels awaiting metadata, and lists each for discovery and for
+New workflow once the roster confirms it. While it has no channel to show and
+the list can still grow it says **Reading channels…**, and it says no channels
+are available only once the list has settled. Confirmed channels join
+discovery like new memberships: the batches are the ones a start without a
+saved list reads, after the roster read, and a channel joined since the list
+was saved is read once its metadata arrives. A roster read that fails before
+confirming any channel shows its error and **Retry channels** with no landing
+beneath it. A saved channel that a roster read neither confirms nor drops, as
+when the relay answers with an older roster than the saved one, stays out
+until a later read decides it, and a routed visit whose workflow has not been
+found waits meanwhile.
+
 Metadata renames/reordering do not restart discovery; new memberships add only
 their missing reads. One stable status replaces
 per-channel loading placeholders, and loaded rows remain visible during refresh.
@@ -215,6 +286,24 @@ journeys cover navigating to the landing, exact readback both before and after
 the receipt, masked secret delivery, and automatic landing-row refresh in
 Chromium and WebKit. Component tests
 cover sequential secrets, interruption, and purge after the dialog takes a value.
+Opening a workflow from its message is covered offline only: the ID tag parser,
+the lookup, its access wiring in the session, the card, the routed page, and
+one journey through the app that starts with the plugin turned off (no action
+and no definition read, then Workflows enabled, the action, the linked
+workflow and Back), with no relay that sends `buzz:workflow-id`. The routed
+page's channel-list states (loading, awaiting metadata, partial with a later
+page, empty, partial and empty with a later page, with and without the
+notice dismissed, a reconnect, a reconnect with the notice shown and with it
+dismissed) are driven
+through a test double of the session's
+channel list, not through the channel store. The start from a saved channel
+list runs the page over the real session and store, in jsdom against a relay
+double: a saved list equal to the roster, a roster that answers late or fails
+once, a workflow that is gone, a saved channel the viewer has since left, a
+viewer left with no channel, a plain visit, and visits that follow a workflow
+created or deleted after the page last read its channels. A reconnect that
+builds a new session, a roster longer than one page read through the channel
+store, and a browser are not among them.
 This is not live acceptance:
 create → edit → run → inspect against an unchanged backend and packaged-native
 acceptance remain unverified. Live credentials, native launch and real workflow
@@ -229,6 +318,73 @@ explaining that the owner set up the workflow but did not send the message
 personally; it shows no keys. Compact Search, Inbox/activity, link previews and
 notification titles retain the automation label; opening the message shows the
 full byline. Notifications use cached names only and do not add profile reads.
+
+### Opening the workflow
+
+The card adds **View workflow** when the message names its workflow and this
+viewer can read it. The relay names the workflow with one `buzz:workflow-id`
+tag whose value is the kind-30620 definition's `d`, a lowercase hyphenated UUID;
+with the verified owner it forms the coordinate `30620:<owner>:<id>`. The tag
+carries no channel and no name. The ID counts only on a message that already
+passes the attribution checks below, and only as exactly one tag with exactly
+two fields. A missing, repeated or malformed ID names nothing and leaves the
+label, owner and card as they were, as do messages sent before the relay added
+the tag.
+
+The action appears only once this session holds a current definition for that
+coordinate in a channel the viewer can access, by the participation rule every
+workflow read in the session uses. The Workflows page is narrower: it also
+skips huddle channels and channels whose metadata is pending. Unknown, loading,
+failed, deleted and inaccessible all show the card unchanged: no link, disabled
+control, placeholder or workflow name. The relay scopes the read to the
+viewer's channels. The session then drops events from a channel it has found
+closed to the viewer and refuses a definition in one, so an inaccessible
+workflow reads as absent. Until channel discovery has placed a channel, both
+session checks pass it and the relay's scoping alone is the gate. When
+discovery then finds that channel closed, the access change drops the retained
+answer and removes an open action. The header label stays plain text, and the
+destination's own checks are a second guard, not the gate. The action, and its
+lookup, also need the Workflows plugin to be turned on, as described below.
+
+Rendering a workflow message reads nothing. Opening the card is the request,
+whether by pointer rest, click or keyboard. A fresh retained answer, from the
+landing's batches or an earlier lookup and including "not readable", answers for
+ten seconds without a read. Otherwise the client sends one kind-30620 read with
+one filter (`authors`, `#d`, `limit: 1`) under a ten-second deadline. Equal
+concurrent lookups share that read, closing the card cancels it, and nothing
+retries or polls. Relay reads per client are therefore none per rendered
+message and at most one single-event read per card opening. A failed read
+retains nothing. Reconnection, access loss and workflow commands drop retained
+answers; reconnection and access loss also remove an open action. The receipt
+of a deletion retires every open lookup of that workflow: the action goes, and
+the answer to a read that was already out is dropped. None of these reread.
+While a lookup's read is out the card keeps the action's line empty and
+unannounced, so the open card does not grow when the action arrives; the line
+goes when the answer is anything but a readable definition.
+
+View workflow opens
+`buzz://plugin?id=buzz.workflows&page=workflows&route.owner=<owner>&route.id=<id>`
+through the surface's own link opener, bound to the message's community like
+any [plugin page link](deep-links.md). It lands on that workflow's detail and
+Back returns to the message. A surface that cannot open links says so in the
+card. The card is on the surfaces that render the session's own message rows
+with the full byline: channel timelines, threads, direct messages and media
+comments. Huddle discussion and watched Activity build their own rows without
+workflow attribution, so they show no workflow card and no action. The action
+opens the saved configuration as it is now, not the revision that sent the
+message.
+
+The Workflows plugin can be turned off, and is by default on a fresh install
+([plugin defaults](plugin-defaults.md)). While it is off, message UI offers no
+path to the workflow and reads no definition: the card is the card without the
+action, whoever the viewer is, and the label, owner and card text are
+unchanged. The plugin declares its page while it runs, and the card mounts the
+action and its lookup only while a page is declared. Turning the plugin on
+reads nothing by itself; a card opened afterwards, or already open, looks its
+workflow up once. Turning it off removes an offered action and cancels its
+lookup. The action stays in the card rather than the message menu: the menu's
+plugin entries sit above the built-in ones, and an entry that may only appear
+after a read would move them under the pointer.
 
 Attribution requires a verified kind-9 event from the selected community's
 explicit NIP-11 `self`, exactly one canonical `buzz:workflow=true` marker and one
@@ -281,5 +437,8 @@ must retain their admission-owned event objects. Without explicit authority,
 cached-only startup keeps the signer fallback described above.
 Participant summaries have no per-message owner evidence
 and continue to identify signing participants, not workflow owners. Workflow rows
-are not grouped together because the message metadata lacks a workflow/run ID.
-Exact workflow/run navigation and historical execution configuration are not claimed.
+are not grouped together: the workflow ID opens the workflow and nothing else,
+and the message metadata has no run ID. Navigation to the workflow is claimed
+only as [described above](#opening-the-workflow), for viewers who can read it.
+Navigation to the run that sent a message, and its historical execution
+configuration, are not claimed.

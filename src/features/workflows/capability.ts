@@ -21,6 +21,7 @@ import {
   validateReference,
   validateWorkflowEvent,
   workflowReference,
+  HEX,
   UUID,
 } from "./protocol";
 
@@ -105,11 +106,37 @@ export function createWorkflows({
     });
     pruneDefinitionCache(now);
   }
+  // Lookups by coordinate, including "no readable definition", share the
+  // batch freshness window and every invalidation below.
+  const located = new Map<
+    string,
+    { definition: WorkflowDefinition | undefined; readAt: number }
+  >();
+  function freshlyLocated(owner: string, id: string) {
+    const now = Date.now();
+    const fresh = (readAt: number) =>
+      now - readAt < WORKFLOW_DEFINITION_CACHE_FRESH_MS;
+    for (const [key, entry] of located)
+      if (!fresh(entry.readAt)) located.delete(key);
+    const hit = located.get(`${owner}:${id}`);
+    if (hit) return hit;
+    pruneDefinitionCache(now);
+    for (const { data, readAt } of definitionCache.values()) {
+      const definition = fresh(readAt)
+        ? data.items.find((item) => item.owner === owner && item.id === id)
+        : undefined;
+      if (definition) return { definition, readAt };
+    }
+    return undefined;
+  }
   function invalidateDefinitionCache() {
     definitionCache.clear();
+    located.clear();
     definitionCacheVersion++;
   }
   const views = new Set<{
+    /** The coordinate a lookup answers, as `owner:id`. */
+    coordinate?: string | undefined;
     clear(): void;
     interrupt(): void;
     emit(): void;
@@ -202,20 +229,27 @@ export function createWorkflows({
       );
   }
   function view<T>(
-    channelId: string | readonly string[],
+    /** Undefined: the result names its own channel, which `load` checks. */
+    channelId: string | readonly string[] | undefined,
     available: boolean,
     empty: T,
     load: (signal: AbortSignal) => Promise<T>,
     accept?: (data: T) => void,
     cached?: { data: T; isFresh(): boolean },
     needsFreshRead?: () => boolean,
+    coordinate?: string,
   ): WorkflowView<T> {
     const channelIds =
-      typeof channelId === "string" ? [channelId] : [...new Set(channelId)];
+      channelId === undefined
+        ? []
+        : typeof channelId === "string"
+          ? [channelId]
+          : [...new Set(channelId)];
     if (
-      !channelIds.length ||
-      channelIds.length > WORKFLOW_CHANNEL_BATCH ||
-      channelIds.some((id) => !UUID.test(id))
+      channelId !== undefined &&
+      (!channelIds.length ||
+        channelIds.length > WORKFLOW_CHANNEL_BATCH ||
+        channelIds.some((id) => !UUID.test(id)))
     )
       throw new Error("Invalid workflow channels");
     const accessible = () => channelIds.every(canAccess);
@@ -252,6 +286,7 @@ export function createWorkflows({
       });
     }
     const owner = {
+      coordinate,
       clear,
       interrupt() {
         controller?.abort();
@@ -306,7 +341,7 @@ export function createWorkflows({
         controller = owned;
         // Paged batches use the shared reader's deadline for each request.
         const signal =
-          typeof channelId !== "string"
+          typeof channelId === "object"
             ? owned.signal
             : AbortSignal.any([owned.signal, AbortSignal.timeout(10000)]);
         snapshot = Object.freeze({ status: "loading", data: snapshot.data });
@@ -572,6 +607,66 @@ export function createWorkflows({
           ),
       );
     },
+    locate({ owner, id }) {
+      if (!HEX.test(owner) || !UUID.test(id))
+        throw new Error("Invalid workflow coordinate");
+      const readable = (definition: WorkflowDefinition | undefined) =>
+        definition && canAccess(definition.channelId) ? definition : undefined;
+      const retained = freshlyLocated(owner, id);
+      let readVersion = definitionCacheVersion;
+      return view<WorkflowDefinition | undefined>(
+        undefined,
+        !!reader,
+        undefined,
+        async (signal) => {
+          if (!reader) throw new Error("Workflow definitions unavailable");
+          readVersion = definitionCacheVersion;
+          // The relay and this session each drop events from channels the
+          // viewer cannot read, so an inaccessible workflow reads as absent.
+          const events = await reader.read(
+            [{ kinds: [30620], authors: [owner], "#d": [id], limit: 1 }],
+            { signal },
+          );
+          signal.throwIfAborted();
+          const rows = events.map(definition);
+          const newest = rows.reduce<WorkflowDefinition | undefined>(
+            (head, row) =>
+              head && head.createdAt >= row.createdAt ? head : row,
+            undefined,
+          );
+          // One coordinate has one home channel; anything else names nothing.
+          return rows.every(
+            (row) =>
+              row.owner === owner &&
+              row.id === id &&
+              row.channelId === newest?.channelId,
+          )
+            ? readable(newest)
+            : undefined;
+        },
+        (data) => {
+          if (readVersion !== definitionCacheVersion) return;
+          located.delete(`${owner}:${id}`);
+          located.set(`${owner}:${id}`, {
+            definition: data,
+            readAt: Date.now(),
+          });
+          for (const key of located.keys()) {
+            if (located.size <= WORKFLOW_DEFINITION_CACHE_MAX_ENTRIES) break;
+            located.delete(key);
+          }
+        },
+        retained && {
+          data: readable(retained.definition),
+          isFresh: () => {
+            const current = freshlyLocated(owner, id);
+            return !!current && current.definition === retained.definition;
+          },
+        },
+        undefined,
+        `${owner}:${id}`,
+      );
+    },
     runs(workflow, cursor) {
       assertAccess(workflow);
       return view(
@@ -650,6 +745,23 @@ export function createWorkflows({
     receipt(event: EventData, message: string | undefined) {
       if (closed || !receiptInterest.delete(event.id)) return;
       if (event.kind !== 46020) invalidateDefinitionCache();
+      if (event.kind === 5) {
+        // A deletion's receipt retires the open lookups of its workflow: the
+        // answer they show, and any read begun before the receipt, predate it.
+        // Nothing reads again until a lookup is asked to.
+        let coordinate: string | undefined;
+        try {
+          const { owner, id } = workflowReference(event);
+          coordinate = `${owner}:${id}`;
+        } catch {
+          /* No coordinate, no lookup to retire. */
+        }
+        for (const owned of views)
+          if (coordinate && owned.coordinate === coordinate) {
+            owned.clear();
+            owned.emit();
+          }
+      }
       if (message === undefined) {
         if (results.get(event.id)?.outcome !== "succeeded")
           results.delete(event.id);

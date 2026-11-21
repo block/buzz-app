@@ -154,6 +154,12 @@ export function createWorkflowFixture(
       trigger: true,
       delete: true,
     },
+    locate: ({ owner, id }) =>
+      fixtureView(
+        definitionState.data.items.find(
+          (item) => item.owner === owner && item.id === id,
+        ),
+      ).view,
     definitions: () => {
       const owned = fixtureView(definitionState.data);
       owned.update(definitionState);
@@ -176,7 +182,9 @@ export function createWorkflowFixture(
               ),
             );
           }
-          await owned.view.refresh();
+          // A test that set "loading" is holding the relay's answer: a read
+          // started meanwhile waits for the next update too.
+          if (definitionState.status !== "loading") await owned.view.refresh();
         },
       };
     },

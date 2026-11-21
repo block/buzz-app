@@ -123,6 +123,26 @@ there is no view beneath it; and while a failed link waits for Retry, the
 picker's **Join a community** opens in place, because a new visit would replace
 the failure and its Retry.
 
+**View workflow** on a workflow message opens a visit to the Workflows page at
+that workflow (page route `{ owner, id }`; see [Workflows](workflows.md#opening-the-workflow)).
+Back returns to the message and Forward restores the workflow's detail. Closing
+the detail retires the visits that opened that workflow in that community and
+leaves the plain Workflows page in place: Back then goes to the opener, and
+Forward returns to the page with the detail closed. A filter change or a
+deletion that closes the detail does the same. Choosing workflows on the page
+itself stays page-local and creates no visit. The visit opens its workflow
+once while the page stays open, and a reconnect neither opens it nor reports
+it missing again. It waits while the page's channel list is still loading, or
+a channel awaits its metadata or, after a start from the saved channel list,
+the roster's confirmation, and reports the workflow missing only once that
+list has settled, including when it settles with no channel for the page. On a
+list that is read but partial it reports the workflow missing and still opens
+it if its channel is listed later. A workflow the reader selects, or a filter they
+change, before the linked workflow has been read stands until a reconnect
+resets the page, which then opens the linked workflow. Retiring those visits
+after a reload is not claimed. While the Workflows plugin is turned off the
+action is not offered, so no such visit starts from a message.
+
 ## History and lifetime boundaries
 
 App arrows, supported history shortcuts, mouse Back/Forward buttons and, in

@@ -1,5 +1,5 @@
 import { readForward } from "./forwarded-message";
-import { workflowOwner } from "./workflow-attribution";
+import { workflowId, workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
@@ -462,6 +462,7 @@ export function foldMessages(
         authorId,
         ...(authorId !== event.pubkey ? { signerId: event.pubkey } : {}),
         workflowOwnerId: workflowOwner(event, signingAuthority),
+        workflowId: workflowId(event, signingAuthority),
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,

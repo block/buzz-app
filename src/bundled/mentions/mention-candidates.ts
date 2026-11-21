@@ -10,14 +10,14 @@ import type { Agent } from "../../features/agents/service";
 import { communityHost } from "../../features/messages/community-host";
 import {
   allowsOutsideMentions,
+  directMessageAddsAgents,
   mentionChannel,
   archivedMention,
   mentionAdmission,
 } from "../../features/messages/mention-admission";
 
 /** The viewer's agents offered outside a stream or forum when the viewer can
- * add members, and outside a DM when `dms` (a DM adds no one, so they are
- * only named there, never notified). */
+ * add members, and outside a DM when `dms`. */
 function availableMentionAgents<T extends { pubkey: string }>(
   channel: ChannelSummary | undefined,
   agents: readonly T[],
@@ -36,15 +36,19 @@ function availableMentionAgents<T extends { pubkey: string }>(
   return agents.filter((agent) => !members.has(agent.pubkey));
 }
 
-/** Row detail for an outside choice. Nobody can be added to a DM, and a Solo
- * chat adds only the viewer's agents (outsideMentionReferences). */
+/** Row detail for an outside choice. A DM adds only agents, and only when
+ * `joins` (joinsDirectMessage); a Solo chat adds only the viewer's agents
+ * (outsideMentionReferences). */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,
   elsewhere?: string,
+  joins = false,
 ) {
   if (elsewhere) return `In ${elsewhere}`;
   return channel?.channelType === "dm"
-    ? "Not in DM · Will not be notified"
+    ? joins
+      ? "Not in DM"
+      : "Not in DM · Will not be notified"
     : channel?.channelType === "solo"
       ? "Not in chat · Will not be notified"
       : "Not in channel";
@@ -224,6 +228,8 @@ function buildCandidates(
       channel,
       elsewhere,
       session.outbox?.supports(9000),
+      // Reads only this channel and what is fixed per session.
+      directMessageAddsAgents(session, channel),
     )) {
       const host = communityHost(agent.relay);
       // Its row here, archived when it was removed, is the one it takes.

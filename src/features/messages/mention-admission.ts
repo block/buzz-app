@@ -2,6 +2,9 @@ import type { ChannelSummary } from "../relay/contracts";
 import type { ComposerSession } from "./composer-session";
 import type { MentionRecipient } from "./mention-draft";
 import { agentUnavailable } from "../agents/choices";
+import { knownAgentPubkeys } from "../agents/known";
+import { canAddToDirectMessage } from "../channel-members/members";
+import { NeedsHistoryChoice } from "../relay/direct-messages";
 
 /** The shared forward-looking rule applied to mention recipients: archived
  * here or being deleted ({@link agentUnavailable}). */
@@ -30,10 +33,73 @@ export function allowsOutsideMentions(
     : !roster && !inviteAgents;
 }
 
+/** Whether tagging an agent in this DM adds it, as the DM's Access dialog
+ * does. A tagged person stays a reference: who joins a DM, and with which
+ * history, is chosen there. */
+export function directMessageAddsAgents(
+  session: ComposerSession,
+  channel: ChannelSummary | undefined,
+) {
+  return (
+    channel?.channelType === "dm" &&
+    !!session.directMessages.add &&
+    canAddToDirectMessage(
+      {
+        viewer: session.viewer,
+        relayAuthor: session.relayAuthor,
+        directMessages: { available: !!session.directMessages.available },
+      },
+      channel,
+    )
+  );
+}
+
+/** Add tagged agents to the DM `channelId` in place, as the Access dialog
+ * does. The relay alone knows who is an agent, so the add asks rather than
+ * including history: a key it finds is a person changes nothing and fails
+ * here, where its history choice cannot be made. */
+export async function addAgentsToDirectMessage(
+  session: ComposerSession,
+  channelId: string,
+  pubkeys: readonly string[],
+  signal: AbortSignal,
+) {
+  const add = session.directMessages.add;
+  if (!add) throw new Error("This connection cannot add agents to messages.");
+  const destination = await add(channelId, pubkeys, "ask", signal).catch(
+    (error: unknown) => {
+      throw error instanceof NeedsHistoryChoice
+        ? new Error("Only agents can be added to a DM by mentioning them.")
+        : error;
+    },
+  );
+  if (destination !== channelId)
+    throw new Error("Only agents can be added to a DM by mentioning them.");
+}
+
+/** Whether tagging this key adds it to the DM `channel`: a known agent
+ * outside a DM that adds agents ({@link directMessageAddsAgents}). */
+export function joinsDirectMessage(
+  session: ComposerSession,
+  channel: ChannelSummary | undefined,
+  pubkey: string,
+) {
+  return (
+    !channel?.members?.includes(pubkey) &&
+    directMessageAddsAgents(session, channel) &&
+    knownAgentPubkeys(session.profiles.snapshot(), {
+      definitions: [],
+      identities: session.agentChoices.snapshot().identities,
+    }).has(pubkey)
+  );
+}
+
 /**
  * Whether sending names this outside key only as a reference, which adds and
- * notifies nobody. Nobody can be added to a DM. A Solo chat adds only the
- * viewer's available agents; any other outside key is a reference there too.
+ * notifies nobody. In a DM this answers for people; an agent tagged there
+ * joins when the DM adds agents ({@link joinsDirectMessage}). A Solo chat adds
+ * only the viewer's available agents; any other outside key is a reference
+ * there too.
  * Elsewhere the sender chooses whether to add outside people.
  */
 export function outsideMentionReferences(

@@ -57,6 +57,9 @@ export type ThreadSnapshot = Readonly<{
   seeking?: true | undefined;
   /** A read failed and waits on session recovery, which retries it. */
   recovering?: true | undefined;
+  /** The relay answered without this view's message or its thread root, as
+   * after a deletion; a failed read never sets it. */
+  missing?: true | undefined;
 }>;
 /** What a closed ordinary thread last showed. A view opened from it shows
  * these rows at once, as display only: they are never evidence, and the
@@ -213,6 +216,8 @@ export function createThreadView({
   let disposed = false;
   let rootId: string | undefined;
   let rootUnavailable = false;
+  // The relay's answer lacked the opened message or its root.
+  let missing = false;
   let targetStatus: ThreadSnapshot["targetStatus"] = exact
     ? "loading"
     : undefined;
@@ -367,6 +372,7 @@ export function createThreadView({
       ...next,
       seeking: seeking || undefined,
       recovering: failed ? true : undefined,
+      missing: missing || undefined,
     };
     const keys = Object.keys(next) as (keyof ThreadSnapshot)[];
     if (keys.every((key) => next[key] === snapshot[key])) return;
@@ -625,6 +631,7 @@ export function createThreadView({
       remote = [];
       staged = [];
       rootId = undefined;
+      missing = false;
       cursor = undefined;
       pages = 0;
       held = undefined;
@@ -920,7 +927,10 @@ export function createThreadView({
             isThreadContent(event) &&
             inChannel(event, channelId),
         );
-        if (!event) throw new Error("The selected message is unavailable.");
+        if (!event) {
+          missing = true;
+          throw new Error("The selected message is unavailable.");
+        }
         rootId = threadReference(event)?.rootId ?? event.id;
       }
       const rootFilter: ReadFilter = {
@@ -982,6 +992,7 @@ export function createThreadView({
           )
         ) {
           rootUnavailable = true;
+          missing = true;
           cursor = undefined;
           pages = 0;
           publish({ canLoadMore: false });
@@ -1070,6 +1081,7 @@ export function createThreadView({
         ) {
           // Hide unavailable history without throwing away known tombstones.
           rootUnavailable = true;
+          missing = true;
           cursor = undefined;
           pages = 0;
           publish({ canLoadMore: false });
@@ -1132,6 +1144,7 @@ export function createThreadView({
       )
         return;
       rootUnavailable = false;
+      missing = false;
       cursor = nextCursor;
       pages = nextPages;
       if (replace) readAt = startedAt;

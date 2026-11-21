@@ -5,6 +5,7 @@ import {
   cleanup,
   fireEvent,
   render,
+  renderHook,
   screen,
   waitFor,
   within,
@@ -13,6 +14,7 @@ import { StrictMode } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
+import { useMissingThreadRoot } from "./missing-thread-roots";
 import { selectNewestMessage } from "./message-selection";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
@@ -662,6 +664,38 @@ it.each([false, true])(
     expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
   },
 );
+it("confirms a root missing only when the relay answered without it", () => {
+  const h = messagesHarness();
+  Object.assign(h.session, { scope: "missing-root-scope" });
+  const missing = renderHook(() =>
+    useMissingThreadRoot("missing-root-scope", "channel", row.id),
+  );
+  try {
+    h.snapshot.root = undefined;
+    h.snapshot.status = "loading";
+    h.render();
+    expect(missing.result.current).toBe(false);
+    // A read that failed proves nothing about the root.
+    h.snapshot.status = "error";
+    h.snapshot.error = "Relay unavailable";
+    h.render();
+    expect(missing.result.current).toBe(false);
+    h.snapshot.error = "The selected message is unavailable.";
+    h.snapshot.missing = true;
+    h.render();
+    expect(screen.getByText("Original message unavailable.")).toBeVisible();
+    expect(missing.result.current).toBe(true);
+    // A later read that finds it clears the record.
+    h.snapshot.status = "ready";
+    h.snapshot.error = undefined;
+    h.snapshot.missing = undefined;
+    h.snapshot.root = row;
+    h.render();
+    expect(missing.result.current).toBe(false);
+  } finally {
+    missing.unmount();
+  }
+});
 it("scopes its reading leases to its thread while the original is unavailable", () => {
   const h = messagesHarness();
   h.resize(600);

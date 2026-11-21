@@ -70,6 +70,7 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
+import { markThreadRoot } from "./missing-thread-roots";
 
 export type ThreadPanelProps = {
   intro?: ReactNode;
@@ -675,6 +676,14 @@ function ThreadMessages({
   useEffect(() => {
     if (resolvedRoot) reportRoot.current?.(resolvedRoot);
   }, [resolvedRoot]);
+  // The relay answering without this thread's root confirms it missing, so a
+  // channel copy of one of its replies offers its own thread instead.
+  const rootMissing = !!snapshot.missing && !snapshot.root;
+  useEffect(() => {
+    if (rootMissing) markThreadRoot(session.scope, channelId, messageId, false);
+    else if (resolvedRoot)
+      markThreadRoot(session.scope, channelId, resolvedRoot, true);
+  }, [rootMissing, resolvedRoot, session.scope, channelId, messageId]);
   // Read the current root only when sharing; paging must not invalidate every reply row.
   const getThreadRoot = useCallback(() => {
     const current = view.snapshot();

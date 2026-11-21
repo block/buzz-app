@@ -592,7 +592,10 @@ Quitting Buzz also turns it off.
   access to the source; the agent you tag, and anyone you later share the chat
   with, can open it only if they can already read that conversation.
 - **Team** contains community channels and their threads. Choose **Reply** on a
-  message to open or continue its thread. Use the **@** picker
+  message to open or continue its thread. On a reply copied to the channel with
+  **Send to channel**, Reply continues the thread it came from, unless the copy
+  already has replies or a draft reply of its own, or its original thread was
+  found deleted. Use the **@** picker
   to address a channel member. A full name typed after **@** and followed by
   Space or closing punctuation, such as `,`, `.` or `'`, selects that person or
   agent unless a namesake or a longer name that begins the same way could be

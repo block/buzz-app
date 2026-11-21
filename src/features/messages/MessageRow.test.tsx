@@ -28,6 +28,7 @@ import {
   SPRING_LOAD_GRACE_MS,
 } from "./spring-loaded-drag";
 import { useShowingDraft } from "./draft-places";
+import { markThreadRoot } from "./missing-thread-roots";
 import { clearView, writeView } from "../../shared/view-state";
 import {
   profileTarget,
@@ -1721,6 +1722,179 @@ it.each([
     }
   },
 );
+
+it.each([
+  {
+    name: "a copy with no replies replies in its source thread",
+    patch: { sentFromThread: { rootId: "source" }, replyCount: 0 },
+    reply: "source",
+  },
+  {
+    name: "a copy with replies keeps its own thread",
+    patch: { sentFromThread: { rootId: "source" } },
+    reply: "root",
+    view: "root",
+  },
+  {
+    name: "a top-level message starts its own thread",
+    patch: { replyCount: 0 },
+    reply: "root",
+  },
+  {
+    name: "a reply replies in its thread",
+    patch: { threadRootId: "parent", replyCount: 0 },
+    reply: "parent",
+  },
+])("$name", ({ patch, reply, view: viewRoot }) => {
+  const thread = vi.fn();
+  const view = renderMessage({
+    row: { ...row, ...patch },
+    viewer: row.authorId,
+    onOpenThread: thread,
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith(reply, reply, "reply");
+    const summary = screen.queryByRole("button", { name: /^View thread/ });
+    expect(!!summary).toBe(!!viewRoot);
+    if (summary) {
+      fireEvent.click(summary);
+      expect(thread).toHaveBeenLastCalledWith(viewRoot, viewRoot);
+    }
+  } finally {
+    view.unmount();
+  }
+});
+
+it("a copy with no replies shows no thread activity of its own", () => {
+  const agent = "a".repeat(64);
+  const typing: readonly TypingEntry[] = [
+    { channelId: row.channelId, threadRootId: "root", pubkey: agent },
+  ];
+  const channels = { channels: [], status: "ready" };
+  const library = { identities: [{ pubkey: agent, name: "Brain" }] };
+  const session = {
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const props = {
+    viewer: row.authorId,
+    session,
+    onOpenThread: vi.fn(),
+  };
+  const view = renderMessage({ ...props, row: { ...row, replyCount: 0 } });
+  try {
+    expect(
+      screen.getByRole("button", { name: /^View thread.*working$/ }),
+    ).toBeInTheDocument();
+    view.rerender(
+      <MessageRow
+        row={{ ...row, replyCount: 0, sentFromThread: { rootId: "source" } }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+        {...props}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^View thread/ })).toBeNull();
+  } finally {
+    view.unmount();
+  }
+});
+
+it("a copy with its own saved draft keeps that draft's thread", () => {
+  const scope = `https://demo.invalid:${"a".repeat(64)}`;
+  // Drafts are keyed by a real event id.
+  const copy = {
+    ...row,
+    id: "c".repeat(64),
+    replyCount: 0,
+    sentFromThread: { rootId: "source" },
+  };
+  const key = `draft:${copy.channelId}:thread:${copy.id}`;
+  const channels = { channels: [], status: "ready" };
+  const library = { identities: [] };
+  const typing: readonly never[] = [];
+  const session = {
+    scope,
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const thread = vi.fn();
+  const view = renderMessage({
+    session,
+    row: copy,
+    viewer: copy.authorId,
+    onOpenThread: thread,
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("source", "source", "reply");
+    // A draft saved under the copy before copies replied in their source.
+    act(() => {
+      writeView(scope, key, { text: "Half a reply", recipients: [] });
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "View thread: Draft reply" }),
+    );
+    expect(thread).toHaveBeenLastCalledWith(copy.id, copy.id);
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith(copy.id, copy.id, "reply");
+    act(() => clearView(scope, key));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("source", "source", "reply");
+  } finally {
+    view.unmount();
+    clearView(scope, key);
+  }
+});
+
+it("a copy whose original root is confirmed missing replies under itself", () => {
+  const scope = `https://demo.invalid:${"b".repeat(64)}`;
+  const channels = { channels: [], status: "ready" };
+  const library = { identities: [] };
+  const typing: readonly never[] = [];
+  const session = {
+    scope,
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const thread = vi.fn();
+  const view = renderMessage({
+    session,
+    row: { ...row, replyCount: 0, sentFromThread: { rootId: "gone" } },
+    viewer: row.authorId,
+    onOpenThread: thread,
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("gone", "gone", "reply");
+    // Another channel's or community's missing root changes nothing here.
+    act(() => markThreadRoot(scope, "elsewhere", "gone", false));
+    act(() => markThreadRoot(`${scope}x`, row.channelId, "gone", false));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("gone", "gone", "reply");
+    act(() => markThreadRoot(scope, row.channelId, "gone", false));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("root", "root", "reply");
+    // A later read that finds the root sends replies back to it.
+    act(() => markThreadRoot(scope, row.channelId, "gone", true));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("gone", "gone", "reply");
+  } finally {
+    view.unmount();
+    markThreadRoot(scope, "elsewhere", "gone", true);
+    markThreadRoot(`${scope}x`, row.channelId, "gone", true);
+  }
+});
 
 it.each([true, false])(
   "offers thread starts only where the conversation starts threads (startsThreads=%s)",

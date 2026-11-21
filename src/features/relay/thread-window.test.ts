@@ -1095,6 +1095,7 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
     root: undefined,
     replies: [],
     canLoadMore: false,
+    missing: true,
   });
   expect(h.view.snapshot().error).toContain(
     "original thread message is unavailable",
@@ -1107,6 +1108,40 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
     replies: [],
     canLoadMore: false,
   });
+  expect(h.view.snapshot().missing).toBeUndefined();
+});
+
+it("never marks a thread missing when its read fails", async () => {
+  const h = await setup((filter) => {
+    if (filter.ids) throw new Error("relay down");
+    return [bounds(filter)];
+  });
+  const gone = h.session.thread(channel, "e".repeat(64));
+  try {
+    await gone.refresh();
+    expect(gone.snapshot().status).not.toBe("ready");
+    expect(gone.snapshot().missing).toBeUndefined();
+  } finally {
+    gone.dispose();
+  }
+});
+
+it("marks a thread missing when the relay answers without the message it opened", async () => {
+  const h = await setup((filter) => (filter.ids ? [] : [bounds(filter)]));
+  const gone = h.session.thread(channel, "e".repeat(64));
+  try {
+    expect(gone.snapshot().missing).toBeUndefined();
+    await gone.refresh();
+    expect(gone.snapshot()).toMatchObject({
+      status: "error",
+      root: undefined,
+      missing: true,
+    });
+    // A thread whose read found its root is never marked.
+    expect(h.view.snapshot().missing).toBeUndefined();
+  } finally {
+    gone.dispose();
+  }
 });
 
 it.each([

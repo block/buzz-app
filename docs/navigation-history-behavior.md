@@ -56,6 +56,17 @@ tabs and Close all tabs retire the complete set of closed content visits in one
 navigation transaction, including inactive tabs. The kept tab stays selected;
 underlying channel/message visits and other channel workspaces remain available.
 
+Activity follows the same rule for the tabs beside its list. Opening a
+conversation or thread from a row, or a Profile/GitHub tab from a link, adds an
+Activity visit whose route names that tab; Back/Forward restores the selection
+that visit showed, and reopens a conversation or thread tab a later open
+replaced. X, Close other tabs, Close all tabs and the page's own close (as
+Archive) retire the closed tabs' visits, keeping the selection they leave. Any
+page whose route accepts these tab visits gets the same behavior; conversation
+workspaces keep their own detail addresses. After reload a visit reopens its
+conversation or thread tab only if that conversation is already available;
+Profile/GitHub tabs do not reopen.
+
 Members follows the same rule: opening it adds a visit. Back closes it while
 staying on the channel; Forward restores it. X, Escape and outside dismissal
 retire that visit, so the next Back leaves the channel and

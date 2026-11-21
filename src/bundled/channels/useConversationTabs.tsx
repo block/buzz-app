@@ -88,6 +88,7 @@ export function useConversationTabs({
   navigation,
   routed,
   onCloseThread,
+  onCloseConversation,
   onRetryNavigation,
   conversationToolbar,
   onVisitPanel,
@@ -142,6 +143,7 @@ export function useConversationTabs({
     active: boolean,
     last: boolean,
   ): void;
+  onCloseConversation?(tab: Extract<Tab, { kind: "conversation" }>): void;
   onRetryNavigation?(): void;
   onVisitPanel?(entry: PanelOpening): void;
   onClosePanel?(entry: PanelOpening, remaining: PanelOpening[]): void;
@@ -552,6 +554,7 @@ export function useConversationTabs({
     const notify = (last: boolean) => {
       if (closing?.kind === "thread")
         onCloseThread?.(closing, !!wasActive, last);
+      else if (closing?.kind === "conversation") onCloseConversation?.(closing);
     };
     if (closing && tabPane(closing) === "main") {
       // The conversation remains; neighbours keep their order.

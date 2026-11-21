@@ -80,3 +80,23 @@ it("drops a link's retired Archived and Drafts choices", () => {
   expect(at({ show: "inbox" })).toEqual({});
   expect(at({ drafts: "true" })).toEqual({});
 });
+
+it("accepts a tab visit, which applies no filters", () => {
+  const visits = [
+    { tab: "thread:channel:root" },
+    { tab: "conversation:channel", message: "a".repeat(64) },
+  ];
+  for (const params of visits) {
+    expect(isInboxRoute(params)).toBe(true);
+    expect(routeOf({ ...inboxTarget, route: { version: 1, params } })).toBe(
+      undefined,
+    );
+  }
+  for (const params of [
+    { tab: "" },
+    { tab: 1 },
+    { tab: "conversation:channel", message: "reply" },
+    { tab: "conversation:channel", activity: "dms" },
+  ])
+    expect(isInboxRoute(params)).toBe(false);
+});

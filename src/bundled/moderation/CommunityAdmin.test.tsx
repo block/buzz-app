@@ -708,6 +708,37 @@ it("ignores a late mint from a previous Invite visit", async () => {
   ).toBeNull();
 });
 
+it("mints a link that never expires", async () => {
+  const user = userEvent.setup();
+  const calls = broker({
+    invite: () =>
+      Response.json({
+        invite_id: "0b9c8f7e-1d2a-4b3c-9e8f-7a6b5c4d3e2f",
+        code: "abc",
+        url: "https://primary.example/invite/abc",
+        expires_at: null,
+        max_uses: null,
+        uses_remaining: null,
+      }),
+  });
+  const { relay: data } = relay(owner);
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  await user.click(await screen.findByRole("tab", { name: "Invite" }));
+  await screen.findByDisplayValue("https://primary.example/invite/abc");
+  await user.click(
+    screen.getByRole("button", { name: "Choose invite expiry" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitemradio", { name: "Never expires" }),
+  );
+  await waitFor(() =>
+    expect(calls.filter((c) => c.route === "invite").at(-1)?.body).toEqual({
+      never_expires: true,
+      max_uses: null,
+    }),
+  );
+});
+
 it("lists invite links and revokes one by row or by pasted link", async () => {
   const user = userEvent.setup();
   const permanent = "0b9c8f7e-1d2a-4b3c-9e8f-7a6b5c4d3e2f";
@@ -720,7 +751,7 @@ it("lists invite links and revokes one by row or by pasted link", async () => {
             id: permanent,
             created_by: owner,
             created_at: 1700000000,
-            expires_at: 4102444800,
+            expires_at: null,
             max_uses: null,
             use_count: 2,
             revoked_at: revoked ? 1700000100 : null,
@@ -751,7 +782,7 @@ it("lists invite links and revokes one by row or by pasted link", async () => {
   render(<CommunityAdmin relay={data} active={() => true} />);
   await user.click(await screen.findByRole("tab", { name: "Links" }));
   const list = await screen.findByRole("list", { name: "Invite links" });
-  expect(list).toHaveTextContent("Active · 2 uses · Expires");
+  expect(list).toHaveTextContent("Active · 2 uses · Never expires");
   expect(list).toHaveTextContent("Used up · 5 of 5 uses · Expired");
   expect(calls.find((c) => c.route === "invites")?.body).toEqual({});
 
@@ -765,7 +796,7 @@ it("lists invite links and revokes one by row or by pasted link", async () => {
     }),
   );
   await waitFor(() =>
-    expect(list).toHaveTextContent("Revoked · 2 uses · Expires"),
+    expect(list).toHaveTextContent("Revoked · 2 uses · Never expires"),
   );
   expect(calls.filter((c) => c.route === "invite-revoke")).toEqual([
     { route: "invite-revoke", body: { id: permanent } },

@@ -10,15 +10,23 @@ const KINDS: Record<string, number> = { add: 9030, remove: 9031, role: 9032 };
 
 /** Normalized `POST /api/invites` body; unknown fields are dropped. */
 export function inviteRequest(value: unknown) {
-  const { ttl_secs: ttl, max_uses: uses = null } = (value ?? {}) as {
+  const {
+    ttl_secs: ttl,
+    max_uses: uses = null,
+    never_expires: never,
+  } = (value ?? {}) as {
     ttl_secs?: unknown;
     max_uses?: unknown;
+    never_expires?: unknown;
   };
+  if (never !== undefined && (never !== true || ttl !== undefined))
+    throw new Error("Invalid invite expiry");
   if (
-    typeof ttl !== "number" ||
-    !Number.isSafeInteger(ttl) ||
-    ttl < MIN_TTL ||
-    ttl > MAX_TTL
+    never !== true &&
+    (typeof ttl !== "number" ||
+      !Number.isSafeInteger(ttl) ||
+      ttl < MIN_TTL ||
+      ttl > MAX_TTL)
   )
     throw new Error("Invalid invite expiry");
   if (
@@ -29,7 +37,9 @@ export function inviteRequest(value: unknown) {
       uses > MAX_USES)
   )
     throw new Error("Invalid invite use limit");
-  return { ttl_secs: ttl, max_uses: uses };
+  return never === true
+    ? { never_expires: true, max_uses: uses }
+    : { ttl_secs: ttl as number, max_uses: uses };
 }
 
 /** `GET /api/invites` path for one page; `before` is the relay's opaque cursor. */

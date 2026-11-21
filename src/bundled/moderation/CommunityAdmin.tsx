@@ -70,10 +70,14 @@ import { canShareInvite, shareInvite } from "./shareInvite";
 import { InviteLinks } from "./InviteLinks";
 
 const DAY = 24 * 60 * 60;
-const EXPIRY = [1, 3, 7, 30].map((days) => ({
-  value: String(days * DAY),
-  label: days === 1 ? "1 day" : `${days} days`,
-}));
+const NEVER = "never";
+const EXPIRY = [
+  ...[1, 3, 7, 30].map((days) => ({
+    value: String(days * DAY),
+    label: days === 1 ? "1 day" : `${days} days`,
+  })),
+  { value: NEVER, label: "Never expires" },
+];
 const USES = [
   { value: "", label: "No limit" },
   ...[1, 5, 10, 25].map((uses) => ({
@@ -603,7 +607,11 @@ function MembershipContent({
     setLink({ settings });
     setCopied(false);
     setError("");
-    mintInvite(community, Number(ttl), uses ? Number(uses) : null).then(
+    mintInvite(
+      community,
+      ttl === NEVER ? null : Number(ttl),
+      uses ? Number(uses) : null,
+    ).then(
       (invite) => {
         if (minting.current === request) setLink({ settings, url: invite.url });
       },

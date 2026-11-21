@@ -1,6 +1,6 @@
 # Contribution workflow
 
-The repository pins just 1.58.0, Node.js 24.18.0, pnpm 11.8.0, Lefthook 2.2.2,
+The repository pins just 1.58.0, Node.js 24.22.3, pnpm 11.8.0, Lefthook 2.2.2,
 and rustup with [Hermit](https://cashapp.github.io/hermit/). `rust-toolchain.toml`
 pins Rust 1.98.1 (including Cargo, rustfmt, and Clippy), which rustup installs
 under the machine-shared `~/.rustup`.
@@ -45,11 +45,9 @@ and package symlinks; `.hermit/` contains ignored local state.
 
 CMake is pinned through Hermit for the native Opus codec build.
 
-All tool versions are unchanged by the public-tooling migration. The public
-catalog does not yet include Node 24.18.0, so `bin/packages/node.hcl` pins its
-[official downloads and checksums](https://nodejs.org/dist/v24.18.0/SHASUMS256.txt)
-as a repository-local override. Remove that override when the public catalog
-supports the same pin; do not silently downgrade it.
+Every Hermit package, including Node.js, comes from the public
+[Hermit catalog](https://github.com/cashapp/hermit-packages). Pin only versions
+that catalog lists, so Renovate's Hermit updates can resolve them.
 
 The pinned pnpm Hermit package supports Apple Silicon macOS but marks Intel macOS
 (`darwin-amd64`) unsupported. Do not silently substitute a different pnpm version

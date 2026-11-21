@@ -541,7 +541,7 @@ it("offers setup only once the plugin's Settings card is registered", () => {
 
 it("keeps keyboard focus in the message when a focused setup card goes away", () => {
   const state = provider("needs-setup");
-  const { container } = render(
+  render(
     <LinkPreviews
       urls={["https://tracker.example/1"]}
       messageId="m"
@@ -557,9 +557,9 @@ it("keeps keyboard focus in the message when a focused setup card goes away", ()
   );
   screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
   act(() => state.set("checking"));
-  const previews = container.firstElementChild;
-  expect(previews).toBeTruthy();
-  expect(document.activeElement).toBe(previews);
+  expect(document.activeElement).toBe(
+    screen.getByRole("group", { name: "Link previews" }),
+  );
   act(() => state.set("needs-setup"));
   screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
   act(() => state.set("ready"));
@@ -597,5 +597,30 @@ it("moves focus to another setup card when the focused one's renderer is ready",
   act(() => tracker.set("checking"));
   expect(document.activeElement).toBe(
     screen.getByRole("button", { name: /^Set up Other/ }),
+  );
+});
+
+it("focuses the labelled previews group when a ready preview has nothing to focus", () => {
+  const state = provider("needs-setup");
+  const Plain = ({ url }: LinkPreviewProps) => <p>Preview {url}</p>;
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, Plain),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      settings={settingsWith()}
+    />,
+  );
+  screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
+  act(() => state.set("ready"));
+  expect(screen.getByText("Preview https://tracker.example/1")).toBeTruthy();
+  expect(document.activeElement).toBe(
+    screen.getByRole("group", { name: "Link previews" }),
   );
 });

@@ -537,6 +537,12 @@ it("reports which plugin Settings cards a link preview setup card can open", asy
   const listener = vi.fn();
   const stop = service.settings.subscribe(listener);
   expect(service.settings.has("tracker/setup")).toBe(false);
+  let visible: boolean | "pending" = false;
+  const visibilityListeners = new Set<() => void>();
+  const setVisible = (next: typeof visible) => {
+    visible = next;
+    for (const each of [...visibilityListeners]) each();
+  };
   const fiber = root
     .extend({ pluginOwner: { id: "tracker", revision: "one" } })
     .plugin((ctx) => {
@@ -545,11 +551,37 @@ it("reports which plugin Settings cards a link preview setup card can open", asy
         title: "Tracker",
         component: () => null,
       });
+      ctx.settingsCards.register({
+        id: "gated",
+        title: "Tracker admin",
+        visibility: {
+          snapshot: () => visible,
+          subscribe: (each) => {
+            visibilityListeners.add(each);
+            return () => visibilityListeners.delete(each);
+          },
+          ensure: () => () => {},
+        },
+        component: () => null,
+      });
     });
   await fiber.await();
   expect(service.settings.has("tracker/setup")).toBe(true);
   expect(service.settings.has("other/setup")).toBe(false);
   expect(listener).toHaveBeenCalled();
+  expect(service.settings.has("tracker/gated")).toBe(false);
+  listener.mockClear();
+  setVisible(true);
+  expect(listener).toHaveBeenCalled();
+  expect(service.settings.has("tracker/gated")).toBe(true);
+  setVisible("pending");
+  expect(service.settings.has("tracker/gated")).toBe(false);
+  setVisible(false);
+  expect(service.settings.has("tracker/gated")).toBe(false);
+  setVisible(true);
+  await fiber.dispose();
+  expect(service.settings.has("tracker/setup")).toBe(false);
+  expect(service.settings.has("tracker/gated")).toBe(false);
   stop();
   await root.fiber.dispose();
 });

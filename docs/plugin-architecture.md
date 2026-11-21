@@ -3192,10 +3192,11 @@ has read the provider, and while it is `checking`, its links have no card and do
 count toward the fold. While it is `needs-setup`, the host draws a compact card for
 each link, labelled with the renderer's title and the link's host; the visible text
 is its accessible name. The host draws that card only while the plugin's
-Settings card is registered, and outside the plugin's error boundary, so a
+Settings card is registered and visible to the viewer, and outside the plugin's error boundary, so a
 preview that failed to render can still ask for setup later. When a status
-change removes a focused setup card, focus moves to another setup card or the
-message's previews rather than the page. A renderer whose `subscribe` throws
+change removes a focused setup card, focus moves to another setup card, the
+first focusable preview, or the message's "Link previews" group, which shows a
+focus ring, rather than the page. A renderer whose `subscribe` throws
 can't report changes, so its links draw as if it had no status until they mount
 again.
 Clicking it opens that plugin's

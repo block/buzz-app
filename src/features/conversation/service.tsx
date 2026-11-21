@@ -483,7 +483,7 @@ export class ConversationService extends Service implements Conversation {
   }
   readonly settings: LinkPreviewSettings = Object.freeze({
     has: (section: string) =>
-      this.ctx.reflect.get("settingsCards")?.has(section) ?? false,
+      this.ctx.reflect.get("settingsCards")?.visibility(section) === true,
     subscribe: (listener: () => void) =>
       this.ctx.reflect.get("settingsCards")?.subscribe(listener) ?? (() => {}),
     open: (section: string) => {

@@ -13,6 +13,14 @@
 .previews:focus {
   outline: none;
 }
+html[data-keyboard-navigation] .previews:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-container);
+}
+.previews:empty:focus-visible {
+  min-height: var(--space-2);
+}
 .previews > * {
   max-width: 100%;
 }

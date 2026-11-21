@@ -198,9 +198,12 @@ export function LinkPreviews({
   const shown = open ? cards : cards.slice(0, FOLD_AFTER);
   const hidden = cards.length - shown.length;
   return (
+    // biome-ignore lint/a11y/useSemanticElements: a labelled group, not a form fieldset, is where focus lands when a setup card goes away.
     <div
       ref={container}
       className={styles.previews}
+      role="group"
+      aria-label="Link previews"
       tabIndex={-1}
       data-link-previews={cards.length ? "" : undefined}
     >

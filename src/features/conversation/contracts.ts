@@ -305,7 +305,7 @@ export type IdentityMarkProps = Readonly<{
   profiles: RelaySession["profiles"];
 }>;
 export type LinkPreviewSettings = Readonly<{
-  /** True while that plugin Settings card is registered. */
+  /** True while that plugin Settings card is registered and visible, so Settings can open it. */
   has(section: string): boolean;
   subscribe(listener: () => void): () => void;
   open(section: string): void;

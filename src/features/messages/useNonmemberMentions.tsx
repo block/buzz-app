@@ -112,7 +112,8 @@ export function useNonmemberMentions(
                 ref={inviteAction}
                 type="button"
                 variant="prominent"
-                disabled={pending?.busy}
+                // Loading, not disabled, so focus survives a failed invite.
+                loading={!!pending?.busy}
                 onClick={() => void add()}
               >
                 {pending?.busy ? "Inviting…" : "Invite"}

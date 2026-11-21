@@ -240,6 +240,16 @@
   display: block;
   margin-top: var(--space-1);
 }
+/* Table columns size as on GitHub: words stay whole, and media shrinks with
+   its column, which can narrow below the media's width and widens to it when
+   there is room. */
+.tableScroll table {
+  overflow-wrap: normal;
+}
+.tableScroll .attachment {
+  display: grid;
+  grid-template-columns: minmax(0, max-content);
+}
 .note {
   margin-top: var(--space-6);
   padding-top: var(--space-3);

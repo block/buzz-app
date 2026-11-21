@@ -17,6 +17,7 @@ import {
   setUnreadFirstPreference,
   unreadFirstPreference,
 } from "../features/search/unread-first-preference";
+import { inAppBrowserDisabled } from "../features/browser/in-app-browser-preference";
 import {
   messageSortPreference,
   setMessageSortPreference,
@@ -60,6 +61,7 @@ afterEach(() => {
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   setUnreadFirstPreference(true);
+  inAppBrowserDisabled.set(false);
   setMessageSortPreference("relevance");
   setClockPreference({
     hourCycle: "system",
@@ -631,6 +633,55 @@ it("leads search with unread until this device turns it off", async () => {
     );
   });
   expect(toggle()).toBeChecked();
+});
+
+it("opens links in the system browser once this device turns the in-app browser off", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Open links in your system browser" });
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).not.toBeChecked();
+  await user.click(toggle());
+  expect(inAppBrowserDisabled.read()).toBe(true);
+  expect(localStorage.getItem("buzz-in-app-browser-disabled.v1")).toBe("on");
+  cleanup();
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(toggle()).toBeChecked();
+});
+
+it("keeps an unsaved in-app browser choice active and retries the same choice", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(
+    screen.getByRole("switch", { name: "Open links in your system browser" }),
+  );
+  expect(inAppBrowserDisabled.read()).toBe(true);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Browser preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving browser preference" }),
+  );
+  expect(localStorage.getItem("buzz-in-app-browser-disabled.v1")).toBe("on");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
 });
 
 it("saves the message sort default, or keeps it active and retries when saving fails", async () => {

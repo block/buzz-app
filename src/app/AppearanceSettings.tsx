@@ -33,6 +33,7 @@ import {
   setMessageAutocorrectPreference,
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
+import { inAppBrowserDisabled } from "../features/browser/in-app-browser-preference";
 import {
   setUnreadFirstPreference,
   useUnreadFirstPreference,
@@ -83,6 +84,8 @@ export function AppearanceSettings({
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
   const unreadFirst = useUnreadFirstPreference();
+  const inAppBrowserOff = inAppBrowserDisabled.usePreference();
+  const inAppBrowserError = inAppBrowserDisabled.useSaveError();
   const messageSort = useMessageSortPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -493,6 +496,12 @@ export function AppearanceSettings({
               checked={unreadFirst.enabled}
               onCheckedChange={setUnreadFirstPreference}
             />
+            <SwitchPreferenceRow
+              label="Open links in your system browser"
+              description="Turns off Buzz’s in-app browser, on a Mac. Links you open next go to your default browser; tabs already open stay open."
+              checked={inAppBrowserOff}
+              onCheckedChange={inAppBrowserDisabled.set}
+            />
             <PreferenceRow
               title="Sort messages by"
               subtitle="Where the relay supports sorting, new searches of one conversation start in this order. Sort messages in the search field changes only that search."
@@ -586,6 +595,20 @@ export function AppearanceSettings({
               onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
             >
               Retry saving search preference
+            </Button>
+          </ToastNotice>
+        )}
+        {active && inAppBrowserError && (
+          <ToastNotice
+            title="Browser preference wasn’t saved"
+            description={inAppBrowserError}
+          >
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => inAppBrowserDisabled.set(inAppBrowserOff)}
+            >
+              Retry saving browser preference
             </Button>
           </ToastNotice>
         )}

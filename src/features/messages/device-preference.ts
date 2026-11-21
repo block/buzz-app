@@ -32,10 +32,11 @@ export function devicePreference(preferenceKey: string, changedEvent: string) {
     return useSyncExternalStore(subscribe, read);
   }
   /** The save failure for the active unsaved choice, until it is saved. */
+  function saveError() {
+    return unsavedPreference === undefined ? null : unsavedError;
+  }
   function useSaveError() {
-    return useSyncExternalStore(subscribe, () =>
-      unsavedPreference === undefined ? null : unsavedError,
-    );
+    return useSyncExternalStore(subscribe, saveError);
   }
   function set(enabled: boolean): string | null {
     let error: string | null = null;
@@ -50,5 +51,5 @@ export function devicePreference(preferenceKey: string, changedEvent: string) {
     return error;
   }
 
-  return { read, subscribe, usePreference, useSaveError, set };
+  return { read, saveError, subscribe, usePreference, useSaveError, set };
 }

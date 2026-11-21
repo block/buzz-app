@@ -178,7 +178,7 @@ it("shows the recorded tool name, highlights tool calls, and keeps script text i
   expect(screen.queryByText("Raw details")).not.toBeInTheDocument();
 });
 
-it("shows a failed nested call on the collapsed script while preserving the script's status", () => {
+it("shows a failed nested call on the collapsed script while preserving the script's status", async () => {
   const turns = codexTurns(
     [
       {
@@ -224,6 +224,7 @@ it("shows a failed nested call on the collapsed script while preserving the scri
   const script = screen.getByText("exec", { exact: true }).closest("details");
   expect(script).not.toHaveAttribute("open");
   expect(script).toHaveAttribute("data-status", "completed");
+  await userEvent.click(screen.getByText("exec", { exact: true }));
   // The script and its nested call each carry their own time.
   expect(script?.querySelectorAll("time")).toHaveLength(2);
   expect(script?.parentElement?.querySelectorAll("time")).toHaveLength(2);
@@ -282,7 +283,7 @@ it("discloses tool arguments and results without raw details, including a posted
   expect(screen.queryByText("Raw details")).not.toBeInTheDocument();
 });
 
-it("renders thought formatting and keeps entry times available, except the prompt", () => {
+it("renders thought formatting and keeps entry times available, except the prompt", async () => {
   const at = Date.UTC(2026, 9, 20, 20, 1, 28);
   const { container } = render(
     <ActivityTranscript
@@ -311,6 +312,7 @@ it("renders thought formatting and keeps entry times available, except the promp
       state={() => "ended"}
     />,
   );
+  await userEvent.click(screen.getByText("Inspecting the bootstrap script"));
   expect(screen.getByText("formatting", { selector: "strong" }).tagName).toBe(
     "STRONG",
   );
@@ -379,7 +381,7 @@ it("updates mounted transcript clocks while keeping elapsed time and navigation"
   }
 });
 
-it("shows no time for an entry with a zero, non-finite or invalid time", () => {
+it("shows no time for an entry with a zero, non-finite or invalid time", async () => {
   const { container } = render(
     <ActivityTranscript
       transcript={{
@@ -414,6 +416,8 @@ it("shows no time for an entry with a zero, non-finite or invalid time", () => {
       state={() => "ended"}
     />,
   );
+  await userEvent.click(screen.getByText("exec", { exact: true }));
+  expect(screen.getByText("d", { selector: "summary span" })).toBeVisible();
   expect(container.querySelectorAll("time")).toHaveLength(0);
 });
 
@@ -504,6 +508,220 @@ it("opens at the latest turn and follows new ones until the reader scrolls up", 
   shared.remove();
 });
 
+it.each([
+  {
+    situation: "when the partial transcript fits",
+    resized: false,
+    fits: true,
+    expectedTop: 90,
+  },
+  {
+    situation: "when the viewport grows to fit after scrolling up",
+    resized: true,
+    fits: true,
+    expectedTop: 90,
+  },
+  {
+    situation: "when native restoration scroll fires inside the follow margin",
+    resized: false,
+    fits: false,
+    expectedTop: 205,
+  },
+])(
+  "keeps the open disclosure and its viewport $situation",
+  async ({ fits, resized, expectedTop }) => {
+    const item = (id: string, text: string) => ({
+      id,
+      text,
+      type: "thought" as const,
+      at: 1,
+    });
+    const turn: TranscriptTurn = {
+      turnId: "ongoing",
+      channelId: null,
+      threadRootId: null,
+      triggeringEventIds: [],
+      newSession: false,
+      config: [],
+      startedAt: 1,
+      partial: false,
+      items: [
+        item("first", "First"),
+        item("middle", "Middle\n\nDetails"),
+        item("last", "Last"),
+      ],
+    };
+    const older = item("history", "Older");
+    const newer = item("live", "Newer");
+    const view = document.body.appendChild(document.createElement("div"));
+    view.style.overflowY = "auto";
+    const prependHeight = () =>
+      view.querySelector('[data-entry="item:history"]') ? 150 : 0;
+    let viewportHeight = resized ? 35 : 150;
+    const rowLengths = fits ? [20, 50, 20] : [80, 140, 100];
+    const contentHeight = fits ? 90 : 320;
+    const naturalHeight = () =>
+      contentHeight +
+      prependHeight() -
+      (view.querySelector('[data-entry="item:last"]') ? 0 : 100) +
+      (view.querySelector('[data-entry="item:live"]') ? 120 : 0);
+    Object.defineProperty(view, "clientHeight", { get: () => viewportHeight });
+    Object.defineProperty(view, "scrollHeight", {
+      get: () => Math.max(viewportHeight, naturalHeight()),
+    });
+    let scrollTop = 0;
+    Object.defineProperty(view, "scrollTop", {
+      get: () => scrollTop,
+      set: (desired: number) => {
+        scrollTop = Math.min(
+          Math.max(0, desired),
+          view.scrollHeight - viewportHeight,
+        );
+      },
+    });
+    const canonicalItems = !fits ? turn.items.slice(0, -1) : turn.items;
+    const show = (history: boolean, live = false) => (
+      <ActivityTranscript
+        transcript={{
+          ...(!history && { partial: true }),
+          turns: [
+            history
+              ? {
+                  ...turn,
+                  items: live
+                    ? [older, ...canonicalItems, newer]
+                    : [older, ...canonicalItems],
+                }
+              : turn,
+          ],
+        }}
+        agentName="Agent"
+        state={() => "working"}
+      />
+    );
+    try {
+      const { rerender } = render(show(false), { container: view });
+      const timeline = view.firstElementChild;
+      const renderedTurn = timeline?.lastElementChild;
+      if (!timeline || !renderedTurn)
+        throw new Error("Missing transcript turn");
+      Object.defineProperty(renderedTurn, "getBoundingClientRect", {
+        value: () => new DOMRect(0, -scrollTop, 100, naturalHeight()),
+      });
+      const rowStarts = [0, rowLengths[0] ?? 0, fits ? 70 : 220];
+      for (const [index, entry] of [
+        ...renderedTurn.querySelectorAll("[data-entry]"),
+      ].entries()) {
+        Object.defineProperty(entry, "getBoundingClientRect", {
+          value: () =>
+            new DOMRect(
+              0,
+              (rowStarts[index] ?? 0) + prependHeight() - scrollTop,
+              100,
+              rowLengths[index],
+            ),
+        });
+      }
+      const summary = screen.getByText("Middle");
+      await userEvent.click(summary);
+      expect(screen.getByText("Details")).toBeVisible();
+      if (resized) {
+        view.scrollTop = 0;
+        fireEvent.scroll(view);
+        viewportHeight = 150;
+      }
+      if (!fits) {
+        view.scrollTop = 95;
+        fireEvent.scroll(view);
+        view.scrollTop = 55;
+      }
+
+      rerender(show(true));
+      expect(view.scrollTop).toBe(expectedTop);
+      expect(screen.getByText("Middle")).toBe(summary);
+      expect(screen.getByText("Details")).toBeVisible();
+      if (!fits) {
+        view.dispatchEvent(new Event("scroll"));
+        rerender(show(true, true));
+        expect(view.scrollTop).toBe(expectedTop);
+      }
+    } finally {
+      view.remove();
+    }
+  },
+);
+
+it.each([
+  { promptHeight: 40, expectedAnchor: "item:reading" },
+  { promptHeight: 200, expectedAnchor: "turn:reading" },
+])(
+  "holds $expectedAnchor when the session prompt moves to an older turn",
+  ({ promptHeight, expectedAnchor }) => {
+    const turn = (id: string, startedAt: number) =>
+      ({
+        turnId: id,
+        startedAt,
+        sessionId: "s",
+        channelId: null,
+        threadRootId: null,
+        triggeringEventIds: [],
+        newSession: false,
+        config: [],
+        partial: false,
+        items: [{ type: "thought", id, at: startedAt, text: id }],
+      }) satisfies TranscriptTurn;
+    const reading = turn("reading", 2);
+    const show = (history: boolean) => (
+      <ActivityTranscript
+        agentName="Agent"
+        state={() => "ended"}
+        transcript={{
+          ...(!history && { partial: true }),
+          turns: withSessionPrompts(
+            history ? [turn("older", 1), reading] : [reading],
+            () => [{ label: "base", text: "Instructions" }],
+          ),
+        }}
+      />
+    );
+    const view = document.body.appendChild(document.createElement("div"));
+    view.style.overflowY = "auto";
+    Object.defineProperty(view, "clientHeight", { value: 150 });
+    const loaded = () => !!view.querySelector('[data-entry="turn:older"]');
+    Object.defineProperty(view, "scrollHeight", {
+      get: () => (loaded() ? 700 : 500),
+    });
+    try {
+      const { rerender } = render(show(false), { container: view });
+      const entry = (id: string) => {
+        const el = view.querySelector<HTMLElement>(`[data-entry="${id}"]`);
+        if (!el) throw new Error(`Missing entry ${id}`);
+        return el;
+      };
+      const rect = (top: number, height: number) =>
+        new DOMRect(0, top - view.scrollTop, 100, height);
+      const prompt = entry("item:s:system-prompt");
+      prompt.getBoundingClientRect = () => rect(20, promptHeight);
+      entry("turn:reading").getBoundingClientRect = () =>
+        rect(loaded() ? 340 : 0, 360);
+      entry("item:reading").getBoundingClientRect = () =>
+        rect(loaded() ? 360 : 20 + promptHeight, 130);
+      view.scrollTop = 25;
+      fireEvent.scroll(view);
+      const anchor = entry(expectedAnchor);
+      const offset = anchor.getBoundingClientRect().top;
+      rerender(show(true));
+      expect(entry("item:s:system-prompt").closest("article")).toBe(
+        entry("turn:older"),
+      );
+      expect(entry(expectedAnchor)).toBe(anchor);
+      expect(anchor.getBoundingClientRect().top).toBe(offset);
+    } finally {
+      view.remove();
+    }
+  },
+);
+
 it("shows the turn a message began, its prompt open, instead of the latest, once", async () => {
   const id = (n: number) => String(n).repeat(64);
   // A retry asks the same message again, so `event` can repeat.
@@ -550,6 +768,10 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
   const shown: string[] = [];
   const margins: string[] = [];
   Element.prototype.scrollIntoView = function (this: HTMLElement) {
+    if (this.dataset.entry === "item:m6")
+      expect(
+        this.querySelector("[data-arrival-surface][data-arrived]"),
+      ).not.toBeNull();
     shown.push(this.dataset.entry ?? "");
     margins.push(this.style.scrollMarginBlockStart);
   };
@@ -558,12 +780,12 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
   const header = (node: HTMLDivElement | null) => {
     if (node) Object.defineProperty(node, "offsetHeight", { value: 40 });
   };
-  const show = (turns: TranscriptTurn[], events: string[]) => (
+  const show = (turns: TranscriptTurn[], events: string[], partial = false) => (
     <TranscriptFocus.Provider value={{ events, inputs: readerInputs(), done }}>
       <div data-transcript>
         <div data-transcript-header ref={header} />
         <ActivityTranscript
-          transcript={{ turns }}
+          transcript={{ turns, ...(partial && { partial: true }) }}
           agentName="Sol"
           state={() => "ended"}
         />
@@ -581,6 +803,9 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
     // reader's own move.
     const trigger = document.body.appendChild(document.createElement("button"));
     trigger.focus();
+    rerender(show([turn(1), turn(2), turn(3)], ["reply", id(2)], true));
+    expect(done).not.toHaveBeenCalled();
+    expect(shown).toEqual([]);
     rerender(show([turn(1), turn(2), turn(3)], ["reply", id(2)]));
     expect(shown).toEqual(["item:p2"]);
     // It starts below the sticky header, with room for its focus ring, and
@@ -708,7 +933,7 @@ it("shows the turn a message began, its prompt open, instead of the latest, once
   }
 });
 
-it("divides sessions, and shows each one's prompt once at its top", () => {
+it("divides sessions, and shows each one's prompt once at its top", async () => {
   const turn = (
     turnId: string,
     sessionId: string,
@@ -751,7 +976,9 @@ it("divides sessions, and shows each one's prompt once at its top", () => {
       .map((line) => line.textContent),
   ).toEqual(["Session continued; earlier turns not shown", "New session"]);
   expect(screen.getAllByText(/System prompt/)).toHaveLength(1);
-  expect(screen.getByText("Agent instructions")).toBeInTheDocument();
+  expect(screen.queryByText("Agent instructions")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByText(/System prompt/));
+  expect(screen.getByText("Agent instructions")).toBeVisible();
 });
 
 it("keeps the conversation readable while disclosing work and showing the current step", async () => {
@@ -819,7 +1046,7 @@ it("keeps the conversation readable while disclosing work and showing the curren
   expect(
     screen.queryByRole("button", { name: "2 activity steps" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText("source")).not.toBeVisible();
+  expect(screen.queryByText("source")).not.toBeInTheDocument();
   await user.click(screen.getByText("renderer"));
   expect(screen.getByText("source")).toBeVisible();
   await user.click(screen.getByText("renderer"));
@@ -853,7 +1080,7 @@ it("keeps thought details collapsed until requested and preserves them across up
       state={() => "working"}
     />,
   );
-  expect(screen.getByText("formatting")).not.toBeVisible();
+  expect(screen.queryByText("formatting")).not.toBeInTheDocument();
   const disclosure = screen
     .getByText("Checking the view", { selector: "summary span" })
     .closest("summary");

@@ -14,6 +14,7 @@ import { ProviderDialogActions } from "../../features/agents/ProviderDialogActio
 import {
   Fragment,
   type ReactNode,
+  useContext,
   useEffect,
   useRef,
   useId,
@@ -21,7 +22,13 @@ import {
   useSyncExternalStore,
 } from "react";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
+import { TranscriptFocus } from "../../features/agents/ActivityTranscript";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
+import type { ClaudeTranscript } from "./transcript";
+import {
+  TranscriptPanel,
+  withLatest,
+} from "../../features/agents/TranscriptPanel";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -994,17 +1001,150 @@ export function createTabs({
     working: boolean;
   }) {
     const workspace = readConfig(agent.config).workspace;
+    const input = JSON.stringify([workspace, conversation.sessionId]);
+    const focus = useContext(TranscriptFocus);
+    const [history, setHistory] = useState({
+      input,
+      focus,
+      attempt: focus ? 1 : 0,
+      loading: false,
+    });
+    const fullHistory = useRef<{ input: string; loaded: boolean }>(undefined);
+    if (history.input !== input) {
+      setHistory({ input, focus, attempt: focus ? 1 : 0, loading: false });
+    } else if (
+      focus &&
+      history.focus !== focus &&
+      !(fullHistory.current?.input === input && fullHistory.current.loaded)
+    ) {
+      setHistory({ ...history, focus, attempt: history.attempt + 1 });
+    }
+    const loadEarlier = () =>
+      setHistory((old) =>
+        old.loading
+          ? old
+          : {
+              ...old,
+              attempt: old.attempt + 1,
+              loading: true,
+            },
+      );
+    type History = ClaudeTranscript & { partial?: true };
+    const again = JSON.stringify([input, history.attempt]);
+    const refreshCount = useRef(0);
+    const settled = useRef<{
+      again: string;
+      refresh: number;
+      working: boolean;
+      result: History;
+    }>(undefined);
+    async function latestTurns(
+      signal: AbortSignal,
+      held: readonly TranscriptTurn[],
+    ) {
+      const turns = await runtime.latestTurns(
+        conversation,
+        workspace,
+        working,
+        signal,
+        held,
+      );
+      signal.throwIfAborted();
+      if (turns && !turns.length) return turns;
+      const from = held.findIndex((turn) => turn.turnId === turns?.[0]?.turnId);
+      if (
+        !turns ||
+        from < 0 ||
+        held
+          .slice(from)
+          .some((turn, index) => turn.turnId !== turns[index]?.turnId) ||
+        turns.some(
+          (turn, index) =>
+            turn.startedAt <
+            ((turns[index - 1] ?? held[from - 1])?.startedAt ?? -Infinity),
+        )
+      ) {
+        if (fullHistory.current?.input !== input)
+          fullHistory.current = { input, loaded: false };
+        return undefined;
+      }
+      return turns;
+    }
     return (
       <TranscriptPanel
         agent={agent}
-        read={(signal) =>
-          runtime.transcript(conversation, workspace, working, signal)
-        }
-        readLatest={(signal, held) =>
-          runtime.latestTurns(conversation, workspace, working, signal, held)
-        }
+        onRefreshRequested={() => {
+          refreshCount.current++;
+        }}
+        read={async (signal) => {
+          const refresh = refreshCount.current;
+          const prior = settled.current;
+          settled.current = undefined;
+          let result: History | undefined;
+          try {
+            if (
+              prior?.again === again &&
+              prior.refresh === refresh &&
+              prior.working !== working &&
+              !prior.result.partial &&
+              !prior.result.incomplete
+            ) {
+              const turns = await latestTurns(signal, prior.result.turns).catch(
+                () => undefined,
+              );
+              signal.throwIfAborted();
+              if (turns?.length) result = withLatest(prior.result, turns);
+            }
+            if (
+              !result &&
+              !history.attempt &&
+              fullHistory.current?.input !== input
+            ) {
+              const tail = await runtime.transcriptPreview(
+                conversation,
+                workspace,
+                working,
+                signal,
+              );
+              signal.throwIfAborted();
+              if (tail) result = { ...tail, partial: true };
+            }
+            if (!result) {
+              result = await runtime.transcript(
+                conversation,
+                workspace,
+                working,
+                signal,
+              );
+              signal.throwIfAborted();
+              fullHistory.current = { input, loaded: Boolean(result) };
+            }
+            if (result) settled.current = { again, working, refresh, result };
+            return result;
+          } finally {
+            if (history.loading && !signal.aborted) {
+              setHistory((current) =>
+                current === history ? { ...current, loading: false } : current,
+              );
+            }
+          }
+        }}
+        readLatest={async (signal, held) => {
+          const prior = settled.current;
+          let result: History | undefined;
+          try {
+            const turns = await latestTurns(signal, held);
+            signal.throwIfAborted();
+            if (prior && turns) result = withLatest(prior.result, turns);
+            return turns;
+          } finally {
+            if (!signal.aborted)
+              settled.current =
+                prior && result ? { ...prior, result } : undefined;
+          }
+        }}
         readKey={`${conversation.key}\u0000${workspace}`}
-        readAgain={conversation.sessionId ?? ""}
+        readAgain={again}
         working={working}
         reading="Reading the Claude session…"
         failed="Could not read the Claude session"
@@ -1016,6 +1156,21 @@ export function createTabs({
         }
         notes={(transcript) => (
           <>
+            {transcript.partial && (
+              <div data-transcript-history="partial">
+                <span className="text-body-sm text-subtle">
+                  Earlier activity is not loaded.{" "}
+                </span>
+                <Button
+                  variant="plain"
+                  size="inline"
+                  loading={history.loading}
+                  onClick={loadEarlier}
+                >
+                  Load earlier activity
+                </Button>
+              </div>
+            )}
             {transcript.incomplete && (
               <p role="status" className="m-0 text-body-sm">
                 Some of this conversation’s sessions may be missing. Refresh to
@@ -1025,7 +1180,7 @@ export function createTabs({
                 </span>
               </p>
             )}
-            {transcript.more && (
+            {transcript.more && !transcript.partial && (
               <p className="m-0 text-body-sm text-subtle">
                 {transcript.turns.length
                   ? `Showing the latest ${transcript.turns.length === 1 ? "turn" : `${transcript.turns.length} turns`}.`

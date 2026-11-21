@@ -162,7 +162,9 @@ PanelDock curve; closing finishes before requesting the native window resize.
 Reopening interrupts the exit. Keyboard and reduced-motion toggles are immediate.
 The regular composer owns its inset without extra huddle-wrapper padding. Thread uses
 the existing relay session for message history, sending, and failed-message
-Retry/Discard. Closing this panel or minimizing the window does not end audio or
+Retry/Discard. It lists top-level messages; a message with thread replies, such as an
+agent's answer to a mention, shows its reply summary, which opens that thread in
+the main window. Closing this panel or minimizing the window does not end audio or
 cancel an accepted message delivery. Text drafts survive tab changes and reopening. Attachment drafts survive tab changes,
 but closing the panel releases its local files. An admitted message clears its persisted
 draft in the main app even if the companion closes before acknowledgment. The transcript tab is a placeholder: local speech

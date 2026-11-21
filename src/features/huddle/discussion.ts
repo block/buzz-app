@@ -33,6 +33,8 @@ export type HuddleDiscussion = {
     edited?: boolean;
     attachmentSeams?: readonly number[];
     mentionReferences?: readonly string[];
+    replyCount?: number;
+    participants?: readonly string[];
     time: number;
     delivery: Delivery;
   }[];
@@ -224,13 +226,19 @@ export function createHuddleDiscussion(
             attachmentSeams: r.attachmentSeams ?? [],
             mentionNames: Object.fromEntries(
               [
-                ...new Set([...r.mentions, ...(r.mentionReferences ?? [])]),
+                ...new Set([
+                  ...r.mentions,
+                  ...(r.mentionReferences ?? []),
+                  ...r.participants,
+                ]),
               ].flatMap((key) => {
                 const name = profiles.get(key)?.name;
                 return name && name.length <= 1000 ? [[key, name]] : [];
               }),
             ),
             mentionReferences: r.mentionReferences ?? [],
+            replyCount: r.replyCount,
+            participants: r.participants,
             time: r.createdAt,
             delivery:
               r.authorId === session.viewer ? (r.delivery ?? "seen") : "seen",

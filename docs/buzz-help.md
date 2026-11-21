@@ -45,6 +45,8 @@ If agent voice stops, the compact player and Huddle window show the reason;
 leave and rejoin to retry.
 Final voice transcripts appear in the room with speaker credit and do not
 mention anyone. Explicit agent watches on that room can still receive them.
+An agent answers a typed mention in the Huddle chat in that message's thread.
+Select the reply summary under the message to open the thread in the main window.
 
 In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to choose which voice the agent speaks with in Huddles (Codex only). Use **Language and region** to filter supported voices with preview recordings by locale or accent. Select a voice to play its sample. Close the chooser with **X** to save your choice, or press Escape to cancel. **Codex default** is above the region filter and follows the current Codex default voice. Selecting another voice, changing the locale, or closing the chooser stops the previous sample. If a harness change is pending, the voice is saved with that change using the settings **Save** button. Preview plays an available prerecorded sample on the local Codex host and does not use your microphone. Voice choices and sample URLs refresh when settings opens; downloaded samples are reused during the app session. Each agent has its own choice, synced with its settings. The saved change applies when the agent next joins a Huddle. Update Buzz on every host running the agent before selecting a non-default voice. Older hosts cannot read the synced voice setting and may fail to start text or voice work.
 

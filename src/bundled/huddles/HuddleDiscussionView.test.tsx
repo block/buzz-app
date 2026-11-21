@@ -248,3 +248,32 @@ it("routes internal links and signed mentions while leaving unbound or edited na
   expect(chip()).toBeUndefined();
   expect(screen.getByText(/@Taylor/)).toBeTruthy();
 });
+
+it("shows an existing thread's replies and opens that thread", () => {
+  const value = discussion("failed");
+  const agent = "cd".repeat(32);
+  assert(value.rows[0]);
+  value.rows[0] = {
+    ...value.rows[0],
+    id: "ef".repeat(32),
+    delivery: "seen",
+    replyCount: 1,
+    participants: [agent],
+    mentionNames: { [agent]: "Robin" },
+  };
+  const openLink = vi.fn(() => true);
+  render(
+    <HuddleDiscussionView
+      discussion={value}
+      composer={null}
+      older={() => {}}
+      retry={() => {}}
+      recover={() => {}}
+      openLink={openLink}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /View thread: 1 reply/ }));
+  expect(openLink).toHaveBeenCalledWith(
+    `buzz://message?channel=room&id=${"ef".repeat(32)}&thread=${"ef".repeat(32)}`,
+  );
+});

@@ -1181,3 +1181,51 @@ it("cancels a pending thread notification when metadata marks its room as a Hudd
   await flush();
   expect(h.show).not.toHaveBeenCalled();
 });
+
+it("notifies a mention in a public stream the viewer reads without joining, and opens it without joining", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+  const h = await setup();
+  h.emit([
+    roster(h.relay, "lobby", [h.peer.pubkey]),
+    metadata(h.relay, "lobby", "Lobby", undefined, [
+      ["t", "stream"],
+      ["public"],
+    ]),
+  ]);
+  const mention = message(h.peer, "lobby", "come look", 1_780_000_000, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([mention], "live", "lobby");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+  expect(h.show.mock.calls[0]?.[0]).toMatchObject({
+    title: expect.stringContaining("#Lobby"),
+    body: "come look",
+  });
+  h.click();
+  expect(h.navigation.navigation.snapshot().entry.target).toMatchObject({
+    channelId: "lobby",
+    messageId: mention.id,
+  });
+  expect(h.owner.session.channels.list().channels.map((c) => c.id)).toEqual([
+    "room",
+  ]);
+});
+
+it("never notifies a crafted mention from a private channel the viewer has not joined", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
+  const h = await setup();
+  h.emit([
+    roster(h.relay, "vault", [h.peer.pubkey]),
+    metadata(h.relay, "vault", "Vault", undefined, [
+      ["t", "stream"],
+      ["private"],
+    ]),
+  ]);
+  const crafted = message(h.peer, "vault", "secret", 1_780_000_000, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.emit([crafted], "live", "vault");
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+  expect(h.owner.session.unread.inbox().items).toEqual([]);
+});

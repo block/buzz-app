@@ -431,6 +431,34 @@ it.each(["button", "menu"] as const)(
   },
 );
 
+it("previews a mention from a public stream the viewer has not joined under its channel name", async () => {
+  const h = fixture({ outside: true });
+  render(previewAt(h));
+  await waitFor(() => expect(previewRows()).toHaveLength(3));
+  const row = previewRows().find((entry) =>
+    entry.textContent?.includes("Come see this"),
+  );
+  expect(row).toHaveTextContent("Lobby");
+});
+
+it("marks a mention from a public stream the viewer has not joined read without joining", async () => {
+  const h = fixture({ withWriter: true, outside: true });
+  render(h.view);
+  await waitFor(() => expect(rows()).toHaveLength(3));
+  const row = rows().find((entry) =>
+    entry.textContent?.includes("Come see this"),
+  );
+  if (!row) throw new Error("Missing outside row");
+  expect(row).toHaveTextContent("Lobby");
+  fireEvent.click(within(row).getByRole("button", { name: /^Mark as read / }));
+  await waitFor(() =>
+    expect(h.journal()?.state.frontiers[`msg:${h.outside.id}`]).toBe(24),
+  );
+  expect(
+    h.session.channels.list().channels.map((channel) => channel.id),
+  ).not.toContain("lobby");
+});
+
 it.each([false, true])(
   "sending leaves the conversation open in its list (DM: %s)",
   async (dm) => {
@@ -997,6 +1025,7 @@ function fixture(
     memberAgents?: 1 | 2;
     readCapability?: "read-only" | "unsupported";
     guest?: boolean;
+    outside?: boolean;
   } = {},
 ) {
   const viewer = keypair(),
@@ -1089,6 +1118,10 @@ function fixture(
   const reply = message(alice, "room", "A thread update", 22, [
     ["e", roots[0]?.id ?? "", "", "reply"],
   ]);
+  // A public stream the viewer reads without joining.
+  const outside = message(alice, "lobby", "Come see this", 24, [
+    ["p", viewer.pubkey],
+  ]);
   const events = [
     roster(
       relayKey,
@@ -1121,6 +1154,16 @@ function fixture(
             ["hidden"],
           ]),
           message(alice, "dm-room", "A direct reply", 23),
+        ]
+      : []),
+    ...(options.outside
+      ? [
+          roster(relayKey, "lobby", [alice.pubkey], 10),
+          metadata(relayKey, "lobby", "Lobby", 10, [
+            ["t", "stream"],
+            ["public"],
+          ]),
+          outside,
         ]
       : []),
     ...(options.withSolo
@@ -1536,6 +1579,7 @@ function fixture(
     late,
     alice,
     viewer,
+    outside,
     relayKey,
     profileAgent,
     emit,

@@ -11,7 +11,7 @@ import {
 } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import type { InboxItem } from "../../features/relay/inbox";
+import { outsideChannel, type InboxItem } from "../../features/relay/inbox";
 import type {
   PageTabsProps,
   PageTabTarget,
@@ -881,9 +881,12 @@ function InboxList({
     // Capture the admitted row and access evidence. Retry is explicit and cannot
     // reuse the intent after retargeting, access changes, or newer read/activity intent.
     const intent = ++intentRevision.current;
-    const channel = session.channels
-      .list()
-      .channels.find((entry) => entry.id === item.channelId);
+    const channelOf = () =>
+      session.channels
+        .list()
+        .channels.find((entry) => entry.id === item.channelId) ??
+      session.channels.get?.(item.channelId);
+    const channel = channelOf();
     const generation = session.unread.generation();
     const membership = channel?.members
       ? [...channel.members].sort().join(":")
@@ -891,9 +894,7 @@ function InboxList({
     let revision = session.unread.revision();
     const remaining = [...item.readThrough];
     const valid = () => {
-      const current = session.channels
-        .list()
-        .channels.find((entry) => entry.id === item.channelId);
+      const current = channelOf();
       return (
         active.current &&
         intentRevision.current === intent &&
@@ -901,11 +902,14 @@ function InboxList({
         !!channel &&
         !!current &&
         !current.cached &&
-        (!current.readOnly || current.viewerRole === "guest") &&
-        !current.archived &&
+        (outsideChannel(current, scope.viewer) ||
+          ((!current.readOnly || current.viewerRole === "guest") &&
+            !current.archived &&
+            !!current.members?.includes(scope.viewer))) &&
         current.channelType === channel.channelType &&
-        !!current.members?.includes(scope.viewer) &&
-        [...current.members].sort().join(":") === membership &&
+        (current.members
+          ? [...current.members].sort().join(":")
+          : undefined) === membership &&
         session.unread.generation() === generation &&
         session.unread
           .inbox()
@@ -1203,9 +1207,10 @@ function InboxList({
                   );
                 }
                 const item = row.item;
-                const channel = list.channels.find(
-                  (candidate) => candidate.id === item.channelId,
-                );
+                const channel =
+                  list.channels.find(
+                    (candidate) => candidate.id === item.channelId,
+                  ) ?? session.channels.get?.(item.channelId);
                 const identity = rowIdentity(item, channel, profiles, name);
                 const { sender, context } = identity;
                 const unread = hasUnread(item);

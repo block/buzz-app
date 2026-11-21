@@ -61,6 +61,8 @@ export type ChannelSummary = Readonly<{
   /** Metadata update time used for stable work-history ordering. */
   updatedAt?: number;
   archived?: true;
+  /** Signed metadata leaves this open channel out of listings for non-members. */
+  unlisted?: true;
   /** Signed metadata cleanup interval in seconds; absent means ongoing or unknown. */
   ttlSeconds?: number;
   /** Exact members from the relay-signed roster; absent means unknown. */

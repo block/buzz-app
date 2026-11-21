@@ -97,6 +97,32 @@ pre-membership history without fresh shared admission. Inbox renders those share
 conversation rows directly; there is no second project/approval row merge or
 feed-owned reconciliation buffer and deletion-count abort.
 
+One exception to membership: a listed public stream or forum the viewer reads
+without joining (`outsideChannel`) contributes only messages that `p`-tag the
+viewer. Activity reads no forum posts (kinds 45001 and 45003), so in practice
+only streams add rows. Diff messages (kind 40008) from these channels are not
+admitted, since Activity's history read never lists them again. Mark all as read
+also reads these channels. Addressed history reads an unknown or stale channel's metadata first,
+once discovery is ready, and its signed metadata alone decides eligibility. A
+read that skipped an unknown channel because discovery was not ready runs again
+once it is. Signed metadata that hides the channel, or a disconnect that leaves
+its metadata unconfirmed, drops its retained mentions, since no read settles
+their edits or deletions; the next addressed read lists them again. There
+is no live route for these channels; a running session lists their mentions on
+its next addressed history read, or live while the viewer has the channel open.
+That read also checks every retained mention for edits and deletions, since the
+relay leaves a deleted one out of the next page, and marks each incomplete until
+its check finishes.
+A dwell in the channel reads the mentions it shows and skips its other rows. A
+dwell at the bottom reads only the bottom row it reached, even one too tall to
+show whole. When that row is a mention in a thread, the dwell also clears the
+device's reminders on the thread's replies; any other row is not retained, so it
+cannot place the thread's bottom.
+It never moves the channel's or thread's read mark, which would read older
+mentions it did not show. The channel's thread roots are never retained, so a
+reply mention's root is fetched for grouping even once it is read, in one read
+across channels. A root the lookup cache evicts is fetched again once.
+
 Channel-archived rooms are excluded from the shared Inbox projection in every
 activity view. Signed archive/unarchive metadata invalidates that projection even
 when membership and channel type stay unchanged. Archiving removes their rows and
@@ -150,7 +176,8 @@ query omits their soft-deleted rows. If reference visibility withholds an auxili
 event, the finite attempt stays failed/incomplete rather than treating the filtered
 page as exhausted history. Explicit Retry can settle it once existing shared
 readers have admitted the missing reference; Inbox adds no reference-resolution loop.
-Auxiliary reads cap retained results at 2,000 events / 4 MiB per stage; the shared reader
+Auxiliary reads ask for at most 500 IDs per filter and cap retained results at
+2,000 events / 4 MiB per stage; the shared reader
 keeps its existing per-request deadline and cancellation. Missing roots,
 participation or older activity can omit rows; an empty Inbox does not prove
 complete history. No polling, independent row source or channel window is

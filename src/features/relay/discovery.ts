@@ -518,6 +518,9 @@ export class DiscoveryState {
         ? { updatedAt: event.created_at }
         : {}),
       ...(event && hasTag(event, "archived", "true") ? { archived: true } : {}),
+      ...(event?.tags.some(([name]) => name === "unlisted")
+        ? { unlisted: true as const }
+        : {}),
       ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
       ...(identity?.labels.length ? { labels: identity.labels } : {}),
       ...(identity?.creator ? { creator: identity.creator } : {}),

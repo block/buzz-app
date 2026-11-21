@@ -449,6 +449,40 @@ it("projects explicit visibility and replaces description-only changes", async (
   }
 });
 
+it("replaces unlisted-only changes in both directions", async () => {
+  const { store, queries, next } = setup();
+  try {
+    queries.ensureList();
+    next().respond([
+      roster(relay, "work", [viewer.pubkey]),
+      metadata(relay, "work", "Work", 1_700_000_000, [
+        ["public"],
+        ["t", "stream"],
+      ]),
+    ]);
+    await flush();
+    expect(queries.list().channels[0]).not.toHaveProperty("unlisted");
+    for (const [index, unlisted] of [true, false].entries()) {
+      const old = queries.list().channels[0];
+      queries.refreshList?.();
+      next().respond([
+        roster(relay, "work", [viewer.pubkey]),
+        metadata(relay, "work", "Work", 1_700_000_001 + index, [
+          ["public"],
+          ["t", "stream"],
+          ...(unlisted ? [["unlisted"]] : []),
+        ]),
+      ]);
+      await flush();
+      const channel = queries.list().channels[0];
+      expect(channel).not.toBe(old);
+      expect(channel?.unlisted).toBe(unlisted ? true : undefined);
+    }
+  } finally {
+    store.dispose();
+  }
+});
+
 it("projects the signed metadata lifetime and replaces lifetime-only changes", async () => {
   const { store, queries, next } = setup();
   try {

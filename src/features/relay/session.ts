@@ -682,6 +682,8 @@ export function createRelaySession(
   /** Solo chats this device is starting; set once channel writes exist. */
   let startingChannel: (id: string) => Promise<void> | undefined = () =>
     undefined;
+  /** An addressed read skipped unknown channels because discovery was not ready. */
+  let outsideDeferred = false;
   // Keep ordinary reads on their existing promise chain; page metadata is opt-in.
   function readVerified(
     filters: readonly ReadFilter[],
@@ -836,6 +838,53 @@ export function createRelaySession(
       settings?.signal?.throwIfAborted();
       if (closed || epoch !== accessEpoch)
         throw new DOMException("Stale relay search", "AbortError");
+    } else if (
+      channelTraffic &&
+      filters.every(
+        (filter) =>
+          filter["#p"]?.length === 1 &&
+          filter["#p"][0] === transport?.viewer &&
+          !filter["#h"]?.length &&
+          !!filter.kinds?.length &&
+          filter.kinds.every(chat),
+      )
+    ) {
+      // Mentions of the viewer reach public channels it has not joined. Read
+      // the metadata of those this session does not know, or knows as archived,
+      // unlisted, non-public or unconfirmed: the relay just listed them, so that
+      // may be stale.
+      const stale = (id: string) => {
+        const known = channels.queries.get?.(id);
+        return (
+          !known ||
+          (!known.members?.includes(transport?.viewer ?? "") &&
+            (!!known.archived ||
+              !!known.unlisted ||
+              known.visibility !== "public" ||
+              !!known.cached ||
+              !!known.metadataCached ||
+              !!known.metadataPending))
+        );
+      };
+      const unknown = [
+        ...new Set(
+          events.flatMap((event) => {
+            const tags = event.tags.filter(([name]) => name === "h");
+            const id = tags.length === 1 ? tags[0]?.[1] : undefined;
+            return chat(event.kind) && id && stale(id) ? [id] : [];
+          }),
+        ),
+      ];
+      // Only into a ready list: a lookup must not stand in for discovery.
+      if (unknown.length && channels.queries.list().status === "ready") {
+        await channels.queries.resolve?.(unknown, {
+          ...settings,
+          viewerLookup: true,
+        });
+        settings?.signal?.throwIfAborted();
+        if (closed || epoch !== accessEpoch)
+          throw new DOMException("Stale relay read", "AbortError");
+      } else if (unknown.length) outsideDeferred = true;
     }
     const visible = accept(
       events,
@@ -1469,6 +1518,7 @@ export function createRelaySession(
     },
     retainedEvent: unread.event,
     retainedEditIds: unread.retainedEditIds,
+    retainedOutsideIds: unread.outsideMentionIds,
     addressedRead: (filter, signal, prepare) =>
       finiteRead([filter], { signal }, (signal) =>
         readVerified([filter], { signal }, true, prepare),
@@ -4401,6 +4451,12 @@ export function createRelaySession(
     refreshChannelActivity,
   );
   const stopInterests = channels.queries.subscribeList(updateInterests);
+  // Activity ensures a stale feed when the list becomes ready, so it reads again.
+  const stopDeferredOutside = channels.queries.subscribeList(() => {
+    if (!outsideDeferred || channels.queries.list().status !== "ready") return;
+    outsideDeferred = false;
+    inboxFeed.stale();
+  });
   updateInterests();
   refreshChannelActivity();
 
@@ -4481,6 +4537,7 @@ export function createRelaySession(
       details.dispose();
       memberAdministration.dispose();
       stopInterests();
+      stopDeferredOutside();
       stopHintGuard();
       stopWarmPreferences();
       for (const view of [...artifactSyncs]) view.dispose();

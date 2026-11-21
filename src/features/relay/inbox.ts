@@ -1,5 +1,20 @@
 import type { PreviewMentions } from "../messages/PreviewText";
+import type { ChannelSummary } from "./contracts";
 import type { ReadTarget } from "./read-state-model";
+
+/** A listed public stream or forum the viewer reads without joining. Its
+ * mentions of the viewer are Activity and notify; nothing else from it is. */
+export const outsideChannel = (channel: ChannelSummary, viewer: string) =>
+  channel.visibility === "public" &&
+  !channel.unlisted &&
+  (channel.channelType === "stream" || channel.channelType === "forum") &&
+  !channel.hidden &&
+  !channel.cached &&
+  !channel.metadataCached &&
+  !channel.metadataPending &&
+  !channel.huddle &&
+  !channel.archived &&
+  !channel.members?.includes(viewer);
 
 /** A conversation projected from the unread owner's bounded verified evidence. */
 export type InboxItem = Readonly<{

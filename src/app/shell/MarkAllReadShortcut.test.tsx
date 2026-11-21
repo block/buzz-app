@@ -15,11 +15,14 @@ const viewer = "a".repeat(64);
 function setup({
   capability = "frontier-sync",
   unreadChannels = ["one"],
+  activityChannels = [] as string[],
   selected = origin as string | null,
   connected = origin,
 }: {
   capability?: string;
   unreadChannels?: string[];
+  /** Channels of Activity rows, which can be outside the channel list. */
+  activityChannels?: string[];
   selected?: string | null;
   /** The community the relay session is actually connected to. */
   connected?: string;
@@ -32,6 +35,9 @@ function setup({
       observedCount: unreadChannels.includes(channelId) ? 2 : 0,
     }),
     activity: () => ({ items: [] }),
+    inbox: () => ({
+      items: activityChannels.map((channelId) => ({ channelId })),
+    }),
     markAllChannelsRead,
   };
   const session = {
@@ -93,6 +99,15 @@ it("is unavailable without read sync, without anything unread, or while another 
   expect(
     setup({ connected: "https://other.example" }).shortcut(),
   ).toBeUndefined();
+});
+
+it("is available when the only unread is a mention in a public channel the viewer has not joined", () => {
+  // That channel is not in the channel list; only Activity holds it.
+  expect(
+    setup({ unreadChannels: ["lobby"], activityChannels: ["lobby"] })
+      .shortcut()
+      ?.when?.(),
+  ).toBe(true);
 });
 
 it("asks first, focusing Mark all as read, and marks nothing when cancelled", async () => {

@@ -569,7 +569,8 @@ create-only secure-storage item is service `xyz.block.buzz.desktop.identity` in 
 builds, or `xyz.block.buzz.desktop.identity.debug` with Rust debug assertions,
 account `human`. Debug worktrees share the debug item, not the release identity;
 ports and frontend dev mode do not isolate it. `just desktop me` is the one
-exception: it signs in with the release key, read from
+exception: it signs in with the release key (and
+[its sign-ins](#sharing-the-installed-apps-sign-ins-in-development)), read from
 `xyz.block.buzz.desktop.identity` (else its pre-1.0 service), and never copies,
 replaces or deletes it. Create, import and Sign out still use only the debug item,
 so Sign out ends the session but the next launch reads the release key again. A
@@ -672,7 +673,9 @@ and 13 occupied; other failures are unavailable. Requests time out after five
 seconds, or two minutes under `BUZZ_DEV_CREDENTIAL_HELPER_AUTHORIZE=1`.
 
 The helper serves only an exact list of items and refuses any other service or
-account. It may only read the release key, never write, copy over or delete it, and
+account. It may only read the release key and the release build's sign-ins
+(`xyz.block.buzz.desktop.federated-session`), never write, copy over or delete
+them, and
 it never replaces the debug human key, which stays create-only. Before it reads a
 value or touches the Keychain, it checks that stdout is a Unix socket whose peer is
 its parent process, by audit token, and that the peer's live code signature meets
@@ -1214,6 +1217,29 @@ Buzz data. Failed removal of a known record leaves refusal durable before any
 secure-store access, so that revision cannot restore until cleanup succeeds.
 Sign out of Buzz removes indexed FI records across profiles/configurations in
 its debug/release namespace before deleting the human key or opening a WebView.
+
+#### Sharing the installed app's sign-ins in development
+
+`just desktop me` reads the installed app's sign-ins as it reads its key: read
+only, never copied over, replaced or deleted. With the installed build's
+[settings](configuration.md), it lists the same servers, so each server's account
+key names the same item. Until the debug build first saves a server's item, it
+reads that item from the release namespace, honoring either namespace's
+refusal markers. Every save goes to the debug namespace: the first copies the
+whole release item there (session and grants, nothing mixed in from an older
+debug item), and its account index, written before the save, makes the debug
+copy the only one read from then on, even once it is empty. The first save
+refuses here a session it copies that Buzz.app refused, and one that fails
+without writing removes that index again. So a sign-out in `me` clears only the debug copy,
+the next launch stays signed out, and a browser sign-in or agent enrollment
+there stays in the debug namespace. Signing out of a session the release item
+still holds does not end it at the server, so the installed app stays signed in.
+Sign out of Buzz removes only the debug records, so the next `me` launch reads
+the installed app's sign-ins again. Plain `just desktop` reads only the debug
+namespace, and once `me` has saved a server's item, both read the same debug copy.
+The installed app's sign-out, or Sign out of Buzz, does not reach a server whose
+item `me` has already saved. Builderlab customers' servers that the installed
+app has listed are added in `me` when one of their communities is first routed.
 
 The app's `federatedIdentity` service exposes this public state to the shared
 sign-in UI. Session record revision survives restore and scopes account caches

@@ -634,3 +634,30 @@ unrelated settings and credentials, and so do the release-only
 `BUZZ_UPDATER_*` inputs. `BUZZ_` values reach child processes of the app, so keep them
 to public configuration. Direct `pnpm tauri build` and `cargo` runs do not load
 `.env.local` this way.
+
+`just desktop me` runs as the installed build, so it also reads the installed
+build's settings from `~/.buzz-foundation/desktop-me.env`, by the same rules.
+Its values beat `.env.local` and lose to the process environment. Put there
+the build inputs your installed build was made with, so the debug build lists
+the same sign-in servers and
+[finds their saved sessions](identity.md#sharing-the-installed-apps-sign-ins-in-development),
+and uses the same backup and Apps targets. A file that adds sign-in servers
+must also set `BUZZ_BUILDERLAB_URL=` (and leave the `BUZZ_BUILD_ENTERPRISE_AUTH_*`
+inputs empty), since the build refuses those inputs beside a descriptor and
+`.env.local` may set one. For a distributor's build, for example:
+
+```sh
+BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG='{"version":1,"id":"example","identityOrigin":"https://identity.example","communityHosts":["*.communities.example"],"adapterBase":"https://identity.example/nip-fa/","apiBasePath":"/api/goose/","signIn":"at-launch","organization":"Example"}'
+BUZZ_BUILDERLAB_URL=
+BUZZ_NSEC_BACKUP_SERVICE_URL=https://identity.example/api/goose
+BUZZ_NSEC_BACKUP_NAMESPACE=backup/example/production
+BUZZ_BUILDERLAB_APPS_CONTROL_PLANE=https://apps-control.example
+```
+
+The file is outside the repository on purpose: worktree bootstrap copies
+`.env.local` into every worktree, agents' included, and never this file, and
+plain `just desktop` and `just desktop-bundle` never read it. `me` also sets
+`BUZZ_DEV_VIEWER` empty, whatever `.env.local` or the shell says, because it
+signs in natively as the installed build does; a pinned viewer would run the
+development broker and compile no sign-in servers. A missing file changes
+nothing.

@@ -22,10 +22,22 @@ export type SavedHead = {
   notices?: unknown[];
   profiles: unknown[];
 };
+export class StartupRosterSuperseded extends Error {
+  constructor(readonly observePeer?: () => void) {
+    super("Startup roster changed");
+  }
+}
+
 export interface HeadPersistence {
   read(): Promise<SavedHead[]>;
-  readStartup?(): Promise<SavedStartup | undefined>;
-  writeStartup?(patch: SavedStartup): Promise<void>;
+  readStartup?(options?: {
+    observeDiscovery?: boolean;
+  }): Promise<SavedStartup | undefined>;
+  writeStartup?(
+    patch: SavedStartup,
+    revoked?: boolean,
+    ifUnchanged?: boolean,
+  ): Promise<void>;
   /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
   writeProfiles?(events: readonly unknown[]): Promise<void>;
@@ -39,12 +51,13 @@ const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
 const MIRROR = ":profiles";
+const STARTUP_BUDGET = `!budget${MIRROR}`;
 /** The largest row saved; a larger one is not written at all. */
 export const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
-type HeadMeta = { key: string; bytes: number; savedAt: number };
-type Record = SavedHead & HeadMeta & { scope: string };
+type RowBudget = { key: string; bytes: number; savedAt: number };
+type Record = SavedHead & RowBudget & { scope: string };
 type ScopedRow = Pick<Record, "scope" | "channelId"> & { key: IDBValidKey };
 
 // History keys are strings. Array keys let us load the metadata on its own
@@ -64,13 +77,26 @@ function putHeadMeta(
     // metadata row, so an older same-key write also invalidates the budget.
     savedAt: Number.NEGATIVE_INFINITY,
     bytes: 0,
-    head: { key, bytes, savedAt } satisfies HeadMeta,
+    head: { key, bytes, savedAt } satisfies RowBudget,
   });
 }
 
 function deleteHead(store: IDBObjectStore, key: string) {
   store.delete(key);
   store.delete([key]);
+}
+
+function discoveryVersion(discovery: SavedStartup["discovery"]): string | null {
+  if (!discovery) return null;
+  return JSON.stringify([
+    discovery.savedAt,
+    discovery.relayAuthor,
+    Array.isArray(discovery.events)
+      ? (discovery.events as ({ id?: unknown } | null)[]).map((event) =>
+          typeof event?.id === "string" ? event.id : null,
+        )
+      : null,
+  ]);
 }
 
 export function createHeadPersistence(
@@ -81,6 +107,7 @@ export function createHeadPersistence(
   const profiles = `${scope}${MIRROR}`;
   let closed = false;
   let opening: Promise<IDBDatabase> | undefined;
+  let observedDiscovery: string | null | undefined;
   function database() {
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
@@ -120,21 +147,66 @@ export function createHeadPersistence(
   }
   /** `handler` must issue follow-up requests synchronously (IDB auto-commits). */
   type Then = <R>(request: IDBRequest<R>, handler: (result: R) => void) => void;
+  function writeStartupBudget(store: IDBObjectStore, rows: RowBudget[]) {
+    if (!rows.length) {
+      store.delete(STARTUP_BUDGET);
+      return;
+    }
+    // Older builds still open this version. Their prune puts this marker last
+    // and evicts it, so their writes cannot leave a stale budget behind.
+    store.put({
+      key: STARTUP_BUDGET,
+      bytes: MAX_BYTES + 1,
+      savedAt: Number.NEGATIVE_INFINITY,
+      data: {},
+      rows,
+    });
+  }
   /** Keep the startup store, across identities, within its byte budget.
    * Optional profile mirrors give way before any saved roster. */
-  function prune(store: IDBObjectStore, then: Then) {
+  function prune(
+    store: IDBObjectStore,
+    then: Then,
+    updated: RowBudget,
+    saved?: (kept: boolean) => void,
+  ) {
     then(
-      store.getAll(),
-      (rows: { key: string; bytes: number; savedAt: number }[]) => {
-        const mirror = (row: { key: string }) =>
-          Number(row.key.endsWith(MIRROR));
-        let total = 0;
-        for (const row of rows.sort(
-          (a, b) => mirror(a) - mirror(b) || b.savedAt - a.savedAt,
-        )) {
-          total += row.bytes;
-          if (total > MAX_BYTES) store.delete(row.key);
-        }
+      store.get(STARTUP_BUDGET),
+      (budget: { rows: RowBudget[] } | undefined) => {
+        const known = new Map(budget?.rows.map((row) => [row.key, row]));
+        known.set(updated.key, updated);
+        then(store.getAllKeys(), (keys) => {
+          const rows: RowBudget[] = [];
+          const missing: string[] = [];
+          for (const key of keys) {
+            if (typeof key !== "string" || key === STARTUP_BUDGET) continue;
+            const row = known.get(key);
+            if (row) rows.push(row);
+            else missing.push(key);
+          }
+          const trim = () => {
+            const mirror = (row: RowBudget) => Number(row.key.endsWith(MIRROR));
+            let total = 0;
+            const kept: RowBudget[] = [];
+            for (const row of rows.sort(
+              (a, b) => mirror(a) - mirror(b) || b.savedAt - a.savedAt,
+            )) {
+              total += row.bytes;
+              if (total > MAX_BYTES) store.delete(row.key);
+              else kept.push(row);
+            }
+            writeStartupBudget(store, kept);
+            saved?.(kept.includes(updated));
+          };
+          // Import sizes once for rows written before the budget was present.
+          let pending = missing.length;
+          if (pending === 0) trim();
+          for (const key of missing)
+            then(store.get(key), ({ bytes, savedAt }: RowBudget) => {
+              rows.push({ key, bytes, savedAt });
+              if (--pending === 0) trim();
+            });
+        });
       },
     );
   }
@@ -201,27 +273,65 @@ export function createHeadPersistence(
     });
   }
   return {
-    readStartup: () =>
+    readStartup: ({ observeDiscovery } = {}) =>
       transact(
         "readonly",
-        (store, done, then) => then(store.get(scope), (row) => done(row?.data)),
-        STARTUP,
-      ),
-    writeStartup: (patch) =>
-      transact(
-        "readwrite",
         (store, done, then) =>
           then(store.get(scope), (row) => {
-            const data = { ...row?.data, ...patch };
-            const bytes = byteSize(data);
-            if (bytes <= MAX_BYTES) {
-              store.put({ key: scope, data, bytes, savedAt: Date.now() });
-              prune(store, then);
-            }
-            done(undefined);
+            const data = row?.data as SavedStartup | undefined;
+            if (observeDiscovery)
+              observedDiscovery = discoveryVersion(data?.discovery);
+            done(data);
           }),
         STARTUP,
       ),
+    async writeStartup(patch, revoked = false, ifUnchanged = false) {
+      let version: string | null | undefined;
+      const saved = await transact<boolean | undefined>(
+        "readwrite",
+        (store, done, then) =>
+          then(store.get(scope), (row) => {
+            if (
+              patch.discovery &&
+              (ifUnchanged || observedDiscovery === undefined)
+            ) {
+              const current = discoveryVersion(row?.data?.discovery);
+              // Compare inside the write transaction. Settings-only changes
+              // preserve the signed snapshot, but a peer can replace or clear it.
+              if (ifUnchanged && current !== observedDiscovery) {
+                version = current;
+                return done(undefined);
+              }
+              if (observedDiscovery === undefined) observedDiscovery = current;
+            }
+            const data: SavedStartup = { ...row?.data, ...patch };
+            let bytes = byteSize(data);
+            if (bytes > MAX_BYTES && revoked) {
+              // An oversized replacement must still remove the revoked roster.
+              delete data.discovery;
+              bytes = byteSize(data);
+            }
+            if (bytes > MAX_BYTES) return done(false);
+            if (patch.discovery) version = discoveryVersion(data.discovery);
+            const meta = { key: scope, bytes, savedAt: Date.now() };
+            store.put({ ...meta, data });
+            prune(store, then, meta, done);
+          }),
+        STARTUP,
+      );
+      if (saved === undefined) {
+        const peerVersion = version;
+        throw new StartupRosterSuperseded(
+          peerVersion
+            ? () => {
+                observedDiscovery = peerVersion;
+              }
+            : undefined,
+        );
+      }
+      if (!saved) throw new Error("Startup cache is over its byte budget");
+      if (version !== undefined) observedDiscovery = version;
+    },
     readProfiles: () =>
       transact(
         "readonly",
@@ -235,13 +345,9 @@ export function createHeadPersistence(
         (store, done, then) => {
           const bytes = byteSize(events);
           if (bytes <= MAX_BYTES) {
-            store.put({
-              key: profiles,
-              data: events,
-              bytes,
-              savedAt: Date.now(),
-            });
-            prune(store, then);
+            const meta = { key: profiles, bytes, savedAt: Date.now() };
+            store.put({ ...meta, data: events });
+            prune(store, then, meta);
           }
           done(undefined);
         },
@@ -277,7 +383,7 @@ export function createHeadPersistence(
         store.put(row);
         putHeadMeta(store, row);
         const size = store.count();
-        const pruneHeads = (rows: HeadMeta[]) => {
+        const pruneHeads = (rows: RowBudget[]) => {
           // Global disk budget across identities; scope is still required for every read.
           let total = 0,
             count = 0;
@@ -294,7 +400,7 @@ export function createHeadPersistence(
           done(undefined);
         };
         const metadata = metadataKeys();
-        then(store.getAll(metadata), (rows: { head: HeadMeta }[]) => {
+        then(store.getAll(metadata), (rows: { head: RowBudget }[]) => {
           // New writes keep one metadata row per head. An older writer drops
           // all metadata, and an older point delete can leave an extra row.
           if (size.result === 2 * rows.length) {
@@ -326,13 +432,23 @@ export function createHeadPersistence(
     clear: async () => {
       await transact(
         "readwrite",
-        (store, done) => {
+        (store, done, then) => {
           store.delete(scope);
           store.delete(profiles);
+          then(store.get(STARTUP_BUDGET), (budget) => {
+            if (!budget) return;
+            writeStartupBudget(
+              store,
+              (budget.rows as RowBudget[]).filter(
+                ({ key }) => key !== scope && key !== profiles,
+              ),
+            );
+          });
           done(undefined);
         },
         STARTUP,
       );
+      observedDiscovery = null;
       await transact("readwrite", (store, done, then) =>
         // Include metadata left by a point delete on an older build.
         then(store.getAll(), (rows: ScopedRow[]) => {

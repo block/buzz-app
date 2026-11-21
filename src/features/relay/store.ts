@@ -52,6 +52,7 @@ import {
   MAX_BYTES as MIRROR_BYTES,
   type HeadPersistence,
   type SavedHead,
+  StartupRosterSuperseded,
 } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
@@ -179,8 +180,8 @@ const sameKeys = (a?: readonly string[], b?: readonly string[]) =>
     (a ?? []).every((key, index) => key === b?.[index]));
 /** Relay page size, separate from discovery's retained-entry budget. */
 const DISCOVERY_LIMIT = 500;
-/** An unchanged saved roster is written again after this long, so a row
- * pruned or cleared on disk returns and restore's one-day limit still passes. */
+const DISCOVERY_SAVE_INTERVAL_MS = 30_000;
+/** Refresh an unchanged saved roster before restore's one-day limit. */
 const DISCOVERY_RESAVE_MS = 600_000;
 /** Channels one creator-proof filter names. Each has one creation, so a limit
  * of twice this, the relay's maximum, leaves room for strays; a filter that
@@ -433,8 +434,14 @@ export function createChannelStore(
   });
   let startup: Promise<void> | undefined;
   let discoveryObserved = false;
-  // Catch-up bursts rewrite the whole startup record; save at most once per 500ms.
-  let discoverySave: ReturnType<typeof setTimeout> | undefined;
+  // Coalesce discovery batches before writing the whole startup record.
+  let discoverySave:
+    | { timer: ReturnType<typeof setTimeout>; ifUnchanged: boolean }
+    | undefined;
+  let lastDiscoveryWrite: number | undefined;
+  let discoveryDirty = false;
+  let discoverySuperseded: "cleared" | "replaced" | undefined;
+  let discoveryRevocationPending = false;
   // The roster last written and when; undefined when the disk copy is unknown.
   let savedDiscovery: { key: string; at: number } | undefined;
   // Directory bursts rewrite the whole profile mirror; save at most once per second.
@@ -1090,7 +1097,7 @@ export function createChannelStore(
       );
       void persistence?.remove(channelId).catch(() => {});
       void options.channelMedia?.forget([channelId]).catch(() => {});
-      saveDiscovery();
+      saveDiscovery(true);
     }, [channelId]);
   }
   async function readPage(
@@ -1566,28 +1573,60 @@ export function createChannelStore(
       await yieldToHost();
     }
   }
-  function saveDiscovery() {
-    clearTimeout(discoverySave);
+  function saveDiscovery(revoked = false) {
+    const ifUnchanged = !revoked && (discoverySave?.ifUnchanged ?? false);
+    clearTimeout(discoverySave?.timer);
     discoverySave = undefined;
     if (!persistence?.writeStartup || !discovery || !transport || disposed)
       return;
+    const urgent = revoked || discoveryRevocationPending;
+    discoveryRevocationPending = urgent;
     const events = discovery.savedEvents();
     const key = [transport.relayAuthor, ...events.map(({ id }) => id)].join();
     const age = now() - (savedDiscovery?.at ?? 0);
+    discoveryDirty = false;
     // Catch-up repeats lookups that change nothing: skip rewriting the same roster.
-    if (savedDiscovery?.key === key && age >= 0 && age < DISCOVERY_RESAVE_MS)
+    if (
+      !urgent &&
+      savedDiscovery?.key === key &&
+      age >= 0 &&
+      age < DISCOVERY_RESAVE_MS
+    )
       return;
-    savedDiscovery = { key, at: now() };
+    const saving = { key, at: now() };
+    discoverySuperseded = undefined;
+    savedDiscovery = saving;
+    lastDiscoveryWrite = saving.at;
     void persistence
-      .writeStartup({
-        discovery: {
-          savedAt: savedDiscovery.at,
-          relayAuthor: transport.relayAuthor,
-          events,
+      .writeStartup(
+        {
+          discovery: {
+            savedAt: saving.at,
+            relayAuthor: transport.relayAuthor,
+            events,
+          },
         },
+        urgent,
+        ifUnchanged,
+      )
+      .then(() => {
+        if (savedDiscovery === saving) discoveryRevocationPending = false;
       })
-      .catch(() => {
+      .catch((error) => {
+        if (savedDiscovery !== saving) return;
         savedDiscovery = undefined;
+        if (!(error instanceof StartupRosterSuperseded)) {
+          discoveryDirty = true;
+          return;
+        }
+        // Only the current attempt can establish the next peer baseline.
+        error.observePeer?.();
+        discoveryRevocationPending = false;
+        discoverySuperseded = error.observePeer ? "replaced" : "cleared";
+        if (discoverySave?.ifUnchanged) {
+          clearTimeout(discoverySave.timer);
+          discoverySave = undefined;
+        }
       });
   }
   /** Mirror the most recently used profiles so the next session starts with
@@ -1710,8 +1749,10 @@ export function createChannelStore(
     // Names do not depend on the saved roster: restore them alongside it.
     const profiles = restoreProfiles();
     try {
-      const saved = (await persistence.readStartup())?.discovery;
+      const saved = (await persistence.readStartup({ observeDiscovery: true }))
+        ?.discovery;
       if (
+        options.revalidate ||
         !saved ||
         saved.relayAuthor !== transport.relayAuthor ||
         !Number.isFinite(saved.savedAt) ||
@@ -1916,14 +1957,40 @@ export function createChannelStore(
     const accessRevision = discovery.accessRevision;
     const overflowRevision = discovery.overflowRevision;
     if (cached) discovery.restrictToKnown();
+    const previousReadable = discovery.readable();
     const starting = [...windows.keys()].filter((id) =>
       discovery.isPending(id),
     );
     let discoveryChanged = false;
+    let cacheChanged = false;
+    let cacheEvidence = false;
+    let newCacheEvidence = false;
+    let membershipRemoved = false;
     for (const event of events) {
-      discoveryChanged = discovery.accept(event, cached) || discoveryChanged;
+      const id = tag(event, event.kind === 9007 ? "h" : "d");
+      const wasMember = id && discovery.authorized(id);
+      const firstEvidence =
+        id &&
+        ((event.kind === 39000 && !discovery.metadataVersion(id)) ||
+          (event.kind === 39002 && !wasMember) ||
+          event.kind === 9007);
+      const changed = discovery.accept(event, cached);
+      discoveryChanged ||= changed;
+      if (id) {
+        const isMember = discovery.authorized(id);
+        membershipRemoved ||= !!wasMember && !isMember;
+        if (!cached && isMember && !discovery.isCached(id)) {
+          cacheChanged ||= changed;
+          newCacheEvidence ||= changed && !!firstEvidence;
+          cacheEvidence ||=
+            changed ||
+            (event.kind === 39002 &&
+              discovery.rosterVersion(id)?.id === event.id) ||
+            (event.kind === 39000 &&
+              discovery.metadataVersion(id)?.id === event.id);
+        }
+      }
       if (event.kind === 39000) {
-        const id = tag(event, "d");
         if (id && discovery.metadataVersion(id)?.id === event.id) {
           if (cached) pendingMetadata.add(id);
           else pendingMetadata.delete(id);
@@ -1936,20 +2003,24 @@ export function createChannelStore(
     }
     // Only a complete viewer-scoped roster read proves absence; capped reads and live traffic never revoke by omission.
     if (complete) {
-      discovery.retain(complete, started);
+      if (discovery.retain(complete, started)) membershipRemoved = true;
       coverage = undefined;
     }
-    const confirmed = list.channels.filter(
+    const confirmed = previousReadable.filter(
       (channel) =>
         channel.cached &&
-        !discovery.get(channel.id)?.cached &&
-        discovery.canAccess(channel.id),
+        !discovery.isCached(channel.id) &&
+        discovery.authorized(channel.id),
     );
     const readable = discovery.readable();
     const channels = Object.freeze(discovery.channels(readable));
     // A system channel never lists but stays readable: its saved history is
     // kept and restored like any other channel's.
     const nextAllowed = new Set(readable.map((channel) => channel.id));
+    const joined = readable.some(
+      (channel) =>
+        !allowed?.has(channel.id) && discovery.authorized(channel.id),
+    );
     const known = new Set([
       ...(allowed ?? []),
       ...windows.keys(),
@@ -2013,10 +2084,41 @@ export function createChannelStore(
       if (current === id) queries.ensure(id);
     }
     if (!cached) {
-      // Catch-up delivers many batches: coalesce them into one snapshot write,
-      // except revocation, which must not leave denied content on disk.
-      if (revoked) saveDiscovery();
-      else discoverySave ??= setTimeout(saveDiscovery, 500);
+      if (!disposed && appliedEpoch === epoch) {
+        discoveryDirty ||= cacheChanged;
+        if (revoked || membershipRemoved) saveDiscovery(true);
+        else {
+          const age = now() - (lastDiscoveryWrite ?? 0);
+          const first =
+            lastDiscoveryWrite === undefined && (!!complete || cacheEvidence);
+          const freshChange =
+            joined || confirmed.length > 0 || newCacheEvidence;
+          const due =
+            age < 0 ||
+            (age >= DISCOVERY_SAVE_INTERVAL_MS &&
+              (discoveryDirty || age >= DISCOVERY_RESAVE_MS));
+          const ifUnchanged = !first && !cacheChanged && !freshChange;
+          // A replacement lets newer pending changes retry against that row.
+          // An absent row cannot identify which peer clear a repeat observed.
+          const canRetry =
+            !discoverySuperseded ||
+            (discoverySuperseded === "replaced" && discoveryDirty);
+          if (
+            (!ifUnchanged || canRetry) &&
+            (first ||
+              discoveryRevocationPending ||
+              freshChange ||
+              (cacheEvidence && due))
+          ) {
+            if (discoverySave) discoverySave.ifUnchanged &&= ifUnchanged;
+            else
+              discoverySave = {
+                timer: setTimeout(saveDiscovery, 500),
+                ifUnchanged,
+              };
+          }
+        }
+      }
       for (const channel of confirmed) {
         // Disk rows were display-only during hydration. Fresh membership now
         // makes that verified evidence usable for explicit read intent too.
@@ -2414,12 +2516,16 @@ export function createChannelStore(
           for (const state of [...windows.values()]) evict(state);
           heads.clear();
           tails.clear();
-          clearTimeout(discoverySave);
+          clearTimeout(discoverySave?.timer);
           discoverySave = undefined;
           // The kept directory is saved again after the clear.
           mirrored = undefined;
           savedAuthority = undefined;
           savedDiscovery = undefined;
+          lastDiscoveryWrite = undefined;
+          discoveryDirty = false;
+          discoverySuperseded = undefined;
+          discoveryRevocationPending = false;
           profileSave ??= setTimeout(saveProfiles, 1000);
           void persistence?.clear().catch(() => {});
           void options.channelMedia?.retain([]).catch(() => {});
@@ -3515,7 +3621,7 @@ export function createChannelStore(
     tails.clear();
     if (discovery) setList({ ...list, channels: discovery.channels() });
     resetReferences();
-    clearTimeout(discoverySave);
+    clearTimeout(discoverySave?.timer);
     discoverySave = undefined;
     clearTimeout(profileSave);
     profileSave = undefined;
@@ -3523,6 +3629,10 @@ export function createChannelStore(
     savedVerified = [];
     savedAuthority = undefined;
     savedDiscovery = undefined;
+    lastDiscoveryWrite = undefined;
+    discoveryDirty = false;
+    discoverySuperseded = undefined;
+    discoveryRevocationPending = false;
     await persistence?.clear();
   }
   /** One background head read at a time; warm never competes with demand reads
@@ -3768,9 +3878,9 @@ export function createChannelStore(
   }
   function restore() {
     if (!prepared || !persistence?.readStartup) return Promise.resolve();
-    // A reload skips the saved roster but keeps the profile mirror, which
-    // only a restore lets it write.
-    startup ??= options.revalidate ? restoreProfiles() : restoreStartup();
+    // Reload observes the roster version for storage retries. The UI still
+    // waits for live discovery, and the profile mirror can restore as usual.
+    startup ??= restoreStartup();
     return startup;
   }
   const queries: ChannelQueries = Object.freeze({
@@ -4466,7 +4576,7 @@ export function createChannelStore(
   }
   function dispose() {
     disposed = true;
-    clearTimeout(discoverySave);
+    clearTimeout(discoverySave?.timer);
     clearTimeout(profileSave);
     if (referenceWake) clearTimeout(referenceWake.timer);
     referenceWake = undefined;

@@ -302,6 +302,9 @@ export class DiscoveryState {
   rosterVersions(): ReadonlyMap<string, RelayEvent> {
     return new Map(this.rosters);
   }
+  rosterVersion(id: string): RelayEvent | undefined {
+    return this.rosters.get(id);
+  }
   /** Channels whose signed metadata is retained, joined or not. */
   metadataIds(): string[] {
     return [...this.metadata.keys()];
@@ -310,7 +313,8 @@ export class DiscoveryState {
     ids: ReadonlySet<string>,
     started: ReadonlyMap<string, RelayEvent>,
   ): boolean {
-    let changed = !this.complete;
+    const wasComplete = this.complete;
+    let removed = false;
     this.complete = true;
     // Keep the last signed version: an old replay cannot undo authoritative loss.
     // A NIP-CL pass reads system channels through their own opt-in filter
@@ -325,11 +329,11 @@ export class DiscoveryState {
       } else if (!this.denied.has(id)) {
         this.denied.add(id);
         this.absent.add(id);
-        changed = true;
+        removed = true;
       }
     }
-    if (changed) this.accessRevision++;
-    return changed;
+    if (!wasComplete || removed) this.accessRevision++;
+    return removed;
   }
   denyAll() {
     this.accessRevision++;
@@ -421,6 +425,9 @@ export class DiscoveryState {
   }
   metadataVersion(id: string): RelayEvent | undefined {
     return this.metadata.get(id);
+  }
+  isCached(id: string): boolean {
+    return this.cached.has(id);
   }
   named(id: string): boolean {
     return this.metadata.has(id);

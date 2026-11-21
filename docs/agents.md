@@ -1203,19 +1203,52 @@ Regression source: `features/agents/choices.test.ts`, plus the chooser, composer
 and Solo chat admission tests. They exercise shared selection and Solo chat admission,
 not native execution.
 
-## Creating a Solo chat in a personal workspace
+## Filing conversations in the owner's workspaces
 
-Only locally hosted agent runs can call `solo_workspace_list` for the host-bound
-owner's personal workspace IDs and names in that community. Pass an exact ID as
-`workspace` to `channel_create` with `solo: true`, and name the owner explicitly
-in `members`. This files only that new confirmed Solo chat. It does not enroll
-members implicitly, copy default agents/Canvas, or change agent authorship.
-Unknown targets and missing owner membership fail before creation. A target
-removed later or a failed preference write leaves the created chat intact; the
-result preserves its ID. A known refusal before assignment says “created, not
-filed”; after assignment starts, failure says placement is unconfirmed and may
-have completed. Inspect or refresh the chat before using **Move to**; never
-create a duplicate. Omit `workspace` for unchanged creation.
+Only locally hosted agent runs can call `workspace_list` for the host-bound
+owner's sidebar workspace IDs and names in that community: every unified
+workspace. Pass an exact ID as `workspace` to `channel_create` for any type.
+`members` works for any type: the relay adds them in the create. The owner must
+be able to see the result: it is `open`, or it names the owner in `members`; a
+private one without the owner is refused before creation. Filing checks the relay's confirmed
+metadata and roster: the agent created it, it is in no plugin region, its named
+members joined, and the owner is a member or it is open.
+
+Without `template`, creation applies the workspace's defaults. Both flows find
+them with `loadWorkspaceDefaults`, and one rule picks their agents, as in **New
+chat** and **New channel**: a default agent not available here (archived, being
+deleted, or not in this community) is skipped and the create goes on. One not
+yet checked is neither: the create waits for a complete read.
+
+- A Solo chat uses `loadChatSetup`, as **New chat** does: the default agents
+  join in the create. Its Canvas starts with the full workspace block only when
+  every member is the owner or one of the owner's agents; otherwise it gets
+  only `shareableInstructions`.
+- A team channel uses `loadChannelSetup`, which shares `channelDefaults` with
+  **New channel**: its Canvas gets only `shareableInstructions`, and its default
+  agents are added after.
+
+The result names each skipped agent.
+
+A chosen `template` replaces the defaults, as in the dialog. Defaults that cannot
+load fail before creation. The tool adds agents with the calling agent's key,
+never the owner's, so before creating it reads each default agent's kind:10100
+`channel_add_policy` and leaves out `owner_only` and `nobody` agents, naming
+them in the result; a failed read creates nothing. The workspace capability is
+for the agent's own tools: plugin tools and provider operations never get it.
+
+Unknown targets and missing owner visibility fail before creation. A target
+removed later or a failed preference write leaves the created conversation
+intact; the result preserves its ID. A known refusal before assignment says
+“created, not filed”; after assignment starts, failure says placement is
+unconfirmed and may have completed. Check the sidebar before `channel_move`;
+never create a duplicate. Omit `workspace` for unchanged creation.
+
+`channel_move` files an existing conversation of any type, DMs included, in a
+workspace, or unfiles it with an empty `workspace`. It reads the conversation's
+relay metadata and roster as the owner and moves only what the owner can see
+(member, or open), and refuses chats a plugin region manages, as **Move to**
+does. It writes the same sidebar assignment as **Move to**.
 
 ## Exact channel-member mentions
 

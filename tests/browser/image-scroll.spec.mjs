@@ -206,7 +206,10 @@ async function holdDecodes(page, holdVisibility = false) {
 const frame = (page) =>
   page.getByRole("link", { name: "Open image attachment" });
 const shown = (page) =>
-  expect(frame(page).locator("img")).toHaveCSS("visibility", "visible");
+  expect(frame(page).locator("img")).toHaveCSS("opacity", "1");
+// The placeholder stays beneath the original's fade, then hides.
+const retired = (page) =>
+  expect(frame(page).locator("canvas")).toHaveCSS("visibility", "hidden");
 const waiting = (page, name) =>
   expect
     .poll(() => page.evaluate((name) => window.imageTest.waiting(name), name))
@@ -271,7 +274,7 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
       .toBe(1);
     const bounds = await frame(page).boundingBox();
     await waiting(page, "first");
-    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("img")).toHaveCSS("opacity", "0");
     expect(
       await frame(page)
         .locator("canvas")
@@ -285,7 +288,14 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     await releaseDecode(page, "first");
     await shown(page);
     // The decoded original owns its frame; transparency never exposes old colors.
-    await expect(frame(page).locator("canvas")).toHaveCount(0);
+    await retired(page);
+    // It fades in over its placeholders; reduced motion shows it at once.
+    await expect(frame(page).locator("canvas")).toHaveCSS("z-index", "-1");
+    const fade = frame(page).locator("img");
+    await expect(fade).toHaveCSS("transition-duration", "0.22s");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(fade).toHaveCSS("transition-duration", "0s");
+    await page.emulateMedia({ reducedMotion: null });
     await expect(frame(page).locator("img")).toHaveCSS("object-fit", "contain");
     await expect(frame(page)).toHaveCSS("clip-path", "none");
     await expect(frame(page).locator("[data-image-outline]")).toHaveCSS(
@@ -304,7 +314,7 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     });
     await page.getByRole("button", { name: "Retarget", exact: true }).click();
     await waiting(page, "next");
-    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("img")).toHaveCSS("opacity", "0");
     await expect(frame(page).locator("canvas")).toHaveCount(1);
     await page
       .getByRole("button", { name: "Restore original", exact: true })
@@ -316,7 +326,7 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
     await expect
       .poll(() => page.evaluate(() => window.imageTest.rejected("first")))
       .toBeGreaterThan(0);
-    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("img")).toHaveCSS("opacity", "0");
     await expect(frame(page).locator("canvas")).toHaveCount(1);
     expect(await frame(page).boundingBox()).toEqual(bounds);
     await expect(frame(page)).not.toHaveAttribute("data-image-ready");
@@ -333,7 +343,7 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
       )
       .toBe(true);
     await releaseDecode(page, "next"); // late callback for a retired source
-    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("img")).toHaveCSS("opacity", "0");
     await expect(frame(page).locator("canvas")).toHaveCount(1);
     expect(await frame(page).boundingBox()).toEqual(bounds);
     await page.getByRole("button", { name: "Retarget", exact: true }).click();
@@ -347,7 +357,7 @@ test("blurhash visibility, decode swap, failure and retired source lifetimes", a
       .getByRole("button", { name: "Toggle mount", exact: true })
       .click();
     await waiting(page, "next");
-    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("img")).toHaveCSS("opacity", "0");
     await releaseDecode(page, "next");
     await shown(page);
     expect(
@@ -390,7 +400,7 @@ test("original ready first cannot regress on late visibility; missing and invali
     await shown(page);
     await page.evaluate(() => window.imageTest.intersect());
     expect(await page.evaluate(() => window.imageTest.paints)).toEqual([]);
-    await expect(frame(page).locator("canvas")).toHaveCount(0);
+    await retired(page);
     for (const name of ["No hash", "Invalid hash"]) {
       await page.getByRole("button", { name, exact: true }).click();
       await waiting(page, "first");
@@ -424,13 +434,13 @@ test("original decode rejection retains blur and the next source still recovers"
       .toBe(1);
     await waiting(page, "first");
     await page.evaluate(() => window.imageTest.reject("first"));
-    await expect(frame(page).locator("img")).toHaveCSS("visibility", "hidden");
+    await expect(frame(page).locator("img")).toHaveCSS("opacity", "0");
     await expect(frame(page).locator("canvas")).toHaveCount(1);
     await page.getByRole("button", { name: "Retarget", exact: true }).click();
     await waiting(page, "next");
     await releaseDecode(page, "next");
     await shown(page);
-    await expect(frame(page).locator("canvas")).toHaveCount(0);
+    await retired(page);
   } finally {
     try {
       await page.unrouteAll({ behavior: "wait" });
@@ -460,13 +470,10 @@ for (const unavailable of ["canvas", "visibility"]) {
       await page.getByRole("button", { name: "Reveal", exact: true }).click();
       await waiting(page, "first");
       expect(await page.evaluate(() => window.imageTest.paints)).toEqual([]);
-      await expect(frame(page).locator("img")).toHaveCSS(
-        "visibility",
-        "hidden",
-      );
+      await expect(frame(page).locator("img")).toHaveCSS("opacity", "0");
       await releaseDecode(page, "first");
       await shown(page);
-      await expect(frame(page).locator("canvas")).toHaveCount(0);
+      await retired(page);
     } finally {
       try {
         await page.unrouteAll({ behavior: "wait" });
@@ -497,7 +504,7 @@ test("decoded image resizing preserves reading and bottom following across remou
     await settle(page, feed);
     expect(await bottomDistance()).toBeLessThan(4);
     await releaseDecode(page, "58");
-    await expect(latestImage).toHaveCSS("visibility", "visible");
+    await expect(latestImage).toHaveCSS("opacity", "1");
     await settle(page, feed);
     expect(await bottomDistance()).toBeLessThan(4);
     const originalNode = await latestImage.elementHandle();
@@ -558,7 +565,7 @@ test("decoded image resizing preserves reading and bottom following across remou
               );
               return (
                 image.naturalWidth > 0 &&
-                getComputedStyle(image).visibility === "hidden" &&
+                getComputedStyle(image).opacity === "0" &&
                 row.getBoundingClientRect().bottom <=
                   viewport.getBoundingClientRect().top
               );
@@ -603,7 +610,7 @@ test("decoded image resizing preserves reading and bottom following across remou
         )
         .toBe(true);
       await settle(page, feed);
-      await expect(resized).toHaveCSS("visibility", "visible");
+      await expect(resized).toHaveCSS("opacity", "1");
       expect(
         await resized.evaluate((image) => image.getBoundingClientRect().height),
       ).toBe(10);
@@ -621,7 +628,7 @@ test("decoded image resizing preserves reading and bottom following across remou
       await releaseDecode(page, visible.name);
       await expect(
         feed.locator(`img[src="https://image.test/${visible.name}.svg"]`),
-      ).toHaveCSS("visibility", "visible");
+      ).toHaveCSS("opacity", "1");
       await settle(page, feed);
       const visibleRow = feed.locator(`[data-message-id="${visible.id}"]`);
       await expect
@@ -647,7 +654,7 @@ test("decoded image resizing preserves reading and bottom following across remou
           originalNode,
         ),
       ).toBe(true);
-      await expect(latestImage).toHaveCSS("visibility", "visible");
+      await expect(latestImage).toHaveCSS("opacity", "1");
       await expect(latestImage).toHaveCSS("height", "10px");
       await settle(page, feed);
       expect(

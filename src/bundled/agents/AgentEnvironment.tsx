@@ -71,6 +71,9 @@ export function AgentEnvironment({
         </Button>
       </div>
     ) : null;
+  // Nothing changes the list while a save or a restart runs: a save during
+  // a restart could miss the process the restart starts.
+  const locked = pending || restarting;
   const edit = (key: number, change: Partial<Row>) => {
     setRows(rows.map((row) => (row.key === key ? { ...row, ...change } : row)));
     setDirty(true);
@@ -99,8 +102,6 @@ export function AgentEnvironment({
       <p className="m-0 mb-2 text-body-sm text-subtle">
         Variables this agent starts with.
       </p>
-      {/* Nothing that changes the list works while a save runs, so no edit is
-          lost when it finishes. */}
       <SettingsGroup layout="form">
         {rows.map((row) => (
           <div key={row.key} className="flex items-end gap-2">
@@ -108,7 +109,7 @@ export function AgentEnvironment({
               <Input
                 placeholder="NAME"
                 value={row.name}
-                disabled={row.saved || pending}
+                disabled={row.saved || locked}
                 autoCapitalize="off"
                 spellCheck={false}
                 onValueChange={(name) => edit(row.key, { name })}
@@ -129,14 +130,14 @@ export function AgentEnvironment({
                 type="password"
                 placeholder={row.saved ? "Saved — type to replace" : "Value"}
                 value={row.value}
-                disabled={pending}
+                disabled={locked}
                 onValueChange={(value) => edit(row.key, { value })}
               />
             </Field>
             <IconButton
               aria-label={`Remove ${row.name || "variable"}`}
               icon={<TrashIcon size={17} />}
-              disabled={pending}
+              disabled={locked}
               onClick={() => {
                 setRows(rows.filter((other) => other.key !== row.key));
                 setDirty(true);
@@ -147,7 +148,7 @@ export function AgentEnvironment({
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             size="sm"
-            disabled={pending}
+            disabled={locked}
             onClick={() => {
               setRows([
                 ...rows,

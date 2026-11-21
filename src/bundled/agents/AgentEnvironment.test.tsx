@@ -126,6 +126,39 @@ it("offers no restart while a save is still being written", async () => {
   await waitFor(() => expect(restartAgent).toHaveBeenCalledOnce());
 });
 
+it("locks the list until a restart finishes", async () => {
+  const user = userEvent.setup();
+  let finish = () => {};
+  restartAgent.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Restart agent" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Restart" }));
+  const value = screen.getByLabelText("Value of SAVED_KEY");
+  expect(value).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add variable" })).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "Remove SAVED_KEY" }),
+  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await user.type(value, "new");
+  expect(value).toHaveValue("");
+  finish();
+  await waitFor(() => expect(value).toBeEnabled());
+  await user.type(value, "new");
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(calls("agent_env_set")).toHaveLength(1));
+});
+
 it("removing a saved row deletes it on save", async () => {
   const user = userEvent.setup();
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);

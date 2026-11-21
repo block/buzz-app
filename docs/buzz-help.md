@@ -108,8 +108,8 @@ if that desktop app is up and running.
 - **Messages.** Hover or right-click a message to react, **Reply**, copy a link,
   forward it, or start a chat about it. On an agent's reply, **View activity**
   shows what it did. **Reply** on a reply copied to the channel with **Send to
-  channel** continues the thread it came from, unless the copy has replies of
-  its own.
+  channel** continues the thread it came from, unless the copy has replies or a
+  draft reply of its own, or its original thread was found deleted.
 - **Pins.** **Pin to channel** (**Pin to DM** in a DM) in a message's More
   menu adds it to the pin list, up to 250; the pin button in the header lists
   them. Solo chats have no pins.

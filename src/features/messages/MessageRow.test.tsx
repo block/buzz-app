@@ -29,6 +29,7 @@ import {
 } from "./spring-loaded-drag";
 import { serializeSelection } from "./selection-copy";
 import { useShowingDraft } from "./draft-places";
+import { markThreadRoot } from "./missing-thread-roots";
 import { clearView, writeView } from "../../shared/view-state";
 import {
   profileTarget,
@@ -1855,6 +1856,96 @@ it("a copy with no replies shows no thread activity of its own", () => {
     expect(screen.queryByRole("button", { name: /^View thread/ })).toBeNull();
   } finally {
     view.unmount();
+  }
+});
+
+it("a copy with its own saved draft keeps that draft's thread", () => {
+  const scope = `https://demo.invalid:${"a".repeat(64)}`;
+  // Drafts are keyed by a real event id.
+  const copy = {
+    ...row,
+    id: "c".repeat(64),
+    replyCount: 0,
+    sentFromThread: { rootId: "source" },
+  };
+  const key = `draft:${copy.channelId}:thread:${copy.id}`;
+  const channels = { channels: [], status: "ready" };
+  const library = { identities: [] };
+  const typing: readonly never[] = [];
+  const session = {
+    scope,
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const thread = vi.fn();
+  const view = renderMessage({
+    session,
+    row: copy,
+    viewer: copy.authorId,
+    onOpenThread: thread,
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("source", "source", "reply");
+    // A draft saved under the copy before copies replied in their source.
+    act(() => {
+      writeView(scope, key, { text: "Half a reply", recipients: [] });
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "View thread: Draft reply" }),
+    );
+    expect(thread).toHaveBeenLastCalledWith(copy.id, copy.id);
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith(copy.id, copy.id, "reply");
+    act(() => clearView(scope, key));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("source", "source", "reply");
+  } finally {
+    view.unmount();
+    clearView(scope, key);
+  }
+});
+
+it("a copy whose original root is confirmed missing replies under itself", () => {
+  const scope = `https://demo.invalid:${"b".repeat(64)}`;
+  const channels = { channels: [], status: "ready" };
+  const library = { identities: [] };
+  const typing: readonly never[] = [];
+  const session = {
+    scope,
+    channels: { list: () => channels, subscribeList: () => () => {} },
+    messages: {},
+    agentChoices: { snapshot: () => library, subscribe: () => () => {} },
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+  } as unknown as RelaySession;
+  const thread = vi.fn();
+  const view = renderMessage({
+    session,
+    row: { ...row, replyCount: 0, sentFromThread: { rootId: "gone" } },
+    viewer: row.authorId,
+    onOpenThread: thread,
+  });
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("gone", "gone", "reply");
+    // Another channel's or community's missing root changes nothing here.
+    act(() => markThreadRoot(scope, "elsewhere", "gone", false));
+    act(() => markThreadRoot(`${scope}x`, row.channelId, "gone", false));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("gone", "gone", "reply");
+    act(() => markThreadRoot(scope, row.channelId, "gone", false));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("root", "root", "reply");
+    // A later read that finds the root sends replies back to it.
+    act(() => markThreadRoot(scope, row.channelId, "gone", true));
+    fireEvent.click(screen.getByRole("button", { name: "Reply" }));
+    expect(thread).toHaveBeenLastCalledWith("gone", "gone", "reply");
+  } finally {
+    view.unmount();
+    markThreadRoot(scope, "elsewhere", "gone", true);
+    markThreadRoot(`${scope}x`, row.channelId, "gone", true);
   }
 });
 

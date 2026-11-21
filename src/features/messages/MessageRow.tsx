@@ -141,7 +141,8 @@ import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
 import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
-import { useThreadDraft } from "./draft-places";
+import { useSavedThreadDraft, useThreadDraft } from "./draft-places";
+import { useMissingThreadRoot } from "./missing-thread-roots";
 
 export type MessageLinkOrigin = Readonly<{
   rootId: string;
@@ -324,10 +325,23 @@ function MessageRowContent({
   );
   // A Send to channel copy starts no thread of its own: until someone replies
   // to it, it opens the thread it was sent from, as a broadcast reply does.
-  const sentFromRootId =
+  // A copy keeps its own thread while it holds a draft saved there, or once
+  // a read confirmed the original's root missing.
+  const copyOf =
     !row.threadRootId && row.replyCount === 0
       ? row.sentFromThread?.rootId
       : undefined;
+  const ownDraft = useSavedThreadDraft(
+    copyOf && onOpenThread ? session : undefined,
+    row.channelId,
+    row.id,
+  );
+  const sourceMissing = useMissingThreadRoot(
+    session?.scope,
+    row.channelId,
+    copyOf,
+  );
+  const sentFromRootId = ownDraft || sourceMissing ? undefined : copyOf;
   const threadRootId = row.threadRootId ?? sentFromRootId;
   const openThreadRootId = threadRootId ?? row.id;
   const openThreadMessageId = sentFromRootId ?? row.id;

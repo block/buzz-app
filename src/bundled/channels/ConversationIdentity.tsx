@@ -10,11 +10,7 @@ import styles from "./Channels.module.css";
 
 type Presence = "online" | "away" | "offline" | undefined;
 
-/**
- * Who a conversation is with, besides you. Every conversation is drawn the
- * same way from this, whatever kind it is: a name changes its label, never
- * its icon.
- */
+/** Everyone in a conversation besides you, agents included. */
 export function conversationOthers(
   channel: Pick<ChannelSummary, "channelType" | "participants" | "members">,
   viewer: string | undefined,
@@ -23,45 +19,111 @@ export function conversationOthers(
   return channel.members?.filter((key) => key !== viewer) ?? none;
 }
 
-/** A conversation's icon in a sidebar row: the one other member's face, the
- * number of others, or the chat bubble when it's with no one else yet. */
+/**
+ * Who a conversation's icon shows: its people, the way the relay knows it.
+ * Agents brought in never change that; they show only when no other person
+ * is in it. A member whose profile hasn't loaded counts as a person.
+ */
+export function identityMembers(
+  others: readonly string[],
+  profiles: ReadonlyMap<string, Profile>,
+): readonly string[] {
+  const people = others.filter((key) => !profiles.get(key)?.isAgent);
+  return people.length ? people : others;
+}
+
+/** Past this many others, a conversation's icon is a count; telling its
+ * agents apart isn't worth loading every member's profile. */
+const identityProfileLimit = 32;
+
+/**
+ * The members a conversation's icon shows, and their profiles. A DM's page
+ * supplies its people's profiles, so a DM row never acquires them itself.
+ */
+export function useConversationIdentity(
+  session: RelaySession,
+  channel: ChannelSummary,
+  given: ReadonlyMap<string, Profile> | undefined,
+) {
+  const others = conversationOthers(channel, session.viewer);
+  const dm = channel.channelType === "dm";
+  const wanted = dm
+    ? ""
+    : (others.length <= identityProfileLimit ? others : others.slice(0, 3))
+        .slice()
+        .sort()
+        .join(":");
+  const queries = wanted ? session.profiles : undefined;
+  const selection = useMemo(
+    () =>
+      queries && wanted
+        ? selectProfiles(queries, wanted.split(":"))
+        : noSelection,
+    [queries, wanted],
+  );
+  const selected = useSyncExternalStore(
+    selection.subscribe,
+    selection.snapshot,
+    selection.snapshot,
+  );
+  useEffect(() => {
+    if (!queries || !wanted) return;
+    const missing = wanted
+      .split(":")
+      .filter((key) => !queries.snapshot().has(key));
+    if (missing.length) void queries.ensure(missing).catch(() => {});
+  }, [queries, wanted]);
+  const profiles = (dm ? given : selected) ?? noProfiles;
+  const members = useMemo(
+    () =>
+      others.length <= identityProfileLimit
+        ? identityMembers(others, profiles)
+        : others,
+    [others, profiles],
+  );
+  return { members, profiles };
+}
+
+/** A conversation's icon in a sidebar row: the one member's face, the
+ * number of members, or the chat bubble when it's with no one else yet. */
 export function ConversationRowIdentity({
-  channel,
+  members,
+  profiles,
+  fallback,
   session,
-  profile,
   presence,
 }: {
-  channel: ChannelSummary;
+  members: readonly string[];
+  profiles: ReadonlyMap<string, Profile>;
+  /** The conversation's name, for a face whose profile hasn't loaded. */
+  fallback: string;
   session: RelaySession;
-  /** The one other member's profile, when the caller already holds it. */
-  profile?: Profile | undefined;
   presence?: Presence;
 }) {
-  const others = conversationOthers(channel, session.viewer);
-  const other = useOtherProfile(session, channel, others, profile);
-  if (others.length === 1)
+  const one = members.length === 1 ? profiles.get(members[0] ?? "") : undefined;
+  if (members.length === 1)
     return (
       <span className={styles.dmAvatar} data-dm-identity="">
         <Avatar
-          src={avatarMedia(other?.picture, session.media)}
+          src={avatarMedia(one?.picture, session.media)}
           alt=""
-          fallback={other?.name ?? channel.name}
+          fallback={one?.name ?? fallback}
           size="fill"
-          shape={other?.isAgent ? "squircle" : "circle"}
+          shape={one?.isAgent ? "squircle" : "circle"}
           statusBadge={presence}
         />
       </span>
     );
-  if (others.length > 1)
+  if (members.length > 1)
     return (
       <span
         className={styles.dmCount}
         data-dm-identity=""
         data-dm-participant-count=""
-        title={`${others.length} other participants`}
+        title={`${members.length} other participants`}
         aria-hidden="true"
       >
-        {others.length}
+        {members.length}
       </span>
     );
   return <ChatCircleIcon size={16} />;
@@ -70,36 +132,51 @@ export function ConversationRowIdentity({
 /** The same identity as a large tile: a face, a cluster of up to three
  * faces, or the chat bubble. */
 export function ConversationTileIdentity({
-  channel,
+  members,
+  profiles,
+  fallback,
   session,
-  profile,
   presence,
 }: {
-  channel: ChannelSummary;
+  members: readonly string[];
+  profiles: ReadonlyMap<string, Profile>;
+  fallback: string;
   session: RelaySession;
-  profile?: Profile | undefined;
   presence?: Presence;
 }) {
-  const others = conversationOthers(channel, session.viewer);
-  const other = useOtherProfile(session, channel, others, profile);
-  if (others.length > 1)
-    return <GroupTile people={others.slice(0, 3)} session={session} />;
-  if (others.length === 1)
+  if (members.length > 1)
+    return (
+      <AvatarStack
+        size="cluster"
+        items={members.slice(0, 3).map((member) => {
+          const profile = profiles.get(member);
+          return {
+            id: member,
+            name: profile?.name ?? "Member",
+            src: avatarMedia(profile?.picture, session.media),
+            shape: profile?.isAgent ? "squircle" : "circle",
+          };
+        })}
+      />
+    );
+  if (members.length === 1) {
+    const one = profiles.get(members[0] ?? "");
     return (
       <Avatar
-        src={avatarMedia(other?.picture, session.media)}
+        src={avatarMedia(one?.picture, session.media)}
         alt=""
-        fallback={other?.name ?? channel.name}
+        fallback={one?.name ?? fallback}
         size="fill"
-        shape={other?.isAgent ? "squircle" : "circle"}
+        shape={one?.isAgent ? "squircle" : "circle"}
         statusBadge={presence}
         statusBadgeSize="small"
       />
     );
+  }
   return (
     <Avatar
       alt=""
-      fallback={channel.name}
+      fallback={fallback}
       fallbackContent={<ChatCircleIcon size={20} />}
       fallbackSurface="accent"
       size="fill"
@@ -107,73 +184,9 @@ export function ConversationTileIdentity({
   );
 }
 
-/** The lone other member's profile, loaded if it isn't yet. A DM's page
- * supplies its person's profile, so a DM row never acquires one itself. */
-function useOtherProfile(
-  session: RelaySession,
-  channel: Pick<ChannelSummary, "channelType">,
-  others: readonly string[],
-  given: Profile | undefined,
-) {
-  const key =
-    channel.channelType !== "dm" && others.length === 1 && !given
-      ? others[0]
-      : undefined;
-  const queries = key ? session.profiles : undefined;
-  const selection = useMemo(
-    () => (queries && key ? selectProfiles(queries, [key]) : noSelection),
-    [queries, key],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  const found = key ? profiles.get(key) : undefined;
-  useEffect(() => {
-    if (queries && key && !found) void queries.ensure([key]).catch(() => {});
-  }, [queries, key, found]);
-  return given ?? found;
-}
-
 const noProfiles: ReadonlyMap<string, Profile> = new Map();
 const noSelection = {
   snapshot: () => noProfiles,
   subscribe: () => () => {},
 };
-
-function GroupTile({
-  people,
-  session,
-}: {
-  people: readonly string[];
-  session: RelaySession;
-}) {
-  // Follow only the people drawn; anyone else's profile arriving renders nothing.
-  const key = people.join(":");
-  const selection = useMemo(
-    () => selectProfiles(session.profiles, key.split(":")),
-    [session.profiles, key],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  return (
-    <AvatarStack
-      size="cluster"
-      items={people.map((person) => {
-        const profile = profiles.get(person);
-        return {
-          id: person,
-          name: profile?.name ?? "Member",
-          src: avatarMedia(profile?.picture, session.media),
-          shape: profile?.isAgent ? "squircle" : "circle",
-        };
-      })}
-    />
-  );
-}
-
 const none: readonly never[] = [];

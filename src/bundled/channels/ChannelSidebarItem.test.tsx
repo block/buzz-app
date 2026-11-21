@@ -165,7 +165,7 @@ it("keeps the DM identity avatar and shows only a separate thinking badge", () =
         channelType: "dm",
         participants: [agent],
       })}
-      profile={state.profiles.get(agent)}
+      profiles={state.profiles}
     />,
   );
   expect(
@@ -400,11 +400,18 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
   view.rerender(
     <ChannelSidebarItem
       {...props}
-      profile={{
-        name: "Alice",
-        picture: "https://example.com/alice.png",
-        isAgent: true,
-      }}
+      profiles={
+        new Map([
+          [
+            "alice",
+            {
+              name: "Alice",
+              picture: "https://example.com/alice.png",
+              isAgent: true,
+            },
+          ],
+        ])
+      }
     />,
   );
   expect(session.media).toHaveBeenLastCalledWith(
@@ -429,7 +436,9 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
   view.rerender(
     <ChannelSidebarItem
       {...props}
-      profile={{ name: "Alice", picture: "javascript:bad" }}
+      profiles={
+        new Map([["alice", { name: "Alice", picture: "javascript:bad" }]])
+      }
     />,
   );
   expect(row.querySelector("img")).toBeNull();
@@ -437,7 +446,7 @@ it("badges one-to-one DM avatars with live presence and sanitizes their media", 
     "data-avatar-shape",
     "circle",
   );
-  view.rerender(<ChannelSidebarItem {...props} profile={undefined} />);
+  view.rerender(<ChannelSidebarItem {...props} profiles={undefined} />);
   expect(row.querySelector(".buzz-avatar")).toHaveTextContent("A");
   for (const participants of [[], ["alice", "bob"]]) {
     view.rerender(
@@ -842,6 +851,7 @@ describe("conversation identity", () => {
   const agent = "a".repeat(64);
   const tom = "b".repeat(64);
   const molly = "c".repeat(64);
+  const muse = "f".repeat(64);
   function viewer(profiles = new Map<string, Profile>()) {
     const state = owner(profiles);
     const ensure = vi.fn(async () => {});
@@ -919,6 +929,66 @@ describe("conversation identity", () => {
     expect(document.querySelector("[data-dm-identity]")).toBeNull();
     expect(screen.getByRole("button", { name: /Notes/ })).toBeInTheDocument();
   });
+
+  it.each([
+    {
+      case: "a person and their agent shows the person",
+      others: [tom, agent],
+      face: "Tom",
+    },
+    { case: "only an agent shows the agent", others: [agent], face: "Scout" },
+    {
+      case: "two people with agents shows the people's count",
+      others: [tom, molly, agent],
+      count: "2",
+    },
+    {
+      case: "two agents and no people shows their count",
+      others: [agent, muse],
+      count: "2",
+    },
+  ])(
+    "draws the icon from the people first: $case",
+    ({ others, face, count }) => {
+      const profiles = new Map<string, Profile>([
+        [agent, { name: "Scout", isAgent: true }],
+        [muse, { name: "Muse", isAgent: true }],
+        [tom, { name: "Tom" }],
+        [molly, { name: "Molly" }],
+      ]);
+      for (const channel of [
+        {
+          id: "alpha",
+          name: "Chat",
+          channelType: "dm" as const,
+          participants: others,
+        },
+        {
+          id: "alpha",
+          name: "Chat",
+          channelType: "stream" as const,
+          members: [me, ...others],
+        },
+      ]) {
+        const { session } = viewer(profiles);
+        const view = render(
+          <ChannelSidebarItem
+            {...itemProps(session, false, channel)}
+            profiles={channel.channelType === "dm" ? profiles : undefined}
+          />,
+        );
+        const identity = document.querySelector("[data-dm-identity]");
+        if (count)
+          expect(identity).toHaveAttribute("data-dm-participant-count");
+        else
+          expect(identity?.querySelector(".buzz-avatar")).toHaveTextContent(
+            face?.[0] ?? "",
+          );
+        expect(identity).toHaveTextContent(count ?? face?.[0] ?? "");
+        view.unmount();
+      }
+    },
+  );
 
   it("clusters up to three faces in tile view", () => {
     const { session } = viewer();

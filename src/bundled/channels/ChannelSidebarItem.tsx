@@ -37,7 +37,7 @@ import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import {
   ConversationRowIdentity,
   ConversationTileIdentity,
-  conversationOthers,
+  useConversationIdentity,
 } from "./ConversationIdentity";
 import { SidebarCardDisplayContext } from "./SidebarCardDisplay";
 import { DmTypingBadge } from "./DmTypingBadge";
@@ -70,7 +70,8 @@ type ItemProps = {
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
   onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
   channel: ChannelSummary;
-  profile?: Profile | undefined;
+  /** A DM's people's profiles, from its page; other rows load their own. */
+  profiles?: ReadonlyMap<string, Profile> | undefined;
   session: RelaySession;
   working: boolean;
   selected: string | undefined;
@@ -182,7 +183,7 @@ function ChannelSidebarItemCore({
   chatIcon: ChatIconComponent,
   onHiddenChange,
   channel,
-  profile,
+  profiles: dmProfiles,
   session,
   selected,
   onSelect,
@@ -218,10 +219,12 @@ function ChannelSidebarItemCore({
   muted: boolean;
 }) {
   const present = useIsPresent();
-  const peer =
-    channel.channelType === "dm" && channel.participants?.length === 1
-      ? channel.participants[0]
-      : undefined;
+  const { members, profiles } = useConversationIdentity(
+    session,
+    channel,
+    dmProfiles,
+  );
+  const peer = members.length === 1 ? members[0] : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
   const actions = useRef<HTMLButtonElement>(null);
   const actionsOpen = !!menuAnchor && menuAnchor === actions.current;
@@ -233,13 +236,13 @@ function ChannelSidebarItemCore({
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
   const tiled = useContext(SidebarCardDisplayContext) === "icons";
-  const identityShowsMembers =
-    conversationOthers(channel, session.viewer).length > 0;
+  const identityShowsMembers = members.length > 0;
   const identity = (
     <ConversationRowIdentity
-      channel={channel}
+      members={members}
+      profiles={profiles}
+      fallback={channel.name}
       session={session}
-      profile={profile}
       presence={presence === "unknown" ? undefined : presence}
     />
   );
@@ -250,8 +253,9 @@ function ChannelSidebarItemCore({
       tile={
         tiled && (
           <ConversationTileIdentity
-            channel={channel}
-            profile={profile}
+            members={members}
+            profiles={profiles}
+            fallback={channel.name}
             presence={presence === "unknown" ? undefined : presence}
             session={session}
           />

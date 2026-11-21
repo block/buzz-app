@@ -440,6 +440,7 @@ export function MessageLink({
     const linked = root ? (
       <PreviewCard
         trigger={menuTrigger}
+        immediate={controls && offered?.immediate === true}
         // A withheld destination's card only explains why; it isn't a link
         // until a recheck admits the reader.
         {...(controls
@@ -467,6 +468,8 @@ export function MessageLink({
         }}
         side="top"
         sideOffset={({ side }) => {
+          // A compact direct action sits against its text, like an inline toolbar.
+          if (controls && offered?.compact) return 0;
           if (side !== "top") return previewGap;
           lift.current = Math.max(
             lift.current,
@@ -474,7 +477,12 @@ export function MessageLink({
           );
           return lift.current;
         }}
-        className={styles.popup ?? ""}
+        className={[
+          styles.popup,
+          controls && offered?.compact && styles.actionPopup,
+        ]
+          .filter(Boolean)
+          .join(" ")}
         aria-label={root.label}
       >
         {root.body}

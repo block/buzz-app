@@ -157,6 +157,11 @@ export function ButtonSpecimen() {
         <Button>Continue</Button>
       </ExamplePreview>
       <ButtonMatrix kind="text" />
+      <ExamplePreview code='<Button size="xs" inset="symmetric"><PlusIcon aria-hidden="true" /> Add item</Button>'>
+        <Button size="xs" inset="symmetric">
+          <PlusIcon aria-hidden="true" /> Add item
+        </Button>
+      </ExamplePreview>
       <ExamplePreview code='<Button variant="outline-subtle" size="xs">from: person</Button>'>
         <Button variant="outline-subtle" size="xs">
           from: person

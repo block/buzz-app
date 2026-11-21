@@ -39,6 +39,12 @@ export type UnreadSnapshot = Readonly<{
    * Bounded like `observedCount`: missing history can leave a later message
    * the oldest one known. Absent when none is unread. */
   oldestUnreadId?: string;
+  /** Channel targets with `oldestUnreadId`: the newest incoming timeline
+   * message older than it that a channel-wide read reaches (`attention()`
+   * reports `prefixRead`). Evidence can have gaps, so it proves where unread
+   * begins only once a contiguous page shows it directly above
+   * `oldestUnreadId`. */
+  readBeforeOldestUnreadId?: string;
   /** Channel targets: a repair has read every channel in unread scope since
    * evidence was last emptied or a channel entered that scope, so evidence
    * reaches past the rows channel windows loaded, up to the repair's per-batch
@@ -1261,14 +1267,7 @@ export function createUnread({
         view.visible(messageId, view.ids.has(messageId)),
     );
     const state = reads.state();
-    const prefixRead =
-      Math.max(
-        state.frontiers[channelId] ?? -1,
-        timeline(entry, dm)
-          ? (state.frontiers[`activity:${channelId}`] ?? -1)
-          : -1,
-        reads.floor(),
-      ) >= event.created_at;
+    const prefixRead = prefixReads(channelId, entry, state, dm);
     return Object.freeze({
       status: kind
         ? "eligible"
@@ -1284,6 +1283,26 @@ export function createUnread({
       viewing,
       ...(prefixRead ? { prefixRead: true as const } : {}),
     });
+  }
+  // A channel-wide read reaches this row: the channel frontier, catch-up's
+  // activity: mark for an ordinary timeline row, or the retention floor.
+  // `attention` reports it as `prefixRead`, and the channel snapshot uses it
+  // for `readBeforeOldestUnreadId`, so both must agree.
+  function prefixReads(
+    channelId: string,
+    entry: Evidence,
+    state: ReadState,
+    dm: boolean,
+  ) {
+    return (
+      Math.max(
+        state.frontiers[channelId] ?? -1,
+        timeline(entry, dm)
+          ? (state.frontiers[`activity:${channelId}`] ?? -1)
+          : -1,
+        reads.floor(),
+      ) >= entry.event.created_at
+    );
   }
   function compute(target: ReadTarget): UnreadSnapshot {
     const key = targetKey(target);
@@ -1349,6 +1368,23 @@ export function createUnread({
       if (category(entry, dm)) rowAttention++;
       if (entry.rootId && activityEvidence(entry)) rowThreads.add(entry.rootId);
     }
+    // The newest incoming timeline message older than the oldest unread one
+    // that a channel-wide read reaches, as `attention` reports `prefixRead`.
+    let readBefore: RelayEvent | undefined;
+    if (oldest) {
+      for (const entry of byChannel.get(target.channelId) ?? []) {
+        const event = entry.event;
+        if (
+          (!entry.parentId || entry.broadcast) &&
+          event.pubkey !== viewer &&
+          !entry.quiet &&
+          order(event, oldest) < 0 &&
+          (!readBefore || order(event, readBefore) > 0) &&
+          prefixReads(target.channelId, entry, state, dm)
+        )
+          readBefore = event;
+      }
+    }
     const manual = reads.localUnread(key)
       ? "local-only"
       : target.kind === "message" &&
@@ -1369,6 +1405,9 @@ export function createUnread({
         ? { latestMessage: { id: latest.id, createdAt: latest.created_at } }
         : {}),
       ...(evidence && oldest ? { oldestUnreadId: oldest.id } : {}),
+      ...(evidence && oldest && readBefore
+        ? { readBeforeOldestUnreadId: readBefore.id }
+        : {}),
       ...(evidence && target.kind === "channel" && sampled
         ? { sampled: true as const }
         : {}),
@@ -1400,6 +1439,7 @@ export function createUnread({
   const equal = (a: UnreadSnapshot, b: UnreadSnapshot) =>
     a.latestMessage?.id === b.latestMessage?.id &&
     a.oldestUnreadId === b.oldestUnreadId &&
+    a.readBeforeOldestUnreadId === b.readBeforeOldestUnreadId &&
     a.sampled === b.sampled &&
     a.sampling === b.sampling &&
     a.observedCount === b.observedCount &&

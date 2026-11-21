@@ -707,6 +707,184 @@ appTest.describe("history longer than one page", () => {
   );
 });
 
+// More unread than a reopen loads: the entry page holds only the newest of
+// them, and the store's repair reaches the read message above the oldest.
+appTest.describe("unread longer than the entry page", () => {
+  appTest.use({ historyCounts: { alpha: 15, beta: 1 } });
+  const ARRIVALS = 200;
+  // Read #Alpha to the bottom, then 200 messages reach the relay while this
+  // session is closed, and Buzz reopens on #Alpha.
+  const reopenPastEntryPage = async (page, app) => {
+    // The fixture appends arrivals to this same history, so keep its last row.
+    const read = app.histories.get("primary/alpha").at(-1);
+    await open(page, app);
+    await reachEdge(page, 1);
+    await composer(page).focus();
+    await expect
+      .poll(
+        async () => (await readJournal(page))?.state.frontiers["alpha"] ?? 0,
+      )
+      .toBeGreaterThanOrEqual(read.created_at);
+    const arrivals = Array.from({ length: ARRIVALS }, (_, index) =>
+      app.append(
+        "primary",
+        "alpha",
+        `New message ${index + 1} of ${ARRIVALS}`,
+        false,
+        false,
+      ),
+    );
+    await open(page, app);
+    await expect(composer(page)).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          ([first, read]) => {
+            const { unread, channels } = window.fixtureRelay.snapshot().session;
+            const rows = channels.window("alpha").rows;
+            return {
+              unread: unread.attention("alpha", first).unread,
+              loaded: rows.some((row) => row.id === first),
+              readBefore: unread.snapshot({
+                kind: "channel",
+                channelId: "alpha",
+              }).readBeforeOldestUnreadId,
+              read: unread.attention("alpha", read).prefixRead ?? false,
+            };
+          },
+          [arrivals[0].id, read.id],
+        ),
+      )
+      .toEqual({
+        unread: true,
+        loaded: false,
+        readBefore: read.id,
+        read: true,
+      });
+    await settle(page);
+    await expect(separator(page)).toHaveCount(0);
+    return { read, arrivals };
+  };
+
+  appTest(
+    "places the line above the oldest unread message once paging loads it, without moving the reader",
+    async ({ page, app }) => {
+      const { read, arrivals } = await reopenPastEntryPage(page, app);
+      // Page up through the unread run, one held page at a time. The page
+      // that draws the line leaves the row the reader is looking at in place.
+      const readRow = history(page).locator(`[data-message-id="${read.id}"]`);
+      const firstRow = history(page).locator(
+        `[data-message-id="${arrivals[0].id}"]`,
+      );
+      await history(page).hover();
+      let drawnInPlace = false;
+      for (let step = 0; ; step++) {
+        if ((await firstRow.count()) && (await readRow.count())) break;
+        expect(step, "paging reaches the oldest unread message").toBeLessThan(
+          60,
+        );
+        const before = (await separator(page).count())
+          ? undefined
+          : await anchor(page);
+        if (app.pending.length) {
+          while (app.pending.length) app.pending.shift().release();
+          // The page lands, then the next one is held or paging stops.
+          await expect
+            .poll(
+              async () =>
+                app.pending.length > 0 ||
+                !(await page.evaluate(
+                  () =>
+                    window.fixtureRelay
+                      .snapshot()
+                      .session.channels.window("alpha").loadingOlder,
+                )),
+            )
+            .toBe(true);
+          await settle(page);
+          if (before && (await separator(page).count())) {
+            await expectAnchor(page, before);
+            drawnInPlace = true;
+          }
+        }
+        await page.mouse.wheel(0, -700);
+        await settle(page);
+      }
+      expect(drawnInPlace, "the line drew as a page landed").toBe(true);
+      await firstRow.scrollIntoViewIfNeeded();
+      await settle(page);
+      await expect(separator(page)).toHaveCount(1);
+      expect(await messageAfter(separator(page))).toBe(arrivals[0].id);
+      // The read message is the last row before the line.
+      const above = await separator(page).evaluate(
+        (element) =>
+          [
+            ...element
+              .closest("[role=region]")
+              .querySelectorAll("[data-message-id]"),
+          ]
+            .filter(
+              (row) =>
+                row.compareDocumentPosition(element) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+            )
+            .at(-1)?.dataset.messageId ?? null,
+      );
+      expect(above).toBe(read.id);
+    },
+  );
+
+  appTest(
+    "marks a message that arrives while away when the reader never paged up to the line above the entry page",
+    async ({ page, app }) => {
+      const { arrivals } = await reopenPastEntryPage(page, app);
+      // Let the store's held history reads finish, so entry settles its
+      // line above the entry page before anything reads the channel.
+      for (let read = 0; app.pending.length; read++) {
+        expect(read, "held reads drain").toBeLessThan(30);
+        while (app.pending.length) app.pending.shift().release();
+        await settle(page);
+      }
+      // Reading at the bottom reads the whole channel.
+      await reachEdge(page, 1);
+      await composer(page).focus();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (id) =>
+              window.fixtureRelay
+                .snapshot()
+                .session.unread.attention("alpha", id).unread,
+            arrivals[0].id,
+          ),
+        )
+        .toBe(false);
+      await expect(separator(page)).toHaveCount(0);
+
+      const away = (active) =>
+        page.evaluate((active) => {
+          document.hasFocus = () => active;
+          window.dispatchEvent(new FocusEvent(active ? "focus" : "blur"));
+        }, active);
+      await away(false);
+      const arrival = app.append(
+        "primary",
+        "alpha",
+        "Arrived while away",
+        true,
+        false,
+      );
+      await expect(
+        history(page).locator(`[data-message-id="${arrival.id}"]`),
+      ).toBeVisible();
+      await expect(separator(page)).toHaveCount(0);
+      await away(true);
+      await expect(separator(page)).toHaveCount(1);
+      expect(await messageAfter(separator(page))).toBe(arrival.id);
+    },
+  );
+});
+
 const fiveChannels = {
   channelIds: ["alpha", "beta", "gamma", "delta", "epsilon"],
   channelNames: { gamma: "Gamma", delta: "Delta", epsilon: "Epsilon" },

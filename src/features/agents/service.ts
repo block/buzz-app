@@ -850,11 +850,11 @@ export type StandaloneTurn<Config = unknown> = Readonly<{
   delivery: Delivery<Config>;
   /** Names the turn, for status views. */
   key: string;
-  /** Aborts when the agent is removed, its type is replaced, or
-   * STANDALONE_DEADLINE_MS after the turn starts (agent-harness/standalone).
-   * Unlike the delivery's signal, it does not count time spent waiting in
-   * the lane. A harness waits for readiness under it and stops its turn when
-   * it aborts. */
+  /** Aborts when the agent is removed, its type or protection settings are
+   * replaced, or the app stops. Unlike the delivery's signal, it has no
+   * deadline: in a community session the wake's turn is the agent's ongoing
+   * work. A harness waits for readiness under it and stops its turn when it
+   * aborts. */
   signal: AbortSignal;
   /** The turn's whole prompt, asked once the harness is ready to start it.
    * Undefined means it is no longer wanted, so no turn starts. */

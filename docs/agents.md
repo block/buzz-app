@@ -689,9 +689,9 @@ Interest's turns one at a time, up to 8 Interests at once, beside the mention
 lane. For a wake in its lane, `src/features/agent-harness/wakes.ts` checks that
 it is still current before and while its prompt is built. A subscription with a delivery address runs in that conversation through the type's `run`, with an `attention` trigger and the Interest instructions outside plugin-data framing. It remains in its Interest lane. Without an address it passes to the type's optional `runOnce`, which runs one turn with
 no saved conversation (Claude: a
-one-off process; Codex: an ephemeral thread). Its signal aborts
-`STANDALONE_DEADLINE_MS` after it starts, including any wait for the harness to
-be ready. The prompt text lives in `attention-prompt.ts`.
+one-off process; Codex: an ephemeral thread). Its signal aborts only when the
+agent is removed, its type or protection settings are replaced, or the app
+stops; the turn has no deadline. The prompt text lives in `attention-prompt.ts`.
 
 A plugin wakes an agent with `ctx.agents.wake(pubkey, { channel, root?, topLevel?, text })`,
 in the conversation of that channel and thread, or of a Solo chat when it leaves

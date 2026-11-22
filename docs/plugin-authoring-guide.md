@@ -112,6 +112,14 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - Use host color tokens (`var(--...)`) so light and dark themes both work. Rely only on the `core` roles in `src/shared/design-system/tokens/registry.ts`; other custom properties, classes and `data-*` attributes are internal.
 - Avoid fixed widths; pages can be narrow.
 
+## Solo draft titles
+
+`SoloRegionSource.draftHeader(binding, input)` can label a native Solo draft.
+It is a pure, optional callback. See [the region contract](../src/features/channel-navigation/solo-navigation-contract.ts)
+for inputs and label bounds. Empty output keeps “New chat”; failed or invalid
+output also shows a notice. Labels grant no destination or parent authority.
+Channel panels can use `panels.useTabTitle`.
+
 ## Common mistakes
 
 - Any runtime import, including `react` or `react/jsx-runtime`.

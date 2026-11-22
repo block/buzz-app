@@ -3795,6 +3795,89 @@ it("does not start a named Solo chat from a file alone", async () => {
 
 const REGION = "buzz.region:example:tasks";
 const regionBinding = { scope: "test", viewer: "f".repeat(64), incarnation: 1 };
+it("updates the region draft breadcrumb from the chosen workspace and original context", async () => {
+  const test = await projectSetup();
+  const user = userEvent.setup();
+  const draft = { key: "item:42", context: { parent: "item:42" } };
+  let parent = "Parent";
+  let enabled = true;
+  const draftHeader = vi.fn<NonNullable<SoloRegionSource["draftHeader"]>>(
+    (_binding, input) =>
+      enabled
+        ? ["Solo", input.workspace ?? "Unfiled", parent, "New subtask"]
+        : [],
+  );
+  const source = { draftHeader };
+  regionNavigation.set({ source, binding: regionBinding });
+  render(
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      region={REGION}
+      projectId="work"
+      draft={draft}
+      onStarted={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("heading", { name: "Solo › work › Parent › New subtask" }),
+  ).toBeVisible();
+  await user.type(screen.getByRole("textbox"), "Keep this brief");
+  await user.click(screen.getByRole("button", { name: "Workspace: Work" }));
+  await user.click(await screen.findByRole("menuitemradio", { name: "Other" }));
+  expect(
+    screen.getByRole("heading", {
+      name: "Solo › other › Parent › New subtask",
+    }),
+  ).toBeVisible();
+  expect(draftHeader).toHaveBeenLastCalledWith(regionBinding, {
+    workspace: "other",
+    draft,
+  });
+  parent = "Renamed parent";
+  act(() => regionNavigation.set({ source, binding: regionBinding }));
+  expect(
+    screen.getByRole("heading", {
+      name: "Solo › other › Renamed parent › New subtask",
+    }),
+  ).toBeVisible();
+  enabled = false;
+  act(() => regionNavigation.set({ source, binding: regionBinding }));
+  expect(screen.getByRole("heading", { name: "New chat" })).toBeVisible();
+  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this brief");
+});
+
+it.each(["throws", "invalid labels"])(
+  "keeps the native draft usable when its breadcrumb %s",
+  async (failure) => {
+    const test = await projectSetup();
+    regionNavigation.set({
+      source: {
+        draftHeader: () => {
+          if (failure === "throws") throw new Error("Unavailable");
+          return ["x".repeat(161)];
+        },
+      },
+      binding: regionBinding,
+    });
+    render(
+      <SoloDraft
+        session={test.session}
+        scope="test"
+        region={REGION}
+        onStarted={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "New chat" })).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "draft location is unavailable",
+    );
+    expect(screen.getByRole("button", { name: "Chat settings" })).toBeEnabled();
+    await userEvent.setup().type(screen.getByRole("textbox"), "Still editable");
+    expect(screen.getByRole("textbox")).toHaveTextContent("Still editable");
+  },
+);
+
 const startOptions = (test: ReturnType<typeof setup>) =>
   (test.channelWrites.start.mock.calls[0] as unknown[] | undefined)?.[6];
 it.each([false, true])(

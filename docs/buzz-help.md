@@ -105,6 +105,8 @@ if that desktop app is up and running.
   Archived channels are read-only, and owners and admins can unarchive them.
 - **Workspaces.** Drag conversations in, or use **Move to…**. A workspace can
   set the folders and default agents for new chats started in it.
+- **Draft titles.** A plugin can show a workspace and parent in its draft title.
+  These labels describe the draft. They do not set its destination.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,

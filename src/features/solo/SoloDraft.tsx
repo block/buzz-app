@@ -8,7 +8,7 @@ import {
 import { startingChatTitle } from "./chat-title";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
-import { SoloDraftView } from "./SoloPresentation";
+import { SoloDraftHeader, SoloDraftView } from "./SoloPresentation";
 import type { SoloDraftStart } from "../channel-navigation/solo-navigation-contract";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
@@ -956,18 +956,27 @@ export function SoloDraft({
   );
   return (
     <SoloDraftView
-      actions={
-        <IconButton
-          ref={settingsTrigger}
-          size="toolbar"
-          aria-label="Chat settings"
-          title="Chat settings"
-          icon={<GearIcon size="1rem" aria-hidden="true" />}
-          disabled={busy}
-          onClick={() => {
-            setSettingsLifetime(draftLifetime(scope, draftSettings));
-            setSettingsOpen(true);
+      header={
+        <SoloDraftHeader
+          owner={owner}
+          input={{
+            ...(selectedProject ? { workspace: selectedProject } : {}),
+            ...(regionDraft ? { draft: regionDraft } : {}),
           }}
+          actions={
+            <IconButton
+              ref={settingsTrigger}
+              size="toolbar"
+              aria-label="Chat settings"
+              title="Chat settings"
+              icon={<GearIcon size="1rem" aria-hidden="true" />}
+              disabled={busy}
+              onClick={() => {
+                setSettingsLifetime(draftLifetime(scope, draftSettings));
+                setSettingsOpen(true);
+              }}
+            />
+          }
         />
       }
     >

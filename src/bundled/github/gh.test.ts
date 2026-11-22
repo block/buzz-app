@@ -241,3 +241,47 @@ it("gives GitHub's reason a diff was refused, and stops gh past the size the pan
   ).rejects.toThrow(OutputTooLarge);
   expect(kill).toHaveBeenCalled();
 });
+
+it("kills a dispatched REST request when the controlled 20-second deadline fires", async () => {
+  const { gitHubRest } = await import("./gh");
+  const deadline = new AbortController();
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockImplementation((milliseconds) => {
+      expect(milliseconds).toBe(20_000);
+      return deadline.signal;
+    });
+  let finish: (code: number | null) => void = () => {};
+  let dispatched: () => void = () => {};
+  const started = new Promise<void>((resolve) => {
+    dispatched = resolve;
+  });
+  const kill = vi.fn(async () => {
+    finish(null);
+  });
+  const rest = gitHubRest({
+    spawn: async () => ({
+      write: async () => {},
+      end: async () => {
+        dispatched();
+      },
+      kill,
+      exited: new Promise<number | null>((resolve) => {
+        finish = resolve;
+      }),
+    }),
+  });
+  try {
+    const request = rest?.("GET", "repos/example-org/sample/pulls/1");
+    const rejection = expect(request).rejects.toMatchObject({
+      name: "TimeoutError",
+    });
+    await started;
+    expect(kill).not.toHaveBeenCalled();
+    deadline.abort(new DOMException("Deadline elapsed", "TimeoutError"));
+    await rejection;
+    expect(kill).toHaveBeenCalledOnce();
+  } finally {
+    timeout.mockRestore();
+  }
+});

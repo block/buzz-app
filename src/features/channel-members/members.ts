@@ -496,6 +496,8 @@ async function addOneMember(
       throw new Error("Migration recovery is unavailable on this host.");
     const id = pending.event.id;
     await withRecovery(id, recovery, () => {
+      if (channel()?.members?.includes(pubkey))
+        throw new Error("Membership changed during retry. Try again.");
       send();
       return waitForAddition(journal, id, signal);
     });

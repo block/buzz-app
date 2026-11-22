@@ -1778,6 +1778,72 @@ it("retries the exact labeled single after restart and refuses a different sourc
   );
 });
 
+it("stops a migration single retry when the member joins while recovery waits", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const person = keypair().pubkey;
+  const add = (retry?: true) =>
+    t.session.memberAdditions.add(t.id, person, { migration: "slack", retry });
+  t.onPublish(() => {
+    throw new PublishRejected("Not sent");
+  });
+  await expect(add()).rejects.toThrow("Not sent");
+  const [receipt] = t.records();
+  const outbox = t.session.outbox;
+  if (!receipt?.recovery || !outbox?.withRecovery)
+    throw new Error("Expected a recoverable addition");
+
+  const entered = Promise.withResolvers<void>();
+  const releaseAdoption = Promise.withResolvers<void>();
+  const releaseReplay = Promise.withResolvers<void>();
+  const adoptionQueued = Promise.withResolvers<void>();
+  const otherQueued = Promise.withResolvers<void>();
+  const replayQueued = Promise.withResolvers<void>();
+  const { recovery } = receipt;
+  const holdAdoption = outbox.withRecovery(receipt.event.id, recovery, () => {
+    entered.resolve();
+    return releaseAdoption.promise;
+  });
+  const work = [holdAdoption];
+  try {
+    await entered.promise;
+    t.onLockWait(adoptionQueued.resolve);
+    t.onPublish(() => {});
+    const retry = add(true);
+    const outcome = expect(retry).rejects.toThrow(
+      "Membership changed during retry. Try again.",
+    );
+    work.push(retry);
+    void outcome.catch(() => {});
+    await adoptionQueued.promise;
+    // Queue a second window's lock between receipt adoption and publication.
+    const other = t.openWindow().outbox;
+    if (!other?.withRecovery)
+      throw new Error("Expected recovery in both windows");
+    t.onLockWait(otherQueued.resolve);
+    work.push(
+      other.withRecovery(
+        receipt.event.id,
+        recovery,
+        () => releaseReplay.promise,
+      ),
+    );
+    await otherQueued.promise;
+    t.onLockWait(replayQueued.resolve);
+    releaseAdoption.resolve();
+    await replayQueued.promise;
+    t.admit(person);
+    await t.session.channelWrites.refreshMembership(t.id);
+    releaseReplay.resolve();
+    await outcome;
+  } finally {
+    releaseAdoption.resolve();
+    releaseReplay.resolve();
+    await Promise.allSettled(work);
+  }
+  expect(t.publish).toHaveBeenCalledOnce();
+});
+
 it("leaves a pending single addition to resume, never batching its person again", async () => {
   const t = batchSetup();
   await t.ready();

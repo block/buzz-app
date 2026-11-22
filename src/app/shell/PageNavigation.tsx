@@ -30,6 +30,7 @@ import {
   PopoverTrigger,
 } from "../../shared/design-system/ui/Popover";
 import { EmptyBestieAvatar } from "../../bundled/bestie/EmptyBestieAvatar";
+import { agentAvatarMenuProps } from "../../features/agents/avatar-menu";
 
 export function PageNavigation({
   pages,
@@ -87,19 +88,35 @@ export function PageNavigation({
               <PageIcon icon={icon} image={image} size={20} strokeWidth={2.5} />
             ),
             panelId: `shell-page-${page.key}`,
-            renderTab: Preview
-              ? (tab: ReactElement<ComponentProps<"button">>) => (
-                  <PagePreview
-                    page={page}
-                    preview={Preview}
-                    label={label}
-                    enabled={previewed(page)}
-                    dockHint
-                  >
-                    {tab}
-                  </PagePreview>
-                )
-              : undefined,
+            renderTab:
+              Preview || avatar
+                ? (tab: ReactElement<ComponentProps<"button">>) => {
+                    const trigger = avatar
+                      ? cloneElement(tab, {
+                          onContextMenu: agentAvatarMenuProps.onContextMenu,
+                          onKeyDown(event) {
+                            tab.props.onKeyDown?.(event);
+                            agentAvatarMenuProps.onKeyDown?.(event);
+                          },
+                        })
+                      : tab;
+                    return Preview ? (
+                      <PagePreview
+                        page={page}
+                        preview={Preview}
+                        label={label}
+                        enabled={previewed(page)}
+                        dockHint
+                      >
+                        {trigger}
+                      </PagePreview>
+                    ) : (
+                      <Tooltip content={label} hint="dock" side="right">
+                        {trigger}
+                      </Tooltip>
+                    );
+                  }
+                : undefined,
             trailing: (
               <>
                 {Badge && (

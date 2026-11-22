@@ -38,12 +38,15 @@ const MODIFIER_KEYS = new Set([
 export function KeyCaptureControl({
   apple,
   label,
+  layout = "row",
   describedBy,
   onCapture,
   onCancel,
 }: {
   apple: boolean;
   label: string;
+  /** A row's small action, or a full-width field in place of a search field. */
+  layout?: "row" | "field";
   describedBy?: string | undefined;
   onCapture: (chord: CapturedChord) => void;
   onCancel: () => void;
@@ -54,12 +57,13 @@ export function KeyCaptureControl({
     input.current?.focus();
   }, []);
   return (
-    <div className={styles.listening}>
-      <span id={instructionId} className="sr-only">
+    <div className={styles.listening} data-layout={layout}>
+      {/* Hidden, not visually hidden: read once as the description. */}
+      <span id={instructionId} hidden>
         Press Escape to cancel, or Tab to leave shortcut capture.
       </span>
       <Input
-        controlSize="sm"
+        controlSize={layout === "row" ? "sm" : "md"}
         ref={input}
         type="text"
         readOnly

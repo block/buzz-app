@@ -28,6 +28,14 @@ import { useMessageOpening } from "../../features/messages/use-message-opening";
 import { ChannelBody } from "./ChannelBody";
 import { InlineThreadSheet } from "./InlineThreadSheet";
 import {
+  canonicalInline,
+  inlineDismissal,
+  inlineToTab,
+  layerDismissal,
+  layerVisit,
+  routedInline,
+} from "./inline-address";
+import {
   LayerAddressContext,
   type LayerAddress,
   type OpenLayer,
@@ -79,11 +87,7 @@ import {
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
-import {
-  targetKey,
-  type OpenTarget,
-  type ViewLayer,
-} from "../../features/navigation/targets";
+import { targetKey, type OpenTarget } from "../../features/navigation/targets";
 import {
   buzzLinkTarget,
   isBuzzLink,
@@ -1745,13 +1749,7 @@ function ChannelWorkspace({
         ),
       ) === "inline"
     ) {
-      const {
-        messageId: _message,
-        threadRootId: _root,
-        context: _context,
-        ...conversation
-      } = routedTarget;
-      if (navigation.resolve({ ...conversation, inline: routedThread.rootId }))
+      if (navigation.resolve(routedInline(routedTarget, routedThread.rootId)))
         return;
     }
     // Each visit is applied once: Back/Forward switch tabs, never close them,
@@ -1990,67 +1988,32 @@ function ChannelWorkspace({
     inlineRoot && currentId && !hasThreadTab(currentId, inlineRoot)
       ? inlineRoot
       : undefined;
-  // ✕, Escape and the scrim retire the thread's visits, with the details
-  // read over it; Back then leaves the conversation.
-  const inlineDismissal = (rootId: string) => {
-    const target = navigator?.snapshot().entry.target;
-    if (target?.kind !== "conversation" || target.inline !== rootId) return;
-    const { inline: _inline, layer, ...rest } = target;
-    return {
-      visits: (visit: OpenTarget) =>
-        sameScope(visit, target) &&
-        visit.kind === "conversation" &&
-        visit.inline === rootId,
-      // A layer over the thread closes with it.
-      fallback: (!layer || layer.rootId === rootId
-        ? rest
-        : { ...rest, layer }) satisfies OpenTarget,
-    };
-  };
+  // The inline thread's and the layer's openings and closings, as
+  // transforms of the visit on screen (inline-address.ts).
   const closeInline = (rootId: string) => {
-    const dismissal = inlineDismissal(rootId);
+    const dismissal = inlineDismissal(
+      navigator?.snapshot().entry.target,
+      rootId,
+    );
     if (dismissal) navigator.dismiss(dismissal.visits, dismissal.fallback);
   };
-  // A link to a reply names the reply until the thread reads its root; the
-  // visit then names the root, so the thread is the same one its row opens.
-  const canonicalInline = (from: string, root: string) => {
-    const target = navigator?.snapshot().entry.target;
-    if (
-      !navigator ||
-      from === root ||
-      target?.kind !== "conversation" ||
-      target.inline !== from
-    )
-      return;
-    const { layer, ...rest } = target;
-    navigator.dismiss(
-      (visit) =>
-        sameScope(visit, target) &&
-        visit.kind === "conversation" &&
-        visit.inline === from,
-      {
-        ...rest,
-        inline: root,
-        ...(layer && layer.rootId !== from ? { layer } : {}),
-      },
+  const resolveInlineRoot = (from: string, root: string) => {
+    const dismissal = canonicalInline(
+      navigator?.snapshot().entry.target,
+      from,
+      root,
     );
+    if (dismissal) navigator.dismiss(dismissal.visits, dismissal.fallback);
   };
-  // Move to side panel hands the thread over: its inline visits retire and
-  // its tab opens in their place. The draft is keyed by thread, so it follows.
+  // Move to side panel hands the thread over: its tab opens in place of its
+  // inline visits. The draft is keyed by thread, so it follows.
   const moveInlineToTab = (rootId: string) => {
-    const dismissal = inlineDismissal(rootId);
     const target = navigator?.snapshot().entry.target;
+    const dismissal = inlineToTab(target, rootId);
     if (!dismissal || target?.kind !== "conversation") return;
     tabState.leaveVisit();
     tabState.openThreadTab(target.channelId, rootId, rootId, "reply", "side");
-    navigator.dismiss(dismissal.visits, {
-      version: 1,
-      kind: "conversation",
-      scope: target.scope,
-      channelId: target.channelId,
-      messageId: rootId,
-      threadRootId: rootId,
-    });
+    navigator.dismiss(dismissal.visits, dismissal.fallback);
   };
   // A layer (details or a panel) opens over the composer of the view it was
   // opened in; the address names that view, so reload and Back/Forward know
@@ -2059,33 +2022,7 @@ function ChannelWorkspace({
     (layer: OpenLayer) => {
       const target = navigator?.snapshot().entry.target;
       if (!navigator || target?.kind !== "conversation") return;
-      const view = {
-        ...(layer.rootId ? { rootId: layer.rootId } : {}),
-        ...(layer.channelId !== target.channelId
-          ? { channelId: layer.channelId }
-          : {}),
-      };
-      const value: ViewLayer =
-        layer.messageId !== undefined
-          ? { messageId: layer.messageId, ...view }
-          : {
-              target: layer.target,
-              ...(layer.threadId ? { threadId: layer.threadId } : {}),
-              ...view,
-            };
-      // Over a thread the visit keeps that thread; over the conversation it
-      // is the conversation's own dialog.
-      void navigator.open(
-        layer.rootId
-          ? { ...target, layer: value }
-          : {
-              version: 1,
-              kind: "conversation",
-              scope: target.scope,
-              channelId: target.channelId,
-              layer: value,
-            },
-      );
+      void navigator.open(layerVisit(target, layer));
     },
     [navigator],
   );
@@ -2093,22 +2030,12 @@ function ChannelWorkspace({
    * stays. `fallback` lands somewhere else instead, as Open as tab does. */
   const dismissLayer = useCallback(
     (fallback?: OpenTarget) => {
-      const target = navigator?.snapshot().entry.target;
-      if (!navigator || target?.kind !== "conversation" || !target.layer)
-        return;
-      const { layer, ...under } = target;
-      navigator.dismiss(
-        (visit) =>
-          sameScope(visit, target) &&
-          visit.kind === "conversation" &&
-          !!visit.layer &&
-          visit.layer.messageId === layer.messageId &&
-          visit.layer.target === layer.target &&
-          visit.layer.threadId === layer.threadId &&
-          visit.layer.rootId === layer.rootId &&
-          visit.layer.channelId === layer.channelId,
-        fallback ?? under,
+      const dismissal = layerDismissal(
+        navigator?.snapshot().entry.target,
+        fallback,
       );
+      if (navigator && dismissal)
+        navigator.dismiss(dismissal.visits, dismissal.fallback);
     },
     [navigator],
   );
@@ -2984,7 +2911,7 @@ function ChannelWorkspace({
           seen={seen}
           close={() => closeInline(inlineThread)}
           moveToTab={() => moveInlineToTab(inlineThread)}
-          onResolvedRoot={(root) => canonicalInline(inlineThread, root)}
+          onResolvedRoot={(root) => resolveInlineRoot(inlineThread, root)}
         />
       )}
       {current && <LayerReader channelId={current.id} />}
@@ -3477,16 +3404,6 @@ function ChannelWorkspace({
     </LinkThreadTabContext>
   );
 }
-
-/** Whether `visit` is in `target`'s conversation, for the same viewer. */
-const sameScope = (
-  visit: OpenTarget,
-  target: Extract<OpenTarget, { kind: "conversation" }>,
-) =>
-  visit.kind === "conversation" &&
-  visit.channelId === target.channelId &&
-  visit.scope.viewer === target.scope.viewer &&
-  visit.scope.communityOrigin === target.scope.communityOrigin;
 
 export function mediaReviewForDestination<
   T extends { channelId: string; entryId?: string | undefined },

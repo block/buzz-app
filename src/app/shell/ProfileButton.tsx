@@ -59,10 +59,12 @@ import styles from "./ProfileButton.module.css";
 import * as communityApi from "../../features/communities/api";
 import {
   deviceTimeZone,
-  shareDeviceTimeZone,
+  followDeviceTimeZone,
 } from "../../features/profiles/share-time-zone";
 
 const noSubscription = () => () => {};
+// The first wait before retrying communities a time zone check left.
+const followRetryDelay = 60_000;
 // The parent row retains the icon for the saved appearance preference.
 const colorModes = {
   light: { label: "Light", Icon: SunIcon },
@@ -93,6 +95,8 @@ export function ProfileButton({
     profile: localProfile,
     viewer,
     selected,
+    status: clientStatus,
+    relayAvailable,
   } = useSyncExternalStore(communities.subscribe, communities.snapshot);
   const presence = useSyncExternalStore(
     communities.presence.subscribe,
@@ -193,31 +197,75 @@ export function ProfileButton({
       signal: controller.signal,
     });
     read.catch(() => {});
-    // Local time is shared by default. This fresh read triggers it; a strong
-    // read just before publishing supplies what is published.
-    if (selected)
-      void shareDeviceTimeZone({
-        community: selected,
+    return () => controller.abort();
+  }, [profiles, viewer, connection.status, session, roster, liveStatus]);
+  // Communities are reached by origin, so this needs no selected session.
+  const canFollow = clientStatus === "ready" && relayAvailable;
+  useEffect(() => {
+    if (!viewer || !canFollow) return;
+    // Profiles follow this device's zone: check every community at launch,
+    // and again whenever the zone or the joined communities change. Those a
+    // check could not finish are retried alone, backing off to every half
+    // hour.
+    const controller = new AbortController();
+    let checked: string | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let delay = followRetryDelay;
+    const run = (key: string, zone: string | undefined, only?: string[]) =>
+      void followDeviceTimeZone({
         viewer,
         communities,
-        read,
-        inspect: () => communityApi.inspectProfile(selected, session),
+        zone,
+        ...(only ? { only } : {}),
         signal: controller.signal,
-        zone: deviceTimeZone(),
-        publish: (profile, existing) =>
-          communityApi.publishProfile(selected, profile, existing),
-      });
-    return () => controller.abort();
-  }, [
-    communities,
-    profiles,
-    viewer,
-    selected,
-    connection.status,
-    session,
-    roster,
-    liveStatus,
-  ]);
+        inspect: (id) => {
+          // The selected community reads through its session, so its profile
+          // directory sees the result.
+          const relay = communities.relay.snapshot();
+          return relay.status === "ready" &&
+            relay.viewer === viewer &&
+            communities.snapshot().selected === id
+            ? communityApi.inspectProfile(id, relay.session)
+            : communityApi.inspectProfile(id);
+        },
+        publish: communityApi.publishProfile,
+      }).then(
+        (failed) => {
+          if (checked !== key || controller.signal.aborted) return;
+          if (!failed.length) {
+            delay = followRetryDelay;
+            return;
+          }
+          retry = setTimeout(() => run(key, zone, failed), delay);
+          delay = Math.min(delay * 2, 30 * 60_000);
+        },
+        () => {},
+      );
+    const check = () => {
+      const zone = deviceTimeZone();
+      const joined = communities
+        .snapshot()
+        .memberships.map(({ id }) => id)
+        .join("\n");
+      const key = `${zone}\n${joined}`;
+      if (key === checked) return;
+      checked = key;
+      clearTimeout(retry);
+      delay = followRetryDelay;
+      run(key, zone);
+    };
+    check();
+    const unsubscribe = communities.subscribe(check);
+    window.addEventListener("focus", check);
+    const timer = setInterval(check, 60_000);
+    return () => {
+      controller.abort();
+      unsubscribe();
+      window.removeEventListener("focus", check);
+      clearInterval(timer);
+      clearTimeout(retry);
+    };
+  }, [communities, viewer, canFollow]);
   const profile = selected ? communityProfile : localProfile;
   const displayName = profile?.name.trim();
   const name =

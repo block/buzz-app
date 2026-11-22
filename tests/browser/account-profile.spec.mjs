@@ -151,9 +151,9 @@ test("account menu choices remain reachable across themes, widths and enlarged t
   ).toBeVisible();
 });
 
-// Sharing by default crosses the profile button's fresh read and the strong
-// read before publishing, then the fixture's merging profile writer (not the
-// browser host's); unit tests stub each read.
+// Following the device's zone crosses the strong read before publishing and
+// the fixture's merging profile writer (not the browser host's); unit tests
+// stub each read.
 test.describe("local time shared by default", () => {
   test.use({ profileTimeZone: null, timezoneId: "Europe/Paris" });
 
@@ -171,5 +171,22 @@ test.describe("local time shared by default", () => {
         about: "",
         tz: "Europe/Paris",
       });
+  });
+});
+
+test.describe("local time follows the device", () => {
+  test.use({
+    profileTimeZone: "Pacific/Honolulu",
+    timezoneId: "America/Los_Angeles",
+  });
+
+  test("launch moves a stale shared zone to the browser's", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await expect
+      .poll(async () => (await app.ownProfile("primary"))?.tz)
+      .toBe("America/Los_Angeles");
   });
 });

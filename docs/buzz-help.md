@@ -291,14 +291,16 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
 - Set or clear your status from the profile menu, or with **Update status** /
   **Set a status** on your own profile. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
-- Your profile shares your local time by default: joining a community, or
-  opening one whose profile has never had a time zone, publishes this device's
-  time zone name, such as `America/Los_Angeles`. Each device does this at most
-  once per community. To stop, open Settings → **Profile** in that community,
-  uncheck **Show my local time on my profile** and save. That opt-out is kept in
-  your profile; if another app rewrites your profile without it, a device that
-  has never shared there can share once more. Check it again to pick a time
-  zone. People who share a time zone show their local time on their profile and
+- Your profile shares your local time by default and follows this computer's
+  time zone name, such as `America/Los_Angeles`. When Buzz opens, and whenever
+  the computer's time zone changes (after travel, say), it updates your profile
+  in every community you've joined. To pick a zone yourself, open Settings →
+  **Profile** in that community, uncheck **Use this computer's time zone**,
+  choose a zone and save; this computer then leaves that community's zone
+  alone, though another computer that still follows its own zone can change
+  it. To stop sharing, uncheck **Show my local time on my profile** and save.
+  That opt-out is kept in your profile and never overwritten. People who share
+  a time zone show their local time on their profile and
   its preview, with "tomorrow" or "yesterday" when their date differs from
   yours. With **Show time zone details on profiles** on in Settings →
   **Appearance**, it also shows how far ahead or behind you they are and their

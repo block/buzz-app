@@ -98,6 +98,7 @@ export type TurnInput = Readonly<{
   channelLevel?: boolean;
   /** The thread the event belongs to, absent for a top-level message. */
   thread?: Readonly<{ rootId: string; parentId: string }>;
+  sourceRoot?: string;
   /** Messages of the conversation the session has not been shown: earlier
    * ones, and for a resumed turn also those after it. */
   context: readonly EventData[];
@@ -166,6 +167,7 @@ export function turnPrompt(input: TurnInput) {
           `Session scope: ${input.scope}`,
           `Channel: ${channelLabel}`,
           `Thread root: ${thread?.rootId ?? event.id}`,
+          ...(input.sourceRoot ? [`Source thread: ${input.sourceRoot}`] : []),
           ...(thread && thread.parentId !== thread.rootId
             ? [`Parent: ${thread.parentId}`]
             : []),

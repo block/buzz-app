@@ -178,6 +178,7 @@ type Request = {
   event?: EventData;
   /** Publish/activity root; unlike toolRoot, retained in DMs. */
   replyRoot?: string;
+  sourceRoot?: string;
   agent: AgentHandle;
   settings: Config;
   conversation: Conversation;
@@ -192,6 +193,7 @@ type Request = {
   team: string;
   session?: Delivery["session"];
   sessionContext?: string;
+  invocationContext?: string;
   /** The Solo chat's workspace Canvas section, if it has one. */
   project?: string;
   /** `project` for a turn that works where `worksElsewhere` says. */
@@ -503,6 +505,7 @@ function noteOf(request: Request) {
     ) ?? [];
   const notes = [
     request.sessionContext,
+    request.invocationContext,
     request.resumed ? RESUMED_PROMPT : undefined,
     ...request.notes,
     turnNote(
@@ -814,7 +817,7 @@ export class CodexRuntime {
   });
   private controlKey(agent: Agent, place: SessionPlace) {
     return scopedKey(
-      this.resolveConfig(agent.config).scope,
+      place.isolated ? "thread" : this.resolveConfig(agent.config).scope,
       place.channelId,
       place.root,
     );
@@ -984,7 +987,10 @@ export class CodexRuntime {
           : undefined;
       const server = this.open(this.handle(agent.key));
       const rpc = await server.opening;
-      const settings = this.resolveConfig(agent.config);
+      const configured = this.resolveConfig(agent.config);
+      const settings = place.isolated
+        ? { ...configured, scope: "thread" as const }
+        : configured;
       const conversation = {
         channelId: place.channelId,
         ...(settings.scope === "channel" || !place.root
@@ -1772,8 +1778,9 @@ export class CodexRuntime {
     // memory versions and search; v14 splits canvas into canvas_get and
     // canvas_set; v15 removes message keywords; v16 splits channel and
     // channels into the channel_* tools; v17 split members into the
-    // member_* tools; v18 adds search and removes read's q.
-    return `buzz.codex.sessions.v18:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
+    // member_* tools; v18 adds search and removes read's q; v19 replaces
+    // solo_workspace_list with workspace_list and adds channel_move.
+    return `buzz.codex.sessions.v19:${scope}:${agent}${sessionKey ? `:session:${sessionKey}` : ""}`;
   }
   private save(request: Request, entry: Entry, key: string, saved: Saved) {
     // Reinserted so the bounded set keeps the most recently used bindings.
@@ -2255,8 +2262,8 @@ export class CodexRuntime {
     if (!reads) throw new Error("Connect to the agent's community first");
     const channelId = delivery.channelId;
     if (!channelId) throw new Error("The event has no unambiguous channel");
-    const settings = this.resolveConfig(delivery.config);
-    if (settings.scope === "community" && !reserved)
+    const configuredSettings = this.resolveConfig(delivery.config);
+    if (configuredSettings.scope === "community" && !reserved)
       return this.controls.admit(
         `${agent.key}/${scopedKey("community", COMMUNITY_SESSION)}`,
         delivery,
@@ -2283,7 +2290,7 @@ export class CodexRuntime {
     // `conversationPlace` has it, whatever folder the chat kept.
     const canvasProjectOf = (
       elsewhere = worksElsewhere(
-        settings.scope === "community"
+        configuredSettings.scope === "community"
           ? undefined
           : // A Solo chat is one conversation, with no thread root.
             this.folder(reads.scope, agent.key, channelId),
@@ -2292,7 +2299,7 @@ export class CodexRuntime {
     ) => canvasRead && project(canvasRead.text, elsewhere);
     const projectOf = (elsewhere?: boolean) =>
       [
-        settings.scope === "community"
+        configuredSettings.scope === "community"
           ? undefined
           : canvasProjectOf(elsewhere)?.section,
         folders.section,
@@ -2305,8 +2312,38 @@ export class CodexRuntime {
     // A stop during the reads deleted this agent's entry; recreating it would
     // reopen the agent.
     delivery.signal.throwIfAborted();
-    const toolRoot = channel?.dm || topLevel ? undefined : rootOf(event);
-    const root = settings.scope === "channel" ? undefined : toolRoot;
+    const route =
+      !channel?.dm && !topLevel
+        ? await delivery.routeConversation?.(
+            {
+              source: {
+                channelId,
+                ...(wake?.root
+                  ? { root: wake.root }
+                  : !wake
+                    ? { root: rootOf(event) }
+                    : {}),
+              },
+              conversation: {
+                channelId,
+                ...(configuredSettings.scope === "community"
+                  ? { community: true }
+                  : configuredSettings.scope === "thread"
+                    ? { root: rootOf(event) }
+                    : {}),
+              },
+            },
+            delivery.signal,
+          )
+        : undefined;
+    const settings =
+      route && configuredSettings.scope !== "thread"
+        ? { ...configuredSettings, scope: "thread" as const }
+        : configuredSettings;
+    const toolRoot =
+      channel?.dm || topLevel ? undefined : (route?.parent ?? rootOf(event));
+    const root =
+      route?.parent ?? (settings.scope === "channel" ? undefined : toolRoot);
     delivery.signal.throwIfAborted();
     const conversationKey = scopedKey(settings.scope, channelId, root);
     await rememberCommunitySource(
@@ -2315,7 +2352,7 @@ export class CodexRuntime {
       settings.scope === "community" ? COMMUNITY_SESSION : channelId,
       channelId,
     );
-    const sourceRoot = wake ? wake.root : rootOf(event);
+    const sourceRoot = route?.parent ?? (wake ? wake.root : rootOf(event));
     const admission = (deferred: boolean) =>
       delivery.prepareSession?.(
         {
@@ -2366,6 +2403,7 @@ export class CodexRuntime {
             : lifetime;
           await runtime.run({
             ...delivery,
+            routeConversation: async () => route,
             ...(admitted
               ? { session: admitted.session, sessionContext: admitted.context }
               : {}),
@@ -2396,7 +2434,9 @@ export class CodexRuntime {
       scope: reads.scope,
       ...(wake ? { current: delivery.current } : {}),
       event,
-      ...(!topLevel ? { replyRoot: rootOf(event) } : {}),
+      ...(!topLevel ? { replyRoot: route?.parent ?? rootOf(event) } : {}),
+      ...(route ? { sourceRoot: route.root } : {}),
+      ...(route?.turnContext ? { invocationContext: route.turnContext } : {}),
       ...(wake ? { wake } : {}),
       ...(delivery.wakeText ? { wakeText: delivery.wakeText } : {}),
       agent,
@@ -2407,13 +2447,15 @@ export class CodexRuntime {
       ...(delivery.synced ? { synced: delivery.synced } : {}),
       activityScope: topLevel
         ? channelId
-        : (threadReference(event)?.rootId ??
+        : (route?.parent ??
+          threadReference(event)?.rootId ??
           (channel?.dm ? channelId : event.id)),
       conversation: {
         channelId,
         name: channel?.name ?? channelId,
         ...(settings.scope === "community" ? { community: true } : {}),
         ...(root ? { root } : {}),
+        ...(route ? { sourceRoot: route.root } : {}),
         ...(topLevel ? { topLevel } : {}),
         ...(topLevel && !solo && !huddle ? { threadReplies: true } : {}),
       },
@@ -2482,7 +2524,9 @@ export class CodexRuntime {
         (request.model && request.model !== targetModel) ||
         (request.effort && request.effort !== targetEffort));
     entry.waiting.add(request);
-    delivery.interruptible?.(() => this.interrupt(entry, key, request));
+    delivery.interruptible?.(() =>
+      this.interrupt(entry, key, request, reserved),
+    );
     const handoff = this.controls.deliver(
       `${agent.key}/${key}`,
       async (deferred) => {
@@ -2490,6 +2534,11 @@ export class CodexRuntime {
         if (deferred) entry.abort.signal.throwIfAborted();
         else delivery.signal.throwIfAborted();
         const admitted = await admission(deferred);
+        if (reserved && request.current?.() === false) {
+          entry.waiting.delete(request);
+          request.answered();
+          return;
+        }
         if (admitted) {
           request.session = admitted.session;
           if (admitted.context !== undefined)
@@ -2970,15 +3019,18 @@ export class CodexRuntime {
     entry: Entry,
     key: string,
     request: Request,
+    canStopWaiting = request.settings.scope === "community",
   ): Promise<void> {
     if (entry.waiting.has(request)) {
-      if (request.settings.scope !== "community")
+      if (!canStopWaiting)
         return Promise.reject(
           new Error("Codex has not started on this message yet"),
         );
       // Codex is still deciding on its steer: stop the turn it joins, or drop it.
       if (request.steering)
-        return request.steering.then(() => this.interrupt(entry, key, request));
+        return request.steering.then(() =>
+          this.interrupt(entry, key, request, canStopWaiting),
+        );
       request.current = () => false;
       request.answered(true);
       return Promise.resolve();
@@ -3276,7 +3328,12 @@ export class CodexRuntime {
       tags: [
         ["h", request.conversation.channelId],
         ...(request.replyRoot !== undefined
-          ? [["e", request.replyRoot, "", "reply"]]
+          ? [
+              ...(request.sourceRoot
+                ? [["e", request.sourceRoot, "", "root"]]
+                : []),
+              ["e", request.replyRoot, "", "reply"],
+            ]
           : []),
         ["p", request.agent.owner],
       ],
@@ -3391,6 +3448,7 @@ export class CodexRuntime {
             ...(request.session ? { session: request.session } : {}),
             channel: request.conversation.channelId,
             ...(request.toolRoot ? { root: request.toolRoot } : {}),
+            ...(request.sourceRoot ? { sourceRoot: request.sourceRoot } : {}),
             ...(request.toolRoot && !request.conversation.root
               ? { wholeChannel: true }
               : {}),

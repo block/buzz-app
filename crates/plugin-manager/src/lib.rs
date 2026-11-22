@@ -45,14 +45,7 @@ pub struct Manifest {
     pub discovery: Option<Discovery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<HostGrants>,
-    /// What the plugin needs from the device to run, from `PLUGIN_REQUIREMENTS`.
-    /// The app does not start it until it has them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub requires: Vec<String>,
 }
-/// The needs a manifest can declare in `requires`; `src/plugins/requirements.ts`
-/// says when each is met.
-pub const PLUGIN_REQUIREMENTS: &[&str] = &["decisions"];
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdatePolicy {
@@ -254,15 +247,6 @@ impl Manifest {
         }
         if self.api_version != 1 {
             return Err("Only page plugin API version 1 is supported".into());
-        }
-        let mut needs = std::collections::HashSet::new();
-        for need in &self.requires {
-            if !PLUGIN_REQUIREMENTS.contains(&need.as_str()) {
-                return Err(format!("Unknown plugin requirement \"{need}\""));
-            }
-            if !needs.insert(need) {
-                return Err("Duplicate plugin requirement".into());
-            }
         }
         if let Some(discovery) = &self.discovery {
             if let Some(category) = &discovery.category {
@@ -2617,30 +2601,6 @@ mod tests {
             .install_artifact(&release(Some(true)), source)
             .unwrap();
         assert_eq!(installed(&open()).update_checks, None);
-    }
-
-    #[test]
-    fn validates_requirements() {
-        let parse = |requires: serde_json::Value| -> Result<Manifest, String> {
-            let manifest: Manifest = serde_json::from_value(serde_json::json!({
-                "id": "example.page", "name": "Example", "apiVersion": 1, "requires": requires
-            }))
-            .map_err(|e| e.to_string())?;
-            manifest.validate()?;
-            Ok(manifest)
-        };
-        assert_eq!(
-            parse(serde_json::json!(["decisions"])).unwrap().requires,
-            ["decisions"]
-        );
-        assert!(parse(serde_json::json!(["network"])).is_err());
-        assert!(parse(serde_json::json!(["decisions", "decisions"])).is_err());
-        // Left out when empty, so older apps still read the manifest.
-        let none = parse(serde_json::json!([])).unwrap();
-        assert!(serde_json::to_value(&none)
-            .unwrap()
-            .get("requires")
-            .is_none());
     }
 
     #[test]

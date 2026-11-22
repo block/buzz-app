@@ -7,8 +7,6 @@ import { createModuleLoader } from "./modules";
 import { withTimeout } from "./timeout";
 import { createPluginRequests } from "./requests";
 import { providePluginManagement } from "./review-access";
-import { unmetRequirement, type Availability } from "./requirements";
-import type {} from "../features/decisions/service";
 import type {
   StorageResult,
   ConfigurationState,
@@ -100,31 +98,8 @@ export function createPluginManager(
   let closed = false;
   let changes = 0;
   let timer: ReturnType<typeof setTimeout>;
-  // Until the decisions service reports a provider, none is available.
-  let available: Availability = { decisions: false };
   const listeners = new Set<() => void>();
-  /** Why each catalog plugin can't run on this device now, by id. */
-  const unmetNow = () =>
-    Object.fromEntries(
-      (configuration.status === "ready" ? configuration.catalog.plugins : [])
-        .map(
-          (plugin) =>
-            [
-              plugin.manifest.id,
-              unmetRequirement(plugin.manifest, available),
-            ] as const,
-        )
-        .filter((entry): entry is readonly [string, string] => !!entry[1]),
-    ) as Readonly<Record<string, string>>;
-  const read = (): {
-    configuration: ConfigurationState;
-    activation: ReturnType<PluginRuntime["snapshot"]>;
-    busy: boolean;
-    error: string | null;
-    refreshError: string | null;
-    /** Absent on hosts and fakes that predate requirements. */
-    unmet?: Readonly<Record<string, string>>;
-  } => ({
+  const read = () => ({
     configuration,
     /** Manifests of the host-owned features, which have no catalog entry. */
     hostOwned,
@@ -132,7 +107,6 @@ export function createPluginManager(
     busy,
     error,
     refreshError,
-    unmet: unmetNow(),
   });
   let snapshot = read();
   const publish = () => {
@@ -159,10 +133,7 @@ export function createPluginManager(
               plugin.enabled &&
               !plugin.error &&
               !builtInIds.has(plugin.manifest.id) &&
-              !(
-                current.externalPluginsPaused && plugin.source === "external"
-              ) &&
-              !unmetRequirement(plugin.manifest, available),
+              !(current.externalPluginsPaused && plugin.source === "external"),
           )
         : [];
     return [...builtInPlugins, ...optional];
@@ -271,27 +242,6 @@ export function createPluginManager(
       configuration.status === "ready" ? configuration.managed : undefined,
   });
   ctx.provide("pluginRequests", requests);
-  // A plugin that needs a decisions provider starts when one is registered
-  // (whatever its status, so `checking` or `needs-setup` count), and stops
-  // when the last one goes.
-  const setAvailable = (next: Availability) => {
-    if (closed || next.decisions === available.decisions) return;
-    available = next;
-    runtime.reconcile(desiredPlugins());
-    publish();
-  };
-  ctx.inject(["decisions"], (scope) => {
-    const read = () =>
-      setAvailable({ decisions: scope.decisions.status() !== "unavailable" });
-    scope.effect(() => {
-      read();
-      const stop = scope.decisions.subscribe(read);
-      return () => {
-        stop();
-        setAvailable({ decisions: false });
-      };
-    });
-  });
   runtime.reconcile(desiredPlugins());
   void refresh();
   const manager = {

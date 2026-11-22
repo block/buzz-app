@@ -393,6 +393,40 @@ it("removes a provider when the plugin asks, before its scope ends", async () =>
   expect(service.providers()).toEqual([]);
 });
 
+it("says decisions can be answered while any provider is registered, whatever its status", async () => {
+  const { root, plugin } = setup();
+  const seen: string[] = [];
+  // A consumer, as a plugin that needs decisions registers its contributions.
+  await root
+    .plugin((ctx) => {
+      ctx.inject(["decisionsAnswerable"], (scope) => {
+        seen.push(`on ${scope.decisionsAnswerable?.version}`);
+        scope.effect(() => () => void seen.push("off"));
+      });
+    })
+    .await();
+  await flush();
+  expect(seen).toEqual([]);
+  const status = settable("needs-setup");
+  const builderlab = await plugin("block.builderlab", {
+    id: "builderlab",
+    ...status,
+  });
+  expect(seen).toEqual(["on 1"]);
+  // A status change, even to one that can't answer, doesn't flap it.
+  status.set("checking");
+  status.set("ready");
+  const typesafe = await plugin("buzz.typesafe", { id: "typesafe" });
+  await builderlab.dispose();
+  await flush();
+  expect(seen).toEqual(["on 1"]);
+  await typesafe.dispose();
+  await flush();
+  expect(seen).toEqual(["on 1", "off"]);
+  await plugin("buzz.typesafe", { id: "typesafe" });
+  expect(seen).toEqual(["on 1", "off", "on 1"]);
+});
+
 it("restores a saved choice once its provider registers, and survives unreadable storage", async () => {
   const { service, plugin } = setup(
     memory({ [DECISION_BACKEND_KEY]: "b/main" }),

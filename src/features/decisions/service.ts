@@ -166,9 +166,23 @@ export interface Decisions {
    * The host then uses its default providers. Other choices stay in effect. */
   retireProvider(id: string): void;
 }
+/** Provided while decisions can be answered on this device, and withdrawn
+ * while they can't. Today that means while at least one decision provider is
+ * registered, whatever its status, so a provider still checking a sign-in or
+ * key counts and a flaky sign-in doesn't flap it. Other reasons may withdraw
+ * it later, so read it as "worth asking", not as "a provider is registered".
+ * A decision can still fail while it is present. */
+export type DecisionsAnswerable = Readonly<{ version: 1 }>;
+const ANSWERABLE: DecisionsAnswerable = Object.freeze({ version: 1 });
+
 declare module "@deepseek-ai/cordis" {
   interface Context {
     decisions: Decisions;
+    /** Optional: a plugin that only works with decisions registers its
+     * contributions inside `ctx.inject(["decisionsAnswerable"], …)`, so they
+     * come and go with it. Never in a module's top-level `inject`, where a
+     * device without a provider would fail its startup. */
+    decisionsAnswerable?: DecisionsAnswerable;
   }
 }
 
@@ -240,9 +254,16 @@ export class DecisionsService extends Service implements Decisions {
       // Unreadable storage means no choice.
     }
     let stops: (() => void)[] = [];
+    let withdraw: (() => void) | undefined;
     const watch = () => {
       for (const stop of stops) stop();
       this.sorted = Object.freeze([...this.registry.snapshot()].sort(byOrder));
+      if (this.sorted.length && !withdraw)
+        withdraw = ctx.provide("decisionsAnswerable", ANSWERABLE);
+      else if (!this.sorted.length && withdraw) {
+        withdraw();
+        withdraw = undefined;
+      }
       stops = this.sorted.map((provider) => {
         try {
           return provider.subscribe(() => this.notify());
@@ -259,6 +280,8 @@ export class DecisionsService extends Service implements Decisions {
         stop();
         for (const each of stops) each();
         stops = [];
+        withdraw?.();
+        withdraw = undefined;
       };
     });
   }

@@ -159,6 +159,7 @@ export type {
 
 export type {
   Decisions,
+  DecisionsAnswerable,
   DecisionProvider,
   DecisionProviderStatus,
   DecisionReply,

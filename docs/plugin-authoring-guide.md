@@ -42,7 +42,7 @@ export function apply(ctx) {
 
 ## Contract rules
 
-- Manifest keys: `id`, `name`, `apiVersion` (must be `1`), optional `description` (1-280 bytes), `discovery` (`category` slug, up to 16 `tags`), `host`. Other top-level keys, and unknown keys inside `host`, are rejected.
+- Manifest keys: `id`, `name`, `apiVersion` (must be `1`), optional `description` (1-280 bytes), `discovery` (`category` slug, up to 16 `tags`), `host`, `agents` (see Declared agents). Other top-level keys, and unknown keys inside `host`, are rejected.
 - Plugin `id`: starts with a lowercase letter, then lowercase letters, digits, `.` and `-` only, at most 80 bytes, no empty segments (no `..`, `-.`, trailing `.`). No underscores. Ids of bundled plugins are reserved. `name`: 1-80 bytes. Updates match on `id`.
 - Contribution ids (page, panel, shortcut, settings card, sidebar section and its actions): `/^[a-z0-9][a-z0-9._-]*$/`, unique within the plugin. Hosts add the plugin identity, so ids are local.
 - Module evaluation must be pure: no work at top level. Do everything in `apply`. Enabled plugins activate even if their page is never opened.
@@ -279,6 +279,28 @@ and source-mode offsets are Markdown. They are not byte offsets. The plugin owns
 restoring the corresponding mode before restoring a selection. Key the editor
 by document identity when switching documents so internal selection, undo history
 and link-dialog intent belong to that document.
+
+## Declared agents (`manifest.agents`)
+
+A plugin can ship agents by listing them in `manifest.json`. A plugin may consist of nothing else, with a `plugin.js` whose `apply` does nothing.
+
+```json
+{
+  "agents": [
+    {
+      "id": "reviewer",
+      "name": "Reviewer",
+      "picture": "https://example.com/reviewer.png",
+      "instructions": "Review pull requests for correctness."
+    }
+  ]
+}
+```
+
+- At most 16 agents. `id` follows the plugin id rules and must stay the same across releases. `name` is 1-80 bytes, `picture` an HTTPS URL, `instructions` up to 64 KiB.
+- The install review lists the agents with a checkbox each. After install, each checked agent opens the owner's Create agent review in the selected community, where they pick its type and model. Declaring an agent creates nothing. The instructions do decide what the agent does with everything its harness allows, such as running commands and reading files on the owner's computer, so the review warns the owner to add agents only from plugins they trust.
+- Buzz saves a note under the plugin's id on each agent it creates, so reinstalling or updating the plugin does not offer an agent that already exists. Disabling or removing the plugin keeps its agents.
+- Older Buzz versions reject manifests with this key.
 
 ## Host access (`manifest.host`)
 

@@ -2171,6 +2171,19 @@ README/icon size limits, reserved filenames and signature coverage.
 See the [example authoring walkthrough](../examples/plugins/README.md#add-discovery-metadata-and-a-readme)
 for a manifest with these optional fields.
 
+### Declaring agents
+
+`manifest.agents` lists up to 16 agents (`id`, `name`, optional HTTPS
+`picture`, optional `instructions` of at most 64 KiB), validated by the plugin
+manager. The install review (`DeclaredAgentsReview`) lists them with a
+checkbox each. After a successful install or update, `Agents.requestDeclaredAgents`
+queues a creation request for each checked agent in the selected community,
+through the same owner review as an agent's `agent_create` request; the
+request names no type. Approval saves the declaring plugin's note
+(`{ declaredAgent: id }`, tag `declared-agent`) in the agent's synced
+settings. Agents with that note, and pending requests from the same plugin,
+are not offered again. The plugin gains no host access from declaring agents, but the instructions steer an agent that can use everything its harness allows; the install review says so.
+
 ### Declaring host access
 
 Plugins can separately declare host access in `manifest.json`:

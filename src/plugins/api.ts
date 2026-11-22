@@ -85,6 +85,18 @@ export type PluginManifest = Readonly<{
      * no cookies. The page itself never comes back. */
     publicPages?: boolean;
   }>;
+  /** Agents the install review offers to create, at most 16. Each still goes
+   * through the owner's creation review; declaring one creates nothing and
+   * grants nothing beyond `host`. */
+  agents?: readonly Readonly<{
+    /** Stable across releases, so a reinstall recognises agents it made. */
+    id: string;
+    name: string;
+    /** An HTTPS image URL. */
+    picture?: string;
+    /** At most 64 KiB. */
+    instructions?: string;
+  }>[];
 }>;
 // Module evaluation must be pure. apply owns resources through ctx.effect.
 // A plugin may contribute to several surfaces, or provide services without UI.

@@ -19004,6 +19004,47 @@ it("submits an unsaved creation draft and creates only after owner review", asyn
   expect(service.find(sibling)?.config).toEqual({ reply: "reviewed" });
 });
 
+it("queues a plugin's declared agents once and records which plugin made each", async () => {
+  const { service, native } = await setup();
+  const plugin = { id: "example.bundle", name: "Example bundle" };
+  const declared = [
+    { id: "reviewer", name: "Reviewer", instructions: "Review PRs." },
+    { id: "writer", name: "Writer" },
+  ];
+  expect(service.requestDeclaredAgents(plugin, declared)).toBe(2);
+  expect(service.requestDeclaredAgents(plugin, declared)).toBe(0);
+  const [reviewer, writer] = service.creationRequests();
+  expect(reviewer).toMatchObject({
+    name: "Reviewer",
+    instructions: "Review PRs.",
+    requester: "example.bundle",
+    requesterName: "Example bundle",
+    declared: { plugin: "example.bundle", agent: "reviewer" },
+  });
+  expect(reviewer?.type).toBeUndefined();
+  expect(native.create).not.toHaveBeenCalled();
+
+  const made = await service.approveCreation(reviewer?.id ?? "", {
+    type: "example/echo",
+    name: "Reviewer",
+    config: { reply: "reviewed" },
+  });
+  expect(service.find(made.key)?.config).toMatchObject({
+    reply: "reviewed",
+    pluginNotes: {
+      "example.bundle": {
+        data: { declaredAgent: "reviewer" },
+        tag: "declared-agent",
+      },
+    },
+  });
+  service.dismissCreation(writer?.id ?? "");
+  expect(service.requestDeclaredAgents(plugin, declared)).toBe(1);
+  expect(service.creationRequests()).toMatchObject([
+    { declared: { agent: "writer" } },
+  ]);
+});
+
 it("dismisses a creation draft without creating an identity", async () => {
   const { service, native, plugin } = await setup();
   await service.create({ type: "example/echo", name: "Parent" });

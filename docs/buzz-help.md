@@ -154,14 +154,11 @@ you or your agents own.
 
 ## Plugins
 
-**Settings → Plugins → Manage plugins** turns plugins on and off, adds them
-from a Git repository or a local folder, and updates them. Don't assume an
+**Settings → Plugins → Manage plugins** shows which plugins are on, turns them
+on and off, adds them from a Git repository or a local folder, and updates
+them. Don't assume an
 optional plugin is on. Agents can ask to install or enable one, which you
 approve or decline.
-
-On by default: Attention, Bestie, Huddles, Voice Notes and Plugin development.
-Off by default: Workflows, Reminders, Drafts & sent, Charts, Focus and
-Changesets.
 
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
 one only if you trust its author with your account and your computer.

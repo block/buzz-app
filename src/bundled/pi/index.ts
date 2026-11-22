@@ -112,6 +112,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     description:
       "Pi on this computer, with any provider Pi supports. Each thread it is mentioned in is one continuing conversation.",
     defaults: () => ({ config: DEFAULT_CONFIG }),
+    // Keep the synced Settings artifact usable after a harness change.
+    syncedSettings: {
+      schema: {},
+      withSynced: (config) => config,
+    },
     settingsProposal: { compactAt: true },
     readModelSettings: (saved) =>
       readModelSettings(config(saved), { provider: true }),

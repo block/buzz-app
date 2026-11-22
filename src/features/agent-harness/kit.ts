@@ -33,7 +33,7 @@ import type { EventData } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
 import { MemoryReads, READ_TIMEOUT_MS } from "./core-memory";
-import { wakeAnchor, wakeLands } from "./plugin-wake";
+import { deliveryPlace, wakeLands } from "./plugin-wake";
 import { readAuthorNames } from "./author-names";
 import { readProject, worksElsewhere } from "./project";
 import { placeOf } from "./sections/compose";
@@ -213,7 +213,14 @@ export function harnessKit(sources: Sources): HarnessKit {
 
   return Object.freeze({
     async conversation(
-      { trigger, agent, channelId, signal, routeConversation }: Delivery,
+      {
+        trigger,
+        agent,
+        channelId,
+        signal,
+        routeConversation,
+        placement,
+      }: Delivery,
       scope: HarnessScope,
     ) {
       if (
@@ -232,8 +239,8 @@ export function harnessKit(sources: Sources): HarnessKit {
         if (!(await fromOwner(trigger.event, agent.owner))) return undefined;
         signal.throwIfAborted();
       }
-      const event =
-        trigger.type === "mention" ? trigger.event : wakeAnchor(trigger);
+      const place = deliveryPlace(trigger, placement);
+      const event = place.event;
       const channel =
         channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channel) return undefined;
@@ -243,7 +250,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         channel,
         signal,
       );
-      const topLevel = solo || wake?.topLevel === true;
+      const topLevel = solo || place.topLevel;
       if (wake && !wakeLands(wake, topLevel)) return undefined;
       const found = await reader(agent.key)?.channel(channel);
       const dm = found?.dm === true;

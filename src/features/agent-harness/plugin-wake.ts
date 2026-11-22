@@ -2,7 +2,11 @@
 // conversations (the `self_handoff` tool), as a harness takes it: in its
 // conversation's session, the way it takes a mention there, but told who woke
 // it and that what the wake says is not a message.
-import type { ConversationWake, Trigger } from "../agents/service";
+import type {
+  ConversationWake,
+  MentionPlacement,
+  Trigger,
+} from "../agents/service";
 import type { EventData } from "../relay/events";
 
 export type { ConversationWake } from "../agents/service";
@@ -26,6 +30,53 @@ export const wakeAnchor = (wake: ConversationWake): EventData => ({
     ["ms", String(wake.at % 1000)],
   ],
 });
+
+/** A mention placed in another message's thread: the same event, with that
+ * thread as its own. Local only, like a wake's anchor: the signed mention is
+ * what authority is checked on, before this. */
+export const placedAnchor = <E extends EventData>(
+  event: E,
+  root: string,
+): E => ({
+  ...event,
+  tags: [
+    ...event.tags.filter(([name]) => name !== "e"),
+    ["e", root, "", "reply"],
+  ],
+});
+
+/** Where a delivery's turn goes, for every harness alike: the event it routes
+ * by, and whether the delivery asks for the channel's top level (a harness
+ * adds its own reasons, such as a Solo chat). A wake routes by its anchor. A
+ * mention routes by its own event, unless a plugin placed it
+ * (`placement`, from `Delivery.placement`; see
+ * `Agents.registerMentionPlacement`): then it goes
+ * exactly where a wake with that `topLevel` or `root` would, with the same
+ * session, context and default `send` target. `wake` is the trigger when it
+ * is one, for `wakeLands` and the wake's own section. */
+export function deliveryPlace(
+  trigger: Extract<Trigger, { type: "mention" }> | ConversationWake,
+  placement: MentionPlacement | undefined,
+): Readonly<{
+  event: EventData;
+  topLevel: boolean;
+  wake: ConversationWake | undefined;
+}> {
+  if (trigger.type === "mention")
+    return {
+      event:
+        placement && "root" in placement
+          ? placedAnchor(trigger.event, placement.root)
+          : trigger.event,
+      topLevel: !!placement && "topLevel" in placement,
+      wake: undefined,
+    };
+  return {
+    event: wakeAnchor(trigger),
+    topLevel: trigger.topLevel === true,
+    wake: trigger,
+  };
+}
 
 /** Whether a wake has a conversation to go to. One with no thread goes only to
  * a Solo chat or an explicitly channel-addressed subscription. Other plugin

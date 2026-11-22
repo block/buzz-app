@@ -33,7 +33,7 @@ import {
   turnNote,
 } from "../../buzz-mcp/session-tools";
 import {
-  wakeAnchor,
+  deliveryPlace,
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import { SessionControls } from "../../features/agent-harness/session-control";
@@ -777,8 +777,8 @@ export class PiRuntime {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
+    const place = deliveryPlace(trigger, delivery.placement);
+    const event = place.event;
     const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
@@ -793,7 +793,7 @@ export class PiRuntime {
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || wake?.topLevel === true;
+    const topLevel = solo || place.topLevel;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.

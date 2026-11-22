@@ -116,14 +116,3 @@ export function createMentionPlacements(root: Context) {
     },
   };
 }
-
-/** The mention as a harness routes it when placed in another message's
- * thread: its own id, author and text, in that thread. Local only, never
- * published, like a wake's anchor. */
-export const placedAnchor = (event: RelayEvent, root: string): RelayEvent => ({
-  ...event,
-  tags: [
-    ...event.tags.filter(([name]) => name !== "e"),
-    ["e", root, "", "reply"],
-  ],
-});

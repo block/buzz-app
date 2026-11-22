@@ -1346,6 +1346,44 @@ const pluginWake = (root?: string, where = channel) => ({
   at: 200_000,
 });
 
+it("answers a placed mention where the matching wake goes: the same session, context and default send", async () => {
+  const mention = message("2", "@Pi back to the build", {
+    created_at: 110,
+    tags: [
+      ["h", channel],
+      ["p", self],
+    ],
+  });
+  // Pi's tools post from the context each delivery hands it.
+  const turn = async (
+    trigger: Delivery["trigger"],
+    extra: Partial<Delivery<Config>> = {},
+  ) => {
+    const { host, deliver } = setup();
+    await deliver(trigger, extra).run;
+    const params = host.requests("deliver")[0]?.params ?? {};
+    return {
+      key: params.key,
+      context: params.context,
+      block: String(params.text).match(/<context>[\s\S]*?<\/context>/)?.[0],
+    };
+  };
+  for (const [placement, wake] of [
+    [{ topLevel: true }, { ...pluginWake(), topLevel: true }],
+    [{ root: root.id }, pluginWake(root.id)],
+  ] as const) {
+    const placed = await turn(
+      { type: "mention", event: mention },
+      { placement },
+    );
+    expect(placed.block, JSON.stringify(placement)).toBeDefined();
+    expect(placed.context, JSON.stringify(placement)).toEqual(
+      "topLevel" in placement ? { channel } : { channel, root: root.id },
+    );
+    expect(placed, JSON.stringify(placement)).toEqual(await turn(wake));
+  }
+});
+
 it("keeps a Pi run going until every placed destination has its final reply", async () => {
   const finished = deferred<unknown>();
   const { host, deliver, runtime } = setup({ wait: () => finished.promise });

@@ -4420,6 +4420,60 @@ it("takes a plugin's wake in its thread's conversation, as the plugin's and not 
   expect(input).not.toContain("<buzz-event");
   expect(input).not.toContain(WAKE_ID);
 });
+it("answers a placed mention where the matching wake goes: the same session, context and default send", async () => {
+  const earlier = "d".repeat(64);
+  const turn = async (
+    make: (f: ReturnType<typeof fixture>) => Delivery,
+  ): Promise<{ context?: string; tags?: string[][] }> => {
+    const f = fixture();
+    try {
+      await f.runtime.run(make(f));
+      await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+      const text = JSON.parse(inputText(f.starts()[0]) ?? "[]")
+        .map((part: { text?: string }) => part.text ?? "")
+        .join("\n");
+      await f.tool("send", { audience: "everyone", text: "Placed" });
+      const context = text.match(/<context>[\s\S]*?<\/context>/)?.[0];
+      const tags = tagsOf(f).at(-1);
+      await f.complete(0);
+      return {
+        ...(context ? { context } : {}),
+        ...(tags ? { tags } : {}),
+      };
+    } finally {
+      f.runtime.dispose();
+    }
+  };
+  /** The owner's top-level mention, placed by a plugin. */
+  const placed =
+    (placement: NonNullable<Delivery["placement"]>) =>
+    (f: ReturnType<typeof fixture>): Delivery => {
+      const delivery = f.delivery("@Codex back to the checklist");
+      if (delivery.trigger.type !== "mention")
+        throw new Error("Expected a mention");
+      return {
+        ...delivery,
+        trigger: {
+          ...delivery.trigger,
+          event: { ...delivery.trigger.event, tags: [["h", "channel"]] },
+        },
+        placement,
+      };
+    };
+  const woken =
+    (extra: { topLevel: true } | { root: string }) =>
+    (f: ReturnType<typeof fixture>): Delivery => {
+      const wake = pluginWake(f);
+      if (wake.trigger.type !== "plugin") throw new Error("Expected a wake");
+      return { ...wake, trigger: { ...wake.trigger, ...extra } };
+    };
+  for (const place of [{ topLevel: true }, { root: earlier }] as const) {
+    const answer = await turn(placed(place));
+    expect(answer.context, JSON.stringify(place)).toBeDefined();
+    expect(answer.tags, JSON.stringify(place)).toBeDefined();
+    expect(answer, JSON.stringify(place)).toEqual(await turn(woken(place)));
+  }
+});
 it("keeps a wake's text from posing as the turn's event", async () => {
   const f = fixture();
   const delivery = pluginWake(f, root);

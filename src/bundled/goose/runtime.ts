@@ -89,10 +89,9 @@ import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
 import {
-  wakeAnchor,
+  deliveryPlace,
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
-import { placedAnchor } from "../../features/agents/mention-placement";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -721,12 +720,8 @@ export class GooseRuntime {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    const event =
-      trigger.type !== "mention"
-        ? wakeAnchor(trigger)
-        : placement && "root" in placement
-          ? placedAnchor(trigger.event, placement.root)
-          : trigger.event;
+    const place = deliveryPlace(trigger, placement);
+    const event = place.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
@@ -751,10 +746,7 @@ export class GooseRuntime {
       channel,
       signal,
     );
-    const topLevel =
-      solo ||
-      wake?.topLevel === true ||
-      (!!placement && "topLevel" in placement);
+    const topLevel = solo || place.topLevel;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     const gateway = offered && (await this.routed(entry, offered));
     if (offered && !admittedDeferred) signal.throwIfAborted();

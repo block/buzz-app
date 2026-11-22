@@ -1789,7 +1789,8 @@ export type Agents = {
    * turn. Asked when the mention is delivered, for at most a few seconds; no
    * answer keeps a thread on the message. A mention
    * inside a thread stays there, and with two plugins registered neither
-   * decides. Harnesses that do not support it ignore it. Feature-detect. */
+   * decides. Every harness answers a placed mention as it would a wake with
+   * that `topLevel` or `root` (`deliveryPlace`). Feature-detect. */
   registerMentionPlacement?(placer: MentionPlacer): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */

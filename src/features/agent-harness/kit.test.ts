@@ -258,6 +258,39 @@ describe("harnessKit.conversation", () => {
   });
 });
 
+describe("a placed mention", () => {
+  it("goes where the matching wake goes: the same conversation and reply", async () => {
+    const earlier = message("1", "The checklist");
+    const mention = message("2", "@Ampy back to the checklist");
+    const wake = {
+      type: "plugin",
+      plugin: "example",
+      channel,
+      text: "Answer it",
+      id: "w".repeat(64),
+      at: 200_000,
+    } as const;
+    for (const [placement, woken] of [
+      [{ topLevel: true }, { ...wake, topLevel: true }],
+      [{ root: earlier.id }, { ...wake, root: earlier.id }],
+    ] as const) {
+      const placed = setup();
+      const asWake = setup();
+      const a = await placed.kit.conversation(
+        placed.delivery({ type: "mention", event: mention }, { placement }),
+        "thread",
+      );
+      const b = await asWake.kit.conversation(asWake.delivery(woken), "thread");
+      if (!a || !b) throw new Error("Not admitted");
+      // The tools' context comes from the conversation alone.
+      expect(a, JSON.stringify(placement)).toEqual(b);
+      await placed.kit.reply(placed.agent, a, "Done");
+      await asWake.kit.reply(asWake.agent, b, "Done");
+      expect(placed.published[0]?.tags).toEqual(asWake.published[0]?.tags);
+    }
+  });
+});
+
 describe("harnessKit.turnPrompt", () => {
   it("shows what the session has not seen, takes notes and restores them", async () => {
     const root = message("1", "Kick off");

@@ -82,7 +82,7 @@ import type { EventData } from "../../features/relay/events";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { threadReference } from "../../features/relay/thread-reference";
 import {
-  wakeAnchor,
+  deliveryPlace,
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
@@ -1362,15 +1362,15 @@ export class ClaudeRuntime {
       const refused = kept && (await this.refusal(agent.key, kept));
       if (refused) throw new Error(refused);
     };
-    const event =
-      trigger.type !== "mention" ? wakeAnchor(trigger) : trigger.event;
+    const place = deliveryPlace(trigger, delivery.placement);
+    const event = place.event;
     const channel =
       channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
     if (!channel) return;
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || wake?.topLevel === true;
+    const topLevel = solo || place.topLevel;
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.

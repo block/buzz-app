@@ -1,6 +1,12 @@
 import { expect, it } from "vitest";
 import { ownerInstructions, pluginInstructions } from "./plugin-instructions";
-import { unframed, wakeSection } from "./plugin-wake";
+import {
+  deliveryPlace,
+  unframed,
+  wakeAnchor,
+  wakeSection,
+} from "./plugin-wake";
+import type { RelayEvent } from "../relay/events";
 import { project } from "./project";
 
 it("keeps Attention instructions outside plugin data framing", () => {
@@ -122,4 +128,54 @@ it("keeps per-turn text from forging a base section's wrapper or the update bloc
       /<\/?(base-section-updates|owner-section|plugin-section)/i,
     );
   }
+});
+
+it("places a mention as the matching wake, and leaves one without a placement where it is", () => {
+  const earlier = "1".repeat(64);
+  const event = {
+    id: "2".repeat(64),
+    pubkey: "a".repeat(64),
+    kind: 9,
+    created_at: 100,
+    content: "@agent back to it",
+    tags: [
+      ["h", "chan"],
+      ["p", "b".repeat(64)],
+    ],
+    sig: "",
+  } as unknown as RelayEvent;
+  const mention = { type: "mention", event } as const;
+  expect(deliveryPlace(mention, undefined)).toEqual({
+    event,
+    topLevel: false,
+    wake: undefined,
+  });
+  expect(deliveryPlace(mention, { topLevel: true })).toEqual({
+    event,
+    topLevel: true,
+    wake: undefined,
+  });
+  const placed = deliveryPlace(mention, { root: earlier });
+  // The mention, with the earlier message's thread as its own.
+  expect(placed.topLevel).toBe(false);
+  expect(placed.event).toMatchObject({ id: event.id, content: event.content });
+  expect(placed.event.tags).toEqual([
+    ["h", "chan"],
+    ["p", "b".repeat(64)],
+    ["e", earlier, "", "reply"],
+  ]);
+  const wake = {
+    type: "plugin",
+    plugin: "example",
+    channel: "chan",
+    text: "hi",
+    id: "w".repeat(64),
+    at: 1000,
+    topLevel: true,
+  } as const;
+  expect(deliveryPlace(wake, { root: earlier })).toEqual({
+    event: wakeAnchor(wake),
+    topLevel: true,
+    wake,
+  });
 });

@@ -156,6 +156,7 @@ fn native_command_permissions_isolate_webviews() {
         "media_lift_subject",
         "media_lift_subject_supported",
         "clipboard_write_text",
+        "media_html_preview_url",
         "media_stream_base",
         "get_os_idle_seconds",
         "system_hour_cycle",

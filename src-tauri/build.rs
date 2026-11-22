@@ -175,6 +175,7 @@ fn main() {
             "draft_diagnostics_save",
             "web_inspector",
             "get_build_identity",
+            "media_html_preview_url",
             "media_stream_base",
             "get_os_idle_seconds",
             "system_hour_cycle",

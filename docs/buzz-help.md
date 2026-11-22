@@ -96,7 +96,9 @@ if that desktop app is up and running.
   forward it, or start a chat about it. On an agent's reply, **View activity**
   shows what it did.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
-  folder and **/** a skill. Attach files by pasting or dragging them in.
+  folder and **/** a skill. Attach files by pasting or dragging them in. On
+  macOS, community HTML files and `/media/*.html` links open in the side panel,
+  with **Open in browser** in the toolbar.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.

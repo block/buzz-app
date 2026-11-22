@@ -40,6 +40,8 @@ mod reminders;
 pub(crate) use reminders::{relay_decode_reminders, relay_sign_reminder};
 mod upload_spool;
 pub(crate) use upload_spool::Spools;
+mod html_preview;
+pub(crate) use html_preview::{media_html_preview_url, HtmlPreview};
 mod media_stream;
 pub(crate) use media_stream::{media_stream_base, MediaStream};
 mod project_git;
@@ -1818,6 +1820,8 @@ async fn upload_file_authorized(
 /// limit, which also covers images. Video is read by `Range`; an origin that
 /// ignores it is spooled to disk up to `WHOLE_VIDEO_MAX` instead.
 const MAX_MEDIA: usize = 100 * 1024 * 1024;
+/// Largest HTML preview buffered in memory: matches the upload limit.
+const MAX_HTML_PREVIEW: usize = 50 * 1024 * 1024;
 /// Largest file the app may save for itself: an agent snapshot PNG.
 const FILE_DOWNLOAD_MAX: usize = 10 * 1024 * 1024;
 /// Largest video an origin that ignores `Range` may send whole: 500 MiB, the
@@ -2603,6 +2607,64 @@ async fn fetch_media(
     range: Option<String>,
 ) -> std::result::Result<tauri::http::Response<Vec<u8>>, u16> {
     fetch_media_bounded(host, fi, url, range, MAX_MEDIA).await
+}
+
+/// Fetches an authenticated HTML relay blob for the isolated loopback preview
+/// listener, accepting only HTML or generic octet-stream uploads.
+pub(super) async fn fetch_html_media(
+    host: &IdentityHost,
+    fi: Option<&FederatedIdentity>,
+    url: Url,
+) -> std::result::Result<(&'static str, Vec<u8>), u16> {
+    let assertion = evidence(host, fi, &url).await.map_err(|_| 401u16)?;
+    let operation = async {
+        let mut upstream = send_media(host, fi, assertion.as_ref(), url, None).await?;
+        if upstream.status() != 200 {
+            return Err(502);
+        }
+        if upstream
+            .content_length()
+            .is_some_and(|length| length > MAX_HTML_PREVIEW as u64)
+        {
+            return Err(413);
+        }
+        let content_type = html_content_type(
+            upstream
+                .headers()
+                .get("content-type")
+                .and_then(|value| value.to_str().ok()),
+        )?;
+        let mut body = Vec::new();
+        while let Some(chunk) = upstream.chunk().await.map_err(|_| 502u16)? {
+            if body.len() + chunk.len() > MAX_HTML_PREVIEW {
+                return Err(413);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok((content_type, body))
+    };
+    if let (Some(fi), Some(assertion)) = (fi, assertion.as_ref()) {
+        fi.during_admitted_operation(host, assertion, false, operation)
+            .await
+            .map_err(|_| 401u16)?
+    } else {
+        operation.await
+    }
+}
+
+fn html_content_type(value: Option<&str>) -> std::result::Result<&'static str, u16> {
+    let kind = value
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    match kind.as_str() {
+        "text/html" | "" | "application/octet-stream" => Ok("text/html; charset=utf-8"),
+        "application/xhtml+xml" => Ok("application/xhtml+xml; charset=utf-8"),
+        _ => Err(415),
+    }
 }
 
 async fn fetch_media_bounded(

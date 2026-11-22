@@ -47,7 +47,7 @@ import {
   hasSoloDraft,
   useSoloDraftProjects,
 } from "../../features/solo/draft-projects";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { SpringLoadedNavigationItem } from "../../features/channel-navigation/SpringLoadedNavigationItem";
 import { workspaceSectionOrder } from "../../features/relay/sidebar-preferences";
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
@@ -96,7 +96,6 @@ import {
   ChatCircleIcon,
   FolderSimpleIcon,
   MinusIcon,
-  PencilSimpleIcon,
   PlusIcon,
   XIcon,
 } from "../../shared/design-system/icons";
@@ -136,6 +135,7 @@ import {
   sidebarHome,
   sidebarDropRowKinds,
   orderContributedSidebarSections,
+  recentAt,
 } from "./sidebar-sections";
 import { activityTranscript } from "./working-agents";
 import { SidebarContributionSection } from "../../features/channel-navigation/SidebarContributionSection";
@@ -286,10 +286,11 @@ export function ChannelInventory({
   const pluginSorted = appliedSorts.some(
     (mode) => mode !== "alpha" && mode !== "recent",
   );
+  const activeFiltered = Object.values(
+    preferences.data?.filters ?? {},
+  ).includes("active");
   const needsActivity =
-    pluginSorted ||
-    appliedSorts.includes("recent") ||
-    Object.values(preferences.data?.filters ?? {}).includes("active");
+    pluginSorted || appliedSorts.includes("recent") || activeFiltered;
   const soloActivity = useCallback(
     (channel: ChannelSummary) => eligibleSolo(channel, viewer),
     [viewer],
@@ -298,6 +299,9 @@ export function ChannelInventory({
   const list = useChannelRoster(queries.channels, {
     activity: needsActivity || (soloRecent && soloActivity),
     preview: pluginSorted,
+    // Recent order is the only reader of activity then; most messages land in
+    // a chat that already leads, so they leave the sidebar alone.
+    ...(pluginSorted || activeFiltered ? {} : { rank: recentAt }),
   });
   // The session reads activity only for saved sorts; Solo's default needs it
   // too, but only while there are Solo chats to order.
@@ -689,13 +693,14 @@ export function ChannelInventory({
         draft?.linked === currentDraft.linked &&
         draft?.project === currentDraft.project;
       return [
-        <NavigationItem
+        <SpringLoadedNavigationItem
           key={draft?.linked ?? draft?.project ?? "new-chat"}
+          onSpring={() => void navigator.open(destination)}
           label="New chat"
           aria-description="Unsent draft"
           selected={selected}
           aria-current={selected ? "page" : undefined}
-          icon={<PencilSimpleIcon size={16} />}
+          icon={<PlusIcon size={16} />}
           onClick={() => {
             if (selected) soloDraftInput()?.focus();
             else void navigator.open(destination);
@@ -1768,7 +1773,11 @@ export function ChannelInventory({
     },
     [lifecycleCallbacks, openSuccessor],
   );
-  const workspaceNewAction = (workspace: string, name: string) => (
+  const workspaceNewAction: WorkspaceSidebarComposition["newAction"] = (
+    workspace,
+    name,
+    menuAnchor,
+  ) => (
     <WorkspaceNewMenu
       key={`${scope}:${workspace}`}
       scope={scope}
@@ -1776,6 +1785,7 @@ export function ChannelInventory({
       name={name}
       channelAvailable={queries.channelCreation.available}
       dmAvailable={queries.directMessages.available}
+      menuAnchor={menuAnchor}
       choose={(action, trigger) => {
         if (relay.snapshot().session !== queries) return;
         if (action === "chat") newChat(workspace);

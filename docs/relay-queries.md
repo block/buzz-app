@@ -329,9 +329,12 @@ retain their previous lifetime. This does not yet add main-pane tabs or dragging
 
 ## Global message search and public previews
 
-Global message searches (`kinds: [9, 40002]`, no `#h`) keep the relay's order.
-Before admitting hits, the session resolves only their distinct nonmember channel
-IDs through the existing verified reader. The palette requests 20 hits; resolution
+Global message searches (`kinds: [9, 40002]`, no `#h`) keep the relay's order,
+unless the device's Decisions API provider can answer: then a relevance-ranked
+search with text reads 60 hits in its first request and the client reorders those
+60 by the provider's yes/no answers, keeping the relay order if any call fails.
+Later pages use `limit: 20` from page 4. Before admitting hits, the session resolves only their distinct nonmember channel
+IDs through the existing verified reader. A palette page is at most 60 hits; resolution
 accepts at most 128 IDs in one bounded request for signed metadata and
 viewer-scoped membership. This also resolves members omitted from a capped roster. Missing/forged metadata
 cannot grant a preview; read/capacity failures remain visible rather than becoming

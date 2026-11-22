@@ -1112,11 +1112,16 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   position: absolute;
   inset: 0;
 }
-/* A thread sheet sizes to its content, so its waiting area keeps a compact
-   height of its own rather than filling (and collapsing with) the sheet. */
+/* A thread sheet sizes to its content, so its waiting area keeps a height of
+   its own, room for the placeholders under its header, rather than filling
+   (and collapsing with) the sheet. */
 [data-details-sheet-surface][data-height="content"] .threadLoading {
   flex: none;
-  min-height: calc(2 * var(--space-16));
+  min-height: calc(var(--sheet-header-height) + 4 * var(--space-16));
+}
+[data-details-sheet-surface][data-height="content"]
+  .threadHistory:has(> .threadLoading) {
+  min-height: calc(var(--sheet-header-height) + 4 * var(--space-16));
 }
 /* A thread sheet's reader runs under its header; so do its placeholders. */
 [data-details-sheet-surface][data-height="content"][data-contained-composer]

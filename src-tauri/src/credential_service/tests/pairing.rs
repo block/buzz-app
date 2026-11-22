@@ -36,7 +36,7 @@ async fn asked(notices: &Arc<Mutex<Vec<Notice>>>) -> String {
 }
 
 /// Pairs and approves; the paired token.
-async fn paired(fixture: &Fixture) -> String {
+pub(super) async fn paired(fixture: &Fixture) -> String {
     let service = fixture.service.clone();
     let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
     let id = asked(&fixture.notices).await;
@@ -481,11 +481,10 @@ async fn a_paired_token_signs_only_what_the_policy_allows() {
     let reply = ask(&fixture, &token, "sign_event", &[&ordinary]).await;
     let signed: Value = serde_json::from_str(reply.1["result"].as_str().unwrap()).unwrap();
     assert_eq!(signed["pubkey"], human_pubkey().await);
-    let profile = unsigned(0, json!([]), now());
-    let reply = ask(&fixture, &token, "sign_event", &[&profile]).await;
+    let unknown = unsigned(4, json!([]), now());
+    let reply = ask(&fixture, &token, "sign_event", &[&unknown]).await;
     assert_eq!(error(&reply), (StatusCode::FORBIDDEN, "denied"));
-    let message = reply.1["message"].as_str().unwrap();
-    assert!(message.contains("can't be signed by a local tool"));
+    assert!(reply.1["message"].as_str().unwrap().contains("Kind 4"));
 }
 
 /// A paired tool's Canvas is bounded as an agent's is: by its content, then

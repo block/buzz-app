@@ -1,4 +1,6 @@
-use super::policy::{classify, Verdict, AUTH_PROOFS, ORDINARY, REFUSED, SENSITIVE};
+use super::policy::{
+    classify, windowable, Verdict, AUTH_PROOFS, ONCE_ONLY, ORDINARY, REFUSED, SENSITIVE,
+};
 use super::*;
 use crate::federated_identity::{agent::AgentTokens, FederatedIdentity};
 use buzz_agent_controller::{AppAgent, Secret};
@@ -155,6 +157,7 @@ pub(crate) fn service_over(
     *service.0.pairings.communities.lock().unwrap() = Some(vec![RELAY.into()]);
     // The page's prompt is listening, as it is once the app shell shows.
     service.0.pairings.prompt(true);
+    service.0.pairings.sign_prompt(true);
     service
 }
 
@@ -1000,16 +1003,28 @@ fn every_buzz_kind_has_one_signing_class() {
 }
 
 #[test]
+fn only_sensitive_kinds_are_once_only() {
+    for &kind in ONCE_ONLY {
+        assert!(SENSITIVE.contains(&kind), "{kind}");
+    }
+    for kind in [
+        5, 9000, 9001, 9002, 9005, 9008, 9040, 9041, 9042, 9043, 9044, 28936, 41011,
+    ] {
+        assert!(!windowable(kind), "{kind}");
+    }
+    for kind in [0, 3, 9007, 9021, 9022, 10002, 30621] {
+        assert!(windowable(kind), "{kind}");
+    }
+}
+
+#[test]
 fn every_class_gets_its_verdict() {
     let verdict = |kind| classify(kind, &[], NOW, NOW, RELAY);
     for &kind in ORDINARY {
         assert_eq!(verdict(kind), Verdict::Sign, "{kind}");
     }
     for &kind in SENSITIVE {
-        assert!(
-            matches!(verdict(kind), Verdict::Deny(reason) if reason.contains("use Buzz")),
-            "{kind}"
-        );
+        assert_eq!(verdict(kind), Verdict::Ask, "{kind}");
     }
     for kind in REFUSED.iter().copied().chain([30350, 65000]) {
         assert!(
@@ -1245,3 +1260,4 @@ fn a_launch_token_reaches_no_child_the_app_spawns() {
 }
 
 mod pairing;
+mod signing;

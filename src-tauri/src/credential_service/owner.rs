@@ -1,7 +1,9 @@
 //! Paired tools: `pair`, and requests made with a paired token, which act as
-//! the human under the same operation policy as an agent's.
+//! the human under the same operation policy as an agent's, except that a
+//! sensitive kind waits for the human to approve it in Buzz.
 use super::pairing::{Approver, Human, Record, SIGN_IN_AGAIN};
-use super::{digest, on_relay, permitted, unsupported};
+use super::policy::Verdict;
+use super::{digest, on_relay, unsupported, verdict};
 use super::{full_budgets, spend, CredentialService, Failure, Unsigned};
 use crate::identity::EventTemplate;
 use buzz_agent_controller::{bounded, framed, CANVAS_MAX_EVENT_BYTES};
@@ -88,7 +90,9 @@ impl CredentialService {
         };
         #[cfg(test)]
         drop(self.0.owner_call_gate.read().await);
-        let result = self.owner_call(&record, &pubkey, method, params).await;
+        let result = self
+            .owner_call(&record, generation, &pubkey, method, params)
+            .await;
         // Revoked, or the human changed, while it ran: whatever it made stays here.
         let still = matches!(self.human().await, Human::Ready(now) if now == record.approved_by);
         if !still || !self.0.pairings.holds(&record.id, generation) {
@@ -100,6 +104,7 @@ impl CredentialService {
     async fn owner_call(
         &self,
         record: &Record,
+        generation: u64,
         pubkey: &str,
         method: &str,
         params: &[String],
@@ -122,9 +127,19 @@ impl CredentialService {
             ("get_public_key", []) => Ok(pubkey.to_owned()),
             ("sign_event", [event]) => {
                 let event = Unsigned::parse(event, pubkey)?;
-                permitted(&event, &record.relay)?;
+                let ask = match verdict(&event, &record.relay)? {
+                    Verdict::Sign => false,
+                    Verdict::Ask => true,
+                    Verdict::Deny(reason) => return Err(Failure::new("denied", &reason)),
+                };
                 bounded(event.kind, &event.content, &event.tags)
                     .map_err(|error| Failure::new("invalid_request", &error))?;
+                if ask {
+                    self.0
+                        .pairings
+                        .approve(record, generation, event.kind, &event.tags)
+                        .await?;
+                }
                 // A Canvas is bounded by its content above and its complete
                 // event below, as an agent's is; every other kind by 64 KiB.
                 let limit = if event.kind == 40100 {

@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { formatItemTimestamp } from "../shared/datetime";
 import { SecuritySettings } from "./SecuritySettings";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -28,6 +29,7 @@ const tool = {
   created: 1_800_000_000,
   lastUsed: 1_800_000_000,
   expires: 1_802_592_000,
+  windows: [] as { kind: number; until: number }[],
 };
 const other = { ...tool, id: "p2", client: "notes", relay: "wss://other/" };
 const third = { ...tool, id: "p3", client: "deploy", relay: "wss://third/" };
@@ -440,4 +442,118 @@ it("shows an empty state, and a read failure", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "could not be read",
   );
+});
+
+const soon = (seconds: number) => Math.floor(Date.now() / 1000) + seconds;
+const stopped = ["credential_sign_window_stop", expect.anything()] as const;
+
+it("lists a tool's remembered approvals and stops one", async () => {
+  const leaves = { kind: 9022, until: soon(240) };
+  const joins = { kind: 9021, until: soon(120) };
+  let listed = [{ ...tool, windows: [leaves, joins] }, other];
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === "credential_pairings_list") return listed;
+    if (command === "credential_sign_window_stop") {
+      const { id, kind } = args as { id: string; kind: number };
+      listed = listed.map((t) =>
+        t.id === id
+          ? { ...t, windows: t.windows.filter((w) => w.kind !== kind) }
+          : t,
+      );
+    }
+    return undefined;
+  });
+  render(<SecuritySettings />);
+  const at = (until: number) => formatItemTimestamp(until, { withTime: true });
+  expect(
+    await screen.findByText(`Can leave channels until ${at(leaves.until)}`),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(`Can join channels until ${at(joins.until)}`),
+  ).toBeInTheDocument();
+  // Only the tool that holds approvals shows any.
+  expect(screen.getAllByRole("button", { name: "Stop" })).toHaveLength(2);
+  expect(invoke).not.toHaveBeenCalledWith(...stopped);
+  const [leavesStop] = screen.getAllByRole("button", { name: "Stop" });
+  if (!leavesStop) throw new Error("No Stop button");
+  await userEvent.click(leavesStop);
+  expect(invoke).toHaveBeenCalledWith("credential_sign_window_stop", {
+    id: "p1",
+    kind: 9022,
+  });
+  await waitFor(() =>
+    expect(screen.queryByText(/Can leave channels/)).toBeNull(),
+  );
+  expect(screen.getByText(/Can join channels/)).toBeInTheDocument();
+  // The Stop that had focus is gone; focus stays in the tool's row.
+  await waitFor(() =>
+    expect(screen.getAllByRole("button", { name: "Revoke" })[0]).toHaveFocus(),
+  );
+});
+
+it("lists no approvals for a tool that has none", async () => {
+  vi.mocked(invoke).mockResolvedValue([tool]);
+  render(<SecuritySettings />);
+  await screen.findByText("buzz-cli");
+  expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+  expect(screen.queryByText(/Can /)).toBeNull();
+});
+
+it("shows approvals that start or stop elsewhere when native says they changed", async () => {
+  let listed = [tool];
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "credential_pairings_list" ? listed : undefined,
+  );
+  render(<SecuritySettings />);
+  await screen.findByText("buzz-cli");
+  const changed = changedListener();
+  listed = [{ ...tool, windows: [{ kind: 9022, until: soon(300) }] }];
+  await changed();
+  expect(
+    await screen.findByText(/Can leave channels until/),
+  ).toBeInTheDocument();
+  listed = [tool];
+  await changed();
+  await waitFor(() =>
+    expect(screen.queryByText(/Can leave channels/)).toBeNull(),
+  );
+});
+
+it("drops an approval once its time passes", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const start = Date.now();
+    const until = Math.floor(start / 1000) + 60;
+    vi.mocked(invoke).mockImplementation(async (command) =>
+      command === "credential_pairings_list"
+        ? [{ ...tool, windows: [{ kind: 9022, until }] }]
+        : undefined,
+    );
+    render(<SecuritySettings />);
+    await act(async () => {});
+    expect(screen.getByText(/Can leave channels until/)).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(59_000));
+    expect(screen.getByText(/Can leave channels until/)).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(2_000));
+    expect(screen.queryByText(/Can leave channels/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    expect(screen.getByText("buzz-cli")).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps the approval and says why when stopping it fails", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "credential_pairings_list")
+      return [{ ...tool, windows: [{ kind: 9022, until: soon(300) }] }];
+    throw "Paired tools could not be saved to secure storage";
+  });
+  render(<SecuritySettings />);
+  await userEvent.click(await screen.findByRole("button", { name: "Stop" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "could not be saved",
+  );
+  expect(screen.getByText(/Can leave channels/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
 });

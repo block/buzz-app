@@ -5,12 +5,14 @@ import {
   verifiedLabel,
   type NamePreference,
 } from "../profiles/name-preference";
-import type {
-  VerifiedProfileAuthority,
-  VerifiedProfileFilter,
-  VerifiedProfileSink,
+import {
+  verifiedProfileSubject,
+  type VerifiedProfileAuthority,
+  type VerifiedProfileFilter,
+  type VerifiedProfileSink,
 } from "./verified-profile";
-import { retryRead } from "./read-retry";
+import { isRetryableRead, retryRead } from "./read-retry";
+import { readErrorKind } from "./errors";
 import { attestedOwner } from "../agents/owner-attestation";
 import { hasEventProof } from "./events";
 import type { Outbox } from "./outbox";
@@ -21,17 +23,24 @@ import {
   PROFILE_ENTRY_BYTES,
 } from "./budget";
 import type { Profile } from "./contracts";
-import type { RelayEvent } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 import { newer } from "./events";
 import { foldProfiles } from "./profiles";
 import type { Priority, RelayReader } from "./reader";
+import { archiveHides, type IdentityArchives } from "./identity-archives";
 
 /** Shared profile reads for any feature, independent of channel history. */
 export interface ProfileQueries {
   snapshot(): ReadonlyMap<string, Profile>;
   subscribe(listener: () => void): () => void;
-  /** Fetch missing profiles; optional enrichment can yield to conversation reads. */
-  ensure(ids: readonly string[], priority?: Priority): Promise<void>;
+  /** Fetch missing profiles; optional enrichment can yield to conversation reads.
+   * A view that shows these people's statuses gets them too: in the same
+   * request as their profiles, or alone when the profiles are already known. */
+  ensure(
+    ids: readonly string[],
+    priority?: Priority,
+    options?: { withStatuses?: boolean },
+  ): Promise<void>;
   /** The winning signed kind 0 retained for one identity, for provenance checks. */
   event?(pubkey: string): RelayEvent | undefined;
   /** Identities a completed read found no profile for, until one arrives. */
@@ -46,10 +55,13 @@ export interface ProfileQueries {
   generation?(): number;
   /** Room for `members` more profiles while a view of that many people is
    * open, within the hard limit. Growth is immediate. After a release, the
-   * next task returns the limit to the largest remaining reservation and
-   * evicts the least recently used profiles past it. */
+   * next task cancels the departing view's background reads; 30 seconds
+   * later, the limit returns to the largest remaining reservation and evicts
+   * the least recently used profiles past it. */
   reserve?(members: number): () => void;
-  /** Profiles the cache can hold now; one ensure may ask for at most this many. */
+  /** The base plus the room open views reserved; one ensure may ask for at
+   * most this many. A released view's hold keeps more profiles cached but
+   * does not count here, so reads sized by it do not evict the held names. */
   limit?(): number;
   /** Moves when the budget drops loaded profiles or a shrink cancels
    * background reads asked for before the release. A view that requested names
@@ -58,12 +70,13 @@ export interface ProfileQueries {
   /** The community's current verified-profile authority, or undefined while
    * it advertises none. Subscribers are notified when it changes. */
   verifiedAuthority?(): VerifiedProfileAuthority | undefined;
-  /** Whether the shared verified directory holds a head for `pubkey`. Its
+  /** Whether the published shared snapshot holds a head for `pubkey`. Its
    * profile's `verified`, present or not, then outranks a search's answer:
    * a newer inactive or malformed head revokes an older name. */
   verifiedHeld?(pubkey: string): boolean;
-  /** Moves with every change to the shared verified heads, including one that
-   * leaves every profile as it was (a first inactive head), and notifies. */
+  /** Moves with published authority/head evidence, including a first inactive
+   * head that leaves profiles unchanged. Checked/cached status alone does not
+   * move it; subscribers still receive those profile status updates. */
   verifiedRevision?(): number;
   /** Whether a `verifiedRevision()` after `revision` accepted a head for
    * `pubkey`, even one the cache evicted before publishing it. Past what it
@@ -74,6 +87,8 @@ export interface ProfileQueries {
 /** Authors per profile read, the reader's largest page. A page that fills it
  * may have left out authors who do have a profile. */
 const PROFILE_PAGE = 500;
+/** How long a released reservation holds the limit up. */
+const RELEASE_HOLD_MS = 30_000;
 
 // Hidden characters must not defeat verified-name qualification. Strip them
 // before trimming so e.g. "Alice \u200b" still matches "Alice". Display text stays intact.
@@ -95,6 +110,14 @@ export function createProfileDirectory(
       sink: VerifiedProfileSink,
     ): (() => void) | undefined;
   },
+  archives?: Pick<IdentityArchives, "snapshot" | "subscribe" | "ensure">,
+  statuses?: {
+    prefetch(
+      authors: readonly string[],
+    ):
+      | { filter: ReadFilter; settle(events?: readonly RelayEvent[]): void }
+      | undefined;
+  },
 ) {
   let limit = PROFILE_CACHE_BASE;
   // DM partners: eviction takes them last, so a large roster cannot turn a
@@ -108,10 +131,17 @@ export function createProfileDirectory(
   // One entry per open view; the largest sets the limit.
   const reservations = new Set<{ members: number }>();
   let shrinking: ReturnType<typeof setTimeout> | undefined;
+  // A released view's room holds the limit up for a while, so a reader who
+  // switches back finds the names it showed instead of reading them again.
+  let held = 0;
+  let holding: ReturnType<typeof setTimeout> | undefined;
+  // The limit open views alone set; a drop means a view left.
+  let opened = PROFILE_CACHE_BASE;
   const owners = new WeakMap<RelayEvent, string>();
   type Batch = {
     work: Promise<void>;
     authors: string[];
+    filters: ReadFilter[];
     priority: Priority;
     reading: boolean;
     refresh: boolean;
@@ -139,6 +169,7 @@ export function createProfileDirectory(
   }
   const listeners = new Set<() => void>();
   let snapshot: ReadonlyMap<string, Profile> = new Map();
+  let publishedVerifiedHeads: ReadonlySet<string> = new Set();
   // Replaced, never mutated, so stores can compare it like `snapshot`.
   let unnamed: ReadonlySet<string> = new Set();
   // Absences this connection has read. Background enrichment does not
@@ -149,6 +180,10 @@ export function createProfileDirectory(
   let loaded: ReadonlySet<string> = new Set();
   let controller = new AbortController();
   let closed = false;
+  // Offline, a collision waits: a read started now could fail and stick.
+  let online = true;
+  // A collision whose archive read was skipped offline, run on reconnect.
+  let waiting = false;
   let generation = 0;
   // Verified heads arrive one relay frame at a time, and each publish refolds
   // every profile. Coalesce them to one publish per macrotask so socket frames,
@@ -165,23 +200,15 @@ export function createProfileDirectory(
       verification.authority,
       verification.subscribe,
       () => {
-        verifiedFlush ??= setTimeout(() => {
-          verifiedFlush = undefined;
-          verifiedRevision++;
-          for (const subject of verified?.takeAccepted() ?? []) {
-            acceptedAt.delete(subject);
-            acceptedAt.set(subject, verifiedRevision);
-          }
-          for (const [subject, revision] of acceptedAt) {
-            if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
-            acceptedAt.delete(subject);
-            forgottenAt = revision;
-          }
-          if (!closed) publish();
-        });
+        verifiedFlush ??= setTimeout(flushVerified);
       },
       verification.refresh,
     );
+  function flushVerified() {
+    clearTimeout(verifiedFlush);
+    verifiedFlush = undefined;
+    if (!closed) publish();
+  }
   // A background read of many pages publishes once, when its pages settle:
   // every publish refolds all profiles and wakes every listener, and an open
   // mention menu re-ranks its whole roster on each one. The session accepts
@@ -233,7 +260,39 @@ export function createProfileDirectory(
    * readers, and on verified-authority and head changes for
    * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
+    // After the snapshot is out: the read's synchronous `loading` may reenter.
+    const collision = fold(headChanged);
+    waiting = collision && !online;
+    if (collision && online && archives?.snapshot().status === "idle")
+      void archives.ensure();
+  }
+  /** Publishes the snapshot; true when a verified collision wants archives. */
+  function fold(headChanged = false): boolean {
     folded = false;
+    const authority = verified?.authority();
+    const held = new Set(
+      (verified?.heads(limit) ?? []).flatMap((event) => {
+        const subject = authority && verifiedProfileSubject(event, authority);
+        return subject ? [subject] : [];
+      }),
+    );
+    const headsChanged =
+      held.size !== publishedVerifiedHeads.size ||
+      [...held].some((pubkey) => !publishedVerifiedHeads.has(pubkey));
+    const accepted = verified?.takeAccepted() ?? [];
+    // Search retries follow evidence, not failure-only sync notifications or
+    // checked/cached status changes. Those still publish their profile state.
+    if (accepted.length || headsChanged || publishedAuthority !== authority)
+      verifiedRevision++;
+    for (const subject of accepted) {
+      acceptedAt.delete(subject);
+      acceptedAt.set(subject, verifiedRevision);
+    }
+    for (const [subject, revision] of acceptedAt) {
+      if (acceptedAt.size <= PROFILE_CACHE_MAX) break;
+      acceptedAt.delete(subject);
+      forgottenAt = revision;
+    }
     const next = foldProfiles([
       ...events.keys().flatMap((id) => {
         const event = events.peek(id);
@@ -262,29 +321,48 @@ export function createProfileDirectory(
     // Qualify all namesakes in the shared directory, including self-declared
     // names that imitate a verified name. This carries through string consumers.
     // Counted once per publish: a pairwise scan is quadratic in a large roster.
+    // An archived identity is no namesake of an active one, but keeps its own
+    // suffix beside any namesake, since it can still post.
+    const archived = (id: string) => archiveHides(archives, id, undefined);
     const verifiedNames = new Map<string, number>();
     const verifiedUsernames = new Map<string | undefined, number>();
-    for (const [, { verified, username }] of next)
+    const activeNames = new Map<string, number>();
+    const activeUsernames = new Map<string | undefined, number>();
+    const count = (
+      names: Map<string, number>,
+      usernames: Map<string | undefined, number>,
+      name: string,
+      username: string | undefined,
+    ) => {
+      names.set(name, (names.get(name) ?? 0) + 1);
+      usernames.set(username, (usernames.get(username) ?? 0) + 1);
+    };
+    for (const [id, { verified, username }] of next)
       if (verified) {
         const name = collisionName(verifiedLabel(verified, preference));
-        verifiedNames.set(name, (verifiedNames.get(name) ?? 0) + 1);
-        verifiedUsernames.set(
-          username,
-          (verifiedUsernames.get(username) ?? 0) + 1,
-        );
+        count(verifiedNames, verifiedUsernames, name, username);
+        if (!archived(id)) count(activeNames, activeUsernames, name, username);
       }
+    // Only a verified collision needs the lazy archive read; it refolds on arrival.
+    const collision =
+      [...verifiedNames.values()].some((n) => n > 1) ||
+      [...verifiedUsernames].some(([u, n]) => u !== undefined && n > 1);
     for (const [id, profile] of next) {
       const own = profile.verified ? 1 : 0;
+      // Only an active verified profile discounts archived namesakes.
+      const [names, usernames] =
+        profile.verified && !archived(id)
+          ? [activeNames, activeUsernames]
+          : [verifiedNames, verifiedUsernames];
       const duplicate =
-        (verifiedNames.get(
+        (names.get(
           collisionName(
             profile.verified
               ? verifiedLabel(profile.verified, preference)
               : profile.name,
           ),
         ) ?? 0) > own ||
-        (!!profile.verified &&
-          (verifiedUsernames.get(profile.username) ?? 0) > own);
+        (!!profile.verified && (usernames.get(profile.username) ?? 0) > own);
       if (duplicate)
         next.set(
           id,
@@ -303,6 +381,7 @@ export function createProfileDirectory(
         old?.picture === value.picture &&
         old?.about === value.about &&
         old?.nip05 === value.nip05 &&
+        old?.tz === value.tz &&
         old?.isAgent === value.isAgent &&
         old?.ownerPubkey === value.ownerPubkey &&
         (old?.verified === value.verified ||
@@ -319,13 +398,16 @@ export function createProfileDirectory(
         unnamed = new Set([...unnamed].filter((id) => !next.has(id)));
     } else if (
       !headChanged &&
+      !headsChanged &&
       publishedAuthority === verified?.authority() &&
       publishedRevision === verifiedRevision
     )
-      return;
+      return collision;
+    publishedVerifiedHeads = held;
     publishedAuthority = verified?.authority();
     publishedRevision = verifiedRevision;
     for (const listener of listeners) notify(listener);
+    return collision;
   }
   /** A completed read that returned no kind 0 is evidence too: the identity is known unnamed. */
   function missed(
@@ -361,6 +443,7 @@ export function createProfileDirectory(
     ids: readonly string[],
     priority: Priority = "foreground",
     refresh = false,
+    withStatuses = false,
   ) {
     if (closed) throw new DOMException("Session closed", "AbortError");
     const unique = [...new Set(ids)];
@@ -385,10 +468,7 @@ export function createProfileDirectory(
           batch.priority = priority;
           if (batch.reading)
             void reader
-              .read(
-                [{ kinds: [0], authors: batch.authors, limit: PROFILE_PAGE }],
-                { signal, priority },
-              )
+              .read(batch.filters, { signal, priority })
               .catch(() => {});
         }
         waiting.add(batch.work);
@@ -408,9 +488,16 @@ export function createProfileDirectory(
     });
     for (let offset = 0; offset < missing.length; offset += PROFILE_PAGE) {
       const authors = missing.slice(offset, offset + PROFILE_PAGE);
+      const status = withStatuses ? statuses?.prefetch(authors) : undefined;
       let answered = false;
+      // Set once a combined read fails, for one more attempt with names alone.
+      let namesAlone = false;
       const batch = {
         authors,
+        filters: [
+          { kinds: [0], authors, limit: PROFILE_PAGE },
+          ...(status ? [status.filter] : []),
+        ],
         priority,
         reading: false,
         refresh,
@@ -424,28 +511,44 @@ export function createProfileDirectory(
           batch.reading = true;
           attempts.set(signal, batch);
           try {
-            const result = await reader.read(
-              [{ kinds: [0], authors, limit: PROFILE_PAGE }],
-              { signal, priority: batch.priority },
-            );
+            const result = await reader.read(batch.filters, {
+              signal,
+              priority: batch.priority,
+            });
             answered = true;
             return result;
+          } catch (error) {
+            // Names never wait on statuses: a relay refusing the status
+            // query still answers names, and rows read their own statuses.
+            if (batch.filters.length > 1) {
+              batch.filters = batch.filters.slice(0, 1);
+              namesAlone = true;
+              status?.settle();
+            }
+            throw error;
           } finally {
             batch.reading = false;
           }
         },
         AbortSignal.any([signal, batch.cancel.signal]),
+        (error) => {
+          const retry = namesAlone && readErrorKind(error) !== "cancelled";
+          namesAlone = false;
+          return retry || isRetryableRead(error);
+        },
       )
         .then((result) => {
+          // Statuses stay valid when a shrink drops these names.
+          status?.settle(result);
           if (signal.aborted || batch.cancel.signal.aborted) return;
           // A foreground reader that joined this read gets its names at once.
           const fold = batch.priority === "background";
-          const profiles = result.filter((event) =>
-            authors.includes(event.pubkey),
+          const profiles = result.filter(
+            (event) => event.kind === 0 && authors.includes(event.pubkey),
           );
           take(profiles, fold);
           // A page at the limit may have left out authors who do have one.
-          if (result.length < PROFILE_PAGE)
+          if (result.filter((event) => event.kind === 0).length < PROFILE_PAGE)
             missed(
               authors,
               new Set(profiles.map((event) => event.pubkey)),
@@ -468,6 +571,19 @@ export function createProfileDirectory(
       for (const id of authors) pending.set(id, batch);
       waiting.add(batch.work);
     }
+    // Names already known need no profile read, but their statuses still do.
+    const reading = new Set(missing);
+    const status = withStatuses
+      ? statuses?.prefetch(unique.filter((id) => !reading.has(id)))
+      : undefined;
+    // Waited on so the caller can warm status images with avatars.
+    if (status)
+      waiting.add(
+        reader.read([status.filter], { signal, priority: "background" }).then(
+          (events) => status.settle(events),
+          () => status.settle(),
+        ),
+      );
     await Promise.all(waiting);
     // Every caller sees its names published when its ensure resolves, also
     // one that joined another caller's read.
@@ -491,16 +607,18 @@ export function createProfileDirectory(
     let reserved = 0;
     for (const { members } of reservations)
       reserved = Math.max(reserved, members);
-    const next = Math.min(PROFILE_CACHE_MAX, PROFILE_CACHE_BASE + reserved);
-    if (next === limit) return;
-    const shrink = next < limit;
+    const open = Math.min(PROFILE_CACHE_MAX, PROFILE_CACHE_BASE + reserved);
+    const departed = open < opened;
+    opened = open;
+    const next = Math.max(open, held);
+    if (next === limit && !departed) return;
     limit = next;
     verified?.resize(limit);
     let dropped = events.resize(limit, limit * PROFILE_ENTRY_BYTES) > 0;
     // A read asked for before the release would land as the newest entries
     // and push out names the next view just loaded. The next view's own reads,
     // foreground reads and reconnect refreshes keep going.
-    if (shrink)
+    if (departed)
       for (const batch of new Set(pending.values())) {
         if (!shrinkCancels(batch)) continue;
         batch.cancel.abort();
@@ -524,6 +642,20 @@ export function createProfileDirectory(
     return () => {
       if (!reservations.delete(reservation) || closed) return;
       releases++;
+      // Only the largest room held so far restarts the hold, so closing
+      // smaller views cannot keep a large channel's room up indefinitely.
+      const room = Math.min(
+        PROFILE_CACHE_MAX,
+        PROFILE_CACHE_BASE + reservation.members,
+      );
+      if (room >= held) {
+        held = room;
+        clearTimeout(holding);
+        holding = setTimeout(() => {
+          held = 0;
+          resize();
+        }, RELEASE_HOLD_MS);
+      }
       // Shrink after the current task: a view that releases and reserves again
       // in one commit (a roster count change, a remount) keeps its profiles.
       shrinking ??= setTimeout(resize);
@@ -537,15 +669,20 @@ export function createProfileDirectory(
         listeners.delete(listener);
       };
     },
-    ensure,
+    ensure: (
+      ids: readonly string[],
+      priority?: Priority,
+      options?: { withStatuses?: boolean },
+    ) => ensure(ids, priority, false, options?.withStatuses),
     event: (pubkey: string) => events.peek(pubkey),
     unnamed: () => unnamed,
     generation: () => generation,
     reserve,
-    limit: () => limit,
+    limit: () => opened,
     evictions: () => events.evictions + cancelled,
     verifiedAuthority: () => verified?.authority(),
-    verifiedHeld: (pubkey: string) => !!verified?.holds(pubkey),
+    // Held evidence and its projection become visible in the same publication.
+    verifiedHeld: (pubkey: string) => publishedVerifiedHeads.has(pubkey),
     verifiedRevision: () => verifiedRevision,
     verifiedSince: (pubkey: string, revision: number) =>
       (acceptedAt.get(pubkey) ?? (revision < forgottenAt ? Infinity : 0)) >
@@ -566,6 +703,11 @@ export function createProfileDirectory(
     localProfiles = signature;
     publish();
   });
+  // Archiving or unarchiving refolds namesake labels. An archive notification
+  // never starts a read: a disconnect's `idle` must not read while offline.
+  const unsubscribeArchives = archives?.subscribe(() => {
+    if (!closed) fold();
+  });
   // Each reader's own choice of name for verified people refolds every label.
   const unsubscribePreference = subscribeNamePreference(() => {
     if (closed) return;
@@ -579,7 +721,9 @@ export function createProfileDirectory(
     accept,
     clear,
     connected(value: boolean) {
+      online = value;
       verified?.connected(value);
+      if (value && waiting) publish();
     },
     reconnect() {
       verified?.connected(true);
@@ -611,16 +755,26 @@ export function createProfileDirectory(
           return event ? [event] : [];
         });
     },
+    /** Up to `count` held verified heads, for the device mirror. */
+    verifiedHeads: (count: number) => verified?.heads(count) ?? [],
+    /** Verified heads an earlier session saved, shown as cached until checked. */
+    restoreVerified(saved: readonly RelayEvent[]) {
+      verified?.restore(saved);
+      // Published now, so a restored session never starts without them.
+      if (verifiedFlush !== undefined) flushVerified();
+    },
     stats: () => events.stats(),
     dispose() {
       closed = true;
       verified?.dispose();
       unsubscribeLocal?.();
       unsubscribePreference();
+      unsubscribeArchives?.();
       clear();
       // After clear(): disposing the verified directory schedules a flush.
       clearTimeout(verifiedFlush);
       clearTimeout(shrinking);
+      clearTimeout(holding);
       listeners.clear();
     },
   };

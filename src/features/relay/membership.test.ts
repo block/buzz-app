@@ -1,4 +1,5 @@
 import { assert, expect, it, vi } from "vitest";
+import { ReadError } from "./errors";
 import { foldMessages } from "./fold";
 import { createRelaySession } from "./session";
 import {
@@ -13,9 +14,9 @@ import {
   signed,
 } from "./testing";
 import type { LiveCallbacks } from "./live";
-import type { ReadFilter } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 import type { HeadPersistence, SavedHead } from "./persistence";
-import { rowProfileIds } from "./membership";
+import { diffPreview, rowProfileIds } from "./membership";
 
 const relay = keypair(),
   viewer = keypair(),
@@ -85,6 +86,15 @@ it("admits only recognized, channel-scoped relay-authored membership payloads", 
   ).toEqual([]);
 });
 
+it.each([
+  [{}, "Diff: patch"],
+  [{ filePath: "a.ts" }, "Diff: a.ts"],
+  [{ description: "Greet" }, "Diff: patch — Greet"],
+  [{ filePath: "a.ts", description: "Greet" }, "Diff: a.ts — Greet"],
+])("summarises a diff with %j as %s", (fields, summary) => {
+  expect(diffPreview({ ...fields, truncated: false })).toBe(summary);
+});
+
 /** Take the pending read `match` selects, in whatever order the store issued it. */
 const take = (
   wire: ReturnType<typeof scriptedTransport>,
@@ -134,25 +144,38 @@ it.each([false, true])(
         [9, 40002, 40008, 48100, 48103],
       );
       const hello = message(viewer, "a", "Hello", 20);
-      head.respond([
+      const page = [
         hello,
         bounds(relay, "a", "head", {
           has_more: true,
           next_cursor: { created_at: hello.created_at, id: hello.id },
         }),
-      ]);
-      await flush();
-      // Messages show before their notices are read.
-      expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id]);
-      const notices = take(wire, isNotices);
-      expect(notices.filters).toEqual([
-        { kinds: [40099], "#h": ["a"], authors: [relay.pubkey], limit: 500 },
-      ]);
+      ];
+      const noticeFilter = {
+        kinds: [40099],
+        "#h": ["a"],
+        authors: [relay.pubkey],
+        limit: 500,
+      };
       // One below the oldest page waits for the page that reaches it.
       const row = addition(pinky.pubkey, 21);
       const below = addition(brain.pubkey, 19);
-      notices.respond([row, below]);
-      await flush();
+      if (prepared) {
+        // A prepared head reads its notices in the same request and shows
+        // with them, however early it was read.
+        expect(head.filters[1]).toEqual(noticeFilter);
+        head.respond([...page, row, below]);
+        await flush();
+      } else {
+        head.respond(page);
+        await flush();
+        // Messages show before their notices are read.
+        expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id]);
+        const notices = take(wire, isNotices);
+        expect(notices.filters).toEqual([noticeFilter]);
+        notices.respond([row, below]);
+        await flush();
+      }
       expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, row.id]);
       expect(q.window("a").rows[1]?.membership?.target).toBe(pinky.pubkey);
       // Render before enrichment, with no per-row blocking request.
@@ -371,7 +394,10 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
       ]);
     await flush();
     first.session.channels.prepare?.("a");
-    wire.next().respond([addition(), end()]);
+    wire.next().respond([end(), addition()]);
+    await flush();
+    // Opening it shows the prepared head's notices, then reads their names.
+    first.session.channels.ensure("a");
     await flush();
     wire
       .next()
@@ -380,7 +406,7 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
         profile(pinky, { name: "Pinky" }),
       ]);
     await flush();
-    expect(saved[0]?.events).toContainEqual(
+    expect(saved[0]?.notices).toContainEqual(
       expect.objectContaining({ id: addition().id, kind: 40099 }),
     );
     expect(saved[0]?.profiles).toHaveLength(2);
@@ -417,6 +443,292 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
   }
 });
 
+it("reads a head's newest notices in its own request and shows them with its rows", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const owner = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
+    prepared: true,
+  });
+  const q = owner.session.channels;
+  try {
+    q.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    q.ensure("a");
+    await flush();
+    const head = take(wire, isWindow);
+    expect(head.filters[1]).toEqual({
+      kinds: [40099],
+      "#h": ["a"],
+      authors: [relay.pubkey],
+      limit: 500,
+    });
+    const joined = addition(pinky.pubkey, 21);
+    const hello = message(viewer, "a", "Hello", 20);
+    head.respond([hello, end(), joined]);
+    await flush();
+    expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, joined.id]);
+    // The head's request was the only notice read.
+    expect(wire.pending.some((entry) => entry.filters.some(isNotices))).toBe(
+      false,
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("saves a head's notices with it and restores only relay-signed ones", async () => {
+  let saved: SavedHead[] = [];
+  const disk: HeadPersistence = {
+    read: async () => saved,
+    write: async (record) => {
+      saved = [record];
+    },
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close() {},
+  };
+  const hello = message(viewer, "a", "Hello", 20);
+  const joined = addition(pinky.pubkey, 21);
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const first = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
+    prepared: true,
+    persistence: disk,
+  });
+  try {
+    first.session.channels.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    first.session.channels.ensure("a");
+    await flush();
+    take(wire, isWindow).respond([hello, end(), joined]);
+    await flush();
+    expect(saved[0]?.notices).toEqual([
+      expect.objectContaining({ id: joined.id }),
+    ]);
+  } finally {
+    first.dispose();
+  }
+  // A notice the relay did not sign is dropped on restore.
+  const forged = activity(
+    { type: "member_joined", actor: viewer.pubkey, target: brain.pubkey },
+    22,
+    viewer,
+  );
+  saved = saved.map((record) => ({
+    ...record,
+    notices: [...(record.notices ?? []), forged],
+  }));
+  const secondWire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const second = createRelaySession(secondWire.transport, {
+    readStateFloor: () => 0,
+    prepared: true,
+    persistence: disk,
+  });
+  try {
+    second.session.channels.ensureList();
+    secondWire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    await flush();
+    second.session.channels.ensure("a");
+    // The saved head shows with its notices before any read answers.
+    await vi.waitFor(() =>
+      expect(second.session.channels.window("a").rows.map((r) => r.id)).toEqual(
+        [hello.id, joined.id],
+      ),
+    );
+  } finally {
+    second.dispose();
+  }
+});
+
+it("does not rewrite a restored head whose notice names are already saved", async () => {
+  const hello = message(viewer, "a", "Hello", 20);
+  const joined = addition(pinky.pubkey, 21);
+  let writes = 0;
+  const disk: HeadPersistence = {
+    read: async () => [
+      {
+        channelId: "a",
+        savedAt: Date.now(),
+        events: [hello, end()],
+        notices: [joined],
+        profiles: [
+          profile(viewer, { name: "Wes" }),
+          profile(pinky, { name: "Pinky" }),
+        ],
+      },
+    ],
+    write: async () => {
+      writes++;
+    },
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close() {},
+  };
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const owner = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
+    prepared: true,
+    persistence: disk,
+  });
+  try {
+    owner.session.channels.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    await flush();
+    owner.session.channels.ensure("a");
+    await vi.waitFor(() =>
+      expect(owner.session.channels.window("a").rows.map((r) => r.id)).toEqual([
+        hello.id,
+        joined.id,
+      ]),
+    );
+    await flush();
+    expect(writes).toBe(0);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("opens a channel over the established stream with its notices read with the head, saved with their names", async () => {
+  let saved: SavedHead[] = [];
+  const disk: HeadPersistence = {
+    read: async () => saved,
+    write: async (record) => {
+      saved = [record];
+    },
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close() {},
+  };
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  let live!: LiveCallbacks;
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { readStateFloor: () => 0, prepared: true, persistence: disk },
+  );
+  const q = owner.session.channels;
+  try {
+    q.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    live.state({ status: "connected", routes: [] });
+    live.established("a");
+    await flush();
+    q.ensure("a");
+    await flush();
+    // The catch-up's head read carries the notices.
+    const head = take(wire, isWindow);
+    expect(head.filters[1]).toEqual(
+      expect.objectContaining({ kinds: [40099], "#h": ["a"] }),
+    );
+    const joined = addition(pinky.pubkey, 21);
+    const hello = message(viewer, "a", "Hello", 20);
+    head.respond([hello, end(), joined]);
+    await flush();
+    expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, joined.id]);
+    // Each name read answers only the names it asks for, so the joiner's name
+    // lands after the head's own save.
+    const names = new Map([
+      [viewer.pubkey, profile(viewer, { name: "Wes" })],
+      [pinky.pubkey, profile(pinky, { name: "Pinky" })],
+    ]);
+    for (let round = 0; round < 3; round++) {
+      for (const entry of wire.pending.splice(0))
+        entry.respond(
+          entry.filters.flatMap((filter) =>
+            isNames(filter)
+              ? (filter.authors ?? []).flatMap((id) => names.get(id) ?? [])
+              : [],
+          ),
+        );
+      await flush();
+    }
+    expect(saved[0]?.notices).toEqual([
+      expect.objectContaining({ id: joined.id }),
+    ]);
+    expect(saved[0]?.profiles).toContainEqual(
+      expect.objectContaining({ pubkey: pinky.pubkey, kind: 0 }),
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("leaves a failed head's window empty, notices and all", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    notices: true,
+  });
+  const owner = createRelaySession(wire.transport, {
+    readStateFloor: () => 0,
+    prepared: true,
+  });
+  const q = owner.session.channels;
+  try {
+    q.ensureList();
+    wire
+      .next()
+      .respond([
+        roster(relay, "a", [viewer.pubkey]),
+        metadata(relay, "a", "A"),
+      ]);
+    await flush();
+    q.ensure("a");
+    await flush();
+    take(wire, isWindow).fail(new ReadError("unavailable", "head failed"));
+    await flush();
+    expect(q.window("a")).toMatchObject({ status: "error", rows: [] });
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("a catch-up head rereads the newest notices, and restarts the descent only when they do not meet the ones held", async () => {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
     notices: true,
@@ -434,14 +746,22 @@ it("a catch-up head rereads the newest notices, and restarts the descent only wh
   );
   const q = owner.session.channels;
   const hello = message(viewer, "a", "Hello", 1_000);
-  const head = () =>
-    take(wire, isWindow).respond([
+  // Each head read carries the channel's newest notices.
+  const head = (notices: RelayEvent[]) => {
+    const read = take(wire, isWindow);
+    expect(read.filters[1]).toEqual(
+      expect.objectContaining({ kinds: [40099], limit: 500 }),
+    );
+    expect(read.filters[1]).not.toHaveProperty("until");
+    read.respond([
       hello,
       bounds(relay, "a", "head", {
         has_more: true,
         next_cursor: { created_at: hello.created_at, id: hello.id },
       }),
+      ...notices,
     ]);
+  };
   const noticeReads = () =>
     wire.pending.filter(
       (entry) => !entry.signal?.aborted && entry.filters.some(isNotices),
@@ -456,10 +776,8 @@ it("a catch-up head rereads the newest notices, and restarts the descent only wh
       ]);
     await flush();
     q.ensure("a");
-    head();
-    await flush();
     const held = addition(pinky.pubkey, 1_001);
-    take(wire, isNotices).respond([held]);
+    head([held]);
     await flush();
     expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, held.id]);
     expect(noticeReads()).toHaveLength(0);
@@ -467,14 +785,10 @@ it("a catch-up head rereads the newest notices, and restarts the descent only wh
     live.state({ status: "connected", routes: [] });
     live.established("a");
     await flush();
-    head();
-    await flush();
     const missed = Array.from({ length: 500 }, (_, index) =>
       addition(keypair().pubkey, 1_100 + index),
     );
-    const top = take(wire, isNotices);
-    expect(top.filters[0]).not.toHaveProperty("until");
-    top.respond(missed);
+    head(missed);
     await flush();
     const resumed = take(wire, isNotices);
     expect(resumed.filters[0]).toMatchObject({
@@ -491,9 +805,7 @@ it("a catch-up head rereads the newest notices, and restarts the descent only wh
     live.state({ status: "connected", routes: [] });
     live.established("a");
     await flush();
-    head();
-    await flush();
-    take(wire, isNotices).respond(missed);
+    head(missed);
     await flush();
     expect(noticeReads()).toHaveLength(0);
     expect(q.window("a").rows).toHaveLength(502);

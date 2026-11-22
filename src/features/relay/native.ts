@@ -8,6 +8,7 @@ import {
   verifiedProfileDiscovery,
 } from "./verified-profile";
 import { nativeSocket } from "./native-socket";
+import { nativeIdentityEnabled } from "../identity/service";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { EventTemplate } from "nostr-tools";
@@ -40,6 +41,7 @@ import {
   type PrivateRecord,
 } from "../channel-templates/model";
 import { parseEvents, type RelayWriter } from "./transport";
+import type { ChannelMedia } from "./store";
 import { communityGitRepository } from "../repos/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
@@ -52,7 +54,12 @@ import { repoGitHost } from "../repos/git";
 import { PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
-import { readStateRefusal, type ReadStateSigning } from "./read-state-host";
+import {
+  followCoordinate,
+  readStateRefusal,
+  type ReadStateSigning,
+  type ThreadFollowsSigning,
+} from "./read-state-host";
 import {
   readSnapshotCommunity,
   readSnapshotFilter,
@@ -92,6 +99,7 @@ async function nativeReadInvoke<T>(
 }
 
 export const nativeWriteKinds = [
+  48103,
   30078,
   7,
   9,
@@ -180,9 +188,47 @@ function nativeResponse(result: {
 }
 
 /** Relay media through the native `buzz-media` scheme (`src-tauri/src/relay.rs`),
- * which signs each Blossom `get`, including every `Range` request. */
-export function nativeMediaUrl(url: string): string {
-  return convertFileSrc(url, "buzz-media");
+ * which signs each Blossom `get`, including every `Range` request. An image is
+ * saved with its `channel`, which forgets it when the channel's messages go. */
+export function nativeMediaUrl(url: string, channel?: string): string {
+  const source = convertFileSrc(url, "buzz-media");
+  return channel ? `${source}?channel=${encodeURIComponent(channel)}` : source;
+}
+
+/** Forgets the images the native `buzz-media` scheme saved for a community. */
+export async function clearNativeMedia(community: string) {
+  if (!nativeIdentityEnabled()) return;
+  await nativeReadInvoke("media_cache_clear", { community });
+}
+
+/** Forgets the images the native `buzz-media` scheme saved from a community's
+ * channels; undefined where images are not saved. */
+export function nativeChannelMedia(
+  community: string,
+): ChannelMedia | undefined {
+  if (!nativeIdentityEnabled()) return undefined;
+  const forget = (
+    channels: { only: readonly string[] } | { allExcept: readonly string[] },
+  ) => nativeReadInvoke<void>("media_cache_forget", { community, channels });
+  return {
+    forget: (only) => forget({ only }),
+    retain: (allExcept) => forget({ allExcept }),
+  };
+}
+
+export type NativeMediaUsage = {
+  community: number;
+  total: number;
+  budget: number;
+};
+
+/** Bytes of images saved for one community and for all, against the shared
+ * limit. Undefined where images aren't saved by the app. */
+export async function nativeMediaUsage(community: string) {
+  if (!nativeIdentityEnabled()) return undefined;
+  return nativeReadInvoke<NativeMediaUsage>("media_cache_usage", {
+    community,
+  });
 }
 
 /** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.
@@ -358,7 +404,7 @@ export function nativeRelaySigner(community: string): Signer {
   };
 }
 
-const verifyNativeSignatures: SignatureVerifier = (claims) =>
+export const verifyNativeSignatures: SignatureVerifier = (claims) =>
   nativeReadInvoke<boolean[]>("relay_verify_signatures", { claims });
 
 /** Device evidence can be verified before any relay connection exists. */
@@ -453,6 +499,9 @@ export async function connectNativeTransport(
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
+  const soloMemberRoleUpdates =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-solo-member-role");
   const artifactSupport =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-ar");
@@ -597,9 +646,14 @@ export async function connectNativeTransport(
       validateLifecycleTemplate,
     ),
     channelDetails: commandWriter("channel-details", validateDetailsTemplate),
-    memberAdministration: commandWriter("member-administration", (event) =>
-      validateMemberAdministrationTemplate(event, transport.viewer ?? ""),
-    ),
+    memberAdministration: {
+      ...commandWriter("member-administration", (event) =>
+        validateMemberAdministrationTemplate(event, transport.viewer ?? ""),
+      ),
+      ...(soloMemberRoleUpdates
+        ? { soloMemberRoleUpdates: true as const }
+        : {}),
+    },
     identityArchive: commandWriter(
       "identity-archive",
       validateArchiveRequestTemplate,
@@ -634,11 +688,25 @@ export async function connectNativeTransport(
           },
         }
       : {}),
-    async openDirectMessage(pubkeys, signal) {
+    async openDirectMessage(pubkeys, signal, history) {
       signal.throwIfAborted();
       const id = await invoke<string>("relay_direct_message", {
         community: origin,
         pubkeys,
+        ...(history
+          ? {
+              channel: history.channelId,
+              history:
+                history.includeHistory === "ask"
+                  ? "ask"
+                  : history.includeHistory
+                    ? "include"
+                    : undefined,
+            }
+          : {}),
+      }).catch((error: unknown) => {
+        // The command rejects with its refusal's words; callers expect an Error.
+        throw typeof error === "string" ? new Error(error) : error;
       });
       signal.throwIfAborted();
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))
@@ -900,6 +968,49 @@ export async function connectNativeTransport(
               headers: Record<string, string>;
               body: string;
             }>("relay_publish_read_state", { community: origin, event });
+            return nativeResponse(result);
+          },
+          signal,
+          "foreground",
+          readStateRefusal,
+        );
+        signal.throwIfAborted();
+        await acceptReadStatePublish(response, event.id);
+      },
+      async decodeFollows(events: readonly RelayEvent[], signal: AbortSignal) {
+        signal.throwIfAborted();
+        const decoded = await nativeReadInvoke<
+          { eventId: string; payload: unknown }[]
+        >("relay_decode_thread_follows", { community: origin, events });
+        signal.throwIfAborted();
+        return decoded;
+      },
+      async signFollows(intent: ThreadFollowsSigning, signal: AbortSignal) {
+        signal.throwIfAborted();
+        const event = eventDto(
+          await nativeReadInvoke("relay_sign_thread_follows", {
+            community: origin,
+            intent,
+          }),
+        );
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        return event;
+      },
+      async publishFollows(event: RelayEvent, signal: AbortSignal) {
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        const response = await admitSignedRequest(
+          origin,
+          transport.viewer,
+          async () => {
+            const result = await nativeReadInvoke<{
+              status: number;
+              headers: Record<string, string>;
+              body: string;
+            }>("relay_publish_thread_follows", { community: origin, event });
             return nativeResponse(result);
           },
           signal,

@@ -1,3 +1,4 @@
+import { useChannelActivitySubscription } from "../agents/use-channel-agent-activity";
 import { useActivityFocusHandoff } from "./use-activity-focus-handoff";
 import messageStyles from "./Messages.module.css";
 import {
@@ -55,8 +56,6 @@ import type { MessageLinkOrigin } from "./MessageRow";
 import styles from "./TypingIndicator.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
 
-const noSubscribe = () => () => {};
-const noActivity = () => undefined;
 const noRows: readonly never[] = [];
 /** Mounted history presents every request this agent is working on here. */
 const presentsAllWork = (
@@ -127,7 +126,7 @@ export function useLiveConversationAgents(
         session.typing.subscribe(listener),
         session.agentChoices.subscribe(listener),
         session.profiles.subscribe(listener),
-        session.agentActivity?.subscribe(listener),
+        session.agentActivity?.subscribe(listener, channelId),
         watchChannel
           ? session.channels?.subscribeWindow?.(channelId, listener)
           : undefined,
@@ -140,7 +139,7 @@ export function useLiveConversationAgents(
   );
   const getKey = () => {
     const entries = session.typing.snapshot();
-    const activity = (session.agentActivity?.snapshot ?? noActivity)();
+    const activity = session.agentActivity?.snapshot(channelId);
     const details = currentActivity(
       activity,
       entries,
@@ -217,10 +216,14 @@ export function useConversationAgents(
     [choices, entries, profiles],
   );
   // Subscribe to what this indicator shows, not every observer frame.
+  const subscribeActivity = useChannelActivitySubscription(
+    session.agentActivity,
+    channelId,
+  );
   const last = useRef<ReadonlyMap<string, CurrentActivity>>(new Map());
   const getDetails = () => {
     const next = currentActivity(
-      (session.agentActivity?.snapshot ?? noActivity)(),
+      session.agentActivity?.snapshot(channelId),
       entries,
       knownAgents,
       channelId,
@@ -232,7 +235,7 @@ export function useConversationAgents(
     return last.current;
   };
   const details = useSyncExternalStore(
-    session.agentActivity?.subscribe ?? noSubscribe,
+    subscribeActivity,
     getDetails,
     getDetails,
   );
@@ -240,7 +243,7 @@ export function useConversationAgents(
   // history presenting every request it is working on here. Uncovered work
   // keeps the conversation's busy cue.
   const readCovered = () => {
-    const snapshot = (session.agentActivity?.snapshot ?? noActivity)();
+    const snapshot = session.agentActivity?.snapshot(channelId);
     return [...details.keys()]
       .filter((key) =>
         presentsAllWork(
@@ -255,11 +258,11 @@ export function useConversationAgents(
       .join(",");
   };
   const covered = useSyncExternalStore(
-    session.agentActivity?.subscribe ?? noSubscribe,
+    subscribeActivity,
     readCovered,
     readCovered,
   );
-  const activity = (session.agentActivity?.snapshot ?? noActivity)();
+  const activity = session.agentActivity?.snapshot(channelId);
   const agents = [...details.keys()]
     .filter((key) => !presented.has(key) && !covered.split(",").includes(key))
     .sort();
@@ -316,9 +319,13 @@ export function TypingIndicator({
     threadRootId,
     !inFlow && audience !== "humans",
   );
+  const subscribeActivity = useChannelActivitySubscription(
+    session.agentActivity,
+    channelId,
+  );
   const lastLocal = useRef(activity?.local ?? noRows);
   const getLocal = () => {
-    const next = session.agentActivity?.snapshot().local ?? noRows;
+    const next = session.agentActivity?.snapshot(channelId).local ?? noRows;
     if (
       next.length !== lastLocal.current.length ||
       next.some((work, index) => work !== lastLocal.current[index])
@@ -326,11 +333,7 @@ export function TypingIndicator({
       lastLocal.current = next;
     return lastLocal.current;
   };
-  useSyncExternalStore(
-    session.agentActivity?.subscribe ?? noSubscribe,
-    getLocal,
-    getLocal,
-  );
+  useSyncExternalStore(subscribeActivity, getLocal, getLocal);
   const agents = audience === "humans" ? [] : activeAgents;
   const hostedAgents = useContext(AgentsContext);
   useAgentsSnapshot(hostedAgents);
@@ -387,10 +390,14 @@ export function TypingIndicator({
     resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
   const scopeLabel = (pubkey: string, workRoot?: string) => {
     if (threadRootId) return undefined;
-    const roots = workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? []);
+    // Work whose conversation is unknown has no scope to name.
+    const roots = (
+      workRoot ? [workRoot] : (details.get(pubkey)?.roots ?? [])
+    ).filter((root): root is string | null => root === null || !!root);
+    // The channel alone is the conversation already shown.
+    if (!roots.some(Boolean)) return undefined;
     const labels = roots.slice(0, 2).map((root) => {
       if (root === null) return "Channel conversation";
-      if (!root) return "Work with unconfirmed thread";
       const text = rows
         .find((row) => row.id === root)
         ?.content.replace(/\s+/g, " ")
@@ -461,10 +468,7 @@ export function TypingIndicator({
         : detail.detailAvailability === "no-current-step"
           ? (remoteDetail ?? "No current step details received.")
           : "Only typing updates are reaching this app.";
-    const scope =
-      detail.roots.length === 1 && detail.roots[0] === null
-        ? undefined
-        : scopeLabel(pubkey, workRoot);
+    const scope = scopeLabel(pubkey, workRoot);
     // The row is the way into an agent's transcript for this work.
     if (canOpen && target)
       return (

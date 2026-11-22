@@ -36,8 +36,27 @@ import type {
   MessageAction,
   ContributionReader,
   PageTabsProps,
+  ConversationWorkspaceProps,
+  SendGate,
 } from "./contracts";
+import { PluginMarkdown, type MarkdownProps } from "../messages/PluginMarkdown";
+import {
+  publishOutgoing,
+  type OutgoingMessage,
+} from "../messages/outgoing-message";
 import type { RelaySession } from "../relay/session";
+import {
+  ChannelMembersDialog,
+  type ChannelMembersDialogProps,
+} from "../../bundled/channels/ChannelMembersDialog";
+import {
+  ChannelGeneralAccess,
+  type ChannelGeneralAccessProps,
+} from "../../bundled/channels/ChannelGeneralAccess";
+import {
+  DocumentEditor,
+  type DocumentEditorProps,
+} from "../messages/DocumentEditor";
 
 /** A Solo chat's sidebar icon: what the plugin knows about the chat, or
  * `fallback` when it has nothing to show. */
@@ -73,6 +92,9 @@ export type Conversation = {
   registerTool(tool: ComposerTool): void;
   completions: ContributionReader<ComposerCompletion>;
   registerCompletion(provider: ComposerCompletion): void;
+  /** Registers `provider` with `supplement: true`. Hosts without supplements
+   * lack this method, so plugins call it as `registerCompletionSupplement?.()`. */
+  registerCompletionSupplement(provider: ComposerCompletion): void;
   annotators: ContributionReader<ComposerAnnotator>;
   /** Marks on the focused composer's prose; see `ComposerAnnotator`. */
   registerAnnotator(annotator: ComposerAnnotator): void;
@@ -89,7 +111,21 @@ export type Conversation = {
   registerMessageAction(action: MessageAction): void;
   identityMarks: ContributionReader<IdentityMark>;
   registerIdentityMark(mark: IdentityMark): void;
+  /** Lets a plugin keep messages a composer is about to publish; see `SendGate`. */
+  registerSendGate(gate: SendGate): void;
+  /** Publishes a message a send gate kept, as the same event the composer
+   * would have sent, and resolves to its event id. It doesn't repeat the
+   * composer's checks. Rejects when the session can't send it. */
+  publish(session: RelaySession, message: OutgoingMessage): Promise<string>;
   ui: {
+    /** Host member picker, with optional plugin-owned actions, settings and link. */
+    MembersDialog: ComponentType<ChannelMembersDialogProps>;
+    /** Signed General access editor with optional resource wording and policy. */
+    GeneralAccess: ComponentType<ChannelGeneralAccessProps>;
+    /** Controlled document editing with the host engine, formatting and link policy. */
+    DocumentEditor: ComponentType<DocumentEditorProps>;
+    /** Bounded document Markdown with host-owned link and image trust rules. */
+    Markdown: (props: MarkdownProps) => ReactNode;
     Thread: (props: EmbeddedThreadProps) => ReactNode;
     /** One channel's message management, edit target and overlays for a page's
      * own `Message` rows and `Composer`, without visiting the channel. */
@@ -103,9 +139,15 @@ export type Conversation = {
     /** The page's content as the first tab, beside conversations it opens;
      * absent until a plugin provides the tab workspace, as Channels does. */
     readonly Tabs?: ((props: PageTabsProps) => ReactNode) | undefined;
+    /** A permanent conversation with a side pane; supplied by Channels. */
+    readonly Workspace?:
+      | ((props: ConversationWorkspaceProps) => ReactNode)
+      | undefined;
   };
   /** Provides `ui.Tabs` while the providing plugin runs; the first one wins. */
   registerTabs(component: ComponentType<PageTabsProps>): void;
+  /** Provides `ui.Workspace` while the plugin runs; the first one wins. */
+  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>): void;
   /** Solo chat icons; the sidebar shows the first one. */
   chatIcons: ContributionReader<ChatIcon>;
   /** Shows `component` as each Solo chat's sidebar icon while the providing
@@ -181,7 +223,10 @@ export class ConversationService extends Service implements Conversation {
   private readonly actionEntries;
   readonly identityMarks;
   private readonly identityMarkEntries;
+  readonly sendGates;
+  private readonly sendGateEntries;
   private readonly tabEntries;
+  private readonly workspaceEntries;
   readonly chatMenus;
   private readonly chatMenuEntries;
   readonly chatIcons;
@@ -249,11 +294,22 @@ export class ConversationService extends Service implements Conversation {
       snapshot: identityMarks.snapshot,
       subscribe: identityMarks.subscribe,
     };
+    const sendGates = createContributions<SendGate>(ctx);
+    this.sendGateEntries = sendGates;
+    this.sendGates = {
+      snapshot: sendGates.snapshot,
+      subscribe: sendGates.subscribe,
+    };
     const tabs = createContributions<{
       id: string;
       component: ComponentType<PageTabsProps>;
     }>(ctx);
     this.tabEntries = tabs;
+    const workspaces = createContributions<{
+      id: string;
+      component: ComponentType<ConversationWorkspaceProps>;
+    }>(ctx);
+    this.workspaceEntries = workspaces;
     const chatMenus = createContributions<ChatMenu>(ctx);
     this.chatMenuEntries = chatMenus;
     this.chatMenus = {
@@ -270,7 +326,20 @@ export class ConversationService extends Service implements Conversation {
       const Provided = tabs.snapshot()[0]?.component;
       return Provided ? <Provided {...props} /> : null;
     };
+    const Workspace = (props: ConversationWorkspaceProps) => {
+      const Provided = workspaces.snapshot()[0]?.component;
+      return Provided ? <Provided {...props} /> : null;
+    };
     this.ui = {
+      MembersDialog: ChannelMembersDialog,
+      GeneralAccess: ChannelGeneralAccess,
+      DocumentEditor,
+      Markdown: (props: MarkdownProps) => (
+        <PluginMarkdown
+          {...props}
+          navigation={this.ctx.reflect.get("navigation")}
+        />
+      ),
       Thread: (props: EmbeddedThreadProps) => (
         <EmbeddedThread {...props} host={this.ctx} extensions={this} />
       ),
@@ -288,12 +357,20 @@ export class ConversationService extends Service implements Conversation {
       get Tabs() {
         return tabs.snapshot().length ? Tabs : undefined;
       },
+      get Workspace() {
+        return workspaces.snapshot().length ? Workspace : undefined;
+      },
     };
   }
   registerTabs(component: ComponentType<PageTabsProps>) {
     if (typeof component !== "function")
       throw new Error("Page tabs need a component");
     this.tabEntries.register(this.ctx, { id: "tabs", component });
+  }
+  registerWorkspace(component: ComponentType<ConversationWorkspaceProps>) {
+    if (typeof component !== "function")
+      throw new Error("A conversation workspace needs a component");
+    this.workspaceEntries.register(this.ctx, { id: "workspace", component });
   }
   registerChatMenu(component: ComponentType<ChatMenuProps>) {
     if (typeof component !== "function")
@@ -318,6 +395,18 @@ export class ConversationService extends Service implements Conversation {
   registerIdentityMark(value: IdentityMark) {
     validate(value);
     this.identityMarkEntries.register(this.ctx, value);
+  }
+  registerSendGate(value: SendGate) {
+    if (
+      !value ||
+      !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
+      typeof value.hold !== "function"
+    )
+      throw new Error("A send gate needs an id and hold function");
+    this.sendGateEntries.register(this.ctx, value);
+  }
+  publish(session: RelaySession, message: OutgoingMessage) {
+    return publishOutgoing(session, message);
   }
   registerAttachment(value: AttachmentRenderer) {
     validate(value);
@@ -358,10 +447,23 @@ export class ConversationService extends Service implements Conversation {
     this.toolEntries.register(this.ctx, value);
   }
   registerCompletion(value: ComposerCompletion) {
+    if (value?.supplement !== undefined)
+      throw new Error(
+        "Register a supplement with registerCompletionSupplement",
+      );
+    this.addCompletion(value);
+  }
+  registerCompletionSupplement(value: ComposerCompletion) {
+    this.addCompletion(value, true);
+  }
+  private addCompletion(value: ComposerCompletion, supplement?: true) {
     validate(value);
     if (typeof value.match !== "function")
       throw new Error("A completion provider needs a matcher");
-    this.completionEntries.register(this.ctx, value);
+    this.completionEntries.register(
+      this.ctx,
+      supplement ? { ...value, supplement } : value,
+    );
   }
   registerAnnotator(value: ComposerAnnotator) {
     validate(value);

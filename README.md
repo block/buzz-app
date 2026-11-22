@@ -5,27 +5,15 @@ app for team chat and AI agents: join a community, talk in channels and direct
 messages, and run agents such as Claude, Codex, Goose or Pi on your own
 computer that answer you right in the conversation.
 
-![A Buzz chat with an agent replying](docs/assets/readme/solo-chat.png)
-
-> [!IMPORTANT]
-> **Buzz 1.0 is in beta.** Buzz 0.X is still available and supported in
-> [block/buzz](https://github.com/block/buzz).
+[![A 38-second demo of Buzz: an agent answers a question in a team channel, then a chat with two agents is shared with that channel](docs/assets/readme/demo.webp)](https://buzz.xyz/#demo)
 
 ## Get started
 
 ### 1. Download
 
-Get the newest build from the [releases page](https://github.com/block/buzz-app/releases).
-
-| Platform | Download | Notes |
-| --- | --- | --- |
-| macOS (Apple Silicon) | `Buzz_…_aarch64.dmg` | Signed and notarized. |
-| macOS (Intel) | `Buzz_…_x64.dmg` | Signed and notarized. |
-| Windows (x64) | `Buzz_…_x64_unsigned.exe` | Not code-signed, so Windows SmartScreen warns you before it runs. |
-| Linux (x64) | `Buzz_…_amd64.deb` or `Buzz_…_x86_64.AppImage` | Built on Ubuntu 24.04. |
-
-Once installed, Buzz updates itself. You can also check from
-**Settings → Software updates**.
+Download the latest release from [buzz.xyz](https://buzz.xyz) or view
+[all releases](https://github.com/block/buzz-app/releases). Available for
+macOS, Windows and Linux.
 
 ### 2. Set up your identity
 
@@ -48,18 +36,12 @@ on another computer.
 
 ### 3. Join a community
 
-Open your invite link and choose **Accept invite in Buzz**, or paste the link
-into the **Join a community** screen and click **Join**. If the link opens
-Buzz 0.X instead, paste it. Already a member from Buzz 0.X? Paste the
-community's address, such as `https://feedback.communities.buzz.xyz`. Add more
-communities later from the community button in the top-right corner →
-**Join a community**.
+Open an invite link and choose **Accept invite in Buzz**, or paste it into
+**Join a community**. Already in a community from Buzz 0.X? Paste its address.
 
-**No invite?** Paste the Buzz feedback community's invite,
-`https://feedback.communities.buzz.xyz/invite/v2.yC8ZZIz5vwWCZYo2RRheuY1a0IKZRTXvxTmK7vIFIIY`,
-create one with **Create a community** (or at [buzz.xyz](https://buzz.xyz)), or
-[run your own relay](https://github.com/block/buzz#i-want-my-own-hosted-relay)
-from block/buzz.
+**No invite?** Join the [Buzz community](https://buzz.communities.buzz.xyz/invite/v2.EeLHaUAe23P7qK0NuWnsdfnH-6L0wJLDnnzpFzrG7rQ),
+start one with **Create a community** (or at [buzz.xyz](https://buzz.xyz)), or
+[run your own relay](https://github.com/block/buzz#i-want-my-own-hosted-relay).
 
 ![The Join a community screen](docs/assets/readme/join-community.png)
 
@@ -95,14 +77,17 @@ edit files there.
 
 ### 6. Use the command line (optional)
 
-Buzz includes the `buzz` command line client at
-`/Applications/Buzz.app/Contents/Resources/bin/buzz`, so scripts and agents need
-no separate install. To run it as `buzz`, link it into your `PATH`:
+Buzz includes the `buzz` command line client, so scripts and agents need no
+separate install. On macOS and Linux (except the AppImage), Buzz links it to
+`~/.local/bin/buzz` each time it starts. If your shell doesn't find `buzz`, add
+that folder to your `PATH` in `~/.zshrc` or `~/.bashrc`:
 
 ```sh
-mkdir -p ~/.local/bin
-ln -sf /Applications/Buzz.app/Contents/Resources/bin/buzz ~/.local/bin/buzz
+export PATH="$HOME/.local/bin:$PATH"
 ```
+
+On Windows, the installer adds it to your `PATH`; open a new terminal after
+installing.
 
 ## Preview limitations
 
@@ -131,7 +116,7 @@ Some parts change less than others:
 - **Likely to break:** reading relay data, anything added to conversations or
   the sidebar, agent hooks, and UI added to pages Buzz owns.
 
-See [plugin architecture](docs/plugin-architecture.md) to build one.
+See [plugins](docs/plugins.md) to build one.
 
 ## Build from source
 
@@ -143,17 +128,16 @@ bin/just desktop
 
 Hermit in `bin/` pins every tool. Desktop builds also need the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). See
-[contributing](docs/contributing.md) for development setup, live relay
-development, testing and hooks, and [plugin architecture](docs/plugin-architecture.md)
+[contributing](CONTRIBUTING.md) for development setup, live relay
+development, testing and hooks, and [plugins](docs/plugins.md)
 to build plugins.
 
 ## Project resources
 
-- [Contributing](docs/contributing.md)
-- [Plugin architecture and the `buzzodz` CLI](docs/plugin-architecture.md)
+- [Contributing](CONTRIBUTING.md)
+- [Plugins](docs/plugins.md)
 - [Contextual identity names: cross-client spec and fixtures](src/bundled/identity-naming/README.md)
 - [Mention rules: cross-client spec and fixtures](src/bundled/mentions/README.md)
-- [Buzz feedback community invite](https://feedback.communities.buzz.xyz/invite/v2.yC8ZZIz5vwWCZYo2RRheuY1a0IKZRTXvxTmK7vIFIIY)
 - [@buzzdotxyz on X](https://x.com/buzzdotxyz)
 - [Project leads](CODEOWNERS)
 - [Governance](GOVERNANCE.md)

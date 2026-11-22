@@ -1,4 +1,5 @@
 import { sessionTools } from "../../buzz-mcp/session-tools";
+import { steerPrompt } from "../claude-code/prompt";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GooseProcess,
@@ -93,6 +94,23 @@ describe("GooseProcess", () => {
       }
     },
   );
+
+  it.each([
+    [undefined, undefined],
+    [200000, "200000"],
+  ])("starts goose compacting by %s tokens", async (compactAt, limit) => {
+    const fake = fakeSpawn();
+    const goose = await GooseProcess.start(fake.spawn, {
+      cwd: "/work",
+      ...(compactAt && { compactAt }),
+    });
+    try {
+      expect(fake.geese[0]?.env.GOOSE_AUTO_COMPACT_TOKEN_LIMIT).toBe(limit);
+    } finally {
+      await goose.kill();
+      await goose.exited;
+    }
+  });
 
   it("starts goose-acp without the app's Buzz identity or goose choice", async () => {
     const { process } = await start();
@@ -326,11 +344,11 @@ describe("GooseProcess", () => {
     const session = await open();
     session.conversation = "channel/root";
     const response = await process.mcp(session.id, "tools/list");
-    expect(tools).toHaveBeenCalledWith("channel/root", {
-      id: 1,
-      method: "tools/list",
-      params: {},
-    });
+    expect(tools).toHaveBeenCalledWith(
+      "channel/root",
+      { id: 1, method: "tools/list", params: {} },
+      expect.objectContaining({ aborted: true }),
+    );
     // goose matches the reply to its request by the id it sent.
     expect(response).toEqual({
       jsonrpc: "2.0",
@@ -1742,6 +1760,56 @@ it("keeps Goose steers in order across an Attention refresh", async () => {
     await flush();
     await goose.close(session);
     await Promise.all([first, second, third]);
+  }
+});
+
+it("steers with a message's built text only when it joins the running turn", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open({
+    choice: () => ({ provider: "openai", model: "gpt-4.1" }),
+  });
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  const prompt = (text: string) => vi.fn(async () => text);
+  const two = prompt("two");
+  const three = prompt("three");
+  const steered = session.send("old two", { refresh: two });
+  // Another model cannot join the running turn: it runs as its own.
+  const other = session.send("old three", { refresh: three }, "o3");
+  try {
+    await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
+    expect(process.turns[0]?.steered[0]).toBe(steerPrompt("two"));
+    expect(two).toHaveBeenCalledExactlyOnceWith();
+    process.turns[0]?.finish();
+    await vi.waitFor(() => expect(process.turns).toHaveLength(2));
+    expect(process.turns[1]?.text).toBe("three");
+    expect(three).toHaveBeenCalledExactlyOnceWith();
+    process.turns[1]?.finish();
+  } finally {
+    await flush();
+    await goose.close(session);
+    await Promise.all([first, steered, other]);
+  }
+});
+
+it("rebuilds an Attention prompt as it joins the running turn", async () => {
+  const { open, process, goose } = await start();
+  process.hold = true;
+  const session = await open();
+  const first = session.send("one");
+  await vi.waitFor(() => expect(process.turns).toHaveLength(1));
+  const refresh = vi.fn(async () => "wake");
+  const woken = session.send("old wake", { current: () => true, refresh });
+  try {
+    await vi.waitFor(() => expect(process.turns[0]?.steered).toHaveLength(1));
+    expect(refresh).toHaveBeenCalledExactlyOnceWith();
+    expect(process.turns[0]?.steered[0]).toBe(steerPrompt("wake"));
+    process.turns[0]?.finish();
+  } finally {
+    await flush();
+    await goose.close(session);
+    await Promise.all([first, woken]);
   }
 });
 

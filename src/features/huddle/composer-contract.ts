@@ -1,4 +1,8 @@
-import type { ComposerSession } from "../messages/composer-session";
+import type {
+  ComposerDraftSend,
+  ComposerDraftSendResult,
+  ComposerSession,
+} from "../messages/composer-session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import type { UploadedAttachment } from "../relay/attachments";
@@ -25,6 +29,10 @@ export type ComposerSnapshot = {
   completions: readonly string[];
 };
 export type ComposerOperations = {
+  forwardSource: {
+    args: import("../messages/forward-clipboard").ForwardReference;
+    result: import("../messages/resolve-forward").ResolvedForward;
+  };
   models: {
     args: readonly string[];
     result: readonly import("../agents/react").MentionModelChoice[];
@@ -32,15 +40,8 @@ export type ComposerOperations = {
   gifSupport: { args: undefined; result: boolean };
   gifSearch: { args: string; result: import("../relay/gifs").KlipyGif[] };
   send: {
-    args: {
-      text: string;
-      draft: string;
-      picks?: import("../relay/messages").MentionPicks;
-      mentions: readonly string[];
-      references: readonly string[];
-      attachments: readonly UploadedAttachment[];
-    };
-    result: string;
+    args: ComposerDraftSend;
+    result: ComposerDraftSendResult;
   };
   release: { args: UploadedAttachment; result: undefined };
   agents: {

@@ -6,17 +6,19 @@ import { PreferenceRow } from "../shared/design-system/ui/PreferenceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Switch } from "../shared/design-system/ui/Switch";
 import { gitScope } from "../plugins/git-scope";
+import { offeredManaged } from "../plugins/managed";
 import type { PluginManager } from "../plugins/manager";
 import type {
   Catalog,
   ImportPreview,
   ManagedEntry,
   ManagedPlugins as ManagedPolicy,
+  ManagedState,
   PluginInfo,
 } from "../plugins/types";
 import { PluginAccessReview } from "./PluginAccessReview";
 import type { UrlPluginSource } from "../features/navigation/targets";
-import { importRollbackWarning } from "./PluginImport";
+import { importLocation, importRollbackWarning } from "./PluginImport";
 import importStyles from "./PluginImport.module.css";
 import styles from "./Settings.module.css";
 
@@ -24,14 +26,25 @@ type Authorize = (
   repository: string,
 ) => Promise<{ repository: string; token: string } | null>;
 
-const location = (entry: ManagedEntry) =>
+/** An agent's request for a local folder, which the review reads again. */
+type FolderEntry = Readonly<{
+  id: string;
+  folder: string;
+  path: string;
+  state: ManagedState;
+}>;
+type ReviewEntry = ManagedEntry | FolderEntry;
+
+const location = (entry: ReviewEntry) =>
   "url" in entry
     ? entry.url
-    : [
-        entry.repository,
-        entry.reference,
-        ...(entry.path === "." ? [] : [entry.path]),
-      ].join(" · ");
+    : "folder" in entry
+      ? importLocation({ source: entry.folder, commit: null }, entry.path)
+      : [
+          entry.repository,
+          entry.reference,
+          ...(entry.path === "." ? [] : [entry.path]),
+        ].join(" · ");
 
 export function ManagedPlugins({
   plugins,
@@ -79,9 +92,7 @@ export function ManagedPlugins({
     />
   ) : null;
   const rows =
-    managed.status === "ready"
-      ? managed.plugins.filter(({ state }) => state !== "current")
-      : [];
+    managed.status === "ready" ? managed.plugins.filter(offeredManaged) : [];
   const section =
     managed.status === "loading" ? (
       <section
@@ -266,10 +277,12 @@ type Review =
   | { status: "error"; reason: string }
   | { status: "ready"; preview: ImportPreview; path: string; key: string };
 
-const entryKey = (entry: ManagedEntry) =>
+const entryKey = (entry: ReviewEntry) =>
   ("url" in entry
     ? [entry.url, entry.sha256]
-    : [entry.repository, entry.reference, entry.commit, entry.path]
+    : "folder" in entry
+      ? [entry.folder, entry.path]
+      : [entry.repository, entry.reference, entry.commit, entry.path]
   ).join("\n");
 
 export function ManagedPluginReview({
@@ -294,7 +307,7 @@ export function ManagedPluginReview({
   busy: boolean;
   source: string;
   /** The live recommendation; undefined once the policy no longer lists it. */
-  entry: ManagedEntry | undefined;
+  entry: ReviewEntry | undefined;
   authorizeGit?: Authorize | undefined;
   holdReview?: (() => () => void) | undefined;
   /** An agent's request, reviewed in place of a recommendation. */
@@ -336,7 +349,7 @@ export function ManagedPluginReview({
   const discard = (value: string) =>
     void imports?.discard(value).catch(() => {});
   const acquire = useEffectEvent(
-    async (current: { active: boolean }, wanted: ManagedEntry) => {
+    async (current: { active: boolean }, wanted: ReviewEntry) => {
       if (!imports) return;
       try {
         if ("url" in wanted) {
@@ -364,19 +377,25 @@ export function ManagedPluginReview({
               : (preview.warnings[0] ?? "No plugin found at this URL."),
           );
         }
-        const signed = await authorizeGit?.(wanted.repository);
-        const preview = await imports.git(
-          signed?.repository ?? wanted.repository,
-          wanted.reference,
-          signed?.token,
-          ...gitScope(wanted.commit, wanted.path),
-        );
+        const folder = "folder" in wanted;
+        // An update reads the installed plugin's saved folder, as Settings' Update does.
+        const signed = folder ? null : await authorizeGit?.(wanted.repository);
+        const preview = !folder
+          ? await imports.git(
+              signed?.repository ?? wanted.repository,
+              wanted.reference,
+              signed?.token,
+              ...gitScope(wanted.commit, wanted.path),
+            )
+          : wanted.state === "missing"
+            ? await imports.folder(wanted.folder)
+            : await imports.previewFolder(wanted.id);
         if (!preview) throw new Error("No plugin source found.");
         if (!current.active) {
           discard(preview.token);
           return;
         }
-        if (preview.commit?.toLowerCase() !== wanted.commit) {
+        if (!folder && preview.commit?.toLowerCase() !== wanted.commit) {
           discard(preview.token);
           throw new Error(
             `The repository returned commit ${preview.commit ?? "unknown"}, not the recommended commit ${wanted.commit}.`,
@@ -402,7 +421,9 @@ export function ManagedPluginReview({
           candidate
             ? `The plugin at ${wanted.path} is ${candidate.manifest.id}, not ${wanted.id}.`
             : (preview.warnings.find((warning) => warning.startsWith(prefix)) ??
-                `This commit has no plugin at ${wanted.path}.`),
+                (folder
+                  ? `This folder has no plugin at ${wanted.path}.`
+                  : `This commit has no plugin at ${wanted.path}.`)),
         );
       } catch (reason) {
         if (current.active)
@@ -607,7 +628,9 @@ export function ManagedPluginReview({
         <p role="status">
           {entry && "url" in entry
             ? "Downloading the plugin…"
-            : "Reading the plugin at the pinned commit… Git imports may take up to a minute."}
+            : entry && "folder" in entry
+              ? "Reading the plugin folder…"
+              : "Reading the plugin at the pinned commit… Git imports may take up to a minute."}
         </p>
       )}
       {review.status === "error" && (
@@ -623,13 +646,30 @@ export function ManagedPluginReview({
               {requestedBy.reason}
             </p>
           )}
+          {"url" in entry &&
+            existing?.source === "external" &&
+            existing.updateSource &&
+            "repository" in existing.updateSource && (
+              <p className="mb-4 mt-0 break-words">
+                This update switches this plugin from Git to a packaged
+                download. The URL below replaces its saved Git source.
+              </p>
+            )}
           <code className={`${importStyles.sourcePath} break-all`}>
-            {location(entry)}
+            {/* A folder as this review read it, which is what installs. */}
+            {"folder" in entry
+              ? importLocation(review.preview, review.path)
+              : location(entry)}
           </code>
-          <p className="mb-4 mt-1 break-all text-caption text-muted">
+          {/* Hashes break anywhere; the folder note is prose. */}
+          <p
+            className={`mb-4 mt-1 ${"folder" in entry ? "break-words" : "break-all"} text-caption text-muted`}
+          >
             {"url" in entry
               ? `SHA-256: ${entry.sha256}`
-              : `Commit: ${review.preview.commit}`}
+              : "folder" in entry
+                ? "Edits to the plugin in this folder update live."
+                : `Commit: ${review.preview.commit}`}
           </p>
           {existing?.source === "bundled" ? (
             <p className="m-0">
@@ -720,14 +760,11 @@ export function UrlPluginInstallReview({
   );
   const saved = current?.updateSource;
   const conflict =
-    current?.source !== "external" || (saved && "url" in saved)
+    current?.source !== "external" ||
+    (saved && ("url" in saved || "repository" in saved))
       ? undefined
       : `${current.manifest.name} is already installed from ${
-          saved && "repository" in saved
-            ? saved.repository
-            : saved
-              ? saved.root
-              : "an unknown source"
+          saved ? saved.root : "an unknown source"
         }; remove it first to install it from ${source.url}.`;
   const close = () => {
     setClosed(true);

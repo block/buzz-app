@@ -283,6 +283,24 @@ test("Stop in a message's activity ends its local work quietly", async ({
   ).toBeFocused();
   const note = row.getByText("Stopped", { exact: true });
   await expect(note).toBeVisible();
+  // The outcome keeps an inset inside its outlined bubble in every density.
+  for (const density of ["default", "compact"]) {
+    await page.evaluate((density) => {
+      document.documentElement.dataset.messageDensity = density;
+    }, density);
+    const inset = await note.evaluate((label) => {
+      const text = label.getBoundingClientRect();
+      const bubble = label
+        .closest('[class*="messageBubble"]')
+        .getBoundingClientRect();
+      return Math.min(
+        text.left - bubble.left,
+        text.top - bubble.top,
+        bubble.bottom - text.bottom,
+      );
+    });
+    expect(inset, density).toBeGreaterThanOrEqual(4);
+  }
   await expect(
     page.locator('[data-channel-id="alpha"] [data-channel-working]'),
   ).toHaveCount(0);
@@ -554,6 +572,11 @@ test("opens an active message's empty thread without losing its activity preview
   await expect(
     thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
   ).toBeFocused();
+  // The composer takes focus before the rows finish positioning, and the
+  // rows stay inert until then, so a press on one would land in the composer.
+  await expect(
+    thread.getByRole("region", { name: "Thread messages", exact: true }),
+  ).toHaveAttribute("aria-busy", "false");
   await activity.press("Enter");
   await expect(
     page.getByRole("tab", { name: "Activity", selected: true }),
@@ -607,6 +630,11 @@ for (const focusOn of ["bubble", "stop", "composer"]) {
       name: /^View agent activity:/,
     });
     await expect(bubble).toBeVisible();
+    // Rows stay inert while the thread positions its first page, so focus()
+    // on a control inside one is a no-op until the region is no longer busy.
+    await expect(
+      thread.getByRole("region", { name: "Thread messages", exact: true }),
+    ).toHaveAttribute("aria-busy", "false");
     // Finish entrance and hold only the exit so the intermediate state is testable.
     await animationsSettled(message.locator("section"), { subtree: true });
     // Hold the actual exit animation before its first frame, rather than racing

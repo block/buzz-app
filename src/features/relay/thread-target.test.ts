@@ -27,7 +27,7 @@ const reply = message(alice, "a", "Selected reply", 10000, [
 ]);
 const aux = (kind: number, target: RelayEvent, content = "", time = 10001) =>
   signed(alice, { kind, content, created_at: time, tags: [["e", target.id]] });
-function setup(id = reply.id) {
+function setup(id = reply.id, subthread = false) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let traffic!: LiveCallbacks;
   const owner = createRelaySession({
@@ -42,15 +42,16 @@ function setup(id = reply.id) {
     ...wire,
     ...owner,
     traffic,
-    view: owner.session.thread("a", id, { exact: true }),
+    view: owner.session.thread("a", id, { exact: true, subthread }),
   };
 }
 async function targetRead(
   h: ReturnType<typeof setup>,
   target = reply,
   overlays: RelayEvent[] = [],
+  selection?: Parameters<typeof h.view.refresh>[0],
 ) {
-  const loading = h.view.refresh();
+  const loading = h.view.refresh(selection);
   h.next().respond([target]);
   await flush();
   h.next().respond(overlays);
@@ -141,7 +142,8 @@ it("admits passive label lookups in the background, so an opened thread's read s
   };
   const opened = h.view.refresh();
   await flush();
-  expect(ids()).toEqual([[linked[0]?.id], [reply.id]]);
+  // The overlay read starts with the target read.
+  expect(ids()).toEqual([[linked[0]?.id], [reply.id], undefined]);
   take((filter) => filter.ids?.[0] === reply.id).respond([reply]);
   await flush();
   take((filter) => filter["#e"]?.[0] === reply.id).respond([]);
@@ -219,13 +221,19 @@ it("keeps a fetched root in the existing thread surface", async () => {
 it("distinguishes absent targets and failed lookup, then permits explicit retry", async () => {
   const h = setup();
   const missing = h.view.refresh();
-  h.next().respond([]);
+  const absent = h.next();
+  const absentOverlay = h.next();
+  absent.respond([]);
   await missing;
   expect(h.view.snapshot().targetStatus).toBe("unavailable");
+  expect(absentOverlay.signal?.aborted).toBe(true);
   const failed = h.view.refresh();
-  h.next().fail(new Error("offline"));
+  const offline = h.next();
+  const offlineOverlay = h.next();
+  offline.fail(new Error("offline"));
   await failed;
   expect(h.view.snapshot().targetStatus).toBe("error");
+  expect(offlineOverlay.signal?.aborted).toBe(true);
   await flush();
   const { loading } = await targetRead(h);
   h.next().respond([root]);
@@ -447,17 +455,124 @@ it("never retains a selected reply rejected by the shared dual-channel access ga
     roster(relay, "b", []),
   ]);
   const reading = h.view.refresh();
-  h.next().respond([denied]);
+  const target = h.next();
+  const overlay = h.next();
+  target.respond([denied]);
   await reading;
   expect(h.view.snapshot()).toMatchObject({
     targetStatus: "unavailable",
     target: undefined,
     replies: [],
   });
-  expect(h.pending).toHaveLength(0); // No overlay/traversal can authorize rejected content.
+  expect(h.pending).toHaveLength(0); // No traversal can authorize rejected content.
+  // The overlapped overlay read is stopped.
+  expect(overlay.signal?.aborted).toBe(true);
   h.traffic.receive([root]);
   expect(h.view.snapshot().target).toBeUndefined();
   expect(h.view.snapshot().replies).toEqual([]);
+});
+
+it.each([1, 5])(
+  "reveals an exact descendant with %s intervening parents",
+  async (depth) => {
+    const parents: RelayEvent[] = [];
+    for (let index = 0; index < depth; index++)
+      parents.push(
+        message(alice, "a", `Ancestor ${index}`, 10001 + index, [
+          ["e", root.id, "", "root"],
+          ["e", parents.at(-1)?.id ?? reply.id, "", "reply"],
+        ]),
+      );
+    const parent = parents.at(-1);
+    if (!parent) throw new Error("Expected a parent");
+    const selected = message(alice, "a", "Exact descendant", 10006, [
+      ["e", root.id, "", "root"],
+      ["e", parent.id, "", "reply"],
+    ]);
+    const sibling = message(alice, "a", "Outside the branch", 10007, [
+      ["e", root.id, "", "reply"],
+    ]);
+    const h = setup(reply.id, true);
+    const { loading } = await targetRead(h, reply, [], {
+      messageId: selected.id,
+      sourceThreadId: root.id,
+    });
+    const loaded = depth === 5 ? parents : [];
+    const source = h.next();
+    expect(source.filters[0]?.ids).toEqual([root.id]);
+    h.traffic.receive([sibling]);
+    expect(h.view.snapshot()).toMatchObject({
+      root: undefined,
+      targetStatus: "loading",
+    });
+    source.respond([root, sibling, ...loaded]);
+    await flush();
+    h.next().respond([selected]);
+    h.next().respond([]);
+    await flush();
+    if (!loaded.length) h.next().respond([parent]);
+    expect(h.pending).toHaveLength(0);
+    await loading;
+
+    const replies = [...loaded, selected].map(({ id }) => ({ id }));
+    expect(h.view.snapshot()).toMatchObject({
+      root: { id: reply.id },
+      replies,
+      target: { id: selected.id },
+      targetStatus: "ready",
+    });
+    const selecting = h.view.retarget(sibling.id, new AbortController().signal);
+    h.next().respond([sibling]);
+    expect(await selecting).toBe("different");
+    expect(h.view.snapshot().target?.id).toBe(selected.id);
+    expect(h.view.snapshot().replies.map(({ id }) => ({ id }))).toEqual(
+      replies,
+    );
+  },
+);
+
+it("keeps the verified branch available when its initial selection is a sibling", async () => {
+  const child = message(alice, "a", "Task reply", 10001, [
+    ["e", root.id, "", "root"],
+    ["e", reply.id, "", "reply"],
+  ]);
+  const sibling = message(alice, "a", "Source reply", 10002, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const h = setup(reply.id, true);
+  const { loading } = await targetRead(h, reply, [], {
+    messageId: sibling.id,
+    sourceThreadId: root.id,
+  });
+  expect(h.view.snapshot().root).toBeUndefined();
+  h.next().respond([root, child, sibling]);
+  await flush();
+  h.next().respond([sibling]);
+  h.next().respond([]);
+  await loading;
+  expect(h.view.snapshot()).toMatchObject({
+    root: { id: reply.id },
+    replies: [{ id: child.id }],
+    targetStatus: "unavailable",
+  });
+});
+
+it("does not open a branch anchor signed for another physical thread", async () => {
+  const h = setup(reply.id, true);
+  const loading = h.view.refresh({
+    messageId: reply.id,
+    sourceThreadId: "a".repeat(64),
+  });
+  h.next().respond([reply]);
+  const overlays = h.next();
+  await loading;
+  expect(h.view.snapshot()).toMatchObject({
+    root: undefined,
+    replies: [],
+    targetStatus: "unavailable",
+  });
+  expect(overlays.signal?.aborted).toBe(true);
+  expect(h.pending).toHaveLength(0);
 });
 
 it("retargets a root-opened reader without reloading its history or replacing its rows", async () => {
@@ -504,6 +619,7 @@ it.each(["different", "unavailable", "error", "cancelled"] as const)(
       signal.signal,
     );
     const pending = h.next();
+    const overlay = h.next();
     if (outcome === "different") {
       pending.respond([unrelated]);
     } else if (outcome === "error") pending.fail(new Error("offline"));
@@ -514,6 +630,8 @@ it.each(["different", "unavailable", "error", "cancelled"] as const)(
     expect(await selecting).toBe(outcome);
     expect(h.view.snapshot()).toBe(before);
     expect(h.pending).toHaveLength(0);
+    // The overlapped overlay read is stopped.
+    expect(overlay.signal?.aborted).toBe(true);
   },
 );
 
@@ -527,9 +645,12 @@ it("the newest retarget wins and access loss fences an in-flight target", async 
   const two = message(alice, "a", "Two", 4, [["e", root.id, "", "reply"]]);
   const first = h.view.retarget(one.id, new AbortController().signal);
   const stale = h.next();
+  const staleOverlay = h.next();
   const second = h.view.retarget(two.id, new AbortController().signal);
   expect(stale.signal?.aborted).toBe(true);
+  expect(staleOverlay.signal?.aborted).toBe(true);
   stale.respond([one]);
+  staleOverlay.respond([]);
   await flush();
   h.next().respond([two]);
   await flush();
@@ -539,8 +660,10 @@ it("the newest retarget wins and access loss fences an in-flight target", async 
   expect(h.view.snapshot().target?.id).toBe(two.id);
   const revoked = h.view.retarget(one.id, new AbortController().signal);
   const held = h.next();
+  const heldOverlay = h.next();
   h.traffic.receive([roster(relay, "a", [], 11)]);
   expect(held.signal?.aborted).toBe(true);
+  expect(heldOverlay.signal?.aborted).toBe(true);
   held.respond([one]);
   expect(await revoked).toBe("cancelled");
   expect(h.view.snapshot().root).toBeUndefined();
@@ -629,12 +752,14 @@ it("finishing an older refresh after a failed retarget keeps the previous target
   await loading;
   const refresh = h.view.refresh();
   const oldTarget = h.next();
+  const oldOverlay = h.next();
   const next = h.view.retarget("c".repeat(64), new AbortController().signal);
   h.next().respond([]);
   expect(await next).toBe("unavailable");
+  expect(h.next().signal?.aborted).toBe(true); // The failed target's overlay.
   oldTarget.respond([reply]);
   await flush();
-  h.next().respond([]);
+  oldOverlay.respond([]);
   await flush();
   h.next().respond([root]);
   await refresh;
@@ -651,21 +776,26 @@ it("a failed retarget cannot strand a pending missing-target repair in loading",
   h.next().respond([root]);
   await loading;
   const missing = h.view.refresh();
-  h.next().respond([]);
+  const absent = h.next();
+  const absentOverlay = h.next();
+  absent.respond([]);
   await missing;
+  expect(absentOverlay.signal?.aborted).toBe(true);
   expect(h.view.snapshot()).toMatchObject({
     root: { id: root.id },
     targetStatus: "unavailable",
   });
   const repair = h.view.refresh();
   const repairingTarget = h.next();
+  const repairingOverlay = h.next();
   expect(h.view.snapshot().targetStatus).toBe("loading");
   const invalid = h.view.retarget("c".repeat(64), new AbortController().signal);
   h.next().respond([]);
   expect(await invalid).toBe("unavailable");
+  expect(h.next().signal?.aborted).toBe(true); // The failed target's overlay.
   repairingTarget.respond([reply]);
   await flush();
-  h.next().respond([]);
+  repairingOverlay.respond([]);
   await flush();
   h.next().respond([root]);
   await repair;
@@ -839,4 +969,36 @@ it("a candidate rejected by final admission never establishes a thread identity"
   } finally {
     thread.view.dispose();
   }
+});
+
+it("projects a task branch while retaining source reads and live isolation", async () => {
+  const h = setup(reply.id, true);
+  const child = message(alice, "a", "Task reply", 10001, [
+    ["e", root.id, "", "root"],
+    ["e", reply.id, "", "reply"],
+  ]);
+  const nested = message(alice, "a", "Nested task reply", 10002, [
+    ["e", root.id, "", "root"],
+    ["e", child.id, "", "reply"],
+  ]);
+  const unrelated = message(alice, "a", "Source chatter", 10003, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const { loading } = await targetRead(h);
+  h.next().respond([root, child, nested, unrelated]);
+  await loading;
+  expect(h.view.snapshot().root?.id).toBe(reply.id);
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+    child.id,
+    nested.id,
+  ]);
+  h.traffic.receive([
+    message(alice, "a", "More chatter", 10004, [["e", root.id, "", "reply"]]),
+  ]);
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+    child.id,
+    nested.id,
+  ]);
+  h.view.dispose();
+  expect(h.view.snapshot().replies).toEqual([]);
 });

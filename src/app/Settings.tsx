@@ -64,7 +64,7 @@ import {
   UrlPluginInstallReview,
   UrlPluginDetails,
 } from "./ManagedPlugins";
-import { managedBy, pendingManaged } from "../plugins/managed";
+import { managedBy, managedLabel, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
 import {
   isUrlInstallSource,
@@ -72,6 +72,7 @@ import {
   type PluginInstallRequests,
 } from "../plugins/installer";
 import { PluginReadme } from "./PluginReadme";
+import performanceDiagnosticsManifest from "../bundled/performance-diagnostics/manifest.json";
 import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
@@ -90,6 +91,7 @@ import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
 import { AgentSettings } from "./AgentSettings";
+import { pluginSection as replaceableSection } from "../features/agent-harness/sections";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
@@ -103,6 +105,7 @@ import {
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
+import { scrollport } from "./scrollport";
 
 // Exit animations retain DOM briefly; retired results must stop accepting focus.
 const PluginListEntry = forwardRef<HTMLDivElement, HTMLMotionProps<"div">>(
@@ -151,6 +154,25 @@ function isEssentialPlugin(plugin: PluginInfo) {
   );
 }
 
+/** The names of the plugins that are on and can replace `section` of the
+ * agents' base instructions in the chats they manage. Safe mode pauses the
+ * external ones. */
+export const sectionPlugins = (
+  plugins: readonly PluginInfo[],
+  section: string,
+  externalPaused = false,
+) =>
+  plugins
+    .filter(
+      (plugin) =>
+        plugin.enabled &&
+        !(externalPaused && plugin.source === "external") &&
+        plugin.manifest.host?.agentPromptSections?.some(
+          (id) => replaceableSection(id)?.id === section,
+        ),
+    )
+    .map((plugin) => plugin.manifest.name);
+
 function comparePlugins(a: PluginInfo, b: PluginInfo) {
   return (
     Number(isRequiredPlugin(b)) - Number(isRequiredPlugin(a)) ||
@@ -166,6 +188,12 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
   const other: PluginInfo[] = [];
   const core: PluginInfo[] = [];
   for (const plugin of plugins) {
+    // Diagnostics are offered through agent requests in this panel.
+    if (
+      plugin.source === "bundled" &&
+      plugin.manifest.id === performanceDiagnosticsManifest.id
+    )
+      continue;
     if (isCorePlugin(plugin)) {
       core.push(plugin);
       continue;
@@ -289,12 +317,6 @@ function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
 /** Narrow containers cover the catalog with details (Settings.module.css). */
 function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
-}
-
-function scrollport(element: Element) {
-  for (let node = element.parentElement; node; node = node.parentElement)
-    if (/auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
-  return null;
 }
 
 /** Whether any scrollport around `element` has scrolled past its start. */
@@ -435,7 +457,7 @@ function PluginDetails({
           </span>
           {managed && (
             <span className={styles.pluginInstallBadge}>
-              Managed by {managed.source}
+              Managed by {managedLabel(managed)}
             </span>
           )}
           <span
@@ -783,9 +805,67 @@ export function Settings({
   // first visit rather than with every Settings open, then kept like the rest.
   const [shortcutsVisited, setShortcutsVisited] = useState(false);
   if (selected === "shortcuts" && !shortcutsVisited) setShortcutsVisited(true);
-  // A switch made from inside the content hides or removes the control that
-  // made it, so focus moves into the section it opened.
+  // Sections share one scrollport, so each would open at the last one's
+  // offset. Side by side, keep each section's place while Settings is open, and
+  // start one not yet shown at its start. Stacked navigation scrolls with the
+  // content, and the sidebar starts sections there (Dialog).
+  const detailElement = useRef<HTMLDivElement>(null);
+  const sectionPlaces = useRef(new Map<string, number>());
+  const placedSection = useRef(selected);
+  // The section a switch made from inside the content opened (effect below).
   const contentFocus = useRef<string>(undefined);
+  useLayoutEffect(() => {
+    const content = detailElement.current;
+    // Standalone Settings scrolls its own detail; App mounts only the pane.
+    if (!navigationPane || !content) return;
+    // The layout can change at any time; stacked, the port leads with the nav.
+    const stacked = (port: Element) => !!port.querySelector(":scope > nav");
+    // Side by side, the plugin catalog scrolls in the detail instead, which the
+    // pane holds to the port's height (Settings.module.css).
+    const detailScrolls = selected === "plugins";
+    // A restore waits for content that renders late, until the user scrolls.
+    // A link starts its section at the top (contentFocus, below).
+    const shown = placedSection.current;
+    placedSection.current = selected;
+    let pending =
+      shown === selected || contentFocus.current === selected
+        ? undefined
+        : sectionPlaces.current.get(selected);
+    const restore = () => {
+      const port = scrollport(content);
+      if (port && !stacked(port))
+        (detailScrolls ? content : port).scrollTop = pending ?? 0;
+    };
+    if (shown !== selected) restore();
+    const keep = ({ target }: Event) => {
+      if (!(target instanceof Node) || !target.contains(content)) return;
+      const port = scrollport(content);
+      if (!port) return;
+      const side = !stacked(port);
+      const at = side && detailScrolls ? content : port;
+      if (target !== at) return;
+      // A clamped restore rests at the bottom edge, where the only way out is
+      // up, so the user's first scroll there clears it.
+      const clamped = at.scrollTop >= at.scrollHeight - at.clientHeight - 1;
+      if (side && pending !== undefined && at.scrollTop < pending && clamped)
+        return;
+      pending = undefined;
+      if (side) sectionPlaces.current.set(selected, at.scrollTop);
+    };
+    const grown = new ResizeObserver(() => pending !== undefined && restore());
+    grown.observe(content);
+    // The held detail keeps its size while the catalog grows inside it.
+    if (detailScrolls && pluginSection.current)
+      grown.observe(pluginSection.current);
+    document.addEventListener("scroll", keep, { capture: true, passive: true });
+    return () => {
+      grown.disconnect();
+      document.removeEventListener("scroll", keep, { capture: true });
+    };
+  }, [selected, navigationPane]);
+  // A switch made from inside the content hides or removes the control that
+  // made it, so focus moves into the section it opened. This effect must stay
+  // after the scroll-place one, so a link starts its section at the top.
   useLayoutEffect(() => {
     if (selected !== contentFocus.current) return;
     contentFocus.current = undefined;
@@ -820,6 +900,13 @@ export function Settings({
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? defaultSection)
+      : undefined;
+  // A visit naming a part lands on it as its section mounts. That wins over
+  // any scroll place Settings restores for the section, so a restore must
+  // skip such a visit.
+  const landing =
+    navigation?.target.kind === "settings" && navigation.target.part
+      ? navigation.entryId
       : undefined;
   useEffect(() => {
     if (
@@ -1255,7 +1342,7 @@ export function Settings({
                           <PluginProvenance
                             source={plugin.source}
                             publisher={plugin.publisher}
-                            managedBy={managedBy(managed, id)?.source}
+                            managedBy={managedLabel(managedBy(managed, id))}
                             className={styles.pluginRowAuthor}
                           />
                         </span>
@@ -1402,6 +1489,7 @@ export function Settings({
   const detail = (
     <>
       <div
+        ref={detailElement}
         className={`${styles.detail} buzz-settings-page`}
         data-integrated={navigationPane || undefined}
       >
@@ -1431,6 +1519,13 @@ export function Settings({
           <AgentSettings
             agents={agents}
             active={selected === "agents"}
+            sectionPlugins={(section) =>
+              sectionPlugins(
+                catalog?.plugins ?? [],
+                section,
+                externalPluginsPaused,
+              )
+            }
             navigation={navigation}
             onProvider={onProvider}
           />
@@ -1544,6 +1639,7 @@ export function Settings({
                   )
                 : undefined
             }
+            landing={landing}
           />
         )}
         {selected === "security" && (
@@ -1551,7 +1647,7 @@ export function Settings({
         )}
         {developerMode && (
           <div hidden={selected !== "developer"}>
-            <DeveloperSettings relay={communities.relay} />
+            <DeveloperSettings />
           </div>
         )}
         <div hidden={selected !== "plugins"}>

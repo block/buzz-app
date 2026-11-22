@@ -1,8 +1,10 @@
+import { readForward } from "./forwarded-message";
 import { workflowOwner } from "./workflow-attribution";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
 import { agentAudience } from "./audience";
+import { relayedFromClaim, relayNotice } from "./relayed-from";
 import { pluginRequestId } from "./plugin-request";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
@@ -74,7 +76,9 @@ function attachmentName(url: string): string | undefined {
   }
 }
 
-export function imetaAttachmentUrls(event: EventData): ReadonlySet<string> {
+export function imetaAttachmentUrls(event: {
+  tags: readonly (readonly string[])[];
+}): ReadonlySet<string> {
   const urls = new Set<string>();
   for (const entry of event.tags) {
     if (entry[0] !== "imeta") continue;
@@ -284,12 +288,10 @@ export function foldMessages(
   const replies = new Map<string, EventData[]>();
   for (const event of events) {
     if (channelRowKind(event.kind)) {
+      // Most callers pass no pending replies; skip the tag scan for them.
+      if (!pendingReplies?.has(event.id)) continue;
       const rootId = threadReference(event)?.rootId;
-      if (
-        rootId &&
-        pendingReplies?.has(event.id) &&
-        channelRowChannel(event) === channelId
-      ) {
+      if (rootId && channelRowChannel(event) === channelId) {
         const list = replies.get(rootId) ?? [];
         list.push(event);
         replies.set(rootId, list);
@@ -434,6 +436,8 @@ export function foldMessages(
         ? reply.pubkey
         : author;
     });
+    const forward = readForward({ ...event, content });
+    const relayed = relayedFromClaim(event);
     rows.push(
       Object.freeze({
         id: event.id,
@@ -461,9 +465,25 @@ export function foldMessages(
         createdAt: event.created_at,
         createdAtMs: eventMs(event),
         content: projected.content,
+        ...(forward ? { forward } : {}),
         ...(projected.content !== content ? { sourceContent: content } : {}),
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(agentAudience(event) ? { audience: "agents" as const } : {}),
+        // Only the signer's own agent: an attributed author signed nothing here.
+        ...(relayed && relayed.agent !== event.pubkey
+          ? {
+              relayedFrom: Object.freeze({
+                ...relayed,
+                ...(() => {
+                  const notice = relayNotice(event.content);
+                  return notice ? { notice } : {};
+                })(),
+                verified:
+                  authorId === event.pubkey &&
+                  agentOwner?.(relayed.agent) === event.pubkey,
+              }),
+            }
+          : {}),
         ...(() => {
           // One exact id, or none: conflicting claims bind no request.
           const ids = new Set(
@@ -501,7 +521,7 @@ export function foldMessages(
               }),
             }
           : {}),
-        ...(edits.length ? { edited: true as const } : {}),
+        ...(edits[0] ? { edited: true as const, editId: edits[0].id } : {}),
         ...(projected.seams.length ? { attachmentSeams: projected.seams } : {}),
         mentionReferences: Object.freeze([
           ...new Set(

@@ -17,6 +17,10 @@ import {
   setUnreadFirstPreference,
   unreadFirstPreference,
 } from "../features/search/unread-first-preference";
+import {
+  messageSortPreference,
+  setMessageSortPreference,
+} from "../features/search/message-sort-preference";
 
 import {
   setThreadPlacementPreference,
@@ -56,10 +60,12 @@ afterEach(() => {
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
   setUnreadFirstPreference(true);
+  setMessageSortPreference("relevance");
   setClockPreference({
     hourCycle: "system",
     seconds: false,
     messageTimestamps: "show",
+    localTimeDetails: true,
   });
   localStorage.clear();
   vi.unstubAllGlobals();
@@ -425,7 +431,7 @@ it("preserves follow-up choice and save recovery when Appearance is hidden", asy
   );
 });
 
-it("saves the clock, seconds and message timestamp choices", async () => {
+it("saves the clock, seconds, message timestamp and profile local time choices", async () => {
   const user = userEvent.setup();
   render(preferencesPage(), { wrapper: ToastProvider });
   const clock = screen.getByRole("combobox", { name: "Clock" });
@@ -439,10 +445,14 @@ it("saves the clock, seconds and message timestamp choices", async () => {
   await user.click(
     await screen.findByRole("option", { name: "Hide in Solo chats" }),
   );
+  await user.click(
+    screen.getByRole("switch", { name: "Show time zone details on profiles" }),
+  );
   expect(clockPreference()).toEqual({
     hourCycle: "h23",
     seconds: true,
     messageTimestamps: "hide-solo",
+    localTimeDetails: false,
   });
   expect(JSON.parse(localStorage.getItem("buzz-clock.v1") ?? "")).toEqual(
     clockPreference(),
@@ -621,6 +631,48 @@ it("leads search with unread until this device turns it off", async () => {
     );
   });
   expect(toggle()).toBeChecked();
+});
+
+it("saves the message sort default, or keeps it active and retries when saving fails", async () => {
+  const user = userEvent.setup();
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  const select = () =>
+    screen.getByRole("combobox", { name: "Sort messages by" });
+  const choose = async (name: string) => {
+    await user.click(select());
+    await user.click(await screen.findByRole("option", { name }));
+  };
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(select()).toHaveTextContent("Most relevant");
+  await choose("Most recent");
+  expect(localStorage.getItem("buzz-search-message-sort.v1")).toBe("newest");
+  cleanup();
+  render(<AppearanceSettings appearance={appearance} />, {
+    wrapper: ToastProvider,
+  });
+  expect(select()).toHaveTextContent("Most recent");
+
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await choose("Most relevant");
+  expect(messageSortPreference()).toBe("relevance");
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Message sort preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving message sort" }),
+  );
+  expect(localStorage.getItem("buzz-search-message-sort.v1")).toBe("relevance");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
 });
 
 it("keeps an unsaved unread-first choice active and retries the same choice", async () => {

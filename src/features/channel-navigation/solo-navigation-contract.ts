@@ -13,6 +13,8 @@ export type SoloRegionSnapshot = Readonly<{
   revision: number;
   model?: unknown;
   notice?: string;
+  /** Draws no region while ready; its chats stay out of the Solo list. */
+  hidden?: boolean;
 }>;
 export type SoloRegionAction = Readonly<{
   id: string;
@@ -46,6 +48,17 @@ export type SoloRegionSource = Readonly<{
   actions?: (binding: SoloRegionBinding) => readonly SoloRegionAction[];
   /** Agents a draft from `openDraft` may address. Without it, any available agent. */
   draftAgent?(binding: SoloRegionBinding, pubkey: string): boolean;
+  /** On draft Send, after the start record is saved and before chat creation or
+   * its first message. The host waits up to 3 seconds; rejection or timeout warns
+   * and continues. Timed-out work is not canceled. Not called by createChat. */
+  prepareStart?(
+    binding: SoloRegionBinding,
+    input: Readonly<{
+      channelId: string;
+      members: readonly string[];
+      start: SoloDraftStart;
+    }>,
+  ): void | Promise<void>;
   /** Show and change this chat's workspace in its composer. Read from local
    * state; a change shows through `read`'s next revision. */
   workspace?(
@@ -60,7 +73,12 @@ export type SoloChatWorkspace = Readonly<{
   file(workspaceId: string | undefined): Promise<void>;
 }>;
 /** How a chat this device sent from `openDraft` was started. */
-export type SoloDraftStart = Readonly<{ workspace?: string; lead?: true }>;
+export type SoloDraftStart = Readonly<{
+  workspace?: string;
+  /** Opaque JSON, retained in navigation history and the device's start record.
+   * Keep secrets out of context. A key isolates this draft from workspace drafts. */
+  draft?: Readonly<{ key?: string; context: JsonValue }>;
+}>;
 export type SoloChatInput = Readonly<{
   channelId: string;
   title: string;
@@ -70,15 +88,15 @@ export type SoloChatInput = Readonly<{
 }>;
 export type SoloRegionHandle = Readonly<{
   label: string;
+  /** Keyed draft context is retained in navigation and the saved start record. */
+  draftContext: true;
+  /** `ui.ChannelGroup` accepts `placement: "team-row"`. */
+  teamRowChannelGroups: true;
   /** The same device state as component props, available before mount. */
   state(binding: SoloRegionBinding): SoloRegionProps["state"];
   /** Open New chat for this region. Its first send creates the chat with this
-   * region's label; until then it is only a draft. With `lead`, the chat starts
-   * as the workspace's lead while the draft still targets that workspace. */
-  openDraft(
-    binding: SoloRegionBinding,
-    input?: Readonly<{ workspace?: string; lead?: true }>,
-  ): void;
+   * region's label; until then it is only a draft. */
+  openDraft(binding: SoloRegionBinding, input?: SoloDraftStart): void;
   /** This device's record of a chat started from `openDraft`, kept until `forget`. */
   started(
     binding: SoloRegionBinding,
@@ -106,17 +124,53 @@ export type SoloRegionProps = Readonly<{
     Card: ComponentType<SoloCardProps>;
     Disclosure: ComponentType<SoloDisclosureProps>;
     Workspace?: ComponentType<SoloWorkspaceProps>;
+    /** A joined channel's native heading and actions around source-owned content. */
+    ChannelGroup?: ComponentType<SoloChannelGroupProps>;
     Chats?: ComponentType<Readonly<{ all?: boolean }>>;
+    /** All ordinary chats without workspace chrome; keeps host rows and filing. */
+    ChatList?: ComponentType;
   }>;
+}>;
+/** A leading action whose artwork shares the native disclosure slot. */
+export type SoloHeaderLeading = Readonly<{
+  /** Non-interactive artwork for the action button. */
+  icon: ReactNode;
+  label: string;
+  onActivate(): void;
+  /** Render the intact controls in a non-interactive anchor, for example for a hover card. */
+  wrapControls?(controls: ReactNode): ReactNode;
+}>;
+export type SoloChannelGroupProps = Readonly<{
+  channelId: string;
+  selected?: boolean;
+  onSelect(): void;
+  expanded: boolean;
+  controls: string;
+  disclosureLabel: string;
+  onToggle(): void;
+  /** Offered only while the host permits starting a chat from this channel. */
+  onNewTask?(): void;
+  headerLeading?: SoloHeaderLeading | undefined;
+  /** Independent header content that stays visible when collapsed. */
+  headerAccessory?: ReactNode;
+  /** Compact, non-interactive content shown in place of quiet header actions. */
+  headerMetadata?: ReactNode;
+  /** Shows the disclosure, task action and content with the channel's Team
+   * sidebar row, which stays the heading, instead of in the region. */
+  placement?: "team-row";
+  children?: ReactNode;
 }>;
 export type SoloWorkspaceProps = Readonly<{
   id: string;
-  /** The workspace whose lead draft, from `openDraft` with `lead`, selects this row. */
-  leadWorkspaceId?: string;
   selected?: boolean;
   onSelect?(): void;
   onNewTask?(): void;
-  /** Reveal a moved or externally opened child; selecting the lead does not expand. */
+  headerLeading?: SoloHeaderLeading | undefined;
+  /** Independent header content that stays visible when collapsed. */
+  headerAccessory?: ReactNode;
+  /** Compact, non-interactive content shown in place of quiet header actions. */
+  headerMetadata?: ReactNode;
+  /** @deprecated Legacy no-op. Use the workspace disclosure to open it. */
   reveal?: string;
   dropTarget?: boolean;
   children?: ReactNode;
@@ -124,6 +178,10 @@ export type SoloWorkspaceProps = Readonly<{
 /** Host conversation behavior. The source composes the presentation from its parts. */
 export type SoloConversationProps = Readonly<{
   channelId: string;
+  /** Use a source-owned destination with the native row controls. */
+  onOpen?(): void;
+  /** Selection from the source-owned destination. */
+  selected?: boolean;
   menuActions?: readonly SoloRegionAction[];
   /** Not called for a conversation outside this region. Renaming replaces it with the host editor. */
   children(conversation: SoloConversation): ReactNode;

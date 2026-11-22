@@ -7,7 +7,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { assert } from "vitest";
 import { createRelaySession } from "../relay/session";
 import type { RelayData, RelaySnapshot } from "../relay/service";
-import type { ChannelSummary } from "../relay/contracts";
+import type { ChannelList, ChannelSummary } from "../relay/contracts";
 import type {
   SoloRegionBinding,
   SoloRegionHandle,
@@ -31,7 +31,7 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
         {
           manifest: { id: "example", name: "Example", apiVersion: 1 },
           source: "external",
-          enabled: false,
+          enabled: true,
           revision: "one",
           previous: null,
           reloadable: false,
@@ -93,7 +93,7 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
       labels: ["buzz.solo", label],
     },
   ];
-  let list = { status: "loading" as const, channels };
+  let list: ChannelList = { status: "loading", channels };
   const rosterListeners = new Set<() => void>(),
     relayListeners = new Set<() => void>();
   const session = {
@@ -131,7 +131,10 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
     async clearCache() {},
   };
   const service = new SoloNavigationService(root, relay, plugins);
-  const register = async (changes: Partial<SoloRegionSource> = {}) => {
+  const register = async (
+    changes: Partial<SoloRegionSource> = {},
+    pluginId = "example",
+  ) => {
     let snapshot: SoloRegionSnapshot;
     let binding!: SoloRegionBinding;
     let signal!: AbortSignal;
@@ -157,7 +160,7 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
       ...changes,
     };
     const fiber = root
-      .extend({ pluginOwner: { id: "example", revision: "one" } })
+      .extend({ pluginOwner: { id: pluginId, revision: "one" } })
       .plugin((ctx) => {
         assert(ctx.soloNavigation);
         handle = ctx.soloNavigation.registerSource(source);
@@ -218,9 +221,12 @@ export function createSoloRegionFixture(viewer = "a".repeat(64)) {
       connection = { ...connection, generation: connection.generation + 1 };
       for (const listener of relayListeners) listener();
     },
-    roster(next: readonly ChannelSummary[]) {
+    roster(
+      next: readonly ChannelSummary[],
+      status: ChannelList["status"] = "loading",
+    ) {
       channels = next;
-      list = { status: "loading", channels };
+      list = { status, channels };
       for (const listener of rosterListeners) listener();
     },
   };

@@ -140,6 +140,9 @@ export const sectionTitle = (tag: string) => TITLES.get(tag) ?? tag;
 export const STEER = "new-message-arrived-while-you-were-working";
 const EVENT_TAGS = new Set(["buzz-event", STEER]);
 
+/** Wrappers inside a base section's text: part of that text, not framing. */
+const INLINE = new Set(["owner-section", "plugin-section"]);
+
 /** Split top-level `<tag attrs>` … `</tag>` prompt framing; other text is kept. */
 export function promptSections(text: string): PromptSection[] {
   const sections: PromptSection[] = [];
@@ -154,7 +157,8 @@ export function promptSections(text: string): PromptSection[] {
       continue;
     }
     const start = /^<([a-z][a-z0-9-]*)(?:\s[^<>]*)?>$/.exec(line);
-    if (start?.[1]) open = { tag: start[1], lines: [] };
+    if (start?.[1] && !INLINE.has(start[1]))
+      open = { tag: start[1], lines: [] };
     else loose.push(line);
   }
   // An unterminated section is ordinary text, not a silently dropped body.
@@ -219,6 +223,36 @@ export function promptMessage(
         ? authorKeys[0]
         : undefined,
   };
+}
+
+/** The ids of the Buzz events a tool result reports sending, as Buzz's
+ * message tools answer, `sent <event-id>`. */
+export const sentEventIds = (output: string) =>
+  [...output.matchAll(/\bsent ([0-9a-f]{64})\b/g)].flatMap(
+    (match) => match[1] ?? [],
+  );
+/** A sent message once its result reports success: posted, as the event the
+ * result names, so a reply can be found by its id. */
+export const postedAs = (output: string) => {
+  const [messageId] = sentEventIds(output);
+  return { posted: true, ...(messageId ? { messageId } : {}) };
+};
+
+/** The ids of the Buzz events a prompt was for: an exact record's first line,
+ * or an older turn's escaped event. */
+export function promptEventIds(sections: readonly PromptSection[]) {
+  return sections.flatMap(({ tag, body }) => {
+    if (!EVENT_TAGS.has(tag)) return [];
+    for (const json of [body.split("\n", 1)[0], body]) {
+      try {
+        const id = eventId(object(JSON.parse(json ?? ""))?.id);
+        if (id) return [id];
+      } catch {
+        // Not an event record.
+      }
+    }
+    return [];
+  });
 }
 
 /** Thread evidence from the prompt's `<context>`: root, channel, or unknown. */
@@ -321,6 +355,22 @@ export function activityTranscript(
   return transcript;
 }
 
+// Each new record replaces the array, so a transcript is rebuilt from every
+// retained record. Frozen records never change: parse each one once.
+const unparsable = Symbol("unparsable");
+const parsedPlaintext = new WeakMap<object, unknown>();
+function parsed(record: Source) {
+  if (parsedPlaintext.has(record)) return parsedPlaintext.get(record);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(record.plaintext);
+  } catch {
+    raw = unparsable;
+  }
+  if (Object.isFrozen(record)) parsedPlaintext.set(record, raw);
+  return raw;
+}
+
 function buildTranscript(
   records: readonly Source[],
   scope: TranscriptScope,
@@ -329,12 +379,8 @@ function buildTranscript(
   const events: { id: string; at: number; order: number; event: Json }[] = [];
   for (const record of records) {
     if (record.agent !== scope.agent) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(record.plaintext);
-    } catch {
-      continue;
-    }
+    const raw = parsed(record);
+    if (raw === unparsable) continue;
     const envelope = object(raw);
     const children =
       envelope?.kind === "batch" ? object(envelope.payload)?.events : [raw];
@@ -699,16 +745,56 @@ function buildTranscript(
       // stays a tool, with its error.
       turn.items = turn.items.map((item) => {
         const text = item.type === "tool" && sent.get(item.toolCallId);
-        return text &&
-          item.status === "completed" &&
-          !errored.has(item.toolCallId) &&
-          postsMessage(item.title)
-          ? { id: item.id, at: item.at, type: "message", text, posted: true }
-          : item;
+        if (
+          !text ||
+          item.type !== "tool" ||
+          item.status !== "completed" ||
+          errored.has(item.toolCallId) ||
+          !postsMessage(item.title)
+        )
+          return item;
+        return {
+          id: item.id,
+          at: item.at,
+          type: "message",
+          text,
+          ...postedAs(item.output),
+        };
       });
       // Older harnesses omit threadRootEventId; the prompt context still names it.
       turn.threadRootId = payloadThread ?? prompt;
       return turn;
     }),
   };
+}
+
+/** `turns` with each notice right after the prompt it was kept for, by the
+ * prompt's id. A notice whose message the harness never took matches no
+ * prompt, so it shows nowhere rather than on another turn. */
+export function withNotices(
+  turns: readonly TranscriptTurn[],
+  notices: ReadonlyMap<string, string>,
+): TranscriptTurn[] {
+  return turns.map((turn) =>
+    turn.items.some((item) => item.type === "prompt" && notices.has(item.id))
+      ? {
+          ...turn,
+          items: turn.items.flatMap((item): TranscriptItem[] => {
+            const text =
+              item.type === "prompt" ? notices.get(item.id) : undefined;
+            return text
+              ? [
+                  item,
+                  {
+                    id: `${item.id}:notice`,
+                    at: item.at,
+                    type: "status",
+                    text,
+                  },
+                ]
+              : [item];
+          }),
+        }
+      : turn,
+  );
 }

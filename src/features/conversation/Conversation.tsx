@@ -1,3 +1,4 @@
+import { hostComposerProvenance } from "../messages/mention-draft";
 import { ActivityIndicatorPresentation } from "./typing-presentation";
 import {
   createContext,
@@ -143,8 +144,9 @@ export function ConversationChannel(props: ChannelProps) {
   const { session, scope, extensions, channel, active, children } = props;
   const channelName = props.channelName ?? channel?.name ?? "";
   // While the channel is open the profile cache keeps room for its whole roster
-  // on top of its base; leaving gives the room back. A retained tab in the
-  // background and a preview that does not visit the channel hold none.
+  // on top of its base; leaving gives the room back after a short hold. A
+  // retained tab in the background and a preview that does not visit the
+  // channel hold none.
   const members = useListedChannel(
     session.channels,
     channel?.id,
@@ -310,6 +312,7 @@ export function ConversationComposer(props: Own<MessageComposerProps>) {
   );
   return (
     <MessageComposer
+      evidenceOwner={hostComposerProvenance}
       {...shared}
       {...(shared.soloConversation
         ? {

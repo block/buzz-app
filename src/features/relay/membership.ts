@@ -9,8 +9,14 @@ export const channelRowKind = (kind: number) =>
 /** A content row has one channel home; ambiguous tags are not membership evidence. */
 export function channelRowChannel(event: EventData): string | undefined {
   if (!channelRowKind(event.kind)) return undefined;
-  const channels = event.tags.filter((tag) => tag[0] === "h");
-  return channels.length === 1 && channels[0]?.[1] ? channels[0][1] : undefined;
+  let home: string[] | undefined;
+  for (let index = 0; index < event.tags.length; index++) {
+    const entry = event.tags[index];
+    if (entry?.[0] !== "h") continue;
+    if (home) return undefined;
+    home = entry;
+  }
+  return home?.[1] || undefined;
 }
 const pubkey = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
@@ -49,11 +55,17 @@ export function rowProfileIds(row: ChannelMessage): readonly string[] {
     : [
         row.authorId,
         ...(row.workflowOwnerId ? [row.workflowOwnerId] : []),
+        // Loading the claimed agent's profile is what lets its owner verify.
+        ...(row.relayedFrom ? [row.relayedFrom.agent] : []),
         ...row.mentions,
         ...(row.mentionReferences ?? []),
         ...row.participants,
       ];
 }
+
+/** One line naming a diff row, whose content is a raw patch rather than prose. */
+export const diffPreview = (diff: NonNullable<ChannelMessage["diff"]>) =>
+  `Diff: ${diff.filePath || "patch"}${diff.description ? ` — ${diff.description}` : ""}`;
 
 /** Activity never replaces the latest conversational sidebar preview. */
 export function messagePreview(
@@ -62,8 +74,6 @@ export function messagePreview(
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
     if (row && !row.membership && !row.huddle)
-      return row.diff
-        ? `Diff: ${row.diff.filePath || "patch"}${row.diff.description ? ` — ${row.diff.description}` : ""}`
-        : row.content;
+      return row.diff ? diffPreview(row.diff) : row.content;
   }
 }

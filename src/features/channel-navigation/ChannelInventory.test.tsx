@@ -19,6 +19,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { SIDEBAR_REVEAL_BUDGET_MS } from "../../bundled/channels/useSidebarStartup";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
+import { MenuItem } from "../../shared/design-system/ui/Menu";
 import { DiscoveryState } from "../relay/discovery";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import { huddleDescription } from "../huddle/lifecycle";
@@ -3195,6 +3196,51 @@ it("does not rebuild unrelated plugin rows when a row menu opens or closes", asy
   expect(
     renderRow.mock.calls.map(([row]) => row.id).filter((id) => id !== "beta"),
   ).toEqual([]);
+});
+
+it("mounts contributed actions only in a row menu with the current workspace target", async () => {
+  const selected = vi.fn();
+  const registry = rowRegistry({
+    version: 1,
+    id: "actions",
+    menu: (props) => (
+      <MenuItem
+        onClick={() => {
+          selected({ ...props, wasAvailable: props.available() });
+          props.close();
+        }}
+      >
+        Plugin action
+      </MenuItem>
+    ),
+  });
+  const h = fixture(undefined, "ready", undefined, undefined, registry);
+  render(h.view("beta"));
+  const alpha = await screen.findByRole("button", { name: "alpha" });
+  fireEvent.keyDown(alpha, { key: "ContextMenu" });
+  const action = await screen.findByRole("menuitem", {
+    name: "Plugin action",
+  });
+  fireEvent.click(action);
+  expect(selected).toHaveBeenCalledOnce();
+  expect(selected.mock.calls[0]?.[0]).toEqual(
+    expect.objectContaining({
+      row: expect.objectContaining({ id: "alpha", kind: "team" }),
+      session: h.session,
+      target: expect.objectContaining({
+        kind: "conversation",
+        channelId: "beta",
+      }),
+    }),
+  );
+  expect(selected.mock.calls[0]?.[0].wasAvailable).toBe(true);
+  expect(selected.mock.calls[0]?.[0].available()).toBe(false);
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("menu", { name: "Actions for alpha" }),
+    ).toBeNull(),
+  );
+  expect(h.navigator.open).not.toHaveBeenCalled();
 });
 
 it("decorates live host rows and closes menus only when their row is hidden", async () => {

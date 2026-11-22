@@ -1,7 +1,9 @@
 import { Service, type Context } from "@deepseek-ai/cordis";
-import type { ReactElement } from "react";
+import type { ComponentType, ReactElement } from "react";
 import type { ChannelSummary } from "../relay/contracts";
+import type { RelaySession } from "../relay/session";
 import type { UnreadSnapshot } from "../relay/unread";
+import type { OpenTarget } from "../navigation/targets";
 import {
   createContributions,
   type Contribution,
@@ -22,6 +24,15 @@ export type SidebarRowSortMode = Readonly<{
   label: string;
   compare: (a: SidebarRow, b: SidebarRow) => number;
 }>;
+export type SidebarRowMenuProps = Readonly<{
+  row: SidebarRow;
+  session: RelaySession;
+  /** The workspace beside which a contributed target may open. */
+  target: OpenTarget;
+  /** False after this exact contribution or row menu has retired. */
+  available(): boolean;
+  close(): void;
+}>;
 export type SidebarRowContribution = Readonly<{
   version: 1;
   id: string;
@@ -29,6 +40,8 @@ export type SidebarRowContribution = Readonly<{
     row: SidebarRow,
     Default: ReactElement | null,
   ) => ReactElement | null;
+  /** Items for the host-owned context menu on an ordinary sidebar row. */
+  menu?: ComponentType<SidebarRowMenuProps>;
   sortModes?: readonly SidebarRowSortMode[];
 }>;
 export type RegisteredSidebarRows = Contribution<SidebarRowContribution>;
@@ -92,6 +105,7 @@ export class SidebarRowsService extends Service implements SidebarRows {
       typeof value.id !== "string" ||
       !idPattern.test(value.id) ||
       (value.render !== undefined && typeof value.render !== "function") ||
+      (value.menu !== undefined && typeof value.menu !== "function") ||
       (value.sortModes !== undefined &&
         (!Array.isArray(value.sortModes) ||
           new Set(value.sortModes.map((mode) => mode?.id)).size !==

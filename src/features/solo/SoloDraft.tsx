@@ -19,7 +19,13 @@ import {
   parseChatSetup,
   type ChatSetup,
 } from "./workspace";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import { ownedSoloAgents } from "../relay/solo-admins";
 import {
@@ -28,7 +34,10 @@ import {
   subscribeView,
   viewRevision,
 } from "../../shared/view-state";
-import { MessageComposer } from "../messages/MessageComposer";
+import {
+  MessageComposer,
+  type MessageComposerProps,
+} from "../messages/MessageComposer";
 import {
   parseSoloModelPicks,
   soloModelPicksKey,
@@ -194,16 +203,22 @@ export function SoloDraft({
   session,
   scope,
   onStarted,
+  onConfirmed,
   onFailed,
   projectId,
   extensions,
   focusRequest = 0,
+  submitRequest,
   agent,
   linkedId,
   source,
   visit,
   region,
   draft: regionDraft,
+  title = "New chat",
+  icon,
+  headerActions,
+  embedded,
 }: {
   draft?: SoloDraftStart["draft"];
   /** The Solo region whose source opened this draft; its chat gets that label. */
@@ -215,10 +230,16 @@ export function SoloDraft({
   /** Start with this agent chosen, as when search opens a new chat with it. */
   agent?: string | undefined;
   focusRequest?: number | AbortSignal;
+  /** Starts one host-seeded request as soon as the shared composer is ready. */
+  submitRequest?: MessageComposerProps["submitRequest"];
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
   onStarted: (id: string) => void;
+  /** The relay confirmed that a chat reported through `onStarted` exists.
+   * Confirmation still arrives after an optimistic channel row replaces the
+   * draft. */
+  onConfirmed?: ((id: string) => void) | undefined;
   /** The started chat `id` was never made; `message` says why, and whether
    * what was sent in it went back to New chat. It does unless a draft was
    * begun there since (an earlier refused prompt included) or it can't be
@@ -227,6 +248,11 @@ export function SoloDraft({
     | ((id: string, message: string, retry?: () => Promise<void>) => void)
     | undefined;
   projectId?: string | undefined;
+  /** Optional host presentation; draft behavior and ownership stay unchanged. */
+  title?: string | undefined;
+  icon?: ReactNode;
+  headerActions?: ReactNode;
+  embedded?: boolean | undefined;
 }) {
   const draftKey = region
     ? regionDraftKey(region, projectId, regionDraft?.key)
@@ -688,7 +714,13 @@ export function SoloDraft({
         // Delivery retains its frozen choices; neither shared map is changed unlocked.
       }
       draftEdited(undefined);
-      if (mounted.current) onStarted(channelId);
+      if (mounted.current) {
+        onStarted(channelId);
+        void ready.then(
+          () => onConfirmed?.(channelId),
+          () => {},
+        );
+      }
       if (clearedPicks === "failed")
         notify(
           "Could not clear model and effort from New chat. Reset them before starting another chat.",
@@ -884,6 +916,7 @@ export function SoloDraft({
         evidenceOwner={hostComposerProvenance}
         key={restored.count}
         focusRequest={restored.focus ? restored.count : 0}
+        submitRequest={submitRequest}
         chatPresentation
         ownSoloConversation
         session={session}
@@ -956,19 +989,25 @@ export function SoloDraft({
   );
   return (
     <SoloDraftView
+      embedded={embedded}
+      title={title}
+      icon={icon}
       actions={
-        <IconButton
-          ref={settingsTrigger}
-          size="toolbar"
-          aria-label="Chat settings"
-          title="Chat settings"
-          icon={<GearIcon size="1rem" aria-hidden="true" />}
-          disabled={busy}
-          onClick={() => {
-            setSettingsLifetime(draftLifetime(scope, draftSettings));
-            setSettingsOpen(true);
-          }}
-        />
+        <>
+          <IconButton
+            ref={settingsTrigger}
+            size="toolbar"
+            aria-label="Chat settings"
+            title="Chat settings"
+            icon={<GearIcon size="1rem" aria-hidden="true" />}
+            disabled={busy}
+            onClick={() => {
+              setSettingsLifetime(draftLifetime(scope, draftSettings));
+              setSettingsOpen(true);
+            }}
+          />
+          {headerActions}
+        </>
       }
     >
       {composer}

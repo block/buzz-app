@@ -8919,6 +8919,249 @@ it("keeps retry submission available while a new Solo draft is locked", () => {
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
+it("submits one seeded host request after its composer is ready", async () => {
+  const submit = vi.fn();
+  const onBlocked = vi.fn();
+  const draft = {
+    text: "What’s new here that I need to know about?",
+    recipients: [],
+  };
+  const request = {
+    id: "catch-up:one",
+    draft,
+    seeded: true,
+    onBlocked,
+  };
+  const h = mount({
+    submitRequest: request,
+    submission: {
+      draftKey: "catch-up",
+      initialDraft: draft,
+      locked: false,
+      disabled: false,
+      submit,
+    },
+  });
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  h.retarget({ submitRequest: request });
+  expect(submit).toHaveBeenCalledOnce();
+  expect(onBlocked).not.toHaveBeenCalled();
+  expect(submit).toHaveBeenCalledWith(
+    {
+      text: "What’s new here that I need to know about?",
+      recipients: [],
+    },
+    expect.objectContaining({ prepareForSend: expect.any(Function) }),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  );
+});
+
+it("never automatically submits an edited already-seeded host request", async () => {
+  const submit = vi.fn();
+  const onBlocked = vi.fn();
+  const h = mount({
+    submitRequest: {
+      id: "catch-up:edited",
+      draft: { text: "Generated catch-up", recipients: [] },
+      seeded: true,
+      onBlocked,
+    },
+    submission: {
+      draftKey: "catch-up:edited",
+      initialDraft: "My edited catch-up",
+      locked: false,
+      disabled: false,
+      submit,
+    },
+  });
+  await waitFor(() => expect(onBlocked).toHaveBeenCalledOnce());
+  expect(h.input()).toHaveTextContent("My edited catch-up");
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("disarms an already-seeded host request when it changes before readiness", async () => {
+  const submit = vi.fn();
+  const onBlocked = vi.fn();
+  const draft = { text: "Generated catch-up", recipients: [] };
+  const submission = {
+    draftKey: "catch-up:pending-edit",
+    initialDraft: draft,
+    locked: false,
+    disabled: true,
+    submit,
+  };
+  const h = mount({
+    submitRequest: {
+      id: "catch-up:pending-edit",
+      draft,
+      seeded: true,
+      onBlocked,
+    },
+    submission,
+  });
+  h.fill("Generated catch-up changed");
+  await waitFor(() => expect(onBlocked).toHaveBeenCalledOnce());
+  h.retarget({ submission: { ...submission, disabled: false } });
+  await waitFor(() => expect(h.input()).toHaveTextContent("changed"));
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("disarms an already-seeded host request when its rich document changes", async () => {
+  const submit = vi.fn();
+  const onBlocked = vi.fn();
+  const draft = { text: "Generated catch-up", recipients: [] };
+  const submission = {
+    draftKey: "catch-up:pending-format",
+    initialDraft: draft,
+    locked: false,
+    disabled: true,
+    submit,
+  };
+  const h = mount({
+    submitRequest: {
+      id: "catch-up:pending-format",
+      draft,
+      seeded: true,
+      onBlocked,
+    },
+    submission,
+  });
+  act(() => {
+    h.input().setSelectionRange(0, draft.text.length);
+    h.input().toggleFormat("bold");
+  });
+  await waitFor(() => expect(onBlocked).toHaveBeenCalledOnce());
+  h.retarget({ submission: { ...submission, disabled: false } });
+  expect(h.input().innerHTML).toContain("<strong>");
+  expect(submit).not.toHaveBeenCalled();
+});
+
+it("seeds an explicit update into an empty composer and submits it once", async () => {
+  const submit = vi.fn();
+  const onBlocked = vi.fn();
+  const onSubmitted = vi.fn();
+  const request = {
+    id: "update:one",
+    draft: { text: "Read the thread again and catch me up", recipients: [] },
+    onBlocked,
+    onSubmitted,
+  };
+  const h = mount({
+    submission: {
+      draftKey: "catch-up:update",
+      initialDraft: "",
+      locked: false,
+      disabled: false,
+      submit,
+    },
+  });
+  h.retarget({ submitRequest: request });
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  expect(submit.mock.calls[0]?.[0]).toMatchObject(request.draft);
+  h.retarget({ submitRequest: request });
+  expect(submit).toHaveBeenCalledOnce();
+  expect(onBlocked).not.toHaveBeenCalled();
+  expect(onSubmitted).toHaveBeenCalledOnce();
+});
+
+it("sends an explicit catch-up update to its selected agent in the existing Solo chat", async () => {
+  const h = mount();
+  h.setLibrary([first]);
+  const channel = {
+    id: "channel",
+    name: "Catch-up chat",
+    channelType: "solo" as const,
+    members: [first.pubkey],
+  };
+  const list = { status: "ready" as const, channels: [channel] };
+  h.retarget({
+    ownSoloConversation: true,
+    soloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: {
+        ...h.session.channels,
+        list: () => list,
+        subscribeList: () => () => {},
+      },
+      channelWrites: {
+        ...h.session.channelWrites,
+        refreshMembership: vi.fn(async () => channel),
+      },
+    },
+  });
+  const onBlocked = vi.fn();
+  h.retarget({
+    submitRequest: {
+      id: "update:solo",
+      draft: {
+        text: "@Honey Read the thread again",
+        recipients: [{ ...first, start: 0, end: 6 }],
+      },
+      onBlocked,
+    },
+  });
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(0, 3)).toEqual([
+    "channel",
+    "@Honey Read the thread again",
+    [first.pubkey],
+  ]);
+  expect(onBlocked).not.toHaveBeenCalled();
+});
+
+it("preserves staged files when an explicit update is requested", async () => {
+  const h = mount();
+  h.retarget({
+    session: {
+      ...h.session,
+      attachments: { upload: vi.fn(async () => uploadDescriptor()) },
+    },
+  });
+  pickAttachments(h.container, [attachmentFile("notes.txt")]);
+  const onBlocked = vi.fn();
+  h.retarget({
+    submitRequest: {
+      id: "update:files",
+      draft: { text: "Update the catch-up", recipients: [] },
+      onBlocked,
+    },
+  });
+  await waitFor(() => expect(onBlocked).toHaveBeenCalledOnce());
+  expect(screen.getByText("notes.txt")).toBeInTheDocument();
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it.each(["Keep my follow-up", "@reference"])(
+  "refuses an update without replacing the existing draft %s",
+  async (draft) => {
+    const submit = vi.fn();
+    const onBlocked = vi.fn();
+    const h = mount({
+      submitRequest: {
+        id: "update:blocked",
+        draft: { text: "Update the catch-up", recipients: [] },
+        onBlocked,
+      },
+      submission: {
+        draftKey: "catch-up:blocked",
+        initialDraft: draft,
+        locked: false,
+        disabled: false,
+        submit,
+      },
+    });
+    await waitFor(() => expect(onBlocked).toHaveBeenCalledOnce());
+    expect(h.input()).toHaveTextContent(draft);
+    expect(submit).not.toHaveBeenCalled();
+  },
+);
+
 it.each([undefined, "root"])(
   "prefills only exact selected agents after an accepted send in %s",
   (threadRootId) => {

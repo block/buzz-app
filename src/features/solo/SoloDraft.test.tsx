@@ -1102,6 +1102,7 @@ it("a refused linked start gives its source and workspace back to the New chat o
 it("a start that is only unconfirmed keeps the chat and its message", async () => {
   const test = setup(),
     onStarted = vi.fn(),
+    onConfirmed = vi.fn(),
     onFailed = vi.fn(),
     user = userEvent.setup();
   test.channelWrites.ready = Promise.reject(
@@ -1113,6 +1114,7 @@ it("a start that is only unconfirmed keeps the chat and its message", async () =
       session={test.session}
       scope="test"
       onStarted={onStarted}
+      onConfirmed={onConfirmed}
       onFailed={onFailed}
     />,
   );
@@ -1120,10 +1122,39 @@ it("a start that is only unconfirmed keeps the chat and its message", async () =
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   await act(() => test.channelWrites.ready.catch(() => {}));
+  expect(onConfirmed).not.toHaveBeenCalled();
   expect(onFailed).not.toHaveBeenCalled();
   expect(test.session.outbox?.dismiss).not.toHaveBeenCalled();
   expect(test.channelWrites.discardFailed).not.toHaveBeenCalled();
   expect(readView("test", "solo:new-draft", null)).toBe("");
+});
+
+it("reports a started chat as confirmed only after relay creation", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    onConfirmed = vi.fn(),
+    user = userEvent.setup();
+  let confirm = () => {};
+  test.channelWrites.ready = new Promise<void>((resolve) => {
+    confirm = resolve;
+  });
+  render(
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+      onConfirmed={onConfirmed}
+    />,
+  );
+  await user.type(screen.getByRole("textbox"), "Confirm this chat");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  const [id] = onStarted.mock.calls[0] ?? [];
+  expect(onConfirmed).not.toHaveBeenCalled();
+
+  await act(async () => confirm());
+
+  await waitFor(() => expect(onConfirmed).toHaveBeenCalledExactlyOnceWith(id));
 });
 it("cannot send on an unsupported community", async () => {
   const test = setup(false),
@@ -2656,6 +2687,7 @@ it("retains a saved first-chat model when its catalog no longer needs controls",
 it("restores model and effort after a refused first Solo start", async () => {
   const test = setup(),
     onStarted = vi.fn(),
+    onConfirmed = vi.fn(),
     onFailed = vi.fn(),
     user = userEvent.setup();
   const pubkey = "a".repeat(64);
@@ -2668,6 +2700,7 @@ it("restores model and effort after a refused first Solo start", async () => {
         session={test.session}
         scope="test"
         onStarted={onStarted}
+        onConfirmed={onConfirmed}
         onFailed={onFailed}
       />
     </AgentsContext.Provider>,
@@ -2695,6 +2728,7 @@ it("restores model and effort after a refused first Solo start", async () => {
 
   await refuse();
   await waitFor(() => expect(onFailed).toHaveBeenCalledOnce());
+  expect(onConfirmed).not.toHaveBeenCalled();
   expect(readView("test", `solo:model-picks:${id}`, null)).toBeNull();
   expect(readView("test", "solo:model-picks:solo:new-draft", null)).toEqual({
     [pubkey]: { model: "deep", effort: "high", type: "test/agent" },

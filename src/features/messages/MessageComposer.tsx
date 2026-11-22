@@ -155,6 +155,7 @@ import {
   MAX_DRAFT_GIFS,
   mentionBoundary,
   mentionDraft,
+  addressingOnly,
   editorMention,
   hasHumanMentionSelection,
   hostComposerProvenance,
@@ -409,6 +410,18 @@ export type MessageComposerProps = {
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
   autoFocus?: boolean | RefObject<HTMLElement | null>;
   focusRequest?: number;
+  /** Submit one host-owned draft after its composer is ready. */
+  submitRequest?:
+    | Readonly<{
+        id: string;
+        draft: MentionDraft;
+        /** The host already persisted this exact draft before mounting. */
+        seeded?: boolean;
+        /** A request never replaces or sends a person's draft, files, or edit. */
+        onBlocked(): void;
+        onSubmitted?(): void;
+      }>
+    | undefined;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
@@ -556,6 +569,14 @@ function untouchedDraft(draft: MentionDraft) {
   );
 }
 
+/** Automatic submission owns only the exact payload the host generated. */
+function sameHostDraft(left: MentionDraft, right: MentionDraft) {
+  return (
+    composerMarkdown(left) === composerMarkdown(right) &&
+    JSON.stringify(left.recipients) === JSON.stringify(right.recipients)
+  );
+}
+
 /** The link that opens a conversation, or a thread in it. */
 function conversationLink(channelId: string, threadRootId?: string) {
   return threadRootId
@@ -599,6 +620,7 @@ function Composer({
   clearMediaTime,
   autoFocus = false,
   focusRequest,
+  submitRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
   submission,
@@ -3802,6 +3824,72 @@ function Composer({
     }
   }
   const readingOnly = !outbox?.supports(9) && !cached;
+  const submittedRequest = useRef<string>(undefined);
+  const seededRequest = useRef<string>(undefined);
+  const submitHostRequest = useEffectEvent(() => {
+    const requestId = submitRequest?.id;
+    if (!requestId || submittedRequest.current === requestId) return;
+    const blocked =
+      !!editing.target ||
+      attachments.items.length > 0 ||
+      !!value.chatCards?.length ||
+      !!value.gifs?.length ||
+      voice.isCapturing();
+    const changed = !sameHostDraft(value, submitRequest.draft);
+    // A persisted seed is an automatic-send grant for exactly that draft.
+    // Observe ownership before readiness gates so an edit or staged file
+    // permanently disarms the grant even if the draft later looks unchanged.
+    if (submitRequest.seeded && (blocked || changed)) {
+      submittedRequest.current = requestId;
+      submitRequest.onBlocked();
+      return;
+    }
+    if (
+      value !== valueRef.current ||
+      readingOnly ||
+      editingDisabled ||
+      submission?.disabled ||
+      pickReadPending ||
+      pickReadFailed ||
+      !picksLoaded ||
+      sendPending ||
+      accepted ||
+      conflict
+    )
+      return;
+    if (seededRequest.current !== requestId) {
+      if (
+        !submitRequest.seeded &&
+        (blocked || (composerMarkdown(value).trim() && !addressingOnly(value)))
+      ) {
+        submittedRequest.current = requestId;
+        submitRequest.onBlocked();
+        return;
+      }
+      seededRequest.current = requestId;
+      if (!submitRequest.seeded) {
+        saveDraft(submitRequest.draft);
+        input.current?.reset(submitRequest.draft);
+        return;
+      }
+    }
+    if (blocked || changed) {
+      submittedRequest.current = requestId;
+      submitRequest.onBlocked();
+      return;
+    }
+    if (!value.text.trim() || (needsRecipient && !value.recipients.length))
+      return;
+    submittedRequest.current = requestId;
+    form.current?.requestSubmit();
+    submitRequest.onSubmitted?.();
+  });
+  // Keep checking readiness after each render only while a host request exists.
+  // Ordinary composers must not install a passive effect on every render.
+  const submitRequestRender = submitRequest ? {} : undefined;
+  useEffect(() => {
+    if (submitRequestRender) submitHostRequest();
+  }, [submitRequestRender]);
   // The attachments section animates out over 150 ms; the form's gap and
   // padding (data-attachments) collapse when it has, not when the list empties.
   // An edit unmounts the section at once, so no exit completes during one.
@@ -4213,6 +4301,19 @@ function Composer({
                   return;
                 setPasteTooLong(false);
                 const textChanged = next.text !== valueRef.current.text;
+                // A seeded host request may still be waiting for agents or
+                // other readiness state. The editor owns this event boundary:
+                // disarm automatic submission as soon as the viewer changes
+                // that exact generated draft, rather than waiting for a later
+                // readiness render to notice the change.
+                if (
+                  submitRequest?.seeded &&
+                  submittedRequest.current !== submitRequest.id &&
+                  !sameHostDraft(next, submitRequest.draft)
+                ) {
+                  submittedRequest.current = submitRequest.id;
+                  submitRequest.onBlocked();
+                }
                 // The default tag's prefill shows without being saved.
                 if (seeding.current) {
                   saveDraft(next, "prefill");

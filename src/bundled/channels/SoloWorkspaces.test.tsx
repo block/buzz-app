@@ -9,7 +9,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
 import {
   WorkspaceCompositionContext,
@@ -35,6 +35,7 @@ import {
 } from "./SoloWorkspaces";
 import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
 import { readView } from "../../shared/view-state";
+import { ChannelSidebarDnd } from "../../features/channel-navigation/ChannelSidebarDnd";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -51,12 +52,17 @@ function projectOf(heading: HTMLElement) {
   if (!project) throw new Error("Missing project");
   return project;
 }
-function fixture(projectName = "Work") {
+function fixture(
+  projectName = "Work",
+  sections: SidebarPreferences["sections"] = [
+    { id: "work", name: projectName, order: 0 },
+  ],
+) {
   const owner = createRelaySession(null);
   const details = { ...owner.session.channelDetails };
   owners.push(owner);
   let saved: SidebarPreferences = {
-    sections: [{ id: "work", name: projectName, order: 0 }],
+    sections,
     assignments: {},
     starred: [],
     muted: [],
@@ -106,13 +112,15 @@ function fixture(projectName = "Work") {
       writeOrder: order,
     });
   const order = vi.fn(async (ids: readonly string[]) => {
-    saved = {
-      ...saved,
-      sections: ids.flatMap((id, order) => {
-        const section = saved.sections.find((section) => section.id === id);
-        return section ? [{ ...section, order }] : [];
-      }),
-    };
+    saved = ids.some((id) => id.startsWith("group:"))
+      ? { ...saved, sectionOrder: [...ids] }
+      : {
+          ...saved,
+          sections: ids.flatMap((id, order) => {
+            const section = saved.sections.find((section) => section.id === id);
+            return section ? [{ ...section, order }] : [];
+          }),
+        };
     return saved;
   });
   const onNew = vi.fn();
@@ -132,9 +140,13 @@ function fixture(projectName = "Work") {
       { id: "other", title: "Existing chat" },
     ],
     compose?: ComposeWorkspaces,
+    workspaceComposition?: ComponentProps<
+      typeof SoloWorkspaces
+    >["workspaceComposition"],
   ) => (
     <SoloWorkspaces
       compose={compose}
+      workspaceComposition={workspaceComposition}
       onNew={onNew}
       session={
         {
@@ -235,6 +247,170 @@ it("moves workspaces with the section menu, keeps collapse and filing, and retri
   expect(h.write).not.toHaveBeenCalled();
   mounted.unmount();
   first.dispose();
+});
+
+it("labels and places the generated catch-up workspace after Chats", async () => {
+  const h = fixture("Work", [
+    { id: "work", name: "Work", order: 0 },
+    { id: "bestie-catch-ups", name: "Catch-ups", order: 1 },
+    { id: "personal", name: "Personal", order: 2 },
+  ]);
+  const store = h.store();
+  render(h.view(store.queries));
+  try {
+    const user = userEvent.setup();
+    const work = await screen.findByRole("button", { name: "Work" });
+    const personal = screen.getByRole("button", { name: "Personal" });
+    const chats = screen.getByRole("button", { name: "Chats" });
+    const catchUp = screen.getByRole("button", { name: "Catch me up" });
+    expect(
+      work.compareDocumentPosition(chats) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      work.compareDocumentPosition(personal) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      chats.compareDocumentPosition(catchUp) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Planning" }),
+    );
+    (await screen.findByRole("menuitem", { name: "Move to" })).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(
+      await screen.findByRole("menuitem", { name: "Catch me up" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("menuitem", { name: "Catch-ups" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getAllByRole("menu")).toHaveLength(1));
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Move down" }),
+    );
+    await waitFor(() =>
+      expect(
+        store.queries.snapshot().data?.sections.map(({ id }) => id),
+      ).toEqual(["personal", "work", "bestie-catch-ups"]),
+    );
+    expect(
+      personal.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Catch me up" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Move up" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  } finally {
+    store.dispose();
+  }
+});
+
+it("keeps Catch me up pinned while unified workspaces reorder", async () => {
+  const catchUp = "bestie-catch-ups";
+  const h = fixture("Work", [
+    { id: "work", name: "Work", order: 0 },
+    { id: catchUp, name: "Catch-ups", order: 1 },
+    { id: "personal", name: "Personal", order: 2 },
+  ]);
+  h.setSaved({
+    ...h.saved(),
+    sectionOrder: [
+      "pages",
+      "starred",
+      `group:${catchUp}`,
+      "group:work",
+      "solo",
+      "group:personal",
+      "channels",
+      "dms",
+    ],
+  });
+  const workspaceComposition = {
+    sections: new Set([
+      "group:work",
+      `group:${catchUp}`,
+      "group:personal",
+      "solo",
+    ]),
+    pendingChatClick: { current: undefined },
+    collapsed: [],
+    toggle: vi.fn(),
+    registerFrame: vi.fn(() => () => {}),
+    newAction: vi.fn(() => null),
+  } satisfies NonNullable<
+    ComponentProps<typeof SoloWorkspaces>["workspaceComposition"]
+  >;
+  const store = h.store();
+  render(
+    <ChannelSidebarDnd
+      writable
+      onMove={vi.fn()}
+      onReorder={vi.fn()}
+      overlay={() => null}
+    >
+      {h.view(
+        store.queries,
+        "unified-workspaces",
+        undefined,
+        undefined,
+        undefined,
+        workspaceComposition,
+      )}
+    </ChannelSidebarDnd>,
+  );
+  try {
+    const user = userEvent.setup();
+    const chats = await screen.findByRole("button", { name: "Chats" });
+    const catchUpHeading = screen.getByRole("button", {
+      name: "Catch me up",
+    });
+    expect(
+      chats.compareDocumentPosition(catchUpHeading) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Move down" }),
+    );
+    await waitFor(() =>
+      expect(h.order).toHaveBeenLastCalledWith(
+        [
+          "pages",
+          "starred",
+          "solo",
+          `group:${catchUp}`,
+          "group:work",
+          "group:personal",
+          "channels",
+          "dms",
+        ],
+        expect.any(AbortSignal),
+      ),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Catch me up" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Move up" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  } finally {
+    store.dispose();
+  }
 });
 
 it("returns focus to the workspace title after a failed order save", async () => {

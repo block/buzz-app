@@ -744,6 +744,22 @@ it("lists a new chat's workspaces first, by the channel name rule", () => {
   w.set(["Docs"]);
   expect(first?.canSelect?.("Enter")).toBe(false);
 });
+it("completes the legacy catch-up workspace with its current name", () => {
+  const t = fixture([]);
+  const w = workspaces(["Catch-ups"]);
+  render(
+    <WorkspaceCompletion.Provider value={w.target}>
+      {t.element("catch")}
+    </WorkspaceCompletion.Provider>,
+  );
+  expect(t.result().items).toEqual([
+    expect.objectContaining({
+      id: "workspace:catch-ups",
+      label: "Catch me up",
+      detail: "Workspace",
+    }),
+  ]);
+});
 it("adds workspace rows that load after `#` opens, and stops listening on unmount", () => {
   const t = fixture([channel("dev")]);
   const w = workspaces(undefined);

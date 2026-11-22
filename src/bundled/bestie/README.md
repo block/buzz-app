@@ -262,3 +262,37 @@ open Bestie to choose another.
 
 Builderlab no longer owns a separate Bestie setup, agent, Solo chat, or
 selection path.
+
+### Contextual catch-ups
+
+With an eligible saved Bestie, a thread root with replies or any reply shows
+**Catch me up** beside **Start Solo chat**, using that agent's current avatar.
+Replies resolve to the canonical thread root. The existing Channels side panel
+opens and automatically sends a request to read the root and every reply; the
+source conversation stays in the main pane.
+
+Eligible team-channel rows also contribute **Catch me up** through their
+left-navigation menu. A known unread range freezes first unread through latest
+at click time. A read channel with verified activity in the last two days freezes
+that two-day window; quiet channels and incomplete unread evidence omit the
+action. The source channel neither opens nor becomes read.
+
+Each frozen source retains its own closable panel tab. The started ordinary Solo
+chat shares a short source-and-date title with that tab, and Buzz lazily creates
+or reuses the normal **Catch me up** workspace after **Chats** to file it.
+Generated requests render as compact summaries with **Show request** for their
+full instructions and source links. When a private channel's known roster does
+not include Bestie, the request skips inspection and progress updates so Bestie
+can give the access guidance directly. Otherwise it checks access first, and
+any optional progress update uses **Taking a look now. I’ll let you know what I
+find.** An inaccessible source asks for Bestie to be added to the channel or
+for the messages to be pasted into the Solo chat.
+Removing or changing Bestie, changing community/account, or disabling the plugin
+retires the panel. If no eligible saved Bestie is available, the catch-up action
+is absent and **Start Solo chat** remains.
+
+Catch-up chats explicitly start with a seven-day inactivity lifetime, independent
+of the general new-Solo default. The panel shows the current lifetime and opens
+the existing Chat settings dialog to change it. Reopening a catch-up returns to
+the same conversation.
+The panel host supplies the only header and close controls.

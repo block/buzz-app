@@ -9,6 +9,7 @@ import type { RelayEvent } from "./events";
 import {
   bounds,
   flush,
+  isNoticeRead,
   keypair,
   message,
   metadata,
@@ -565,10 +566,12 @@ describe("channel store", () => {
       await flush();
       scripted.pending.length = 0;
       clock += 61_000;
+      const query = vi.spyOn(scripted.transport, "query");
       queries.ensure("c");
       const last = head.at(-1);
       assert(last);
-      scripted.next().respond([
+      const read = scripted.next();
+      read.respond([
         ...head,
         bounds(relay, "c", "head", {
           has_more: true,
@@ -576,12 +579,25 @@ describe("channel store", () => {
         }),
       ]);
       await flush();
-      return { ids: queries.window("c").rows.map((row) => row.id), older };
+      return {
+        ids: queries.window("c").rows.map((row) => row.id),
+        older,
+        read,
+        noticeReads: query.mock.calls.filter(([filters]) =>
+          isNoticeRead(filters),
+        ).length,
+      };
     }
     const latest = message(alice, "c", "latest", 25);
     it("merges a newer head into the paged rows on a revisit past the lease", async () => {
-      const { ids, older } = await revisited([latest, newer]);
+      const { ids, older, read, noticeReads } = await revisited([
+        latest,
+        newer,
+      ]);
       expect(ids).toEqual([older.id, newer.id, latest.id]);
+      // The head read its newest notices, so none are read apart from it.
+      expect(read.filters[1]).toMatchObject({ kinds: [40099] });
+      expect(noticeReads).toBe(0);
     });
     it("replaces the paged rows with a newer head that does not meet them", async () => {
       const after = message(alice, "c", "after", 24);

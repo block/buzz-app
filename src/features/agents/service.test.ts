@@ -11261,6 +11261,43 @@ describe("a turn closing or reloading the app stopped", () => {
     }
   });
 
+  it("is read again at once by a replacement session after a failed read", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const read = vi.mocked(second.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failed = false;
+    read.mockImplementation(async (filters, options) => {
+      if (!filters[0]?.ids || failed) return original(filters, options);
+      failed = true;
+      throw new Error("relay down");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      second.service.resumeInterrupted();
+      await vi.waitFor(() => expect(failed).toBe(true));
+      await settle();
+      expect(second.run).not.toHaveBeenCalled();
+      expect(readInterrupted(second.storage)).toEqual({
+        [bot]: { [asked.id]: channel },
+      });
+      second.connect(false);
+      second.connect(true);
+      await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+      expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("is left to the copy of the app that holds the agent", async () => {
     const asked = mention();
     const other = await setup({

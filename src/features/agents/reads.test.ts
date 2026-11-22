@@ -192,6 +192,36 @@ describe("readyOwnerReads", () => {
     }
   });
 
+  it("backs off for a reader made afresh at each check", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = community(ready(session()));
+      const channel = vi.fn(async () => undefined);
+      const deadline = new AbortController();
+      const waiting = readyOwnerReads(
+        c.relay,
+        agent,
+        deadline.signal,
+        "agent-dm",
+        "This turn",
+        () =>
+          ({
+            channelLabel: () => undefined,
+            subscribeChannels: () => () => {},
+            channel,
+          }) as never,
+      );
+      for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+      expect(channel).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(channel).toHaveBeenCalledTimes(3);
+      deadline.abort();
+      await expect(waiting).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("rejects on the deadline and stops listening", async () => {
     const c = community(connecting);
     const deadline = new AbortController();

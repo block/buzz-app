@@ -826,11 +826,12 @@ export class AgentRunners {
   /** The turns the app left working last time, by agent, until the owner
    * forgets them, or resumes them and each agent's are read again. */
   private left: Interrupted;
-  /** When each agent's turns a failed read left are read again on the same
-   * connection, backing off as catch-up does; a new connection tries now. */
+  /** When each agent's turns a failed read left are read again while the same
+   * session stays connected, backing off as catch-up does; a reconnect or a
+   * replacement session tries now. */
   private readonly resumeRetries = new Map<
     AgentKey,
-    { delay: number; at: number; epoch: number }
+    { delay: number; at: number; connection: Connection; epoch: number }
   >();
   /** The turns the app left working last time, as this page started: only
    * Resume gives them again, never a replay or live delivery. */
@@ -1916,7 +1917,9 @@ export class AgentRunners {
       !agent ||
       !runner.type ||
       community?.connection.since === undefined ||
-      (retry?.epoch === community.connection.epoch && retry.at > Date.now())
+      (retry?.connection === community.connection &&
+        retry.epoch === community.connection.epoch &&
+        retry.at > Date.now())
     )
       return;
     const { [runner.key]: _, ...rest } = this.left;
@@ -1929,7 +1932,8 @@ export class AgentRunners {
     }
     this.host.resumeFollowUps?.(agent, channels);
     const { signal } = community.controller;
-    const { epoch } = community.connection;
+    const { connection } = community;
+    const { epoch } = connection;
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
     const read = async () => {
       // Each read failing leaves its turns for the next try; the other still
@@ -1982,6 +1986,7 @@ export class AgentRunners {
           this.resumeRetries.set(runner.key, {
             delay,
             at: Date.now() + delay + Math.floor((delay * Math.random()) / 4),
+            connection,
             epoch,
           });
         }

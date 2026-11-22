@@ -240,26 +240,24 @@ export function readyOwnerReads(
   let retryOwn: ReturnType<typeof setTimeout> | undefined;
   let check = () => {};
   /** The agent's current reads once they know the channel's kind; until then
-   * they are watched and asked to resolve it, again after a lookup that left
-   * it unknown, backing off until the deadline. */
+   * they are watched and asked to resolve it, one lookup at a time and again,
+   * backing off until the deadline, after one that left it unknown: whichever
+   * reads are current then, so a reader made afresh at each check cannot ask
+   * any faster. */
   const own = (id: string) => {
     const reads = agentReads?.();
     if (!reads) return undefined;
     if (reads.channelLabel(id)?.channelType) return reads;
     if (reads !== watched) {
       stopOwn();
-      clearTimeout(retryOwn);
-      retryOwn = undefined;
-      asking = false;
-      askAgain = OWN_RETRY_MS;
       watched = reads;
       stopOwn = reads.subscribeChannels(() => check());
     }
     if (!asking && retryOwn === undefined) {
       asking = true;
       const unresolved = () => {
-        if (finished || watched !== reads) return;
         asking = false;
+        if (finished) return;
         if (signal.aborted || reads.channelLabel(id)?.channelType) return;
         retryOwn = setTimeout(() => {
           retryOwn = undefined;

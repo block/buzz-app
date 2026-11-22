@@ -38,7 +38,7 @@ import { GifPicker } from "./GifPicker";
 import type { EmojiSearchSelection } from "./emoji-mart";
 import { PREVIEW_ACTION_SLOT, type AddEmoji } from "./add-emoji";
 import { SKIN_TONE_SLOT, defaultSkinTone, toneHand } from "./skin-tone";
-import { MAX_PER_LINE, rootFontSize, spaciousGrid } from "./picker-layout";
+import { rootFontSize, spaciousGrid } from "./picker-layout";
 const NO_ADD_EMOJI = {
   snapshot: () => undefined,
   subscribe: () => () => {},
@@ -48,6 +48,7 @@ const NO_ADD_EMOJI = {
 // text-size preferences scale them. Fallbacks are their 1rem values.
 const EMOJI_SIZE = "--size-emoji-picker";
 const EMOJI_SLOT = "--size-control";
+const MAX_PER_LINE = 8;
 const PICKER_COLUMN_CHROME = 44;
 // Two balanced scrollbar lanes plus the gaps between fixed-size slots.
 const PICKER_CHROME = 72;

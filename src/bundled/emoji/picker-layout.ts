@@ -1,8 +1,6 @@
 /** Below this grid width (in rem) the category bar and labelled actions do
  * not fit, so the picker drops the bar and shows Add emoji as an icon. */
 const SPACIOUS_GRID_REM = 18;
-/** The composer picker's most columns. */
-export const MAX_PER_LINE = 8;
 
 export const spaciousGrid = (gridWidth: number, rootFontSize: number) =>
   gridWidth >= SPACIOUS_GRID_REM * rootFontSize;

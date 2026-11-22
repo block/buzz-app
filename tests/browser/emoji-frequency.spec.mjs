@@ -87,10 +87,6 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   await input.press("ArrowDown");
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", ":party-parrot-wave: ");
-  // Recording finishes once Emoji Mart's module resolves.
-  await expect.poll(counts).toMatchObject({
-    "buzz-custom/a/party-parrot-wave": 1,
-  });
   await input.fill(":party-p");
   await expect.poll(labels).toEqual([":party-parrot-wave:", ":party-parrot:"]);
   await input.press("Escape");
@@ -100,7 +96,7 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
     smirk: 3,
     "buzz-custom/a/party-parrot-wave": 1,
   });
-  expect(stored.heart_eyes).toBeLessThan(1);
+  expect(stored.heart_eyes).toBeUndefined();
   await openFrequent();
   await expect(frequent.locator('img[src*="wave.png"]')).toHaveCount(1);
   await expect(frequent.and(page.locator('[aria-label="😏"]'))).toHaveCount(1);
@@ -145,4 +141,39 @@ test("the default row follows the picker's width across reloads", async ({
   await openPicker();
   await expect(frequent).toHaveCount(4);
   expect(errors.unexplained()).toEqual([]);
+});
+
+test("choices in two windows of one profile keep each other", async ({
+  page,
+  context,
+}) => {
+  const other = await context.newPage();
+  const errors = [watchPageErrors(page), watchPageErrors(other)];
+  const choose = async (window, query, label, value) => {
+    const input = window.getByRole("textbox", { name: "Message #general" });
+    await input.fill(query);
+    await expect(window.getByRole("option").first()).toHaveText(label);
+    await input.press("Tab");
+    await expect(input).toHaveJSProperty("value", value);
+  };
+  for (const window of [page, other])
+    await window.goto("/tests/fixtures/emoji.html");
+  // Each window opens its picker first, so each has loaded Emoji Mart.
+  for (const window of [page, other]) {
+    await window
+      .getByRole("button", { name: "Emoji and GIFS", exact: true })
+      .click();
+    await window.keyboard.press("Escape");
+  }
+  await choose(page, ":smirk", /:smirk:/, "😏 ");
+  await choose(other, ":rocket", /:rocket:/, "🚀 ");
+  await choose(page, ":tada", /:tada:/, "🎉 ");
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+      ),
+    )
+    .toEqual({ smirk: 1, rocket: 1, tada: 1 });
+  for (const watched of errors) expect(watched.unexplained()).toEqual([]);
 });

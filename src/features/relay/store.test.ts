@@ -342,6 +342,21 @@ describe("channel store", () => {
       queries.ensure("c");
       expect(take(true).filters[0]).toMatchObject({ until: 20 });
     });
+    it("reads a page too large for a response again in default pages", async () => {
+      const { queries, take } = await opened();
+      queries.loadOlder("c", 200);
+      const large = take(false);
+      expect(large.filters[0]).toMatchObject({ limit: 200, until: 20 });
+      large.fail(
+        new ReadError("invalid-response", "Relay response exceeds the read budget"),
+      );
+      await flush();
+      expect(take(false).filters[0]).toMatchObject({ limit: 20, until: 20 });
+      expect(queries.window("c")).toMatchObject({
+        loadingOlder: true,
+        error: undefined,
+      });
+    });
     it("reads a cancelled aux read again with the next fill", async () => {
       const { take, page } = await opened();
       const first = row(10);

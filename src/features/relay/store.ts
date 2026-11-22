@@ -1544,6 +1544,15 @@ export function createChannelStore(
         denyChannel(state.channelId, error);
         return;
       }
+      // A large page can pass the reader's response budget where the same
+      // range in default pages fits.
+      if (
+        cursor &&
+        limit !== undefined &&
+        limit > WINDOW_PAGE_SIZE &&
+        readErrorKind(error) === "invalid-response"
+      )
+        return loadPage(state, cursor, WINDOW_PAGE_SIZE);
       setWindow(
         state,
         cursor || state.snapshot.rows.length

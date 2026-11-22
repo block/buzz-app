@@ -1,5 +1,6 @@
 import { hostComposerProvenance } from "./mention-draft";
 import { MessageLoading } from "./MessageLoading";
+import { mediaWorkspace } from "./MediaSheet";
 import { TypingIndicator } from "./TypingIndicator";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
@@ -59,7 +60,13 @@ import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
 /** A sheet over the view the media was opened from, or the fullscreen viewer. */
 export type MediaReviewPlacement =
-  | { kind: "sheet"; host: ComposerOverlayHost; rootId: string }
+  | {
+      kind: "sheet";
+      host: ComposerOverlayHost;
+      /** What the sheet spans: the workspace around the view's pane. */
+      workspace: HTMLElement;
+      rootId: string;
+    }
   | { kind: "fullscreen" };
 
 type MediaReviewViewerProps = {
@@ -87,14 +94,10 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
     // A view no longer on screen keeps the fullscreen viewer.
     if (!props.opening || !host?.composer.isConnected)
       return { kind: "fullscreen" };
-    // The sheet spans the workspace the view sits in, joined panes and all.
-    const workspace =
-      host.pane.closest<HTMLElement>("[data-buzz-surface][data-joined]") ??
-      host.pane.closest<HTMLElement>("[data-buzz-surface]") ??
-      host.pane;
     return {
       kind: "sheet",
-      host: { ...host, viewport: workspace },
+      host,
+      workspace: mediaWorkspace(host),
       rootId: props.opening.rootId,
     };
   });

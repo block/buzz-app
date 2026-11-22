@@ -807,6 +807,38 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
     margin: 0 auto var(--space-3);
   }
 }
+/* In a view the composer sits in a dock, which takes its place in the layout
+   and holds the sheets opened from the view's rows, drawn around it. */
+.composerDock {
+  --composer-radius: calc(var(--radius-icon-button) + var(--space-1h) + 1px);
+  position: relative;
+  z-index: 2;
+  box-sizing: border-box;
+  min-width: 0;
+  align-self: stretch;
+  flex-shrink: 0;
+  width: min(calc(100% - 2 * var(--space-4)), var(--buzz-message-width, 52rem));
+  margin: 0 auto var(--space-4);
+}
+:where(html[data-message-density="compact"]) .composerDock {
+  width: calc(100% - 2 * var(--space-4));
+}
+@media (max-width: 40.625rem) {
+  .composerDock {
+    width: min(
+      calc(100% - 2 * var(--space-3)),
+      var(--buzz-message-width, 52rem)
+    );
+    margin: 0 auto var(--space-3);
+  }
+}
+/* Above a details sheet in its dock, so a reply can be written while
+   reading. */
+.composerDock > .composer {
+  z-index: 2;
+  width: auto;
+  margin: 0;
+}
 .composer[data-editing] {
   overflow: hidden;
 }
@@ -4481,11 +4513,6 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
 }
 
-/* A details sheet lives in the composer's pane, between its history and its
-   composer, which rises above it so a reply can be written while reading. */
-:has(> .detailsSheetLayer) > .composer {
-  z-index: 2;
-}
 /* A media sheet is drawn over the window, above the side panes' overlays. */
 .detailsSheetLayer[data-workspace-overlay] {
   position: relative;
@@ -4496,7 +4523,7 @@ html[data-keyboard-navigation]
   visibility: hidden;
 }
 /* Only the reader under a sheet hides its jump control, not the sheet's own. */
-:has(> .detailsSheetLayer) > :not(.detailsSheetLayer) .jumpToLatest {
+:has(> .composerDock > .detailsSheetLayer) > :not(.composerDock) .jumpToLatest {
   display: none;
 }
 

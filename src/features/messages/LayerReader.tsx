@@ -2,11 +2,11 @@ import { useContext, useRef } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import {
   composerHost,
-  useComposerForm,
+  useComposerDock,
   useComposerScope,
 } from "./composer-overlay";
 import { DetailsReader } from "./DetailsReader";
-import { DetailsSheet } from "./DetailsSheet";
+import { ComposerSheet } from "./ComposerSheet";
 import { LayerAddressContext, type OpenLayer, layerInView } from "./view-layer";
 
 /** The layer of the view it is mounted in, when the address names one: a
@@ -27,7 +27,7 @@ export function LayerReader({ channelId }: { channelId: string }) {
 function Layer({ open }: { open: OpenLayer }) {
   const view = useComposerScope();
   const address = useContext(LayerAddressContext);
-  const form = useComposerForm(view?.handle);
+  const dock = useComposerDock(view?.handle);
   // Close hands focus back to what opened the layer, when it is still there.
   const opener = useRef(
     document.activeElement instanceof HTMLElement
@@ -35,7 +35,7 @@ function Layer({ open }: { open: OpenLayer }) {
       : null,
   );
   if (!address || !view) return null;
-  const host = form ? composerHost(view.handle) : null;
+  const host = dock ? composerHost(view.handle) : null;
   const onOpenChange = (next: boolean) => {
     if (!next) address.dismiss();
   };
@@ -44,7 +44,7 @@ function Layer({ open }: { open: OpenLayer }) {
       <DetailsReader channelId={open.channelId} messageId={open.messageId}>
         {({ title, avatar, time, body }) =>
           host ? (
-            <DetailsSheet
+            <ComposerSheet
               open
               onOpenChange={onOpenChange}
               host={host}
@@ -54,7 +54,7 @@ function Layer({ open }: { open: OpenLayer }) {
               finalFocus={opener}
             >
               {body}
-            </DetailsSheet>
+            </ComposerSheet>
           ) : (
             <Dialog
               open
@@ -73,7 +73,7 @@ function Layer({ open }: { open: OpenLayer }) {
   const drawn = address.renderPanel(open);
   if (!drawn) return null;
   return host ? (
-    <DetailsSheet
+    <ComposerSheet
       open
       onOpenChange={onOpenChange}
       host={host}
@@ -82,7 +82,7 @@ function Layer({ open }: { open: OpenLayer }) {
       onOpenAsTab={drawn.openAsTab}
     >
       {drawn.content}
-    </DetailsSheet>
+    </ComposerSheet>
   ) : (
     <Dialog
       open

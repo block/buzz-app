@@ -1,5 +1,5 @@
 import type { MediaReviewPlacement } from "./MediaReviewViewer";
-import { DetailsSheet } from "./DetailsSheet";
+import { MediaSheet } from "./MediaSheet";
 import {
   useState,
   useRef,
@@ -205,13 +205,12 @@ export function MediaReviewFrame(
   if (props.placement?.kind !== "sheet")
     return <FullscreenMediaReviewFrame {...props} />;
   return (
-    <DetailsSheet
+    <MediaSheet
       open={open}
       onOpenChange={setOpen}
       onClosed={props.close}
       host={props.placement.host}
-      containsComposer
-      height="stable"
+      workspace={props.placement.workspace}
       title={props.title}
       closeLabel="Close media viewer"
       finalFocus={props.restoreFocus}
@@ -236,6 +235,6 @@ export function MediaReviewFrame(
         </div>
         {props.sidebar}
       </section>
-    </DetailsSheet>
+    </MediaSheet>
   );
 }

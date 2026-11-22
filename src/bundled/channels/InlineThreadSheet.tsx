@@ -3,10 +3,10 @@ import { ConversationThread } from "../../features/conversation/Conversation";
 import {
   ComposerScopeProvider,
   composerHost,
-  useComposerForm,
+  useComposerDock,
   useComposerScope,
 } from "../../features/messages/composer-overlay";
-import { DetailsSheet } from "../../features/messages/DetailsSheet";
+import { ComposerSheet } from "../../features/messages/ComposerSheet";
 import {
   INLINE_THREAD_INTRO,
   InlineThreadIntro,
@@ -44,17 +44,17 @@ export function InlineThreadSheet({
   onResolvedRoot?: ((rootId: string) => void) | undefined;
 }) {
   const view = useComposerScope();
-  const form = useComposerForm(view?.handle);
+  const dock = useComposerDock(view?.handle);
   // Decided once per thread opening; a thread closed mid-intro shows it again.
   const [intro, setIntro] = useState<InlineThreadIntroStep | undefined>(() =>
     introducesInlineThreads(seen) ? 1 : undefined,
   );
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const host = form ? composerHost(view?.handle) : null;
+  const host = dock ? composerHost(view?.handle) : null;
   if (!host) return null;
   return (
     <>
-      <DetailsSheet
+      <ComposerSheet
         open
         onOpenChange={(next) => {
           if (!next) close();
@@ -79,7 +79,7 @@ export function InlineThreadSheet({
           />
           <LayerReader channelId={channelId} />
         </ComposerScopeProvider>
-      </DetailsSheet>
+      </ComposerSheet>
       {intro && (
         <InlineThreadIntro
           seen={seen}

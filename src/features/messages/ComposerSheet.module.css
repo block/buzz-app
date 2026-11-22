@@ -34,6 +34,18 @@
   clip-path: inset(var(--scrim-inset));
   pointer-events: auto;
 }
+/* Inside another sheet, whose material places it, the scrim dims that
+   sheet below its header; a panel's dims the header too. */
+.sheet .scrim {
+  inset: var(--thread-header-height) 0 0;
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  clip-path: none;
+}
+.sheet .scrim[data-panel] {
+  inset: 0;
+}
 .scrim:is([data-starting-style], [data-ending-style]) {
   opacity: 0;
 }
@@ -49,21 +61,25 @@
   /* Medium dialog insets, reduced at narrow widths as dialogs are. */
   --dialog-padding: var(--space-8);
   --sheet-gap: var(--space-2);
-  --sheet-top: max(8rem, calc(var(--pane-top) + var(--space-4)));
+  --sheet-border-width: 1px;
+  /* A thread's header: its compact controls inside its padding. */
+  --thread-header-height: calc(2 * var(--space-4) + var(--size-control-sm));
+  --sheet-header-height: var(--thread-header-height);
+  --sheet-top: max(8rem, calc(var(--view-top) + var(--space-4)));
   --sheet-max-height: calc(
-    var(--frame-height, 100dvh) -
-    var(--composer-bottom) +
+    var(--dock-bottom) +
     var(--sheet-gap) -
     var(--sheet-top)
   );
-  position: fixed;
-  left: calc(var(--composer-left) - var(--sheet-gap));
-  bottom: calc(var(--composer-bottom) - var(--sheet-gap));
+  /* Drawn in its composer's dock, around the composer. */
+  position: absolute;
+  left: calc(-1 * var(--sheet-gap));
+  right: calc(-1 * var(--sheet-gap));
+  bottom: calc(-1 * var(--sheet-gap));
   z-index: 1;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  width: calc(var(--composer-width) + 2 * var(--sheet-gap));
   max-height: var(--sheet-max-height);
   overflow: hidden;
   /* Concentric with the composer it surrounds. */
@@ -74,7 +90,7 @@
 }
 @media (max-height: 40rem) {
   .sheet {
-    --sheet-top: calc(var(--pane-top) + var(--space-4));
+    --sheet-top: calc(var(--view-top) + var(--space-4));
   }
 }
 @media (max-width: 30rem) {
@@ -208,8 +224,10 @@
 }
 /* Match Show more's composer footprint. The floating surface's 1px border
    counts toward the surrounding gap; only the reader grows above the editor. */
-.sheet[data-height="content"][data-contained-composer] [data-message-composer] {
-  width: var(--composer-width);
+.sheet[data-height="content"][data-contained-composer] [data-composer-dock] {
+  /* With the sheets and scrim it holds, above this sheet's header. */
+  z-index: 3;
+  width: calc(100% + 2 * var(--sheet-border-width) - 2 * var(--sheet-gap));
   margin: 0 auto calc(var(--sheet-gap) - var(--sheet-border-width));
 }
 html[data-keyboard-navigation]
@@ -235,6 +253,8 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
 /* A panel, such as a profile or a pull request, reads at the full height over
    the composer it covers. Its renderer keeps its own padding and scrolling. */
 .sheet[data-reader-only] {
+  /* Its header, when the panel reads beneath it. */
+  --sheet-header-height: calc(var(--space-5) + var(--size-control-sm));
   height: var(--sheet-max-height);
 }
 .sheet[data-reader-only] > .content {
@@ -282,12 +302,16 @@ html[data-keyboard-navigation] .sheet[data-contained-composer] {
 
 /* Media spans the workspace at a stable height, with its own stage, comments
    and comment box. Its side insets match its bottom inset in this pane. */
-.sheet[data-height="stable"] {
+.mediaSheet {
   --media-sheet-inset: max(
     0px,
     calc(var(--composer-pane-bottom) - var(--sheet-gap))
   );
+  position: fixed;
+  z-index: 1;
   left: calc(var(--pane-left) + var(--media-sheet-inset));
+  right: auto;
+  bottom: calc(var(--composer-bottom) - var(--sheet-gap));
   width: calc(var(--pane-width) - 2 * var(--media-sheet-inset));
   height: var(--sheet-max-height);
 }
@@ -369,8 +393,12 @@ html[data-keyboard-navigation] .sheet[data-height="stable"] {
   opacity: 1;
 }
 
-/* A sheet over a composer inside another sheet, with its scrim, stacks above
-   that sheet's header. */
-.sheet :is(.sheet, .scrim) {
-  z-index: 3;
+/* Over a composer inside another sheet, details stop below that sheet's
+   header, whose Close still closes both; a panel stacks tightly over it,
+   covering its header, and only a strip of the sheet beneath shows above. */
+.sheet .sheet {
+  --sheet-top: calc(var(--view-top) + var(--thread-header-height));
+}
+.sheet .sheet[data-reader-only] {
+  --sheet-top: calc(var(--view-top) + var(--space-4));
 }

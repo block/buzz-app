@@ -3511,7 +3511,9 @@ export class AgentRunners {
       }
       // Asked while the turn starts; the harness reads it on delivery.
       const mentionChannel =
-        trigger.type === "mention" && !trigger.resumed
+        trigger.type === "mention" &&
+        !trigger.resumed &&
+        trigger.event.pubkey === agent.owner
           ? (job.channelId ?? channelOf(trigger.event))
           : undefined;
       const placing =

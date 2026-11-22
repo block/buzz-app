@@ -11514,7 +11514,7 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(third.run).not.toHaveBeenCalled();
   });
 
-  it("hands a top-level mention the place and note a plugin chose, and never asks about a thread reply", async () => {
+  it("hands the owner's top-level mention the place and note a plugin chose, and never asks about a thread reply or someone else's mention", async () => {
     const app = await setup({ identities: [echo] });
     const place = vi.fn(async () => ({
       topLevel: true as const,
@@ -11526,7 +11526,8 @@ describe("a turn closing or reloading the app stopped", () => {
         plugin.agents.registerMentionPlacement?.({ id: "where", place });
       })
       .await();
-    const asked = mention();
+    // The owner's mention: only those are placed.
+    const asked = { ...mention(), pubkey: viewer };
     app.emit({ events: [asked], channelId: channel });
     await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
     const delivery = app.run.mock.calls[0]?.[0];
@@ -11540,16 +11541,26 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(delivery.agent.notes?.(channel)).toEqual([
       "It asks for #release-notes.",
     ]);
-    const reply = eventDto(
-      message(author, channel, "Echo, and this", nowSeconds(), [
-        ["e", asked.id, "", "reply"],
-        ["p", bot],
-      ]),
-    );
+    const reply = {
+      ...eventDto(
+        message(author, channel, "Echo, and this", nowSeconds(), [
+          ["e", asked.id, "", "reply"],
+          ["p", bot],
+        ]),
+      ),
+      pubkey: viewer,
+    };
     app.emit({ events: [reply], channelId: channel });
     await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
     expect(place).toHaveBeenCalledOnce();
     expect(app.run.mock.calls[1]?.[0].placement).toBeUndefined();
+    // Someone else's mention keeps its native place too.
+    const theirs = eventDto(
+      message(author, channel, "Echo, from me", nowSeconds() + 1, [["p", bot]]),
+    );
+    app.emit({ events: [theirs], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(3));
+    expect(place).toHaveBeenCalledOnce();
   });
 
   it.each([false, true])(

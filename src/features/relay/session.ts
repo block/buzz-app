@@ -78,6 +78,7 @@ import { createTyping } from "./typing";
 import { validTypingTemplate } from "./typing-protocol";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
+import { cutTime, movedIds } from "./history-move";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
@@ -1239,6 +1240,15 @@ export function createRelaySession(
           },
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
+          // Every cache that holds the source's events gives up the moved ones.
+          moved: (move, cutAt, stale) => {
+            unread.evictMoved(move, cutAt, stale);
+            const held = recent.entries().map(([, { event }]) => event);
+            const at = cutAt ?? cutTime(move, held);
+            for (const id of movedIds(held, move, at, stale)) recent.delete(id);
+            // A closed thread reopens from what it kept, which may be moved.
+            resumes.clear();
+          },
           verifyStored: transport.verifyStored?.bind(transport),
           demand: (channelId) => demandChannel(channelId),
           rosterChanged: (strong) => {

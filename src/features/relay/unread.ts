@@ -23,6 +23,7 @@ import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
 import { eventChannel } from "./placement";
+import { cutTime, movedIds, type HistoryMove } from "./history-move";
 import { threadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
@@ -2848,6 +2849,38 @@ export function createUnread({
         bytes -= eventBytes(event);
       }
   }
+  /** A conversation's history moved out of `move.channelId`: the moved
+   * messages, their threads, reactions and edits are no longer that channel's
+   * evidence, so its counts, latest message and first unread recompute from
+   * what stayed. See `movedIds` for what goes and when. */
+  function evictMoved(
+    move: HistoryMove,
+    cutAt: number | undefined,
+    stale: boolean,
+  ) {
+    if (closed) return;
+    const ids = movedIds(
+      events.values(),
+      move,
+      cutAt ?? cutTime(move, events.values()),
+      stale,
+    );
+    if (!ids.size) return;
+    for (const id of ids) {
+      const event = events.get(id);
+      if (!event) continue;
+      events.delete(id);
+      bytes -= eventBytes(event);
+      witnesses.delete(id);
+      lookupEvents.delete(id);
+      forcedMessages.get(move.channelId)?.delete(id);
+    }
+    indexed = false;
+    // Evidence shrank: the next repair reads unbounded again.
+    forget();
+    dropOrphans();
+    publish(new Set([move.channelId]));
+  }
   function accept(batch: readonly RelayEvent[]) {
     if (closed) return false;
     retract(batch);
@@ -4100,6 +4133,7 @@ export function createUnread({
       });
     },
     accept,
+    evictMoved,
     purge,
     /** `covered`: the membership route's replay was continuous, so read state
      * resumes from it instead of reading its snapshot again. */

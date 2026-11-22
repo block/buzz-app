@@ -30,6 +30,12 @@ import {
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
 import { placedIn, restorePlacement } from "./placement";
+import {
+  cutTime,
+  historyMoves,
+  movedIds,
+  type HistoryMove,
+} from "./history-move";
 import { USER_STATUS_KIND } from "./user-status-policy";
 import {
   LARGE_READ_DEADLINE_MS,
@@ -342,6 +348,16 @@ export function createChannelStore(
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
         restored?(events: readonly RelayEvent[]): void;
+        /** A conversation's history moved out of `move.channelId`: the store has
+         * dropped what it held of it, and the rest of the session holds the same
+         * events (unread evidence, recent traffic). `cutAt` is the cut message's
+         * time when the store held it; `stale` says everything cached predates
+         * the move, so a cut the cache does not hold drops every row. */
+        moved?(
+          move: HistoryMove,
+          cutAt: number | undefined,
+          stale: boolean,
+        ): void;
         verifyStored?: ReadTransport["verifyStored"];
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
@@ -1011,6 +1027,8 @@ export function createChannelStore(
         );
         if (!live(state, generation) || controller.signal.aborted) return;
         takeNotices(state, events, cursor);
+        // A read after the move holds no moved rows; a cache that does is stale.
+        dropMoved(historyMoves(events, source.relayAuthor), false);
         if (top) keepNotices(state);
         // Read beside the head, notices wait for its rows (see `adoptHead`).
         if (state.floor === undefined) continue;
@@ -4715,10 +4733,86 @@ export function createChannelStore(
         void fetchProfiles(state.snapshot.rows.slice(-12));
     }
   });
+  /** Moves already applied, by their notice's id. */
+  const applied = new Set<string>();
+  /** The relay moved a conversation's history out of a channel: drop what this
+   * session cached of it, from the cut message on, with the threads, reactions
+   * and edits that follow it. Each move applies once, so messages sent after it
+   * are never taken for moved ones. A `stale` cache is one that predates the
+   * move (live traffic): it drops every row when the cut is not held. A read
+   * since the move holds only what stayed. The destination needs nothing: it
+   * arrives through discovery and its own reads. */
+  function dropMoved(moves: readonly HistoryMove[], stale: boolean) {
+    if (!transport) return;
+    for (const move of moves) {
+      if (applied.has(move.id)) continue;
+      const channelId = move.channelId;
+      const state = windows.get(channelId);
+      const head = heads.peek(channelId);
+      const tail = tails.peek(channelId);
+      const pool: RelayEvent[] = [
+        ...(state?.events ?? []),
+        ...(state?.above?.values() ?? []),
+        ...(state?.traffic.values() ?? []),
+        ...(head?.events ?? []),
+        ...(tail?.events ?? []),
+      ];
+      const cutAt = cutTime(move, pool);
+      // A read that never held the cut has nothing of the move to drop here,
+      // but another cache may: the session decides.
+      if (cutAt === undefined && !stale) {
+        transport.moved?.(move, undefined, false);
+        continue;
+      }
+      applied.add(move.id);
+      if (applied.size > 256)
+        applied.delete(applied.values().next().value as string);
+      const ids = movedIds(pool, move, cutAt, stale);
+      const keep = (event: RelayEvent) => !ids.has(event.id);
+      if (state && ids.size) {
+        state.events = state.events.filter(keep);
+        for (const id of ids) {
+          state.above?.delete(id);
+          state.traffic.delete(id);
+        }
+        setWindow(state, {});
+      }
+      if (head?.events.some((event) => ids.has(event.id))) {
+        const events = head.events.filter(keep);
+        const next: Head = {
+          ...head,
+          events,
+          rows: Object.freeze(
+            foldChannelMessages(channelId, transport.relayAuthor, events),
+          ),
+        };
+        heads.set(channelId, next);
+        save(channelId, next);
+      }
+      if (tail?.events.some((event) => ids.has(event.id))) {
+        const events = tail.events.filter(keep);
+        const next = {
+          events,
+          preview: messagePreview(
+            foldChannelMessages(channelId, transport.relayAuthor, [
+              ...(heads.peek(channelId)?.events ?? []),
+              ...events,
+            ]),
+          ),
+        };
+        tails.set(channelId, next, tailBytes(next));
+      }
+      transport.moved?.(move, cutAt, stale);
+      // Nothing held says where the history now ends: ask the relay.
+      if (cutAt === undefined && state) queries.refresh?.(channelId);
+    }
+    setList(list);
+  }
   /** Verified traffic shares the same fold as reads and local intent. Window bounds remain read-owned. */
   function accept(events: readonly RelayEvent[]) {
     if (disposed || !transport) return;
     const generation = epoch;
+    dropMoved(historyMoves(events, transport.relayAuthor), true);
     const changedChannels = new Set(
       events.flatMap((event) =>
         event.tags.flatMap(([name, value]) =>

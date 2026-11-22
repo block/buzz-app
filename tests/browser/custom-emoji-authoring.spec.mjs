@@ -314,7 +314,10 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     // Publish failure keeps the draft; retry publishes the own set.
     relay.rejectNextPublication();
     await save.click();
-    await expect(page.getByRole("alert")).toHaveText("Failed to add emoji.");
+    // The relay's own failure text reaches the user, not the generic fallback.
+    await expect(page.getByRole("alert")).toHaveText(
+      "Relay request failed (503)",
+    );
     await expect(save).toBeEnabled();
     expect(relay.report.rejections).toHaveLength(1);
     expect(ownSet(primary)).toBeUndefined();
@@ -572,7 +575,9 @@ test("adds custom emoji through the production broker, then uses, replaces, retr
     await page.setViewportSize({ width: 1440, height: 950 });
     relay.rejectNextPublication();
     await remove.click();
-    await expect(page.getByRole("alert")).toHaveText("Failed to remove emoji.");
+    await expect(page.getByRole("alert")).toHaveText(
+      "Relay request failed (503)",
+    );
     expect(ownSet(primary).tags).toEqual(replaced.tags);
     await expect(remove).toBeEnabled();
     await remove.focus();

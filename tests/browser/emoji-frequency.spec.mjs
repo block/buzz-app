@@ -66,7 +66,11 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   ).toBeVisible();
   await page.keyboard.press("Enter");
   await expect(input).toHaveJSProperty("value", "😏 ");
-  await input.fill(":sm");
+  // The pick focused the editor. ProseMirror restores its own selection 20 ms
+  // after focus, undoing the DOM select-all `fill` makes in that window, so
+  // replace the draft with the composer's own select-all, as a person would.
+  await input.press("ControlOrMeta+a");
+  await page.keyboard.insertText(":sm");
   await expect(choices.first()).toHaveText(/:smirk:/);
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "😏 ");

@@ -9,14 +9,16 @@ const preferenceKey = "buzz-thread-placement.v1";
 const changedEvent = "buzz-thread-placement-changed";
 let unsavedPreference: ThreadPlacement | undefined;
 
-/** Device-local default for new tabs, never an instruction to move existing ones. */
+/** Device-local default for new openings, never an instruction to move
+ * existing tabs. Inline unless the viewer chose a pane; the first inline
+ * thread's intro is where they can opt out. */
 export function threadPlacementPreference(): ThreadPlacement {
   if (unsavedPreference !== undefined) return unsavedPreference;
   try {
     const saved = localStorage.getItem(preferenceKey);
-    return saved === "main" || saved === "inline" ? saved : "side";
+    return saved === "main" || saved === "side" ? saved : "inline";
   } catch {
-    return "side";
+    return "inline";
   }
 }
 /** The pane a new thread tab opens in. Inline is not a pane: a thread that

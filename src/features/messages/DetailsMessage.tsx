@@ -9,12 +9,7 @@ import {
 import { formatItemTimestamp } from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import {
-  composerHost,
-  useComposerForm,
-  useComposerScope,
-} from "./composer-overlay";
-import { DetailsSheet } from "./DetailsSheet";
+import { useComposerScope } from "./composer-overlay";
 import styles from "./Messages.module.css";
 import { LayerAddressContext } from "./view-layer";
 
@@ -36,15 +31,14 @@ function holdsBack(clip: HTMLElement) {
   );
 }
 
-/** A details message reads in the chat as its opening brief, and opens whole
- * over the composer of the view it sits in, or as a dialog when that composer
- * isn't on screen. Where the address names the layer, the view's
- * `LayerReader` draws it from its id; elsewhere this row draws it in place. */
+/** A details message reads in the chat as its opening brief, and opens whole.
+ * On a page that addresses its views' layers, the view's `LayerReader` draws
+ * it from its id, over the view's composer; elsewhere, as in Bestie, this row
+ * opens it in a dialog. */
 export function DetailsMessage({
   messageId,
   channelId,
   author,
-  avatar,
   createdAt,
   preview,
   keepMounted,
@@ -53,8 +47,6 @@ export function DetailsMessage({
   messageId: string;
   channelId: string;
   author: string;
-  /** The author's avatar, beside their name in the reader. */
-  avatar: ReactNode;
   createdAt: number;
   /** The whole message as the chat renders it; only its brief shows. */
   preview: ReactNode;
@@ -76,8 +68,6 @@ export function DetailsMessage({
     () => (local ? keepMounted?.(messageId) : undefined),
     [local, keepMounted, messageId],
   );
-  const form = useComposerForm(view?.handle);
-  const host = local && form ? composerHost(view?.handle) : null;
   const trigger = useRef<HTMLButtonElement>(null);
   const clip = useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = useState(false);
@@ -129,34 +119,18 @@ export function DetailsMessage({
           </Button>
         </span>
       )}
-      {host ? (
-        <DetailsSheet
+      {local && (
+        <Dialog
           open
           onOpenChange={(next) => {
             if (!next) close();
           }}
-          host={host}
           title={author}
-          leading={avatar}
           description={time}
           finalFocus={trigger}
         >
           {reader}
-        </DetailsSheet>
-      ) : (
-        local && (
-          <Dialog
-            open
-            onOpenChange={(next) => {
-              if (!next) close();
-            }}
-            title={author}
-            description={time}
-            finalFocus={trigger}
-          >
-            {reader}
-          </Dialog>
-        )
+        </Dialog>
       )}
     </div>
   );

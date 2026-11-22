@@ -17,6 +17,10 @@ import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMateri
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useFinalFocusUnlessMoved } from "../../shared/design-system/ui/finalFocus";
 import type { ComposerOverlayHost } from "./composer-overlay";
+import {
+  type InlineThreadIntroStep,
+  IntroSpotlight,
+} from "./InlineThreadIntro";
 import styles from "./DetailsSheet.module.css";
 import messageStyles from "./Messages.module.css";
 
@@ -342,6 +346,8 @@ export function DetailsSheet({
   onClosed,
   onMoveToTab,
   onOpenAsTab,
+  spotlight,
+  onSpotlightAnchor,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -373,6 +379,11 @@ export function DetailsSheet({
   onMoveToTab?: (() => void) | undefined;
   /** Closes this sheet and opens what it reads as a tab. */
   onOpenAsTab?: (() => void) | undefined;
+  /** The intro step pointing into this sheet: 1 its title, 2 Move to side
+   * panel. */
+  spotlight?: InlineThreadIntroStep | undefined;
+  /** Receives the element the current intro step points at. */
+  onSpotlightAnchor?: ((element: HTMLElement | null) => void) | undefined;
 }) {
   const { composer } = host;
   const [mounted, setMounted] = useState(open);
@@ -477,8 +488,21 @@ export function DetailsSheet({
               )}
               <div className={styles.byline}>
                 {leading}
-                <BaseDialog.Title className={`text-label ${styles.name}`}>
-                  {title}
+                <BaseDialog.Title
+                  className={`text-label ${styles.name}`}
+                  data-spotlight={spotlight === 1 || undefined}
+                >
+                  {spotlight === undefined ? (
+                    title
+                  ) : (
+                    <IntroSpotlight
+                      shape="pill"
+                      active={spotlight === 1}
+                      anchorRef={onSpotlightAnchor}
+                    >
+                      {title}
+                    </IntroSpotlight>
+                  )}
                 </BaseDialog.Title>
                 {description && (
                   <BaseDialog.Description
@@ -502,15 +526,26 @@ export function DetailsSheet({
                   />
                 )}
                 {onMoveToTab && (
-                  <IconButton
-                    aria-label="Move to side panel"
-                    title="Move to side panel"
-                    variant="glass"
-                    shape="round"
-                    size="compact"
-                    icon={<SidebarRightIcon size={16} aria-hidden="true" />}
-                    onClick={onMoveToTab}
-                  />
+                  <IntroSpotlight
+                    shape="ring"
+                    active={spotlight === 2}
+                    anchorRef={onSpotlightAnchor}
+                  >
+                    <IconButton
+                      aria-label="Move to side panel"
+                      // An intro step names it while it points here.
+                      title={
+                        spotlight === undefined
+                          ? "Move to side panel"
+                          : undefined
+                      }
+                      variant="glass"
+                      shape="round"
+                      size="compact"
+                      icon={<SidebarRightIcon size={16} aria-hidden="true" />}
+                      onClick={onMoveToTab}
+                    />
+                  </IntroSpotlight>
                 )}
                 <BaseDialog.Close
                   render={

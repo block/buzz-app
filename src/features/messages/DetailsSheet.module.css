@@ -118,6 +118,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The intro's pill reaches past the short title it highlights. */
+.name[data-spotlight] {
+  overflow: visible;
+}
 .time {
   flex: none;
   white-space: nowrap;

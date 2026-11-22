@@ -46,8 +46,11 @@ export const test = base.extend({
   liveDraw: [0, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
-  // Open threads in: "side" (the app default), "main" or "inline".
+  // Open threads in: "side", "main" or "inline" (the app default). Journeys
+  // open tabs unless they opt into inline.
   threadPlacement: ["side", { option: true }],
+  // Whether the first inline thread introduces itself; journeys skip it.
+  threadIntro: [false, { option: true }],
   profilePicture: ["", { option: true }],
   // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
   // browser's zone into it; null leaves the key out so launch shares one.
@@ -158,6 +161,7 @@ export const test = base.extend({
       actionProfile,
       agentMessageDeletion,
       threadPlacement,
+      threadIntro,
       profilePicture,
       profileTimeZone,
       readState,
@@ -2776,12 +2780,19 @@ export const test = base.extend({
           });
           observer.observe(document, { childList: true, subtree: true });
         });
-      if (threadPlacement !== "side")
+      if (threadPlacement !== "inline")
         await page.addInitScript((placement) => {
           // Seed once, so a choice made during the journey survives reloads.
           const key = "buzz-thread-placement.v1";
           if (!localStorage.getItem(key)) localStorage.setItem(key, placement);
         }, threadPlacement);
+      if (!threadIntro)
+        await page.addInitScript((viewer) => {
+          localStorage.setItem(
+            `buzz.seen.v1:${viewer}:buzz.channels/inline-thread-intro`,
+            "1",
+          );
+        }, viewer);
       await page.addInitScript(
         ({
           viewer,

@@ -826,11 +826,11 @@ export class AgentRunners {
   /** The turns the app left working last time, by agent, until the owner
    * forgets them, or resumes them and each agent's are read again. */
   private left: Interrupted;
-  /** When each agent's private turns, whose read as the agent failed, are
-   * read again, backing off as catch-up does. */
+  /** When each agent's turns a failed read left are read again on the same
+   * connection, backing off as catch-up does; a new connection tries now. */
   private readonly resumeRetries = new Map<
     AgentKey,
-    { delay: number; at: number }
+    { delay: number; at: number; epoch: number }
   >();
   /** The turns the app left working last time, as this page started: only
    * Resume gives them again, never a replay or live delivery. */
@@ -1913,10 +1913,10 @@ export class AgentRunners {
     if (
       !this.resuming.has(runner.key) ||
       !left ||
-      (retry?.at ?? 0) > Date.now() ||
       !agent ||
       !runner.type ||
-      community?.connection.since === undefined
+      community?.connection.since === undefined ||
+      (retry?.epoch === community.connection.epoch && retry.at > Date.now())
     )
       return;
     const { [runner.key]: _, ...rest } = this.left;
@@ -1929,12 +1929,12 @@ export class AgentRunners {
     }
     this.host.resumeFollowUps?.(agent, channels);
     const { signal } = community.controller;
+    const { epoch } = community.connection;
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
     const read = async () => {
       // Each read failing leaves its turns for the next try; the other still
       // resumes what it finds.
       let retry: readonly string[] = [];
-      let privateFailed = false;
       const owned = await community.session
         .readRemote([{ ids, limit: ids.length }], { signal, fresh: true })
         .catch((error) => {
@@ -1956,7 +1956,6 @@ export class AgentRunners {
         } catch (error) {
           if (signal.aborted) throw error;
           retry = [...new Set([...retry, ...hidden])];
-          privateFailed = true;
           console.warn(
             `Agent ${agent.name} could not resume its private turns`,
             error,
@@ -1968,13 +1967,12 @@ export class AgentRunners {
       return {
         events: [...owned, ...(agents ?? [])],
         retry: retry.filter((id) => !recovered.has(id)),
-        privateFailed,
       };
     };
     void read().then(
-      ({ events, retry, privateFailed }) => {
-        // Only the agent's own reads back off; the owner's retry as before.
-        if (!privateFailed) this.resumeRetries.delete(runner.key);
+      ({ events, retry }) => {
+        // Turns a failed read left back off until a try finds them all.
+        if (!retry.length) this.resumeRetries.delete(runner.key);
         else {
           const delay = Math.min(
             (this.resumeRetries.get(runner.key)?.delay ??
@@ -1984,6 +1982,7 @@ export class AgentRunners {
           this.resumeRetries.set(runner.key, {
             delay,
             at: Date.now() + delay + Math.floor((delay * Math.random()) / 4),
+            epoch,
           });
         }
         if (retry.length)

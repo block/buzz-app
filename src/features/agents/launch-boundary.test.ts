@@ -141,6 +141,7 @@ function countedTransport(records: RelayEvent[]) {
   const state = {
     offline: false,
     failMentionCatchUp: false,
+    failIdReads: false,
     afterRuns: () => false,
   };
   let live!: LiveCallbacks;
@@ -159,6 +160,8 @@ function countedTransport(records: RelayEvent[]) {
       if (state.offline) throw new Error("Relay unreachable");
       if (state.failMentionCatchUp && filters[0]?.["#p"] && !filters[0]["#h"])
         throw new Error("Owner mention read refused");
+      if (state.failIdReads && filters.some((filter) => filter.ids))
+        throw new Error("Owner read refused");
       // A mention catch-up pages by time, as the relay does.
       if (filters.length === 1 && filters[0]?.["#p"])
         return relayPage(records, filters[0]);
@@ -1123,6 +1126,47 @@ it("keeps an interrupted private turn for retry when the agent's read fails", as
   await vi.advanceTimersByTimeAsync(20_000);
   // Backed off, not read again on every service tick.
   expect(f.native.query.mock.calls.length - failures).toBeLessThanOrEqual(2);
+  f.native.query.mockImplementation(dm.query);
+  await vi.advanceTimersByTimeAsync(300_000);
+  await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
+  expect(f.deliveries[0]?.trigger).toMatchObject({
+    type: "mention",
+    resumed: true,
+    event: { id: dm.sent.id },
+  });
+});
+
+it("backs off Resume while the owner's read fails and the agent's finds nothing", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const dm = await agentOnlyDm({ at: Math.floor(Date.now() / 1000) - 3_600 });
+  const f = await gooseSetup((storage) =>
+    writeInterrupted(storage, agentKey.pubkey, {
+      [dm.sent.id]: privateChannel,
+    }),
+  );
+  f.transport.failIdReads = true;
+  f.native.query.mockResolvedValue([]);
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const ownerReads = () =>
+    f.requests.filter((request) =>
+      request.filters.some((filter) => filter.ids?.includes(dm.sent.id)),
+    ).length;
+  await vi.waitFor(() =>
+    expect(
+      f.service.snapshot().interrupted.map((agent) => agent.pubkey),
+    ).toEqual([agentKey.pubkey]),
+  );
+  f.service.resumeInterrupted();
+  await vi.waitFor(() =>
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("could not resume its turns"),
+      expect.any(Error),
+    ),
+  );
+  const failures = ownerReads();
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(ownerReads() - failures).toBeLessThanOrEqual(2);
+  expect(f.deliveries).toHaveLength(0);
   f.native.query.mockImplementation(dm.query);
   await vi.advanceTimersByTimeAsync(300_000);
   await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));

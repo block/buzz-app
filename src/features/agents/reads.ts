@@ -166,13 +166,16 @@ export function workflowMarked(event: RelayEvent, owner: string) {
   );
 }
 
+const OWN_RETRY_MS = 1_000;
+const OWN_RETRY_MAX_MS = 15_000;
+
 /** `ownerReads` of the agent's own community and owner, once the community is
  * ready, has listed its channels and knows the kind of `channelId`, which a
  * turn needs to tell where to answer: now when it has, or after the reconnect
  * under way, through a new session in the same community and owner if that
  * replaces the old one. A channel the owner cannot see is read through the
- * agent's own reads as they are at each check, which it asks to resolve the
- * channel when they do not know its kind yet. Rejects when the community ends up another one or another owner's, is
+ * agent's own reads as they are at each check, which it asks, with backoff,
+ * to resolve the channel while they do not know its kind. Rejects when the community ends up another one or another owner's, is
  * disconnected or fails in a way the service does not recover from by itself,
  * or when `signal` aborts first. It waits for the service's own notifications
  * and never reconnects. Its errors name what waits, `what`. */
@@ -229,27 +232,45 @@ export function readyOwnerReads(
       return pending;
     return undefined;
   };
-  const asked = new WeakSet<AgentReads>();
   let stopOwn = () => {};
   let watched: AgentReads | undefined;
+  let asking = false;
+  let finished = false;
+  let askAgain = OWN_RETRY_MS;
+  let retryOwn: ReturnType<typeof setTimeout> | undefined;
   let check = () => {};
   /** The agent's current reads once they know the channel's kind; until then
-   * they are asked once, and watched, to resolve it. */
+   * they are watched and asked to resolve it, again after a lookup that left
+   * it unknown, backing off until the deadline. */
   const own = (id: string) => {
     const reads = agentReads?.();
     if (!reads) return undefined;
     if (reads.channelLabel(id)?.channelType) return reads;
     if (reads !== watched) {
       stopOwn();
+      clearTimeout(retryOwn);
+      retryOwn = undefined;
+      asking = false;
+      askAgain = OWN_RETRY_MS;
       watched = reads;
       stopOwn = reads.subscribeChannels(() => check());
     }
-    if (!asked.has(reads)) {
-      asked.add(reads);
-      void reads.channel(id).then(
-        () => check(),
-        () => {},
-      );
+    if (!asking && retryOwn === undefined) {
+      asking = true;
+      const unresolved = () => {
+        if (finished || watched !== reads) return;
+        asking = false;
+        if (signal.aborted || reads.channelLabel(id)?.channelType) return;
+        retryOwn = setTimeout(() => {
+          retryOwn = undefined;
+          check();
+        }, askAgain);
+        askAgain = Math.min(askAgain * 2, OWN_RETRY_MAX_MS);
+      };
+      void reads
+        .channel(id)
+        .then(unresolved, unresolved)
+        .finally(() => check());
     }
     return undefined;
   };
@@ -260,7 +281,9 @@ export function readyOwnerReads(
     const finish = () => {
       stop();
       stopList();
+      finished = true;
       stopOwn();
+      clearTimeout(retryOwn);
       signal.removeEventListener("abort", aborted);
     };
     const aborted = () => {
@@ -273,6 +296,7 @@ export function readyOwnerReads(
       );
     };
     check = () => {
+      if (finished) return;
       const reads = settled();
       if (reads !== pending) {
         finish();

@@ -144,10 +144,24 @@ viewport):
   starts. When entry did not capture a verified, idle window with all of its
   history (rows sit above it, or it was cached, refreshing or still paging), the
   **New messages** divider waits for `sampled`, then appears only at
-  `oldestUnreadId` among the rows loaded on entry and only below one that a
-  channel-wide read reaches (`attention()` reports `prefixRead`: the channel
-  frontier, its `activity:` catch-up mark or the retention floor), because each
-  of those also reads every older ordinary row. While it waits with `sampling`
+  `oldestUnreadId` and only below a row that a channel-wide read reaches
+  (`attention()` reports `prefixRead`: the channel frontier, its `activity:`
+  catch-up mark or the retention floor), because each of those also reads every
+  older ordinary row. When `oldestUnreadId` is an entry row, that row must be
+  an entry row too. When no entry row above it can show that (it is not
+  loaded at all because there is more unread than the entry page holds, or it
+  is the first entry row that could be unread), the snapshot's
+  `readBeforeOldestUnreadId` names the newest such row the store's evidence
+  holds above it. Evidence can have gaps (saved pages, capped repair batches),
+  so the divider is fixed at entry but draws only once paging loads that row
+  directly above it with no row that could be unread between them, and with
+  the divider either on an entry row or above them all; a contiguous page
+  proves nothing unknown sits there. Until then the divider is not placed, so
+  an arrival while away can still take the visit's one divider, and the fixed
+  one is dropped. Once drawn it is placed like any other and stays, even if
+  the rows that proved it leave the window. Any other `oldestUnreadId` outside
+  the entry rows (an arrival or a row an older page loaded) settles the visit
+  with no divider. While it waits with `sampling`
   set, the timeline holds its own reading (dwell and bottom catch-up), which
   would otherwise read the loaded rows and erase the evidence it waits for. Once
   `sampled` is set the divider is placed and reading starts at once; if

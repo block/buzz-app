@@ -10,8 +10,13 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { Fragment, memo } from "react";
 import { profileTarget } from "../profiles/target";
-import type { Profile } from "../relay/contracts";
-import { membershipDescription, type TimelineRow } from "./membership-rows";
+import type { ConversationChange, Profile } from "../relay/contracts";
+import { memberChange } from "../relay/membership";
+import {
+  conversationDescription,
+  membershipDescription,
+  type TimelineRow,
+} from "./membership-rows";
 import { DayDivider } from "./MessageTimestamp";
 import styles from "./Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -29,6 +34,7 @@ export const MembershipRow = memo(function MembershipRow({
   resolveName: scopedName,
   onOpenLink,
   canOpenLink,
+  conversationName,
 }: {
   row: TimelineRow;
   names?: IdentityNameView | undefined;
@@ -40,15 +46,27 @@ export const MembershipRow = memo(function MembershipRow({
   resolveName?: (pubkey: string, fallback: string) => string;
   onOpenLink?: ((url: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
+  /** Words a conversation by id, for the other side of a history move. */
+  conversationName?: ((id: string) => string | undefined) | undefined;
 }) {
   const globalName = useIdentityNames(names);
   const resolveName = scopedName ?? globalName;
-  const { targets, parts, title } = membershipDescription(
-    row.membershipRows ?? [row],
-    profiles,
-    viewer,
-    resolveName,
-  );
+  const { targets, parts, title } =
+    row.membership && !memberChange(row)
+      ? conversationDescription(
+          row,
+          row.membership as ConversationChange,
+          profiles,
+          viewer,
+          resolveName,
+          conversationName,
+        )
+      : membershipDescription(
+          row.membershipRows ?? [row],
+          profiles,
+          viewer,
+          resolveName,
+        );
   return (
     <div data-message-id={row.id} data-membership-row="">
       {day && <DayDivider createdAt={row.createdAt} />}

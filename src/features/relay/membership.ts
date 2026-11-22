@@ -1,4 +1,8 @@
-import type { ChannelMessage, MembershipChange } from "./contracts";
+import type {
+  ChannelMessage,
+  MembershipChange,
+  SystemChange,
+} from "./contracts";
 import type { EventData } from "./events";
 import { objectBody } from "./body";
 
@@ -20,15 +24,45 @@ export function channelRowChannel(event: EventData): string | undefined {
 }
 const pubkey = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+const channelId = (value: unknown): value is string =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value);
 
 /** Only the session's verified relay identity may describe membership activity. */
 export function membershipChange(
   event: EventData,
   relayAuthor: string,
-): MembershipChange | undefined {
+): SystemChange | undefined {
   if (event.kind !== 40099 || event.pubkey !== relayAuthor) return;
   const body = objectBody(event.content);
   if (!body || !pubkey(body.actor)) return;
+  if (body.type === "dm_named")
+    return typeof body.name === "string" && body.name
+      ? Object.freeze({ type: body.type, actor: body.actor, name: body.name })
+      : undefined;
+  if (body.type === "history_moved") {
+    const { from, to, cut, count, added } = body;
+    return channelId(from) &&
+      channelId(to) &&
+      from !== to &&
+      typeof cut === "string" &&
+      /^[0-9a-f]{64}$/.test(cut) &&
+      typeof count === "number" &&
+      Number.isSafeInteger(count) &&
+      count >= 0 &&
+      Array.isArray(added) &&
+      added.every(pubkey)
+      ? Object.freeze({
+          type: body.type,
+          actor: body.actor,
+          from,
+          to,
+          cut,
+          count,
+          added: Object.freeze([...added]),
+        })
+      : undefined;
+  }
   if (body.type === "member_left") {
     if (body.target !== undefined && body.target !== body.actor) return;
     return Object.freeze({
@@ -48,19 +82,30 @@ export function membershipChange(
     });
 }
 
+/** The row's member change, when it is one: a join, leave or removal, as
+ * opposed to a conversation being named or its history moved. */
+export const memberChange = (
+  row: Pick<ChannelMessage, "membership">,
+): MembershipChange | undefined =>
+  row.membership && "target" in row.membership ? row.membership : undefined;
+
 /** Shared profile demand includes system actors/subjects without inventing mentions. */
 export function rowProfileIds(row: ChannelMessage): readonly string[] {
-  return row.membership
-    ? [row.membership.actor, row.membership.target]
-    : [
-        row.authorId,
-        ...(row.workflowOwnerId ? [row.workflowOwnerId] : []),
-        // Loading the claimed agent's profile is what lets its owner verify.
-        ...(row.relayedFrom ? [row.relayedFrom.agent] : []),
-        ...row.mentions,
-        ...(row.mentionReferences ?? []),
-        ...row.participants,
-      ];
+  const change = row.membership;
+  if (change) {
+    if (change.type === "history_moved") return [change.actor, ...change.added];
+    if ("target" in change) return [change.actor, change.target];
+    return [change.actor];
+  }
+  return [
+    row.authorId,
+    ...(row.workflowOwnerId ? [row.workflowOwnerId] : []),
+    // Loading the claimed agent's profile is what lets its owner verify.
+    ...(row.relayedFrom ? [row.relayedFrom.agent] : []),
+    ...row.mentions,
+    ...(row.mentionReferences ?? []),
+    ...row.participants,
+  ];
 }
 
 /** One line naming a diff row, whose content is a raw patch rather than prose. */

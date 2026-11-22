@@ -40,9 +40,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.diff?.commitSha === right.diff?.commitSha &&
     left.diff?.description === right.diff?.description &&
     left.diff?.truncated === right.diff?.truncated &&
-    left.membership?.type === right.membership?.type &&
-    left.membership?.actor === right.membership?.actor &&
-    left.membership?.target === right.membership?.target &&
+    sameSystemChange(left.membership, right.membership) &&
     left.edited === right.edited &&
     left.attachmentSourceId === right.attachmentSourceId &&
     sameArray(left.attachmentSeams, right.attachmentSeams) &&
@@ -107,3 +105,23 @@ export function shareMessageRows(
   });
   return sameArray(previous, shared) ? previous : shared;
 }
+
+const sameSystemChange = (
+  left: ChannelMessage["membership"],
+  right: ChannelMessage["membership"],
+) =>
+  left === right ||
+  (!!left &&
+    !!right &&
+    left.type === right.type &&
+    left.actor === right.actor &&
+    (left.type === "history_moved"
+      ? right.type === "history_moved" &&
+        left.from === right.from &&
+        left.to === right.to &&
+        left.cut === right.cut &&
+        left.count === right.count &&
+        sameArray(left.added, right.added)
+      : left.type === "dm_named"
+        ? right.type === "dm_named" && left.name === right.name
+        : "target" in right && left.target === right.target));

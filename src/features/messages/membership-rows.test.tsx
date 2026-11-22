@@ -4,8 +4,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { profileTarget } from "../profiles/target";
-import type { ChannelMessage, MembershipChange } from "../relay/contracts";
+import type {
+  ChannelMessage,
+  MembershipChange,
+  SystemChange,
+} from "../relay/contracts";
 import {
+  conversationDescription,
   membershipRows,
   membershipDescription,
   renderedRowIndex,
@@ -13,6 +18,7 @@ import {
 } from "./membership-rows";
 import { MembershipRow } from "./MembershipRow";
 import { geometrySignature } from "./geometry";
+import { memberChange } from "../relay/membership";
 const wes = "a".repeat(64),
   pinky = "b".repeat(64),
   brain = "c".repeat(64);
@@ -23,7 +29,7 @@ const profiles = new Map([
 ]);
 function row(
   id: string,
-  membership?: MembershipChange,
+  membership?: SystemChange,
   createdAt = 100,
 ): ChannelMessage {
   return {
@@ -229,7 +235,7 @@ it("every grouped input remains represented for mixed three-event sequences", ()
           expect(description.targets).toEqual([
             ...new Set(
               (group.membershipRows ?? [group]).map(
-                (r) => r.membership?.target,
+                (r) => memberChange(r)?.target,
               ),
             ),
           ]);
@@ -411,4 +417,62 @@ it("omits only the owner's starting agents once history reaches the start", () =
       true,
     ).map((row) => row.id),
   ).toEqual(["left", "message"]);
+});
+
+const from = "11111111-1111-4111-8111-111111111111";
+const to = "22222222-2222-4222-8222-222222222222";
+const moved = {
+  type: "history_moved",
+  actor: wes,
+  from,
+  to,
+  cut: "c".repeat(64),
+  count: 2,
+  added: [],
+} as const;
+
+it("words naming and moving as placeholder copy, from either side of a move", () => {
+  const named = row("1", { type: "dm_named", actor: wes, name: "Launch" });
+  expect(
+    conversationDescription(named, named.membership as never, profiles).text,
+  ).toBe("Wes named this conversation Launch");
+  const names = (id: string) => (id === to ? "Launch" : "Plans");
+  const inSource = { ...row("2", moved), channelId: from };
+  const inDestination = { ...row("3", moved), channelId: to };
+  expect(
+    conversationDescription(
+      inSource,
+      moved,
+      profiles,
+      undefined,
+      undefined,
+      names,
+    ).text,
+  ).toBe("Wes moved 2 messages to Launch");
+  expect(
+    conversationDescription(
+      inDestination,
+      moved,
+      profiles,
+      undefined,
+      undefined,
+      names,
+    ).text,
+  ).toBe("Wes moved 2 messages from Plans");
+  expect(
+    conversationDescription(inSource, { ...moved, count: 1 }, profiles, wes)
+      .text,
+  ).toBe("You moved 1 message to another conversation");
+});
+
+it("keeps conversation notices out of member groups", () => {
+  const rows = membershipRows([
+    row("1", joined(wes, pinky)),
+    row("2", { type: "dm_named", actor: wes, name: "Launch" }),
+    row("3", joined(wes, brain)),
+  ]);
+  expect(rows.map((r) => r.id)).toEqual(["1", "2", "3"]);
+  expect(
+    rows.every((r) => !r.membershipRows || r.membershipRows.length === 1),
+  ).toBe(true);
 });

@@ -10,6 +10,7 @@ import {
 } from "../../shared/design-system/icons";
 import { useNativeDownload } from "./use-native-download";
 import { isNativeMediaSource } from "./attachment-source";
+import { notifyDownloadSaved } from "./DownloadNotice";
 
 const FAILURE_DURATION = 6000;
 const SAVED = "Saved to Downloads";
@@ -129,7 +130,7 @@ export function MediaMenuDownloadNotice() {
   // The host sends the saved file's name, or null if the download failed.
   const show = useEffectEvent((name: string | null) => {
     if (name === null) notify(FAILED, "error");
-    else notify(SAVED, "success");
+    else notifyDownloadSaved(notify);
   });
   useEffect(() => {
     if (!isTauri()) return;

@@ -457,7 +457,12 @@ export function useToastNotification() {
   return (
     title: string,
     tone: "success" | "error" | "info",
-    action?: { label: string; onClick(): void; timeout?: number },
+    action?: {
+      label: string;
+      onClick(): void;
+      timeout?: number;
+      variant?: "link";
+    },
   ) => {
     // The card stays focusable while Sonner animates it out; act once.
     let acted = false;
@@ -473,7 +478,8 @@ export function useToastNotification() {
           >
             {action && (
               <Button
-                size="compact"
+                variant={action.variant ?? "subtle"}
+                size={action.variant === "link" ? "text" : "compact"}
                 onClick={() => {
                   if (acted) return;
                   acted = true;

@@ -32,6 +32,7 @@ import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 import { useMediaElementSource } from "./use-media-element-source";
 import { MediaContextMenu } from "./MediaContextMenu";
+import { OpenDownloadsButton } from "./DownloadNotice";
 import { MediaActionAnnouncements } from "./MediaActionAnnouncements";
 
 export type MediaPlayback = Readonly<{
@@ -505,6 +506,7 @@ export function MediaViewer({
   close(): void;
   children: ReactNode;
 }) {
+  const [hasDownload, setHasDownload] = useState(false);
   const backdrop = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   useModalBoundary(backdrop, closeButton, close);
@@ -529,18 +531,23 @@ export function MediaViewer({
           <PanelHeader
             title={<PanelHeaderLabel title={title} />}
             actions={
-              <IconButton
-                size="compact"
-                ref={closeButton}
-                type="button"
-                aria-label="Close fullscreen viewer"
-                onClick={close}
-                icon={<XIcon size={20} aria-hidden="true" />}
-              />
+              <>
+                {hasDownload && <OpenDownloadsButton />}
+                <IconButton
+                  size="compact"
+                  ref={closeButton}
+                  type="button"
+                  aria-label="Close fullscreen viewer"
+                  onClick={close}
+                  icon={<XIcon size={20} aria-hidden="true" />}
+                />
+              </>
             }
           />
         </div>
-        <MediaActionAnnouncements>{children}</MediaActionAnnouncements>
+        <MediaActionAnnouncements onDownloadSaved={() => setHasDownload(true)}>
+          {children}
+        </MediaActionAnnouncements>
       </section>
     </div>
   );

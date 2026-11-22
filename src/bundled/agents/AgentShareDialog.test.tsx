@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, assert, expect, it, vi } from "vitest";
@@ -860,14 +862,19 @@ it("draws pack art from the app's own copy, since its CDN can't be read back", a
 
 it("saves an .agent.png natively on desktop, never through a blob link", async () => {
   const user = userEvent.setup();
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   desktop.tauri = true;
   desktop.invoke.mockResolvedValueOnce("/Users/ada/Downloads/Ada.agent.png");
   const click = vi.spyOn(HTMLAnchorElement.prototype, "click");
   try {
     drawable();
-    share(community().session);
-    await user.click(exportButton());
-    await user.click(await saveCard());
+    const view = share(community().session);
+    const startExport = exportButton();
+    await user.click(startExport);
+    const save = await saveCard();
+    await waitFor(() => expect(startExport).not.toBeInTheDocument());
+    await user.click(save);
+    await waitFor(() => expect(save).not.toBeInTheDocument());
     // Desktop says where the file went.
     expect(
       await screen.findByText(
@@ -877,6 +884,35 @@ it("saves an .agent.png natively on desktop, never through a blob link", async (
     expect(click).not.toHaveBeenCalled();
     expect(desktop.invoke).toHaveBeenCalledOnce();
     const [command, bytes, options] = desktop.invoke.mock.calls[0] ?? [];
+    const modal = screen.getByRole("dialog", { name: "Share Ada" });
+    const folder = within(modal).getByRole("button", {
+      name: "Open Downloads",
+    });
+    let failOpen!: (error: Error) => void;
+    desktop.invoke.mockReturnValueOnce(
+      new Promise<void>((_, reject) => {
+        failOpen = reject;
+      }),
+    );
+    try {
+      folder.focus();
+      await user.keyboard("{Enter}");
+      expect(desktop.invoke).toHaveBeenLastCalledWith("open_downloads_folder");
+      view.rerender(null);
+    } finally {
+      await act(async () => failOpen(new Error("Folder unavailable")));
+    }
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Couldn’t open the Downloads folder.",
+      }),
+    ).toBeVisible();
+    const receipt = screen.getByRole("dialog", {
+      name: "Saved an agent card for Ada to /Users/ada/Downloads/Ada.agent.png.",
+    });
+    expect(
+      within(receipt).getByRole("button", { name: "Open Downloads" }),
+    ).toBeVisible();
     expect(command).toBe("file_download");
     expect(options).toEqual({
       headers: { "x-buzz-file-name": "Ada.agent.png" },

@@ -163,6 +163,7 @@ fn main() {
             "relay_upload_chunk",
             "relay_upload",
             "relay_upload_cancel",
+            "open_downloads_folder",
             "media_download",
             "media_cache_clear",
             "media_cache_forget",

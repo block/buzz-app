@@ -289,7 +289,10 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   there. Otherwise it pairs the phone with this identity by QR code and a
   verification code.
 - Set or clear your status from the profile menu, or with **Update status** /
-  **Set a status** on your own profile. On a profile or in the profile menu,
+  **Set a status** on your own profile. Your status emoji appears above your
+  avatar in the bottom-left dock. Hover the emoji or avatar, or focus the
+  avatar, to see your name, availability, full status, and when it clears.
+  Text-only statuses show a speech bubble. On a profile or in the profile menu,
   hover the status emoji to see its `:name:`.
 - Your profile shares your local time by default: joining a community, or
   opening one whose profile has never had a time zone, publishes this device's

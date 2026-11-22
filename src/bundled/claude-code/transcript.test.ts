@@ -1075,7 +1075,7 @@ it("shows a session's prompt once over the latest turns it swaps in", async () =
     ClaudeRuntime.prototype.latestTurns.call(
       {
         spawn,
-        reads: () => undefined,
+        reads: () => ({ ownerReadable: () => true, name: () => undefined }),
         prompts: () => prompts,
         notices: new Map(),
         place: (_agent: string, _key: string, workspace: string) => workspace,

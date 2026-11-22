@@ -106,6 +106,7 @@ import {
   inStream,
   MENTIONS,
   oldestFirst,
+  PRIVATE_MENTIONS,
   POLL_OVERLAP,
   readWindow,
   streamKey,
@@ -515,12 +516,32 @@ export type RunnerHost = {
    * channel is public; undefined as for `member`. Only a member may be
    * delivered to. */
   reads(agent: Agent, event: Pick<RelayEvent, "tags">): boolean | undefined;
+  /** Whether the agent's own read of DMs its owner cannot read is due: false
+   * while it backs off, undefined when it has none here. */
+  privateMentionsDue?(agent: Agent): boolean | undefined;
+  /** Reads the agent's mentions as itself, failing while any DM they are in
+   * is only partly known. */
+  readPrivateMentions?(
+    agent: Agent,
+    filter: ReadFilter,
+    signal: AbortSignal,
+  ): Promise<readonly RelayEvent[]>;
+  /** Reads as the agent itself what the owner's session cannot, resolving
+   * the channels of what it returns, or undefined when the agent has no read
+   * of its own here. */
+  readAsAgent?(
+    agent: Agent,
+    filter: ReadFilter,
+    signal: AbortSignal,
+  ): Promise<readonly RelayEvent[]> | undefined;
   /** Resolves listening metadata before an enabled watch is admitted. */
   resolveChannels?(
     agent: Agent,
     channels: readonly string[],
     signal: AbortSignal,
   ): Promise<void>;
+  /** Whether the event is in a DM only the agent, not its owner, can read. */
+  ownerHidden?(agent: Agent, event: RelayEvent): boolean;
   /** Whether the event's channel is a DM between the agent and one other. */
   dm(agent: Agent, event: RelayEvent): boolean;
   /** Whether the event came as it would have with no watch keeping channels
@@ -1677,7 +1698,14 @@ export class AgentRunners {
       const community = agent && this.host.community(agent);
       const on = !!agent?.attentionEnabled && !!runner.type?.run;
       const reading: Stream[] = [];
-      const streams = agent ? streamsOf(agent) : [];
+      // Only an agent with reads of its own here has private mentions.
+      const streams = agent
+        ? streamsOf(agent).filter(
+            (stream) =>
+              !stream.private ||
+              this.host.privateMentionsDue?.(agent) !== undefined,
+          )
+        : [];
       // Saved edits still invalidate retries when a disconnect hides the row.
       const attention =
         agent?.attention ?? this.host.savedAttention(runner.key);
@@ -1723,7 +1751,8 @@ export class AgentRunners {
           (stream.channel === undefined ||
             !community?.session.attendPending(stream.channel)) &&
           (runner.readRetries.get(stream.key)?.failure.retryAt ?? 0) <=
-            Date.now()
+            Date.now() &&
+          !(stream.private && !this.host.privateMentionsDue?.(agent as Agent))
         )
           reading.push(stream);
       }
@@ -1877,51 +1906,79 @@ export class AgentRunners {
       return this.unmark(runner.key, ids);
     }
     this.host.resumeFollowUps?.(agent, channels);
+    const { signal } = community.controller;
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
-    void community.session
-      .readRemote([{ ids, limit: ids.length }], {
-        signal: community.controller.signal,
-        fresh: true,
-      })
-      .then(
-        (events) => {
-          // A turn's own run forgets it when it settles.
-          const kept = new Set<string>();
-          // Oldest first, as they were sent: a later correction stays last.
-          const proven = (events.filter(hasEventProof) as RelayEvent[]).sort(
-            (a, b) =>
-              a.created_at - b.created_at ||
-              (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
-          );
-          for (const event of proven) {
-            const channel = channels[event.id];
-            if (channel === undefined) continue;
-            if (!this.hasSeen(runner, event.id, channelOf(event)))
-              this.markSeen(runner, event.id, channelOf(event));
-            const queued = this.enqueue(runner, {
-              trigger: { type: "mention", event, resumed: true },
-              ...(channel ? { channelId: channel } : {}),
-              ...(typeof left[event.id] === "string"
-                ? { nativePlacement: true }
-                : {}),
-            });
-            if (queued) kept.add(event.id);
-          }
-          const forgotten = Object.fromEntries(
-            Object.entries(channels).filter(([id]) => !kept.has(id)),
-          );
-          this.host.abandonFollowUps?.(agent, forgotten);
-          this.unmark(runner.key, Object.keys(forgotten));
-        },
-        (error) => {
-          this.left = { ...this.left, [runner.key]: left };
-          if (!community.controller.signal.aborted)
-            console.warn(
-              `Agent ${agent.name} could not resume its turns`,
-              error,
-            );
-        },
+    const read = async () => {
+      const owned = await community.session.readRemote(
+        [{ ids, limit: ids.length }],
+        { signal, fresh: true },
       );
+      const found = new Set(owned.filter(hasEventProof).map(({ id }) => id));
+      const hidden = ids.filter((id) => !found.has(id));
+      let agents: readonly RelayEvent[] | undefined;
+      let retry: readonly string[] = [];
+      if (hidden.length)
+        try {
+          agents = await this.host.readAsAgent?.(
+            agent,
+            { ids: hidden, limit: hidden.length },
+            signal,
+          );
+        } catch (error) {
+          if (signal.aborted) throw error;
+          retry = hidden;
+          console.warn(
+            `Agent ${agent.name} could not resume its private turns`,
+            error,
+          );
+        }
+      return { events: [...owned, ...(agents ?? [])], retry };
+    };
+    void read().then(
+      ({ events, retry }) => {
+        if (retry.length)
+          this.left = {
+            ...this.left,
+            [runner.key]: Object.fromEntries(
+              retry.map((id) => [id, left[id] ?? ""]),
+            ),
+          };
+        // A turn's own run forgets it when it settles.
+        const kept = new Set<string>();
+        // Oldest first, as they were sent: a later correction stays last.
+        const proven = (events.filter(hasEventProof) as RelayEvent[]).sort(
+          (a, b) =>
+            a.created_at - b.created_at ||
+            (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+        );
+        for (const event of proven) {
+          const channel = channels[event.id];
+          if (channel === undefined) continue;
+          if (!this.hasSeen(runner, event.id, channelOf(event)))
+            this.markSeen(runner, event.id, channelOf(event));
+          const queued = this.enqueue(runner, {
+            trigger: { type: "mention", event, resumed: true },
+            ...(channel ? { channelId: channel } : {}),
+            ...(typeof left[event.id] === "string"
+              ? { nativePlacement: true }
+              : {}),
+          });
+          if (queued) kept.add(event.id);
+        }
+        const forgotten = Object.fromEntries(
+          Object.entries(channels).filter(
+            ([id]) => !kept.has(id) && !retry.includes(id),
+          ),
+        );
+        this.host.abandonFollowUps?.(agent, forgotten);
+        this.unmark(runner.key, Object.keys(forgotten));
+      },
+      (error) => {
+        this.left = { ...this.left, [runner.key]: left };
+        if (!community.controller.signal.aborted)
+          console.warn(`Agent ${agent.name} could not resume its turns`, error);
+      },
+    );
   }
   private mark(key: AgentKey, id: string, entry: InterruptedTurns[string]) {
     return this.saveTurns(key, {
@@ -1968,25 +2025,32 @@ export class AgentRunners {
       pass.community.controller.signal,
     ]);
     const name = () => this.host.agent(runner.key)?.name;
-    const read = async (filter: ReadFilter) => {
+    const read = (stream: Stream) => async (filter: ReadFilter) => {
       // Only the relay's page: read() also adds events the session observed
       // meanwhile and the owner's messages not yet sent, and an older one of
       // those would page past events the relay has not returned yet.
-      const events = await pass.community.session.readRemote([filter], {
-        signal,
-        priority: "background",
-        fresh: true,
-        // Of every channel: a public one the session does not know yet too.
-        ...(filter["#h"] ? {} : { resolveChannels: true }),
-      });
+      const agent = this.host.agent(runner.key);
+      const events = stream.private
+        ? agent && this.host.readPrivateMentions
+          ? await this.host.readPrivateMentions(agent, filter, signal)
+          : []
+        : await pass.community.session.readRemote([filter], {
+            signal,
+            priority: "background",
+            fresh: true,
+            // Of every channel: a public one the session does not know yet too.
+            ...(filter["#h"] ? {} : { resolveChannels: true }),
+          });
       signal.throwIfAborted();
       // Only what the relay signed.
       const signed = events.filter(hasEventProof) as RelayEvent[];
-      const agent = this.host.agent(runner.key);
       for (const event of signed)
         this.readAddressable.set(
           event,
-          !!agent && this.host.unattended(agent, event, false),
+          !!agent &&
+            this.host.unattended(agent, event, false) &&
+            // The owner's mentions stream gives the rest.
+            (!stream.private || !!this.host.ownerHidden?.(agent, event)),
         );
       return signed;
     };
@@ -2003,7 +2067,7 @@ export class AgentRunners {
               stream,
               this.checkpoints[stream.key],
               typeof upper === "number" ? upper : upper(stream),
-              read,
+              read(stream),
             )
               .then((window) => {
                 signal.throwIfAborted();
@@ -2012,6 +2076,13 @@ export class AgentRunners {
                 return window;
               })
               .catch((error) => {
+                if (stream.private && !signal.aborted) {
+                  console.warn(
+                    `Agent ${name()} could not catch up its private mentions`,
+                    error,
+                  );
+                  return undefined;
+                }
                 if (signal.aborted || stream.mentions) throw error;
                 const object = pass.attention?.[slug];
                 if (!object) throw error;
@@ -2362,7 +2433,10 @@ export class AgentRunners {
       ),
       // Mentions need no record: a membership added to a community has none
       // until something is saved for it there.
-      ...[...this.runners.keys()].map((key) => streamKey(key, MENTIONS)),
+      ...[...this.runners.keys()].flatMap((key) => [
+        streamKey(key, MENTIONS),
+        streamKey(key, PRIVATE_MENTIONS),
+      ]),
     ]);
     this.checkpoints = Object.fromEntries(
       Object.entries(this.checkpoints).filter(([key]) => keys.has(key)),

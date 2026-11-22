@@ -46,6 +46,12 @@ import { type Facts, LAYOUT } from "../../features/agent-harness/sections";
 import type { AgentKey } from "../../features/agents/membership";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
+import {
   EACH_TURN,
   sessionPrompts,
 } from "../../features/agents/session-prompts";
@@ -1688,7 +1694,7 @@ export class CodexRuntime {
   }
   private savedConversations(agent: AgentKey, saved: Record<string, Saved>) {
     const reads = this.reads(agent);
-    return Object.entries(saved)
+    const rows = Object.entries(saved)
       .reverse()
       .flatMap(([key, { threadId, at }]) => {
         try {
@@ -1707,7 +1713,7 @@ export class CodexRuntime {
               key,
               channelId,
               ...(community ? { community: true as const } : {}),
-              ...reads?.channelLabel(channelId),
+              ...ownerLabel(reads, channelId),
               ...(root === "channel" ? {} : { root }),
               threadId,
               ...(at === undefined ? {} : { at }),
@@ -1718,6 +1724,7 @@ export class CodexRuntime {
         }
       })
       .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+    return ownerRows(rows, reads);
   }
   /** A display name for a pubkey in the agent's community, if known. */
   name(agent: AgentKey, pubkey: string) {
@@ -1759,7 +1766,28 @@ export class CodexRuntime {
   /** The community's current name and kind for a channel, if it lists it;
    * `useOpenedSession` gives them to a thread `find` returned. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return this.reads(agent)?.channelLabel(channelId);
+    return ownerLabel(this.reads(agent), channelId);
+  }
+  /** Whether the live session `key` is of a conversation its owner can read. */
+  readableSession(agent: AgentKey, key: string) {
+    try {
+      const [channelId] = JSON.parse(key) as unknown[];
+      return (
+        channelId === COMMUNITY_SESSION ||
+        (typeof channelId === "string" &&
+          this.reads(agent)?.ownerReadable(channelId) === true)
+      );
+    } catch {
+      return false;
+    }
+  }
+  /** The turns of `conversation` its owner can read. */
+  readable(
+    agent: AgentKey,
+    conversation: Readonly<{ channelId: string; community?: true }>,
+    turns: readonly TranscriptTurn[],
+  ) {
+    return ownerTurns(turns, this.reads(agent), conversation);
   }
   /** What each of the agent's threads started with. */
   prompts(agent: AgentKey) {

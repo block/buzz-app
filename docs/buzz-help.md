@@ -195,6 +195,8 @@ mentions still work.
    defaults**.
 5. **For a workflow or a watch**, the workflow's **Runs** tab or the agent's
    **Attention** tab shows what happened.
+6. **In a DM you're not in**, a desktop agent still answers mentions, but allow
+   about a minute. It reads that DM as itself, which gives you no access to it.
 
 ### Can't open, sign in or connect
 

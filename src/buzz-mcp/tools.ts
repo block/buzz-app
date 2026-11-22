@@ -1,3 +1,4 @@
+import { readSubthread } from "../features/relay/subthread";
 import { messageAuthor } from "../features/relay/fold";
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
@@ -338,8 +339,8 @@ export const TOOLS: readonly Tool[] = [
     channel: str,
   }),
   tool(
-    "solo_workspace_list",
-    "List your owner's personal Solo workspace IDs and names on this local host.",
+    "workspace_list",
+    "List your owner's sidebar workspaces on this local host: each one's ID and name.",
     {},
   ),
   tool(
@@ -359,14 +360,29 @@ export const TOOLS: readonly Tool[] = [
       join_role: joinRole,
       template: str,
       solo: { type: "boolean" },
-      members: { ...strs, description: "Solo only: pubkeys or npubs." },
+      members: {
+        ...strs,
+        description: "Pubkeys or npubs who join in the create.",
+      },
       workspace: {
         ...str,
         description:
-          "Solo only, local host: exact ID from solo_workspace_list. Include your owner in members. Placement only; no workspace defaults.",
+          "Local host: exact ID from workspace_list. Your owner must see it: open, or with your owner in members. Without template, applies the workspace's defaults.",
       },
     },
     ["name", "visibility"],
+  ),
+  tool(
+    "channel_move",
+    "Move a conversation your owner can see, of any type, to one of their sidebar workspaces. Local host only.",
+    {
+      channel: { ...str, description: "Default: current." },
+      workspace: {
+        ...str,
+        description: "Exact ID from workspace_list; empty unfiles it.",
+      },
+    },
+    ["workspace"],
   ),
   tool("channel_update", "Change a channel's details.", {
     channel: str,
@@ -612,13 +628,18 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // A harness takes a wake with no thread only in a Solo chat.
     if (!event && !soloChannelMetadata(metadata as RelayEvent))
       throw new Error("thread is required outside a Solo chat.");
-    const root = event && rootOf(event);
+    const same = channel === context.channel;
+    const task =
+      event &&
+      ((same && !!context.sourceRoot && event.id === context.root) ||
+        client.isTaskThread?.(channel, event.id));
+    const root = event && (task ? event.id : rootOf(event));
     // A conversation with no thread is the whole channel, unless the host
     // says this channel's threads have sessions of their own.
-    const same = channel === context.channel;
     const rootless = same && !context.root && !context.wholeChannel;
     const apart = rootless ? client.threadsApart?.(channel) : undefined;
-    const whole = context.wholeChannel || (!context.root && apart !== true);
+    const whole =
+      !task && (context.wholeChannel || (!context.root && apart !== true));
     if (same && (whole || root === context.root))
       throw new Error(
         rootless && client.threadsApart && apart === undefined
@@ -747,7 +768,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         "This chat stays at the top level: send again without reply.",
       );
     const audienceTags = [...audienceOf(args), ...requestOf(args)];
-    const thread = reply ? await tools.threadTags(reply) : [];
+    const thread = reply ? await tools.threadTags(reply, channel) : [];
     return post(tools, channel, args, thread, audienceTags);
   },
 
@@ -765,7 +786,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // As relay ingest reads it: the last valid marker, in either case.
     const root = target
       ? (threadReference(target)?.rootId ?? target.id)
-      : parent;
+      : (context.sourceRoot ?? parent);
     return post(
       tools,
       channel,
@@ -942,6 +963,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         channel = tag(event, "h") ?? channel;
       }
       if (!channel) throw new Error("channel is required here.");
+      const sourceRoot = root === context.root ? context.sourceRoot : undefined;
+      if (sourceRoot && channel !== context.channel)
+        throw new Error("The task thread is in a different channel.");
       max = bound(limit, 100, 500);
       // The root comes on the first page only, apart from the replies' limit
       // and cursor.
@@ -949,12 +973,20 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         {
           kinds: THREAD,
           "#h": [channel],
-          "#e": [root],
-          limit: max + 1,
+          "#e": [sourceRoot ?? root],
+          // The task anchor may also be returned by the physical reply query.
+          limit: max + (sourceRoot ? 2 : 1),
           ...cursor,
         },
-        ...(before === undefined
-          ? [{ ids: [root], kinds: [...THREAD, 45001], limit: 1 }]
+        ...(before === undefined || sourceRoot
+          ? [
+              {
+                ids: [root],
+                kinds: [...THREAD, 45001],
+                ...(sourceRoot ? { "#h": [channel] } : {}),
+                limit: 1,
+              },
+            ]
           : []),
       ]);
       first = events.find((event) => event.id === root);
@@ -987,15 +1019,26 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // retention can leave older history unseen.
     const shown = found.slice(0, max);
     const last = shown.at(-1);
-    const lines = await tools.messages(
-      first ? [first, ...shown] : shown,
-      scope,
-    );
-    if (!lines.length) return "No messages.";
+    const page = first ? [first, ...shown] : shown;
+    const branch =
+      scope.root && scope.root === context.root && context.sourceRoot
+        ? await readSubthread(
+            page,
+            { channel, root: context.sourceRoot, anchor: scope.root },
+            THREAD,
+            (filters) => client.query(filters),
+          )
+        : undefined;
+    const lines = await tools.messages(branch?.events ?? page, scope);
+    if (!lines.length && !(scope.root === context.root && context.sourceRoot))
+      return "No messages.";
     const noun = scope.root ? "replies" : "messages";
     return [
       scope.root ? `thread ${scope.root} in ${channel}` : `channel ${channel}`,
       ...lines,
+      ...(branch?.incomplete
+        ? ["Some replies could not be verified as part of this task."]
+        : []),
       last && found.length > max
         ? `Older ${noun} remain; continue with ${JSON.stringify({ ...more, before: last.created_at, before_id: last.id })}`
         : `The relay returned no older ${noun}.`,
@@ -1219,12 +1262,26 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   channel_get: (tools, args) => tools.details(target(tools, args)),
-  solo_workspace_list: async ({ client }) => {
-    if (!client.soloWorkspaces)
-      throw new Error("Solo workspaces are unavailable on this host");
-    return JSON.stringify(await client.soloWorkspaces.list());
+  workspace_list: async ({ client }) => {
+    if (!client.workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    return JSON.stringify(await client.workspaces.list());
   },
   channel_create: (tools, args) => tools.create(args),
+  channel_move: async (tools, args) => {
+    const channel = target(tools, args);
+    if (typeof args.workspace !== "string")
+      throw new Error("workspace must be a workspace ID, or empty to unfile.");
+    const workspace = args.workspace.trim() || undefined;
+    if (!tools.client.workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    const placement = await tools.client.workspaces.move(channel, workspace);
+    if (placement.status === "filed")
+      return workspace
+        ? `moved ${channel} to workspace ${workspace}`
+        : `unfiled ${channel}`;
+    return `${channel} may not have moved: ${placement.error ?? "unconfirmed"}. Check your owner's sidebar before trying again.`;
+  },
   channel_update: (tools, args) => tools.update(target(tools, args), args),
   channel_join: (tools, args) => lifecycle(tools, args, "join"),
   channel_leave: (tools, args) => lifecycle(tools, args, "leave"),
@@ -1984,10 +2041,36 @@ class Tools {
 
   /** The e-tag of a `send` reply to `parent`: a reply to any message in a
    * thread is a reply to the thread's root. */
-  async threadTags(parent: string) {
-    const root =
-      parent === this.context.root ? parent : rootOf(await this.event(parent));
-    return [["e", root, "", "reply"]];
+  async threadTags(parent: string, channel: string) {
+    const { channel: taskChannel, root: anchor, sourceRoot } = this.context;
+    const target = parent === anchor ? undefined : await this.event(parent);
+    if (anchor && sourceRoot) {
+      const taskTags = [
+        ["e", sourceRoot, "", "root"],
+        ["e", anchor, "", "reply"],
+      ];
+      if (!target) {
+        if (channel !== taskChannel)
+          throw new Error("The task thread is in a different channel.");
+        return taskTags;
+      }
+      if (
+        channel === taskChannel &&
+        tag(target, "h") === channel &&
+        threadReference(target)?.rootId === sourceRoot
+      ) {
+        const branch = await readSubthread(
+          [target],
+          { channel, root: sourceRoot, anchor },
+          THREAD,
+          (filters) => this.client.query(filters),
+        );
+        if (branch.events.length) return taskTags;
+        if (branch.incomplete)
+          throw new Error("Could not verify the task reply's parent thread.");
+      }
+    }
+    return [["e", target ? rootOf(target) : parent, "", "reply"]];
   }
 
   /** Visit matching events in relay order, retaining only what the caller needs.
@@ -2172,8 +2255,6 @@ class Tools {
     if (args.solo !== undefined && typeof args.solo !== "boolean")
       throw new Error("solo must be true or false.");
     const solo = args.solo === true;
-    if (!solo && args.members !== undefined)
-      throw new Error("members is for Solo chats.");
     const members = keys(args, "members").filter(
       (key) => key !== this.client.pubkey,
     );
@@ -2189,7 +2270,7 @@ class Tools {
         "A Solo chat is a private stream without about or template.",
       );
     if (members.length > 32)
-      throw new Error("A Solo chat starts with at most 32 members.");
+      throw new Error("A channel starts with at most 32 members.");
     // Found first, so a wrong name creates nothing.
     const template =
       args.template === undefined
@@ -2197,15 +2278,55 @@ class Tools {
         : await this.template(required(args, "template"));
     const workspace =
       args.workspace === undefined ? undefined : required(args, "workspace");
-    if (workspace !== undefined && !solo)
-      throw new Error("workspace is for Solo chats.");
-    if (workspace !== undefined && !this.client.soloWorkspaces)
-      throw new Error("Solo workspaces are unavailable on this host");
+    const workspaces = this.client.workspaces;
+    if (workspace !== undefined && !workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    // A private one is filed only with the owner in `members`; the host
+    // checks that before anything is created.
+    // As New channel or New chat in a workspace: its defaults, unless a
+    // template is chosen. Read first, so they apply or nothing is created.
+    const defaults =
+      workspace !== undefined && !template
+        ? await workspaces?.defaults(
+            workspace,
+            solo ? { solo, members } : { solo },
+          )
+        : undefined;
+    // Its default agents that this agent may add: Buzz adds them with your
+    // owner's key, which this agent never signs with.
+    const { addable, refused: barred } = await this.addable(
+      (defaults?.agents ?? []).filter((key) => key !== this.client.pubkey),
+    );
+    // As New chat and New channel, one not available here is skipped.
+    const refused: [string, string][] = [
+      ...(defaults?.skipped ?? [])
+        .filter((key) => key !== this.client.pubkey)
+        .map((key): [string, string] => [
+          key,
+          "not available in this community (archived, being deleted, or not in any channel here)",
+        ]),
+      ...barred,
+    ];
+    // A Solo chat's agents join in the create, as Buzz starts one.
+    const joining = solo ? [...new Set([...members, ...addable])] : members;
+    if (joining.length > 32)
+      throw new Error("A channel starts with at most 32 members.");
+    const setup: ChannelTemplate | undefined =
+      template ??
+      (defaults && {
+        name: "workspace defaults",
+        canvas: defaults.canvas,
+        agents: solo ? [] : addable,
+      });
     const id = crypto.randomUUID();
     const file =
       workspace === undefined
         ? undefined
-        : await this.client.soloWorkspaces?.prepare(workspace, members, id);
+        : await workspaces?.prepare(
+            workspace,
+            { members: joining, open: args.visibility === "open" },
+            id,
+          );
     await this.client.publish({
       kind: 9007,
       content: "",
@@ -2218,20 +2339,25 @@ class Tools {
         ...(ttl ? [["ttl", String(ttl)]] : []),
         // As Buzz starts a Solo chat: the relay adds the `p` members in the create.
         ...(solo ? channelLabelTags([SOLO_LABEL, SOLO_NAMED_LABEL]) : []),
-        ...members.map((key) => ["p", key]),
+        ...joining.map((key) => ["p", key]),
       ],
     });
     const labeled = (now: BuzzEvent | undefined) =>
       !!now && (!solo || soloChannelMetadata(now as RelayEvent));
     const shown = await until(() => this.metadata(id), labeled).catch(unread);
     if (!shown || shown instanceof Error)
-      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}${role === "guest" ? "; join_role was not set" : ""}${members.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}.`;
-    const lines = [`created ${id}`];
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${setup ? `; ${template ? "the template was" : "the workspace defaults were"} not applied` : ""}${role === "guest" ? "; join_role was not set" : ""}${joining.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}${refused.length ? `; workspace default agents not added: ${refused.map(([key]) => key).join(", ")}` : ""}.`;
+    const lines = [
+      `created ${id}`,
+      ...refused.map(
+        ([key, why]) => `workspace default agent ${key} not added: ${why}`,
+      ),
+    ];
     if (!labeled(shown))
       lines.push(
         "The community did not keep the Solo label, so it is an ordinary private channel.",
       );
-    if (members.length) lines.push(...(await this.joined(id, members)));
+    if (joining.length) lines.push(...(await this.joined(id, joining)));
     if (file) {
       try {
         const placement = await file(id);
@@ -2239,16 +2365,16 @@ class Tools {
           placement.status === "filed"
             ? `filed in workspace ${workspace}`
             : placement.status === "not-filed"
-              ? `created, not filed in workspace: ${placement.error}. Use Move to on this chat; do not create another chat.`
-              : `created; workspace placement unconfirmed and may have completed: ${placement.error}. Inspect or refresh this chat before Move to; do not create another chat.`,
+              ? `created, not filed in workspace: ${placement.error}. Use channel_move; do not create another.`
+              : `created; workspace placement unconfirmed and may have completed: ${placement.error}. Check your owner's sidebar before channel_move; do not create another.`,
         );
       } catch (error) {
         lines.push(
-          `created; workspace placement unconfirmed and may have completed: ${reason(error)}. Inspect or refresh this chat before Move to; do not create another chat.`,
+          `created; workspace placement unconfirmed and may have completed: ${reason(error)}. Check your owner's sidebar before channel_move; do not create another.`,
         );
       }
     }
-    if (template) lines.push(...(await this.apply(id, template)));
+    if (setup) lines.push(...(await this.apply(id, setup)));
     // Last, so the template's agents join as members, not guests.
     if (role === "guest")
       try {
@@ -2306,6 +2432,40 @@ class Tools {
       }
     if (agents.length) lines.push(...(await this.change(id, agents, [])).lines);
     return lines;
+  }
+
+  /** Which of `agents` this agent may add, by each one's own
+   * `channel_add_policy`; the rest with why not. A failed read throws, so
+   * nothing is created. */
+  async addable(agents: readonly string[]) {
+    if (!agents.length)
+      return { addable: [] as string[], refused: [] as [string, string][] };
+    const events = await this.client.query([
+      { kinds: [10100], authors: [...agents] },
+    ]);
+    const policy = new Map<string, { at: number; value: unknown }>();
+    for (const event of events) {
+      if (!agents.includes(event.pubkey)) continue;
+      const seen = policy.get(event.pubkey);
+      if (seen && seen.at >= event.created_at) continue;
+      let value: unknown;
+      try {
+        value = (JSON.parse(event.content) as Record<string, unknown>)
+          .channel_add_policy;
+      } catch {}
+      policy.set(event.pubkey, { at: event.created_at, value });
+    }
+    const addable: string[] = [];
+    const refused: [string, string][] = [];
+    for (const key of agents) {
+      const value = policy.get(key)?.value;
+      if (value === "owner_only")
+        refused.push([key, "only your owner can add this agent"]);
+      else if (value === "nobody")
+        refused.push([key, "this agent can't be added by anyone else"]);
+      else addable.push(key);
+    }
+    return { addable, refused };
   }
 
   /** The owner's template named `name`, as one, without guessing. */

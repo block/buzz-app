@@ -2,17 +2,25 @@ import { runtimePerformance } from "../developer/runtime-performance";
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import type {} from "../../plugins/api";
+import { AppInvocation } from "../../buzz-mcp/app-client";
 import { nativeIdentityEnabled } from "../identity/service";
 import type { SoloRegionBinding } from "../channel-navigation/solo-navigation-contract";
 import { repositoryFolders } from "../communities/repositories";
+import { attachmentMessage, validateUploadResult } from "../relay/attachments";
 
 export type HostRequest = Readonly<{
   url: string;
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Readonly<Record<string, string>>;
   body?: string;
+  /** Slot ID, never secret bytes. Text only; incompatible native hosts reject. */
+  secret?: string;
   /** Native deadline in milliseconds, 1–180000. Defaults to 30000. */
   timeoutMs?: number;
+  /** A bounded GET continuing the current approved create, without method
+   * override, body, headers or secret. Same-origin admission does not prove
+   * the URL is the created task. A refusal never falls back to a plain request. */
+  parent?: Readonly<{ version: 1; callId: string }>;
 }>;
 /** A multipart POST of one local `.tar.gz` file in the home directory, with
  * text fields beside it, to an origin the plugin declares. */
@@ -46,6 +54,15 @@ export type HostResponse = Readonly<{
   status: number;
   headers: Readonly<Record<string, string>>;
   body: string;
+  parent?: HostResponseParent;
+}>;
+/** Native correlation of a parent read; `sequence` rises from 2. */
+export type HostResponseParent = Readonly<{
+  version: 1;
+  callId: string;
+  digest: string;
+  destination: ReviewedInvocationDestination;
+  sequence: number;
 }>;
 export type HostRequestOnceOptions = Readonly<{
   callId: string;
@@ -54,16 +71,31 @@ export type HostRequestOnceOptions = Readonly<{
 }>;
 /** GET-only raw bytes from an exact declared HTTPS origin. Desktop only. */
 export type HostByteRequest = Readonly<{
-  url: string;
   /** Required integer byte cap, 1–16777216. */
   maxBytes: number;
   /** 1–30000 milliseconds; defaults to 30000. */
   timeoutMs?: number;
-}>;
+  /** The one credential-free result read of the current approved create.
+   * Native retains that source; a refusal never falls back to a plain read. */
+  parent?: HostRequest["parent"];
+}> &
+  (
+    | Readonly<{ url: string; result?: never }>
+    | Readonly<{
+        url?: never;
+        parent: NonNullable<HostRequest["parent"]>;
+        /** With a `resultUrl` grant: the result URL native read
+         * from the parent response with this sequence, the latest one. The
+         * URL itself never passes through the plugin to native. */
+        result: Readonly<{ version: 1; sequence: number }>;
+      }>
+  );
 export type HostByteResponse = Readonly<{
   status: number;
   headers: Readonly<Record<string, string>>;
   body: Uint8Array;
+  parent?: HostResponseParent;
+  source?: HostByteSource;
 }>;
 /** What a public page names in its head for a link preview. URLs are
  * absolute HTTPS; read the image with `requestBytes` and `host.publicImages`. */
@@ -82,6 +114,9 @@ export type HostPage = Readonly<{
   location?: string;
   preview?: HostPagePreview;
 }>;
+/** Identifies the natively retained result source. Not authority: bytes or
+ * a hash handed back never substitute for it. */
+export type HostByteSource = Readonly<{ sha256: string; size: number }>;
 export type HostSavedBytes = Readonly<{
   path: string;
   size: number;
@@ -215,7 +250,129 @@ export interface HostSecrets {
   /** Failure does not promise the credential remains usable or rolled back. */
   clear(slot: string): Promise<void>;
 }
+export type ReviewedInvocationDestination = Readonly<{
+  community: string;
+  viewer: string;
+  channel: string;
+  /** The conversation the call was addressed in: its task anchor. */
+  root?: string;
+  /** The physical thread when root is an invocation subthread. */
+  sourceRoot?: string;
+}>;
+/** Exact HTTP create. Authorization comes natively from `slot`, never headers. */
+export type ReviewedInvocationEffect = Readonly<{
+  kind: "credential-http";
+  method: "POST";
+  url: string;
+  headers: Readonly<Record<string, string>>;
+  slot: string;
+}>;
+/** Plugin-supplied explanation shown beside, never instead of, the request. */
+export type ReviewedInvocationDisclosure = Readonly<{
+  version: string;
+  text: string;
+}>;
+/** The one expected result's generic shape, frozen into the reviewed request.
+ * Native fully decodes and checks the retained source against it; a mismatch
+ * fails rather than being trimmed, stretched or re-encoded to fit. */
+export type ReviewedInvocationExpectedMedia = Readonly<{
+  version: 1;
+  kind: "video";
+  container: "mp4";
+  codec: "h264";
+  width: number;
+  height: number;
+  durationMs: number;
+  toleranceMs: number;
+  maxBytes: number;
+}>;
+/** Without `version`, a synthetic request. Version 1 needs effect and disclosure;
+ * `body` is then the exact HTTP body. `expectedMedia` needs host support. */
+export type ReviewedInvocationRequest = Readonly<{
+  operation: string;
+  body: string;
+  destination: ReviewedInvocationDestination;
+  version?: 1;
+  effect?: ReviewedInvocationEffect;
+  disclosure?: ReviewedInvocationDisclosure;
+  expectedMedia?: ReviewedInvocationExpectedMedia;
+}>;
+export type ReviewedInvocationReceipt = Readonly<{
+  callId: string;
+  destination: ReviewedInvocationDestination;
+  digest: string;
+  outcome: "cancelled" | "submitted" | "unknown";
+  /** An agent's review: what its one upload and one attachment message
+   * became. Posted is the community accepting that exact event, not playable
+   * media; an unknown upload is never posted or retried. */
+  delivery?: Readonly<{
+    upload: "uploaded" | "failed" | "unknown";
+    status: "posted" | "failed" | "unknown";
+    eventId?: string;
+  }>;
+}>;
+/** The one bounded response to an approved version 1 create. */
+export type ReviewedInvocationCreateResponse = Readonly<{
+  version: 1;
+  callId: string;
+  digest: string;
+  destination: ReviewedInvocationDestination;
+  sequence: 1;
+  phase: "create-response";
+  status: number;
+  safeBody: string;
+}>;
+/** Selects the source this call's own parent byte read retained. */
+export type ReviewedInvocationSourceSelection = Readonly<{
+  source: HostByteSource;
+}>;
+export type ReviewedInvocationOptions = Readonly<{
+  callId: string;
+  /** Required for version 1. Called at most once, only while the call is live.
+   * With `expectedMedia`, returning (or resolving to) a selection prepares that
+   * retained source natively; a throw or rejection retires the call. Neither
+   * completes it or reports a result. */
+  onCreateResponse?: (response: ReviewedInvocationCreateResponse) =>
+    | void
+    | ReviewedInvocationSourceSelection
+    // biome-ignore lint/suspicious/noConfusingVoidType: existing void and async void callbacks stay assignable.
+    | Promise<ReviewedInvocationSourceSelection | void>;
+  /** Called at most once, synchronously, when native holds this call's
+   * validated review, before approval. Not approval, execution or delivery,
+   * and never after a refusal, disposal or retirement. A throw retires the
+   * call; the returned promise still reports how it ended. */
+  onStarted?: () => void;
+}>;
+/** What this native host implements. Availability only: not a grant, saved
+ * credential or permission to dispatch. */
+export type ReviewedInvocationSupport = Readonly<{
+  version: 1;
+  synthetic: boolean;
+  credentialHttp: Readonly<{
+    version: 1;
+    createResponse: boolean;
+    continuation: boolean;
+    /** Absent: `expectedMedia` is unsupported. */
+    expectedMedia?: 1;
+    result: boolean;
+    delivery: boolean;
+    /** Absent: `requestBytes` `result` mode is unsupported. */
+    resultUrl?: 1;
+  }> | null;
+  /** Set by this host, not native: `onStarted` is supported. */
+  reviewStart?: 1;
+}>;
 export interface Host {
+  /** Experimental, macOS. Buzz owns review/action in the message card; native
+   * owns one-shot dispatch. Synthetic requests run a fake executable. Version 1
+   * sends one POST after approval and reports its create response; without
+   * continuation support the receipt then ends `unknown`. No retry. */
+  reviewAndInvokeOnce?: (
+    request: ReviewedInvocationRequest,
+    options: ReviewedInvocationOptions,
+  ) => Promise<ReviewedInvocationReceipt>;
+  /** Check before offering review. Any failure reports nothing supported. */
+  reviewedInvocationSupport?: () => Promise<ReviewedInvocationSupport>;
   /** Feature-detect only: presence does not promise usable desktop storage.
    * No value readback, fallback, retry or cancellation of native work. */
   readonly secrets?: HostSecrets;
@@ -385,7 +542,294 @@ const callContexts = new WeakMap<
   }
 >();
 
+/** Internal read model, not an author acceptance capability. */
+export type ReviewedInvocationProjection = Readonly<{
+  callId: string;
+  pluginId: string;
+  revision: string;
+  request: ReviewedInvocationRequest;
+  /** The agent membership native fenced for this review, when one started it. */
+  author?: Readonly<{ pubkey: string; relay: string }>;
+  digest: string;
+  expiresAt: number;
+  /** Host-derived from the admitted grant: one result download is allowed. */
+  resultUrl?: 1;
+}>;
+export type ReviewedOperation = Readonly<{
+  callId: string;
+  pluginId: string;
+  revision: string;
+  session: import("../relay/session").RelaySession;
+  destination: ReviewedInvocationDestination;
+  /** The agent call that started it, when an added tool did. */
+  agent?: AppInvocation;
+  mount?: object;
+  projection?: ReviewedInvocationProjection;
+  status:
+    | "pending"
+    | "dispatching"
+    | "retired"
+    | ReviewedInvocationReceipt["outcome"];
+}>;
+/** Where one agent's added-tool call may send a review: what the app
+ * captured for it, never a plugin's own claim. */
+export type ReviewedOrigin = Readonly<{
+  invocation: AppInvocation;
+  relay: string;
+  destination: ReviewedInvocationDestination;
+}>;
+const agentRuns = (operation: ReviewedOperation) => {
+  try {
+    operation.agent?.live();
+    return true;
+  } catch {
+    return false;
+  }
+};
+const UNSUPPORTED: ReviewedInvocationSupport = Object.freeze({
+  version: 1,
+  synthetic: false,
+  credentialHttp: null,
+});
+const SUPPORT_FLAGS = [
+  "createResponse",
+  "continuation",
+  "result",
+  "delivery",
+] as const;
+function parseSupport(value: unknown): ReviewedInvocationSupport {
+  const support = value as ReviewedInvocationSupport | null;
+  const http = support?.credentialHttp;
+  const valid =
+    typeof support === "object" &&
+    support !== null &&
+    Object.keys(support).length === 3 &&
+    support.version === 1 &&
+    typeof support.synthetic === "boolean" &&
+    (http === null ||
+      (typeof http === "object" &&
+        Object.keys(http).length ===
+          5 +
+            Number(http.expectedMedia !== undefined) +
+            Number(http.resultUrl !== undefined) &&
+        (http.expectedMedia === undefined || http.expectedMedia === 1) &&
+        (http.resultUrl === undefined || http.resultUrl === 1) &&
+        http.version === 1 &&
+        SUPPORT_FLAGS.every((flag) => typeof http[flag] === "boolean")));
+  return valid
+    ? Object.freeze({
+        ...support,
+        credentialHttp: http && Object.freeze({ ...http }),
+        reviewStart: 1,
+      })
+    : UNSUPPORTED;
+}
+/** Copies every scalar before the first await; no caller object reaches native. */
+function captureReviewed(
+  input: ReviewedInvocationRequest,
+): ReviewedInvocationRequest {
+  const { version, effect, disclosure } = input;
+  const base = {
+    operation: input.operation,
+    body: input.body,
+    destination: Object.freeze({
+      community: input.destination.community,
+      viewer: input.destination.viewer,
+      channel: input.destination.channel,
+      ...(input.destination.root === undefined
+        ? {}
+        : { root: input.destination.root }),
+      ...(input.destination.sourceRoot === undefined
+        ? {}
+        : { sourceRoot: input.destination.sourceRoot }),
+    }),
+  };
+  const media = input.expectedMedia;
+  if (
+    version === undefined &&
+    effect === undefined &&
+    disclosure === undefined &&
+    media === undefined
+  )
+    return Object.freeze(base);
+  const headers = effect?.headers;
+  if (
+    version !== 1 ||
+    !effect ||
+    !disclosure ||
+    typeof headers !== "object" ||
+    headers === null ||
+    Array.isArray(headers)
+  )
+    throw new Error("Invalid reviewed invocation");
+  const captured = Object.freeze({
+    ...base,
+    version: 1 as const,
+    effect: Object.freeze({
+      kind: effect.kind,
+      method: effect.method,
+      url: effect.url,
+      headers: Object.freeze(Object.fromEntries(Object.entries(headers))),
+      slot: effect.slot,
+    }),
+    disclosure: Object.freeze({
+      version: disclosure.version,
+      text: disclosure.text,
+    }),
+    ...(media === undefined ? {} : { expectedMedia: captureMedia(media) }),
+  });
+  if (
+    [
+      captured.effect.kind,
+      captured.effect.method,
+      captured.effect.url,
+      captured.effect.slot,
+      captured.disclosure.version,
+      captured.disclosure.text,
+      ...Object.values(captured.effect.headers),
+    ].some((value) => typeof value !== "string")
+  )
+    throw new Error("Invalid reviewed invocation");
+  return captured;
+}
+const MEDIA_NUMBERS = [
+  "width",
+  "height",
+  "durationMs",
+  "toleranceMs",
+  "maxBytes",
+] as const;
+/** Scalar copy only; native owns the bounds. */
+function captureMedia(
+  media: ReviewedInvocationExpectedMedia,
+): ReviewedInvocationExpectedMedia {
+  const captured = Object.freeze({
+    version: media?.version,
+    kind: media?.kind,
+    container: media?.container,
+    codec: media?.codec,
+    width: media?.width,
+    height: media?.height,
+    durationMs: media?.durationMs,
+    toleranceMs: media?.toleranceMs,
+    maxBytes: media?.maxBytes,
+  });
+  if (
+    captured.version !== 1 ||
+    captured.kind !== "video" ||
+    captured.container !== "mp4" ||
+    captured.codec !== "h264" ||
+    !MEDIA_NUMBERS.every((name) => Number.isSafeInteger(captured[name]))
+  )
+    throw new Error("Invalid reviewed invocation");
+  return captured;
+}
+// Native serializes headers in sorted order; compare them order-independently.
+const effectKey = ({
+  version,
+  effect,
+  disclosure,
+  expectedMedia,
+}: ReviewedInvocationRequest) =>
+  JSON.stringify([
+    version,
+    effect && [
+      effect.kind,
+      effect.method,
+      effect.url,
+      effect.slot,
+      Object.entries(effect.headers).sort(),
+    ],
+    disclosure && [disclosure.version, disclosure.text],
+    expectedMedia && [
+      expectedMedia.version,
+      expectedMedia.kind,
+      expectedMedia.container,
+      expectedMedia.codec,
+      ...MEDIA_NUMBERS.map((name) => expectedMedia[name]),
+    ],
+  ]);
+export function sameDestination(
+  a: ReviewedInvocationDestination,
+  b: ReviewedInvocationDestination,
+) {
+  return (
+    a?.community === b?.community &&
+    a.viewer === b.viewer &&
+    a.channel === b.channel &&
+    a.root === b.root &&
+    a.sourceRoot === b.sourceRoot
+  );
+}
+
+type Continuation = {
+  callId: string;
+  pluginId: string;
+  revision: string;
+  digest: string;
+  sequence: number;
+  /** The last source this call's parent byte read retained. */
+  source?: HostByteSource;
+  live: () => boolean;
+};
+
 export class HostService extends Service implements Host {
+  private reviewedOperation: ReviewedOperation | undefined;
+  private continuation: Continuation | undefined;
+  private reviewRetirement: Promise<void> | undefined;
+  private readonly reviewListeners = new Set<() => void>();
+  /** Internal host UI read model. Not included in the plugin Host contract. */
+  readonly reviewed = {
+    snapshot: () => this.reviewedOperation,
+    bind: (
+      callId: string,
+      mount: object,
+      reader: Readonly<{
+        session: ReviewedOperation["session"] | undefined;
+        channel: string | undefined;
+        root: string | undefined;
+        /** The physical thread of the signed row the review renders on. */
+        thread: string | undefined;
+      }>,
+    ): boolean => {
+      const current = this.reviewedOperation;
+      if (
+        !current ||
+        current.callId !== callId ||
+        current.status !== "pending" ||
+        current.session !== reader.session ||
+        current.destination.channel !== reader.channel ||
+        current.destination.root !== reader.root ||
+        (current.destination.sourceRoot !== undefined &&
+          current.destination.sourceRoot !== reader.thread) ||
+        !agentRuns(current)
+      )
+        return false;
+      if (!current.mount) this.reviewed.update({ ...current, mount });
+      return this.reviewedOperation?.mount === mount;
+    },
+    subscribe: (listener: () => void) => {
+      this.reviewListeners.add(listener);
+      return () => {
+        this.reviewListeners.delete(listener);
+      };
+    },
+    update: (operation: ReviewedOperation) => {
+      this.reviewedOperation = Object.freeze(operation);
+      for (const listener of this.reviewListeners) listener();
+    },
+    retire: (callId: string): Promise<void> => {
+      const current = this.reviewedOperation;
+      if (current?.callId !== callId) return Promise.resolve();
+      if (["pending", "dispatching"].includes(current.status))
+        this.reviewed.update({ ...current, status: "retired" });
+      this.reviewRetirement ??= invoke<void>("plugin_host_reviewed_retire", {
+        callId,
+      });
+      return this.reviewRetirement;
+    },
+  };
+
   constructor(context: Context) {
     super(context, "host");
   }
@@ -431,6 +875,315 @@ export class HostService extends Service implements Host {
 
   prepareRemoteAgentAuthorization(agentPubkey: string, signal?: AbortSignal) {
     return prepareRemoteAgentAuthorization(agentPubkey, signal);
+  }
+
+  async reviewedInvocationSupport(): Promise<ReviewedInvocationSupport> {
+    if (!this.ctx.pluginOwner || !isTauri()) return UNSUPPORTED;
+    try {
+      return parseSupport(
+        await invoke<unknown>("plugin_host_reviewed_capabilities"),
+      );
+    } catch {
+      return UNSUPPORTED;
+    }
+  }
+
+  async reviewAndInvokeOnce(
+    input: ReviewedInvocationRequest,
+    options: ReviewedInvocationOptions,
+    origin?: ReviewedOrigin,
+  ): Promise<ReviewedInvocationReceipt> {
+    const ctx = this.ctx;
+    const owner = ctx.pluginOwner;
+    const callId = options.callId;
+    if (!owner || !isTauri() || !UUID.test(callId) || ctx.fiber.uid === null)
+      throw new Error(
+        "Reviewed invocation requires an active installed desktop plugin",
+      );
+    const request = captureReviewed(input);
+    const { onCreateResponse, onStarted } = options;
+    if (
+      (request.version === 1 && typeof onCreateResponse !== "function") ||
+      (onStarted !== undefined && typeof onStarted !== "function") ||
+      typeof request.operation !== "string" ||
+      typeof request.body !== "string" ||
+      Object.values(request.destination).some(
+        (value) => typeof value !== "string",
+      ) ||
+      (request.destination.sourceRoot !== undefined &&
+        request.destination.root === undefined)
+    )
+      throw new Error("Invalid reviewed invocation");
+    if (
+      origin &&
+      (!AppInvocation.is(origin.invocation) ||
+        !sameDestination(request.destination, origin.destination))
+    )
+      throw new Error("Reviewed invocation can only send where it was asked");
+    // A new review needs its tool call still running, here and after each wait.
+    const initiating = () => {
+      origin?.invocation.initiating();
+      return true;
+    };
+    initiating();
+    const stopped = origin?.invocation.stopped();
+    const relay = ctx.relay;
+    const reader = relay?.snapshot();
+    if (
+      !reader ||
+      reader.origin !== request.destination.community ||
+      reader.session.viewer !== request.destination.viewer
+    )
+      throw new Error(
+        "Reviewed invocation requires the current conversation session",
+      );
+    const previous = this.reviewed.snapshot();
+    if (
+      previous &&
+      ["pending", "dispatching", "retired"].includes(previous.status)
+    )
+      throw new Error("Another reviewed invocation is active or retiring");
+    const operation: ReviewedOperation = {
+      callId,
+      pluginId: owner.id,
+      revision: owner.revision,
+      session: reader.session,
+      destination: request.destination,
+      ...(origin && { agent: origin.invocation }),
+      status: "pending",
+    };
+    this.reviewRetirement = undefined;
+    this.reviewed.update(operation);
+    let active = true;
+    let started = false;
+    const onReview = new Channel<ReviewedInvocationProjection>((projection) => {
+      const current = this.reviewed.snapshot();
+      if (!active || current?.callId !== callId || current.status !== "pending")
+        return;
+      if (
+        projection.callId !== callId ||
+        projection.pluginId !== owner.id ||
+        projection.revision !== owner.revision ||
+        projection.request.operation !== request.operation ||
+        projection.request.body !== request.body ||
+        !sameDestination(projection.request.destination, request.destination) ||
+        projection.author?.pubkey !== origin?.invocation.pubkey ||
+        projection.author?.relay !== origin?.relay ||
+        effectKey(projection.request) !== effectKey(request) ||
+        !/^[0-9a-f]{64}$/.test(projection.digest) ||
+        !Number.isSafeInteger(projection.expiresAt) ||
+        (projection.resultUrl !== undefined && projection.resultUrl !== 1)
+      ) {
+        void this.reviewed.retire(callId).catch(() => {});
+        return;
+      }
+      this.reviewed.update({
+        ...current,
+        projection: Object.freeze({
+          ...projection,
+          ...(projection.author && {
+            author: Object.freeze({ ...projection.author }),
+          }),
+          request: Object.freeze({
+            ...projection.request,
+            destination: Object.freeze({ ...projection.request.destination }),
+            ...(projection.request.effect && {
+              effect: Object.freeze({
+                ...projection.request.effect,
+                headers: Object.freeze({
+                  ...projection.request.effect.headers,
+                }),
+              }),
+            }),
+            ...(projection.request.disclosure && {
+              disclosure: Object.freeze({ ...projection.request.disclosure }),
+            }),
+            ...(projection.request.expectedMedia && {
+              expectedMedia: Object.freeze({
+                ...projection.request.expectedMedia,
+              }),
+            }),
+          }),
+        }),
+      });
+      // Update's listeners can dispose or retire this call before it starts.
+      const stored = this.reviewed.snapshot();
+      if (
+        started ||
+        !active ||
+        stored?.callId !== callId ||
+        stored.status !== "pending" ||
+        !stored.projection
+      )
+        return;
+      started = true;
+      try {
+        onStarted?.();
+      } catch {
+        void this.reviewed.retire(callId).catch(() => {});
+      }
+    });
+    let created = false;
+    const onProgress =
+      request.version === 1 &&
+      new Channel<ReviewedInvocationCreateResponse>((response) => {
+        const current = this.reviewed.snapshot();
+        if (
+          !active ||
+          current?.callId !== callId ||
+          current.status !== "dispatching"
+        )
+          return;
+        if (
+          created ||
+          response?.version !== 1 ||
+          response.callId !== callId ||
+          response.digest !== current.projection?.digest ||
+          !sameDestination(response.destination, request.destination) ||
+          response.sequence !== 1 ||
+          response.phase !== "create-response" ||
+          !Number.isInteger(response.status) ||
+          response.status < 100 ||
+          response.status > 599 ||
+          typeof response.safeBody !== "string"
+        ) {
+          void this.reviewed.retire(callId).catch(() => {});
+          return;
+        }
+        created = true;
+        const continuation: Continuation = {
+          callId,
+          pluginId: owner.id,
+          revision: owner.revision,
+          digest: response.digest,
+          sequence: 1,
+          live: () =>
+            active &&
+            this.reviewed.snapshot()?.callId === callId &&
+            this.reviewed.snapshot()?.status === "dispatching",
+        };
+        this.continuation = continuation;
+        let selection: unknown;
+        try {
+          selection = onCreateResponse?.(
+            Object.freeze({
+              version: 1,
+              callId,
+              digest: response.digest,
+              destination: request.destination,
+              sequence: 1,
+              phase: "create-response",
+              status: response.status,
+              safeBody: response.safeBody,
+            }),
+          );
+        } catch {
+          // A plugin callback failure cannot alter the consumed operation;
+          // with expected media, it ends the attempt without a refetch.
+          if (request.expectedMedia !== undefined)
+            void this.reviewed.retire(callId).catch(() => {});
+          return;
+        }
+        if (request.expectedMedia === undefined) return;
+        // Handle rejection now: a late callback must not go unobserved.
+        void Promise.resolve(selection)
+          .then((value) => this.selectSource(owner, continuation, value))
+          .catch(() => this.reviewed.retire(callId))
+          .catch(() => {});
+      });
+    const stopSession = relay.subscribe(() => {
+      if (relay.snapshot().session !== reader.session)
+        void this.reviewed.retire(callId).catch(() => {});
+    });
+    // The agent stopping, not its turn ending, retires its review natively,
+    // including during admission reads before an upload or a signature.
+    const stopAgent = () => void this.reviewed.retire(callId).catch(() => {});
+    stopped?.addEventListener("abort", stopAgent, { once: true });
+    if (stopped?.aborted) stopAgent();
+    let confirmRetired = () => {};
+    const retired = new Promise<void>((resolve) => {
+      confirmRetired = () => {
+        const current = this.reviewed.snapshot();
+        if (current?.callId === callId && current.status === "retired")
+          this.reviewed.update({ ...current, status: "unknown" });
+        resolve();
+      };
+    });
+    const release = ctx.effect(
+      () => () => {
+        active = false;
+        stopSession();
+        stopped?.removeEventListener("abort", stopAgent);
+        // Cordis swallows cleanup rejections. Keep its cleanup barrier pending
+        // until native confirms retirement; failure must not admit a successor.
+        void this.reviewed.retire(callId).then(confirmRetired, () => {});
+        return retired;
+      },
+      "native reviewed invocation",
+    );
+    const terminalReceipt = (result: ReviewedInvocationReceipt) => {
+      if (
+        !result ||
+        result.callId !== callId ||
+        !sameDestination(result.destination, request.destination) ||
+        !/^[0-9a-f]{64}$/.test(result.digest) ||
+        (this.reviewed.snapshot()?.projection !== undefined &&
+          result.digest !== this.reviewed.snapshot()?.projection?.digest) ||
+        !["cancelled", "submitted", "unknown"].includes(result.outcome) ||
+        (result.delivery !== undefined &&
+          (!origin ||
+            !["uploaded", "failed", "unknown"].includes(
+              result.delivery.upload,
+            ) ||
+            !["posted", "failed", "unknown"].includes(result.delivery.status) ||
+            (result.delivery.eventId !== undefined &&
+              !/^[0-9a-f]{64}$/.test(result.delivery.eventId))))
+      )
+        throw new Error("Invalid reviewed invocation receipt; outcome unknown");
+      // Native has completed/consumed this exact operation. Confirm even when
+      // protectedCall will suppress the response because disposal has begun.
+      confirmRetired();
+      const current = this.reviewed.snapshot();
+      if (current?.callId === callId)
+        this.reviewed.update({ ...current, status: result.outcome });
+      return Object.freeze({
+        callId,
+        destination: request.destination,
+        digest: result.digest,
+        outcome: result.outcome,
+        ...(result.delivery && {
+          delivery: Object.freeze({
+            upload: result.delivery.upload,
+            status: result.delivery.status,
+            ...(result.delivery.eventId && {
+              eventId: result.delivery.eventId,
+            }),
+          }),
+        }),
+      });
+    };
+    try {
+      return await protectedCall<ReviewedInvocationReceipt>(
+        ctx,
+        callId,
+        () => active && initiating(),
+        (once) =>
+          invoke<ReviewedInvocationReceipt>("plugin_host_reviewed_invoke", {
+            id: owner.id,
+            revision: owner.revision,
+            once,
+            request,
+            ...(origin && {
+              author: { pubkey: origin.invocation.pubkey, relay: origin.relay },
+            }),
+            onReview,
+            ...(onProgress ? { onProgress } : {}),
+          }).then(terminalReceipt),
+      );
+    } finally {
+      if (this.continuation?.callId === callId) this.continuation = undefined;
+      release();
+    }
   }
 
   async runCommand(id: string, input?: string): Promise<string | null> {
@@ -750,11 +1503,288 @@ export class HostService extends Service implements Host {
     const owner = this.ctx.pluginOwner;
     if (!owner || !isTauri())
       throw new Error("Host requests require an installed desktop plugin");
+    if (input.parent !== undefined) return this.parentRead(owner, input);
     return invoke<HostResponse>("plugin_host_request", {
       id: owner.id,
       revision: owner.revision,
       request: input,
     }).catch(rethrow);
+  }
+
+  private async parentRead(
+    owner: NonNullable<Context["pluginOwner"]>,
+    input: HostRequest,
+  ): Promise<HostResponse> {
+    const { url, method, timeoutMs, parent } = input;
+    const callId = parent?.callId;
+    const continuation = this.continuation;
+    if (
+      parent?.version !== 1 ||
+      typeof url !== "string" ||
+      (method ?? "GET") !== "GET" ||
+      input.body !== undefined ||
+      input.headers !== undefined ||
+      input.secret !== undefined ||
+      (timeoutMs !== undefined && !Number.isSafeInteger(timeoutMs)) ||
+      !continuation ||
+      continuation.callId !== callId ||
+      continuation.pluginId !== owner.id ||
+      continuation.revision !== owner.revision
+    )
+      throw parentReadFailure("js-admission");
+    if (!continuation.live()) throw parentReadFailure("js-lifecycle");
+    const response = await invoke<HostResponse>("plugin_host_request", {
+      id: owner.id,
+      revision: owner.revision,
+      request: {
+        url,
+        method: "GET",
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      },
+      parent: { version: 1, callId },
+    }).catch((error: unknown) => {
+      // A native code arrives as its exact string and becomes the Error message.
+      if (!continuation.live()) throw parentReadFailure("js-lifecycle");
+      rethrow(error);
+    });
+    // Retired or replaced work is suppressed, never handed to the plugin.
+    if (!continuation.live()) throw parentReadFailure("js-lifecycle");
+    let correlated: HostResponseParent;
+    try {
+      correlated = this.correlate(
+        continuation,
+        response?.parent,
+        Number.isInteger(response?.status) && typeof response.body === "string",
+      );
+    } catch {
+      throw parentReadFailure("js-correlation");
+    }
+    return Object.freeze({
+      status: response.status,
+      headers: Object.freeze({}),
+      body: response.body,
+      parent: correlated,
+    });
+  }
+
+  /** The callback's selection of its own retained source, through the private
+   * result command. Void selects nothing; anything else must match exactly. */
+  private async selectSource(
+    owner: NonNullable<Context["pluginOwner"]>,
+    continuation: Continuation,
+    value: unknown,
+  ): Promise<void> {
+    if (value === undefined) return;
+    const selection = value as ReviewedInvocationSourceSelection | null;
+    const source: unknown =
+      typeof selection === "object" && selection !== null
+        ? selection.source
+        : undefined;
+    const { sha256, size } = (source ?? {}) as Partial<HostByteSource>;
+    const retained = continuation.source;
+    if (!continuation.live()) return;
+    if (
+      Object.keys(selection ?? {}).length !== 1 ||
+      typeof source !== "object" ||
+      source === null ||
+      Object.keys(source).length !== 2 ||
+      !retained ||
+      sha256 !== retained.sha256 ||
+      size !== retained.size
+    )
+      throw new Error("Invalid source selection");
+    const ack = await this.reviewedStep(owner, continuation, "prepared", {
+      phase: "prepare",
+      source: { sha256, size },
+    });
+    const { agent, destination } = this.reviewed.snapshot() ?? {};
+    // A plugin's own review keeps its prepared media native; nothing posts it.
+    if (!ack || !agent || !destination) return;
+    const prepared = ack.prepared;
+    if (
+      !prepared ||
+      !/^[0-9a-f]{64}$/.test(prepared.sha256) ||
+      !Number.isSafeInteger(prepared.size)
+    )
+      throw new Error("Invalid prepared acknowledgement");
+    await this.deliver(owner, continuation, agent, destination, prepared);
+  }
+
+  /** The agent's one upload of its prepared media, then its one
+   * attachment-only message in the chat and thread it was asked from, while
+   * the agent's handle is still held. Nothing here is retried. */
+  private async deliver(
+    owner: NonNullable<Context["pluginOwner"]>,
+    continuation: Continuation,
+    agent: AppInvocation,
+    { community, channel, root, sourceRoot }: ReviewedInvocationDestination,
+    prepared: HostByteSource,
+  ) {
+    agent.live();
+    const uploaded = await this.reviewedStep(owner, continuation, "uploaded", {
+      phase: "upload",
+    });
+    if (!uploaded) return;
+    agent.live();
+    const media = validateUploadResult(
+      uploaded.upload,
+      community,
+      prepared.size,
+      "video.mp4",
+    );
+    if (media.sha256 !== prepared.sha256 || media.type !== "video/mp4")
+      throw new Error("Invalid reviewed upload");
+    const message = attachmentMessage("", [media], community);
+    await this.reviewedStep(owner, continuation, "publishing", {
+      phase: "publish",
+      event: {
+        kind: 9,
+        content: message.content,
+        tags: [
+          ["h", channel],
+          ...(sourceRoot === undefined ? [] : [["e", sourceRoot, "", "root"]]),
+          ...(root === undefined ? [] : [["e", root, "", "reply"]]),
+          ...message.tags,
+        ],
+      },
+    });
+  }
+
+  /** One private step of the original call. Undefined once the call ended;
+   * a mismatched acknowledgement retires it. */
+  private async reviewedStep(
+    owner: NonNullable<Context["pluginOwner"]>,
+    continuation: Continuation,
+    phase: "prepared" | "uploaded" | "publishing",
+    step: object,
+  ) {
+    if (!continuation.live()) return undefined;
+    const ack = await invoke<
+      Readonly<{
+        version: number;
+        callId: string;
+        digest: string;
+        destination: ReviewedInvocationDestination;
+        phase: string;
+        prepared?: HostByteSource;
+        upload?: unknown;
+      }>
+    >("plugin_host_reviewed_result", {
+      id: owner.id,
+      revision: owner.revision,
+      parent: { version: 1, callId: continuation.callId },
+      step,
+    });
+    const destination = this.reviewed.snapshot()?.destination;
+    if (!continuation.live() || !destination) return undefined;
+    if (
+      ack?.version !== 1 ||
+      ack.callId !== continuation.callId ||
+      ack.digest !== continuation.digest ||
+      !sameDestination(ack.destination, destination) ||
+      ack.phase !== phase
+    )
+      throw new Error("Invalid reviewed acknowledgement");
+    return ack;
+  }
+
+  /** A mismatched native correlation retires the call; nothing falls back. */
+  private correlate(
+    continuation: Continuation,
+    correlation: HostResponseParent | undefined,
+    valid: boolean,
+  ): HostResponseParent {
+    const destination = this.reviewed.snapshot()?.destination;
+    if (
+      !valid ||
+      !destination ||
+      correlation?.version !== 1 ||
+      correlation.callId !== continuation.callId ||
+      correlation.digest !== continuation.digest ||
+      !sameDestination(correlation.destination, destination) ||
+      !Number.isSafeInteger(correlation.sequence) ||
+      correlation.sequence <= continuation.sequence
+    ) {
+      void this.reviewed.retire(continuation.callId).catch(() => {});
+      throw new Error("Invalid parent read; outcome unknown");
+    }
+    continuation.sequence = correlation.sequence;
+    return Object.freeze({
+      version: 1,
+      callId: continuation.callId,
+      digest: continuation.digest,
+      destination,
+      sequence: correlation.sequence,
+    });
+  }
+
+  private async parentBytes(
+    owner: NonNullable<Context["pluginOwner"]>,
+    input: HostByteRequest,
+  ): Promise<HostByteResponse> {
+    const { url, result, maxBytes, timeoutMs, parent } = input;
+    const callId = parent?.callId;
+    const continuation = this.continuation;
+    if (
+      parent?.version !== 1 ||
+      (result === undefined
+        ? typeof url !== "string"
+        : url !== undefined ||
+          Object.keys(result).length !== 2 ||
+          result.version !== 1 ||
+          result.sequence !== continuation?.sequence) ||
+      !continuation ||
+      continuation.callId !== callId ||
+      continuation.pluginId !== owner.id ||
+      continuation.revision !== owner.revision ||
+      !continuation.live()
+    )
+      throw new Error("Parent read is unavailable");
+    const lifetime = byteLifetime(this.ctx);
+    try {
+      const frame = await invoke<unknown>("plugin_host_request_bytes", {
+        id: owner.id,
+        revision: owner.revision,
+        request: {
+          ...(result === undefined
+            ? { url }
+            : { result: { version: 1, sequence: result.sequence } }),
+          maxBytes,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        },
+        parent: { version: 1, callId },
+      }).catch(rethrow);
+      lifetime.active();
+      if (!continuation.live()) throw new Error("Parent read is unavailable");
+      let decoded: ReturnType<typeof readByteFrame> | undefined;
+      try {
+        decoded = readByteFrame(frame, maxBytes);
+      } catch {}
+      const source = decoded?.metadata.source as HostByteSource | undefined;
+      const correlated = this.correlate(
+        continuation,
+        decoded?.metadata.parent as HostResponseParent | undefined,
+        decoded?.status === 200 &&
+          Object.keys(decoded.headers).length === 0 &&
+          typeof source?.sha256 === "string" &&
+          /^[0-9a-f]{64}$/.test(source.sha256) &&
+          source.size === decoded.body.byteLength,
+      );
+      const retained = Object.freeze({
+        sha256: (source as HostByteSource).sha256,
+        size: (source as HostByteSource).size,
+      });
+      continuation.source = retained;
+      return Object.freeze({
+        status: 200,
+        headers: Object.freeze({}),
+        body: (decoded as NonNullable<typeof decoded>).body,
+        parent: correlated,
+        source: retained,
+      });
+    } finally {
+      lifetime.release();
+    }
   }
 
   async requestOnce(
@@ -826,6 +1856,8 @@ export class HostService extends Service implements Host {
           input.timeoutMs > 30000))
     )
       throw new Error("Invalid byte request limits");
+    if (input.parent !== undefined || input.result !== undefined)
+      return this.parentBytes(owner, input);
     const lifetime = byteLifetime(ctx);
     try {
       const frame = await invoke<unknown>("plugin_host_request_bytes", {
@@ -1118,6 +2150,11 @@ function byteLifetime(ctx: Context) {
 }
 
 function decodeByteFrame(frame: unknown, maxBytes: number): HostByteResponse {
+  const { status, headers, body } = readByteFrame(frame, maxBytes);
+  return { status, headers, body };
+}
+
+function readByteFrame(frame: unknown, maxBytes: number) {
   // Check transport before creating a view: fallback arrays must not be copied.
   if (
     !(frame instanceof ArrayBuffer) ||
@@ -1174,10 +2211,19 @@ function decodeByteFrame(frame: unknown, maxBytes: number): HostByteResponse {
     status,
     headers: headers as Record<string, string>,
     body: new Uint8Array(frame, 4 + length),
+    metadata: metadata as Record<string, unknown>,
   };
 }
 
 /** A native command's failure, which arrives as its message, as an Error. */
+/** A parent read's refusal, named only by the boundary that observed it. The
+ * fixed versioned message is the whole diagnostic: no cause, URL or body. */
+function parentReadFailure(
+  code: "js-admission" | "js-lifecycle" | "js-correlation",
+): Error {
+  return new Error(`host-parent-read/v1/${code}`);
+}
+
 function rethrow(error: unknown): never {
   throw typeof error === "string" ? new Error(error) : error;
 }

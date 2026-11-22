@@ -58,8 +58,19 @@ vi.mock("./MessageRow", () => ({
     onReply,
     onOpenMediaReview,
     onMediaPlayback,
+    reviewRoot,
   }: MessageRowProps) => (
-    <article data-message-id={row.id} data-scope={scope}>
+    <article
+      data-message-id={row.id}
+      data-scope={scope}
+      data-review-root={
+        reviewRoot === undefined
+          ? "unresolved"
+          : reviewRoot === null
+            ? "channel"
+            : reviewRoot
+      }
+    >
       <span>{row.content}</span>
       <button type="button" onClick={() => onReply?.(row.id)}>
         Reply to {row.content}
@@ -3599,4 +3610,30 @@ it("reveals a completed step selected by an exact thread link", async () => {
   expect(
     screen.getByRole("button", { name: /Collapse activity history/ }),
   ).toBeVisible();
+});
+
+it("passes its resolved thread root to both root and reply readers, even while refreshing", () => {
+  const h = messagesHarness();
+  h.snapshot.replies = [{ ...row, id: "reply", content: "Reply" }];
+  h.snapshot.status = "loading";
+  h.render(true);
+  expect(
+    document.querySelector(`[data-message-id="${row.id}"]`),
+  ).toHaveAttribute("data-review-root", row.id);
+  expect(document.querySelector('[data-message-id="reply"]')).toHaveAttribute(
+    "data-review-root",
+    row.id,
+  );
+});
+
+it("does not call an unresolved thread reader a channel-root reader", () => {
+  const h = messagesHarness();
+  h.snapshot.root = undefined;
+  h.snapshot.replies = [{ ...row, id: "reply", content: "Reply" }];
+  h.snapshot.status = "loading";
+  h.render();
+  expect(document.querySelector('[data-message-id="reply"]')).toHaveAttribute(
+    "data-review-root",
+    "unresolved",
+  );
 });

@@ -1009,3 +1009,44 @@ pub(crate) fn while_fixture_busy(host: &IdentityHost, call: impl FnOnce()) {
     let _guard = host.0.lock().unwrap();
     call();
 }
+
+#[test]
+fn viewer_admission_is_busy_only_while_another_holder_has_the_identity() {
+    let host = IdentityHost::fixture();
+    let viewer = host.current_viewer().unwrap().unwrap();
+    let entered = std::cell::Cell::new(0);
+    let admit = || {
+        entered.set(entered.get() + 1);
+        Ok(())
+    };
+    {
+        let _held = host.held();
+        assert_eq!(
+            host.try_with_current_viewer(&viewer, admit),
+            Err(Refusal::Busy("Identity is busy".into()))
+        );
+        // String callers keep the same refusal.
+        assert_eq!(
+            host.with_current_viewer(&viewer, || Ok(())),
+            Err("Identity is busy".to_owned())
+        );
+    }
+    assert_eq!(entered.get(), 0);
+    host.try_with_current_viewer(&viewer, admit).unwrap();
+    assert_eq!(entered.get(), 1);
+    assert_eq!(
+        host.try_with_current_viewer("other", admit),
+        Err(Refusal::Terminal("Identity changed".into()))
+    );
+    host.poison();
+    assert_eq!(
+        host.try_with_current_viewer(&viewer, admit),
+        Err(Refusal::Terminal("Identity is busy".into())),
+        "a poisoned identity is never retried"
+    );
+    assert_eq!(
+        host.with_current_viewer(&viewer, || Ok(())),
+        Err("Identity is busy".to_owned())
+    );
+    assert_eq!(entered.get(), 1);
+}

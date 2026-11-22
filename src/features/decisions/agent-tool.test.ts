@@ -1,7 +1,7 @@
 import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import { flush } from "../relay/testing";
 import { AGENT_CALL_LIMIT, registerDecideTool } from "./agent-tool";
 import {
@@ -70,7 +70,7 @@ async function setup(
       .await();
     await flush();
   }
-  const addTool = vi.fn<(tool: AddedTool) => void>();
+  const addTool = vi.fn<(tool: PluginTool) => void>();
   registerDecideTool(
     {
       addTool,

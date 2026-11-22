@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import type { BuzzClient } from "../../buzz-mcp/client";
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import type { GitHubCli } from "./gh";
 import { addPullStateTool } from "./pull-state-tool";
 import { createPullStates } from "./pull-states";
@@ -174,9 +174,9 @@ it("answers as the agent tool github_pr_state does, without reading again", asyn
   }) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
   const states = createPullStates(gh);
   const github = gitHubPulls(states);
-  const tools: AddedTool[] = [];
+  const tools: PluginTool[] = [];
   addPullStateTool({ addTool: (tool) => tools.push(tool) }, states);
-  const tool = tools[0] as AddedTool;
+  const tool = tools[0] as PluginTool;
   const ask = async (args: Record<string, unknown>) =>
     JSON.parse(
       String(await tool.call({} as BuzzClient, { channel: "c" }, args)),
@@ -225,9 +225,9 @@ it("tells observers when reading again starts failing and when it works again", 
   }) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
   const states = createPullStates(gh);
   const github = gitHubPulls(states);
-  const tools: AddedTool[] = [];
+  const tools: PluginTool[] = [];
   addPullStateTool({ addTool: (tool) => tools.push(tool) }, states);
-  const tool = tools[0] as AddedTool;
+  const tool = tools[0] as PluginTool;
   let at = Date.now();
   // Each asks a minute and more after the last, so the tool reads again.
   const read = async () => {

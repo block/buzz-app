@@ -77,6 +77,31 @@ export type PluginManifest = Readonly<{
         siblings?: readonly Readonly<{ name: string; sha256: string }>[];
       }>;
     }>[];
+    /** Installed host-card review grants. A credential HTTP declaration does not
+     * establish runtime support; require the native capability handshake. */
+    reviewedInvocations?: readonly (
+      | Readonly<{
+          id: string;
+          artifact: Readonly<{
+            path: string;
+            sha256: string;
+            siblings?: readonly Readonly<{ name: string; sha256: string }>[];
+          }>;
+          credentialHttp?: never;
+        }>
+      | Readonly<{
+          id: string;
+          credentialHttp: Readonly<{
+            version: 1;
+            slot: string;
+            /** Lets the call download one public HTTPS result whose URL native
+             * reads at this fixed RFC 6901 pointer in an authenticated 200
+             * response. No API credential is sent with it. */
+            resultUrl?: Readonly<{ version: 1; jsonPointer: string }>;
+          }>;
+          artifact?: never;
+        }>
+    )[];
     /** The plugin may serve MCP with `host.serveMcp`, including tools for
      * commands bound to an Attention source run. */
     mcp?: boolean;

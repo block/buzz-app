@@ -2,7 +2,7 @@
 // reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memories } from "./client";
+import type { BuzzClient, Context, Memories } from "./client";
 import { nativeToolClient } from "../features/agents/tool-operation";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import { imageType } from "../features/relay/attachment-limits";
@@ -30,6 +30,70 @@ export function relayKeyOf(
 ) {
   return source && (source.workflowAuthority() ?? null);
 }
+
+/** One added-tool call as the app ran it: its client's actual agent and the
+ * conversation it was addressed in, copied before any check could wait.
+ * Only the app makes these, and no plugin is handed one. */
+export class AppInvocation {
+  readonly #agent: AgentHandle;
+  readonly #initiating: () => void;
+  readonly key: string;
+  readonly pubkey: string;
+  readonly owner: string;
+  readonly channel: string | undefined;
+  readonly root: string | undefined;
+  /** The physical thread when root is an invocation subthread. */
+  readonly sourceRoot: string | undefined;
+  constructor(agent: AgentHandle, context: Context, initiating: () => void) {
+    this.#agent = agent;
+    this.#initiating = initiating;
+    this.key = agent.key;
+    this.pubkey = agent.pubkey;
+    this.owner = agent.owner;
+    this.channel = context.channel;
+    this.root = context.root;
+    this.sourceRoot = context.sourceRoot;
+    Object.freeze(this);
+  }
+  static is(value: unknown): value is AppInvocation {
+    return typeof value === "object" && value !== null && #agent in value;
+  }
+  /** Throws unless the call is still running, to start something new. */
+  initiating() {
+    this.#initiating();
+    this.#agent.live();
+  }
+  /** Throws once the agent's handle has stopped, for work already started. */
+  live() {
+    this.#agent.live();
+  }
+  /** Aborts once the agent's handle stops for good; the call ending does not. */
+  stopped() {
+    return this.#agent.lifetime();
+  }
+}
+
+/** Marks the clients made here: a private brand, not a field a caller could
+ * set or copy. */
+class AppClient {
+  readonly #agent: AgentHandle;
+  readonly #check: () => void;
+  constructor(agent: AgentHandle, check: () => void) {
+    this.#agent = agent;
+    this.#check = check;
+  }
+  /** `client`'s call in `context`, while `open` says the call runs; none for
+   * a client this module did not make. */
+  static invocation(client: BuzzClient, context: Context, open: () => boolean) {
+    if (!(#agent in client)) return undefined;
+    const check = client.#check;
+    return new AppInvocation(client.#agent, context, () => {
+      if (!open()) throw new Error("The tool call has ended");
+      check();
+    });
+  }
+}
+export const appInvocation = AppClient.invocation;
 
 export function appClient(
   agent: AgentHandle,
@@ -85,7 +149,7 @@ export function appClient(
   const plugins = agent.plugins;
   const { settings, workspaces } = agent;
   const signal = options.callSignal ?? options.signal;
-  const client: BuzzClient = {
+  const client: BuzzClient = Object.assign(new AppClient(agent, check), {
     ...(signal ? { signal } : {}),
     ...(agent.settle
       ? {
@@ -431,7 +495,7 @@ export function appClient(
         clear: () => bestie().clear(),
       },
     }),
-  };
+  } satisfies BuzzClient);
   if (options.nativeCall && options.callSignal) {
     nativeToolClient(client, {
       signal: options.callSignal,

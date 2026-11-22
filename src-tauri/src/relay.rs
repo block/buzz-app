@@ -35,6 +35,9 @@ mod media_cache;
 pub(crate) use media_cache::MediaCache;
 pub(crate) use media_cache::DIR as MEDIA_CACHE_DIR;
 mod media_preparation;
+pub(crate) use media_preparation::{strict_video, Prepared, StrictVideo};
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) use media_preparation::{Programs, WriteGate, CONVERSIONS};
 mod media_spool;
 mod reminders;
 pub(crate) use reminders::{relay_decode_reminders, relay_sign_reminder};
@@ -47,6 +50,25 @@ pub(crate) use project_git::{relay_project_git, relay_project_git_cancel};
 type Result<T> = std::result::Result<T, String>;
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_RESPONSE: usize = 16 * 1024 * 1024;
+
+/// The one strict preparation of a reviewed result's retained source. The
+/// directory and files stay inside the returned value; nothing is uploaded.
+pub(crate) async fn prepare_result(
+    bytes: Vec<u8>,
+    source_sha256: String,
+    expected: StrictVideo,
+    timeout: std::time::Duration,
+    cancelled: oneshot::Receiver<()>,
+) -> Result<Prepared> {
+    media_preparation::prepare_strict(bytes, source_sha256, expected, timeout, cancelled)
+        .await
+        .map_err(|error| {
+            format!(
+                "Result media unavailable ({}); the attempt is consumed",
+                error.code()
+            )
+        })
+}
 
 fn hex_key(value: &str) -> bool {
     value.len() == 64

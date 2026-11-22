@@ -33,7 +33,7 @@ test("generated author package exposes shared messages, captured-read Undo, host
       join(dir, "consumer.ts"),
       `
 import { createElement } from "react";
-import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostSecrets, HostSecretStatus, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, OutgoingMessage, SendGate, Seen } from "@buzz/author";
+import type { Context, DocumentEditorProps, DocumentEditorHandle, DocumentEditorSelection, ChannelMembersDialogProps, ChannelGeneralAccessProps, GeneralAccessPolicy, MemberChange, Delivery, HarnessConversation, McpHandler, StandaloneTurn, TurnResult, DecisionResult, Host, HostSecrets, HostSecretStatus, HostRequestOnceOptions, AddedTool, AddedToolContext, AddedToolReply, BuzzClient, Media, HostByteUpload, HostByteRequest, HostByteResponse, HostSavedBytes, PluginManifest, NamingPolicy, PagePreviewProps, PageSidebarProps, SidebarSectionContribution, SidebarSections, SidebarRowContribution, SidebarRows, ReadMutationResult, UnreadCapability, Backdrops, PluginUi, OutgoingMessage, SendGate, Seen, ReviewedInvocationCreateResponse, ReviewedInvocationSupport, HostResponseParent, HostByteSource, ReviewedInvocationExpectedMedia, ReviewedInvocationSourceSelection } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -132,6 +132,56 @@ export function apply(ctx: Context) {
   // Older structural hosts need not implement saved credentials.
   const oldHost: Host = { runCommand: host.runCommand, request: host.request };
   void oldHost;
+  const support: Promise<ReviewedInvocationSupport> | undefined = host.reviewedInvocationSupport?.();
+  void support?.then((value) => value.credentialHttp?.continuation satisfies boolean | undefined);
+  void host.reviewAndInvokeOnce?.(
+    {
+      version: 1,
+      operation: "create",
+      body: "{}",
+      destination: { community: "c", viewer: "v", channel: "ch" },
+      effect: { kind: "credential-http", method: "POST", url: "https://api.example.com/v1", headers: {}, slot: "api-key" },
+      disclosure: { version: "example/1", text: "Costs one credit" },
+    },
+    { callId: "id", onCreateResponse: (response: ReviewedInvocationCreateResponse) => void response.safeBody },
+  );
+  // An existing explicitly typed async handler on a legacy request stays assignable.
+  const observeCreate = async (response: ReviewedInvocationCreateResponse): Promise<void> => {
+    void response.safeBody;
+  };
+  void host.reviewAndInvokeOnce?.(
+    { version: 1, operation: "create", body: "{}", destination: { community: "c", viewer: "v", channel: "ch" }, effect: { kind: "credential-http", method: "POST", url: "https://api.example.com/v1", headers: {}, slot: "api-key" }, disclosure: { version: "example/1", text: "Costs one credit" } },
+    { callId: "id", onCreateResponse: observeCreate },
+  );
+  const expectedMedia: ReviewedInvocationExpectedMedia = { version: 1, kind: "video", container: "mp4", codec: "h264", width: 1280, height: 720, durationMs: 5000, toleranceMs: 50, maxBytes: 1 };
+  void host.reviewAndInvokeOnce?.(
+    { version: 1, operation: "create", body: "{}", destination: { community: "c", viewer: "v", channel: "ch" }, effect: { kind: "credential-http", method: "POST", url: "https://api.example.com/v1", headers: {}, slot: "api-key" }, disclosure: { version: "example/1", text: "Costs one credit" }, expectedMedia },
+    { callId: "id", onCreateResponse: async (): Promise<ReviewedInvocationSourceSelection> => ({ source: { sha256: "0".repeat(64), size: 1 } }) },
+  );
+  void support?.then((value) => value.credentialHttp?.expectedMedia satisfies 1 | undefined);
+  void support?.then((value) => value.reviewStart satisfies 1 | undefined);
+  // A start signal carries nothing: it is not approval or a result.
+  void host.reviewAndInvokeOnce?.(
+    { version: 1, operation: "create", body: "{}", destination: { community: "c", viewer: "v", channel: "ch" }, effect: { kind: "credential-http", method: "POST", url: "https://api.example.com/v1", headers: {}, slot: "api-key" }, disclosure: { version: "example/1", text: "Costs one credit" } },
+    { callId: "id", onCreateResponse: () => {}, onStarted: () => {} },
+  );
+  // @ts-expect-error The start signal has no approval or receipt argument.
+  void host.reviewAndInvokeOnce?.({ operation: "x", body: "", destination: { community: "c", viewer: "v", channel: "ch" } }, { callId: "id", onStarted: (approved: boolean) => void approved });
+  void host.request({ url: "https://api.example.com/tasks/t", parent: { version: 1, callId: "id" } }).then((response) => response.parent satisfies HostResponseParent | undefined);
+  void host.requestBytes?.({ url: "https://cdn.example.com/out.mp4", maxBytes: 1, parent: { version: 1, callId: "id" } }).then((response) => response.source satisfies HostByteSource | undefined);
+  const selected: HostByteRequest = { maxBytes: 1, parent: { version: 1, callId: "id" }, result: { version: 1, sequence: 2 } };
+  void host.requestBytes?.(selected);
+  // @ts-expect-error A result read names a native selection, never also a URL.
+  host.requestBytes?.({ ...selected, url: "https://cdn.example.com/out.mp4" });
+  // @ts-expect-error A result read continues one call.
+  host.requestBytes?.({ maxBytes: 1, result: { version: 1, sequence: 2 } });
+  // @ts-expect-error A parent read continues one call; it carries no credential slot authority.
+  void host.request({ url: "https://api.example.com/tasks/t", parent: { version: 1, callId: "id", slot: "api-key" } });
+  // @ts-expect-error A selection references the retained source; it carries no bytes or path.
+  const sourceSelection: ReviewedInvocationSourceSelection = { source: { sha256: "", size: 1 }, path: "/tmp/x" };
+  void sourceSelection;
+  // @ts-expect-error Approval stays in the host card; there is no accept option.
+  void host.reviewAndInvokeOnce?.({ operation: "x", body: "", destination: { community: "c", viewer: "v", channel: "ch" } }, { callId: "id", accept: true });
   if (host.secrets) {
     const secrets: HostSecrets = host.secrets;
     const status: Promise<HostSecretStatus> = secrets.status("api-key");
@@ -158,6 +208,12 @@ export function apply(ctx: Context) {
     const invalid: HostSecretStatus = "unknown";
     void [value, invalid];
   }
+  // @ts-expect-error Byte GET never accepts a secret slot.
+  host.requestBytes?.({ url: "https://api.example.com", maxBytes: 1, secret: "api-key" });
+  // @ts-expect-error Byte multipart never accepts a secret slot.
+  host.uploadBytesOnce?.(new Uint8Array([1]), { ...upload, secret: "api-key" }, { callId: crypto.randomUUID() });
+  // @ts-expect-error Archive uploads never accept a secret slot.
+  host.upload?.({ url: "https://api.example.com", file: { field: "file", path: "/home/a.tar.gz", name: "a.tar.gz", contentType: "application/gzip" }, secret: "api-key" });
   const tool: AddedTool = { name: "example_image", description: "Read an image", inputSchema: {},
     async call(client: BuzzClient, context: AddedToolContext): Promise<AddedToolReply> {
       void [context.channel, context.root, context.topLevel, context.wholeChannel];
@@ -198,6 +254,7 @@ export function apply(ctx: Context) {
     method: "POST",
     headers: { Authorization: "Bearer sample" },
     body: "{}",
+    secret: "api-key",
   }).then((response) => void response.status);
   // Final synchronous eligibility is part of the optional protected method.
   if (typeof host.requestOnce === "function") {
@@ -205,7 +262,7 @@ export function apply(ctx: Context) {
       callId: "12345678-1234-4234-8234-123456789abc",
       isEligible: () => true,
     };
-    void host.requestOnce({ url: "https://api.example.com/submit", method: "POST" }, options);
+    void host.requestOnce({ url: "https://api.example.com/submit", method: "POST", secret: "api-key" }, options);
     // @ts-expect-error Final caller eligibility must be synchronous.
     const invalid: HostRequestOnceOptions = { callId: options.callId, isEligible: async () => true };
     void invalid;

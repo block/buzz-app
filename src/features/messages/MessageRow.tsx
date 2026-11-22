@@ -148,6 +148,8 @@ export type MessageRowProps = {
   stoppedRequest?: ChannelMessage | undefined;
   staticMentions?: boolean | undefined;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
+  /** Host reader target: null is channel-level; undefined is unresolved/ineligible. */
+  reviewRoot?: string | null | undefined;
   session?: RelaySession | undefined;
   /** Resolves names, channels and mentions where the row is shown without
    * `session`, which would also offer its controls. */
@@ -258,6 +260,7 @@ function MessageRowContent({
   withoutReactions = false,
   renderMessage,
   getThreadRoot,
+  reviewRoot,
   session,
   references = session,
   scope,
@@ -1706,6 +1709,17 @@ function MessageRowContent({
                       registry={extensions.messages}
                       renderer={messageRenderer}
                       message={row}
+                      reviewReader={
+                        session && reviewRoot !== undefined
+                          ? {
+                              session,
+                              channel: row.channelId,
+                              ...(reviewRoot === null
+                                ? {}
+                                : { root: reviewRoot }),
+                            }
+                          : undefined
+                      }
                       onFailedChange={(renderer, failed) =>
                         setFailedRenderer((current) =>
                           failed

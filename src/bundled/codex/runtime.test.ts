@@ -5839,6 +5839,8 @@ it("offers the tools plugins add, runs them as the agent here, and starts a new 
     expect.objectContaining({ pubkey }),
     { channel: "channel", root },
     { title: "Ship it" },
+    undefined,
+    expect.objectContaining({ pubkey, channel: "channel", root }),
   );
   await f.complete();
   await vi.waitFor(() =>

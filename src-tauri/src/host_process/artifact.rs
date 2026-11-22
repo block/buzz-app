@@ -17,7 +17,7 @@ pub(super) fn verify_artifact(artifact: &ProcessArtifact) -> Result<PathBuf, Str
     Ok(executable)
 }
 
-pub(super) fn snapshot(artifact: &ProcessArtifact, store: &Path) -> Result<PathBuf, String> {
+pub(crate) fn snapshot(artifact: &ProcessArtifact, store: &Path) -> Result<PathBuf, String> {
     let files = files(artifact)?;
     let key = format!(
         "{:x}",

@@ -2309,6 +2309,7 @@ function Timeline({
                       continuesMessageGroup(row, nextRow))
                   }
                   session={queries}
+                  reviewRoot={null}
                   scope={scope}
                   row={row}
                   threadOpen={row.id === openThreadRootId}

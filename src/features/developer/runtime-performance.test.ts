@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { clientMetrics } from "./client-metrics";
 import { registerPerformanceTool } from "./performance-tool";
@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 it("returns bounded numeric evidence through the production agent tool, even with dev metrics off", async () => {
-  let tool!: AddedTool;
+  let tool!: PluginTool;
   let changed!: () => void;
   const unsubscribe = vi.fn();
   const lifetime = new AbortController();

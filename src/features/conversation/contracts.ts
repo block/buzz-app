@@ -247,6 +247,9 @@ export type MessageRenderer = Readonly<{
   id: string;
   title: string;
   matches(message: ChannelMessage): boolean;
+  /** Locator only. Buzz renders the matching native-frozen operation and sole
+   * action; this callback cannot approve, replace, renew or dispatch it. */
+  reviewedInvocation?(message: ChannelMessage): string | undefined;
   /** True for each attachment the component draws itself. The host leaves
    * those out of its attachment list only while it draws the component, and
    * lists them again if the component fails. A throwing claim is treated as

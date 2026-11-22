@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import type { BuzzClient } from "../../buzz-mcp/client";
 import { GitHubError, type GitHubCli } from "./gh";
 import { addPullStateTool } from "./pull-state-tool";
@@ -13,10 +13,10 @@ afterEach(() => {
 });
 
 function setup(gh: GitHubCli) {
-  const tools: AddedTool[] = [];
+  const tools: PluginTool[] = [];
   const states = createPullStates(gh);
   addPullStateTool({ addTool: (tool) => tools.push(tool) }, states);
-  const tool = tools[0] as AddedTool;
+  const tool = tools[0] as PluginTool;
   return {
     states,
     call: (args: Record<string, unknown>) =>

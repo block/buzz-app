@@ -3,6 +3,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { ContributionReader, MessageRenderer } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { WithTargetOpener } from "./opener";
+import type { ReviewReader } from "./ReviewedInvocationReview";
 
 const EMPTY: readonly never[] = [];
 const NONE = { snapshot: () => EMPTY, subscribe: () => () => {} };
@@ -33,9 +34,11 @@ export function MessageBody({
   message,
   children,
   onFailedChange,
+  reviewReader,
 }: {
   registry: ContributionReader<MessageRenderer>;
   message: ChannelMessage;
+  reviewReader?: ReviewReader | undefined;
   children: ReactNode;
   /** Reports a renderer's failure while its fallback is mounted. */
   onFailedChange?: (renderer: MessageRenderer, failed: boolean) => void;
@@ -47,6 +50,7 @@ export function MessageBody({
       renderer={renderer}
       message={message}
       onFailedChange={onFailedChange}
+      reviewReader={reviewReader}
     >
       {children}
     </MessageCard>
@@ -60,10 +64,12 @@ export function MessageCard({
   message,
   children,
   onFailedChange,
+  reviewReader,
 }: {
   registry: ContributionReader<MessageRenderer>;
   renderer: ReturnType<typeof useMessageRenderer>;
   message: ChannelMessage;
+  reviewReader?: ReviewReader | undefined;
   children: ReactNode;
   /**
    * Called with true when the fallback replaces `renderer`, and with false when
@@ -74,6 +80,11 @@ export function MessageCard({
     | undefined;
 }) {
   if (!renderer) return children;
+  const props = {
+    message,
+    reviewReader,
+    reviewCurrent: () => registry.snapshot().includes(renderer),
+  };
   return (
     <ContributionBoundary
       key={`${contributionKey(renderer)}:${message.channelId}:${message.id}`}
@@ -84,7 +95,7 @@ export function MessageCard({
     >
       <WithTargetOpener
         component={renderer.component}
-        props={{ message }}
+        props={props}
         registry={registry}
         entry={renderer}
       />

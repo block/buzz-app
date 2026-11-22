@@ -5,7 +5,7 @@
 // grant a plugin more than its owner reviewed, and a new plugin still needs
 // the owner to load it in Settings.
 import guide from "../../../docs/plugin-authoring-guide.md?raw";
-import type { AddedTool } from "../../buzz-mcp/session-tools";
+import type { PluginTool } from "../../buzz-mcp/session-tools";
 import type { PluginManager } from "../../plugins/manager";
 import type { PluginState } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
@@ -17,7 +17,7 @@ type Plugins = Pick<
 >;
 export type PluginDevelopmentHost = Readonly<{
   plugins: () => Plugins;
-  agents: Readonly<{ addTool(tool: AddedTool): void }>;
+  agents: Readonly<{ addTool(tool: PluginTool): void }>;
   /** What active plugins registered, by kind. */
   registered: () => Readonly<Record<string, Registered>>;
 }>;

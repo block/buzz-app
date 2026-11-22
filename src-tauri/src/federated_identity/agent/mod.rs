@@ -165,6 +165,10 @@ impl Admission {
     pub(crate) fn expires_at(&self) -> Option<tokio::time::Instant> {
         self.cached.as_ref().map(|cached| cached.expires_at)
     }
+    /// The incarnation it fences, for fresh evidence under the same one.
+    pub(crate) fn incarnation(&self) -> Stamp {
+        self.incarnation
+    }
     pub(crate) fn dispatch(&self) -> Result<(), String> {
         self.commit(false, || Ok(()))?;
         if self
@@ -519,18 +523,23 @@ impl AgentTokens {
         incarnation: Stamp,
         valid_for: Duration,
     ) -> Result<Admission, String> {
-        let tokens = self.server_for(&agent.relay)?;
-        let mut admission = Admission {
-            tokens: tokens.clone(),
+        let mut admission = self.fence(agent, incarnation)?;
+        admission.cached = admission
+            .tokens
+            .acquire(agent, key, incarnation.key, valid_for)
+            .await?;
+        admission.dispatch()?;
+        Ok(admission)
+    }
+    /// The membership's incarnation fence alone, without organization evidence.
+    pub(crate) fn fence(&self, agent: &AppAgent, incarnation: Stamp) -> Result<Admission, String> {
+        let admission = Admission {
+            tokens: self.server_for(&agent.relay)?,
             agent: agent.pubkey.clone(),
             incarnation,
             row: row_key(&agent.pubkey, &agent.relay)?,
             cached: None,
         };
-        admission.dispatch()?;
-        admission.cached = tokens
-            .acquire(agent, key, incarnation.key, valid_for)
-            .await?;
         admission.dispatch()?;
         Ok(admission)
     }

@@ -3540,6 +3540,8 @@ it("offers the tools plugins add, runs them as the agent, and replaces an idle s
     expect.objectContaining({ pubkey: self }),
     { channel, root },
     { title: "Ship it" },
+    undefined,
+    expect.objectContaining({ pubkey: self, channel, root }),
   );
   // The process keeps the list it started with, so it is replaced.
   added.length = 0;

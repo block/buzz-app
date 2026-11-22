@@ -157,12 +157,14 @@ function Page({
 }) {
   const [node, setNode] = useState<HTMLDivElement | null>(null);
   const near = useNear(node, root, Math.max(screen, MIN_DRAW_REACH));
+  const text = usePageText(pdf, page, near);
   return (
+    // biome-ignore lint/a11y/useSemanticElements: A page holds text, not form controls, so it isn't a fieldset.
     <div
       ref={setNode}
       className={styles.page}
       data-page={page}
-      role="img"
+      role="group"
       aria-label={`Page ${page} of ${pdf.sizes.length}`}
       style={{
         width: Math.floor(size.width * scale),
@@ -170,8 +172,29 @@ function Page({
       }}
     >
       {near && <Drawing pdf={pdf} page={page} scale={scale} />}
+      {text !== undefined && (
+        <div className={styles.pageText}>
+          {text || "This page has no text."}
+        </div>
+      )}
     </div>
   );
+}
+
+/** A page's text is read once it first comes near, then kept for screen
+ * readers, which may read pages that have scrolled away. */
+function usePageText(pdf: PdfDocument, page: number, near: boolean) {
+  const [text, setText] = useState<string>();
+  const wanted = near || text !== undefined;
+  useEffect(() => {
+    if (!wanted) return;
+    const controller = new AbortController();
+    pdf.pageText(page, controller.signal).then(setText, () => {
+      if (!controller.signal.aborted) setText("");
+    });
+    return () => controller.abort();
+  }, [pdf, page, wanted]);
+  return text;
 }
 
 const boxes = (from: HTMLElement) =>

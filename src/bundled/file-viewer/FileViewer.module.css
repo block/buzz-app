@@ -217,10 +217,19 @@
   box-sizing: border-box;
 }
 .page {
+  position: relative;
   flex: none;
   background: var(--surface-panel);
   box-shadow: 0 0 0 1px var(--border-standard);
 }
 .page canvas {
   display: block;
+}
+.pageText {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: pre-wrap;
 }

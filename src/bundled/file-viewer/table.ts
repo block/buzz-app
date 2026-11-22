@@ -12,36 +12,51 @@ export type Table = Readonly<{
 export function parseTable(text: string, delimiter: "," | "\t"): Table {
   const rows: string[][] = [];
   let row: string[] = [];
+  let columns = 0;
   let field = "";
+  let empty = true;
   let quoted = false;
   let omittedRows = 0;
   let widest = 0;
-  const endRow = () => {
-    row.push(field);
+  // Fields past the display limits are counted but never built, so a huge
+  // row costs no more memory than the cells it shows.
+  let keep = true;
+  const append = (value: string) => {
+    empty = false;
+    if (keep) field += value;
+  };
+  const endField = () => {
+    if (keep) row.push(field);
+    columns++;
     field = "";
-    widest = Math.max(widest, row.length);
-    if (rows.length < MAX_ROWS) rows.push(row.slice(0, MAX_COLUMNS));
+    empty = true;
+    keep = rows.length < MAX_ROWS && columns < MAX_COLUMNS;
+  };
+  const endRow = () => {
+    endField();
+    widest = Math.max(widest, columns);
+    if (rows.length < MAX_ROWS) rows.push(row);
     else omittedRows++;
     row = [];
+    columns = 0;
+    keep = rows.length < MAX_ROWS;
   };
   for (let index = 0; index < text.length; index++) {
-    const char = text[index];
+    const char = text.charAt(index);
     if (quoted) {
-      if (char !== '"') field += char;
+      if (char !== '"') append(char);
       else if (text[index + 1] === '"') {
-        field += '"';
+        append('"');
         index++;
       } else quoted = false;
-    } else if (char === '"' && field === "") quoted = true;
-    else if (char === delimiter) {
-      row.push(field);
-      field = "";
-    } else if (char === "\n" || char === "\r") {
+    } else if (char === '"' && empty) quoted = true;
+    else if (char === delimiter) endField();
+    else if (char === "\n" || char === "\r") {
       if (char === "\r" && text[index + 1] === "\n") index++;
       endRow();
-    } else field += char;
+    } else append(char);
   }
-  if (field !== "" || row.length > 0) endRow();
+  if (!empty || columns > 0) endRow();
   const fit = Math.max(
     1,
     Math.floor(MAX_CELLS / Math.max(1, Math.min(widest, MAX_COLUMNS))),

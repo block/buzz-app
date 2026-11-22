@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { MAX_PDF_TEXT_CHARS, openPdf } from "./pdf";
+import { MAX_PAGE_TEXT_CHARS, MAX_PDF_TEXT_CHARS, openPdf } from "./pdf";
 
 // Control pdf.js I/O so stalled and failed streams are deterministic. The
 // adapter owns cancellation, page rollback, separators and the text budget.
@@ -349,6 +349,30 @@ it("yields between pages so cancellation can retire its timer without destroying
     expect(h.document.getPage.mock.calls).toEqual([[1]]);
     expect(h.task.destroy).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    await pdf.destroy();
+  }
+});
+
+it("reads one page's text for assistive technology, within its budget", async () => {
+  const pages = [
+    page([{ str: "First" }, { str: " line", hasEOL: true }, { str: "next" }]),
+    page([{ str: "x".repeat(MAX_PAGE_TEXT_CHARS + 10) }]),
+    page(),
+  ];
+  loading(pages);
+  const pdf = await openPdf(new Uint8Array(), signal());
+  try {
+    await expect(pdf.pageText(1, signal())).resolves.toBe("First line\nnext");
+    await expect(pdf.pageText(2, signal())).resolves.toHaveLength(
+      MAX_PAGE_TEXT_CHARS,
+    );
+    await expect(pdf.pageText(3, signal())).resolves.toBe("");
+    const stopped = new AbortController();
+    stopped.abort();
+    await expect(pdf.pageText(1, stopped.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
   } finally {
     await pdf.destroy();
   }

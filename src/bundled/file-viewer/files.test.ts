@@ -97,6 +97,18 @@ it("parses quoted CSV fields and caps rows and columns", () => {
   expect(big.omittedRows).toBe(300 - MAX_CELLS / MAX_COLUMNS);
 });
 
+it("counts the columns and rows it leaves out without keeping them", () => {
+  const shown = Array(MAX_COLUMNS).fill("x").join(",");
+  const huge = "y".repeat(5 * 1024 * 1024);
+  const text = `${shown},"${huge}\n${huge}",${Array(1000).fill("z").join(",")}\nlast,row\n`;
+  const table = parseTable(text, ",");
+  expect(table.rows).toEqual([Array(MAX_COLUMNS).fill("x"), ["last", "row"]]);
+  expect(table.omittedColumns).toBe(1001);
+  const tail = parseTable(`${"r\n".repeat(MAX_ROWS)}"a\nb",c\nd\n`, ",");
+  expect(tail.rows).toHaveLength(MAX_ROWS);
+  expect(tail.omittedRows).toBe(2);
+});
+
 const respond = (body: BodyInit, headers: HeadersInit = {}, status = 200) =>
   (async () => new Response(body, { status, headers })) as typeof fetch;
 

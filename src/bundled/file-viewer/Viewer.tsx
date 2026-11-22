@@ -1,5 +1,13 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { FileTextIcon } from "../../shared/design-system/icons";
+import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
@@ -27,7 +35,7 @@ export type ViewerProps = Readonly<{
 
 type Loaded =
   | { state: "loading" }
-  | { state: "failed"; message: string }
+  | { state: "failed"; message: string; retryable: boolean }
   | { state: "ready"; bytes: Uint8Array };
 
 function failureMessage(error: unknown, format: FileFormat): string {
@@ -36,16 +44,19 @@ function failureMessage(error: unknown, format: FileFormat): string {
     return `${formatLabel(format)} files open up to ${limit} MB. Download it to read it.`;
   if (error instanceof LoadError && error.reason === "not-text")
     return "This file isn't text. Download it to open it in another app.";
-  return "This file couldn't be loaded. Check your connection and try again.";
+  return "This file couldn't be loaded. Check your connection, then try again.";
 }
 
 function useBytes(
   format: FileFormat,
   source: string | undefined,
   fetcher: typeof fetch | undefined,
-): Loaded {
+): [Loaded, () => void] {
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt((count) => count + 1), []);
   useEffect(() => {
+    void attempt;
     if (!source) return;
     const controller = new AbortController();
     setLoaded({ state: "loading" });
@@ -56,18 +67,41 @@ function useBytes(
           setLoaded({
             state: "failed",
             message: failureMessage(error, format),
+            retryable: !(
+              error instanceof LoadError &&
+              (error.reason === "too-large" || error.reason === "not-text")
+            ),
           });
       },
     );
     return () => controller.abort();
-  }, [format, source, fetcher]);
-  return loaded;
+  }, [format, source, fetcher, attempt]);
+  return [loaded, retry];
 }
 
-function Unavailable({ title, message }: { title: string; message: string }) {
+function Unavailable({
+  title,
+  message,
+  retry,
+}: {
+  title: string;
+  message: string;
+  retry?: (() => void) | undefined;
+}) {
   return (
     <div className={styles.status}>
-      <EmptyState icon={<FileTextIcon />} title={title} description={message} />
+      <EmptyState
+        icon={<FileTextIcon />}
+        title={title}
+        description={message}
+        action={
+          retry && (
+            <Button variant="outline-subtle" size="sm" onClick={retry}>
+              Try again
+            </Button>
+          )
+        }
+      />
     </div>
   );
 }
@@ -80,7 +114,7 @@ export function Viewer({
   media,
   fetcher,
 }: ViewerProps) {
-  const loaded = useBytes(file.format, source, fetcher);
+  const [loaded, retry] = useBytes(file.format, source, fetcher);
   if (!source)
     return (
       <Unavailable
@@ -91,7 +125,11 @@ export function Viewer({
   return (
     <div className={styles.viewer}>
       {loaded.state === "failed" ? (
-        <Unavailable title="Can't open this file" message={loaded.message} />
+        <Unavailable
+          title="Can't open this file"
+          message={loaded.message}
+          retry={loaded.retryable ? retry : undefined}
+        />
       ) : loaded.state === "loading" ? (
         <LoadingRegion pending label={`Loading ${file.name}`}>
           {null}

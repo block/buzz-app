@@ -188,8 +188,11 @@ for (const { name, width, theme, large } of [
       .first()
       .click();
     await expect(viewer.getByText("Page 1 of 2")).toBeVisible();
-    const first = viewer.getByRole("img", { name: "Page 1 of 2" });
+    const first = viewer.getByRole("group", { name: "Page 1 of 2" });
     await expect(first.locator("canvas")).toBeVisible();
+    await expect(first).toMatchAriaSnapshot(
+      '- group "Page 1 of 2": First page',
+    );
     await expect
       .poll(() =>
         first.locator("canvas").evaluate((canvas) => {
@@ -235,10 +238,13 @@ test("explains a file that can't be loaded", async ({ page }) => {
     .getByRole("button", { name: /notes\.md/ })
     .first()
     .click();
+  const viewer = page.getByRole("complementary", { name: "File viewer" });
+  await expect(viewer.getByText(/couldn't be loaded/)).toBeVisible();
+  await page.unroute("**/api/relay/media?**");
+  await serveMedia(page);
+  await viewer.getByRole("button", { name: "Try again" }).click();
   await expect(
-    page
-      .getByRole("complementary", { name: "File viewer" })
-      .getByText(/couldn't be loaded/),
+    viewer.getByRole("heading", { name: "Launch notes" }),
   ).toBeVisible();
 });
 

@@ -9,6 +9,7 @@ import workerSrc from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 
 export const MAX_PDF_PAGES = 1000;
 export const MAX_PDF_TEXT_CHARS = 5_000_000;
+export const MAX_PAGE_TEXT_CHARS = 100_000;
 const MAX_CANVAS_PIXELS = 16_000_000;
 
 const DATA = {
@@ -54,6 +55,8 @@ export type PdfDocument = Readonly<{
   /** The pages laid out, up to `MAX_PDF_PAGES`. */
   sizes: readonly PageSize[];
   text(signal: AbortSignal): Promise<string>;
+  /** One page's text, up to `MAX_PAGE_TEXT_CHARS`, for assistive technology. */
+  pageText(page: number, signal: AbortSignal): Promise<string>;
   render(page: number, canvas: HTMLCanvasElement, scale: number): PdfRendering;
   destroy(): Promise<void>;
 }>;
@@ -218,6 +221,41 @@ export async function openPdf(
           signal.removeEventListener("abort", cancel);
           closed.signal.removeEventListener("abort", cancel);
         }
+      },
+      pageText: async (number, signal) => {
+        const check = () => {
+          if (signal.aborted || closed.signal.aborted)
+            throw new DOMException("PDF text extraction stopped", "AbortError");
+        };
+        check();
+        const page = await document.getPage(number);
+        check();
+        const reader = page.streamTextContent().getReader();
+        const parts: string[] = [];
+        let remaining = MAX_PAGE_TEXT_CHARS;
+        try {
+          while (remaining > 0) {
+            const content = await reader.read();
+            check();
+            if (content.done) break;
+            for (const item of content.value.items) {
+              if (!("str" in item)) continue;
+              const part = (item.hasEOL ? `${item.str}\n` : item.str).slice(
+                0,
+                remaining,
+              );
+              parts.push(part);
+              remaining -= part.length;
+              if (!remaining) break;
+            }
+          }
+        } finally {
+          void reader
+            .cancel(new Error("PDF text extraction stopped"))
+            .catch(() => {});
+          reader.releaseLock();
+        }
+        return parts.join("").trim();
       },
       render(number, canvas, scale) {
         let task: RenderTask | undefined;

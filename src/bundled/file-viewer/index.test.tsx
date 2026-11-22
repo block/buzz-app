@@ -282,3 +282,41 @@ it("explains a file that is too large or fails to load", async () => {
   );
   expect(await screen.findByText(/couldn't be loaded/)).toBeInTheDocument();
 });
+
+it("tries a failed file again without closing its tab", async () => {
+  const file = { url: MEDIA, name: "notes.txt", format: "text" } as const;
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response("", { status: 503 }))
+    .mockResolvedValueOnce(new Response("back online"));
+  render(
+    <Viewer
+      file={file}
+      source="/media"
+      openLink={() => false}
+      fetcher={fetcher}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Try again" }),
+  );
+  expect(await screen.findByText("back online")).toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("offers no retry for a file that is too large", async () => {
+  render(
+    <Viewer
+      file={{ url: MEDIA, name: "huge.txt", format: "text" }}
+      source="/media"
+      openLink={() => false}
+      fetcher={async () =>
+        new Response("x", { headers: { "content-length": String(1e9) } })
+      }
+    />,
+    { wrapper: ToastProvider },
+  );
+  expect(await screen.findByText(/open up to 20 MB/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});

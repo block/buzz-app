@@ -1,9 +1,10 @@
 // Smart routing: when the owner sends a message in a channel, Jev decides
 // who answers it (if it tags no one) and where the answer goes (for a
 // top-level message), in one request when the message arrives. A reply in a
-// thread stays in that thread. Untagged: the picked agent is woken there.
-// Tagged: the tagged agents' turns are placed there through the mention
-// placement hook. Both flows share one where path (`where.ts`).
+// thread stays in that thread. Untagged: the message is delivered to the
+// picked agent as a mention (`deliverMention`), and the placement hook places
+// it from the same decision. Tagged: the hook asks Jev where only. Both flows
+// share one where path (`where.ts`).
 import { useSyncExternalStore } from "react";
 import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
@@ -32,7 +33,6 @@ import {
   WHO_THRESHOLD,
   decideWhere,
   whereQuestions,
-  wherePrompt,
   type ContextMessage,
   type Where,
 } from "./where";
@@ -45,11 +45,13 @@ const LOG_LIMIT = 300;
 const CONTEXT_LIMIT = 10;
 /** Decisions take at most 32 questions. */
 const QUESTION_LIMIT = 32;
-/** Under the host's 3s cap for a placed mention, so a slow Jev is logged
- * here as a timeout rather than dropped there. */
-const PLACE_TIMEOUT_MS = 2500;
-const WAKE_TIMEOUT_MS = 15000;
-/** Waits before each retry of a wake the host refused as `unavailable`. */
+/** Under the host's 1s cap for a placed mention, so a slow Jev is logged
+ * here as a timeout rather than dropped there. A direct call's p99 is about
+ * 224ms. */
+const PLACE_TIMEOUT_MS = 800;
+/** The untagged who + where call, which nothing waits on. */
+const WHO_TIMEOUT_MS = 15000;
+/** Waits before each retry of a delivery the host refused as `unavailable`. */
 const WAKE_RETRY_DELAYS_MS = [3000, 7000];
 
 export type Entry = Readonly<{
@@ -65,7 +67,7 @@ export type Entry = Readonly<{
   probability?: number;
   yes?: Readonly<Record<string, number>>;
   where?: Where;
-  /** Where the reply was sent (wake) or placed (mention). */
+  /** Where the reply goes: the picked agent's or the tagged agents'. */
   destination?: Readonly<{ topLevel: true } | { root: string }>;
   wake?: string;
   ms?: number;
@@ -307,12 +309,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
     };
     const community =
       (tagging[0] ?? ask[0])?.relay ?? ctx.relay.snapshot().origin;
-    const result = await ctx.decisions.decide({
-      state,
-      questions,
-      timeoutMs,
-      ...(community ? { community } : {}),
-    });
+    // The decisions service waits at least 1s; the placement deadline is
+    // shorter, so this call stops waiting on its own.
+    let stop = () => {};
+    const result = await Promise.race([
+      ctx.decisions.decide({
+        state,
+        questions,
+        timeoutMs,
+        ...(community ? { community } : {}),
+      }),
+      new Promise<{ outcome: "failed"; reason: "timeout" }>((resolve) => {
+        const timer = setTimeout(
+          () => resolve({ outcome: "failed", reason: "timeout" }),
+          timeoutMs,
+        );
+        stop = () => clearTimeout(timer);
+      }),
+    ]).finally(() => stop());
     const ms = Date.now() - started;
     if (result.outcome !== "answered")
       return { failed: result.reason, ms } as const;
@@ -355,7 +369,16 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // Asked by the host before a tagged agent's turn starts, once per agent;
   // agents tagged together share one decision. No composer check: the host
   // asks only about the owner's own mentions.
+  // Each message's where decision, shared by the agents it reaches: tagged
+  // together, or picked by Jev and then asked about by the host.
   const placing = new Map<string, Promise<Where | undefined>>();
+  const remember = (id: string, decided: Promise<Where | undefined>) => {
+    placing.set(id, decided);
+    if (placing.size > 200) {
+      const oldest = placing.keys().next().value;
+      if (oldest) placing.delete(oldest);
+    }
+  };
   const placer: MentionPlacer = {
     id: "where",
     async place({ channel: channelId, event }) {
@@ -365,11 +388,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       let decided = placing.get(event.id);
       if (!decided) {
         decided = placeOnce(now.session, now.viewer, event, channelId);
-        placing.set(event.id, decided);
-        if (placing.size > 200) {
-          const oldest = placing.keys().next().value;
-          if (oldest) placing.delete(oldest);
-        }
+        remember(event.id, decided);
       }
       const where = await decided;
       if (!where) return undefined;
@@ -437,7 +456,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     return decided.where;
   }
 
-  // ---- Untagged: pick who answers, and wake them where it goes ----
+  // ---- Untagged: pick who answers, and deliver the message to them ----
 
   const handled = new Set<string>();
   const startedAt = Math.floor(Date.now() / 1000);
@@ -554,7 +573,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       channel,
       candidates,
       [],
-      WAKE_TIMEOUT_MS,
+      WHO_TIMEOUT_MS,
     );
     // Jev down: no one is woken, as without the plugin.
     if ("failed" in decided) {
@@ -600,24 +619,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
       destination,
     } as const;
     record({ ...picked, wake: "waking" });
-    const text = [
-      `${safe(() => session.profiles.snapshot().get(viewer)?.name) || "The owner"} sent message ${event.id} in this conversation without tagging anyone.`,
-      `Smart routing sends such messages to one of their agents, and picked you (${pct(probability)}).`,
-      "Treat that message as addressed to you: handle it if it is yours to do; if it is not for you, end the turn without posting.",
-      ...(decided.where ? ["", wherePrompt(decided.where, event.id)] : []),
-      "",
-      "The message:",
-      messageText(event).slice(0, 4000),
-    ].join("\n");
+    // The placement hook answers this message's place from the decision
+    // already made, with no second Jev call.
+    if (!thread) remember(event.id, Promise.resolve(decided.where));
+    const deliver = ctx.agents.deliverMention;
+    if (!deliver) {
+      record({ ...picked, wake: "failed: this app can't deliver mentions" });
+      return;
+    }
+    // Delivered as if the owner had tagged it: the agent sees the owner's
+    // request, placed where the decision put it.
+    const note = `${safe(() => session.profiles.snapshot().get(viewer)?.name) || "The owner"} tagged no one in this message. Smart routing delivered it to you: Jev picked you (${pct(probability)}). Handle it if it is yours to do; if it is not, end the turn without posting.`;
     let wake = "";
     for (let attempt = 0; ; attempt++) {
+      // Not once routing has stopped.
+      if (!answerable) {
+        wake = "dropped: routing stopped";
+        break;
+      }
       try {
-        const sent = await ctx.agents.wake(
-          agent.key,
-          { channel: channelId, ...destination, text },
-          // Not once routing has stopped.
-          { current: () => answerable },
-        );
+        const sent = await deliver.call(ctx.agents, agent.key, event, { note });
         wake =
           sent.status === "delivered" ? "delivered" : `dropped: ${sent.reason}`;
       } catch (error) {
@@ -749,7 +770,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         .slice(-Math.min(300, Math.max(1, Number(limit) || 20)))
         .reverse();
       return JSON.stringify(
-        { thresholds: { who: WHO_THRESHOLD, ...WHERE_THRESHOLDS }, entries },
+        {
+          thresholds: { who: WHO_THRESHOLD, ...WHERE_THRESHOLDS },
+          timeouts: timeouts(log),
+          entries,
+        },
         null,
         2,
       );
@@ -781,6 +806,26 @@ export function RoutingStatus({
       </SettingsGroup>
     </section>
   );
+}
+
+/** How often Jev missed the placement deadline (PLACE_TIMEOUT_MS) among the
+ * tagged messages it was asked about, and how often the who + where call
+ * timed out, through whichever provider answers here. */
+export function timeouts(entries: readonly Entry[]) {
+  const count = (flow: Entry["flow"]) => {
+    const asked = entries.filter(
+      (entry) => entry.flow === flow && entry.status !== "skipped",
+    );
+    return {
+      asked: asked.length,
+      timedOut: asked.filter((entry) => entry.reason === "Jev timeout").length,
+    };
+  };
+  return {
+    placeMs: PLACE_TIMEOUT_MS,
+    place: count("where"),
+    whoAndWhere: count("who+where"),
+  };
 }
 
 /** The mark's tooltip and the dialog: every answer behind a decision. */

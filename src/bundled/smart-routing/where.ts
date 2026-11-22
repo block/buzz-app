@@ -300,15 +300,3 @@ export function placeText(destination: Destination) {
 
 export const ELSEWHERE_NOTE =
   "Smart routing: the message may ask for the answer in another place (another channel or a thread it names). If it does, post there as it asks, and leave at most a short pointer here.";
-
-/** What a woken agent is told about the place its reply goes. */
-export function wherePrompt(where: Where, eventId: string) {
-  const d = where.destination;
-  const said =
-    d.type === "top"
-      ? "Smart routing placed your reply at the top level of this channel: a send without reply posts there."
-      : d.type === "earlier"
-        ? `Smart routing placed your reply in the thread on earlier message ${d.id} ("${d.snippet}"), which message ${eventId} follows up on: a send without reply posts there.`
-        : `Smart routing placed your reply in a thread on message ${eventId}: a send without reply posts there.`;
-  return where.elsewhere ? `${said}\n${ELSEWHERE_NOTE}` : said;
-}

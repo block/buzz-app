@@ -5,6 +5,8 @@ import { createElement, type ComponentType } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DecisionRequest } from "../../features/decisions/service";
 import type { MentionPlacer } from "../../features/agents/mention-placement";
+import type { RelayEvent } from "../../features/relay/events";
+import { threadReference } from "../../features/relay/thread-reference";
 import { bundledPlugins } from "..";
 import * as plugin from ".";
 import manifest from "./manifest.json";
@@ -89,16 +91,23 @@ function start() {
   });
   const agents = [agent(MBOT, "mbot"), agent(ART, "ART")];
   const calls: DecisionRequest[] = [];
-  const wakes: { key: string; wake: Record<string, unknown> }[] = [];
+  /** Mentions the plugin delivered, as the host took them. */
+  const delivered: { key: string; event: RelayEvent; note?: string }[] = [];
   const state = {
     down: false,
+    /** How long Jev takes to answer. */
+    delayMs: 0,
     where: {} as WhereAnswer,
     who: { ART: 0.84, mbot: 0.1 } as Record<string, number>,
   };
   /** Placers registered now; each is removed with the scope that added it. */
   const placers = new Set<MentionPlacer>();
-  const wake = async (key: string, wake: Record<string, unknown>) => {
-    wakes.push({ key, wake });
+  const deliverMention = async (
+    key: string,
+    event: RelayEvent,
+    options: { note?: string } = {},
+  ) => {
+    delivered.push({ key, event, ...options });
     return { status: "delivered" };
   };
   class Agents extends Service {
@@ -106,7 +115,7 @@ function start() {
       super(ctx, "agents");
     }
     snapshot = () => ({ agents, running: agents });
-    wake = wake;
+    deliverMention = deliverMention;
     addTool = vi.fn();
     registerMentionPlacement(placer: MentionPlacer) {
       this.ctx.effect(() => {
@@ -125,10 +134,12 @@ function start() {
     }),
     subscribe: () => () => {},
   } as never);
-  new Agents(root);
+  const agentsService = new Agents(root);
   root.provide("decisions", {
     async decide(request: DecisionRequest) {
       calls.push(request);
+      if (state.delayMs)
+        await new Promise((resolve) => setTimeout(resolve, state.delayMs));
       if (state.down)
         return { outcome: "failed", backend: "jev", reason: "service_error" };
       const w = {
@@ -232,11 +243,38 @@ function start() {
       new AbortController().signal,
     );
   };
+  /** Where the `index`th delivered mention lands, as the host places it: a
+   * thread reply in its thread, a top-level one where the hook says, else a
+   * thread on it. */
+  const landed = async (index: number) => {
+    const d = delivered[index];
+    if (!d) throw new Error("Nothing delivered");
+    const thread = threadReference(d.event);
+    if (thread) return { root: thread.rootId };
+    const placer = [...placers][0];
+    const answer = placer
+      ? ((await placer.place(
+          { agent: d.key, channel: CH, event: d.event } as never,
+          new AbortController().signal,
+        )) as { topLevel?: true; root?: string } | undefined)
+      : undefined;
+    if (answer?.topLevel) return { topLevel: true };
+    return { root: answer?.root ?? d.event.id };
+  };
   return {
     send,
     place,
+    landed,
+    /** The `smart_routing_log` tool the plugin added. */
+    tool: () => {
+      const added = agentsService?.addTool.mock.calls.at(-1)?.[0] as
+        | { call(...args: unknown[]): Promise<string> }
+        | undefined;
+      if (!added) throw new Error("No log tool");
+      return added;
+    },
     calls,
-    wakes,
+    delivered,
     state,
     skip: () => skipCount++,
     fiber,
@@ -268,7 +306,7 @@ beforeEach(() => localStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
 describe("smart routing", () => {
-  it("in a thread: who only, no where questions, woken in that thread", async () => {
+  it("in a thread: who only, no where questions, delivered as a mention that stays in that thread", async () => {
     const f = await setup();
     await f.send(
       top("3", "and add a test", [
@@ -276,15 +314,14 @@ describe("smart routing", () => {
         ["e", EARLIER, "", "reply"],
       ]),
     );
-    await vi.waitFor(() => expect(f.wakes).toHaveLength(1));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
     expect(WHERE_KEYS.some((key) => key in (f.calls[0]?.questions ?? {}))).toBe(
       false,
     );
-    expect(f.wakes[0]).toMatchObject({
-      key: ART,
-      wake: { channel: CH, root: EARLIER },
-    });
-    expect(f.wakes[0]?.wake.topLevel).toBeUndefined();
+    // The owner's own message, as if they had tagged the agent.
+    expect(f.delivered[0]).toMatchObject({ key: ART, event: { id: hex("3") } });
+    expect(f.delivered[0]?.note).toContain("Jev picked you (84%)");
+    await expect(f.landed(0)).resolves.toEqual({ root: EARLIER });
   });
 
   it("a tagged reply in a thread is never placed and asks Jev nothing", async () => {
@@ -304,31 +341,30 @@ describe("smart routing", () => {
     const f = await setup();
     f.state.where = { place: "working" };
     await f.send(top("4", "is it done?"));
-    await vi.waitFor(() => expect(f.wakes).toHaveLength(1));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
     expect(f.calls).toHaveLength(1);
     expect(whoKeys(f.calls[0])).toEqual(["mbot", "ART"]);
-    expect(f.wakes[0]?.wake).toMatchObject({ channel: CH, topLevel: true });
-    expect("root" in (f.wakes[0]?.wake ?? {})).toBe(false);
-    expect(f.wakes[0]?.wake.text).toContain(
-      "placed your reply at the top level",
-    );
+    // The host asks the hook, which answers from that decision: no second
+    // Jev call.
+    await expect(f.landed(0)).resolves.toEqual({ topLevel: true });
+    expect(f.calls).toHaveLength(1);
   });
 
   it("a shared space threads on the message; a moved-on follow-up goes to the earlier message's thread", async () => {
     const f = await setup();
     await f.send(top("5", "who owns the flaky suite?"));
-    await vi.waitFor(() => expect(f.wakes).toHaveLength(1));
-    expect(f.wakes[0]?.wake).toMatchObject({ root: hex("5") });
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
+    await expect(f.landed(0)).resolves.toEqual({ root: hex("5") });
     f.state.where = { place: "working", moved_on: 0.95, target: "m1" };
     await f.send(top("6", "back to Pat's note: did the build pass?"));
-    await vi.waitFor(() => expect(f.wakes).toHaveLength(2));
-    expect(f.wakes[1]?.wake).toMatchObject({ root: EARLIER });
-    expect(f.wakes[1]?.wake.text).toContain(`earlier message ${EARLIER}`);
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(2));
+    await expect(f.landed(1)).resolves.toEqual({ root: EARLIER });
     // Under the stricter moved-on line, it stays at the top level.
     f.state.where = { place: "working", moved_on: 0.85, target: "m1" };
     await f.send(top("7", "back to it"));
-    await vi.waitFor(() => expect(f.wakes).toHaveLength(3));
-    expect(f.wakes[2]?.wake).toMatchObject({ topLevel: true });
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(3));
+    await expect(f.landed(2)).resolves.toEqual({ topLevel: true });
+    expect(f.calls).toHaveLength(3);
   });
 
   it("tagged at the top level: where only, placed through the hook, and agents tagged together share one decision", async () => {
@@ -347,7 +383,7 @@ describe("smart routing", () => {
       "mbot",
       "ART",
     ]);
-    expect(f.wakes).toHaveLength(0);
+    expect(f.delivered).toHaveLength(0);
     // The untagged flow leaves tagged messages to the hook.
     await f.send(event).catch(() => {});
     expect(f.calls).toHaveLength(1);
@@ -364,7 +400,7 @@ describe("smart routing", () => {
     });
   });
 
-  it("Jev down: no wake for an untagged message, no placement for a tagged one", async () => {
+  it("Jev down: nothing delivered for an untagged message, no placement for a tagged one", async () => {
     const f = await setup();
     f.state.down = true;
     await expect(
@@ -373,10 +409,34 @@ describe("smart routing", () => {
     await f.send(top("b", "is it done?"));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(f.calls).toHaveLength(2);
-    expect(f.wakes).toHaveLength(0);
+    expect(f.delivered).toHaveLength(0);
   });
 
-  it("the same message gets the same destination in both flows", async () => {
+  it("stops waiting for Jev at 800ms when placing a tagged message, keeps today's place, and counts the timeout", async () => {
+    const f = await setup();
+    f.state.where = { place: "working" };
+    f.state.delayMs = 900;
+    const started = Date.now();
+    await expect(
+      f.place(top("e", "@ART is it done?", [["p", ART]])),
+    ).resolves.toBeUndefined();
+    const waited = Date.now() - started;
+    expect(waited).toBeGreaterThanOrEqual(790);
+    expect(waited).toBeLessThan(1000);
+    const tool = f.tool();
+    const log = JSON.parse(await tool.call({}, {}, {}));
+    expect(log.timeouts).toMatchObject({
+      placeMs: 800,
+      place: { asked: 1, timedOut: 1 },
+    });
+    expect(log.entries[0]).toMatchObject({
+      flow: "where",
+      status: "failed",
+      reason: "Jev timeout",
+    });
+  });
+
+  it("a Jev-picked agent and a tagged agent end up in the same place for the same message", async () => {
     for (const where of [
       { place: "working" },
       { place: "shared" },
@@ -387,14 +447,16 @@ describe("smart routing", () => {
       const f = await setup();
       f.state.where = where;
       await f.send(top("c", "the message"));
-      await vi.waitFor(() => expect(f.wakes).toHaveLength(1));
-      const {
-        channel: _channel,
-        text: _text,
-        ...woken
-      } = f.wakes[0]?.wake ?? {};
-      const placed = await f.place(top("c", "the message", [["p", ART]]));
-      expect(placed, JSON.stringify(where)).toEqual(woken);
+      await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
+      const picked = await f.landed(0);
+      // A fresh plugin, so the tagged flow decides on its own.
+      const g = await setup();
+      g.state.where = where;
+      const { note: _note, ...tagged } =
+        ((await g.place(top("c", "the message", [["p", ART]]))) as
+          | { note?: string }
+          | undefined) ?? {};
+      expect(tagged, JSON.stringify(where)).toEqual(picked);
     }
   });
 
@@ -426,7 +488,7 @@ describe("smart routing", () => {
     expect(await screen.findByText("Routing your messages")).toBeTruthy();
     f.state.where = { place: "working" };
     await f.send(top("d", "is it done?"));
-    await vi.waitFor(() => expect(f.wakes).toHaveLength(1));
+    await vi.waitFor(() => expect(f.delivered).toHaveLength(1));
 
     // The last provider goes: both are removed, and messages go where they
     // always have.
@@ -435,6 +497,6 @@ describe("smart routing", () => {
     expect(f.live()).toBeUndefined();
     expect(await screen.findByText("Needs a decisions provider")).toBeTruthy();
     expect(f.calls).toHaveLength(1);
-    expect(f.wakes).toHaveLength(1);
+    expect(f.delivered).toHaveLength(1);
   });
 });

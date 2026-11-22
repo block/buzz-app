@@ -958,7 +958,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       const id = text(args.thread) ?? (context.root as string);
       let root = id;
       if (id !== context.root) {
-        const event = await tools.event(id);
+        const event = await tools.event(
+          id,
+          args.message_url === undefined ? undefined : channel,
+        );
         root = rootOf(event);
         channel = tag(event, "h") ?? channel;
       }
@@ -2030,12 +2033,16 @@ class Tools {
     return value;
   }
 
-  async event(id: string) {
+  async event(id: string, linkedChannel?: string) {
     if (!HEX.test(id)) throw new Error(`Not an event id: ${id}`);
     const [event] = await this.client.query([
       { ids: [id], kinds: [...THREAD, 45001], limit: 1 },
     ]);
-    if (!event) throw new Error(`No message ${id}.`);
+    if (!event) {
+      if (linkedChannel && !(await this.metadata(linkedChannel)))
+        throw unseen(linkedChannel);
+      throw new Error(`No message ${id}.`);
+    }
     return event;
   }
 

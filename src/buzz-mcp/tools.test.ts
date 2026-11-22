@@ -895,6 +895,10 @@ it.each([
   ["current thread", {}],
   ["explicit thread", { thread: nested }],
   ["message link", { message_url: `buzz://message?channel=chan&id=${nested}` }],
+  [
+    "message link with an unseen channel ID",
+    { message_url: `buzz://message?channel=unseen&id=${nested}` },
+  ],
 ] as const)(
   "keeps agent ownership and nested reply context in a %s read",
   async (_, args) => {
@@ -1050,6 +1054,32 @@ const reply = (id: string, created_at: number) =>
   });
 const read = (client: BuzzClient, args: Record<string, unknown>) =>
   callTool(client, { channel: "chan", root }, "read", args) as Promise<string>;
+
+it("reports channel visibility when a message link's event and channel are unavailable", async () => {
+  const { client } = fake([event({ kind: 39000, tags: [["d", "chan"]] })]);
+  const channel = "private";
+  const id = "9".repeat(64);
+  const visibilityError = `No channel ${channel} that you can see`;
+  await expect(
+    callTool(client, {}, "channel_get", { channel }),
+  ).rejects.toThrow(visibilityError);
+  await expect(
+    read(client, { message_url: `buzz://message?channel=${channel}&id=${id}` }),
+  ).rejects.toThrow(visibilityError);
+  await expect(
+    read(client, { message_url: `buzz://message?channel=chan&id=${id}` }),
+  ).rejects.toThrow(`No message ${id}.`);
+});
+
+it("preserves relay errors when resolving a message link", async () => {
+  const { client } = fake(community);
+  vi.mocked(client.query).mockRejectedValueOnce(new Error("Relay unavailable"));
+  await expect(
+    read(client, { message_url: `buzz://message?channel=chan&id=${nested}` }),
+  ).rejects.toThrow("Relay unavailable");
+  expect(client.query).toHaveBeenCalledOnce();
+});
+
 /** The arguments a read says to continue with, if it says to. */
 const next = (answer: string) => {
   const found = answer.match(/continue with (\{.*\})$/m)?.[1];

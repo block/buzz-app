@@ -39,6 +39,7 @@ function harness() {
     closeOwner: vi.fn(async () => {}),
   } satisfies TerminalBridge;
   const screen = {
+    focus: () => true,
     mount: vi.fn(() => () => {}),
     output: vi.fn(async (_: Uint8Array) => {}),
     dispose: vi.fn(),

@@ -1200,6 +1200,8 @@ export class CodexRuntime {
     for (const listener of this.listeners) listener();
   }
   private source(agent: AgentKey, key: string, request: Request) {
+    // A standalone wake has no channel to authorize.
+    if (request.conversation.channelId === COMMUNITY_SESSION) return;
     const id = `${agent}\n${key}`;
     const sources = this.sources.get(id) ?? new Set<string>();
     sources.add(request.conversation.channelId);
@@ -1794,7 +1796,14 @@ export class CodexRuntime {
   }
   /** Whether the live session `key`'s details came only from requests in
    * channels its owner can read. */
-  readableDetail(agent: AgentKey, key: string) {
+  readableDetail(agent: AgentKey, key: string): boolean {
+    // An execution target's sessions are its own runtime's to authorize.
+    const remote = [...this.remote.values()].find(
+      (entry) =>
+        entry.agent === agent &&
+        entry.runtime.sessions(agent).some((view) => view.key === key),
+    );
+    if (remote) return remote.runtime.readableDetail(agent, key);
     const reads = this.reads(agent);
     return [...(this.sources.get(`${agent}\n${key}`) ?? [])].every(
       (channelId) => reads?.ownerReadable(channelId) === true,

@@ -9,6 +9,9 @@ import {
 import { createRelayReader } from "../relay/reader";
 import type { AgentReads } from "./reads";
 
+const channelOf = (event: RelayEvent) =>
+  event.tags.find(([key]) => key === "h")?.[1];
+
 export class AgentInbox {
   private readonly channels = new ByteLru<ChannelSummary>(128, 2 * 1024 * 1024);
   private readonly listeners = new Set<() => void>();
@@ -171,12 +174,24 @@ export class AgentInbox {
     const { events, partial } = await this.read(filter, signal);
     if (partial.length)
       throw new Error("The relay returned only part of a DM's details");
-    return events;
+    // Only a confirmed DM is read past the owner; the owner's own channels
+    // come from the owner's session.
+    const owned = await Promise.all(
+      events.map((event) => this.owner.channel(channelOf(event) ?? "")),
+    );
+    return events.filter((event, index) => {
+      const channel = channelOf(event);
+      return !!channel && (!!owned[index] || !!this.channel(channel));
+    });
   }
 
+  /** A catch-up page as the relay gave it, whole, so its paging holds; the
+   * runner delivers only its confirmed DMs. */
   async mentions(filter: ReadFilter, signal: AbortSignal) {
     try {
-      const events = await this.readAsAgent(filter, signal);
+      const { events, partial } = await this.read(filter, signal);
+      if (partial.length)
+        throw new Error("The relay returned only part of a DM's details");
       if (events.length < filter.limit) this.schedule(0);
       return events;
     } catch (error) {

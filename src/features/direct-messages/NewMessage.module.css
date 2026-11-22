@@ -203,36 +203,6 @@
   min-height: 0;
   container-type: inline-size;
 }
-/* The picked group's ongoing conversation keeps the width it had alone. */
-.discussion {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-/* Their named conversations: a side list when there's room, else a menu. */
-.named {
-  display: none;
-  flex: none;
-  inline-size: 16rem;
-  min-height: 0;
-  overflow: auto;
-  padding: var(--space-3) var(--space-3) var(--space-3) 0;
-}
-.namedMenu {
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--space-2) var(--space-6) 0;
-}
-@container (min-width: 48rem) {
-  .named {
-    display: block;
-  }
-  .namedMenu {
-    display: none;
-  }
-}
 .feedback {
   @apply text-body-sm;
   color: var(--text-subtle);
@@ -340,4 +310,22 @@
   overflow: auto;
   place-items: center;
   padding: var(--space-6);
+}
+/* The picked people, then their DM and named conversations. */
+.people {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  width: min(26rem, 100%);
+}
+.people > * {
+  align-self: stretch;
+}
+.people > :first-child {
+  align-self: center;
+}
+/* An optional name, set as the page's heading. */
+.title {
+  padding: var(--space-4) var(--space-6) 0;
 }

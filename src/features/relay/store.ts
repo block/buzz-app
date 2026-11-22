@@ -4274,7 +4274,7 @@ export function createChannelStore(
       discovery.start({
         id: channel.id,
         name: channel.name,
-        channelType: "solo",
+        channelType: channel.channelType ?? "solo",
         members: Object.freeze(
           [...new Set([transport.viewer, ...channel.members])].sort(),
         ),

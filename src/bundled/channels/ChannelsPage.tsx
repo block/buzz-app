@@ -3056,6 +3056,22 @@ function ChannelWorkspace({
                 if (behindSettings()) return;
                 select(channelId);
               }}
+              solo={({ agent, name }) => (
+                <SoloDraft
+                  key={agent ?? ""}
+                  embedded
+                  name={name}
+                  agent={agent}
+                  visit={navigation}
+                  session={queries}
+                  scope={scope}
+                  extensions={extensions}
+                  onStarted={(channelId) => {
+                    if (!behindSettings()) select(channelId);
+                  }}
+                  onFailed={(_channelId, message) => notify(message, "error")}
+                />
+              )}
               onStarted={(channelId, id) => {
                 handoff?.clearPreparingDm();
                 if (behindSettings()) return;

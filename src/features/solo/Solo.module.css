@@ -64,6 +64,12 @@
   margin-top: auto;
 }
 
+/* Chat settings, at the top of a new chat shown inside New message. */
+.embeddedActions {
+  align-self: flex-end;
+  padding-inline: var(--space-4);
+}
+
 .column {
   width: 55%;
   flex: 1;

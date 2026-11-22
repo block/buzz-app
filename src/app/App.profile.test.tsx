@@ -757,7 +757,7 @@ it("keeps the same unsent conversation and companion panel through Settings sect
     await screen.findByRole("option", { name: "Draft recipient" }),
   );
   const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
-    name: "Message Draft recipient",
+    name: "Start a new conversation",
   });
   await user.click(editor);
   await user.paste("Keep this draft behind Settings");
@@ -781,7 +781,7 @@ it("keeps the same unsent conversation and companion panel through Settings sect
     expect(note).toHaveValue("Retain companion state");
     expect(
       within(composing).getByRole("textbox", {
-        name: "Message Draft recipient",
+        name: "Start a new conversation",
         hidden: true,
       }),
     ).toBe(editor);
@@ -837,7 +837,7 @@ it("returns keyboard-opened Settings to the same focused draft", async () => {
     await screen.findByRole("option", { name: "Draft recipient" }),
   );
   const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
-    name: "Message Draft recipient",
+    name: "Start a new conversation",
   });
   await user.click(editor);
   await user.paste("Keyboard draft");

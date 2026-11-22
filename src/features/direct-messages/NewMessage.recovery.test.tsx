@@ -24,6 +24,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useChannelList } from "../relay/react";
+import type { ChannelSummary } from "../relay/contracts";
 import { createRelaySession } from "../relay/session";
 import {
   keypair,
@@ -192,6 +193,17 @@ function setup(
   );
   /** The viewer's own agents, which New Message offers. */
   const agents: { pubkey: string; name: string }[] = [];
+  // Creating a channel needs a writer for 9007 that this relay double lacks, so
+  // a started conversation is recorded and listed as pending, the way the real
+  // start lists it; messages to its id then publish as usual.
+  const startConversation = vi.fn<
+    (
+      id: string,
+      title: string,
+      members: readonly string[],
+      ...rest: unknown[]
+    ) => { create: Promise<void>; ready: Promise<void> }
+  >(() => ({ create: Promise.resolve(), ready: Promise.resolve() }));
   const create = () => {
     const local = {
       status: "ready" as const,
@@ -225,23 +237,54 @@ function setup(
       },
     );
     owners.push(owner);
-    return owner;
+    // The page starts conversations through this stand-in; everything else is
+    // the real session.
+    const session = {
+      ...owner.session,
+      channelWrites: {
+        available: true,
+        start: (
+          id: string,
+          title: string,
+          members: readonly string[],
+          ...rest: unknown[]
+        ) => {
+          // The relay knows its roster once it has made the conversation. The
+          // DM's roster stays last, which openDirectMessage rewrites.
+          events.unshift(roster(relay, id, [viewer.pubkey, ...members]));
+          owner.session.channels.start?.({
+            id,
+            name: title,
+            members,
+            labels: [],
+            channelType: "stream",
+          });
+          return startConversation(id, title, members, ...rest);
+        },
+      },
+    } as unknown as typeof owner.session;
+    return { ...owner, session };
   };
   const onStarted = vi.fn();
+  const onOpenChat = vi.fn();
   function Draft({
     owner,
     extensions,
     visit,
+    known,
   }: {
     owner: ReturnType<typeof create>;
     extensions?: ConversationExtensions | undefined;
     visit?: PageNavigation | undefined;
+    /** The channels this page knows, instead of the session's list. */
+    known?: readonly ChannelSummary[] | undefined;
   }) {
     const { channels } = useChannelList(owner.session.channels);
     return (
       <NewMessage
         session={owner.session}
-        channels={channels}
+        channels={known ?? channels}
+        onOpenChat={onOpenChat}
         scope={scope}
         host={
           {
@@ -271,11 +314,20 @@ function setup(
     owner: ReturnType<typeof create>,
     extensions?: ConversationExtensions,
     visit?: PageNavigation,
-  ) => render(<Draft owner={owner} extensions={extensions} visit={visit} />);
+    known?: readonly ChannelSummary[],
+  ) =>
+    render(
+      <Draft
+        owner={owner}
+        extensions={extensions}
+        visit={visit}
+        known={known}
+      />,
+    );
   const user = userEvent.setup();
   const compose = async () => {
     await user.click(await screen.findByRole("option", { name: "Avery" }));
-    await user.type(screen.getByRole("textbox"), "Durable first message");
+    await user.type(composer(), "Durable first message");
   };
   return {
     agents,
@@ -283,16 +335,21 @@ function setup(
     query,
     events,
     openDirectMessage,
+    startConversation,
     publish,
     create,
     mount,
     compose,
     user,
     onStarted,
+    onOpenChat,
     records: () => records,
   };
 }
 const send = () => screen.getByRole("button", { name: "Send message" });
+/** The message composer, not the optional Name field above To. */
+const composer = () =>
+  screen.getByRole("textbox", { name: (name) => name !== "Name" });
 
 it("restores a bounded recipient and draft when unused profile metadata exceeds the view quota", async () => {
   const name = "A".repeat(600);
@@ -317,7 +374,7 @@ it("restores a bounded recipient and draft when unused profile metadata exceeds 
   const owner = t.create();
   const page = t.mount(owner);
   await t.user.click(await screen.findByRole("option", { name }));
-  await t.user.type(screen.getByRole("textbox"), "Saved before sending");
+  await t.user.type(composer(), "Saved before sending");
   expect(readView(scope, "direct-message:recipients", [])).toEqual([
     { pubkey: other.pubkey, name: name.slice(0, 500) },
   ]);
@@ -330,7 +387,7 @@ it("restores a bounded recipient and draft when unused profile metadata exceeds 
       name: `Remove ${name.slice(0, 500)}`,
     }),
   ).toBeEnabled();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Saved before sending");
+  expect(composer()).toHaveTextContent("Saved before sending");
   expect(t.openDirectMessage).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
 });
@@ -417,9 +474,7 @@ it("recovers an uncertain first send after localStorage failure and session rest
   const second = t.create();
   const resumed = t.mount(second);
   await waitFor(() => expect(send()).toBeEnabled());
-  expect(screen.getByRole("textbox")).toHaveTextContent(
-    "Durable first message",
-  );
+  expect(composer()).toHaveTextContent("Durable first message");
   expect(screen.getByRole("button", { name: "Remove Avery" })).toBeDisabled();
   await t.user.click(screen.getByRole("button", { name: "Retry send" }));
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
@@ -434,7 +489,7 @@ it("recovers an uncertain first send after localStorage failure and session rest
     await restored.session.outbox?.ready();
   });
   await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
-  expect(screen.getByRole("textbox")).toHaveProperty("value", "");
+  expect(composer()).toHaveProperty("value", "");
   expect(
     screen.queryByRole("button", { name: "Remove Avery" }),
   ).not.toBeInTheDocument();
@@ -469,9 +524,7 @@ it("removing a failed operation in Diagnostics unlocks the preserved draft on re
   diagnostics.unmount();
   t.mount(owner);
   await waitFor(() => expect(send()).toBeEnabled());
-  expect(screen.getByRole("textbox")).toHaveTextContent(
-    "Durable first message",
-  );
+  expect(composer()).toHaveTextContent("Durable first message");
   expect(screen.getByRole("button", { name: "Remove Avery" })).toBeEnabled();
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
@@ -495,9 +548,7 @@ it("keeps a failed message in Back history when only the outbox holds it", async
   const passThrough = vi.fn<PageNavigation["passThrough"]>(() => () => {});
   t.mount(owner, undefined, { passThrough } as unknown as PageNavigation);
   await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveTextContent(
-      "Durable first message",
-    ),
+    expect(composer()).toHaveTextContent("Durable first message"),
   );
   expect(passThrough.mock.lastCall?.[0]()).toBe(false);
 });
@@ -513,9 +564,7 @@ it("never publishes if the durable recovery write fails", async () => {
   await t.user.click(send());
   await screen.findByRole("alert");
   expect(t.publish).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox")).toHaveTextContent(
-    "Durable first message",
-  );
+  expect(composer()).toHaveTextContent("Durable first message");
 });
 
 it.each([false, true])(
@@ -528,9 +577,8 @@ it.each([false, true])(
     await t.compose();
     await t.user.click(send());
     await screen.findByRole("alert");
-    await t.user.clear(screen.getByRole("textbox"));
-    if (!empty)
-      await t.user.type(screen.getByRole("textbox"), "Corrected message");
+    await t.user.clear(composer());
+    if (!empty) await t.user.type(composer(), "Corrected message");
     await t.user.click(screen.getByRole("button", { name: "Remove Avery" }));
     if (!empty)
       await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
@@ -542,7 +590,7 @@ it.each([false, true])(
       await restored.session.outbox?.ready();
     });
     await waitFor(() =>
-      expect(screen.getByRole("textbox")).toHaveProperty(
+      expect(composer()).toHaveProperty(
         "value",
         empty ? "" : "Corrected message",
       ),
@@ -582,9 +630,7 @@ it("retains recovery if saved-view cleanup fails, then retires without republish
   expect(t.publish).toHaveBeenCalledOnce();
   resumed.unmount();
   t.mount(owner);
-  await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveProperty("value", ""),
-  );
+  await waitFor(() => expect(composer()).toHaveProperty("value", ""));
   expect(send()).toBeDisabled();
 });
 
@@ -618,18 +664,14 @@ it("reconciles a remount while acknowledgement is held without reviving the deli
         screen.getByRole("button", { name: "Remove Avery" }),
       ).toBeDisabled(),
     );
-    expect(screen.getByRole("textbox")).toHaveTextContent(
-      "Durable first message",
-    );
+    expect(composer()).toHaveTextContent("Durable first message");
   } finally {
     release();
   }
   await waitFor(() =>
     expect(t.records().some((item) => item.recovery)).toBe(false),
   );
-  await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveProperty("value", ""),
-  );
+  await waitFor(() => expect(composer()).toHaveProperty("value", ""));
   expect(
     screen.queryByRole("button", { name: "Remove Avery" }),
   ).not.toBeInTheDocument();
@@ -643,9 +685,7 @@ it("reconciles a remount while acknowledgement is held without reviving the deli
   await act(async () => {
     await restored.session.outbox?.ready();
   });
-  await waitFor(() =>
-    expect(screen.getByRole("textbox")).toHaveProperty("value", ""),
-  );
+  await waitFor(() => expect(composer()).toHaveProperty("value", ""));
   expect(send()).toBeDisabled();
 });
 
@@ -692,7 +732,9 @@ it.each(["picker", "completion"])(
     );
     await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
     const composer = () =>
-      screen.getByRole<ComposerInputElement>("textbox", { name: /^Message / });
+      screen.getByRole<ComposerInputElement>("textbox", {
+        name: "Start a new conversation",
+      });
     const choices = async () => {
       if (path === "picker") {
         await t.user.click(
@@ -800,8 +842,8 @@ it.each(["", "Please review these fixes"])(
     expect(
       screen.queryByRole("region", { name: "Chat attachments" }),
     ).toBeNull();
-    expect(screen.getByRole("textbox")).toHaveTextContent("Fix");
-    if (caption) expect(screen.getByRole("textbox")).toHaveTextContent(caption);
+    expect(composer()).toHaveTextContent("Fix");
+    if (caption) expect(composer()).toHaveTextContent(caption);
     await t.user.click(retry);
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
     expect(t.publish).toHaveBeenCalledTimes(2);
@@ -833,8 +875,8 @@ it("retries an unchanged failed DM saved with legacy chat attachments", async ()
   ]);
   t.mount(t.create());
   await waitFor(() => expect(send()).toBeEnabled());
-  expect(screen.getByRole("textbox")).toHaveTextContent("Session: Fix");
-  expect(screen.getByRole("textbox")).toHaveTextContent(text);
+  expect(composer()).toHaveTextContent("Session: Fix");
+  expect(composer()).toHaveTextContent(text);
   await t.user.click(send());
   await waitFor(() =>
     expect(t.onStarted).toHaveBeenCalledWith(channel, event.id),
@@ -844,83 +886,112 @@ it("retries an unchanged failed DM saved with legacy chat attachments", async ()
   expect(t.publish.mock.calls[0]?.[0]).toEqual(event);
 });
 
-it("loads matching DM history inline and keeps the draft while recipients change", async () => {
+/** The "Direct message" row under the picked people. */
+const directRow = () => screen.getByRole("button", { name: /^Direct message/ });
+/** The row has a DM to open once it stops being a toggle. */
+const knowsDm = () =>
+  waitFor(() => expect(directRow()).not.toHaveAttribute("aria-pressed"));
+/** The row is a toggle: these people have no DM this page knows. */
+const knowsNoDm = () =>
+  waitFor(() => expect(directRow()).toHaveAttribute("aria-pressed"));
+const sentTo = (t: ReturnType<typeof setup>) =>
+  t.publish.mock.calls.map(
+    ([event]) => event.tags.find(([name]) => name === "h")?.[1],
+  );
+
+it("lists the DM of these people as a row, without its history, and keeps the draft while recipients change", async () => {
   const t = setup();
   t.events.unshift(
     message(other, channel, "Earlier conversation", 1_700_000_001),
   );
   const owner = t.create();
-  const view = t.mount(owner);
+  t.mount(owner);
   await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-  await screen.findByRole("region", { name: "Channel message history" });
-  await waitFor(() =>
-    expect(
-      owner.session.channels.window(channel).rows.map((row) => row.content),
-    ).toContain("Earlier conversation"),
-  );
-  expect(
-    screen.queryByRole("button", { name: "Open conversation" }),
-  ).not.toBeInTheDocument();
-  expect(t.openDirectMessage).not.toHaveBeenCalled();
-  expect(t.publish).not.toHaveBeenCalled();
-  await t.user.type(screen.getByRole("textbox"), "Keep this draft");
-  await addRecipient(t, "Zoe");
+  await knowsDm();
   expect(
     screen.queryByRole("region", { name: "Channel message history" }),
   ).not.toBeInTheDocument();
-  expect(
-    view.container.querySelector('[data-new-message-body] [title="Zoe"]'),
-  ).toBeInTheDocument();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+  await t.user.type(composer(), "Keep this draft");
+  await addRecipient(t, "Zoe");
+  // Avery and Zoe have no DM together.
+  await knowsNoDm();
+  expect(composer()).toHaveTextContent("Keep this draft");
   await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
-  await screen.findByRole("region", { name: "Channel message history" });
-  await waitFor(() =>
-    expect(
-      owner.session.channels.window(channel).rows.map((row) => row.content),
-    ).toContain("Earlier conversation"),
-  );
-  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+  await knowsDm();
+  expect(composer()).toHaveTextContent("Keep this draft");
+  await t.user.click(directRow());
+  expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith(channel);
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.startConversation).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("opens the DM of these people with its history, whether or not it shows one", async () => {
+it("starts a conversation by default, even when these people have a DM, and never opens the DM", async () => {
   const t = setup();
-  const owner = t.create();
-  t.mount(owner);
+  t.events.unshift(
+    message(other, channel, "Earlier conversation", 1_700_000_001),
+  );
+  t.mount(t.create());
   await t.compose();
-  await screen.findByRole("region", { name: "Channel message history" });
+  await knowsDm();
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.startConversation).toHaveBeenCalledExactlyOnceWith(
+    expect.stringMatching(/^[0-9a-f-]{36}$/),
+    "Durable first message",
+    [other.pubkey],
+    undefined,
+    false,
+    undefined,
+    { solo: false },
+  );
+  const id = t.startConversation.mock.calls[0]?.[0];
+  expect(sentTo(t)).toEqual([id]);
+  expect(t.onStarted).toHaveBeenCalledWith(id, expect.any(String));
+  expect(t.onOpenChat).not.toHaveBeenCalled();
+});
+
+it("names the started conversation by the typed title", async () => {
+  const t = setup();
+  t.mount(t.create());
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.type(screen.getByRole("textbox", { name: "Name" }), "Offsite");
+  await t.user.type(composer(), "Where to?");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.startConversation.mock.calls[0]?.[1]).toBe("Offsite");
+  expect(t.publish.mock.calls[0]?.[0].content).toBe("Where to?");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+});
+
+it("sends in the DM, which the relay opens by its people, once Direct message is chosen", async () => {
+  const t = setup();
+  t.mount(t.create());
+  // Zoe has no DM with the viewer.
+  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  await knowsNoDm();
+  await t.user.click(directRow());
+  expect(directRow()).toHaveAttribute("aria-pressed", "true");
+  await t.user.type(composer(), "Hello Zoe");
   await t.user.click(send());
   await waitFor(() => expect(t.openDirectMessage).toHaveBeenCalledOnce());
   // The relay picks the DM by its people, and restores it if it is hidden.
   expect(t.openDirectMessage.mock.calls[0]?.[2]).toEqual({
     includeHistory: true,
   });
-  cleanup();
-
-  const fresh = setup();
-  fresh.mount(fresh.create());
-  await fresh.user.click(await screen.findByRole("option", { name: "Zoe" }));
-  expect(
-    screen.queryByRole("region", { name: "Channel message history" }),
-  ).not.toBeInTheDocument();
-  await fresh.user.type(screen.getByRole("textbox"), "Hello Zoe");
-  await fresh.user.click(send());
-  await waitFor(() => expect(fresh.openDirectMessage).toHaveBeenCalledOnce());
-  expect(fresh.openDirectMessage.mock.calls[0]?.[2]).toEqual({
-    includeHistory: true,
-  });
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.startConversation).not.toHaveBeenCalled();
+  expect(sentTo(t)).toEqual([channel]);
 });
 
-describe("the relay picks the DM, and the preview is only a hint", () => {
-  const sentTo = (t: ReturnType<typeof setup>) =>
-    t.publish.mock.calls.map(
-      ([event]) => event.tags.find(([name]) => name === "h")?.[1],
-    );
-
-  it("sends a 1:1 to the people's DM when the preview shows a group whose other member claims to be an agent", async () => {
-    const t = setup();
-    // Mallory is a person to the relay, but her own profile says agent, so
-    // the page counts the group as Avery's DM and, sorting first, shows it.
-    const mallorys = "00000000-0000-4000-8000-000000000000";
+describe("the relay picks the DM, and the list is only a hint", () => {
+  /** Mallory is a person to the relay, but her own profile says agent, so the
+   * page counts the group as Avery's DM and, sorting first, offers it. */
+  const mallorys = "00000000-0000-4000-8000-000000000000";
+  function withMallory(t: ReturnType<typeof setup>) {
     t.events.unshift(
       profile(third, { name: "Mallory", is_agent: true }),
       signed(relay, {
@@ -936,12 +1007,31 @@ describe("the relay picks the DM, and the preview is only a hint", () => {
       roster(relay, mallorys, [viewer.pubkey, other.pubkey, third.pubkey]),
       message(other, mallorys, "Mallory is here", 1_700_000_002),
     );
+  }
+
+  it("opens the group DM whose other member claims to be an agent, as the people's DM", async () => {
+    const t = setup();
+    withMallory(t);
     const owner = t.create();
     t.mount(owner);
     await owner.session.profiles.ensure([third.pubkey]);
     await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await showsHistory(owner, mallorys, "Mallory is here");
-    await t.user.type(screen.getByRole("textbox"), "Just us");
+    await knowsDm();
+    await t.user.click(directRow());
+    expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith(mallorys);
+    expect(t.openDirectMessage).not.toHaveBeenCalled();
+    expect(t.publish).not.toHaveBeenCalled();
+  });
+
+  it("sends a 1:1 to the people's DM when this page knows no DM, whatever the relay has", async () => {
+    const t = setup();
+    withMallory(t);
+    const owner = t.create();
+    t.mount(owner, undefined, undefined, []);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await knowsNoDm();
+    await t.user.click(directRow());
+    await t.user.type(composer(), "Just us");
     await t.user.click(send());
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
     // The relay returns Avery's 1:1, and the message and page go there.
@@ -952,10 +1042,9 @@ describe("the relay picks the DM, and the preview is only a hint", () => {
     expect(t.onStarted).toHaveBeenCalledWith(channel, expect.any(String));
   });
 
-  it("sends to a DM an agent joined in place, by the people it still has", async () => {
-    const t = setup();
-    // Avery's DM, which the viewer's agent Zoe joined later: the relay still
-    // knows it by its people, not by all its members.
+  /** Avery's DM, which the viewer's agent Zoe joined later: the relay still
+   * knows it by its people, not by all its members. */
+  function withAgentJoined(t: ReturnType<typeof setup>) {
     const at = t.events.findIndex(
       (event) => event.kind === 0 && event.pubkey === another.pubkey,
     );
@@ -971,13 +1060,30 @@ describe("the relay picks the DM, and the preview is only a hint", () => {
       another.pubkey,
     ]);
     t.events.unshift(message(other, channel, "Zoe joined", 1_700_000_001));
-    const owner = t.create();
-    t.mount(owner);
+  }
+
+  it("opens a DM an agent joined as the DM of the people it still has", async () => {
+    const t = setup();
+    withAgentJoined(t);
+    t.mount(t.create());
     await t.user.click(await screen.findByRole("option", { name: "Avery" }));
     await addRecipient(t, "Zoe, Agent");
-    await showsHistory(owner, channel, "Zoe joined");
-    expect(screen.queryByText(/Sending adds/)).toBeNull();
-    await t.user.type(screen.getByRole("textbox"), "Hello");
+    await knowsDm();
+    await t.user.click(directRow());
+    expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith(channel);
+    expect(t.openDirectMessage).not.toHaveBeenCalled();
+    expect(t.publish).not.toHaveBeenCalled();
+  });
+
+  it("sends to a DM an agent joined in place, by the people it still has", async () => {
+    const t = setup();
+    withAgentJoined(t);
+    t.mount(t.create(), undefined, undefined, []);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await addRecipient(t, "Zoe, Agent");
+    await knowsNoDm();
+    await t.user.click(directRow());
+    await t.user.type(composer(), "Hello");
     await t.user.click(send());
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
     // Tagged, the relay finds this DM by its people instead of making an
@@ -1012,21 +1118,6 @@ function groupHistory(t: ReturnType<typeof setup>) {
     message(another, group, "Group history", 1_700_000_002),
   );
 }
-/** The DM whose timeline the page shows; rows stay virtual in jsdom. */
-const previewed = () =>
-  screen
-    .queryByRole("region", { name: "Channel message history" })
-    ?.getAttribute("data-channel-timeline");
-async function showsHistory(
-  owner: ReturnType<ReturnType<typeof setup>["create"]>,
-  id: string,
-  content: string,
-) {
-  await waitFor(() => expect(previewed()).toBe(id));
-  expect(
-    owner.session.channels.window(id).rows.map((row) => row.content),
-  ).toContain(content);
-}
 async function addRecipient(t: ReturnType<typeof setup>, name: string) {
   const field = screen.getByRole("combobox", { name: "Message recipients" });
   await t.user.click(field);
@@ -1035,7 +1126,7 @@ async function addRecipient(t: ReturnType<typeof setup>, name: string) {
   await t.user.click(await screen.findByRole("option", { name }));
 }
 
-it("previews locally and relay-hidden DMs without restoring them until Send", async () => {
+it("offers locally and relay-hidden DMs as rows without restoring them, and a default send leaves them hidden", async () => {
   const t = setup();
   groupHistory(t);
   t.events.unshift(
@@ -1067,7 +1158,7 @@ it("previews locally and relay-hidden DMs without restoring them until Send", as
     expect(owner.session.channels.list().status).toBe("ready"),
   );
   act(() => sidebar?.hide(channel));
-  // Settle the hide's own history baseline before anything previews the DM.
+  // Settle the hide's own history baseline before anything offers the DM.
   await waitFor(() =>
     expect(readView(scope, "hidden-dms", [])).toEqual([
       expect.objectContaining({ id: channel, knownIds: expect.any(Array) }),
@@ -1075,53 +1166,63 @@ it("previews locally and relay-hidden DMs without restoring them until Send", as
   );
   t.mount(owner);
   await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-  await showsHistory(owner, channel, "Earlier conversation");
+  await knowsDm();
+  await t.user.click(directRow());
+  expect(t.onOpenChat).toHaveBeenLastCalledWith(channel);
   await addRecipient(t, "Zoe");
-  await showsHistory(owner, group, "Group history");
+  await waitFor(async () => {
+    await t.user.click(directRow());
+    expect(t.onOpenChat).toHaveBeenLastCalledWith(group);
+  });
   await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
-  await showsHistory(owner, channel, "Earlier conversation");
-  // Neither preview restored its row or opened the DM.
+  await knowsDm();
+  // Offering them neither restored a row nor opened a DM.
   expect(sidebar?.hiddenIds).toEqual(new Set([channel]));
   expect(owner.session.channelLifecycle.snapshot().hidden).toEqual([group]);
   expect(t.openDirectMessage).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
-  // Send keeps the existing confirmed open, which restores the row.
-  await t.user.type(screen.getByRole("textbox"), "Back again");
+  // Send starts a conversation, so the hidden DM stays hidden.
+  await t.user.type(composer(), "Back again");
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.openDirectMessage).toHaveBeenCalledOnce();
-  expect(t.openDirectMessage.mock.calls[0]?.[0]).toEqual([other.pubkey]);
-  expect(sidebar?.hiddenIds).toEqual(new Set());
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.startConversation).toHaveBeenCalledOnce();
+  expect(sidebar?.hiddenIds).toEqual(new Set([channel]));
 });
 
-it("previews only the DM whose participants exactly match, in any order", async () => {
+it("offers only the DM whose participants exactly match, in any order", async () => {
   const t = setup();
   groupHistory(t);
   const owner = t.create();
-  const view = t.mount(owner);
-  const introduces = (name: string) =>
-    view.container.querySelector(`[data-new-message-body] [title="${name}"]`);
+  t.mount(owner);
+  /** The DM the row opens for the people now picked, once it has one. */
+  const opens = async () => {
+    await knowsDm();
+    t.onOpenChat.mockClear();
+    await t.user.click(directRow());
+    return t.onOpenChat.mock.lastCall?.[0];
+  };
   // Zoe alone is a subset of the group and has no 1:1 DM.
   await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
-  expect(previewed()).toBeUndefined();
-  expect(introduces("Zoe")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(owner.session.channels.list().status).toBe("ready"),
+  );
+  await knowsNoDm();
   await addRecipient(t, "Avery");
-  await showsHistory(owner, group, "Group history");
+  expect(await opens()).toBe(group);
   // A superset leaves the group as soon as it is chosen.
   await addRecipient(t, "Kai");
-  expect(previewed()).toBeUndefined();
-  expect(introduces("Kai")).toBeInTheDocument();
+  await knowsNoDm();
   await t.user.click(screen.getByRole("button", { name: "Remove Kai" }));
-  await showsHistory(owner, group, "Group history");
+  expect(await opens()).toBe(group);
   // Avery alone, also a subset of the group, matches the separate 1:1 DM.
   await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
-  expect(previewed()).not.toBe(group);
-  await showsHistory(owner, channel, "Earlier conversation");
+  await waitFor(async () => expect(await opens()).toBe(channel));
   expect(t.openDirectMessage).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
 });
 
-it("previews a group DM of the same people even when it also holds an agent", async () => {
+it("offers a group DM of the same people even when it also holds an agent", async () => {
   const t = setup();
   groupHistory(t);
   const bot = keypair();
@@ -1148,59 +1249,9 @@ it("previews a group DM of the same people even when it also holds an agent", as
   await owner.session.profiles.ensure([bot.pubkey]);
   await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
   await addRecipient(t, "Avery");
-  await showsHistory(owner, group, "Group history");
-  expect(t.openDirectMessage).not.toHaveBeenCalled();
-});
-
-it("never shows a previous match's history that finishes loading after an edit", async () => {
-  const t = setup();
-  groupHistory(t);
-  const read = t.query.getMockImplementation();
-  assert.exists(read);
-  let release = () => {};
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let started = false;
-  let answered = false;
-  t.query.mockImplementation(async (filters) => {
-    if (
-      !filters.some(
-        (filter) => filter.kinds?.includes(9) && filter["#h"]?.includes(group),
-      )
-    )
-      return read(filters);
-    started = true;
-    await held;
-    try {
-      return await read(filters);
-    } finally {
-      answered = true;
-    }
-  });
-  const owner = t.create();
-  t.mount(owner);
-  try {
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await showsHistory(owner, channel, "Earlier conversation");
-    await addRecipient(t, "Zoe");
-    await waitFor(() => expect(started).toBe(true));
-    // The new match loads in place of the 1:1 timeline, never beside it.
-    expect(previewed()).toBeUndefined();
-    expect(screen.getByText("Loading messages…")).toBeVisible();
-    await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
-    await showsHistory(owner, channel, "Earlier conversation");
-  } finally {
-    release();
-  }
-  await waitFor(() => expect(answered).toBe(true));
-  // Let the store apply or retire the late page before checking the page.
-  await act(async () => {});
-  expect(previewed()).toBe(channel);
-  expect(screen.queryByText("Loading messages…")).not.toBeInTheDocument();
-  // Matching the group again shows its own history.
-  await addRecipient(t, "Zoe");
-  await showsHistory(owner, group, "Group history");
+  await knowsDm();
+  await t.user.click(directRow());
+  expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith(group);
   expect(t.openDirectMessage).not.toHaveBeenCalled();
 });
 
@@ -1233,18 +1284,24 @@ it("matches the recipients chosen by the time the DM roster loads", async () => 
     await addRecipient(t, "Zoe");
     await waitFor(() => expect(started).toBe(true));
     expect(owner.session.channels.list().status).not.toBe("ready");
-    expect(previewed()).toBeUndefined();
+    // No DM is known yet, so Direct message only toggles.
+    expect(directRow()).toHaveAttribute("aria-pressed", "false");
     await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
   } finally {
     release();
   }
-  await showsHistory(owner, channel, "Earlier conversation");
+  await knowsDm();
+  await t.user.click(directRow());
+  expect(t.onOpenChat).toHaveBeenLastCalledWith(channel);
   await addRecipient(t, "Zoe");
-  await showsHistory(owner, group, "Group history");
+  await waitFor(async () => {
+    await t.user.click(directRow());
+    expect(t.onOpenChat).toHaveBeenLastCalledWith(group);
+  });
   expect(t.openDirectMessage).not.toHaveBeenCalled();
 });
 
-it("still previews history when this connection cannot start DMs", async () => {
+it("still opens an existing DM, and starts conversations, when this connection cannot start DMs", async () => {
   const t = setup();
   t.events.unshift(
     message(other, channel, "Earlier conversation", 1_700_000_001),
@@ -1259,144 +1316,31 @@ it("still previews history when this connection cannot start DMs", async () => {
   };
   t.mount(owner);
   await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-  await showsHistory(owner, channel, "Earlier conversation");
+  await knowsDm();
+  await t.user.click(directRow());
+  expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith(channel);
+  // New conversations never need a DM.
+  expect(
+    screen.queryByText(
+      "Starting direct messages is unavailable on this connection.",
+    ),
+  ).not.toBeInTheDocument();
+  await t.user.type(composer(), "Hello");
+  expect(send()).toBeEnabled();
+  // Choosing a DM that must be started is what this connection cannot do.
+  await t.user.click(screen.getByRole("button", { name: "Remove Avery" }));
+  await addRecipient(t, "Zoe");
+  await knowsNoDm();
+  await t.user.click(directRow());
   expect(
     screen.getByText(
       "Starting direct messages is unavailable on this connection.",
     ),
   ).toBeVisible();
-  await t.user.type(screen.getByRole("textbox"), "Hello");
   expect(send()).toBeDisabled();
   expect(t.openDirectMessage).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
 });
-
-it.each([40003, 5])(
-  "shows and dismisses a restored failed message update (%i) in the preview",
-  async (kind) => {
-    const t = setup();
-    const original = message(
-      viewer,
-      channel,
-      "Original message",
-      1_700_000_001,
-    );
-    t.events.unshift(original);
-    const event = signed(viewer, {
-      kind,
-      tags: [
-        ["h", channel],
-        ["e", original.id],
-        ...(kind === 5 ? [["k", "9"]] : []),
-      ],
-      content: kind === 40003 ? "Recovered edit" : "",
-    });
-    t.storage.load = async () => [
-      { event, signed: event, delivery: "failed", error: "Rejected update" },
-    ];
-    const owner = t.create();
-    await owner.session.outbox?.ready();
-    t.mount(owner);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await screen.findByRole("region", { name: "Channel message history" });
-    expect(
-      screen.getByRole("button", { name: "Retry message update" }),
-    ).toBeVisible();
-    await t.user.click(
-      screen.getByRole("button", { name: "Discard failed update" }),
-    );
-    await waitFor(() =>
-      expect(owner.session.outbox?.snapshot()).toHaveLength(0),
-    );
-    expect(
-      screen.queryByRole("button", { name: "Retry message update" }),
-    ).not.toBeInTheDocument();
-  },
-);
-
-it.each([false, true])(
-  "preserves draft and retry focus without stealing moved focus (%s)",
-  async (moveFocus) => {
-    const t = setup();
-    t.events.unshift(
-      message(other, channel, "Recovered history", 1_700_000_001),
-    );
-    const read = t.query.getMockImplementation();
-    assert.exists(read);
-    let broken = true;
-    let pending: Promise<void> | undefined;
-    let started = false;
-    t.query.mockImplementation(async (filters) => {
-      if (filters.some((filter) => filter.kinds?.includes(9))) {
-        started = true;
-        await pending;
-      }
-      const result = await read(filters);
-      return broken && filters.some((filter) => filter.kinds?.includes(9))
-        ? result.filter((event) => event.kind === 9)
-        : result;
-    });
-    const owner = t.create();
-    t.mount(owner);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    await waitFor(() =>
-      expect(owner.session.channels.window(channel).status).toBe("error"),
-    );
-    await t.user.type(screen.getByRole("textbox"), "Keep this draft");
-    const retry = screen.getByRole("button", { name: "Retry messages" });
-    const recipients = screen.getByRole("combobox", {
-      name: "Message recipients",
-    });
-    const historyReads = () =>
-      t.query.mock.calls.filter(([filters]) =>
-        filters.some((filter) => filter.kinds?.includes(9)),
-      ).length;
-    for (const fail of [true, false]) {
-      broken = fail;
-      started = false;
-      let release = () => {};
-      pending = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      try {
-        act(() => retry.focus());
-        await t.user.keyboard("{Enter}");
-        await waitFor(() => expect(started).toBe(true));
-        expect(retry).toHaveFocus();
-        expect(retry).toHaveAttribute("aria-busy", "true");
-        const reads = historyReads();
-        await t.user.keyboard("{Enter}");
-        expect(historyReads()).toBe(reads);
-        if (!fail && moveFocus) {
-          await t.user.click(recipients);
-          expect(recipients).toHaveFocus();
-        }
-      } finally {
-        release();
-      }
-      await waitFor(() =>
-        expect(owner.session.channels.window(channel).status).toBe(
-          fail ? "error" : "ready",
-        ),
-      );
-      if (fail) {
-        expect(retry).toHaveFocus();
-        expect(retry).not.toHaveAttribute("aria-busy", "true");
-      }
-    }
-    expect(retry).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        moveFocus ? recipients : screen.getByRole("textbox"),
-      ).toHaveFocus(),
-    );
-    expect(
-      owner.session.channels.window(channel).rows.map((row) => row.content),
-    ).toContain("Recovered history");
-    expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
-    expect(t.publish).not.toHaveBeenCalled();
-  },
-);
 
 const photo = {
   name: "photo.png",
@@ -1447,7 +1391,7 @@ it.each(["", "See attached"])(
     const t = setup();
     const f = attachable(t);
     await t.user.click(await screen.findByRole("option", { name: "Avery" }));
-    if (caption) await t.user.type(screen.getByRole("textbox"), caption);
+    if (caption) await t.user.type(composer(), caption);
     await f.attach();
     await waitFor(() => expect(f.files.snapshot()[0]?.status).toBe("ready"));
     expect(t.openDirectMessage).not.toHaveBeenCalled();

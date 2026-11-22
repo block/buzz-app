@@ -205,7 +205,13 @@ export function SoloDraft({
   visit,
   region,
   draft: regionDraft,
+  embedded = false,
+  name: givenName,
 }: {
+  /** Shown inside New message, which supplies the page's title. */
+  embedded?: boolean;
+  /** The chat's name from the host's title field; empty follows settings. */
+  name?: string | undefined;
   draft?: SoloDraftStart["draft"];
   /** The Solo region whose source opened this draft; its chat gets that label. */
   region?: string | undefined;
@@ -398,13 +404,13 @@ export function SoloDraft({
         ),
       ),
     ];
+    const chosenName = givenName?.trim() ? givenName : draftSettings.name;
     const named =
-      typeof draftSettings.name === "string" &&
-      !!canonicalDetailsName(draftSettings.name);
+      typeof chosenName === "string" && !!canonicalDetailsName(chosenName);
     const name =
-      typeof draftSettings.name === "string"
-        ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
-        : draftSettings.name;
+      typeof chosenName === "string"
+        ? canonicalDetailsName(chosenName) || startingChatTitle(draft)
+        : chosenName;
     const ttlSeconds = draftLifetime(scope, draftSettings);
     const project = selectedProject;
     const canvas = draftCanvas;
@@ -980,6 +986,7 @@ export function SoloDraft({
   );
   return (
     <SoloDraftView
+      embedded={embedded}
       actions={
         <IconButton
           ref={settingsTrigger}

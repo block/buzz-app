@@ -10,10 +10,20 @@ import styles from "./Solo.module.css";
 export function SoloDraftView({
   children,
   actions,
+  embedded = false,
 }: {
   actions?: ReactNode;
   children: ReactNode;
+  /** Inside New message, which owns the page and its heading. */
+  embedded?: boolean;
 }) {
+  if (embedded)
+    return (
+      <div className={styles.start}>
+        <div className={styles.embeddedActions}>{actions}</div>
+        <div className={styles.startContent}>{children}</div>
+      </div>
+    );
   return (
     <section
       className={styles.work}

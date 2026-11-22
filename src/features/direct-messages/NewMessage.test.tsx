@@ -120,6 +120,16 @@ function setup({ archived = [] as string[] } = {}) {
     delivery: vi.fn<RelaySession["directMessages"]["delivery"]>(() => "failed"),
     subscribeOpened: () => () => {},
   };
+  const channelWrites = {
+    available: true,
+    start: vi.fn<RelaySession["channelWrites"]["start"]>(
+      () =>
+        ({
+          create: Promise.resolve(),
+          ready: Promise.resolve(),
+        }) as unknown as ReturnType<RelaySession["channelWrites"]["start"]>,
+    ),
+  };
   let operations: readonly OutgoingEvent[] = [];
   const outboxListeners = new Set<() => void>();
   const notifyOutbox = () => {
@@ -170,6 +180,7 @@ function setup({ archived = [] as string[] } = {}) {
   const session = {
     viewer: "f".repeat(64),
     directMessages,
+    channelWrites,
     messages,
     outbox,
     sidebarPreferences,
@@ -295,6 +306,7 @@ function setup({ archived = [] as string[] } = {}) {
     profiles,
     channels,
     directMessages,
+    channelWrites,
     messages,
     outbox,
     sidebarPreferences,
@@ -324,8 +336,22 @@ function setup({ archived = [] as string[] } = {}) {
 const recipient = () =>
   screen.getByRole("combobox", { name: "Message recipients" });
 const send = () => screen.getByRole("button", { name: "Send message" });
+/** The message composer, not the optional Name field above To. */
+const composer = () =>
+  screen.getByRole("textbox", { name: (name) => name !== "Name" });
 
-it("lists the group's named conversations beside their history, whatever agents are in them", async () => {
+/** Picks the people by name, as typed in To. */
+async function pick(t: ReturnType<typeof setup>, ...names: string[]) {
+  for (const name of names) {
+    await t.user.type(recipient(), name);
+    await t.user.click(await screen.findByRole("option", { name }));
+  }
+}
+/** The "Direct message" row under the picked people. */
+const directRow = () => screen.getByRole("button", { name: /^Direct message/ });
+const SENT_ID = /^[0-9a-f-]{36}$/;
+
+it("lists a Direct message row, then the group's named conversations, whatever agents are in them", async () => {
   const t = setup();
   const [one, agent, three] = people;
   assert(one && agent && three);
@@ -357,20 +383,16 @@ it("lists the group's named conversations beside their history, whatever agents 
     },
   ] as ChannelSummary[];
   t.mount();
-  for (const person of [one, three]) {
-    await t.user.type(recipient(), person.name);
-    await t.user.click(
-      await screen.findByRole("option", { name: person.name }),
-    );
-  }
-  const list = await screen.findByRole("complementary", {
-    name: "With Person 1 and Person 3",
-  });
+  await pick(t, one.name, three.name);
+  const list = (
+    await screen.findByRole("heading", { name: "With Person 1 and Person 3" })
+  ).closest("section") as HTMLElement;
   expect(
     within(list)
       .getAllByRole("button")
       .map((row) => row.textContent),
   ).toEqual([
+    expect.stringContaining("Direct message"),
     expect.stringContaining("Trip planning"),
     expect.stringContaining("Launch checklist"),
   ]);
@@ -379,6 +401,183 @@ it("lists the group's named conversations beside their history, whatever agents 
   );
   expect(t.onOpenChat).toHaveBeenCalledWith("trip");
   expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.channelWrites.start).not.toHaveBeenCalled();
+});
+
+const dm = (members: string[], extra: Partial<ChannelSummary> = {}) =>
+  ({
+    id: "the-dm",
+    name: "Person 1",
+    channelType: "dm",
+    members,
+    lastActivityAt: 50,
+    ...extra,
+  }) as ChannelSummary;
+
+it("opens the existing DM of these people from the Direct message row, ignoring agents", async () => {
+  const t = setup();
+  const [one, agent] = people;
+  assert(one && agent);
+  t.profiles.set(agent.pubkey, { name: agent.name, isAgent: true });
+  t.channels.channels = [
+    dm(["f".repeat(64), one.pubkey, agent.pubkey]),
+    dm(["f".repeat(64), people[2]?.pubkey ?? ""], { id: "someone-else" }),
+  ];
+  t.mount();
+  await pick(t, one.name);
+  await t.user.click(directRow());
+  expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith("the-dm");
+  expect(directRow()).not.toHaveAttribute("aria-pressed");
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.channelWrites.start).not.toHaveBeenCalled();
+  expect(t.messages.send).not.toHaveBeenCalled();
+});
+
+it("sends by default to a new conversation even when a DM of these people exists", async () => {
+  const t = setup();
+  const [one] = people;
+  assert(one);
+  t.channels.channels = [dm(["f".repeat(64), one.pubkey])];
+  t.mount();
+  await pick(t, one.name);
+  await t.user.type(composer(), "Fresh start");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.onOpenChat).not.toHaveBeenCalled();
+  expect(t.channelWrites.start).toHaveBeenCalledOnce();
+});
+
+it("toggles Direct message when these people have no DM, and the next send uses the DM", async () => {
+  const t = setup();
+  const [one] = people;
+  assert(one);
+  t.mount();
+  await pick(t, one.name);
+  expect(directRow()).toHaveAttribute("aria-pressed", "false");
+  expect(composer()).toHaveAccessibleName("Start a new conversation");
+  await t.user.click(directRow());
+  expect(directRow()).toHaveAttribute("aria-pressed", "true");
+  expect(t.onOpenChat).not.toHaveBeenCalled();
+  expect(composer()).toHaveAccessibleName("Message Person 1");
+  // Choosing it again goes back to a new conversation.
+  await t.user.click(directRow());
+  expect(directRow()).toHaveAttribute("aria-pressed", "false");
+  await t.user.click(directRow());
+  await t.user.type(composer(), "Hello DM");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.directMessages.open).toHaveBeenCalledExactlyOnceWith(
+    [one.pubkey],
+    expect.any(AbortSignal),
+    true,
+  );
+  expect(t.channelWrites.start).not.toHaveBeenCalled();
+  expect(t.messages.send).toHaveBeenCalledOnce();
+  expect(t.messages.send.mock.calls[0]?.[0]).toBe(channel);
+});
+
+it("goes back to a new conversation when the people change after choosing Direct message", async () => {
+  const t = setup();
+  const [one, , three] = people;
+  assert(one && three);
+  t.mount();
+  await pick(t, one.name);
+  await t.user.click(directRow());
+  await pick(t, three.name);
+  expect(directRow()).toHaveAttribute("aria-pressed", "false");
+  await t.user.type(composer(), "Both of you");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.channelWrites.start).toHaveBeenCalledOnce();
+});
+
+it("starts a conversation named from the first message", async () => {
+  const t = setup();
+  const [one, , three] = people;
+  assert(one && three);
+  t.mount();
+  await pick(t, one.name, three.name);
+  await t.user.type(composer(), "Plan the offsite");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.channelWrites.start).toHaveBeenCalledExactlyOnceWith(
+    expect.stringMatching(SENT_ID),
+    "Plan the offsite",
+    [one.pubkey, three.pubkey],
+    undefined,
+    false,
+    undefined,
+    { solo: false },
+  );
+  const id = t.channelWrites.start.mock.calls[0]?.[0];
+  expect(t.messages.send).toHaveBeenCalledOnce();
+  expect(t.messages.send.mock.calls[0]?.[0]).toBe(id);
+  expect(t.messages.send.mock.calls[0]?.[1]).toBe("Plan the offsite");
+  expect(t.onStarted).toHaveBeenCalledWith(id, "d".repeat(64));
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+});
+
+it("names the conversation by the typed title instead of the message", async () => {
+  const t = setup();
+  const [one] = people;
+  assert(one);
+  t.mount();
+  await pick(t, one.name);
+  expect(composer()).toHaveAccessibleName("Start a new conversation");
+  await t.user.type(screen.getByRole("textbox", { name: "Name" }), "Roadmap");
+  expect(composer()).toHaveAccessibleName("Message Roadmap");
+  await t.user.type(composer(), "First thoughts");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.channelWrites.start).toHaveBeenCalledExactlyOnceWith(
+    expect.stringMatching(SENT_ID),
+    "Roadmap",
+    [one.pubkey],
+    undefined,
+    false,
+    undefined,
+    { solo: false },
+  );
+  expect(t.messages.send.mock.calls[0]?.[1]).toBe("First thoughts");
+  expect(t.directMessages.open).not.toHaveBeenCalled();
+});
+
+it("disables the Name field and shows the people while sending a Direct message", async () => {
+  const t = setup();
+  const [one] = people;
+  assert(one);
+  t.mount();
+  await pick(t, one.name);
+  const name = screen.getByRole("textbox", { name: "Name" });
+  expect(name).toBeEnabled();
+  expect(name).toHaveAttribute("placeholder", "Untitled");
+  await t.user.click(directRow());
+  expect(name).toBeDisabled();
+  expect(name).toHaveAttribute("placeholder", "Person 1");
+});
+
+it("says conversations cannot start when the connection cannot", async () => {
+  const t = setup();
+  const [one] = people;
+  assert(one);
+  Object.assign(t.channelWrites, { available: false });
+  Object.assign(t.directMessages, { available: false });
+  t.mount();
+  await pick(t, one.name);
+  expect(
+    screen.getByText(
+      "Starting conversations is unavailable on this connection.",
+    ),
+  ).toBeVisible();
+  expect(send()).toBeDisabled();
+  await t.user.click(directRow());
+  expect(
+    screen.getByText(
+      "Starting direct messages is unavailable on this connection.",
+    ),
+  ).toBeVisible();
 });
 
 it("finds a hosted agent by its owned name and sends without local custody", async () => {
@@ -394,13 +593,17 @@ it("finds a hosted agent by its owned name and sends without local custody", asy
   );
   expect(t.directMessages.open).not.toHaveBeenCalled();
   expect(t.messages.send).not.toHaveBeenCalled();
-  await t.user.type(screen.getByRole("textbox"), "Hello hosted helper");
+  await t.user.type(composer(), "Hello hosted helper");
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.directMessages.open).toHaveBeenCalledWith(
+  expect(t.channelWrites.start).toHaveBeenCalledWith(
+    expect.stringMatching(SENT_ID),
+    "Hello hosted helper",
     [hosted.pubkey],
-    expect.any(AbortSignal),
-    true,
+    undefined,
+    false,
+    undefined,
+    { solo: false },
   );
   expect(t.messages.send).toHaveBeenCalledOnce();
 });
@@ -413,7 +616,7 @@ it("revalidates a hosted recipient when its owned evidence disappears", async ()
   await t.user.click(
     await screen.findByRole("option", { name: "Person 2, Agent" }),
   );
-  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  await t.user.type(composer(), "Private draft");
   t.updateControl({ status: "ready", agents: [], hosted: [] });
   await t.user.click(send());
   expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -431,7 +634,7 @@ it("neither offers nor sends to an agent whose Delete started", async () => {
   await t.user.click(
     await screen.findByRole("option", { name: "Person 2, Agent" }),
   );
-  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  await t.user.type(composer(), "Private draft");
   // Chosen before its Delete started; Send checks again.
   t.updateControl({
     status: "ready",
@@ -464,7 +667,7 @@ it("holds the archive rule by key, without agent flags, for a selected and a res
   const t = setup();
   const view = t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  await t.user.type(composer(), "Private draft");
   t.setArchived([pubkey]);
   expect(screen.getByText("Unavailable")).toBeVisible();
   await t.user.click(send());
@@ -800,12 +1003,12 @@ it("completes with Space only for one exact name, and with Tab", async () => {
   expect(recipient()).toHaveFocus();
   // With recipients chosen and nothing typed, Tab starts composing.
   await t.user.keyboard("{Tab}");
-  const composer = screen.getByRole("textbox", {
-    name: "Message José, Avery Chen",
+  const editor = screen.getByRole("textbox", {
+    name: "Start a new conversation",
   });
-  expect(composer).toHaveFocus();
+  expect(editor).toHaveFocus();
   await t.user.keyboard("Hello");
-  expect(composer).toHaveTextContent("Hello");
+  expect(editor).toHaveTextContent("Hello");
   expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(2);
 });
 
@@ -947,7 +1150,7 @@ it("stays out of Back history until a message is written, whoever it addresses",
   expect(passes?.()).toBe(true);
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
   expect(passes?.()).toBe(true);
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.type(composer(), "Hello");
   expect(passes?.()).toBe(false);
 });
 
@@ -969,7 +1172,7 @@ it("stays in Back history once a message is written, even if it cannot be saved"
     t.mount({ passThrough } as unknown as PageNavigation);
     const passes = passThrough.mock.lastCall?.[0];
     await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-    await t.user.type(screen.getByRole("textbox"), "Hello");
+    await t.user.type(composer(), "Hello");
     expect(localStorage.getItem(draftStorageKey)).toBeNull();
     expect(passes?.()).toBe(false);
   } finally {
@@ -983,7 +1186,7 @@ it("leaves Back history once its written message is sent", async () => {
   t.mount({ passThrough } as unknown as PageNavigation);
   const passes = passThrough.mock.lastCall?.[0];
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.type(composer(), "Hello");
   expect(passes?.()).toBe(false);
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
@@ -1006,10 +1209,7 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
   expect(
     view.container.querySelector("[data-new-message-body]"),
   ).toBeEmptyDOMElement();
-  expect(screen.getByRole("textbox")).toHaveAttribute(
-    "contenteditable",
-    "false",
-  );
+  expect(composer()).toHaveAttribute("contenteditable", "false");
   await screen.findByRole("option", { name: "Person 1" });
   expect(screen.queryByRole("option", { name: "Me" })).not.toBeInTheDocument();
   expect(screen.getAllByRole("option")).toHaveLength(10);
@@ -1042,7 +1242,7 @@ it("opens blank and focused, adds multiple recipients, deduplicates, and enforce
   ).not.toBeInTheDocument();
   expect(screen.queryAllByRole("option")).toHaveLength(0);
   await t.user.keyboard("{Tab}");
-  expect(screen.getByRole("textbox")).toHaveFocus();
+  expect(composer()).toHaveFocus();
   await t.user.click(recipient());
   // A full field can't be typed in, so reopening it shows no notice now;
   // the "8 people selected" placeholder is what remains.
@@ -1085,14 +1285,14 @@ it("closes the people list after each pick and brings it back when the next name
   expect(await screen.findByRole("listbox")).toBeVisible();
 });
 
-it("shows selected recipient artwork without opening or sending, and updates it on removal", async () => {
+it("shows the people's artwork, never an agent's, without starting or sending, and updates it on removal", async () => {
   const t = setup();
   const view = t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  const editor = screen.getByRole("textbox");
+  const editor = composer();
   expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
     "data-placeholder",
-    "Message Person 1",
+    "Start a new conversation",
   );
   await t.user.type(recipient(), "Person 2");
   await t.user.click(
@@ -1100,36 +1300,31 @@ it("shows selected recipient artwork without opening or sending, and updates it 
   );
   expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
     "data-placeholder",
-    "Message Person 1, Person 2",
+    "Start a new conversation",
   );
   const artwork = () => view.container.querySelector("[data-new-message-body]");
   expect(artwork()?.querySelector('[title="Person 1"]')).toHaveAttribute(
     "data-avatar-shape",
     "circle",
   );
-  expect(artwork()?.querySelector('[title="Person 2"]')).toHaveAttribute(
-    "data-avatar-shape",
-    "squircle",
-  );
+  // An agent never changes whose conversation it is.
+  expect(artwork()?.querySelector('[title="Person 2"]')).toBeNull();
   await t.user.click(screen.getByRole("button", { name: "Remove Person 1" }));
   expect(artwork()?.querySelector('[title="Person 1"]')).toBeNull();
-  expect(artwork()?.querySelector('[title="Person 2"]')).toBeInTheDocument();
-  expect(screen.getByRole("textbox")).toBe(editor);
-  expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
-    "data-placeholder",
-    "Message Person 2",
-  );
+  expect(artwork()?.querySelector("[data-avatar-shape]")).toBeNull();
+  expect(composer()).toBe(editor);
   await t.user.click(screen.getByRole("button", { name: "Remove Person 2" }));
   expect(editor.querySelector("[data-placeholder]")).toHaveAttribute(
     "data-placeholder",
     "",
   );
   expect(t.directMessages.open).not.toHaveBeenCalled();
+  expect(t.channelWrites.start).not.toHaveBeenCalled();
   expect(t.messages.send).not.toHaveBeenCalled();
   expect(t.onOpenThread).not.toHaveBeenCalled();
 });
 
-it("addresses the draft to the person it was opened from, creating the DM only on send", async () => {
+it("addresses the draft to the person it was opened from, starting a conversation only on send", async () => {
   const t = setup();
   const [person] = people;
   if (!person) throw new Error("No person");
@@ -1138,16 +1333,21 @@ it("addresses the draft to the person it was opened from, creating the DM only o
   expect(
     await screen.findByRole("button", { name: "Remove Person 1" }),
   ).toBeVisible();
-  await waitFor(() => expect(screen.getByRole("textbox")).toHaveFocus());
-  expect(t.directMessages.open).not.toHaveBeenCalled();
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await waitFor(() => expect(composer()).toHaveFocus());
+  expect(t.channelWrites.start).not.toHaveBeenCalled();
+  await t.user.type(composer(), "Hello");
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.directMessages.open).toHaveBeenCalledExactlyOnceWith(
+  expect(t.channelWrites.start).toHaveBeenCalledExactlyOnceWith(
+    expect.stringMatching(SENT_ID),
+    "Hello",
     [person.pubkey],
-    expect.any(AbortSignal),
-    true,
+    undefined,
+    false,
+    undefined,
+    { solo: false },
   );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
   expect(t.messages.send).toHaveBeenCalledOnce();
 });
 
@@ -1203,7 +1403,7 @@ it("keeps a held message's recipients when opened from another person", async ()
   );
   const view = t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Held");
+  await t.user.type(composer(), "Held");
   await t.user.click(send());
   await screen.findByRole("alert");
   view.unmount();
@@ -1221,7 +1421,7 @@ it("keeps a failed message's recipients when opened from another person", async 
   t.directMessages.delivered.mockRejectedValueOnce(new Error("Send failed"));
   const view = t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Failed");
+  await t.user.type(composer(), "Failed");
   await t.user.click(send());
   await screen.findByRole("alert");
   view.unmount();
@@ -1245,7 +1445,8 @@ it("holds a choice made during a send until the send settles, keeping the send's
   );
   const view = t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Mid-send");
+  await t.user.click(directRow());
+  await t.user.type(composer(), "Mid-send");
   await t.user.click(send());
   const third = people[2];
   if (!third) throw new Error("No people");
@@ -1451,10 +1652,10 @@ it("keeps a failed draft editable and resolves changed recipients again", async 
     new Error("Delivery failed"),
   );
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.type(composer(), "Hello");
   await t.user.click(send());
   expect(await screen.findByRole("alert")).toHaveTextContent("Delivery failed");
-  expect(screen.getByRole("textbox")).toHaveTextContent("Hello");
+  expect(composer()).toHaveTextContent("Hello");
   expect(t.onStarted).not.toHaveBeenCalled();
   await t.user.click(recipient());
   await t.user.type(recipient(), "Person 2");
@@ -1463,12 +1664,15 @@ it("keeps a failed draft editable and resolves changed recipients again", async 
   );
   await t.user.click(send());
   await waitFor(() =>
-    expect(t.onStarted).toHaveBeenCalledWith(channel, "d".repeat(64)),
+    expect(t.onStarted).toHaveBeenCalledWith(
+      t.channelWrites.start.mock.calls[1]?.[0],
+      "d".repeat(64),
+    ),
   );
-  expect(t.directMessages.open.mock.calls).toEqual([
-    [[people[0]?.pubkey], expect.any(AbortSignal), true],
-    [[people[0]?.pubkey, people[1]?.pubkey], expect.any(AbortSignal), true],
-  ]);
+  expect(
+    t.channelWrites.start.mock.calls.map(([, , members]) => members),
+  ).toEqual([[people[0]?.pubkey], [people[0]?.pubkey, people[1]?.pubkey]]);
+  expect(t.directMessages.open).not.toHaveBeenCalled();
   expect(t.outbox.dismiss).toHaveBeenCalledOnce();
 });
 
@@ -1476,17 +1680,17 @@ it("holds Send while the To field has text that is not a recipient", async () =>
   const t = setup();
   t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.type(composer(), "Hello");
   expect(send()).toBeEnabled();
   const error = "“zz” is not a valid recipient";
   await t.user.type(recipient(), "zz");
   expect(send()).toBeDisabled();
   // No error while the name is typed.
   expect(screen.queryByText(error)).not.toBeInTheDocument();
-  await t.user.click(screen.getByRole("textbox"));
+  await t.user.click(composer());
   await t.user.keyboard("{Enter}");
-  expect(t.directMessages.open).not.toHaveBeenCalled();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Hello");
+  expect(t.channelWrites.start).not.toHaveBeenCalled();
+  expect(composer()).toHaveTextContent("Hello");
   // Once To is left, the error names its text in a status under the field.
   const hint = within(
     screen.getByRole("group", { name: "Recipients" }),
@@ -1505,15 +1709,20 @@ it("holds Send while the To field has text that is not a recipient", async () =>
   expect(screen.queryByText(/is not a valid recipient/)).toBeNull();
   expect(recipient()).not.toHaveAccessibleDescription();
   await t.user.clear(recipient());
-  await t.user.click(screen.getByRole("textbox"));
+  await t.user.click(composer());
   expect(screen.queryByText(error)).not.toBeInTheDocument();
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.directMessages.open).toHaveBeenCalledWith(
+  expect(t.channelWrites.start).toHaveBeenCalledWith(
+    expect.stringMatching(SENT_ID),
+    "Hello",
     [people[0]?.pubkey],
-    expect.any(AbortSignal),
-    true,
+    undefined,
+    false,
+    undefined,
+    { solo: false },
   );
+  expect(t.directMessages.open).not.toHaveBeenCalled();
 });
 
 it("shows the To error only beside a recipient, and clears it once the text becomes one", async () => {
@@ -1527,13 +1736,13 @@ it("shows the To error only beside a recipient, and clears it once the text beco
   await t.user.clear(recipient());
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
   await t.user.type(recipient(), "Person 3");
-  await t.user.click(screen.getByRole("textbox"));
+  await t.user.click(composer());
   expect(
     screen.getByText("“Person 3” is not a valid recipient"),
   ).toBeInTheDocument();
   await t.user.click(recipient());
   await t.user.click(screen.getByRole("option", { name: "Person 3" }));
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.type(composer(), "Hello");
   expect(screen.queryByText(/is not a valid recipient/)).toBeNull();
   expect(send()).toBeEnabled();
 });
@@ -1544,7 +1753,7 @@ it("does not hold Send for spaces left in the To field", async () => {
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
   await t.user.type(recipient(), "  ");
   expect(recipient()).toHaveValue("  ");
-  await t.user.click(screen.getByRole("textbox"));
+  await t.user.click(composer());
   await t.user.keyboard("Hello");
   // Spaces are no name, so they neither hold Send nor raise the To error.
   expect(send()).toBeEnabled();
@@ -1561,7 +1770,7 @@ it("cuts the text named by the To error to 24 characters", async () => {
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
   await t.user.click(recipient());
   await t.user.paste("  Avery Chen and Jordan 👩‍👩‍👧 Lee");
-  await t.user.click(screen.getByRole("textbox"));
+  await t.user.click(composer());
   // Trimmed, then cut after the 23rd character, which here is an emoji
   // sequence of several code points.
   expect(
@@ -1571,7 +1780,7 @@ it("cuts the text named by the To error to 24 characters", async () => {
   ).toBeInTheDocument();
   await t.user.clear(recipient());
   await t.user.paste("Avery Chen and Jordan Le");
-  await t.user.click(screen.getByRole("textbox"));
+  await t.user.click(composer());
   expect(
     screen.getByText("“Avery Chen and Jordan Le” is not a valid recipient"),
   ).toBeInTheDocument();
@@ -1592,7 +1801,8 @@ it("locks during opening and delivery, waits for confirmation, and retries the s
     new Error("Delivery uncertain"),
   );
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Keep this draft");
+  await t.user.click(directRow());
+  await t.user.type(composer(), "Keep this draft");
   await t.user.dblClick(send());
   expect(t.directMessages.open).toHaveBeenCalledOnce();
   expect(recipient()).toBeDisabled();
@@ -1600,7 +1810,7 @@ it("locks during opening and delivery, waits for confirmation, and retries the s
   expect(t.onStarted).not.toHaveBeenCalled();
   release(channel);
   await screen.findByRole("alert");
-  expect(screen.getByRole("textbox")).toHaveTextContent("Keep this draft");
+  expect(composer()).toHaveTextContent("Keep this draft");
   await t.user.click(screen.getByRole("button", { name: "Retry send" }));
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
   expect(t.messages.send).toHaveBeenCalledOnce();
@@ -1613,7 +1823,8 @@ it("preserves recipients and draft after opening fails and across remount", asyn
   const view = t.mount();
   t.directMessages.open.mockRejectedValueOnce(new Error("Offline"));
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Try later");
+  await t.user.click(directRow());
+  await t.user.type(composer(), "Try later");
   await t.user.click(send());
   await screen.findByRole("alert");
   await waitFor(() => expect(send()).toBeEnabled());
@@ -1625,7 +1836,9 @@ it("preserves recipients and draft after opening fails and across remount", asyn
   view.unmount();
   t.mount();
   expect(screen.getByRole("button", { name: "Remove Person 1" })).toBeVisible();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Try later");
+  expect(composer()).toHaveTextContent("Try later");
+  // Choosing Direct message is not kept, so the retry starts a conversation.
+  expect(directRow()).toHaveAttribute("aria-pressed", "false");
   await waitFor(() => expect(send()).toBeEnabled());
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
@@ -1947,14 +2160,15 @@ it("cancels opening on page exit and does not send after a late response", async
   );
   const view = t.mount();
   await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
-  await t.user.type(screen.getByRole("textbox"), "Keep for later");
+  await t.user.click(directRow());
+  await t.user.type(composer(), "Keep for later");
   await t.user.click(send());
   view.unmount();
   expect(t.directMessages.open.mock.calls[0]?.[1].aborted).toBe(true);
   release(channel);
   await waitFor(() => expect(t.messages.send).not.toHaveBeenCalled());
   t.mount();
-  expect(screen.getByRole("textbox")).toHaveTextContent("Keep for later");
+  expect(composer()).toHaveTextContent("Keep for later");
   expect(t.onStarted).not.toHaveBeenCalled();
 });
 
@@ -1966,7 +2180,7 @@ it.each(["removed", "loading", "error"] as const)(
     await t.user.click(
       await screen.findByRole("option", { name: "Person 2, Agent" }),
     );
-    await t.user.type(screen.getByRole("textbox"), "Private draft");
+    await t.user.type(composer(), "Private draft");
     const current = t.control.snapshot();
     t.updateControl({
       ...current,
@@ -1983,7 +2197,7 @@ it.each(["removed", "loading", "error"] as const)(
     await t.user.click(send());
     await screen.findByRole("alert");
     expect(t.directMessages.open).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox")).toHaveTextContent("Private draft");
+    expect(composer()).toHaveTextContent("Private draft");
   },
 );
 
@@ -1997,10 +2211,13 @@ it("checks local agents again after opening and leaves queued retries alone", as
       }),
   );
   t.mount();
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(recipient(), "Person 2");
   await t.user.click(
     await screen.findByRole("option", { name: "Person 2, Agent" }),
   );
-  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  await t.user.click(directRow());
+  await t.user.type(composer(), "Private draft");
   await t.user.click(send());
   const previous = t.control.snapshot();
   t.updateControl({ ...previous, status: "loading" });
@@ -2087,7 +2304,7 @@ it("revalidates an unchanged definitively failed agent send before retry", async
   await t.user.click(
     await screen.findByRole("option", { name: "Person 2, Agent" }),
   );
-  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  await t.user.type(composer(), "Private draft");
   t.directMessages.delivered.mockRejectedValueOnce(new Error("Not sent"));
   await t.user.click(send());
   await screen.findByRole("alert");
@@ -2155,9 +2372,7 @@ it("retires a confirmed legacy message when the page stays mounted", async () =>
   expect(
     screen.queryByRole("button", { name: "Remove Person 1" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("textbox")).not.toHaveTextContent(
-    "Already sent legacy message",
-  );
+  expect(composer()).not.toHaveTextContent("Already sent legacy message");
   expect(send()).toBeDisabled();
   expect(t.messages.send).not.toHaveBeenCalled();
 });
@@ -2301,7 +2516,7 @@ const aleksandr = { pubkey: "a".repeat(64), name: "jack" };
 const petrov = verifiedAs("Aleksandr", "aleksandr", "Aleksandr Petrov");
 const petrovRow = { name: "Aleksandr, Aleksandr Petrov · @aleksandr" };
 
-it("labels people by verified identity, never an editable handle, and opens the chosen key", async () => {
+it("labels people by verified identity, never an editable handle, and starts with the chosen key", async () => {
   const t = setup();
   // An unverified "jack" whose handle imitates the verified one, and a
   // verified "jack" whose handle equals its name.
@@ -2338,13 +2553,17 @@ it("labels people by verified identity, never an editable handle, and opens the 
   await t.user.keyboard(" ");
   expect(recipient()).toHaveValue("jack ");
   await t.user.click(screen.getByRole("option", petrovRow));
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.type(composer(), "Hello");
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
-  expect(t.directMessages.open).toHaveBeenCalledWith(
+  expect(t.channelWrites.start).toHaveBeenCalledWith(
+    expect.stringMatching(SENT_ID),
+    "Hello",
     [aleksandr.pubkey],
-    expect.any(AbortSignal),
-    true,
+    undefined,
+    false,
+    undefined,
+    { solo: false },
   );
 });
 
@@ -2391,7 +2610,8 @@ it("relabels a recipient whose verification answers late, keeping a failed send'
   t.mount();
   await waitFor(() => expect(recipient()).toBeEnabled());
   await t.user.click(await screen.findByRole("option", { name: "jack" }));
-  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.click(directRow());
+  await t.user.type(composer(), "Hello");
   await t.user.click(send());
   await screen.findByRole("alert");
   release();
@@ -2426,7 +2646,7 @@ it.each([
     change(undefined);
     const name = browsed ? "jack" : abbreviatedPublicKey(aleksandr.pubkey);
     await screen.findByRole("button", { name: `Remove ${name}` });
-    screen.getByRole("textbox", { name: `Message ${name}` });
+    screen.getByRole("heading", { name: `With ${name}` });
     shared = new Map([[aleksandr.pubkey, { name: "Jack Editable" }]]);
     change(undefined);
     await screen.findByRole("button", { name: "Remove Jack Editable" });
@@ -2459,5 +2679,5 @@ it("searches and labels by profile names on a relay without verified identity", 
   await t.user.click(
     screen.getByRole("option", { name: `jack ${labels.get(imitator.pubkey)}` }),
   );
-  screen.getByRole("textbox", { name: "Message jack" });
+  screen.getByRole("heading", { name: "With jack" });
 });

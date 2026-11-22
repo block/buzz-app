@@ -64,7 +64,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         signal,
         channelId,
         what,
-        agents.conversationReads?.(agent.key),
+        () => agents.conversationReads?.(agent.key),
       ),
     (key) => agents.relay(key)?.snapshot().scope,
   );

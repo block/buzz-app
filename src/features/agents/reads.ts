@@ -170,8 +170,9 @@ export function workflowMarked(event: RelayEvent, owner: string) {
  * ready, has listed its channels and knows the kind of `channelId`, which a
  * turn needs to tell where to answer: now when it has, or after the reconnect
  * under way, through a new session in the same community and owner if that
- * replaces the old one. A channel the owner cannot see but `agentReads` know
- * the kind of is read through them. Rejects when the community ends up another one or another owner's, is
+ * replaces the old one. A channel the owner cannot see is read through the
+ * agent's own reads as they are at each check, which it asks to resolve the
+ * channel when they do not know its kind yet. Rejects when the community ends up another one or another owner's, is
  * disconnected or fails in a way the service does not recover from by itself,
  * or when `signal` aborts first. It waits for the service's own notifications
  * and never reconnects. Its errors name what waits, `what`. */
@@ -181,7 +182,7 @@ export function readyOwnerReads(
   signal: AbortSignal,
   channelId?: string,
   what = "Workflow request",
-  agentReads?: AgentReads,
+  agentReads?: () => AgentReads | undefined,
 ): Promise<AgentReads> {
   const unavailable = () =>
     new Error(`${what} could not start: its community is no longer connected.`);
@@ -217,9 +218,7 @@ export function readyOwnerReads(
           channels.get?.(channelId)
         )?.channelType
       )
-        return agentReads?.channelLabel(channelId)?.channelType
-          ? agentReads
-          : pending;
+        return own(channelId) ?? pending;
       return ownerReads(relay, agent.pubkey);
     }
     if (
@@ -230,6 +229,30 @@ export function readyOwnerReads(
       return pending;
     return undefined;
   };
+  const asked = new WeakSet<AgentReads>();
+  let stopOwn = () => {};
+  let watched: AgentReads | undefined;
+  let check = () => {};
+  /** The agent's current reads once they know the channel's kind; until then
+   * they are asked once, and watched, to resolve it. */
+  const own = (id: string) => {
+    const reads = agentReads?.();
+    if (!reads) return undefined;
+    if (reads.channelLabel(id)?.channelType) return reads;
+    if (reads !== watched) {
+      stopOwn();
+      watched = reads;
+      stopOwn = reads.subscribeChannels(() => check());
+    }
+    if (!asked.has(reads)) {
+      asked.add(reads);
+      void reads.channel(id).then(
+        () => check(),
+        () => {},
+      );
+    }
+    return undefined;
+  };
   return new Promise((resolve, reject) => {
     let stop = () => {};
     let stopList = () => {};
@@ -237,6 +260,7 @@ export function readyOwnerReads(
     const finish = () => {
       stop();
       stopList();
+      stopOwn();
       signal.removeEventListener("abort", aborted);
     };
     const aborted = () => {
@@ -248,7 +272,7 @@ export function readyOwnerReads(
         ),
       );
     };
-    const check = () => {
+    check = () => {
       const reads = settled();
       if (reads !== pending) {
         finish();

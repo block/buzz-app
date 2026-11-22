@@ -685,7 +685,7 @@ export class GooseRuntime {
             signal,
             channelId ?? trigger.event.tags.find((tag) => tag[0] === "h")?.[1],
             undefined,
-            this.reads(agent.key),
+            () => this.reads(agent.key),
           )
         : this.reads(agent.key);
       if (ready) {
@@ -732,7 +732,7 @@ export class GooseRuntime {
       signal,
       channel,
       "This turn",
-      this.reads(agent.key),
+      () => this.reads(agent.key),
     );
     signal.throwIfAborted();
     if (current && !current()) return ignored?.();

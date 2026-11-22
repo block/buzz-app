@@ -153,7 +153,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         signal,
         channelId,
         undefined,
-        agents.conversationReads?.(agent.key),
+        () => agents.conversationReads?.(agent.key),
       ),
     // A session control's route, as the runner decides a turn's.
     (key) => {

@@ -92,7 +92,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         signal,
         channelId,
         undefined,
-        ctx.agents.conversationReads?.(agent.key),
+        () => ctx.agents.conversationReads?.(agent.key),
       ),
     CODEX_ROUTES,
   );

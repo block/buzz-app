@@ -233,8 +233,7 @@ test.describe("Conversation surfaces", () => {
     ).toBeVisible();
     await settle(page);
     await expectEndAligned(mainHistory);
-    await page.getByRole("tab", { name: "Solo", exact: true }).click();
-    await page.locator('[data-solo-channel-id="beta"]').click();
+    await sidebar.locator('button[data-solo-destination-id="beta"]').click();
     await expect(
       page.getByRole("textbox", { name: "Message your agents", exact: true }),
     ).toBeVisible();

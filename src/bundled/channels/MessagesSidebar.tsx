@@ -24,6 +24,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { Agents } from "../../features/agents/service";
+import type { Panels } from "../../features/panels/service";
 import type { Navigation } from "../../features/navigation/controller";
 import type { OpenTarget } from "../../features/navigation/targets";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
@@ -83,6 +84,7 @@ export type MessagesSidebarProps = Pick<
   memberships?: readonly Membership[] | undefined;
   relay: RelayData;
   navigator: Navigation;
+  panels?: Panels | undefined;
   agents?: Agents | undefined;
   chatIcons?: ContributionReader<ChatIcon> | undefined;
   chatMenus?: ContributionReader<ChatMenu> | undefined;
@@ -185,6 +187,7 @@ function ScopedSidebar({
         <ChannelInventory
           relay={props.relay}
           navigator={props.navigator}
+          panels={props.panels}
           agents={props.agents}
           target={props.target}
           queries={connection.session}

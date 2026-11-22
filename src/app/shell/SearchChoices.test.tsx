@@ -972,3 +972,49 @@ it("reports a move before choosing the highlighted row, so the order shown holds
     run.mock.invocationCallOrder.at(-1) ?? 0,
   );
 });
+
+it("triggers a highlighted row secondaryAction on Shift+Enter while keeping Enter for the primary action", () => {
+  const primary = vi.fn();
+  const secondary = vi.fn();
+  const input = createRef<HTMLInputElement>();
+  const rows: SearchDestination[] = [
+    {
+      key: "person:ryan",
+      label: "Ryan Smith",
+      icon: ChatCircleIcon,
+      run: primary,
+      secondaryAction: {
+        label: "View profile",
+        ariaLabel: "View profile for Ryan Smith",
+        run: secondary,
+      },
+    },
+  ];
+  render(
+    <SearchChoices
+      query="ryan"
+      onQueryChange={() => {}}
+      input={input}
+      open
+      groups={[{ label: "People", destinations: rows }]}
+      peek={{
+        ranked: false,
+        preview: (row) => (row ? <div>{row.label}</div> : null),
+      }}
+    />,
+  );
+  const field = screen.getByRole("combobox");
+  expect(document.querySelector(".search-peek-keys")?.textContent).toContain(
+    "View profile",
+  );
+  // Repeat Shift+Enter does not double-fire.
+  fireEvent.keyDown(field, { key: "Enter", shiftKey: true, repeat: true });
+  expect(secondary).not.toHaveBeenCalled();
+  // Shift+Enter triggers secondaryAction without firing the primary action.
+  fireEvent.keyDown(field, { key: "Enter", shiftKey: true });
+  expect(secondary).toHaveBeenCalledTimes(1);
+  expect(primary).not.toHaveBeenCalled();
+  // Plain Enter still runs the primary action.
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(primary).toHaveBeenCalledTimes(1);
+});

@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 import { setClockPreference } from "../../shared/clock-preference";
@@ -530,4 +536,46 @@ it("shows each line's resolved mentions as chips, keeping the hit's highlight", 
     expect.arrayContaining(["author", tomb]),
     "background",
   );
+});
+
+it("renders a View profile button in the preview when a row provides secondaryAction", () => {
+  const openProfile = vi.fn();
+  const session = {
+    profiles: {
+      ensure: vi.fn(),
+      snapshot: () => noProfiles,
+      subscribe: () => () => {},
+    },
+    channels: {
+      list: () => list,
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  render(
+    <SearchPreview
+      session={session}
+      cache={new Map()}
+      row={{
+        key: "p:ryan",
+        label: "Ryan Smith",
+        icon: ChatCircleIcon,
+        run: () => {},
+        peek: { kind: "person", pubkey: "a".repeat(64) },
+        secondaryAction: {
+          label: "View profile",
+          ariaLabel: "View profile for Ryan Smith",
+          run: openProfile,
+        },
+      }}
+      tone="person"
+      terms={["ryan"]}
+      nameOf={() => "Ryan Smith"}
+      whereOf={() => ""}
+    />,
+  );
+  const button = screen.getByRole("button", {
+    name: "View profile for Ryan Smith",
+  });
+  fireEvent.click(button);
+  expect(openProfile).toHaveBeenCalledTimes(1);
 });

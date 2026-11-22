@@ -51,6 +51,8 @@ import { SpringLoadedNavigationItem } from "../../features/channel-navigation/Sp
 import { workspaceSectionOrder } from "../../features/relay/sidebar-preferences";
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
+import type { Panels } from "../../features/panels/service";
+import { profileTarget } from "../../features/profiles/target";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelRoster } from "../../features/relay/react";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
@@ -99,6 +101,7 @@ import {
   FolderSimpleIcon,
   MinusIcon,
   PlusIcon,
+  UserIcon,
   XIcon,
 } from "../../shared/design-system/icons";
 import { ChannelReadMenuItem } from "./ChannelReadMenuItem";
@@ -187,6 +190,8 @@ type Inventory = {
 };
 
 const noSubscription = () => () => {};
+const noPanels: readonly unknown[] = [];
+const emptyPanels = () => noPanels;
 const emptyContributions: readonly RegisteredSidebarSection[] = [];
 const noSidebarSections = () => emptyContributions;
 const emptyRowContributions: readonly RegisteredSidebarRows[] = [];
@@ -203,6 +208,7 @@ const emptySidebarSections: SidebarSections = {
 export function ChannelInventory({
   relay,
   navigator,
+  panels,
   agents,
   target,
   queries,
@@ -222,6 +228,7 @@ export function ChannelInventory({
 }: {
   relay: RelayData;
   navigator: Navigation;
+  panels?: Panels | undefined;
   agents?: Agents | undefined;
   target: OpenTarget;
   queries: RelaySession;
@@ -396,6 +403,11 @@ export function ChannelInventory({
   );
   const lifecycleFocus = useRef<string | undefined>(undefined);
   const lifecycleTrigger = useRef<HTMLElement | undefined>(undefined);
+  useSyncExternalStore(
+    panels?.subscribe ?? noSubscription,
+    panels?.snapshot ?? emptyPanels,
+    panels?.snapshot ?? emptyPanels,
+  );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
     queries.profiles,
@@ -1245,6 +1257,38 @@ export function ChannelInventory({
     surface?: ChannelMenuSurface,
   ) => {
     const actions: ReactNode[] = [];
+    if (
+      panels &&
+      channel.channelType === "dm" &&
+      channel.participants?.length === 1 &&
+      channel.participants[0]
+    ) {
+      const peer = channel.participants[0];
+      const profile = dmProfiles.get(peer);
+      const profileUri = profileTarget(peer, { agent: !!profile?.isAgent });
+      if (profileUri && panels.resolve(profileUri)) {
+        actions.push(
+          <MenuItem
+            key="view-profile"
+            onClick={() => {
+              surface?.close(() => false);
+              if (
+                !panels.requestOpen({
+                  target: profileUri,
+                  channelId: channel.id,
+                })
+              )
+                panels.requestOpen({ target: profileUri, channelId: "" });
+            }}
+          >
+            <MenuIcon>
+              <UserIcon size={14} />
+            </MenuIcon>
+            View profile
+          </MenuItem>,
+        );
+      }
+    }
     if (!surface && channel.channelType === "solo") {
       actions.push(
         <SoloChatMenuItems

@@ -268,6 +268,7 @@ export function SearchResults({
   onScopeChange,
   openConversation,
   openNewMessage,
+  openProfile,
   openAgentSession,
   usageScope,
   sidebarScope,
@@ -305,6 +306,8 @@ export function SearchResults({
   ) => void;
   /** Open a New message draft to someone the viewer has no DM with. */
   openNewMessage: (pubkey: string) => void;
+  /** Open a person's or agent's profile panel in place. */
+  openProfile?: ((pubkey: string, agent: boolean) => void) | undefined;
   /** Open a new Solo chat with one of the viewer's agents. Without it,
    * choosing one of their agents opens a direct message, as for anyone else. */
   openAgentSession?: ((pubkey: string) => void) | undefined;
@@ -1678,6 +1681,25 @@ export function SearchResults({
         channelId: channel.id,
         about: channel.description,
       },
+      ...(openProfile &&
+      channel.channelType === "dm" &&
+      channel.participants?.length === 1 &&
+      channel.participants[0]
+        ? (() => {
+            const peer = channel.participants[0];
+            const isAgent = !!dmAgent(channel);
+            return {
+              secondaryAction: {
+                label: "View profile",
+                ariaLabel: `View profile for ${channel.name}`,
+                run: () => {
+                  cancelPersonOpen();
+                  openProfile(peer, isAgent);
+                },
+              },
+            };
+          })()
+        : {}),
       run: choose(key, () => openConversation(channel.id)),
       ...unreadBadge(channel),
     };
@@ -1821,6 +1843,18 @@ export function SearchResults({
         dm && !newSession
           ? { kind: "channel", channelId: dm.id, about: dm.description }
           : { kind: "person", pubkey: person.pubkey },
+      ...(openProfile
+        ? {
+            secondaryAction: {
+              label: "View profile",
+              ariaLabel: `View profile for ${person.label}`,
+              run: () => {
+                cancelPersonOpen();
+                openProfile(person.pubkey, person.agent);
+              },
+            },
+          }
+        : {}),
       run: choose(key, () =>
         newSession
           ? openAgentSession(person.pubkey)

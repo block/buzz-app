@@ -1,5 +1,6 @@
 import { SEARCH_DEBOUNCE_MS } from "../../shared/search-debounce";
 import type { ConversationHostServices } from "../conversation/ConversationHost";
+import { profilePanelKey, profileTarget } from "../profiles/target";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "../messages/composer-testing";
@@ -244,17 +245,20 @@ function setup({ archived = [] as string[] } = {}) {
       signal: new AbortController().signal,
     }),
   });
+  const requestOpen = vi.fn(() => true);
+  const panels = {
+    snapshot: () => emptyPanels,
+    subscribe: () => () => {},
+    resolve: vi.fn((_target: string) => undefined as unknown),
+    requestOpen,
+  };
   const page = (visit?: PageNavigation, to?: string, at = Date.now()) => (
     <NewMessage
       intent={to ? { to, at } : undefined}
       channels={channels.channels}
       host={
         {
-          panels: {
-            snapshot: () => emptyPanels,
-            subscribe: () => () => {},
-            resolve: () => undefined,
-          },
+          panels,
           relay: {
             snapshot: () => ({ status: "ready", session: session, scope }),
           },
@@ -285,6 +289,7 @@ function setup({ archived = [] as string[] } = {}) {
     outbox,
     onOpenThread,
     onStarted,
+    panels,
     mount,
     control,
     setArchived(keys: readonly string[]) {
@@ -2360,4 +2365,34 @@ it("searches and labels by profile names on a relay without verified identity", 
     screen.getByRole("option", { name: `jack ${labels.get(imitator.pubkey)}` }),
   );
   screen.getByRole("textbox", { name: "Message jack" });
+});
+
+it("shows View profile on a 1:1 draft and hides it when adding a second recipient", async () => {
+  const t = setup();
+  const ryan = { pubkey: "c".repeat(64), name: "Ryan Smith" };
+  const second = { pubkey: "d".repeat(64), name: "Alex Lee" };
+  t.panels.resolve.mockImplementation((target: string) =>
+    profilePanelKey(target) ? { id: "profile" } : undefined,
+  );
+  t.directMessages.people.mockResolvedValue({
+    people: [ryan, second],
+    hasMore: false,
+  });
+  t.mount();
+  await waitFor(() => expect(recipient()).toBeEnabled());
+  await t.user.click(await screen.findByRole("option", { name: /Ryan Smith/ }));
+
+  const viewProfile = await screen.findByRole("button", {
+    name: "View profile for Ryan Smith",
+  });
+  await t.user.click(viewProfile);
+  expect(t.panels.requestOpen).toHaveBeenCalledWith({
+    target: profileTarget(ryan.pubkey, { agent: false }),
+    channelId: "",
+  });
+
+  // Adding a second recipient turns it into a group draft without a single profile action.
+  await t.user.click(recipient());
+  await t.user.click(await screen.findByRole("option", { name: /Alex Lee/ }));
+  expect(screen.queryByRole("button", { name: /View profile/ })).toBeNull();
 });

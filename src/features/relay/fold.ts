@@ -10,6 +10,7 @@ import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { huddleRoom } from "../huddle/lifecycle";
 import { newer } from "./events";
+import { inChannel } from "./placement";
 import type { EventData } from "./events";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
@@ -320,7 +321,7 @@ export function foldMessages(
     item.pubkey === event.pubkey ||
     item.pubkey === messageAuthor(event, signingAuthority) ||
     ([9, 40002].includes(event.kind) &&
-      item.tags.some((entry) => entry[0] === "h" && entry[1] === channelId) &&
+      inChannel(item, channelId) &&
       item.pubkey === agentOwner?.(messageAuthor(event, signingAuthority)));
   const deleted = (event: EventData) =>
     overlays

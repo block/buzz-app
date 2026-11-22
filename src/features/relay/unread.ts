@@ -22,6 +22,7 @@ import { LIVE_RESUME_LAG } from "./live";
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
+import { eventChannel } from "./placement";
 import { threadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
@@ -367,8 +368,7 @@ const channelIds = new WeakMap<RelayEvent, string | undefined>();
 /** Verified events are frozen, and every evidence index asks for each one. */
 const channelOf = (event: RelayEvent) => {
   if (channelIds.has(event)) return channelIds.get(event);
-  const tags = event.tags.filter(([name]) => name === "h");
-  const channelId = tags.length === 1 ? tags[0]?.[1] : undefined;
+  const channelId = eventChannel(event);
   channelIds.set(event, channelId);
   return channelId;
 };

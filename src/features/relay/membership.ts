@@ -5,6 +5,7 @@ import type {
 } from "./contracts";
 import type { EventData } from "./events";
 import { objectBody } from "./body";
+import { placedChannel } from "./placement";
 
 /** Content rows retained by channel history/live windows, not the unread kind set. */
 export const CHANNEL_ROW_KINDS = [9, 40002, 40008, 40099, 48100, 48103];
@@ -13,6 +14,8 @@ export const channelRowKind = (kind: number) =>
 /** A content row has one channel home; ambiguous tags are not membership evidence. */
 export function channelRowChannel(event: EventData): string | undefined {
   if (!channelRowKind(event.kind)) return undefined;
+  const moved = placedChannel(event);
+  if (moved) return moved;
   let home: string[] | undefined;
   for (let index = 0; index < event.tags.length; index++) {
     const entry = event.tags[index];

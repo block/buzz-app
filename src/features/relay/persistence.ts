@@ -20,6 +20,9 @@ export type SavedHead = {
   events: unknown[];
   /** Membership notices among the events, read apart from them. */
   notices?: unknown[];
+  /** Ids of events signed for another channel that the relay served in this
+   * one (moved DM history), so a restored head places them as it did. */
+  placed?: string[];
   profiles: unknown[];
 };
 export interface HeadPersistence {

@@ -29,6 +29,7 @@ import {
 } from "./channel-labels";
 import { foldMessages } from "./fold";
 import { eventDto, hasTag, newer, tag, type RelayEvent } from "./events";
+import { placedIn, restorePlacement } from "./placement";
 import { USER_STATUS_KIND } from "./user-status-policy";
 import {
   LARGE_READ_DEADLINE_MS,
@@ -1242,11 +1243,13 @@ export function createChannelStore(
     const profiles = headProfiles(channelId, head);
     const signature = profiles.map((event) => event.id).join(":");
     if (signature === previousProfiles) return signature;
+    const moved = placedIn(channelId, head.events);
     const record: SavedHead = {
       channelId,
       savedAt: head.savedAt,
       events: [...head.events],
       ...(head.notices ? { notices: [...head.notices] } : {}),
+      ...(moved.length ? { placed: moved } : {}),
       profiles,
     };
     void persistence.write(record).catch(() => {});
@@ -1906,6 +1909,16 @@ export function createChannelStore(
         }
         if (heads.peek(record.channelId)) continue;
         const events = verified.slice(0, record.events.length);
+        if (Array.isArray(record.placed))
+          restorePlacement(
+            record.channelId,
+            new Set(
+              record.placed.filter(
+                (id): id is string => typeof id === "string",
+              ),
+            ),
+            events,
+          );
         const notices = transport
           .visible(verified.slice(record.events.length))
           .filter(

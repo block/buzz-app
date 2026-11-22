@@ -821,6 +821,12 @@ export class AgentRunners {
   /** The turns the app left working last time, by agent, until the owner
    * forgets them, or resumes them and each agent's are read again. */
   private left: Interrupted;
+  /** When each agent's private turns, whose read as the agent failed, are
+   * read again, backing off as catch-up does. */
+  private readonly resumeRetries = new Map<
+    AgentKey,
+    { delay: number; at: number }
+  >();
   /** The turns the app left working last time, as this page started: only
    * Resume gives them again, never a replay or live delivery. */
   private readonly stopped: Interrupted;
@@ -1889,9 +1895,11 @@ export class AgentRunners {
     const left = this.left[runner.key];
     const agent = this.host.ready(runner.key);
     const community = agent && this.host.community(agent);
+    const retry = this.resumeRetries.get(runner.key);
     if (
       !this.resuming.has(runner.key) ||
       !left ||
+      (retry?.at ?? 0) > Date.now() ||
       !agent ||
       !runner.type ||
       community?.connection.since === undefined
@@ -1936,6 +1944,18 @@ export class AgentRunners {
     };
     void read().then(
       ({ events, retry }) => {
+        if (!retry.length) this.resumeRetries.delete(runner.key);
+        else {
+          const delay = Math.min(
+            (this.resumeRetries.get(runner.key)?.delay ??
+              CATCH_UP_RETRY_MS / 2) * 2,
+            CATCH_UP_RETRY_BASE_MAX_MS,
+          );
+          this.resumeRetries.set(runner.key, {
+            delay,
+            at: Date.now() + delay + Math.floor((delay * Math.random()) / 4),
+          });
+        }
         if (retry.length)
           this.left = {
             ...this.left,

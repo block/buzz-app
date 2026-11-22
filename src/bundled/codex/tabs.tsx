@@ -83,7 +83,7 @@ import {
   needsSignIn,
   type Spawn,
 } from "./rpc";
-import type { CodexRuntime, SavedConversation } from "./runtime";
+import type { CodexRuntime, SavedConversation, SessionView } from "./runtime";
 import type { CodexSetup } from "./setup";
 import { readTranscript, TURN_LIMIT } from "./transcript";
 import { VoicePreview } from "./VoicePreview";
@@ -1324,7 +1324,11 @@ export function createTabs(
         !saved.has(view.key) && runtime.readableSession(agent.key, view.key),
     );
     const current = here && views.get(here.key);
-    const detail = (text: string, status?: string) =>
+    const detail = (view: SessionView | undefined) =>
+      view?.detail && runtime.readableDetail(agent.key, view.key)
+        ? text(view.detail, view.status)
+        : undefined;
+    const text = (text: string, status?: string) =>
       status !== "Working" ? (
         <p className="m-0 whitespace-pre-wrap break-words text-body-sm text-subtle">
           {text}
@@ -1348,7 +1352,7 @@ export function createTabs(
             searching={searching}
             error={lookupError}
             status={current?.status}
-            detail={current?.detail && detail(current.detail, current.status)}
+            detail={detail(current)}
             onView={() => here && show(here)}
           />
         )}
@@ -1363,7 +1367,7 @@ export function createTabs(
                     <p className="m-0 break-words text-body-sm">
                       <code>{view.key}</code> · {view.status}
                     </p>
-                    {view.detail && detail(view.detail, view.status)}
+                    {detail(view)}
                   </li>
                 ))}
                 {recent.map((conversation) => {
@@ -1403,7 +1407,7 @@ export function createTabs(
                           View transcript
                         </Button>
                       </div>
-                      {view?.detail && detail(view.detail, view.status)}
+                      {detail(view)}
                     </li>
                   );
                 })}

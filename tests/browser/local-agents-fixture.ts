@@ -124,6 +124,22 @@ export const localAgentPlugin: BundledPlugin = {
         title: "Local tester",
         resumes: resumable,
         defaults: () => ({ config: {} }),
+        liveUsage: async () => ({
+          provider: "Fixture provider",
+          surface: "chatgpt-subscription",
+          observedAt: Date.now(),
+          freshness: "live",
+          account: { state: "signed-in", plan: "Fixture Plus" },
+          allowances: [
+            {
+              id: "primary",
+              label: "5h limit",
+              usedPercent: 25,
+              windowMinutes: 300,
+              resetsAt: Date.now() + 60 * 60 * 1000,
+            },
+          ],
+        }),
         // The remote agent type's Activity tab, so published turns can be seen.
         tabs: [
           {

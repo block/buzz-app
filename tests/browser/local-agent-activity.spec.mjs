@@ -15,6 +15,7 @@ test.use({
   threadUnread: true,
   historyCounts: { alpha: 2, beta: 1 },
   localAgentActivity: true,
+  video: "on",
 });
 test("local agent receipt, work and failure agree across sidebar, thread and exact message", async ({
   page,
@@ -62,6 +63,16 @@ test("local agent receipt, work and failure agree across sidebar, thread and exa
     .toBe(1);
   const second = send("Second local request");
   const secondRow = thread.locator(`[data-message-id="${second.id}"]`);
+  const usage = thread.locator("details").filter({
+    has: page.getByText("Fixture provider", { exact: true }),
+  });
+  await expect(usage).toContainText("Fixture Plus");
+  await expect(usage).toContainText("75% remaining");
+  await usage.getByText("Fixture provider", { exact: true }).click();
+  await expect(usage.getByText("25% used", { exact: true })).toBeVisible();
+  await expect(
+    usage.getByRole("button", { name: "Refresh usage", exact: true }),
+  ).toBeVisible();
   const waiting = secondRow.getByRole("button", {
     name: /^(View agent activity|Show activity history|Collapse activity history):/,
   });

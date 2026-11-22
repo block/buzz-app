@@ -6,7 +6,7 @@ These rules add what agents need on top of it.
 ## How to work
 
 - Every PR must leave a functioning main, we can release at any time. So make
-  PRs the smallest complete change that solves the task. 
+  PRs the smallest complete change that solves the task.
 - Run focused tests for what you changed. The git hooks own formatting, lint,
   type checks and related tests, and CI runs everything. Run a full suite
   locally only when asked or to reproduce a CI failure.
@@ -85,12 +85,12 @@ This repository is public, and every feature must work for any community or
 distributor. Never commit anything that only makes sense for a specific organization,
 or refer to internal company context.
 
-Company or community specific behavior belongs in a private plugin. A host change 
-made for one must be a general extension point that any plugin author could use, 
-and must never name or special-case a specific plugin or organization. 
+Company or community specific behavior belongs in a private plugin. A host change
+made for one must be a general extension point that any plugin author could use,
+and must never name or special-case a specific plugin or organization.
 
 The same goes for issues, PR text, commit messages and reviews: no quotes,
-links or attributions from internal discussions. 
+links or attributions from internal discussions.
 
 ## Commits and PRs
 

@@ -78,7 +78,7 @@ if that desktop app is up and running.
   a community by its address or an invite link, or to bring an existing key.
   Someone who used an older Buzz on this computer can bring that identity over.
 - **Keep a copy of your key.** Your identity is a private key. Buzz shows
-  whether it's backed up in **Settings → Identity**, and **Copy private key**
+  whether it's backed up in **Settings → Buzz → Identity**, and **Copy private key**
   makes a copy for a password manager. Without a copy, a lost key means a lost
   identity. Never paste a private key into a chat.
 - **More communities.** Use **Join a community** in the community picker with an
@@ -141,7 +141,9 @@ Huddles need the desktop app. The headphone button in a channel or DM header
 starts or joins one. Only Codex agents have voice. Your running Codex agent
 joins when it's a member of the huddle: starting a huddle in its DM adds it,
 and otherwise you add it from the huddle's members. Transcripts post in the
-huddle's room. Each agent's **Huddle voice** setting picks its voice.
+huddle's room. Each agent's **Huddle voice** setting picks its voice. An agent
+hears whatever your microphone picks up, including people near you, and audio
+sent just before someone leaves can be credited to whoever takes their place.
 
 ## Workflows
 
@@ -157,9 +159,12 @@ from a Git repository or a local folder, and updates them. Don't assume an
 optional plugin is on. Agents can ask to install or enable one, which you
 approve or decline.
 
-On by default: Attention, Bestie, Huddles and Plugin development. Off by
-default: Workflows, Reminders, Drafts & sent, Charts, Focus, Changesets and
-Voice Notes.
+On by default: Attention, Bestie, Huddles, Voice Notes and Plugin development.
+Off by default: Workflows, Reminders, Drafts & sent, Charts, Focus and
+Changesets.
+
+A plugin runs with the same reach as Buzz itself, with no sandbox. Install
+one only if you trust its author with your account and your computer.
 
 ## Attention
 

@@ -40,7 +40,13 @@ BUZZ_DEV_VIEWER=npub1...
 BUZZ_RELAY_URL=wss://your-community-relay   # optional default community
 ```
 
-Each worktree gets its own port, so you can run several copies at once.
+The desktop app reads the same pin, so with it set, plain `just desktop` also
+runs as that account and some features, such as pairing, are unavailable. Run
+`BUZZ_DEV_VIEWER= just desktop` for a separate development identity.
+
+Each worktree gets its own port, so you can run several copies at once. Ports
+don't separate identities: every debug build signs with the same development
+key, in the same communities.
 `just --list` shows the other commands.
 
 ## Find your way around

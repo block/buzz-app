@@ -16,7 +16,7 @@ import {
 } from "./composer-overlay";
 import { DetailsSheet } from "./DetailsSheet";
 import styles from "./Messages.module.css";
-import { LayerAddressContext, layerInView } from "./view-layer";
+import { LayerAddressContext } from "./view-layer";
 
 const HEADING = /^H[1-6]$/;
 
@@ -38,7 +38,8 @@ function holdsBack(clip: HTMLElement) {
 
 /** A details message reads in the chat as its opening brief, and opens whole
  * over the composer of the view it sits in, or as a dialog when that composer
- * isn't on screen. The row draws the reader, so its links stay live. */
+ * isn't on screen. Where the address names the layer, the view's
+ * `LayerReader` draws it from its id; elsewhere this row draws it in place. */
 export function DetailsMessage({
   messageId,
   channelId,
@@ -65,22 +66,18 @@ export function DetailsMessage({
   const view = useComposerScope();
   const address = useContext(LayerAddressContext);
   const [local, setLocal] = useState(false);
-  const addressed = !!address && !!view;
-  const open = addressed
-    ? address.open?.messageId === messageId &&
-      layerInView(address.open, channelId, view)
-    : local;
+  const addressed = !!address && !!view && !view.local;
   const show = () =>
     addressed
       ? address.show({ messageId, channelId, rootId: view.rootId })
       : setLocal(true);
-  const close = () => (addressed ? address.dismiss() : setLocal(false));
+  const close = () => setLocal(false);
   useEffect(
-    () => (open ? keepMounted?.(messageId) : undefined),
-    [open, keepMounted, messageId],
+    () => (local ? keepMounted?.(messageId) : undefined),
+    [local, keepMounted, messageId],
   );
   const form = useComposerForm(view?.handle);
-  const host = open && form ? composerHost(view?.handle) : null;
+  const host = local && form ? composerHost(view?.handle) : null;
   const trigger = useRef<HTMLButtonElement>(null);
   const clip = useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = useState(false);
@@ -147,7 +144,7 @@ export function DetailsMessage({
           {reader}
         </DetailsSheet>
       ) : (
-        open && (
+        local && (
           <Dialog
             open
             onOpenChange={(next) => {
@@ -155,7 +152,6 @@ export function DetailsMessage({
             }}
             title={author}
             description={time}
-            visit={addressed}
             finalFocus={trigger}
           >
             {reader}

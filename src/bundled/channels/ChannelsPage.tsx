@@ -33,8 +33,9 @@ import {
   type OpenLayer,
   type PanelLayer as PanelLayerAddress,
 } from "../../features/messages/view-layer";
-import { PanelLayer } from "../../features/messages/PanelLayer";
-import { placeOpening } from "./placement";
+import { LayerReader } from "../../features/messages/LayerReader";
+import { inlineMedia, placeOpening } from "./placement";
+import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import {
   type ConversationTab,
   entryPane,
@@ -1418,6 +1419,7 @@ function ChannelWorkspace({
     initialAttachments?: readonly Attachment[] | undefined;
     initialTime: number;
     hasComments: boolean;
+    opening?: MediaReviewOrigin | undefined;
     entryId?: string | undefined;
   }>();
   // The current destination may be an authorized public preview, which is
@@ -1428,6 +1430,12 @@ function ChannelWorkspace({
   useEffect(() => {
     if (mediaReview && !showingMediaReview) setMediaReview(undefined);
   }, [mediaReview, showingMediaReview]);
+  // Media in a sheet reads over its view and leaves the panes as they are;
+  // the fullscreen viewer takes over the page, as before.
+  const fullscreenMedia =
+    showingMediaReview && !showingMediaReview.opening
+      ? showingMediaReview
+      : undefined;
   // Panels a thread tab's links open can become dialogs on that tab's view;
   // `openInView`, below, decides.
   const inView =
@@ -1478,7 +1486,7 @@ function ChannelWorkspace({
     // composer reads a draft only when it mounts, so a side thread kept
     // mounted under the hidden dock would still show the text the viewer
     // replaced. Main-pane threads keep their place and state, as before.
-    hostPanes: showingMediaReview ? ["main"] : undefined,
+    hostPanes: fullscreenMedia ? ["main"] : undefined,
     navigation: navigator,
     routed: routedThread,
     onVisitPanel: visitPanel,
@@ -2175,6 +2183,7 @@ function ChannelWorkspace({
       initialTime: number,
       hasComments = false,
       initialAttachments?: readonly Attachment[],
+      opening?: MediaReviewOrigin,
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
@@ -2190,6 +2199,7 @@ function ChannelWorkspace({
         initialTime,
         hasComments,
         initialAttachments,
+        ...(inlineMedia(opening) ? { opening } : {}),
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },
@@ -2439,7 +2449,7 @@ function ChannelWorkspace({
     !requestedMessage &&
     !requestedThread &&
     !membersOpen &&
-    !showingMediaReview &&
+    !fullscreenMedia &&
     (navigation?.focus ?? navigator?.snapshot().attempt.focus) !== "preserve" &&
     tabState.tabs.some(
       (tab) =>
@@ -2456,7 +2466,7 @@ function ChannelWorkspace({
     undefined,
     BOARD_MAIN_MIN_REM,
   );
-  const docked = !!showingPanel && !showingMediaReview;
+  const docked = !!showingPanel && !fullscreenMedia;
   // A floating dock covers the conversation, even the strip beside a card:
   // keep focus, typing, reading and assistive technology out of it.
   const conversation = useRef<HTMLElement>(null);
@@ -2718,7 +2728,7 @@ function ChannelWorkspace({
     current?.viewerRole === "guest" &&
       !current.cached &&
       !membersOpen &&
-      !showingMediaReview,
+      !fullscreenMedia,
     contentReadyChannel === currentId,
   );
   // The conversation: full width for Solo, or the first main-pane tab.
@@ -2908,7 +2918,7 @@ function ChannelWorkspace({
           moveToTab={() => moveInlineToTab(inlineThread)}
         />
       )}
-      {current && <PanelLayer channelId={current.id} />}
+      {current && <LayerReader channelId={current.id} />}
     </div>
   );
   const workspace = (
@@ -3290,7 +3300,7 @@ function ChannelWorkspace({
         keepMounted={
           tabState.entries.length > 0 ||
           (!!hasPanel && !tabState.paneOpen) ||
-          (!!hasPanel && !!showingMediaReview)
+          (!!hasPanel && !!fullscreenMedia)
         }
         className={styles.panelStack}
         resizeHandle={split.handle}

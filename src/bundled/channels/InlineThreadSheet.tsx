@@ -6,7 +6,7 @@ import {
   useComposerScope,
 } from "../../features/messages/composer-overlay";
 import { DetailsSheet } from "../../features/messages/DetailsSheet";
-import { PanelLayer } from "../../features/messages/PanelLayer";
+import { LayerReader } from "../../features/messages/LayerReader";
 
 /** The conversation's inline thread: a dialog drawn over the conversation's
  * composer, with the thread's own reply box in its place. The address owns
@@ -46,7 +46,7 @@ export function InlineThreadSheet({
       {/* The thread's own view, for the details and panels its rows open. */}
       <ComposerScopeProvider rootId={rootId}>
         <ConversationThread messageId={rootId} focusRequest={1} />
-        <PanelLayer channelId={channelId} />
+        <LayerReader channelId={channelId} />
       </ComposerScopeProvider>
     </DetailsSheet>
   );

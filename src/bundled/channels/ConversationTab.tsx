@@ -24,8 +24,9 @@ import { ChannelBody } from "./ChannelBody";
 import { SoloColumn } from "../../features/solo/SoloPresentation";
 import { rootOfTab, type ConversationTab as Tab } from "./useChannelTabState";
 import { ComposerScopeProvider } from "../../features/messages/composer-overlay";
-import { PanelLayer } from "../../features/messages/PanelLayer";
+import { LayerReader } from "../../features/messages/LayerReader";
 import type { PageNavigation } from "../../features/navigation/service";
+import { inlineMedia } from "./placement";
 import styles from "./ChannelTabs.module.css";
 
 type ConversationTabProps = {
@@ -131,7 +132,7 @@ export function ConversationTab({
     return () => request.abort();
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
-  const media = useMediaReview();
+  const media = useMediaReview(inlineMedia);
   // A retained tab re-renders with its page. Its memoized rows open links and
   // threads through stable openers that consult the latest handlers when chosen.
   const latest = useRef({ openLink, openThread });
@@ -195,7 +196,7 @@ export function ConversationTab({
               close={close}
               parent={parent}
             />
-            <PanelLayer channelId={channel.id} />
+            <LayerReader channelId={channel.id} />
           </ComposerScopeProvider>
         ) : target && inTimeline === false ? (
           <ConversationThread

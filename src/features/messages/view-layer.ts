@@ -41,5 +41,6 @@ export const layerInView = (
 ) =>
   !!open &&
   view.shown &&
+  !view.local &&
   open.channelId === channelId &&
   open.rootId === view.rootId;

@@ -1,5 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
+import type { MediaReviewOrigin } from "./composer-overlay";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { RelayedRunPreview } from "./RelayedRunPreview";
@@ -275,6 +276,7 @@ export type ChannelTimelineProps = {
     seconds: number,
     hasComments?: boolean,
     initialAttachments?: readonly Attachment[],
+    opening?: MediaReviewOrigin,
   ): void;
 };
 

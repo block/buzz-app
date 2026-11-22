@@ -52,6 +52,9 @@ export type ComposerView = Readonly<{
   rootId?: string | undefined;
   /** False while the view is a hidden tab: its dialogs stay closed. */
   shown: boolean;
+  /** A view the address never names, such as a media viewer's comments: its
+   * details open in place. */
+  local?: boolean | undefined;
 }>;
 const ComposerScope = createContext<ComposerView | undefined>(undefined);
 export const useComposerScope = () => useContext(ComposerScope);
@@ -60,16 +63,18 @@ export const useComposerScope = () => useContext(ComposerScope);
 export function ComposerScopeProvider({
   rootId,
   shown = true,
+  local,
   children,
 }: {
   rootId?: string | undefined;
   shown?: boolean | undefined;
+  local?: boolean | undefined;
   children: ReactNode;
 }) {
   const [handle] = useState(createComposerHandle);
   const value = useMemo(
-    () => ({ handle, rootId, shown }),
-    [handle, rootId, shown],
+    () => ({ handle, rootId, shown, local }),
+    [handle, rootId, shown, local],
   );
   return createElement(ComposerScope.Provider, { value }, children);
 }
@@ -79,6 +84,14 @@ export type ComposerOverlayHost = Readonly<{
   composer: HTMLElement;
   /** The composer's pane: the sheet is drawn and clipped within it. */
   pane: HTMLElement;
+  /** What a media sheet spans: the workspace around the pane. */
+  viewport?: HTMLElement | undefined;
+}>;
+/** The view a row opened media from: its composer, and the thread the media
+ * is in, whose comments the media sheet reads. */
+export type MediaReviewOrigin = Readonly<{
+  host: ComposerOverlayHost;
+  rootId: string;
 }>;
 
 /** Where `handle`'s composer is now, while it is on screen. */

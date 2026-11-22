@@ -43,10 +43,15 @@ function fixedFrame(element: HTMLElement): HTMLElement | null {
   return null;
 }
 
-/** Where the sheet sits: around its composer, within the composer's pane. */
-function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
+/** Where the sheet sits: around its composer, within the composer's pane. A
+ * media sheet (`windowed`) is drawn over the whole window, across the
+ * workspace around the pane. */
+function geometry(
+  { composer, pane, viewport = pane }: ComposerOverlayHost,
+  windowed: boolean,
+): CSSProperties {
   // Inside another sheet, positions count from that sheet's padding box.
-  const frame = fixedFrame(pane);
+  const frame = windowed ? null : fixedFrame(pane);
   const frameBox = frame?.getBoundingClientRect();
   const originX = frameBox ? frameBox.left + (frame?.clientLeft ?? 0) : 0;
   const originY = frameBox ? frameBox.top + (frame?.clientTop ?? 0) : 0;
@@ -55,6 +60,7 @@ function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
     new DOMRect(box.left - originX, box.top - originY, box.width, box.height);
   const rect = local(composer.getBoundingClientRect());
   const bounds = local(pane.getBoundingClientRect());
+  const workspace = viewport.getBoundingClientRect();
   // The scrim dims the pane's outer surface, clipped to the pane's own region:
   // joined panels share their shell's rounded shape, and their inner panels
   // deliberately have no radius.
@@ -102,6 +108,11 @@ function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
       "--sheet-top": `${Math.max(bounds.top, header ? header.bottom - originY : 0)}px`,
     }),
     "--pane-top": `${bounds.top}px`,
+    ...(windowed && {
+      "--pane-left": `${workspace.left}px`,
+      "--pane-width": `${workspace.width}px`,
+      "--composer-pane-bottom": `${workspace.bottom - rect.bottom}px`,
+    }),
     "--scrim-top": `${surfaceBounds.top}px`,
     "--scrim-left": `${surfaceBounds.left}px`,
     "--scrim-width": `${surfaceBounds.width}px`,
@@ -116,17 +127,18 @@ function geometry({ composer, pane }: ComposerOverlayHost): CSSProperties {
  * the sheet's header, which a thread reads beneath. */
 function useComposerGeometry(
   host: ComposerOverlayHost,
+  windowed: boolean,
   mounted: boolean,
   surface: HTMLElement | null,
 ) {
-  const { composer, pane } = host;
-  const [style, setStyle] = useState(() => geometry(host));
+  const { composer, pane, viewport } = host;
+  const [style, setStyle] = useState(() => geometry(host, windowed));
   useLayoutEffect(() => {
     if (!mounted) return;
     const header = surface?.querySelector("header");
     const update = () =>
       setStyle({
-        ...geometry({ composer, pane }),
+        ...geometry({ composer, pane, viewport }, windowed),
         "--sheet-border-width": surface
           ? getComputedStyle(surface).borderBottomWidth
           : "0px",
@@ -139,13 +151,14 @@ function useComposerGeometry(
         : new ResizeObserver(update);
     observer?.observe(composer);
     observer?.observe(pane);
+    if (viewport) observer?.observe(viewport);
     if (header) observer?.observe(header);
     window.addEventListener("resize", update);
     return () => {
       observer?.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [composer, pane, mounted, surface]);
+  }, [composer, pane, viewport, windowed, mounted, surface]);
   return style;
 }
 
@@ -163,7 +176,8 @@ const milliseconds = (value: string) =>
     : Number.parseFloat(value) * 1000;
 
 /** Grows the sheet up out of the composer as it opens and folds it back down
- * into the composer as it closes. Base UI owns the unmount timing. */
+ * into the composer as it closes. Base UI owns the unmount timing. A media
+ * sheet uses an interruptible CSS transition instead. */
 function useGrowth() {
   const last = useRef<{ open: boolean; animation?: Animation }>(undefined);
   return (element: HTMLElement, open: boolean, mounting = false) => {
@@ -287,8 +301,8 @@ function useComposerHandoff(
       };
     };
     start();
-    // A thread's reply box arrives after its verified root, independently of
-    // the sheet's render.
+    // A thread's reply box, or media's comment box, arrives after its verified
+    // root, independently of the sheet's render.
     const observer = new MutationObserver(start);
     if (!started) observer.observe(sheet, { childList: true, subtree: true });
     return () => {
@@ -317,11 +331,15 @@ export function DetailsSheet({
   title,
   description,
   leading,
+  closeLabel = "Close",
   finalFocus,
   children,
   containsComposer = false,
+  height = "content",
   readerOnly = false,
   tall = false,
+  headerActions,
+  onClosed,
   onMoveToTab,
   onOpenAsTab,
 }: {
@@ -332,16 +350,25 @@ export function DetailsSheet({
   description?: ReactNode;
   /** Shown before the title, such as its author's avatar. */
   leading?: ReactNode;
+  closeLabel?: string;
   finalFocus?: RefObject<HTMLElement | null> | undefined;
   children: ReactNode;
-  /** A thread supplies its own reply box in place of the view's composer. */
+  /** A thread, or media, supplies its own reply box in place of the view's
+   * composer. */
   containsComposer?: boolean;
+  /** Threads and details fit their content; media takes a stable working
+   * area across the workspace, over the whole window. */
+  height?: "content" | "stable";
   /** A panel: it takes the full height and covers the composer, which it
    * leaves untouched underneath. */
   readerOnly?: boolean;
   /** Takes the full height while true, as a thread does under a panel, and
    * settles back to its content after. */
   tall?: boolean;
+  /** Shown before Close, such as media's gallery controls. */
+  headerActions?: ReactNode;
+  /** Once a close has finished its motion. */
+  onClosed?: (() => void) | undefined;
   /** Hands what this sheet reads to a side-pane tab. */
   onMoveToTab?: (() => void) | undefined;
   /** Closes this sheet and opens what it reads as a tab. */
@@ -351,7 +378,8 @@ export function DetailsSheet({
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
-  const style = useComposerGeometry(host, mounted, surface);
+  const windowed = height === "stable";
+  const style = useComposerGeometry(host, windowed, mounted, surface);
   // The view's own composer stays usable under a details reader; a thread's
   // reply box replaces it, and a panel covers it, keeping its text.
   useLayoutEffect(() => {
@@ -372,7 +400,7 @@ export function DetailsSheet({
   const grow = useGrowth();
   // Later changes reverse whatever motion is running.
   useLayoutEffect(() => {
-    if (popup.current) grow(popup.current, open);
+    if (popup.current && !windowed) grow(popup.current, open);
   });
   return (
     <BaseDialog.Root
@@ -396,20 +424,24 @@ export function DetailsSheet({
       onOpenChangeComplete={(next) => {
         if (next) return;
         setMounted(false);
+        onClosed?.();
         const active = document.activeElement;
         if (active === document.body || popup.current?.contains(active))
           finalFocus?.current?.focus({ preventScroll: true });
       }}
     >
       <BaseDialog.Portal
-        container={host.pane}
+        // Media is drawn over the window, above the workspace's side panes.
+        container={windowed ? document.body : host.pane}
         className={messageStyles.detailsSheetLayer}
+        data-workspace-overlay={windowed || undefined}
         data-details-sheet=""
       >
         <BaseDialog.Backdrop
           ref={backdrop}
           forceRender
           className={styles.scrim}
+          data-window={windowed || undefined}
           style={style}
         />
         <BaseDialog.Popup
@@ -418,7 +450,7 @@ export function DetailsSheet({
             if (element && element !== grown.current) {
               grown.current = element;
               setSurface(element);
-              grow(element, true, true);
+              if (!windowed) grow(element, true, true);
             }
             popup.current = element;
             focus.ref(element);
@@ -429,16 +461,18 @@ export function DetailsSheet({
           data-reader-only={readerOnly || undefined}
           data-tall={tall || undefined}
           // Threads and details fit their content and grow with it, up to the
-          // maximum; a panel takes the full height (`data-reader-only`).
-          data-height="content"
+          // maximum; a panel takes the full height (`data-reader-only`), and
+          // media a stable area across the workspace.
+          data-height={height}
           style={style}
           // A thread places focus in its reply box; a reader takes it itself.
-          initialFocus={containsComposer ? false : popup}
+          // Media takes focus at its first control, so its keys work at once.
+          initialFocus={windowed ? undefined : containsComposer ? false : popup}
           finalFocus={focus.finalFocus}
         >
           <div className={styles.content}>
             <header className={`buzz-dialog-header ${styles.header}`}>
-              {containsComposer && (
+              {containsComposer && !windowed && (
                 <DialogBarMaterial className={styles.headerMaterial} />
               )}
               <div className={styles.byline}>
@@ -455,6 +489,7 @@ export function DetailsSheet({
                 )}
               </div>
               <div className="buzz-dialog-header-actions">
+                {headerActions}
                 {onOpenAsTab && (
                   <IconButton
                     aria-label="Open as tab"
@@ -480,7 +515,7 @@ export function DetailsSheet({
                 <BaseDialog.Close
                   render={
                     <IconButton
-                      aria-label="Close"
+                      aria-label={closeLabel}
                       variant="glass"
                       shape="round"
                       size="compact"

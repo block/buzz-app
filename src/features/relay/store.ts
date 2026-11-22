@@ -135,7 +135,7 @@ type WindowState = {
     | { controller: AbortController; generation: number; dropped?: boolean }
     | undefined;
   /** Aux work waits while a head read may replace its rows (`reattach`). */
-  auxPaused?: boolean;
+  auxPaused?: boolean | undefined;
   /** A refused aux read's retry hint: no aux read before it, one at it. */
   auxRetryAt?: number;
   auxRetry?: ReturnType<typeof setTimeout>;

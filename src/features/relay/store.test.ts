@@ -348,7 +348,10 @@ describe("channel store", () => {
       const large = take(false);
       expect(large.filters[0]).toMatchObject({ limit: 200, until: 20 });
       large.fail(
-        new ReadError("invalid-response", "Relay response exceeds the read budget"),
+        new ReadError(
+          "invalid-response",
+          "Relay response exceeds the read budget",
+        ),
       );
       await flush();
       expect(take(false).filters[0]).toMatchObject({ limit: 20, until: 20 });
@@ -665,7 +668,9 @@ describe("channel store", () => {
       await flush();
       // No aux read while the head loads.
       expect(
-        scripted.pending.some((read) => read.filters[0]?.include_aux && read.filters[0]?.until),
+        scripted.pending.some(
+          (read) => read.filters[0]?.include_aux && read.filters[0]?.until,
+        ),
       ).toBe(false);
       const head = scripted.pending.find(
         (read) => !read.filters[0]?.until && read.filters[0]?.["#h"],
@@ -837,7 +842,8 @@ describe("channel store", () => {
     assert(older && head && tail && latest);
     const take = () => {
       const read = scripted.pending.find(
-        (entry) => entry.filters[0]?.top_level && !entry.filters[0]?.include_aux,
+        (entry) =>
+          entry.filters[0]?.top_level && !entry.filters[0]?.include_aux,
       );
       assert(read);
       scripted.pending.splice(scripted.pending.indexOf(read), 1);
@@ -854,7 +860,10 @@ describe("channel store", () => {
     queries.loadOlder("c");
     take().respond([
       older,
-      bounds(relay, "c", `10:${head.id}`, { has_more: false, next_cursor: null }),
+      bounds(relay, "c", `10:${head.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
     ]);
     await flush();
     // The stream delivers a row; what it missed before it is unknown.
@@ -1159,8 +1168,8 @@ describe("channel store", () => {
     const rows = [190, 180, 170].map((at) =>
       message(alice, "c", `older ${at}`, at),
     );
-    const [, second, last] = rows;
-    assert(second && last);
+    const [first, second, last] = rows;
+    assert(first && second && last);
     take().respond([
       ...rows,
       bounds(relay, "c", `200:${newer.id}`, {
@@ -1171,10 +1180,10 @@ describe("channel store", () => {
     await flush();
     // A backdated row takes a place in the limited aux read.
     const backdated = message(alice, "c", "backdated", 175);
-    const first = take();
-    expect(first.filters[0]).toMatchObject({ include_aux: true, limit: 3 });
-    first.respond([
-      rows[0],
+    const aux = take();
+    expect(aux.filters[0]).toMatchObject({ include_aux: true, limit: 3 });
+    aux.respond([
+      first,
       second,
       backdated,
       bounds(relay, "c", `200:${newer.id}`, {

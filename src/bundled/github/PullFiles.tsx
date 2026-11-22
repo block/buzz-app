@@ -1,3 +1,4 @@
+import { useDiffLayout } from "./diff-layout";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowSquareOutIcon } from "../../shared/design-system/icons/index";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
@@ -24,6 +25,7 @@ export function PullFiles({
   diff: GitHubDiff;
 }) {
   const { repository, base, head, merged } = pull;
+  const layout = useDiffLayout();
   const [result, setResult] = useState<string | Error>();
   useEffect(() => {
     const controller = new AbortController();
@@ -74,6 +76,7 @@ export function PullFiles({
               <DiffViewer
                 // biome-ignore lint/suspicious/noArrayIndexKey: A file's patch can repeat; its place in this diff cannot.
                 key={index}
+                viewType={layout}
                 content={part.content}
                 files={part.files}
               />

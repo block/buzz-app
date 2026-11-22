@@ -10,11 +10,16 @@ import type { RelaySession } from "../../features/relay/session";
 import type { RelayEvent } from "../../features/relay/events";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { Agent } from "../../features/agents/service";
+import type { MentionPlacer } from "../../features/agents/mention-placement";
 import type {
   DecisionAnswer,
   DecisionQuestion,
 } from "../../features/decisions/service";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Header } from "../../shared/design-system/ui/Header";
+import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { SendIcon } from "../../shared/design-system/icons/index";
 import {
   buildState,
   ELSEWHERE_NOTE,
@@ -351,7 +356,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // agents tagged together share one decision. No composer check: the host
   // asks only about the owner's own mentions.
   const placing = new Map<string, Promise<Where | undefined>>();
-  ctx.agents.registerMentionPlacement?.({
+  const placer: MentionPlacer = {
     id: "where",
     async place({ channel: channelId, event }) {
       const now = sessionNow();
@@ -373,7 +378,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ...(where.elsewhere ? { note: ELSEWHERE_NOTE } : {}),
       };
     },
-  });
+  };
   async function placeOnce(
     session: RelaySession,
     viewer: string,
@@ -436,7 +441,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
 
   const handled = new Set<string>();
   const startedAt = Math.floor(Date.now() / 1000);
-  ctx.effect(() => {
+  /** Watches the owner's messages and wakes the agent Jev picks. */
+  const watchSends = () => {
     let bound: RelaySession | undefined;
     let unbind: (() => void) | undefined;
     const bind = () => {
@@ -474,6 +480,45 @@ export const apply: PluginModule["apply"] = (ctx) => {
       stop();
       unbind?.();
     };
+  };
+
+  // ---- Routing runs only while decisions can be answered ----
+  //
+  // Cordis adds the hook and the watch when the decisions service says they
+  // can, and removes them when it withdraws that; until then the plugin does
+  // nothing and messages go where they always have. Not in the module's
+  // `inject`, where a device without a provider would fail its startup.
+  let answerable = false;
+  const answerableListeners = new Set<() => void>();
+  const setAnswerable = (next: boolean) => {
+    answerable = next;
+    for (const listener of answerableListeners) listener();
+  };
+  ctx.inject(["decisionsAnswerable"], (scope) => {
+    scope.effect(() => {
+      setAnswerable(true);
+      return () => setAnswerable(false);
+    });
+    scope.agents.registerMentionPlacement?.(placer);
+    scope.effect(watchSends);
+  });
+  // Its card says whether it is routing, or why not.
+  ctx.inject(["settingsCards"], (scope) => {
+    scope.settingsCards.register({
+      id: "status",
+      title: "Smart routing",
+      icon: SendIcon,
+      group: "Plugins",
+      component: () => (
+        <RoutingStatus
+          answerable={() => answerable}
+          subscribe={(listener) => {
+            answerableListeners.add(listener);
+            return () => void answerableListeners.delete(listener);
+          }}
+        />
+      ),
+    });
   });
 
   async function route(
@@ -570,7 +615,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
         const sent = await ctx.agents.wake(
           agent.key,
           { channel: channelId, ...destination, text },
-          { current: () => true },
+          // Not once routing has stopped.
+          { current: () => answerable },
         );
         wake =
           sent.status === "delivered" ? "delivered" : `dropped: ${sent.reason}`;
@@ -710,6 +756,32 @@ export const apply: PluginModule["apply"] = (ctx) => {
     },
   });
 };
+
+/** The settings card: routing, or idle until decisions can be answered. */
+export function RoutingStatus({
+  answerable,
+  subscribe,
+}: {
+  answerable(): boolean;
+  subscribe(listener: () => void): () => void;
+}) {
+  const on = useSyncExternalStore(subscribe, answerable);
+  return (
+    <section aria-label="Smart routing settings">
+      <Header title="Smart routing" />
+      <SettingsGroup>
+        <PreferenceRow
+          title={on ? "Routing your messages" : "Needs a decisions provider"}
+          subtitle={
+            on
+              ? "Jev picks who answers a message you tag no one in, and whether a top-level message is answered at the top level or in a thread."
+              : "It does nothing until decisions can be answered. Sign in to Builderlab with decisions, or add a TypeSafe key, under Decisions API."
+          }
+        />
+      </SettingsGroup>
+    </section>
+  );
+}
 
 /** The mark's tooltip and the dialog: every answer behind a decision. */
 export function details(entry: Entry) {

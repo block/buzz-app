@@ -3,7 +3,6 @@
   "name": "Smart routing",
   "apiVersion": 1,
   "description": "When you send a message, Jev decides which of your agents answers (if you tag no one) and whether the answer goes at the top level or in a thread.",
-  "requires": ["decisions"],
   "discovery": {
     "category": "agent-tools",
     "tags": ["messaging"]

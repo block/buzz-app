@@ -81,12 +81,6 @@ import docsManifest from "./docs/manifest.json";
 import * as docs from "./docs";
 import smartRoutingManifest from "./smart-routing/manifest.json";
 import * as smartRouting from "./smart-routing";
-/**
- * Smart routing runs only with a decisions provider (its manifest says so).
- * Wrapped in a call: the browser build adds its fixture agent to the first
- * array assigned in this file (tests/browser/build.mjs).
- */
-const needs = Object.freeze(["decisions"] as const);
 
 const codexHarness: BundledPlugin = {
   manifest: { ...codexManifest, apiVersion: 1 },
@@ -107,9 +101,10 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: false,
   },
   {
-    manifest: { ...smartRoutingManifest, apiVersion: 1, requires: needs },
+    manifest: { ...smartRoutingManifest, apiVersion: 1 },
     module: smartRouting,
-    // Off until it has had more testing; it also needs a decisions provider.
+    // Off until it has had more testing. On, it routes only while decisions
+    // can be answered.
     enabledByDefault: false,
   },
   {

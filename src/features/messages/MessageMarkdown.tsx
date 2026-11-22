@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
-import type { ComposerSession } from "./composer-session";
+import { fullSession, type ComposerSession } from "./composer-session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { bareHostParts, messageLinkParts } from "./message-link-parts";
@@ -22,7 +22,9 @@ import {
   channelLinkLabel,
   emptyReferenceDirectory,
   ProfileMention,
+  profileMentionIdentity,
 } from "./ReferenceText";
+import { ProfilePeek } from "../profiles/ProfilePeek";
 import { profileKey } from "../profiles/target";
 import Markdown, { type Components, type ExtraProps } from "react-markdown";
 import remarkBreaks from "remark-breaks";
@@ -672,7 +674,7 @@ function PreparedMessageMarkdown({
     if (typeof text !== "string" || typeof target !== "string")
       return undefined;
     const clickable = interactive && !!canOpenLink?.(target);
-    return (
+    const mention = (
       <ProfileMention
         text={text}
         target={target}
@@ -681,6 +683,30 @@ function PreparedMessageMarkdown({
         viewer={session?.viewer}
         resolveName={resolveName}
         onOpen={clickable ? onOpenLink : undefined}
+      />
+    );
+    const { key, agent, label } = profileMentionIdentity(
+      text,
+      target,
+      profiles,
+      directory.agents,
+      resolveName,
+    );
+    if (!clickable || !key) return mention;
+    const host = fullSession(session);
+    return (
+      <ProfilePeek
+        inline
+        trigger={mention}
+        name={label}
+        picture={profiles.get(key)?.picture}
+        pubkey={key}
+        agent={agent}
+        session={host}
+        channelId={row.channelId}
+        viewer={host?.viewer}
+        target={target}
+        onOpen={onOpenLink}
       />
     );
   };

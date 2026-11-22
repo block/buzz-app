@@ -122,19 +122,35 @@ export async function follow(
   return d;
 }
 
+/** The hook is no longer the repository and publisher it was shown as. */
+export class HookChanged extends Error {}
+
+/** Deletes `hook`, only while its latest revision still follows the same
+ * repository for the same publisher, so a confirmation never removes
+ * something else. */
 export async function unfollow(
   session: RelaySession,
   channel: string,
   hook: Hook,
   signal = AbortSignal.timeout(20_000),
 ) {
+  const head = await headOf(session, channel, hook, signal);
+  const current = parseHook(head);
+  if (
+    !current ||
+    current.repo !== hook.repo ||
+    current.publisher !== hook.publisher
+  )
+    throw new HookChanged(
+      `${hook.repo} changed since you chose it. Check the list and try again.`,
+    );
   await save(
     session,
     {
       d: hook.d,
       channel,
       op: "delete",
-      prev: await headOf(session, channel, hook, signal),
+      prev: head.id,
       repo: hook.repo,
     },
     signal,
@@ -151,5 +167,5 @@ async function headOf(
   const read = session.snapshotRead;
   const head = read && (await readHead(read, channel, hook.d, signal));
   if (!head) throw new Error("The hook could not be read. Try again.");
-  return head.id;
+  return head;
 }

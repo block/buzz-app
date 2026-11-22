@@ -36,6 +36,7 @@ const hook = (publisher: string, repo = "block/buzz-app", d = "hook-d") =>
 
 function mount(initial: { status: string; events: VerifiedEvent[] }) {
   let snapshot = initial;
+  let stored: (() => VerifiedEvent[]) | undefined;
   const listeners = new Set<() => void>();
   const sign = vi.fn(async (template: object) => ({
     ...template,
@@ -47,7 +48,7 @@ function mount(initial: { status: string; events: VerifiedEvent[] }) {
   const session = {
     viewer,
     snapshotRead: async (filters: { "#d"?: string[] }[]) =>
-      snapshot.events.filter((event) =>
+      (stored?.() ?? snapshot.events).filter((event) =>
         event.tags.some(([n, v]) => n === "d" && v === filters[0]?.["#d"]?.[0]),
       ),
     configArtifactWriter: { sign, publish },
@@ -77,6 +78,9 @@ function mount(initial: { status: string; events: VerifiedEvent[] }) {
   );
   return {
     sign,
+    reads(next: () => VerifiedEvent[]) {
+      stored = next;
+    },
     set(next: typeof snapshot) {
       snapshot = next;
       act(() => {
@@ -151,4 +155,37 @@ it("names whose Buzz publishes a repository, and confirms an unfollow that stops
   expect(template.tags).toContainEqual(["d", "hook-d"]);
   expect(template.tags).toContainEqual(["op", "delete"]);
   await vi.waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+});
+
+it("marks a list it can't confirm is current, and names publishers only as last known", () => {
+  const view = mount({ status: "live", events: [hook(dana)] });
+  expect(screen.getByText(/Published from Dana’s Buzz/)).toBeVisible();
+  view.set({ status: "stale", events: [hook(dana)] });
+  expect(
+    screen.getByText("Reconnecting. This list may be out of date."),
+  ).toBeVisible();
+  expect(screen.getByText("Last known publisher: Dana.")).toBeVisible();
+  expect(screen.queryByText(/Published from Dana’s Buzz/)).toBeNull();
+});
+
+it("unfollows nothing when the hook changed while its confirmation was open", async () => {
+  const user = userEvent.setup();
+  const view = mount({ status: "live", events: [hook(dana)] });
+  await user.click(screen.getByRole("button", { name: "Unfollow" }));
+  // Someone points the same hook at another repository before the confirm.
+  view.reads(() => [
+    { ...hook(dana, "block/other"), id: "2".repeat(64), created_at: 2 },
+  ]);
+  await user.click(
+    within(screen.getByRole("alertdialog")).getByRole("button", {
+      name: "Unfollow",
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "block/buzz-app changed since you chose it.",
+    ),
+  );
+  expect(view.sign).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alertdialog")).toBeNull();
 });

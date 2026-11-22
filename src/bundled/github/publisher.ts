@@ -16,6 +16,7 @@ import { GitHubError, type GitHubCli } from "./gh";
 import { HOOK_TYPE, parseHook, type Hook } from "./hooks";
 import { keyOf } from "./pull-states";
 import { PULL_TYPE, announcementUrl } from "./relay-pull";
+import { parseGitHubReference } from "./references";
 
 export const POLL_MS = 60_000;
 const MAX_BACKOFF_MS = 15 * 60_000;
@@ -40,6 +41,8 @@ export const MAX_CHANNELS = 255;
 const TITLE_BYTES = 512;
 const HISTORY_PAGE = 100;
 const HISTORY_PAGES = 5;
+/** `#d` values per head read, within the relay's 256 values per filter. */
+const HEADS_PER_READ = 200;
 /** Kind 9: a channel message. */
 const MESSAGE_KIND = 9;
 /** How far before its claim an announcement may say it was posted. */
@@ -841,6 +844,48 @@ export function createCards(deps: Deps) {
     return rootOn(step, base, id, true);
   }
 
+  /** The pull requests of `target`'s repository this identity announced in
+   * its channel, by URL, from its newest messages there. */
+  async function ownAnnouncements(target: Target, signal: AbortSignal) {
+    const found = new Map<string, number>();
+    let until: number | undefined;
+    for (let page = 0; page < HISTORY_PAGES; page++) {
+      const messages = await deps.read(
+        [
+          {
+            kinds: [MESSAGE_KIND],
+            "#h": [target.channel],
+            authors: [viewer],
+            limit: HISTORY_PAGE,
+            ...(until === undefined ? {} : { until }),
+          },
+        ],
+        { signal },
+      );
+      for (const message of messages) {
+        if (message.pubkey !== viewer || tag(message, "h") !== target.channel)
+          continue;
+        const reference = parseGitHubReference(
+          announcementUrl(message.content) ?? "",
+        );
+        const link = message.content.split("\n").at(-1)?.trim();
+        if (
+          reference?.repository.toLowerCase() !== target.hook.repo ||
+          !link ||
+          keyOf(link) !== keyOf(reference.url)
+        )
+          continue;
+        const number = Number(reference.label.slice(1));
+        if (Number.isInteger(number) && number > 0) found.set(link, number);
+      }
+      if (messages.length < HISTORY_PAGE) break;
+      const oldest = Math.min(...messages.map((event) => event.created_at));
+      if (until !== undefined && oldest >= until) break;
+      until = oldest - 1;
+    }
+    return found;
+  }
+
   /** This identity's announcement of `pull` in `channel` since `claimed`
    * claimed it, as the relay holds it. */
   async function announced(
@@ -1033,6 +1078,36 @@ export function createCards(deps: Deps) {
             found.set(pull.url, pull.number);
         }
         if (events.length < HISTORY_PAGE) break;
+      }
+      // Its own announcements name every card it started, whoever wrote the
+      // head since and whatever that head says, so a device that never saw a
+      // card still finds it.
+      const announced = await ownAnnouncements(target, signal);
+      const urls = [...announced.keys()].filter((url) => !found.has(url));
+      const ds = await Promise.all(
+        urls.map((url) => pullId(target.hook.d, target.channel, url)),
+      );
+      for (let start = 0; start < ds.length; start += HEADS_PER_READ) {
+        const heads = await headsOf(
+          ds.slice(start, start + HEADS_PER_READ),
+          signal,
+        );
+        for (const [index, d] of ds.entries()) {
+          if (index < start || index >= start + HEADS_PER_READ) continue;
+          const head = heads.get(d);
+          const url = urls[index];
+          const number = url && announced.get(url);
+          if (!head || !url || !number) continue;
+          const state = parsePull(head)?.state;
+          if (
+            head.pubkey === viewer &&
+            tag(head, "op") !== "delete" &&
+            state !== "open" &&
+            state !== "draft"
+          )
+            continue;
+          found.set(url, number);
+        }
       }
       return found;
     },

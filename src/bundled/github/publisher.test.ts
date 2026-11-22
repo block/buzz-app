@@ -336,13 +336,17 @@ function fakeRelay() {
     const [h] = (filter["#h"] as string[] | undefined) ?? [];
     const authors = filter.authors as string[] | undefined;
     if ((filter.kinds as number[]).includes(9))
-      return [...posts.values()].filter(
-        (event) =>
-          messages.has(event.id) &&
-          tagOf(event, "h") === h &&
-          (!authors || authors.includes(event.pubkey)) &&
-          event.created_at >= ((filter.since as number) ?? 0),
-      );
+      return [...posts.values()]
+        .filter(
+          (event) =>
+            messages.has(event.id) &&
+            tagOf(event, "h") === h &&
+            (!authors || authors.includes(event.pubkey)) &&
+            event.created_at >= ((filter.since as number) ?? 0) &&
+            event.created_at <= ((filter.until as number) ?? Infinity),
+        )
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, (filter.limit as number) ?? Infinity);
     if (filter.artifact !== undefined) {
       const unsupported = Object.keys(filter).find(
         (key) =>
@@ -922,9 +926,17 @@ function runner(
     configArtifactWriter: relay.writer(mike, before),
     snapshotRead: relay.read,
     messages: {
-      send: (_channel: string, content: string) => {
+      send: (to: string, content: string) => {
         sent.push(content);
         const id = "m".repeat(64);
+        relay.posts.set(id, {
+          id,
+          pubkey: mike,
+          created_at: Math.floor(Date.now() / 1000),
+          kind: 9,
+          content,
+          tags: [["h", to]],
+        });
         relay.messages.add(id);
         return id;
       },
@@ -1302,6 +1314,45 @@ it("keeps reconciling a card someone else marked done, on the device that kept i
   expect(tagOf(relay.headOf(d), "status")).toBe("merged");
   later.stop();
 });
+
+it.each([
+  ["marked done", "update"],
+  ["deleted", "delete"],
+])(
+  "keeps reconciling a card someone else %s, from a device that never saw it",
+  async (_, op) => {
+    vi.useFakeTimers();
+    const relay = fakeRelay();
+    const first = runner([channel], relay);
+    const d = await cardD();
+    await vi.waitFor(() =>
+      expect(tagOf(relay.headOf(d), "root")).toBe("m".repeat(64)),
+    );
+    first.stop();
+    if (op === "delete") relay.remove(d);
+    else
+      relay.forge(
+        d,
+        (tags) =>
+          tags.map((entry) =>
+            entry[0] === "state" || entry[0] === "status"
+              ? [entry[0], "closed"]
+              : entry,
+          ),
+        serialize({ ...read().pull, state: "closed" }),
+      );
+
+    const fresh = runner([channel], relay, undefined, memoryStorage());
+    fresh.answer();
+    fresh.numbered(
+      new Map([[7, node({ state: "MERGED", mergedBy: { login: "dan" } })]]),
+    );
+    await vi.waitFor(() => expect(fresh.replies).toEqual(["Merged by dan"]));
+    expect(relay.headOf(d)?.pubkey).toBe(mike);
+    expect(tagOf(relay.headOf(d), "status")).toBe("merged");
+    fresh.stop();
+  },
+);
 
 it("never applies a read older than the card another of its devices wrote", async () => {
   const relay = fakeRelay();

@@ -16,6 +16,7 @@ import styles from "./GitHub.module.css";
 import type { PublisherStatus } from "./publisher";
 import {
   HOOK_TYPE,
+  HookChanged,
   follow,
   parseHook,
   repositoryOf,
@@ -176,31 +177,40 @@ function Hooks({
               : "Loading…"}
           </p>
         ) : (
-          <SettingsGroup>
-            {hooks.map((hook: Hook) => (
-              <PreferenceRow
-                key={hook.d}
-                title={hook.repo}
-                subtitle={
-                  hook.publisher === viewer
-                    ? (publisher?.get(channel, hook.d) ??
-                      "Published from your Buzz. Cards update while it is open.")
-                    : `Published from ${nameOf(hook.publisher)}’s Buzz. Cards update while it is open.`
-                }
-                trailing={
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <Button
-                      type="button"
-                      disabled={!!busy}
-                      onClick={() => setConfirming(hook)}
-                    >
-                      Unfollow
-                    </Button>
-                  </div>
-                }
-              />
-            ))}
-          </SettingsGroup>
+          <>
+            {!complete && (
+              <p role="status" className="m-0 text-body-sm text-subtle">
+                Reconnecting. This list may be out of date.
+              </p>
+            )}
+            <SettingsGroup>
+              {hooks.map((hook: Hook) => (
+                <PreferenceRow
+                  key={hook.d}
+                  title={hook.repo}
+                  subtitle={
+                    !complete
+                      ? `Last known publisher: ${hook.publisher === viewer ? "you" : nameOf(hook.publisher)}.`
+                      : hook.publisher === viewer
+                        ? (publisher?.get(channel, hook.d) ??
+                          "Published from your Buzz. Cards update while it is open.")
+                        : `Published from ${nameOf(hook.publisher)}’s Buzz. Cards update while it is open.`
+                  }
+                  trailing={
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Button
+                        type="button"
+                        disabled={!!busy}
+                        onClick={() => setConfirming(hook)}
+                      >
+                        Unfollow
+                      </Button>
+                    </div>
+                  }
+                />
+              ))}
+            </SettingsGroup>
+          </>
         )}
       </div>
       {confirming && (
@@ -222,7 +232,13 @@ function Hooks({
                 loading={busy === `unfollow:${confirming.d}`}
                 onClick={() =>
                   void run(`unfollow:${confirming.d}`, async () => {
-                    await unfollow(session, channel, confirming);
+                    try {
+                      await unfollow(session, channel, confirming);
+                    } catch (reason) {
+                      if (reason instanceof HookChanged)
+                        setConfirming(undefined);
+                      throw reason;
+                    }
                     setConfirming(undefined);
                   })
                 }

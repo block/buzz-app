@@ -3,7 +3,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { EventData } from "../../features/relay/events";
 import type { RelaySession } from "../../features/relay/session";
-import { follow, HOOK_TYPE, parseHook, repositoryOf, unfollow } from "./hooks";
+import {
+  follow,
+  HOOK_TYPE,
+  HookChanged,
+  parseHook,
+  repositoryOf,
+  unfollow,
+} from "./hooks";
 import { canFollow } from "./index";
 
 const channel = "11111111-1111-4111-8111-111111111111";
@@ -16,10 +23,16 @@ function session() {
   const snapshotRead = vi.fn(async (_filters: unknown, _options?: unknown) => [
     {
       id: head,
+      pubkey: viewer,
+      created_at: 1,
       kind: 45010,
+      content: JSON.stringify({ version: 1, repo: "block/buzz" }),
       tags: [
         ["d", "hook-d"],
         ["h", channel],
+        ["type", HOOK_TYPE],
+        ["repo", "block/buzz"],
+        ["publisher", viewer],
       ],
     },
   ]);
@@ -86,6 +99,26 @@ it("follows a repository with a hook artifact naming the viewer as its publisher
     follow(anonymous.session, channel, "block/buzz"),
   ).rejects.toThrow("not known");
   expect(anonymous.sign).not.toHaveBeenCalled();
+});
+
+it("unfollows nothing once the hook follows another repository or publisher", async () => {
+  for (const changed of [
+    { repo: "block/goose", publisher: viewer },
+    { repo: "block/buzz", publisher: "d".repeat(64) },
+  ]) {
+    const { session: held, sign } = session();
+    await expect(
+      unfollow(held, channel, {
+        d: "hook-d",
+        repo: changed.repo,
+        head,
+        author: changed.publisher,
+        createdAt: 1,
+        publisher: changed.publisher,
+      }),
+    ).rejects.toBeInstanceOf(HookChanged);
+    expect(sign).not.toHaveBeenCalled();
+  }
 });
 
 it("unfollows with a delete revision that carries no title or content", async () => {

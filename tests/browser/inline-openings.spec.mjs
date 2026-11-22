@@ -79,6 +79,60 @@ test.describe("Side panel", () => {
 test.describe("Inline", () => {
   test.use({ threadPlacement: "inline" });
 
+  test("a thread from the sidebar's preview or a link in another channel opens inline in its channel", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    const reply = app.append(
+      "primary",
+      "alpha",
+      "Linked reply",
+      true,
+      false,
+      root.id,
+    );
+    await page.locator('button[data-channel-id="beta"]').click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    // The sidebar's unread-thread preview goes to the thread's channel with
+    // the thread inline, not a tab.
+    await page.locator('button[data-channel-id="alpha"]').hover();
+    await page
+      .getByRole("dialog", { name: "Activity in Alpha" })
+      .getByRole("region", { name: "Unread threads" })
+      .getByRole("button", { name: /^Open unread thread/ })
+      .first()
+      .click();
+    await expect(thread(page)).toBeVisible();
+    expect(await address(page)).toMatchObject({ channelId: "alpha" });
+    expect((await address(page)).inline).toMatch(/^[a-f0-9]{64}$/);
+    expect(await address(page)).not.toHaveProperty("threadRootId");
+    await expect(side(page).getByRole("tab")).toHaveCount(0);
+    await close(thread(page)).click();
+    await expect(thread(page)).toHaveCount(0);
+    // So does a link in another channel to a reply in that thread, as the
+    // app copies one.
+    await page.locator('button[data-channel-id="beta"]').click();
+    const message = app.append(
+      "primary",
+      "beta",
+      `See <buzz://message?channel=alpha&id=${reply.id}&thread=${root.id}>`,
+    );
+    await activate(
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
+        .getByRole("link", { name: /Alpha$/ }),
+    );
+    await expect(thread(page).getByText("Linked reply")).toBeVisible();
+    await expect
+      .poll(() => address(page))
+      .toMatchObject({ channelId: "alpha", inline: root.id });
+    await expect(side(page).getByRole("tab")).toHaveCount(0);
+  });
+
   test("a pull request and a profile open over the conversation; Open as tab hands them to a tab", async ({
     page,
     app,

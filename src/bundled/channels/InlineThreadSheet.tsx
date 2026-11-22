@@ -27,6 +27,7 @@ export function InlineThreadSheet({
   seen,
   close,
   moveToTab,
+  onResolvedRoot,
 }: {
   channelId: string;
   rootId: string;
@@ -38,6 +39,9 @@ export function InlineThreadSheet({
   close(): void;
   /** Moves the thread to a side-pane tab. */
   moveToTab(): void;
+  /** The thread's verified root, which a link to one of its replies names
+   * only once the reply is read. */
+  onResolvedRoot?: ((rootId: string) => void) | undefined;
 }) {
   const view = useComposerScope();
   const form = useComposerForm(view?.handle);
@@ -68,7 +72,11 @@ export function InlineThreadSheet({
       >
         {/* The thread's own view, for the details and panels its rows open. */}
         <ComposerScopeProvider rootId={rootId}>
-          <ConversationThread messageId={rootId} focusRequest={1} />
+          <ConversationThread
+            messageId={rootId}
+            focusRequest={1}
+            onResolvedRoot={onResolvedRoot}
+          />
           <LayerReader channelId={channelId} />
         </ComposerScopeProvider>
       </DetailsSheet>

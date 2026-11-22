@@ -1695,11 +1695,55 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
+  // Read as a visit is applied, so tab changes don't reapply it.
+  const routing = useRef({ tabs: tabState.tabs, canHold: false });
+  routing.current = {
+    tabs: tabState.tabs,
+    canHold: !threadPane && !!composes && current?.channelType !== "solo",
+  };
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
     if (!navigation || navigation.signal.aborted) return;
     if (draft || composingMessage) open(undefined);
+    // A thread opened by its address, as from a link to it, the sidebar or
+    // Activity, reads inline over this conversation as one opened from its
+    // row does, unless a tab already shows it. The visit becomes that
+    // conversation with the thread inline; the message it named, if a reply,
+    // is not singled out in the thread. Only a known root goes inline: the
+    // timeline's, or the address's hint. A bare link to a message outside
+    // the timeline still opens its tab, which reads it or says it's gone.
+    const routedTarget = navigation.target;
+    if (
+      routedThread &&
+      (exact?.rootId || requestedThread) &&
+      routedTarget.kind === "conversation" &&
+      !routedTarget.detail &&
+      !routedTarget.panel &&
+      !routedTarget.forward &&
+      !routedTarget.layer &&
+      placeOpening(
+        { kind: "thread" },
+        {
+          hasTab: routing.current.tabs.some(
+            (tab) =>
+              tab.kind === "thread" &&
+              tab.channelId === routedThread.channelId &&
+              rootOfTab(tab) === routedThread.rootId,
+          ),
+          canHold: routing.current.canHold,
+        },
+      ) === "inline"
+    ) {
+      const {
+        messageId: _message,
+        threadRootId: _root,
+        context: _context,
+        ...conversation
+      } = routedTarget;
+      if (navigation.resolve({ ...conversation, inline: routedThread.rootId }))
+        return;
+    }
     // Each visit is applied once: Back/Forward switch tabs, never close them,
     // and a closed tab is not reopened by a re-render of the same visit. A
     // message still resolving its placement waits rather than recording.
@@ -1812,6 +1856,8 @@ function ChannelWorkspace({
     handoff?.activityThread,
     exact?.request,
     exact?.inTimeline,
+    exact?.rootId,
+    requestedThread,
     routedThread,
     detailReply,
     detailSource,
@@ -1963,6 +2009,30 @@ function ChannelWorkspace({
   const closeInline = (rootId: string) => {
     const dismissal = inlineDismissal(rootId);
     if (dismissal) navigator.dismiss(dismissal.visits, dismissal.fallback);
+  };
+  // A link to a reply names the reply until the thread reads its root; the
+  // visit then names the root, so the thread is the same one its row opens.
+  const canonicalInline = (from: string, root: string) => {
+    const target = navigator?.snapshot().entry.target;
+    if (
+      !navigator ||
+      from === root ||
+      target?.kind !== "conversation" ||
+      target.inline !== from
+    )
+      return;
+    const { layer, ...rest } = target;
+    navigator.dismiss(
+      (visit) =>
+        sameScope(visit, target) &&
+        visit.kind === "conversation" &&
+        visit.inline === from,
+      {
+        ...rest,
+        inline: root,
+        ...(layer && layer.rootId !== from ? { layer } : {}),
+      },
+    );
   };
   // Move to side panel hands the thread over: its inline visits retire and
   // its tab opens in their place. The draft is keyed by thread, so it follows.
@@ -2924,6 +2994,7 @@ function ChannelWorkspace({
           seen={seen}
           close={() => closeInline(inlineThread)}
           moveToTab={() => moveInlineToTab(inlineThread)}
+          onResolvedRoot={(root) => canonicalInline(inlineThread, root)}
         />
       )}
       {current && <LayerReader channelId={current.id} />}

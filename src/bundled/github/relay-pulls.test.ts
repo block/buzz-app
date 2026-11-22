@@ -244,6 +244,55 @@ it("reads each shown announcement's cards once when the channel's sync fails for
   expect(reads).toHaveLength(2);
 });
 
+it("ends a fallback read's trust once the sync recovers without the hook", async () => {
+  const { session, views, publish } = fakeSession((filter) =>
+    (filter["#root"] as string[] | undefined)?.[0] === root
+      ? [head(7)]
+      : (filter["#d"] as string[] | undefined)?.[0] === "hook-d"
+        ? [hook()]
+        : [],
+  );
+  const pulls = createRelayPulls(session);
+  pulls.watch(channel, root);
+  const view = views[0];
+  if (!view) throw new Error("no view");
+  publish(view, [], "error");
+  await vi.waitFor(() => expect(pulls.byRoot(root, mike)?.pull.number).toBe(7));
+  // Unfollowed: the recovered sync holds the card but no hook.
+  publish(view, [head(7)], "live");
+  expect(pulls.byRoot(root, mike)).toBeUndefined();
+});
+
+it("drops a fallback read that lands after the sync recovers", async () => {
+  let land: (() => void) | undefined;
+  const gate = new Promise<void>((resolve) => {
+    land = resolve;
+  });
+  const card = head(7);
+  const { session, views, publish } = fakeSession((filter) =>
+    (filter["#root"] as string[] | undefined)?.[0] === root
+      ? [card]
+      : (filter["#d"] as string[] | undefined)?.[0] === "hook-d"
+        ? [hook()]
+        : [],
+  );
+  const read = session.snapshotRead as NonNullable<typeof session.snapshotRead>;
+  (session as { snapshotRead: typeof read }).snapshotRead = async (...args) => {
+    await gate;
+    return read(...args);
+  };
+  const pulls = createRelayPulls(session);
+  pulls.watch(channel, root);
+  const view = views[0];
+  if (!view) throw new Error("no view");
+  publish(view, [], "error");
+  publish(view, [card], "live");
+  land?.();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(pulls.byRoot(root, mike)).toBeUndefined();
+});
+
 it("keeps a channel's sync a while after its last reader, and one sync for all readers", () => {
   vi.useFakeTimers();
   const { session, views, publish } = fakeSession();

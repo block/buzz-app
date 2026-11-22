@@ -165,6 +165,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         relay={ctx.relay}
         channelContext={channelContext}
         publisher={gh ? publisher : undefined}
+        nameOf={nameOf}
       />
     ),
   });

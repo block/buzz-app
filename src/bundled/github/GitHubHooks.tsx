@@ -5,6 +5,7 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { ARTIFACT_REVISION_KIND } from "../../features/relay/artifact-sync";
 import { GithubLogoIcon } from "../../shared/design-system/icons/index";
+import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Header, InlineHeader } from "../../shared/design-system/ui/Header";
@@ -63,10 +64,12 @@ function Hooks({
   session,
   channel,
   publisher,
+  nameOf,
 }: {
   session: RelaySession;
   channel: string;
   publisher: PublisherStatus | undefined;
+  nameOf: (pubkey: string) => string;
 }) {
   const { status, hooks } = useHooks(session, channel);
   useSyncExternalStore(
@@ -76,9 +79,12 @@ function Hooks({
   const [repo, setRepo] = useState("");
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState("");
+  const [confirming, setConfirming] = useState<Hook>();
   const name = repositoryOf(repo);
   const viewer = session.viewer;
   const able = !!viewer && !!publisher;
+  // Only a complete, current list can say a repository isn't followed yet.
+  const complete = status === "live";
   const run = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
     setError("");
@@ -91,6 +97,11 @@ function Hooks({
     }
   };
   const duplicate = !!name && hooks.some((hook) => hook.repo === name);
+  const ready = !!name && able && complete && !duplicate && !busy;
+  const whose = (hook: Hook) =>
+    hook.publisher === viewer
+      ? "Your Buzz"
+      : `${nameOf(hook.publisher)}’s Buzz`;
   return (
     <section className={styles.hooks} aria-label="GitHub repositories">
       <Header
@@ -101,7 +112,7 @@ function Hooks({
         aria-label="Follow a repository"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!name || !able || duplicate || busy) return;
+          if (!ready) return;
           void run("follow", async () => {
             await follow(session, channel, name);
             setRepo("");
@@ -121,7 +132,9 @@ function Hooks({
                 ? "This channel already follows it."
                 : repo.trim() && !name
                   ? "Enter a repository as owner/repo."
-                  : undefined
+                  : name && able && !complete
+                    ? "Following waits until this channel’s followed repositories are up to date."
+                    : undefined
             }
           >
             <Input
@@ -135,11 +148,7 @@ function Hooks({
             />
           </Field>
           <div className="flex flex-wrap items-center justify-end gap-3">
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={!name || !able || duplicate || !!busy}
-            >
+            <Button type="submit" variant="primary" disabled={!ready}>
               Follow
             </Button>
           </div>
@@ -156,11 +165,15 @@ function Hooks({
           <p role="status" className="m-0 text-body-sm text-subtle">
             This community can’t list followed repositories.
           </p>
+        ) : status === "restricted" ? (
+          <p role="status" className="m-0 text-body-sm text-subtle">
+            You can’t read this channel’s followed repositories.
+          </p>
         ) : !hooks.length ? (
           <p role="status" className="m-0 text-body-sm text-subtle">
-            {status === "loading"
-              ? "Loading…"
-              : "No repositories followed in this channel."}
+            {status === "live"
+              ? "No repositories followed in this channel."
+              : "Loading…"}
           </p>
         ) : (
           <SettingsGroup>
@@ -172,18 +185,14 @@ function Hooks({
                   hook.publisher === viewer
                     ? (publisher?.get(channel, hook.d) ??
                       "Published from your Buzz. Cards update while it is open.")
-                    : "Published from a member's Buzz. Cards update while it is open."
+                    : `Published from ${nameOf(hook.publisher)}’s Buzz. Cards update while it is open.`
                 }
                 trailing={
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <Button
                       type="button"
                       disabled={!!busy}
-                      onClick={() =>
-                        void run(`unfollow:${hook.d}`, () =>
-                          unfollow(session, channel, hook),
-                        )
-                      }
+                      onClick={() => setConfirming(hook)}
                     >
                       Unfollow
                     </Button>
@@ -194,6 +203,36 @@ function Hooks({
           </SettingsGroup>
         )}
       </div>
+      {confirming && (
+        <AlertDialog
+          title={`Unfollow ${confirming.repo}?`}
+          description={`${whose(confirming)} stops posting its pull requests here, and their cards turn back into plain links for everyone in this channel.`}
+          pending={busy === `unfollow:${confirming.d}`}
+          onClose={() => setConfirming(undefined)}
+          actions={
+            <>
+              <Button
+                disabled={!!busy}
+                onClick={() => setConfirming(undefined)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={busy === `unfollow:${confirming.d}`}
+                onClick={() =>
+                  void run(`unfollow:${confirming.d}`, async () => {
+                    await unfollow(session, channel, confirming);
+                    setConfirming(undefined);
+                  })
+                }
+              >
+                Unfollow
+              </Button>
+            </>
+          }
+        />
+      )}
     </section>
   );
 }
@@ -202,8 +241,10 @@ export function GitHubHooks({
   relay,
   channelContext,
   publisher,
+  nameOf,
 }: {
   relay: RelayData;
+  nameOf: (pubkey: string) => string;
   /** This device's publishing, where it can publish. */
   publisher?: PublisherStatus | undefined;
 } & Pick<PanelProps, "channelContext">) {
@@ -225,6 +266,7 @@ export function GitHubHooks({
       session={state.session}
       channel={channelContext.channelId}
       publisher={publisher}
+      nameOf={nameOf}
     />
   );
 }

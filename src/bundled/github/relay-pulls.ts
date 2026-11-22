@@ -35,6 +35,13 @@ type Synced = {
   roots: Set<string>;
   /** Each watched root's cards and their hooks, read once the sync fails. */
   read: Map<string, readonly VerifiedEvent[]>;
+  /** Bumped when the sync recovers, so a read still on its way is dropped. */
+  generation: number;
+};
+
+const failed = (entry: Synced) => {
+  const { status } = entry.view.snapshot();
+  return status === "error" || status === "unsupported";
 };
 
 const READ_CARDS = 100;
@@ -102,8 +109,17 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
    * channel's sync has failed for good. */
   const recover = (channel: string, entry: Synced) => {
     const read = session.snapshotRead;
-    const status = entry.view.snapshot().status;
-    if (!read || (status !== "error" && status !== "unsupported")) return;
+    // Reads stand in only while the sync is down; once it is back, its hooks
+    // alone decide trust, so an unfollow it carries ends trust at once.
+    if (!failed(entry)) {
+      if (entry.read.size) {
+        entry.read.clear();
+        entry.generation++;
+      }
+      return;
+    }
+    if (!read) return;
+    const { generation } = entry;
     for (const root of entry.roots) {
       if (entry.read.has(root)) continue;
       entry.read.set(root, []);
@@ -145,7 +161,12 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
               {},
             )
           : [];
-        if (synced.get(channel) !== entry) return;
+        if (
+          synced.get(channel) !== entry ||
+          entry.generation !== generation ||
+          !failed(entry)
+        )
+          return;
         entry.read.set(root, [...cards, ...found] as VerifiedEvent[]);
         rebuild();
       })().catch(() => {});
@@ -177,6 +198,7 @@ export function createRelayPulls(session: RelaySession): RelayPulls {
             readers: 0,
             roots: new Set(),
             read: new Map(),
+            generation: 0,
           };
           created.stop = view.subscribe(() => {
             recover(channel, created);

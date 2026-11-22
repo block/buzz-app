@@ -8,6 +8,7 @@ import type { Hook } from "./hooks";
 import {
   ABANDONED_CLAIM_S,
   ANNOUNCE_GRACE_S,
+  START_SPREAD_MS,
   MAX_CHANNELS,
   POLL_MS,
   ROOT_ATTEMPTS,
@@ -895,6 +896,8 @@ function runner(
   channels = [channel],
   relay = fakeRelay(),
   before?: (event: EventData) => void,
+  storage = memoryStorage(),
+  random = () => 0,
 ) {
   const hookEvent: EventData = {
     id: "1".repeat(64),
@@ -982,7 +985,7 @@ function runner(
     },
   ) as unknown as GitHubCli;
   const status = createPublisherStatus();
-  const stop = startPublisher(relayData, gh, status, memoryStorage());
+  const stop = startPublisher(relayData, gh, status, storage, random);
   return {
     relay,
     hooks,
@@ -1062,6 +1065,22 @@ it("keeps polls through a reloading hook view, and says when the hook view fails
   expect(run.status.get(channel, "hook-d")).toMatch(/needs a relay/);
   run.hooks.set({ status: "live", events: [] });
   expect(run.status.get(channel, "hook-d")).toBeUndefined();
+  run.stop();
+});
+
+it("spreads each hook's first poll, so clients that reconnect together don't read at once", async () => {
+  vi.useFakeTimers();
+  const run = runner(
+    [channel],
+    fakeRelay(),
+    undefined,
+    memoryStorage(),
+    () => 0.5,
+  );
+  await vi.advanceTimersByTimeAsync(START_SPREAD_MS / 2 - 1);
+  expect(run.gh).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await vi.waitFor(() => expect(run.gh).toHaveBeenCalledTimes(1));
   run.stop();
 });
 
@@ -1215,6 +1234,72 @@ it("keeps every other card current when GitHub can't find one of them", async ()
   );
   await vi.waitFor(() => expect(later.replies).toEqual(["Merged by dan"]));
   expect(later.status.get(channel, "hook-d")).toBeUndefined();
+  later.stop();
+});
+
+it("keeps reconciling a card someone else wrote on top of, on any device", async () => {
+  vi.useFakeTimers();
+  const relay = fakeRelay();
+  const first = runner([channel], relay);
+  const d = await cardD();
+  await vi.waitFor(() =>
+    expect(tagOf(relay.headOf(d), "root")).toBe("m".repeat(64)),
+  );
+  first.stop();
+  relay.forge(
+    d,
+    (tags) => tags,
+    serialize({ ...read().pull, title: "Edited" }),
+  );
+
+  const later = runner([channel], relay);
+  later.answer();
+  later.numbered(
+    new Map([[7, node({ state: "MERGED", mergedBy: { login: "dan" } })]]),
+  );
+  await vi.waitFor(() => expect(later.replies).toEqual(["Merged by dan"]));
+  expect(relay.headOf(d)?.pubkey).toBe(mike);
+  expect(tagOf(relay.headOf(d), "status")).toBe("merged");
+  later.stop();
+});
+
+it("keeps reconciling a card someone else marked done, on the device that kept it", async () => {
+  vi.useFakeTimers();
+  const relay = fakeRelay();
+  const storage = memoryStorage();
+  const first = runner([channel], relay, undefined, storage);
+  const d = await cardD();
+  await vi.waitFor(() =>
+    expect(tagOf(relay.headOf(d), "root")).toBe("m".repeat(64)),
+  );
+  await vi.advanceTimersByTimeAsync(POLL_MS);
+  await vi.waitFor(() =>
+    expect(
+      [...storage.items]
+        .filter(([key]) => key.startsWith("buzz.github.publisher.open"))
+        .join(),
+    ).toContain("/pull/7"),
+  );
+  first.stop();
+  relay.forge(
+    d,
+    (tags) =>
+      tags.map((entry) =>
+        entry[0] === "state" || entry[0] === "status"
+          ? [entry[0], "closed"]
+          : entry,
+      ),
+    serialize({ ...read().pull, state: "closed" }),
+  );
+
+  const later = runner([channel], relay, undefined, storage);
+  later.answer();
+  later.numbered(
+    new Map([[7, node({ state: "MERGED", mergedBy: { login: "dan" } })]]),
+  );
+  await vi.waitFor(() => expect(later.replies).toEqual(["Merged by dan"]));
+  expect(relay.headOf(d)?.pubkey).toBe(mike);
+  expect(tagOf(relay.headOf(d), "status")).toBe("merged");
   later.stop();
 });
 

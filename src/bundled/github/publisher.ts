@@ -19,6 +19,9 @@ import { PULL_TYPE, announcementUrl } from "./relay-pull";
 
 export const POLL_MS = 60_000;
 const MAX_BACKOFF_MS = 15 * 60_000;
+/** How widely each hook's first poll is spread, so clients that reconnect
+ * together don't all read at once. */
+export const START_SPREAD_MS = 30_000;
 /** How soon to try a new announcement's root again: the card can name it only
  * once the relay holds the message. */
 const ROOT_RETRY_MS = 5_000;
@@ -46,6 +49,7 @@ const ANNOUNCEMENTS = 50;
 const DEVICE_KEY = "buzz.github.publisher.device";
 const PENDING_KEY = "buzz.github.publisher.pending";
 const OWN_KEY = "buzz.github.publisher.own";
+const OPEN_KEY = "buzz.github.publisher.open";
 
 /** `github.pull` content v1, field for field. */
 export type Pull = {
@@ -498,6 +502,8 @@ export type Deps = Readonly<{
   read: SnapshotRead;
   messages: Pick<RelaySession["messages"], "send" | "reply">;
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
+  /** In [0, 1): spreads first polls and retries across clients. */
+  random?: () => number;
 }>;
 
 /** One round's result for a hook: whether to come back soon, what to tell
@@ -569,6 +575,9 @@ export function createCards(deps: Deps) {
       return undefined;
     }
   };
+
+  const openKey = (target: Target) =>
+    `${OPEN_KEY}:${deps.scope}:${target.channel}:${target.hook.d}`;
 
   /** The head a read found, or what this device last wrote when the read
    * holds an older revision of this identity's. Another writer's head is
@@ -965,9 +974,26 @@ export function createCards(deps: Deps) {
     },
 
     /** The open pull requests this identity keeps cards for under
-     * `target`'s hook, by URL, as the relay holds them. */
+     * `target`'s hook, by URL: those this device last knew of, and those the
+     * relay holds, including cards whose head someone else wrote on top. */
     async openCards(target: Target, signal: AbortSignal) {
       const found = new Map<string, number>();
+      try {
+        const known: unknown = JSON.parse(
+          storage.getItem(openKey(target)) ?? "[]",
+        );
+        if (Array.isArray(known))
+          for (const entry of known)
+            if (
+              Array.isArray(entry) &&
+              typeof entry[0] === "string" &&
+              Number.isInteger(entry[1]) &&
+              entry[1] > 0
+            )
+              found.set(entry[0], entry[1]);
+      } catch {
+        // Nothing kept; the relay's answer stands alone.
+      }
       for (let page = 0; page < HISTORY_PAGES; page++) {
         const events = await deps.read(
           [
@@ -987,19 +1013,37 @@ export function createCards(deps: Deps) {
         for (const event of events) {
           const pull = parsePull(event);
           if (
-            event.pubkey === viewer &&
-            tag(event, "h") === target.channel &&
-            tag(event, "hook") === target.hook.d &&
-            tag(event, "op") !== "delete" &&
-            (pull?.state === "open" || pull?.state === "draft") &&
-            pull.repo === target.hook.repo &&
-            pull.number > 0
+            !pull ||
+            tag(event, "h") !== target.channel ||
+            tag(event, "hook") !== target.hook.d ||
+            tag(event, "op") === "delete" ||
+            pull.repo !== target.hook.repo ||
+            pull.number <= 0
+          )
+            continue;
+          // Another writer's head is no word on the pull request's state,
+          // only on which card it is, and only when the ID is this hook's.
+          if (event.pubkey === viewer) {
+            if (pull.state === "open" || pull.state === "draft")
+              found.set(pull.url, pull.number);
+          } else if (
+            tag(event, "d") ===
+            (await pullId(target.hook.d, target.channel, pull.url))
           )
             found.set(pull.url, pull.number);
         }
         if (events.length < HISTORY_PAGE) break;
       }
       return found;
+    },
+
+    /** Keeps `open` for the next start, so a card someone else's head hides
+     * from the relay's answer is still read. */
+    rememberOpen(target: Target, open: ReadonlyMap<string, number>) {
+      keep(
+        openKey(target),
+        JSON.stringify([...open].slice(-HISTORY_PAGE * HISTORY_PAGES)),
+      );
     },
   };
 }
@@ -1057,6 +1101,7 @@ function publish(
 ) {
   const lifetime = new AbortController();
   const cards = createCards(deps);
+  const random = deps.random ?? Math.random;
   /** One sync per `MAX_CHANNELS` channels, by their sorted IDs. */
   let hookViews = new Map<string, { view: View; stop(): void } | undefined>();
   const polls = new Map<string, { target: Target; stop(): void }>();
@@ -1129,6 +1174,7 @@ function publish(
             if (outcome.settled.has(pull.url)) open.delete(pull.url);
           } else if (outcome.carded.has(pull.url) && !open.has(pull.url))
             open.set(pull.url, pull.number);
+        cards.rememberOpen(target, open);
         report(outcome.problems.join(" ") || undefined);
         next = outcome.again ? ROOT_RETRY_MS : POLL_MS;
         delay = POLL_MS;
@@ -1136,11 +1182,11 @@ function publish(
         if (signal.aborted) return;
         report(`${target.hook.repo} couldn't be read: ${reason(error)}`);
         delay = Math.min(delay * 2, MAX_BACKOFF_MS);
-        next = delay;
+        next = delay / 2 + (random() * delay) / 2;
       }
       if (!signal.aborted) timer = setTimeout(() => void tick(), next);
     };
-    timer = setTimeout(() => void tick(), 0);
+    timer = setTimeout(() => void tick(), random() * START_SPREAD_MS);
     return () => {
       stopped.abort();
       clearTimeout(timer);
@@ -1261,6 +1307,7 @@ export function startPublisher(
   gh: GitHubCli | undefined,
   status: PublisherStatus,
   storage?: Deps["storage"],
+  random: () => number = Math.random,
 ): () => void {
   if (!gh) return () => {};
   const kept = storage ?? localStorage;
@@ -1289,6 +1336,7 @@ export function startPublisher(
           read,
           messages: session.messages,
           storage: kept,
+          random,
         },
         status,
       ),

@@ -98,6 +98,23 @@ function LinkPreviewSetup({
   );
 }
 
+function shownWithin(element: HTMLElement, root: HTMLElement): boolean {
+  if (element.closest("[inert]")) return false;
+  const view = root.ownerDocument.defaultView;
+  if (!view) return false;
+  const { visibility } = view.getComputedStyle(element);
+  if (visibility === "hidden" || visibility === "collapse") return false;
+  for (
+    let node: HTMLElement | null = element;
+    node && node !== root;
+    node = node.parentElement
+  ) {
+    if (node.hidden || view.getComputedStyle(node).display === "none")
+      return false;
+  }
+  return true;
+}
+
 export function LinkPreviews({
   urls,
   messageId,
@@ -186,13 +203,18 @@ export function LinkPreviews({
     if (!root) return;
     const active = root.ownerDocument.activeElement;
     if (active && active !== root.ownerDocument.body) return;
-    const next =
-      root.querySelector<HTMLElement>("[data-link-preview-setup]") ??
-      root.querySelector<HTMLElement>(
+    const candidates = [
+      ...root.querySelectorAll<HTMLElement>("[data-link-preview-setup]"),
+      ...root.querySelectorAll<HTMLElement>(
         "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])",
-      ) ??
-      root;
-    next.focus({ preventScroll: true });
+      ),
+    ];
+    for (const candidate of candidates) {
+      if (!shownWithin(candidate, root)) continue;
+      candidate.focus({ preventScroll: true });
+      if (root.ownerDocument.activeElement === candidate) return;
+    }
+    root.focus({ preventScroll: true });
   });
   if (!registry || !matched.length) return null;
   const shown = open ? cards : cards.slice(0, FOLD_AFTER);

@@ -624,3 +624,75 @@ it("focuses the labelled previews group when a ready preview has nothing to focu
     screen.getByRole("group", { name: "Link previews" }),
   );
 });
+
+it("skips hidden controls when a focused setup card becomes a ready preview", () => {
+  const state = provider("needs-setup");
+  const Hidden = ({ url }: LinkPreviewProps) => (
+    <div>
+      <a href={url} hidden>
+        Hidden {url}
+      </a>
+      <span style={{ display: "none" }}>
+        <button type="button">Collapsed</button>
+      </span>
+      <a href={url} style={{ visibility: "hidden" }}>
+        Invisible {url}
+      </a>
+      <div inert>
+        <button type="button">Inert</button>
+      </div>
+      <button type="button">Open {url}</button>
+    </div>
+  );
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, Hidden),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      settings={settingsWith()}
+    />,
+  );
+  screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
+  act(() => state.set("ready"));
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Open https://tracker.example/1" }),
+  );
+});
+
+it("focuses the labelled previews group when a ready preview's only control is hidden", () => {
+  const state = provider("needs-setup");
+  const Hidden = ({ url }: LinkPreviewProps) => (
+    <p>
+      Preview {url}
+      <a href={url} hidden>
+        Hidden
+      </a>
+    </p>
+  );
+  render(
+    <LinkPreviews
+      urls={["https://tracker.example/1"]}
+      messageId="m"
+      registry={reader([
+        withStatus(
+          entry("tracker", () => true, 0, Hidden),
+          state,
+        ),
+      ])}
+      onOpenLink={() => true}
+      settings={settingsWith()}
+    />,
+  );
+  screen.getByRole("button", { name: /^Set up Tracker/ }).focus();
+  act(() => state.set("ready"));
+  expect(document.activeElement).toBe(
+    screen.getByRole("group", { name: "Link previews" }),
+  );
+  expect(document.activeElement).not.toBe(document.body);
+});

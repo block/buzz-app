@@ -61,7 +61,12 @@ test("ordinary thread reveals its first content already positioned at the bottom
     ).toBeFocused();
     await expect(history).toHaveAttribute("data-positioning");
     await expect(history.getByRole("status")).toHaveText("Loading thread…");
-    await expect(history.getByRole("status")).toBeInViewport();
+    // The status is for screen readers; message-shaped placeholders show.
+    const placeholders = history.locator("[data-message-loading]");
+    await expect(placeholders).toBeInViewport();
+    await expect(
+      history.locator('img[src="/buzz-loading-mark.svg"]'),
+    ).toHaveCount(0);
     await expect(history.locator("[data-thread-rows]")).toHaveAttribute(
       "inert",
     );

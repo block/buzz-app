@@ -12,7 +12,11 @@ export function MessageLoading({
   return (
     <div className={styles.threadLoading}>
       <LoadingRegion pending label={label} statusVisibility="screen-reader">
-        <div className={loading.messages} aria-hidden="true">
+        <div
+          className={loading.messages}
+          aria-hidden="true"
+          data-message-loading=""
+        >
           {[0, 1, 2].map((row) => (
             <div key={row} className={loading.row}>
               <span className={`${loading.box} ${loading.avatar}`} />

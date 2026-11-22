@@ -20,6 +20,7 @@ import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
+import { seedThreadPlacement } from "./thread-placement.mjs";
 import { validTypingTemplate } from "../../src/features/relay/typing-protocol.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -2781,11 +2782,7 @@ export const test = base.extend({
           observer.observe(document, { childList: true, subtree: true });
         });
       if (threadPlacement !== "inline")
-        await page.addInitScript((placement) => {
-          // Seed once, so a choice made during the journey survives reloads.
-          const key = "buzz-thread-placement.v1";
-          if (!localStorage.getItem(key)) localStorage.setItem(key, placement);
-        }, threadPlacement);
+        await seedThreadPlacement(page, threadPlacement);
       if (!threadIntro)
         await page.addInitScript((viewer) => {
           localStorage.setItem(

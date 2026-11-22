@@ -984,10 +984,21 @@ test("Settings loads and publishes the selected community profile", async ({
   await expect(button(page, "Edit profile")).toHaveCount(0);
   await name.fill("Do not save");
   await expect(name).toHaveValue("Do not save");
+  // Another section would hide the draft, so choosing one asks first.
+  const discard = page.getByRole("alertdialog", { name: "Discard changes?" });
   await button(page, "Manage plugins").click();
+  await discard
+    .getByRole("button", { name: "Keep editing", exact: true })
+    .click();
+  await expect(name).toHaveValue("Do not save");
+  await button(page, "Manage plugins").click();
+  await discard
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
   await expect(name).toBeHidden();
   await button(page, "Profile").click();
-  await expect(name).toHaveValue("Do not save");
+  await expect(name).toHaveValue("Fixture Reader");
+  await name.fill("Do not save");
   await button(page, "Cancel").press("Enter");
   await expect(name).toBeFocused();
   await expect(name).toHaveValue("Fixture Reader");

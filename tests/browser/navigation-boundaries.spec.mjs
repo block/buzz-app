@@ -106,9 +106,10 @@ test("cold Settings provider waits for its plugin activation", async ({
   }
 });
 
-// Native Forward must retain the actual editor node while its destination fails;
-// owner tests cover pending activation and Save/Discard decision ordering.
-test("native Settings traversal retains a dirty Profile behind an unavailable provider", async ({
+// Native Forward to another section asks before it hides a dirty Profile, and
+// Keep editing retains the actual editor node; owner tests cover pending
+// activation and Save/Discard decision ordering.
+test("native Settings traversal asks before an unavailable provider hides a dirty Profile", async ({
   page,
   app,
 }) => {
@@ -132,22 +133,35 @@ test("native Settings traversal retains a dirty Profile behind an unavailable pr
     .getByRole("dialog", { name: "Settings", exact: true })
     .getByRole("textbox", { name: "Display name", exact: true });
   await expect(name).toBeEnabled();
+  await expect(name).toHaveValue("Fixture Reader");
   await name.fill("Keep this Profile draft");
   await name.evaluate((element) => {
     window.retainedDraftEditor = element;
   });
+  const warning = page.getByRole("alertdialog", {
+    name: "Discard changes?",
+    exact: true,
+  });
   await page.goForward();
+  await warning
+    .getByRole("button", { name: "Keep editing", exact: true })
+    .click();
+  await expect(name).toHaveValue("Keep this Profile draft");
+  expect(
+    await name.evaluate((element) => element === window.retainedDraftEditor),
+  ).toBe(true);
+  await page.goForward();
+  await warning
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
   await expect(
     page.getByText("This page isn’t available", { exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(() => window.retainedDraftEditor.isConnected),
-  ).toBe(true);
+  ).toBe(false);
   await page.goBack();
-  await expect(name).toHaveValue("Keep this Profile draft");
-  expect(
-    await name.evaluate((element) => element === window.retainedDraftEditor),
-  ).toBe(true);
+  await expect(name).toHaveValue("Fixture Reader");
 });
 
 test("Messages default resolution returns opened to cold and warm callers without an extra visit", async ({

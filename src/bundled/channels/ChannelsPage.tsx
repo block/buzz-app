@@ -34,7 +34,7 @@ import {
   type PanelLayer as PanelLayerAddress,
 } from "../../features/messages/view-layer";
 import { LayerReader } from "../../features/messages/LayerReader";
-import { inlineMedia, placeOpening } from "./placement";
+import { type InlineHost, inlineMedia, placeIn } from "./placement";
 import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import type { Seen } from "../../features/seen/service";
 import {
@@ -1695,12 +1695,23 @@ function ChannelWorkspace({
     panelTrigger,
     splitTrigger,
   } = secondary;
-  // Read as a visit is applied, so tab changes don't reapply it.
-  const routing = useRef({ tabs: tabState.tabs, canHold: false });
-  routing.current = {
-    tabs: tabState.tabs,
-    canHold: !threadPane && !!composes && current?.channelType !== "solo",
+  // What this page can hold inline, the one input to every opening's
+  // placement. Read when something opens, so it never re-renders rows.
+  const inlineHost = useRef<InlineHost>({
+    addressed: false,
+    channelId: undefined,
+    composes: false,
+    threadsInPane: false,
+  });
+  inlineHost.current = {
+    addressed: !!navigator && addressed?.channelId === currentId,
+    channelId: currentId,
+    composes: !!composes && current?.channelType !== "solo",
+    threadsInPane: !!threadPane,
   };
+  // Read as a visit is applied, so tab changes don't reapply it.
+  const routingTabs = useRef(tabState.tabs);
+  routingTabs.current = tabState.tabs;
   useLayoutEffect(() => {
     // Navigation temporarily withdraws the old presentation while preparing
     // the next destination. That handoff must not dismiss saved thread tabs.
@@ -1722,17 +1733,16 @@ function ChannelWorkspace({
       !routedTarget.panel &&
       !routedTarget.forward &&
       !routedTarget.layer &&
-      placeOpening(
+      placeIn(
         { kind: "thread" },
-        {
-          hasTab: routing.current.tabs.some(
-            (tab) =>
-              tab.kind === "thread" &&
-              tab.channelId === routedThread.channelId &&
-              rootOfTab(tab) === routedThread.rootId,
-          ),
-          canHold: routing.current.canHold,
-        },
+        inlineHost.current,
+        { channelId: routedThread.channelId },
+        routingTabs.current.some(
+          (tab) =>
+            tab.kind === "thread" &&
+            tab.channelId === routedThread.channelId &&
+            rootOfTab(tab) === routedThread.rootId,
+        ),
       ) === "inline"
     ) {
       const {
@@ -1915,17 +1925,11 @@ function ChannelWorkspace({
       if (
         navigator &&
         target?.kind === "conversation" &&
-        placeOpening(
+        placeIn(
           { kind: "thread" },
-          {
-            hasTab: hasThreadTab(channelId, threadRootId),
-            canHold:
-              !threadPane &&
-              !!composes &&
-              current?.channelType !== "solo" &&
-              channelId === currentId &&
-              target.channelId === channelId,
-          },
+          inlineHost.current,
+          { channelId },
+          hasThreadTab(channelId, threadRootId),
         ) === "inline"
       ) {
         if (target.inline !== threadRootId)
@@ -1976,9 +1980,6 @@ function ChannelWorkspace({
       open,
       setSettings,
       threadPane,
-      composes,
-      current?.channelType,
-      currentId,
       hasThreadTab,
       tabState.openThreadTab,
       tabState.leaveVisit,
@@ -2119,15 +2120,11 @@ function ChannelWorkspace({
     view: Readonly<{ channelId: string; rootId?: string | undefined }>,
   ) => {
     if (
-      placeOpening(
+      placeIn(
         { kind: "panel", panel: opening.panel },
-        {
-          hasTab: secondary.hasPanelTab(opening),
-          canHold:
-            !!navigator &&
-            addressed?.channelId === currentId &&
-            (view.rootId !== undefined || view.channelId === currentId),
-        },
+        inlineHost.current,
+        view,
+        secondary.hasPanelTab(opening),
       ) !== "inline"
     )
       return false;
@@ -2306,11 +2303,8 @@ function ChannelWorkspace({
   }, [currentId, routedThread]);
   // Read when a link is chosen, so tab changes don't re-render every row.
   const linkTabs = useRef(tabState.tabs);
-  const canHoldInline = useRef(false);
   useLayoutEffect(() => {
     linkTabs.current = tabState.tabs;
-    canHoldInline.current =
-      !threadPane && !!composes && current?.channelType !== "solo";
   });
   const openLink = useCallback(
     (
@@ -2359,12 +2353,11 @@ function ChannelWorkspace({
         if (
           navigator &&
           viewer &&
-          placeOpening(
+          placeIn(
             { kind: "chat" },
-            {
-              hasTab: linkTabs.current.some((tab) => tab.id === id),
-              canHold: true,
-            },
+            inlineHost.current,
+            { channelId: linkedChat.id },
+            linkTabs.current.some((tab) => tab.id === id),
           ) === "inline"
         ) {
           void navigator.open({
@@ -2412,19 +2405,16 @@ function ChannelWorkspace({
             target.kind === "conversation" &&
             target.threadRootId &&
             current &&
-            placeOpening(
+            placeIn(
               { kind: "thread" },
-              {
-                hasTab: linkTabs.current.some(
-                  (tab) =>
-                    tab.kind === "thread" &&
-                    tab.channelId === current.id &&
-                    rootOfTab(tab) === target.threadRootId,
-                ),
-                canHold:
-                  canHoldInline.current &&
-                  navigator.snapshot().entry.target.kind === "conversation",
-              },
+              inlineHost.current,
+              { channelId: target.channelId },
+              linkTabs.current.some(
+                (tab) =>
+                  tab.kind === "thread" &&
+                  tab.channelId === current.id &&
+                  rootOfTab(tab) === target.threadRootId,
+              ),
             ) === "inline"
           ) {
             open(undefined);

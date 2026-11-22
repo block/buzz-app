@@ -44,3 +44,56 @@ export function placeOpening(
 export const inlineMedia = (opening: MediaReviewOrigin | undefined) =>
   placeOpening({ kind: "media" }, { hasTab: false, canHold: !!opening }) ===
   "inline";
+
+/** What the page on screen can hold inline, read when something is opened. */
+export type InlineHost = Readonly<{
+  /** The page addresses its views, and its visit is a conversation's. */
+  addressed: boolean;
+  /** The conversation it shows. */
+  channelId: string | undefined;
+  /** That conversation's composer is on screen, which a thread sheet takes
+   * the place of. */
+  composes: boolean;
+  /** Its threads open in a pane of their own, as a Solo chat's do. */
+  threadsInPane: boolean;
+}>;
+
+/** Where in the page an opening would read: the conversation of `channelId`,
+ * or the thread view with `rootId` (the inline thread or a thread tab). */
+export type InlineView = Readonly<{
+  channelId: string;
+  rootId?: string | undefined;
+}>;
+
+/** Whether `host` can hold `opening` read from `view`: the one answer for
+ * `placeOpening`'s `canHold`. A thread needs the conversation it belongs to,
+ * on screen with its composer. A panel needs a view of this page: the
+ * conversation on screen, or a thread view; without a composer it reads as
+ * a centered dialog. A link to a Solo chat goes to the chat itself. */
+export function canHoldInline(
+  opening: Opening,
+  host: InlineHost,
+  view: InlineView,
+): boolean {
+  if (opening.kind === "chat") return true;
+  if (!host.addressed || !host.channelId) return false;
+  if (opening.kind === "thread")
+    return (
+      host.composes && !host.threadsInPane && view.channelId === host.channelId
+    );
+  if (opening.kind === "panel")
+    return view.rootId !== undefined || view.channelId === host.channelId;
+  return false;
+}
+
+/** `placeOpening` for an opening read from `view` of `host`. */
+export const placeIn = (
+  opening: Opening,
+  host: InlineHost,
+  view: InlineView,
+  hasTab: boolean,
+) =>
+  placeOpening(opening, {
+    hasTab,
+    canHold: canHoldInline(opening, host, view),
+  });

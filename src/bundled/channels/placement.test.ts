@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
-import { inlineMedia, placeOpening } from "./placement";
+import { canHoldInline, inlineMedia, placeOpening } from "./placement";
 
 const open = { hasTab: false, canHold: true };
 const live = { kind: "panel", panel: { inline: false } } as const;
@@ -59,5 +59,45 @@ describe("placeOpening", () => {
     expect(inlineMedia(undefined)).toBe(false);
     setThreadPlacementPreference("side");
     expect(inlineMedia(opening)).toBe(false);
+  });
+});
+
+describe("canHoldInline", () => {
+  const host = {
+    addressed: true,
+    channelId: "alpha",
+    composes: true,
+    threadsInPane: false,
+  };
+  const thread = { kind: "thread" } as const;
+  const panel = { kind: "panel", panel: {} } as const;
+
+  it("holds a thread only in its own conversation, on screen with its composer", () => {
+    expect(canHoldInline(thread, host, { channelId: "alpha" })).toBe(true);
+    expect(canHoldInline(thread, host, { channelId: "beta" })).toBe(false);
+    for (const change of [
+      { addressed: false },
+      { composes: false },
+      { threadsInPane: true },
+    ])
+      expect(
+        canHoldInline(thread, { ...host, ...change }, { channelId: "alpha" }),
+      ).toBe(false);
+  });
+
+  it("holds a panel over the conversation or a thread view, with or without a composer", () => {
+    const quiet = { ...host, composes: false };
+    expect(canHoldInline(panel, quiet, { channelId: "alpha" })).toBe(true);
+    expect(
+      canHoldInline(panel, host, { channelId: "beta", rootId: "root" }),
+    ).toBe(true);
+    expect(canHoldInline(panel, host, { channelId: "beta" })).toBe(false);
+    expect(
+      canHoldInline(
+        panel,
+        { ...host, addressed: false },
+        { channelId: "alpha" },
+      ),
+    ).toBe(false);
   });
 });

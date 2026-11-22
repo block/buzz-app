@@ -15,7 +15,11 @@ import {
   promptMessage,
   promptSections,
 } from "../../features/agents/activity-transcript";
-import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  RESUMED_PROMPT,
+  TOP_LEVEL_MENTION_PROMPT,
+  TOP_LEVEL_PROMPT,
+} from "../../buzz-mcp/prompt";
 import { STEER_NOTE, steerPrompt } from "../claude-code/prompt";
 import { STEER } from "../../features/agents/activity-transcript";
 import type { Agent, Delivery } from "../../features/agents/service";
@@ -456,7 +460,7 @@ it("leaves a protected Buzz tool call to Goose's own tool review", async () => {
   }
 });
 
-it("answers a placed mention where the matching wake goes: the same session, context and default send", async () => {
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
   const earlier = message("1", "The checklist");
   const turn = async (
     trigger: Delivery["trigger"],
@@ -492,7 +496,13 @@ it("answers a placed mention where the matching wake goes: the same session, con
     [{ root: earlier.id }, pluginWake(earlier.id)],
   ] as const) {
     const placed = await turn(mention, { placement });
-    expect(placed.context, JSON.stringify(placement)).toBeDefined();
+    const woken = await turn(wake);
+    const where = (context = "") =>
+      context
+        .split("\n")
+        .filter((line) =>
+          /^(Scope|Session scope|Channel|Thread root):/.test(line),
+        );
     expect(placed.tags, JSON.stringify(placement)).toEqual(
       "topLevel" in placement
         ? [["h", channel]]
@@ -501,7 +511,16 @@ it("answers a placed mention where the matching wake goes: the same session, con
             ["e", earlier.id, "", "reply"],
           ],
     );
-    expect(placed, JSON.stringify(placement)).toEqual(await turn(wake));
+    // The same session and default `send` target as the wake.
+    expect(where(placed.context), JSON.stringify(placement)).toEqual(
+      where(woken.context),
+    );
+    expect(placed.tags, JSON.stringify(placement)).toEqual(woken.tags);
+    // Framed as a mention: no wake or Interest wording at the top level.
+    if ("topLevel" in placement) {
+      expect(placed.context).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(placed.context).not.toContain("Interest");
+    } else expect(placed.context).toEqual(woken.context);
   }
 });
 

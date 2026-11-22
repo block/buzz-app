@@ -28,7 +28,10 @@ import {
   fileStore,
   type AgentStore,
 } from "../../features/agents/state";
-import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  RESUMED_PROMPT,
+  TOP_LEVEL_MENTION_PROMPT,
+} from "../../buzz-mcp/prompt";
 import type {
   Agent,
   AgentHandle,
@@ -4420,11 +4423,11 @@ it("takes a plugin's wake in its thread's conversation, as the plugin's and not 
   expect(input).not.toContain("<buzz-event");
   expect(input).not.toContain(WAKE_ID);
 });
-it("answers a placed mention where the matching wake goes: the same session, context and default send", async () => {
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
   const earlier = "d".repeat(64);
   const turn = async (
     make: (f: ReturnType<typeof fixture>) => Delivery,
-  ): Promise<{ context?: string; tags?: string[][] }> => {
+  ): Promise<{ context?: string; tags?: string[][]; text: string }> => {
     const f = fixture();
     try {
       await f.runtime.run(make(f));
@@ -4439,6 +4442,7 @@ it("answers a placed mention where the matching wake goes: the same session, con
       return {
         ...(context ? { context } : {}),
         ...(tags ? { tags } : {}),
+        text,
       };
     } finally {
       f.runtime.dispose();
@@ -4468,10 +4472,19 @@ it("answers a placed mention where the matching wake goes: the same session, con
       return { ...wake, trigger: { ...wake.trigger, ...extra } };
     };
   for (const place of [{ topLevel: true }, { root: earlier }] as const) {
-    const answer = await turn(placed(place));
+    const { text, ...answer } = await turn(placed(place));
+    const { text: wokenText, ...wake } = await turn(woken(place));
     expect(answer.context, JSON.stringify(place)).toBeDefined();
     expect(answer.tags, JSON.stringify(place)).toBeDefined();
-    expect(answer, JSON.stringify(place)).toEqual(await turn(woken(place)));
+    // The same session, context and default `send` target as the wake.
+    expect(answer, JSON.stringify(place)).toEqual(wake);
+    // Framed as the owner's mention, not the wake's channel-level text.
+    expect(text).toContain("<buzz-event>");
+    expect(wokenText).not.toContain("<buzz-event>");
+    if ("topLevel" in place) {
+      expect(text).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(text).not.toContain("Interest");
+    }
   }
 });
 it("keeps a wake's text from posing as the turn's event", async () => {

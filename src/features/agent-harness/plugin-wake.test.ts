@@ -1,7 +1,8 @@
 import { expect, it } from "vitest";
 import { ownerInstructions, pluginInstructions } from "./plugin-instructions";
 import {
-  deliveryPlace,
+  placeOf,
+  turnOf,
   unframed,
   wakeAnchor,
   wakeSection,
@@ -130,7 +131,7 @@ it("keeps per-turn text from forging a base section's wrapper or the update bloc
   }
 });
 
-it("places a mention as the matching wake, and leaves one without a placement where it is", () => {
+it("places every turn by one rule, and gives a harness the event in that place", () => {
   const earlier = "1".repeat(64);
   const event = {
     id: "2".repeat(64),
@@ -145,25 +146,13 @@ it("places a mention as the matching wake, and leaves one without a placement wh
     sig: "",
   } as unknown as RelayEvent;
   const mention = { type: "mention", event } as const;
-  expect(deliveryPlace(mention, undefined)).toEqual({
-    event,
-    topLevel: false,
-    wake: undefined,
-  });
-  expect(deliveryPlace(mention, { topLevel: true })).toEqual({
-    event,
-    topLevel: true,
-    wake: undefined,
-  });
-  const placed = deliveryPlace(mention, { root: earlier });
-  // The mention, with the earlier message's thread as its own.
-  expect(placed.topLevel).toBe(false);
-  expect(placed.event).toMatchObject({ id: event.id, content: event.content });
-  expect(placed.event.tags).toEqual([
-    ["h", "chan"],
-    ["p", "b".repeat(64)],
-    ["e", earlier, "", "reply"],
-  ]);
+  const reply = {
+    type: "mention" as const,
+    event: {
+      ...event,
+      tags: [...event.tags, ["e", earlier, "", "reply"]],
+    } as RelayEvent,
+  };
   const wake = {
     type: "plugin",
     plugin: "example",
@@ -171,11 +160,69 @@ it("places a mention as the matching wake, and leaves one without a placement wh
     text: "hi",
     id: "w".repeat(64),
     at: 1000,
-    topLevel: true,
   } as const;
-  expect(deliveryPlace(wake, { root: earlier })).toEqual({
-    event: wakeAnchor(wake),
-    topLevel: true,
-    wake,
+  // Mentions: a thread on the message, its thread, or where it was placed.
+  expect(placeOf(mention, "chan", false)).toEqual({
+    channel: "chan",
+    root: event.id,
   });
+  expect(placeOf(reply, "chan", false)).toEqual({
+    channel: "chan",
+    root: earlier,
+  });
+  expect(placeOf(mention, "chan", false, { topLevel: true })).toEqual({
+    channel: "chan",
+    topLevel: true,
+  });
+  expect(placeOf(mention, "chan", false, { root: earlier })).toEqual({
+    channel: "chan",
+    root: earlier,
+  });
+  // A Solo chat is at the top level whatever else is asked.
+  expect(placeOf(reply, "chan", true)).toEqual({
+    channel: "chan",
+    topLevel: true,
+  });
+  // Wakes: where they say, or nowhere.
+  expect(placeOf(wake, "chan", false)).toBeUndefined();
+  expect(placeOf({ ...wake, root: earlier }, "chan", false)).toEqual({
+    channel: "chan",
+    root: earlier,
+  });
+  expect(placeOf({ ...wake, topLevel: true }, "chan", false)).toEqual({
+    channel: "chan",
+    topLevel: true,
+  });
+  // The host's place wins over anything the harness would work out.
+  const placed = turnOf(
+    mention,
+    { place: { channel: "chan", root: earlier } },
+    "chan",
+    false,
+  );
+  expect(placed?.topLevel).toBe(false);
+  expect(placed?.event).toMatchObject({ id: event.id, content: event.content });
+  expect(placed?.event.tags).toEqual([
+    ["h", "chan"],
+    ["p", "b".repeat(64)],
+    ["e", earlier, "", "reply"],
+  ]);
+  expect(
+    turnOf(
+      mention,
+      { place: { channel: "chan", topLevel: true } },
+      "chan",
+      false,
+    ),
+  ).toEqual({
+    place: { channel: "chan", topLevel: true },
+    topLevel: true,
+    event,
+  });
+  // Its native place keeps the mention as it is.
+  expect(turnOf(reply, {}, "chan", false)?.event).toBe(reply.event);
+  expect(turnOf({ ...wake, root: earlier }, {}, "chan", false)?.event).toEqual(
+    wakeAnchor({ ...wake, root: earlier }),
+  );
+  expect(turnOf(wake, {}, "chan", false)).toBeUndefined();
 });

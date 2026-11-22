@@ -88,10 +88,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { RelayData } from "../../features/relay/service";
 import { threadReference } from "../../features/relay/thread-reference";
-import {
-  deliveryPlace,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import {
   CONTEXT_LIMIT,
   type Scope,
@@ -663,7 +660,6 @@ export class GooseRuntime {
       named,
       gateway: offered,
       gatewayFallback,
-      placement,
     } = delivery;
     // Unaddressed watches and timers come as standalone turns (`runOnce`).
     if (
@@ -720,10 +716,7 @@ export class GooseRuntime {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    const place = deliveryPlace(trigger, placement);
-    const event = place.event;
-    const channel =
-      channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
     // community, or one still listing its channels, does not know yet: it
@@ -746,8 +739,10 @@ export class GooseRuntime {
       channel,
       signal,
     );
-    const topLevel = solo || place.topLevel;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     const gateway = offered && (await this.routed(entry, offered));
     if (offered && !admittedDeferred) signal.throwIfAborted();
     // A wake run without the gateway says so beside its prompt in Activity:

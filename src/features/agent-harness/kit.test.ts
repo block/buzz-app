@@ -291,6 +291,46 @@ describe("a placed mention", () => {
   });
 });
 
+describe("a turn the host placed", () => {
+  it("gives a harness built on the kit the host's place, with no code of its own", async () => {
+    const earlier = message("1", "The checklist");
+    const mention = message("2", "@Ampy back to the checklist");
+    const trigger = { type: "mention", event: mention } as const;
+    for (const place of [
+      { channel, topLevel: true },
+      { channel, root: earlier.id },
+    ] as const) {
+      const f = setup();
+      // Only `place`: no placement answer, no wake fields.
+      const d = f.delivery(trigger, { place });
+      const conversation = await f.kit.conversation(d, "thread");
+      if (!conversation) throw new Error("Not admitted");
+      expect(conversation).toMatchObject(
+        "topLevel" in place
+          ? { key: channel, topLevel: true }
+          : {
+              key: `${channel}/${earlier.id}`,
+              root: earlier.id,
+              topLevel: false,
+            },
+      );
+      const prompt = await f.kit.turnPrompt(d, conversation);
+      expect(prompt.text).toContain(
+        "topLevel" in place ? "Scope: channel" : `Thread root: ${earlier.id}`,
+      );
+      await f.kit.reply(f.agent, conversation, "Done");
+      expect(f.published[0]?.tags).toEqual(
+        "topLevel" in place
+          ? [["h", channel]]
+          : [
+              ["h", channel],
+              ["e", earlier.id, "", "reply"],
+            ],
+      );
+    }
+  });
+});
+
 describe("harnessKit.turnPrompt", () => {
   it("shows what the session has not seen, takes notes and restores them", async () => {
     const root = message("1", "Kick off");

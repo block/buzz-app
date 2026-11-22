@@ -31,8 +31,7 @@ import {
 } from "../../features/agents/owner-attestation";
 import {
   type ConversationWake,
-  deliveryPlace,
-  wakeLands,
+  turnOf,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
 import { routeFor } from "../../features/agents/model-routes";
@@ -2431,8 +2430,6 @@ export class CodexRuntime {
     // code, and the agent's own handoff comes from a turn already acting
     // for the owner.
     const wake = trigger.type !== "mention" ? trigger : undefined;
-    const place = deliveryPlace(trigger, delivery.placement);
-    const event = place.event;
     // A workflow's mention waits out a reconnect; the check below decides.
     const ready =
       trigger.type === "mention" && workflowMarked(trigger.event, agent.owner)
@@ -2467,8 +2464,12 @@ export class CodexRuntime {
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
     const huddle = isHuddleRoom(channel?.about);
-    const topLevel = solo || huddle || place.topLevel;
-    if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
+    // Where the host placed it. A Huddle room is Codex's own reason to
+    // answer at the top level.
+    const turn = turnOf(trigger, delivery, channelId, solo || huddle);
+    if (!turn) return delivery.ignored?.();
+    const { event } = turn;
+    const topLevel = turn.topLevel || huddle;
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
     const [canvasRead, folders] = await Promise.all([

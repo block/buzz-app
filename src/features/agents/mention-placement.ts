@@ -37,7 +37,7 @@ export type MentionPlacer = Readonly<{
   ): Promise<MentionPlacerAnswer | undefined>;
 }>;
 
-export const PLACEMENT_TIMEOUT_MS = 3000;
+export const PLACEMENT_TIMEOUT_MS = 1000;
 
 /** The answer's place and note; a malformed place is dropped, and a thread
  * on the message itself is where it goes anyway. */

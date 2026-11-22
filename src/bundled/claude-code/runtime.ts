@@ -81,10 +81,7 @@ import type { Host } from "../../features/host/service";
 import type { EventData } from "../../features/relay/events";
 import type { ChannelLabel } from "../../features/channels/channel-icon";
 import { threadReference } from "../../features/relay/thread-reference";
-import {
-  deliveryPlace,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
 import {
@@ -1362,16 +1359,15 @@ export class ClaudeRuntime {
       const refused = kept && (await this.refusal(agent.key, kept));
       if (refused) throw new Error(refused);
     };
-    const place = deliveryPlace(trigger, delivery.placement);
-    const event = place.event;
-    const channel =
-      channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1] ?? undefined;
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || place.topLevel;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const native = await this.key(

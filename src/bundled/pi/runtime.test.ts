@@ -1,3 +1,4 @@
+import { TOP_LEVEL_MENTION_PROMPT } from "../../buzz-mcp/prompt";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
 import { afterEach, expect, it, vi } from "vitest";
@@ -1346,7 +1347,7 @@ const pluginWake = (root?: string, where = channel) => ({
   at: 200_000,
 });
 
-it("answers a placed mention where the matching wake goes: the same session, context and default send", async () => {
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
   const mention = message("2", "@Pi back to the build", {
     created_at: 110,
     tags: [
@@ -1376,11 +1377,27 @@ it("answers a placed mention where the matching wake goes: the same session, con
       { type: "mention", event: mention },
       { placement },
     );
-    expect(placed.block, JSON.stringify(placement)).toBeDefined();
+    const woken = await turn(wake);
+    const where = (context = "") =>
+      context
+        .split("\n")
+        .filter((line) =>
+          /^(Scope|Session scope|Channel|Thread root):/.test(line),
+        );
     expect(placed.context, JSON.stringify(placement)).toEqual(
       "topLevel" in placement ? { channel } : { channel, root: root.id },
     );
-    expect(placed, JSON.stringify(placement)).toEqual(await turn(wake));
+    // The same session and the same context for Pi's tools as the wake.
+    expect(placed.key, JSON.stringify(placement)).toEqual(woken.key);
+    expect(placed.context, JSON.stringify(placement)).toEqual(woken.context);
+    expect(where(placed.block), JSON.stringify(placement)).toEqual(
+      where(woken.block),
+    );
+    // Framed as a mention: no wake or Interest wording at the top level.
+    if ("topLevel" in placement) {
+      expect(placed.block).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(placed.block).not.toContain("Interest");
+    } else expect(placed.block).toEqual(woken.block);
   }
 });
 

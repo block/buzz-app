@@ -4,10 +4,13 @@
 // it and that what the wake says is not a message.
 import type {
   ConversationWake,
+  Delivery,
   MentionPlacement,
   Trigger,
+  TurnPlace,
 } from "../agents/service";
 import type { EventData } from "../relay/events";
+import { threadReference } from "../relay/thread-reference";
 
 export type { ConversationWake } from "../agents/service";
 export type PluginTrigger = Extract<Trigger, { type: "plugin" }>;
@@ -45,36 +48,73 @@ export const placedAnchor = <E extends EventData>(
   ],
 });
 
-/** Where a delivery's turn goes, for every harness alike: the event it routes
- * by, and whether the delivery asks for the channel's top level (a harness
- * adds its own reasons, such as a Solo chat). A wake routes by its anchor. A
- * mention routes by its own event, unless a plugin placed it
- * (`placement`, from `Delivery.placement`; see
- * `Agents.registerMentionPlacement`): then it goes
- * exactly where a wake with that `topLevel` or `root` would, with the same
- * session, context and default `send` target. `wake` is the trigger when it
- * is one, for `wakeLands` and the wake's own section. */
-export function deliveryPlace(
-  trigger: Extract<Trigger, { type: "mention" }> | ConversationWake,
-  placement: MentionPlacement | undefined,
-): Readonly<{
-  event: EventData;
-  topLevel: boolean;
-  wake: ConversationWake | undefined;
-}> {
-  if (trigger.type === "mention")
-    return {
-      event:
-        placement && "root" in placement
-          ? placedAnchor(trigger.event, placement.root)
-          : trigger.event,
-      topLevel: !!placement && "topLevel" in placement,
-      wake: undefined,
-    };
+type Addressed = Extract<Trigger, { type: "mention" }> | ConversationWake;
+
+/** The one rule for where a turn lives. The host applies it once and sends
+ * the answer as `Delivery.place`; `turnOf` applies it for a host that sent
+ * none. `flat`: the channel's own turns are at its top level (a Solo chat).
+ * A mention goes where a plugin placed it, else its thread, or a thread on
+ * it; a wake where it says. Undefined: a wake with nowhere to go. */
+export function placeOf(
+  trigger: Addressed,
+  channel: string,
+  flat: boolean,
+  placement?: MentionPlacement,
+): TurnPlace | undefined {
+  if (flat) return { channel, topLevel: true };
+  if (trigger.type === "mention") {
+    if (placement)
+      return "topLevel" in placement
+        ? { channel, topLevel: true }
+        : { channel, root: placement.root };
+    const { event } = trigger;
+    return { channel, root: threadReference(event)?.rootId ?? event.id };
+  }
+  if (trigger.topLevel === true) return { channel, topLevel: true };
+  if (trigger.root) return { channel, root: trigger.root };
+  return undefined;
+}
+
+/** The channel a turn is in, before its place is known. */
+export const turnChannel = (
+  trigger: Addressed,
+  delivery: Pick<Delivery, "place" | "channelId">,
+) =>
+  delivery.place?.channel ??
+  delivery.channelId ??
+  (trigger.type === "mention"
+    ? trigger.event.tags.find((tag) => tag[0] === "h")?.[1]
+    : trigger.channel);
+
+/** What a harness takes from a delivery, so it implements no placement of
+ * its own: the turn's place (`Delivery.place`, or `placeOf` for a host that
+ * sent none, with the harness's own `flat` read), whether it is at the top
+ * level, and the event it routes, reads and replies by, which is in that
+ * place: the mention, in the placed thread when it was placed in another, or
+ * a wake's anchor. Undefined when the turn has nowhere to go. */
+export function turnOf(
+  trigger: Addressed,
+  delivery: Pick<Delivery, "place" | "placement">,
+  channel: string,
+  flat: boolean,
+):
+  | Readonly<{ place: TurnPlace; event: EventData; topLevel: boolean }>
+  | undefined {
+  const place =
+    delivery.place ?? placeOf(trigger, channel, flat, delivery.placement);
+  if (!place) return undefined;
+  const topLevel = "topLevel" in place;
+  if (trigger.type !== "mention")
+    return { place, topLevel, event: wakeAnchor(trigger) };
+  const { event } = trigger;
+  const native = threadReference(event)?.rootId ?? event.id;
   return {
-    event: wakeAnchor(trigger),
-    topLevel: trigger.topLevel === true,
-    wake: trigger,
+    place,
+    topLevel,
+    event:
+      "root" in place && place.root !== native
+        ? placedAnchor(event, place.root)
+        : event,
   };
 }
 

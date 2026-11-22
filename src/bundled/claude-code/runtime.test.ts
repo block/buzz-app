@@ -46,7 +46,11 @@ import {
   standaloneSessions,
 } from "../../features/agents/standalone-sessions";
 import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
-import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  RESUMED_PROMPT,
+  TOP_LEVEL_MENTION_PROMPT,
+  TOP_LEVEL_PROMPT,
+} from "../../buzz-mcp/prompt";
 import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import {
@@ -2737,7 +2741,7 @@ it("stops a routed community wake before Claude receives its prompt", async () =
   }
 });
 
-it("answers a placed mention where the matching wake goes: the same session, context and default send", async () => {
+it("answers a placed mention where the matching wake goes, framed as the owner's request", async () => {
   const earlier = message("1", "The checklist");
   const mention = message("2", "@Claude back to the checklist", {
     created_at: 101,
@@ -2777,8 +2781,24 @@ it("answers a placed mention where the matching wake goes: the same session, con
       { type: "mention", event: mention },
       { placement },
     );
-    expect(placed.context, JSON.stringify(placement)).toBeDefined();
-    expect(placed, JSON.stringify(placement)).toEqual(await turn(wake));
+    const woken = await turn(wake);
+    const where = (context = "") =>
+      context
+        .split("\n")
+        .filter((line) =>
+          /^(Scope|Session scope|Channel|Thread root):/.test(line),
+        );
+    // The same session and default `send` target as the wake.
+    expect(where(placed.context), JSON.stringify(placement)).toEqual(
+      where(woken.context),
+    );
+    expect(placed.tags, JSON.stringify(placement)).toEqual(woken.tags);
+    // Framed as a mention: no wake or Interest wording at the top level.
+    if ("topLevel" in placement) {
+      expect(placed.context).toContain(TOP_LEVEL_MENTION_PROMPT);
+      expect(placed.context).not.toContain("Interest");
+      expect(placed.tags).toEqual([["h", channel]]);
+    } else expect(placed.context).toEqual(woken.context);
   }
 });
 

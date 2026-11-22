@@ -32,10 +32,7 @@ import {
   sessionTools,
   turnNote,
 } from "../../buzz-mcp/session-tools";
-import {
-  deliveryPlace,
-  wakeLands,
-} from "../../features/agent-harness/plugin-wake";
+import { turnChannel, turnOf } from "../../features/agent-harness/plugin-wake";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   coreMemorySection,
@@ -777,9 +774,7 @@ export class PiRuntime {
       entry.handle = agent;
       entry.team = team ?? "";
     }
-    const place = deliveryPlace(trigger, delivery.placement);
-    const event = place.event;
-    const channel = channelId ?? event.tags.find((tag) => tag[0] === "h")?.[1];
+    const channel = turnChannel(trigger, delivery);
     if (!channel) return;
     // Where it answers needs the channel's kind, which a reconnecting
     // community, or one still listing its channels, does not know yet: it
@@ -793,8 +788,10 @@ export class PiRuntime {
     const solo =
       (await this.reads(agent.key)?.soloChat(agent.owner, channel, signal)) ??
       false;
-    const topLevel = solo || place.topLevel;
-    if (wake && !wakeLands(wake, topLevel)) return ignored?.();
+    // Where the host placed it; this harness has no rules of its own.
+    const turn = turnOf(trigger, delivery, channel, solo);
+    if (!turn) return ignored?.();
+    const { event, topLevel } = turn;
     // Frozen with the policy: a scope change while this waits must not move
     // its prompt to another conversation than the one it is delivered to.
     const { key, dm } = await this.key(

@@ -187,6 +187,16 @@ const deploy = (id: string, patch: Partial<RelayEvent> = {}) =>
 
 // Cleanup's channel step has its own coverage (relay-removal); here only its
 // place in the order matters.
+/** Owner messages a test treats as the relay's verified records. */
+const proven = vi.hoisted(() => new WeakSet<object>());
+vi.mock("../relay/events", async (original) => {
+  const actual = await original<typeof import("../relay/events")>();
+  return {
+    ...actual,
+    hasEventProof: (event: Parameters<typeof actual.hasEventProof>[0]) =>
+      proven.has(event) || actual.hasEventProof(event),
+  };
+});
 const leaveChannels = vi.hoisted(() => vi.fn());
 // The viewer's kind 30177 records, as the community's outbox writes them.
 const records = vi.hoisted(() => ({
@@ -11537,6 +11547,8 @@ describe("a turn closing or reloading the app stopped", () => {
       expect.any(AbortSignal),
     );
     expect(delivery.placement).toEqual({ topLevel: true });
+    // The host decides where the turn lives; harnesses only read it.
+    expect(delivery.place).toEqual({ channel, topLevel: true });
     // A top-level turn takes the channel's notes.
     expect(delivery.agent.notes?.(channel)).toEqual([
       "It asks for #release-notes.",
@@ -11554,6 +11566,10 @@ describe("a turn closing or reloading the app stopped", () => {
     await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
     expect(place).toHaveBeenCalledOnce();
     expect(app.run.mock.calls[1]?.[0].placement).toBeUndefined();
+    expect(app.run.mock.calls[1]?.[0].place).toEqual({
+      channel,
+      root: asked.id,
+    });
     // Someone else's mention keeps its native place too.
     const theirs = eventDto(
       message(author, channel, "Echo, from me", nowSeconds() + 1, [["p", bot]]),
@@ -11561,6 +11577,75 @@ describe("a turn closing or reloading the app stopped", () => {
     app.emit({ events: [theirs], channelId: channel });
     await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(3));
     expect(place).toHaveBeenCalledOnce();
+    expect(app.run.mock.calls[2]?.[0].place).toEqual({
+      channel,
+      root: theirs.id,
+    });
+  });
+
+  it("delivers the owner's own message to an agent as a mention a plugin asked for, once, and placed like any other", async () => {
+    const app = await setup({ identities: [echo] });
+    const place = vi.fn(async () => ({ root: earlierId }));
+    const earlierId = "e".repeat(64);
+    let deliver!: NonNullable<Agents["deliverMention"]>;
+    await app.ctx
+      .extend({ pluginOwner: { id: "router", revision: "one" } })
+      .plugin((plugin) => {
+        plugin.agents.registerMentionPlacement?.({ id: "where", place });
+        const bound = plugin.agents.deliverMention;
+        if (!bound) throw new Error("Expected deliverMention");
+        deliver = bound.bind(plugin.agents);
+      })
+      .await();
+    const owned = (content: string, tags: string[][] = []) => {
+      const event = {
+        ...eventDto(message(author, channel, content, nowSeconds(), tags)),
+        pubkey: viewer,
+      };
+      proven.add(event);
+      return event;
+    };
+    const asked = owned("Is the build green?");
+    await expect(
+      deliver(bot, asked, { note: "Smart routing picked you." }),
+    ).resolves.toEqual({ status: "delivered" });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    const delivery = app.run.mock.calls[0]?.[0];
+    if (!delivery) throw new Error("Expected a delivery");
+    // An ordinary mention: the owner's request, asked about and placed.
+    expect(delivery.trigger).toEqual({ type: "mention", event: asked });
+    expect(place).toHaveBeenCalledOnce();
+    expect(delivery.place).toEqual({ channel, root: earlierId });
+    expect(delivery.agent.notes?.(channel, earlierId)).toEqual([
+      "Smart routing picked you.",
+    ]);
+    // Once only, never for an agent the message tags, and only the owner's
+    // verified messages.
+    await expect(deliver(bot, asked)).resolves.toEqual({
+      status: "dropped",
+      reason: "delivered",
+    });
+    await expect(
+      deliver(bot, owned("@Echo look", [["p", bot]])),
+    ).resolves.toEqual({ status: "dropped", reason: "tagged" });
+    const copied = { ...owned("A copy") };
+    await expect(deliver(bot, copied)).resolves.toEqual({
+      status: "dropped",
+      reason: "not-owner",
+    });
+    await expect(
+      deliver(bot, eventDto(message(author, channel, "Theirs", nowSeconds()))),
+    ).resolves.toEqual({ status: "dropped", reason: "not-owner" });
+    await expect(deliver(other, owned("Nobody runs it"))).resolves.toEqual({
+      status: "dropped",
+      reason: "unavailable",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(app.run).toHaveBeenCalledOnce();
+    // Only a plugin delivers one.
+    await expect(
+      app.ctx.agents.deliverMention?.(bot, owned("No plugin")),
+    ).rejects.toThrow("Only an enabled plugin");
   });
 
   it.each([false, true])(

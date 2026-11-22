@@ -77,6 +77,12 @@ const ROLES = ["owner", "admin", "member", "guest", "bot"];
 const str = { type: "string" } as const;
 const strs = { type: "array", items: str } as const;
 // Shared by send and reply_in_subthread.
+const inferMentions = {
+  type: "boolean",
+  default: true,
+  description:
+    "False skips name/profile-link mention inference; explicit mentions still notify.",
+} as const;
 const audience = {
   type: "string",
   enum: ["everyone", "agents"],
@@ -137,6 +143,7 @@ export async function captureToolBody(
   )
     throw new Error("Protected picture uploads are not supported.");
   const message = name === "send" || name === "reply_in_subthread";
+  if (message) inferMentionsOf(args);
   if (
     !message &&
     name !== "mem_set" &&
@@ -227,6 +234,7 @@ export const TOOLS: readonly Tool[] = [
       reply: str,
       files: strs,
       mentions: strs,
+      infer_mentions: inferMentions,
       audience,
       request,
       final,
@@ -235,13 +243,14 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "reply_in_subthread",
-    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience, request and final; the channel is the parent's.",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, infer_mentions, audience, request and final; the channel is the parent's.",
     {
       parent: { ...str, description: "Id of the message to reply under" },
       text: str,
       path: str,
       files: strs,
       mentions: strs,
+      infer_mentions: inferMentions,
       audience,
       request,
       final,
@@ -1957,6 +1966,13 @@ function audienceOf(args: Args): string[][] {
   return args.audience === "agents" ? [["audience", "agents"]] : [];
 }
 
+/** Whether message content supplies recipients in addition to explicit mentions. */
+function inferMentionsOf(args: Args): boolean {
+  if (args.infer_mentions != null && typeof args.infer_mentions !== "boolean")
+    throw new Error("infer_mentions must be a boolean.");
+  return args.infer_mentions !== false;
+}
+
 /** Publishes `args`' text, files and mentions as a message in `channel`,
  * with `thread`'s e-tags and any `extra` tags. */
 async function post(
@@ -1966,10 +1982,15 @@ async function post(
   thread: readonly string[][],
   extra: readonly string[][] = [],
 ) {
+  const infer = inferMentionsOf(args);
   const paths = list(args.files);
   const body = (await tools.body(args, !paths.length)) ?? "";
   // Uploads come after every refusal; their links name no one.
-  const mentions = await tools.mentions(channel, body, list(args.mentions));
+  const mentions = await tools.mentions(
+    channel,
+    infer ? body : "",
+    list(args.mentions),
+  );
   // The runner suppresses every relay event authored by this agent. A post
   // receipt must not suggest that a self-mention scheduled another session.
   if (mentions.includes(tools.client.pubkey))

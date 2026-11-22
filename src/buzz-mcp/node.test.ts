@@ -4,6 +4,8 @@ import { chmod, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bytesToHex } from "nostr-tools/utils";
+import { npubEncode } from "nostr-tools/nip19";
+import { verifyEvent, type Event } from "nostr-tools";
 import { keypair, signed } from "../features/relay/testing";
 import { LIVE_CANVAS_BYTES } from "../features/channel-templates/canvas-limits.ts";
 import { nodeClient, relayAuthority, relayAuthorityLookup } from "./node";
@@ -39,6 +41,31 @@ const client = () =>
     root: "/",
   });
 const message = signed(owner, { kind: 9, content: "hi", tags: [["h", "c"]] });
+
+it("signs literal send content without inferred p-tags through /events", async () => {
+  const text = `  é e\u0301 🧪\r\n@Unknown \`nostr:${npubEncode(owner.pubkey)}\`\n `;
+  await callTool(client(), { channel: "c" }, "send", {
+    text,
+    audience: "agents",
+    request: message.id,
+    infer_mentions: false,
+    final: true,
+  });
+  expect(stored).toHaveLength(1);
+  const event = stored[0] as Event;
+  expect(event.content).toBe(text);
+  expect(event.pubkey).toBe(agent.pubkey);
+  expect(event.kind).toBe(9);
+  expect(event.tags.filter(([tag]) => tag === "p")).toEqual([]);
+  expect(event.tags).toEqual([
+    ["h", "c"],
+    ["audience", "agents"],
+    ["buzz:request", message.id],
+    ["ms", expect.any(String)],
+    ["auth", owner.pubkey, "", "0".repeat(128)],
+  ]);
+  expect(verifyEvent(event)).toBe(true);
+});
 
 it("returns verified events from a query", async () => {
   response = () => [message];

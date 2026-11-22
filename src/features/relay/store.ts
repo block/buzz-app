@@ -4635,13 +4635,15 @@ export function createChannelStore(
         (local?.snapshot() ?? []).map((item) => item.event.id),
       );
       const merged = [...state.events, ...incoming];
-      // A full window drops its oldest rows; older pages read them again.
-      const retained = trimOldest(state, merged, localIds);
+      // A full window drops its oldest rows; older pages read them again. An
+      // older page in flight lands below the rows held and slides the window
+      // within its budget then: trimming under it would cancel it each time.
+      const retained = state.snapshot.loadingOlder
+        ? merged
+        : trimOldest(state, merged, localIds);
       const trimmed = retained.length < merged.length;
       const retainedIds = new Set(retained.map((event) => event.id));
       if (trimmed) {
-        // An older read in flight continues below the rows dropped.
-        if (state.snapshot.loadingOlder) state.controller?.abort();
         for (const id of state.traffic.keys())
           if (!retainedIds.has(id)) state.traffic.delete(id);
       }

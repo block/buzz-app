@@ -758,7 +758,7 @@ describe("channel store", () => {
       expect(row(older[1])?.reactions).toEqual([]);
     },
   );
-  it("a full window drops its oldest rows for live traffic and cancels the older read below them", async () => {
+  it("a full window drops its oldest rows for live traffic, but not under an older read", async () => {
     const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
     let live!: LiveCallbacks;
     const queries = createRelaySession(
@@ -784,26 +784,34 @@ describe("channel store", () => {
       }),
     ]);
     await flush();
-    queries.loadOlder("c");
-    const stale = scripted.pending.find((read) => read.filters[0]?.until);
-    assert(stale);
     live.receive([message(alice, "c", "three", 3)]);
-    expect(stale.signal?.aborted).toBe(true);
-    expect(queries.window("c")).toMatchObject({
-      hasMore: true,
-      loadingOlder: false,
-    });
+    expect(queries.window("c")).toMatchObject({ hasMore: true });
     expect(queries.window("c").rows.map((row) => row.content)).toEqual([
       "two",
       "three",
     ]);
-    // The next older page reads the dropped row again.
+    // The next older page reads the dropped row again; traffic while it is
+    // in flight does not cancel it.
     await flush();
     queries.loadOlder("c");
-    expect(scripted.pending.at(-1)?.filters[0]).toMatchObject({
-      until: 2,
-      before_id: two.id,
+    const older = scripted.pending.find((read) => read.filters[0]?.until);
+    expect(older?.filters[0]).toMatchObject({ until: 2, before_id: two.id });
+    live.receive([message(alice, "c", "four", 4)]);
+    expect(older?.signal?.aborted).toBe(false);
+    older?.respond([
+      one,
+      bounds(relay, "c", `2:${two.id}`, { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    // It lands below the rows held and slides the window within its budget.
+    expect(queries.window("c")).toMatchObject({
+      hasNewer: true,
+      loadingOlder: false,
     });
+    expect(queries.window("c").rows.map((row) => row.content)).toEqual([
+      "one",
+      "two",
+    ]);
   });
   it("pages a window by the relay cursor, prepends older rows, and fetches missing profiles once", async () => {
     const { store, queries, next, pending } = setup();

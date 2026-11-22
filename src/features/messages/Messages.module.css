@@ -3096,6 +3096,10 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   font-weight: var(--type-weight-medium);
   padding-inline: var(--space-1h);
 }
+/* An avatar keeps the same inset before it as above and below it. */
+.messageBubble .text [data-mention-kind][data-mention-avatar] {
+  padding-inline-start: var(--space-half);
+}
 .messageBubble .text :is(pre, .codeBlock, table) {
   border-radius: var(--message-inner-radius);
   background: var(--surface-panel);

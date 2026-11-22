@@ -1,6 +1,8 @@
 import { useChannelIdentityNames } from "../identity-names/react";
 import { useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "./composer-session";
 import type { ChannelList, ChannelSummary, Profile } from "../relay/contracts";
@@ -16,13 +18,16 @@ const emptyProfiles: ReadonlyMap<string, Profile> = new Map();
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** A mention chip's contents. The icon stays with the first character, so a
- * chip at a line end never strands its icon; the rest wraps within the message. */
+ * chip at a line end never strands its icon; the rest wraps within the message.
+ * With a picture, the identity's avatar takes the icon's place. */
 export function MentionLabel({
   agent,
   label,
+  avatar,
 }: {
   agent: boolean;
   label: string;
+  avatar?: string | undefined;
 }) {
   const Icon = agent ? RobotIcon : AtIcon;
   const lead = graphemes.segment(label).containing(0)?.segment ?? "";
@@ -30,7 +35,20 @@ export function MentionLabel({
     <>
       <span className={styles.lead}>
         <span role="img" aria-label={agent ? "agent @" : "@"}>
-          <Icon aria-hidden="true" className={styles.icon} />
+          {avatar ? (
+            <span className="inline-chip-avatar">
+              <Avatar
+                src={avatar}
+                alt=""
+                fallback={label}
+                fallbackContent={<Icon aria-hidden="true" />}
+                size="fill"
+                shape={agent ? "squircle" : "circle"}
+              />
+            </span>
+          ) : (
+            <Icon aria-hidden="true" className={styles.icon} />
+          )}
         </span>
         {lead}
       </span>
@@ -50,6 +68,7 @@ export function ProfileMention({
   viewer,
   resolveName,
   onOpen,
+  media,
 }: {
   text: string;
   target: string;
@@ -58,6 +77,8 @@ export function ProfileMention({
   viewer: string | undefined;
   resolveName: (pubkey: string, fallback: string) => string;
   onOpen?: ((target: string) => unknown) | undefined;
+  /** Without it the chip keeps its icon. */
+  media?: ((url: string, size: "small") => string | undefined) | undefined;
 }) {
   const key = profileKey(target);
   const agent =
@@ -67,6 +88,9 @@ export function ProfileMention({
   // A namesake-qualified span shows its name; its target is the key.
   const shown = text.slice(1).replace(/ \([a-f0-9]{64}\)$/i, "");
   const label = key ? resolveName(key, shown) : shown;
+  const avatar = key
+    ? avatarMedia(profiles.get(key)?.picture, media)
+    : undefined;
   const Mention = onOpen ? "button" : "span";
   // Selection copy reads the identity and the whole label (selection-copy.ts).
   return (
@@ -77,6 +101,7 @@ export function ProfileMention({
       data-mention-self={key && key === viewer ? "" : undefined}
       data-profile-target={target}
       data-mention-name={label}
+      data-mention-avatar={avatar ? "" : undefined}
       aria-label={onOpen ? `View ${label} profile` : undefined}
       onClick={
         onOpen
@@ -87,7 +112,7 @@ export function ProfileMention({
           : undefined
       }
     >
-      <MentionLabel agent={agent} label={label} />
+      <MentionLabel agent={agent} label={label} avatar={avatar} />
     </Mention>
   );
 }
@@ -275,6 +300,13 @@ export function ReferenceText({
         {renderText(text.slice(offset, reference.start))}
       </span>,
     );
+    const avatar =
+      reference.kind === "channel"
+        ? undefined
+        : avatarMedia(
+            directory.profiles.get(reference.id)?.picture,
+            session?.media,
+          );
     const label =
       reference.kind === "channel"
         ? reference.label.slice(1)
@@ -298,9 +330,14 @@ export function ReferenceText({
           className={styles.link}
           data-mention-kind={reference.kind}
           data-mention-self={reference.id === session?.viewer ? "" : undefined}
+          data-mention-avatar={avatar ? "" : undefined}
           title={`${reference.kind === "agent" ? "Agent" : "Person"}: ${label}\n${reference.id}`}
         >
-          <MentionLabel agent={reference.kind === "agent"} label={label} />
+          <MentionLabel
+            agent={reference.kind === "agent"}
+            label={label}
+            avatar={avatar}
+          />
         </span>
       ),
     );

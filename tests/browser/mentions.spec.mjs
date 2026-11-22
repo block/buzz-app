@@ -327,9 +327,11 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   }
   await page.keyboard.press("Tab");
   await expect(emojiTool).toBeFocused();
+  // Honey has a picture, so the chip takes the sent-message mention fill.
+  await expect(chip.locator(".inline-chip-avatar")).toBeVisible();
   const chipRoles = await chip.evaluate((element) => {
     const probe = document.createElement("span");
-    probe.style.backgroundColor = "var(--affordance-subtle)";
+    probe.style.backgroundColor = "var(--affordance-mention)";
     probe.style.color = "var(--text-standard)";
     element.append(probe);
     const style = getComputedStyle(probe);

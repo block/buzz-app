@@ -159,3 +159,71 @@ it("keeps an accessible qualifier separate from the authored name and stays iner
   );
   expect(container.querySelector("button, a, [tabindex], [title]")).toBeNull();
 });
+
+it("shows a resolved identity's avatar in place of the sigil", () => {
+  const { container, rerender } = render(
+    <InlineChip
+      address={{ kind: "agent", id: "b".repeat(64) }}
+      interactive={false}
+      face={{
+        label: "Helper",
+        avatarUrl: "https://example.org/helper.png",
+        loading: false,
+        resolved: true,
+      }}
+    />,
+  );
+  const chip = screen.getByRole("img", { name: "Agent Helper" });
+  expect(chip.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://example.org/helper.png",
+  );
+  expect(chip.querySelector("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
+  expect(container.querySelector(".inline-chip-trigger")).toBeNull();
+
+  rerender(
+    <InlineChip
+      address={{ kind: "agent", id: "b".repeat(64) }}
+      interactive={false}
+      face={{
+        label: "Helper",
+        avatarUrl: "https://example.org/helper.png",
+        loading: true,
+        resolved: true,
+      }}
+    />,
+  );
+  expect(container.querySelector("img")).toBeNull();
+  expect(container.querySelector(".inline-chip-trigger")).toHaveTextContent(
+    "@",
+  );
+});
+
+it("keeps the sigil in the chip text and shows the kind's icon when the avatar fails", () => {
+  const { container } = render(
+    <InlineChip
+      address={address}
+      interactive={false}
+      face={{
+        label: "Alice",
+        avatarUrl: "https://example.org/missing.png",
+        loading: false,
+        resolved: true,
+      }}
+    />,
+  );
+  const chip = screen.getByRole("img", { name: "Person Alice" });
+  expect(chip).toHaveTextContent("@Alice");
+  const image = container.querySelector("img");
+  if (!image) throw new Error("No avatar image");
+  act(() => {
+    image.dispatchEvent(new Event("error"));
+  });
+  const fallback = container.querySelector("[data-avatar-fallback]");
+  expect(fallback?.querySelector("svg")).not.toBeNull();
+  expect(fallback).toHaveTextContent("");
+  expect(chip).toHaveTextContent("@Alice");
+});

@@ -583,3 +583,36 @@ it("waits for a preview to near its scroll pane, not the window", () => {
     vi.unstubAllGlobals();
   }
 });
+
+it("shows a mentioned profile's safe avatar in a preview chip and keeps the icon otherwise", () => {
+  const pictured = new Map<string, Profile>([
+    [
+      tomb,
+      { name: "tomb", picture: "https://example.org/tomb.png" } as Profile,
+    ],
+    [mic, { name: "Mic", picture: "http://example.org/mic.png" } as Profile],
+  ]);
+  const media = vi.fn((url: string) => `${url}?small`);
+  const view = render(
+    <PreviewText
+      text="ping @tomb and @Mic"
+      mentions={{ mentions: [tomb, mic], content: "ping @tomb and @Mic" }}
+      session={
+        {
+          ...session,
+          media,
+          profiles: { subscribe: () => () => {}, snapshot: () => pictured },
+        } as unknown as RelaySession
+      }
+      channelId="room"
+    />,
+  ).container;
+  const [withPicture, unsafe] = view.querySelectorAll("[data-mention-kind]");
+  expect(withPicture?.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://example.org/tomb.png?small",
+  );
+  expect(unsafe?.querySelector("img")).toBeNull();
+  expect(unsafe?.querySelector("svg")).not.toBeNull();
+  expect(media).toHaveBeenCalledWith("https://example.org/tomb.png", "small");
+});

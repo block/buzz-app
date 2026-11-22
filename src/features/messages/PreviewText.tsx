@@ -255,6 +255,7 @@ export function PreviewText({
         agents={directory.agents}
         viewer={session?.viewer}
         resolveName={resolveName}
+        media={session?.media}
       />
     );
     return positions?.length ? (

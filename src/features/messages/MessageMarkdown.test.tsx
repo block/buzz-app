@@ -1136,6 +1136,117 @@ it.each(["@Mic", `[@Mic](${profileTarget(mic)})`])(
   },
 );
 
+it.each(["@Mic", `[@Mic](${profileTarget(mic)})`])(
+  "shows the %s identity's avatar in place of its chip icon",
+  (mention) => {
+    const media = vi.fn((url: string) => `${url}?small`);
+    const view = renderDom(
+      <MessageMarkdown
+        {...props(`Hello ${mention}`, {
+          media,
+          participantProfiles: new Map([
+            [mic, { name: "Mic", picture: "https://example.org/mic.png" }],
+          ]),
+        })}
+      />,
+    );
+    const lead = view.container.querySelector(
+      "[data-mention-kind]",
+    )?.firstElementChild;
+    expect(lead?.querySelector("svg")).toBeNull();
+    expect(lead?.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.org/mic.png?small",
+    );
+    expect(lead?.querySelector("[data-avatar-shape]")).toHaveAttribute(
+      "data-avatar-shape",
+      "circle",
+    );
+    expect(lead?.textContent).toBe("M");
+    expect(media).toHaveBeenCalledWith("https://example.org/mic.png", "small");
+  },
+);
+
+it.each([
+  ["an http picture", "http://example.org/mic.png", (url: string) => url],
+  ["an SVG data picture", "data:image/svg+xml,<svg/>", (url: string) => url],
+  [
+    "a picture with credentials",
+    "https://user:pass@example.org/mic.png",
+    (url: string) => url,
+  ],
+  ["no media path", "https://example.org/mic.png", () => undefined],
+])("keeps the chip icon for %s", (_, picture, media) => {
+  const view = renderDom(
+    <MessageMarkdown
+      {...props("Hello @Mic", {
+        media,
+        participantProfiles: new Map([[mic, { name: "Mic", picture }]]),
+      })}
+    />,
+  );
+  const lead = view.container.querySelector(
+    "[data-mention-kind]",
+  )?.firstElementChild;
+  expect(lead?.querySelector("img")).toBeNull();
+  expect(lead?.querySelector("svg")).not.toBeNull();
+});
+
+it("shows the chip icon, not a letter, while a mention's avatar fails", () => {
+  const view = renderDom(
+    <MessageMarkdown
+      {...props("Hello @Mic", {
+        media: (url) => url,
+        participantProfiles: new Map([
+          [mic, { name: "Mic", picture: "https://example.org/missing.png" }],
+        ]),
+      })}
+    />,
+  );
+  const chip = view.container.querySelector("[data-mention-kind]");
+  const image = chip?.querySelector("img");
+  if (!image) throw new Error("No avatar image");
+  act(() => {
+    image.dispatchEvent(new Event("error"));
+  });
+  const fallback = chip?.querySelector("[data-avatar-fallback]");
+  expect(fallback?.querySelector("svg")).not.toBeNull();
+  expect(chip?.textContent).toBe("Mic");
+});
+
+it("draws an agent mention's avatar as a squircle", () => {
+  const directory = {
+    profiles: new Map([
+      [
+        mic,
+        {
+          name: "Fizz",
+          isAgent: true as const,
+          picture: "https://example.org/fizz.png",
+        },
+      ],
+    ]),
+    channels: [],
+    named: [],
+    agents: [],
+  };
+  const view = renderDom(
+    <MessageMarkdown
+      {...props("@Fizz can you join", {
+        directory,
+        participantProfiles: directory.profiles,
+        media: (url) => url,
+        patch: { mentions: [mic] },
+      })}
+    />,
+  );
+  const chip = view.container.querySelector('[data-mention-kind="agent"]');
+  expect(chip?.querySelector("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
+});
+
 it.each<[string, RenderOptions]>([
   ["a refusing opener", { canOpenLink: () => false }],
   ["no opener", { canOpenLink: undefined }],

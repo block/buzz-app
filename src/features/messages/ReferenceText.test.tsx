@@ -191,3 +191,36 @@ it("does not name a withheld raw link after the directory's public name", async 
   expect(raw).toHaveAttribute("aria-label", "Private channel");
   expect(screen.queryByRole("link", { name: "#open" })).toBeNull();
 });
+
+it("shows a mentioned profile's safe avatar in plain reference text and keeps the icon otherwise", () => {
+  const safe = "a".repeat(64);
+  const unsafe = "b".repeat(64);
+  const directory = {
+    profiles: new Map([
+      [safe, { name: "Ada", picture: "https://example.org/ada.png" }],
+      [unsafe, { name: "Bo", picture: "http://example.org/bo.png" }],
+    ]),
+    channels: [],
+    named: [],
+    agents: [],
+  };
+  const media = vi.fn((url: string) => `${url}?small`);
+  const view = render(
+    <ReferenceText
+      text="@Ada and @Bo"
+      mentions={[safe, unsafe]}
+      directory={directory}
+      renderText={(part) => part}
+      onOpenLink={() => true}
+      session={{ viewer: "v".repeat(64), media } as unknown as RelaySession}
+    />,
+  );
+  const [ada, bo] = view.container.querySelectorAll("[data-mention-kind]");
+  expect(ada?.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://example.org/ada.png?small",
+  );
+  expect(bo?.querySelector("img")).toBeNull();
+  expect(bo?.querySelector("svg")).not.toBeNull();
+  expect(media).toHaveBeenCalledWith("https://example.org/ada.png", "small");
+});

@@ -4,6 +4,7 @@ import * as emoji from "../bundled/emoji";
 import mentionsManifest from "../bundled/mentions/manifest.json";
 import * as mentions from "../bundled/mentions";
 import { PLUGIN_REQUEST_REVIEWER } from "../plugins/review-access";
+import * as htmlPreview from "./html-preview-feature";
 import * as pluginRequests from "./plugin-request-feature";
 
 // Host-owned features use the shared contribution lifecycle, without catalog
@@ -11,6 +12,15 @@ import * as pluginRequests from "./plugin-request-feature";
 export const conversationFeatures: readonly BundledPlugin[] = [
   { manifest: { ...emojiManifest, apiVersion: 1 }, module: emoji },
   { manifest: { ...mentionsManifest, apiVersion: 1 }, module: mentions },
+  {
+    manifest: {
+      id: "buzz.html-preview",
+      name: "HTML preview",
+      apiVersion: 1,
+      description: "Preview community HTML files and links in the side panel.",
+    },
+    module: htmlPreview,
+  },
   {
     manifest: {
       id: PLUGIN_REQUEST_REVIEWER,

@@ -1529,3 +1529,31 @@ it("takes mouse back/forward requests for its page from app navigation", async (
     window.removeEventListener("buzz:history-forward", app);
   }
 });
+
+it("opens the active page in the system browser when opted in and surfaces errors", async () => {
+  const user = userEvent.setup();
+  const platform = fakePlatform();
+  vi.mocked(platform.openExternal)
+    .mockResolvedValueOnce()
+    .mockRejectedValueOnce(new Error("Opener refused URL"));
+  render(
+    <BrowserHostView
+      url="http://127.0.0.1:51234/cap/report.html"
+      allowOpenExternal
+      platform={platform}
+      sessions={new BrowserSessions(platform)}
+      pollInterval={5}
+    />,
+  );
+  await waitFor(() =>
+    expect(platform.status).toHaveBeenCalledWith("session-1"),
+  );
+  const openButton = screen.getByRole("button", { name: "Open in browser" });
+  await user.click(openButton);
+  expect(platform.openExternal).toHaveBeenCalledWith("https://example.com/");
+
+  await user.click(openButton);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Opener refused URL",
+  );
+});

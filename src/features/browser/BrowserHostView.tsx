@@ -8,6 +8,7 @@ import {
 } from "react";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import {
+  ArrowSquareOutIcon,
   ArrowsClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
@@ -103,6 +104,7 @@ export function BrowserHostView({
   canResumeUrl,
   label,
   openSignIn,
+  allowOpenExternal,
   platform,
   sessions,
   pollInterval = 300,
@@ -501,6 +503,21 @@ export function BrowserHostView({
           <span className={styles.status} title={status.title}>
             {status.title}
           </span>
+        ) : null}
+        {allowOpenExternal && !status.held && page !== "unavailable" ? (
+          <IconButton
+            size="toolbar"
+            variant="quiet"
+            aria-label="Open in browser"
+            title="Open in browser"
+            onClick={() => {
+              setLocalError(null);
+              platform
+                .openExternal(status.url || resumeUrl.current)
+                .catch((error) => setLocalError(message(error)));
+            }}
+            icon={<ArrowSquareOutIcon size={16} />}
+          />
         ) : null}
       </div>
       {error && !page ? (

@@ -25,6 +25,8 @@ export type BrowserViewProps = Readonly<{
   /** Opens where `builderlab`'s sign-in is renewed, for an app that refused
    * it. Without it, that page offers only Try again. */
   openSignIn?: (() => void) | undefined;
+  /** Shows a toolbar button to open the current page in the system browser. */
+  allowOpenExternal?: boolean | undefined;
 }>;
 
 export interface Browser {

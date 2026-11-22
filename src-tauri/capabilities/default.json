@@ -111,6 +111,7 @@
     "allow-draft-diagnostics-save",
     "allow-web-inspector",
     "allow-get-build-identity",
+    "allow-media-html-preview-url",
     "allow-media-stream-base",
     "allow-get-os-idle-seconds",
     "allow-system-hour-cycle",

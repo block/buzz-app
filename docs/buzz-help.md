@@ -1079,6 +1079,10 @@ Quitting Buzz also turns it off.
   follows the language and region. Show seconds adds seconds to clock times. **Message timestamps** can hide the
   time beside each message everywhere or only in Solo chats; day dividers and
   screen-reader dates remain.
+- **Refresh rate**: in the Mac app, **Settings → Appearance → Match display
+  refresh rate** animates at the display's full rate, such as 120 Hz, instead
+  of about 60 fps. It is off by default, may use more power, and takes effect
+  after restarting Buzz. It is hidden where the system's WebKit cannot apply it.
 - **Back and Forward**: after following a channel or message link to another
   channel, Back and Forward restore the thread tab you last selected in the
   channel you left.

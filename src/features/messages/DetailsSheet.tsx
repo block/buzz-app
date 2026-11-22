@@ -111,7 +111,7 @@ function geometry(
     ...(frame && {
       "--sheet-top": `${Math.max(bounds.top, header ? header.bottom - originY : 0)}px`,
     }),
-    "--pane-top": `${bounds.top}px`,
+    "--pane-top": `${(windowed ? workspace : bounds).top}px`,
     ...(windowed && {
       "--pane-left": `${workspace.left}px`,
       "--pane-width": `${workspace.width}px`,

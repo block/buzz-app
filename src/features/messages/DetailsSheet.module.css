@@ -208,7 +208,7 @@
 }
 /* Match Show more's composer footprint. The floating surface's 1px border
    counts toward the surrounding gap; only the reader grows above the editor. */
-.sheet[data-contained-composer] [data-message-composer] {
+.sheet[data-height="content"][data-contained-composer] [data-message-composer] {
   width: var(--composer-width);
   margin: 0 auto calc(var(--sheet-gap) - var(--sheet-border-width));
 }
@@ -313,10 +313,9 @@ html[data-keyboard-navigation] .sheet[data-contained-composer] {
   position: relative;
   padding: var(--space-4) var(--space-4) 0;
 }
-/* Its comment box fills the comments column. */
-.sheet[data-height="stable"] [data-message-composer] {
-  width: auto;
-  margin: 0;
+/* Its comments fill their column above the comment box. */
+.sheet[data-contained-composer][data-height="stable"] [data-message-scroller] {
+  flex: 1;
 }
 /* Media is workspace-sized, so it never folds into its composer. CSS reverses
    from the painted state when Close interrupts the entrance. */

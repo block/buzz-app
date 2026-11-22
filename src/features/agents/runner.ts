@@ -638,6 +638,14 @@ export type RunnerHost = {
       }>
     | undefined
   >;
+  /** Where a plugin places this top-level mention's reply; see
+   * `Agents.registerMentionPlacement`. */
+  placeMention?(
+    agent: Agent,
+    channel: string,
+    event: RelayEvent,
+    signal: AbortSignal,
+  ): Promise<import("./mention-placement").PlacedMention>;
   routeConversation?(
     agent: Agent,
     type: RegisteredAgentType,
@@ -3501,6 +3509,17 @@ export class AgentRunners {
             "Invocation routing is unavailable for this agent. Restore it and retry.",
           );
       }
+      // Asked while the turn starts; the harness reads it on delivery.
+      const mentionChannel =
+        trigger.type === "mention" && !trigger.resumed
+          ? (job.channelId ?? channelOf(trigger.event))
+          : undefined;
+      const placing =
+        trigger.type === "mention" && mentionChannel && this.host.placeMention
+          ? this.host
+              .placeMention(agent, mentionChannel, trigger.event, signal)
+              .catch(() => ({}))
+          : undefined;
       // Before any type code (its models included) runs for this turn.
       const routing = await this.gatewayRouting(
         agent,
@@ -3596,7 +3615,19 @@ export class AgentRunners {
             }
           : undefined;
       };
+      const { placement, note }: import("./mention-placement").PlacedMention =
+        (await placing) ?? {};
       signal.throwIfAborted();
+      // The note goes to the conversation the placed turn takes notes in.
+      if (note && mentionChannel && trigger.type === "mention")
+        this.note(
+          agent.key,
+          mentionChannel,
+          note,
+          placement && "topLevel" in placement
+            ? undefined
+            : (placement?.root ?? trigger.event.id),
+        );
       const routingTrigger = addressed(job.trigger) ? job.trigger : anchor;
       const routeConversation = this.host.routeConversation;
       const delivery = Object.freeze({
@@ -3632,6 +3663,7 @@ export class AgentRunners {
             }
           : {}),
         ...(type.sessionAdmission ? { prepareSession } : {}),
+        ...(placement ? { placement } : {}),
         ...(job.channelId ? { channelId: job.channelId } : {}),
         ...routing,
         agent: handle,

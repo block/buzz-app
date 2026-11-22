@@ -687,6 +687,7 @@ pub(crate) mod tests {
                 discovery: None,
                 updates: None,
                 host: None,
+                requires: Vec::new(),
             },
             source: origin,
             enabled: false,

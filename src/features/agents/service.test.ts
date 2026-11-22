@@ -11514,6 +11514,44 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(third.run).not.toHaveBeenCalled();
   });
 
+  it("hands a top-level mention the place and note a plugin chose, and never asks about a thread reply", async () => {
+    const app = await setup({ identities: [echo] });
+    const place = vi.fn(async () => ({
+      topLevel: true as const,
+      note: "It asks for #release-notes.",
+    }));
+    await app.ctx
+      .extend({ pluginOwner: { id: "where", revision: "one" } })
+      .plugin((plugin) => {
+        plugin.agents.registerMentionPlacement?.({ id: "where", place });
+      })
+      .await();
+    const asked = mention();
+    app.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    const delivery = app.run.mock.calls[0]?.[0];
+    if (!delivery) throw new Error("Expected a delivery");
+    expect(place).toHaveBeenCalledWith(
+      expect.objectContaining({ channel, event: asked }),
+      expect.any(AbortSignal),
+    );
+    expect(delivery.placement).toEqual({ topLevel: true });
+    // A top-level turn takes the channel's notes.
+    expect(delivery.agent.notes?.(channel)).toEqual([
+      "It asks for #release-notes.",
+    ]);
+    const reply = eventDto(
+      message(author, channel, "Echo, and this", nowSeconds(), [
+        ["e", asked.id, "", "reply"],
+        ["p", bot],
+      ]),
+    );
+    app.emit({ events: [reply], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+    expect(place).toHaveBeenCalledOnce();
+    expect(app.run.mock.calls[1]?.[0].placement).toBeUndefined();
+  });
+
   it.each([false, true])(
     "requires a durable native fallback only when a routing plugin matches (%s)",
     async (matches) => {

@@ -456,6 +456,56 @@ it("leaves a protected Buzz tool call to Goose's own tool review", async () => {
   }
 });
 
+it("answers a top-level mention where a plugin placed it: the top level, or an earlier message's thread", async () => {
+  const send = async (
+    f: ReturnType<typeof setup>,
+    event: RelayEvent,
+    placement: NonNullable<Delivery["placement"]>,
+  ) => {
+    await f.deliver(event, { placement });
+    await vi.waitFor(() => expect(f.goose()?.turns.length).toBeGreaterThan(0));
+    const process = f.goose();
+    const turn = process?.turns.at(-1);
+    if (!process || !turn) throw new Error("Goose turn did not start");
+    await process.mcp(turn.sessionId, "tools/call", {
+      name: "send",
+      arguments: { audience: "everyone", text: "Placed" },
+    });
+    return { turn, tags: f.published.at(-1)?.tags };
+  };
+  const top = setup({ hold: true });
+  try {
+    const { turn, tags } = await send(
+      top,
+      message("1", "@Gander is it done?"),
+      {
+        topLevel: true,
+      },
+    );
+    // One session for the channel, told it is delivered at channel level.
+    expect(turn.text).toContain("Scope: channel");
+    expect(tags).toEqual([["h", channel]]);
+  } finally {
+    top.runtime.dispose();
+  }
+  const earlier = message("1", "The checklist");
+  const moved = setup({ hold: true, thread: [earlier] });
+  try {
+    const { turn, tags } = await send(
+      moved,
+      message("2", "@Gander back to the checklist: add a step"),
+      { root: earlier.id },
+    );
+    expect(turn.text).toContain(`Thread root: ${earlier.id}`);
+    expect(tags).toEqual([
+      ["h", channel],
+      ["e", earlier.id, "", "reply"],
+    ]);
+  } finally {
+    moved.runtime.dispose();
+  }
+});
+
 const protection = (key: string, f: () => ReturnType<typeof setup>) =>
   ({
     key,

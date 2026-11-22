@@ -8,6 +8,10 @@ export type PluginManifest = Readonly<{
   name: string;
   apiVersion: 1;
   description?: string;
+  /** What the plugin needs from this device to run. `decisions`: a
+   * decisions provider (`ctx.decisions.status()` other than `unavailable`).
+   * Until it has them the host does not start it, and Settings says why. */
+  requires?: readonly "decisions"[];
   /** Support Git update notices. The user's saved choice overrides this default. */
   updates?: Readonly<{ defaultEnabled: boolean }>;
   /** Author-supplied browsing metadata. It never grants host capabilities. */

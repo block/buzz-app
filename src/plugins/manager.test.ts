@@ -626,3 +626,54 @@ it("offers agents the plugins it reads, through the context", async () => {
     plugins: [{ id: "example", enabled: true, bundled: true }],
   });
 });
+
+it("starts a plugin that needs decisions only while a provider is registered, and says why it waits", async () => {
+  const needs = {
+    manifest: {
+      id: "example",
+      name: "Example",
+      apiVersion: 1,
+      requires: ["decisions"],
+    },
+    source: "bundled",
+    enabled: true,
+    revision: "one",
+    previous: null,
+    reloadable: false,
+    error: null,
+  } as const;
+  const catalog: StorageResult = {
+    status: "ready",
+    externalPluginsPaused: false,
+    catalog: { profile: "test", location: "test", plugins: [needs] },
+  };
+  let status: "unavailable" | "checking" | "ready" = "unavailable";
+  const listeners = new Set<() => void>();
+  const changed = (next: typeof status) => {
+    status = next;
+    for (const listener of listeners) listener();
+  };
+  const { plugins, pages, root } = harness({
+    getCatalog: vi.fn(async () => catalog),
+  });
+  root.provide("decisions", {
+    status: () => status,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as never);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(pages.snapshot()).toHaveLength(0);
+  expect(plugins.snapshot().unmet).toEqual({
+    example: "Needs a decisions provider",
+  });
+  // A provider still checking its key counts: the plugin handles failures.
+  changed("checking");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(pages.snapshot()).toHaveLength(1);
+  expect(plugins.snapshot().unmet).toEqual({});
+  changed("unavailable");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(pages.snapshot()).toHaveLength(0);
+});

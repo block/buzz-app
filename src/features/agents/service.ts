@@ -12,6 +12,11 @@ import {
   type AgentSessionSource,
   type RoutedInvocation,
 } from "./session-admission";
+import {
+  createMentionPlacements,
+  type MentionPlacement,
+  type MentionPlacer,
+} from "./mention-placement";
 import type {} from "../navigation/service";
 import {
   createAgentExecutions,
@@ -847,6 +852,11 @@ export type AgentAttention = Readonly<{
   ): Promise<Shown>;
 }>;
 export type { ClassifierOutcome } from "./classifier";
+export type {
+  MentionPlacement,
+  MentionPlacer,
+  MentionPlacerAnswer,
+} from "./mention-placement";
 export type CaughtUp = Readonly<{
   event: RelayEvent;
   classifier?: ClassifierOutcome;
@@ -943,6 +953,10 @@ export type Delivery<Config = unknown> = Readonly<{
   trigger: Trigger;
   session?: AgentSessionAssociation;
   sessionContext?: string;
+  /** Where a plugin placed this top-level mention's reply, asked before the
+   * harness chooses its session: the harness answers there as it would a
+   * wake with that `root` or `topLevel`. Absent keeps the native place. */
+  placement?: MentionPlacement;
   /** Resolve an opt-in task subthread after authority and chat-scope checks. */
   routeConversation?(
     placement: Readonly<{
@@ -1769,6 +1783,14 @@ export type Agents = {
   readonly invocationIntentVersion?: 1;
   readonly invocationTurnContext?: true;
   registerSessionRouter(router: AgentSessionRouter): void;
+  /** Decides where the owner's top-level mentions of local agents are
+   * answered: the top level, or the thread of a message such as an earlier
+   * one the mention follows up on, plus an optional private note for that
+   * turn. Asked when the mention is delivered, for at most a few seconds; no
+   * answer keeps a thread on the message. A mention
+   * inside a thread stays there, and with two plugins registered neither
+   * decides. Harnesses that do not support it ignore it. Feature-detect. */
+  registerMentionPlacement?(placer: MentionPlacer): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
   bindExecution(
@@ -2549,6 +2571,10 @@ export class AgentsService extends Service implements Agents {
   registerSessionRouter(router: AgentSessionRouter) {
     this.sessionAdmissions.register(this.ctx, router);
   }
+  private readonly mentionPlacements;
+  registerMentionPlacement(placer: MentionPlacer) {
+    this.mentionPlacements.register(this.ctx, placer);
+  }
   private readonly executions;
   private async checkExecution(key: AgentKey, type: string) {
     if (!(await this.executions.inspect(key))) return;
@@ -2812,6 +2838,7 @@ export class AgentsService extends Service implements Agents {
       executionStorage(storage),
     );
     this.executions = createAgentExecutions(ctx, executionStorage(storage));
+    this.mentionPlacements = createMentionPlacements(ctx);
     this.contributions = createContributions<HostedAgentType>(ctx);
     this.hookContributions = createAgentHooks(ctx);
     this.tabContributions = createContributions<AgentAddedTab>(ctx);
@@ -2937,6 +2964,8 @@ export class AgentsService extends Service implements Agents {
     /** The catch-up progress this program last read or saved. */
     let savedProgress: Checkpoints = {};
     this.runners = new AgentRunners({
+      placeMention: (agent, channel, event, signal) =>
+        this.mentionPlacements.place(agent.key, channel, event, signal),
       routeConversation: (
         agent,
         type,

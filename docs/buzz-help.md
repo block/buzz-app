@@ -129,6 +129,10 @@ if that desktop app is up and running.
   thread. Its settings can make it one per channel or one per community.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
   can't finish, it says why and offers **Retry**.
+- **Live usage** appears above the composer for the most recent local agent in
+  that conversation. Expand it for context use, account state, provider
+  allowances and reset times. Claude shows live context but marks subscription
+  allowances unavailable because Claude does not expose structured plan limits.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents

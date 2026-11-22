@@ -1,3 +1,7 @@
+import type {
+  ReactionGroup,
+  ReactionContent,
+} from "../../src/bundled/github/pr-reactions";
 import type { Host, HostProcessOptions } from "../../src/features/host/service";
 
 export const fixturePull = { repository: "example-org/sample", number: 1 };
@@ -42,6 +46,7 @@ export function githubCommentHost() {
       | "refresh-failed"
       | "hold",
     comments: [] as Row[],
+    reactions: {} as Record<string, ReactionGroup[]>,
     calls: [] as { id: string; args: readonly string[]; input: unknown }[],
     pageSize: 100,
     files: [{ filename: "src/example.ts", previous_filename: "src/old.ts" }],
@@ -60,6 +65,7 @@ export function githubCommentHost() {
     databaseId: row.id,
     body: row.body,
     author: { ...row.user, avatarUrl: "./design-system/assets/avatar.png" },
+    reactionGroups: state.reactions[row.node_id] ?? [],
     url: row.html_url,
   });
   const page = <T>(nodes: T[], cursor?: string | null) => {
@@ -94,6 +100,7 @@ export function githubCommentHost() {
         const variables = (value.variables ?? {}) as {
           id?: string;
           cursor?: string;
+          content?: ReactionContent;
         };
         const answer = (data: unknown, status = 200) => {
           options.onStdout?.(
@@ -111,6 +118,54 @@ export function githubCommentHost() {
           return;
         }
         if (id === "graphql") {
+          const query = String(value.query);
+          if (
+            query.includes("PullRequestReviewComment") ||
+            query.startsWith("mutation")
+          ) {
+            const row = state.comments.find(
+              (row) => row.node_id === variables.id,
+            );
+            if (!row) {
+              answer({ node: null, viewer: { login: state.viewer } });
+              return;
+            }
+            let groups = state.reactions[row.node_id] ?? [];
+            if (query.startsWith("mutation")) {
+              const add = query.includes("addReaction");
+              const old = groups.find(
+                (group) => group.content === variables.content,
+              );
+              groups = [
+                ...groups.filter(
+                  (group) => group.content !== variables.content,
+                ),
+                {
+                  content: variables.content as ReactionContent,
+                  viewerHasReacted: add,
+                  users: {
+                    totalCount: (old?.users.totalCount ?? 0) + (add ? 1 : -1),
+                  },
+                },
+              ];
+              state.reactions[row.node_id] = groups;
+              answer({
+                [add ? "addReaction" : "removeReaction"]: {
+                  subject: { id: row.node_id, reactionGroups: groups },
+                },
+              });
+            } else
+              answer({
+                viewer: { login: state.viewer },
+                node: {
+                  id: row.node_id,
+                  pullRequest: { id: "pull-fixture" },
+                  reactionGroups: groups,
+                },
+              });
+            return;
+          }
+
           if (String(value.query).includes("r0:")) {
             answer({
               r0: {

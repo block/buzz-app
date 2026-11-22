@@ -405,3 +405,26 @@ it("allows merged-PR inline comments and replies while retaining snapshot checks
     2,
   );
 });
+
+it("refreshes cached reaction counts from thread and nested comment reads", async () => {
+  const { api, snapshot, anchor, state } = await setup();
+  await api.create(snapshot, anchor, "First", "reaction-refresh");
+  const comment = (await api.loadThreads(fixturePull)).items[0]?.comments[0];
+  if (!comment || !api.reactions)
+    throw new Error("Missing comment/reaction adapter");
+  await api.reactions.update(snapshot, comment, {
+    content: "HEART",
+    reacted: true,
+  });
+  expect(api.reactions.get(comment.id)?.groups?.[0]?.users.totalCount).toBe(1);
+  state.reactions[comment.id] = [
+    { content: "HEART", viewerHasReacted: true, users: { totalCount: 5 } },
+  ];
+  await api.loadThreads(fixturePull);
+  expect(api.reactions.get(comment.id)?.groups?.[0]?.users.totalCount).toBe(5);
+  state.reactions[comment.id] = [
+    { content: "HEART", viewerHasReacted: true, users: { totalCount: 6 } },
+  ];
+  await api.loadComments("thread-1");
+  expect(api.reactions.get(comment.id)?.groups?.[0]?.users.totalCount).toBe(6);
+});

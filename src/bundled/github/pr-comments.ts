@@ -1,3 +1,9 @@
+import {
+  createPrReactions,
+  reactionFields,
+  type ReactionGroup,
+  type PrReactions,
+} from "./pr-reactions";
 import { commentLines } from "../diffs/comment-lines";
 import type { Host } from "../../features/host/service";
 import {
@@ -34,6 +40,7 @@ export type Comment = Readonly<{
   body: string;
   author: string;
   avatarUrl?: string | undefined;
+  reactions?: readonly ReactionGroup[] | undefined;
   url: string;
 }>;
 export type Thread = Readonly<{
@@ -82,6 +89,7 @@ export class PrCommentError extends Error {
   }
 }
 export interface PrComments {
+  reactions?: PrReactions | undefined;
   loadSnapshot(pull: PullRef, signal?: AbortSignal): Promise<Snapshot>;
   loadThreads(
     pull: PullRef,
@@ -159,8 +167,9 @@ type RestComment = {
   original_line: number | null;
   in_reply_to_id?: number;
 };
-const commentFields = `id databaseId body author { login avatarUrl } url`;
-type GraphComment = Omit<Comment, "author"> & {
+const commentFields = `id databaseId body author { login avatarUrl } url ${reactionFields}`;
+type GraphComment = Omit<Comment, "author" | "reactions"> & {
+  reactionGroups?: readonly ReactionGroup[];
   author: { login: string; avatarUrl?: string } | null;
 };
 type Connection<T> = {
@@ -177,6 +186,7 @@ const graphComment = (comment: GraphComment): Comment => ({
   ...comment,
   author: comment.author?.login ?? "deleted user",
   avatarUrl: comment.author?.avatarUrl,
+  reactions: comment.reactionGroups,
 });
 
 const snapshotLines = new WeakMap<Snapshot, Map<string, Set<string>>>();
@@ -399,7 +409,9 @@ export function createPrComments(
     }
     return result;
   }
+  const reactions = createPrReactions(gh);
   return {
+    reactions,
     async loadSnapshot(pull, signal) {
       try {
         const before = await meta(pull, signal);
@@ -468,6 +480,7 @@ export function createPrComments(
       }
     },
     async loadThreads(pull, cursor, signal) {
+      const started = reactions.revision();
       try {
         type Row = Omit<
           Thread,
@@ -513,6 +526,12 @@ export function createPrComments(
             resolved: row.isResolved,
             rootCommentId: row.comments.nodes[0]?.databaseId ?? 0,
             comments: row.comments.nodes.map((comment) => {
+              reactions.accept(
+                comment.id,
+                data.viewer?.login,
+                comment.reactionGroups,
+                started,
+              );
               return graphComment(comment);
             }),
             commentsComplete: !row.comments.pageInfo.hasNextPage,
@@ -527,6 +546,7 @@ export function createPrComments(
       }
     },
     async loadComments(threadId, cursor, signal) {
+      const started = reactions.revision();
       try {
         const data = await gh<{
           viewer: { login: string };
@@ -565,6 +585,12 @@ export function createPrComments(
             rootCommentId: data.node.root.nodes[0]?.databaseId ?? 0,
           },
           items: page.items.map((comment) => {
+            reactions.accept(
+              comment.id,
+              data.viewer?.login,
+              comment.reactionGroups,
+              started,
+            );
             return graphComment(comment);
           }),
         };

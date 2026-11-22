@@ -2096,7 +2096,11 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   Closed and merged PRs also offer commenting;
   GitHub checks whether the submission is allowed. Raw or unmapped patches cannot
   accept new line comments.
-  Comments render Markdown with author avatars and separated replies.
+  Comments render Markdown with author avatars and separated replies. Use
+  **React** to choose an emoji; click an existing count to add or remove
+  yours. Your change appears immediately while the controls are disabled, then
+  reconciles with GitHub. If a reaction’s delivery
+  is unknown, use **Check reactions** before trying again.
   Several inline composers can stay open at once; opening another line keeps
   existing text. Unsent text is local to the panel; cancel, refresh, leaving
   Changes or closing the panel discards it. After a PR changes, select the line

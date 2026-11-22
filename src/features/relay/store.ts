@@ -1040,18 +1040,21 @@ export function createChannelStore(
     )
       return;
     if (!transport || !state.auxPages.length) return;
+    // Only the open channel reads aux; another channel's wait for its
+    // revisit (see `ensure`).
+    if (current !== state.channelId) return;
     if (performance.now() < (state.auxRetryAt ?? 0)) return;
     const source = transport;
     const { channelId, generation } = state;
     const controller = new AbortController();
-    const current: NonNullable<WindowState["auxRead"]> = {
+    const mine: NonNullable<WindowState["auxRead"]> = {
       controller,
       generation,
     };
-    state.auxRead = current;
+    state.auxRead = mine;
     // A read lost to anything but dropAux is read again with the next fill.
     const keep = (page: WindowState["auxPages"][number]) => {
-      if (!current.dropped) state.auxPages.unshift(page);
+      if (!mine.dropped) state.auxPages.unshift(page);
     };
     controllers.add(controller);
     try {
@@ -1116,11 +1119,11 @@ export function createChannelStore(
         relayDebug("aux failed", channelId.slice(0, 8), readErrorKind(error));
     } finally {
       controllers.delete(controller);
-      if (state.auxRead === current) state.auxRead = undefined;
+      if (state.auxRead === mine) state.auxRead = undefined;
       // A generation change the window survives (an access purge) ends this
       // fill but not its work.
       if (
-        !current.dropped &&
+        !mine.dropped &&
         state.generation !== generation &&
         windows.get(channelId) === state
       )

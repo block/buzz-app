@@ -327,6 +327,21 @@ describe("channel store", () => {
       await flush();
       expect(queries.window("c").rows[0]?.content).toBe("row 10");
     });
+    it("reads a page's aux only once its channel is open again", async () => {
+      const { queries, take, scripted } = await opened();
+      const first = row(10);
+      queries.loadOlder("c");
+      queries.ensure("d");
+      take(false).respond([first, below(newer, first)]);
+      await flush();
+      expect(
+        scripted.pending.some(
+          (read) => read.filters[0]?.until && read.filters[0]?.include_aux,
+        ),
+      ).toBe(false);
+      queries.ensure("c");
+      expect(take(true).filters[0]).toMatchObject({ until: 20 });
+    });
     it("reads a cancelled aux read again with the next fill", async () => {
       const { take, page } = await opened();
       const first = row(10);

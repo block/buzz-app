@@ -79,6 +79,10 @@ import * as performanceDiagnostics from "./performance-diagnostics";
 
 import docsManifest from "./docs/manifest.json";
 import * as docs from "./docs";
+import smartRoutingManifest from "./smart-routing/manifest.json";
+import * as smartRouting from "./smart-routing";
+/** Smart routing runs only with a decisions provider (its manifest says so). */
+const needs = ["decisions"] as const;
 
 const codexHarness: BundledPlugin = {
   manifest: { ...codexManifest, apiVersion: 1 },
@@ -96,6 +100,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
     // Opt-in: it reads community membership in the background once enabled.
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...smartRoutingManifest, apiVersion: 1, requires: needs },
+    module: smartRouting,
+    // Off until it has had more testing; it also needs a decisions provider.
     enabledByDefault: false,
   },
   {

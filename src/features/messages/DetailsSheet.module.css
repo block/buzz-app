@@ -306,6 +306,7 @@ html[data-keyboard-navigation] .sheet[data-contained-composer] {
   > .content
   > .body
   > .reader {
+  flex: 1;
   overflow: hidden;
 }
 /* Its header sits above the stage rather than over a reader. */
@@ -345,4 +346,31 @@ html[data-keyboard-navigation] .sheet[data-height="stable"] {
   .sheet[data-height="stable"] {
     transition: none;
   }
+}
+
+/* A panel that draws to the sheet's edges, such as a profile, reads under the
+   header, which takes the material once that panel scrolls beneath it. */
+.sheet[data-reader-only]:has([data-full-bleed]) > .content > .header {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+}
+.sheet[data-reader-only]:has([data-full-bleed]) > .content > .body {
+  padding-top: 0;
+}
+.sheet[data-reader-only] .headerMaterial {
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--easing-state);
+}
+.sheet[data-reader-only]:not(:has([data-full-bleed])) .headerMaterial {
+  display: none;
+}
+.sheet[data-reader-only][data-scrolled] .headerMaterial {
+  opacity: 1;
+}
+
+/* A sheet over a composer inside another sheet, with its scrim, stacks above
+   that sheet's header. */
+.sheet :is(.sheet, .scrim) {
+  z-index: 3;
 }

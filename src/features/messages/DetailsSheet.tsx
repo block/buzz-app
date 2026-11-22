@@ -53,6 +53,7 @@ function fixedFrame(element: HTMLElement): HTMLElement | null {
 function geometry(
   { composer, pane, viewport = pane }: ComposerOverlayHost,
   windowed: boolean,
+  readerOnly = false,
 ): CSSProperties {
   // Inside another sheet, positions count from that sheet's padding box.
   const frame = windowed ? null : fixedFrame(pane);
@@ -81,12 +82,14 @@ function geometry(
       "[data-details-sheet-surface], [data-overlay-boundary]",
     ) ?? pane
   ).getBoundingClientRect();
-  // A sheet over a composer inside another sheet stops below that sheet's
-  // header, which stays above it; nor does its scrim cover that header, whose
-  // Close still closes both.
-  const header = frame?.matches("[data-details-sheet-surface]")
-    ? frame.querySelector("header")?.getBoundingClientRect()
-    : undefined;
+  // Over a composer inside another sheet, a panel stacks tightly over that
+  // sheet, covering its header, and so does its scrim. Details stop below the
+  // header and leave it out of their scrim: its Close still closes both.
+  const nested = !!frame?.matches("[data-details-sheet-surface]");
+  const header =
+    nested && !readerOnly
+      ? frame?.querySelector("header")?.getBoundingClientRect()
+      : undefined;
   // A region edge at the surface's border extends through that border.
   const inset = (distance: number, border: string) =>
     distance <= Number.parseFloat(border) ? 0 : distance;
@@ -108,8 +111,12 @@ function geometry(
     "--composer-bottom": `${frameHeight - rect.bottom}px`,
     "--composer-radius": getComputedStyle(composer).borderTopLeftRadius,
     "--frame-height": `${frameHeight}px`,
+    // Only a strip of the sheet beneath shows above a panel.
     ...(frame && {
-      "--sheet-top": `${Math.max(bounds.top, header ? header.bottom - originY : 0)}px`,
+      "--sheet-top":
+        nested && readerOnly
+          ? `calc(${Math.max(bounds.top, 0)}px + var(--space-4))`
+          : `${Math.max(bounds.top, header ? header.bottom - originY : 0)}px`,
     }),
     "--pane-top": `${(windowed ? workspace : bounds).top}px`,
     ...(windowed && {
@@ -132,17 +139,20 @@ function geometry(
 function useComposerGeometry(
   host: ComposerOverlayHost,
   windowed: boolean,
+  readerOnly: boolean,
   mounted: boolean,
   surface: HTMLElement | null,
 ) {
   const { composer, pane, viewport } = host;
-  const [style, setStyle] = useState(() => geometry(host, windowed));
+  const [style, setStyle] = useState(() =>
+    geometry(host, windowed, readerOnly),
+  );
   useLayoutEffect(() => {
     if (!mounted) return;
     const header = surface?.querySelector("header");
     const update = () =>
       setStyle({
-        ...geometry({ composer, pane, viewport }, windowed),
+        ...geometry({ composer, pane, viewport }, windowed, readerOnly),
         "--sheet-border-width": surface
           ? getComputedStyle(surface).borderBottomWidth
           : "0px",
@@ -162,7 +172,7 @@ function useComposerGeometry(
       observer?.disconnect();
       window.removeEventListener("resize", update);
     };
-  }, [composer, pane, viewport, windowed, mounted, surface]);
+  }, [composer, pane, viewport, windowed, readerOnly, mounted, surface]);
   return style;
 }
 
@@ -390,7 +400,13 @@ export function DetailsSheet({
   if (open && !mounted) setMounted(true);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
   const windowed = height === "stable";
-  const style = useComposerGeometry(host, windowed, mounted, surface);
+  const style = useComposerGeometry(
+    host,
+    windowed,
+    readerOnly,
+    mounted,
+    surface,
+  );
   // The view's own composer stays usable under a details reader; a thread's
   // reply box replaces it, and a panel covers it, keeping its text.
   useLayoutEffect(() => {
@@ -480,10 +496,22 @@ export function DetailsSheet({
           // Media takes focus at its first control, so its keys work at once.
           initialFocus={windowed ? undefined : containsComposer ? false : popup}
           finalFocus={focus.finalFocus}
+          // A panel under its header shows that header's material once
+          // scrolled.
+          onScrollCapture={
+            readerOnly
+              ? (event) =>
+                  event.currentTarget.toggleAttribute(
+                    "data-scrolled",
+                    event.target instanceof Element &&
+                      event.target.scrollTop > 0,
+                  )
+              : undefined
+          }
         >
           <div className={styles.content}>
             <header className={`buzz-dialog-header ${styles.header}`}>
-              {containsComposer && !windowed && (
+              {((containsComposer && !windowed) || readerOnly) && (
                 <DialogBarMaterial className={styles.headerMaterial} />
               )}
               <div className={styles.byline}>

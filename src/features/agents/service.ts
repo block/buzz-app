@@ -4679,13 +4679,19 @@ export class AgentsService extends Service implements Agents {
     this.runners.dismissInterrupted(this.interruptedKeys());
     this.update();
   };
+  // Shown to the owner, so only what the owner's own session knows.
   interruptedTurns = (agent: Agent) =>
     Object.entries(this.runners.interruptedTurns(agent.key)).map(
-      ([id, channelId]) => ({
-        id,
-        channelId,
-        channel: this.channelOf(agent, { tags: [["h", channelId]] }),
-      }),
+      ([id, channelId]) => {
+        const channels = this.bindingOf(agent)?.session.channels;
+        return {
+          id,
+          channelId,
+          channel:
+            channels?.list().channels.find((item) => item.id === channelId) ??
+            channels?.get?.(channelId),
+        };
+      },
     );
   readInterrupted = async (agent: Agent, signal: AbortSignal) => {
     const session = this.bindingOf(agent)?.session;

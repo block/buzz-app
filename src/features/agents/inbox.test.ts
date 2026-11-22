@@ -266,3 +266,26 @@ it("keeps verified DM facts when a refresh returns only part of them", async () 
     f.controller.abort();
   }
 });
+
+it("reads past the owner only into confirmed DMs", async () => {
+  const f = fixture();
+  f.query.mockImplementation(async (filters: readonly ReadFilter[]) =>
+    filters[0]?.kinds?.includes(39000)
+      ? eventsDto([
+          metadata(relay, channel, "Private stream", 1, [
+            ["private"],
+            ["t", "stream"],
+          ]),
+          roster(relay, channel, [agent.pubkey, sibling.pubkey], 1),
+        ])
+      : eventsDto([mention]),
+  );
+  try {
+    expect(await f.inbox.readAsAgent(filter, signal())).toEqual([]);
+    expect(await f.inbox.mentions(filter, signal())).toEqual(
+      eventsDto([mention]),
+    );
+  } finally {
+    f.controller.abort();
+  }
+});

@@ -56,10 +56,11 @@ export type PdfDocument = Readonly<{
   sizes: readonly PageSize[];
   text(signal: AbortSignal): Promise<string>;
   /** One page's text, up to `MAX_PAGE_TEXT_CHARS`, for assistive technology. */
-  pageText(page: number, signal: AbortSignal): Promise<string>;
+  pageText(page: number, signal: AbortSignal): Promise<PageText>;
   render(page: number, canvas: HTMLCanvasElement, scale: number): PdfRendering;
   destroy(): Promise<void>;
 }>;
+export type PageText = Readonly<{ text: string; truncated: boolean }>;
 export type PdfOpenError = "password" | "not-pdf";
 
 export class PdfError extends Error {
@@ -223,39 +224,60 @@ export async function openPdf(
         }
       },
       pageText: async (number, signal) => {
-        const check = () => {
-          if (signal.aborted || closed.signal.aborted)
-            throw new DOMException("PDF text extraction stopped", "AbortError");
+        const stopped = () =>
+          new DOMException("PDF text extraction stopped", "AbortError");
+        if (signal.aborted || closed.signal.aborted) throw stopped();
+        let reader: ReadableStreamDefaultReader<TextContent> | undefined;
+        let stop!: () => void;
+        const aborted = new Promise<never>((_, reject) => {
+          stop = () => {
+            reject(stopped());
+            if (reader)
+              void reader
+                .cancel(new Error("PDF text extraction stopped"))
+                .catch(() => {});
+          };
+        });
+        aborted.catch(() => {});
+        signal.addEventListener("abort", stop, { once: true });
+        closed.signal.addEventListener("abort", stop, { once: true });
+        const until = async <T>(operation: Promise<T>) => {
+          const result = await Promise.race([operation, aborted]);
+          if (signal.aborted || closed.signal.aborted) throw stopped();
+          return result;
         };
-        check();
-        const page = await document.getPage(number);
-        check();
-        const reader = page.streamTextContent().getReader();
-        const parts: string[] = [];
-        let remaining = MAX_PAGE_TEXT_CHARS;
         try {
-          while (remaining > 0) {
-            const content = await reader.read();
-            check();
+          const page = await until(document.getPage(number));
+          reader = page.streamTextContent().getReader();
+          const parts: string[] = [];
+          let remaining = MAX_PAGE_TEXT_CHARS;
+          let truncated = false;
+          while (!truncated) {
+            const content = await until(reader.read());
             if (content.done) break;
             for (const item of content.value.items) {
               if (!("str" in item)) continue;
-              const part = (item.hasEOL ? `${item.str}\n` : item.str).slice(
-                0,
-                remaining,
-              );
+              const value = item.hasEOL ? `${item.str}\n` : item.str;
+              const part = value.slice(0, remaining);
               parts.push(part);
               remaining -= part.length;
-              if (!remaining) break;
+              if (value.slice(part.length).trim()) {
+                truncated = true;
+                break;
+              }
             }
           }
+          return { text: parts.join("").trim(), truncated };
         } finally {
-          void reader
-            .cancel(new Error("PDF text extraction stopped"))
-            .catch(() => {});
-          reader.releaseLock();
+          signal.removeEventListener("abort", stop);
+          closed.signal.removeEventListener("abort", stop);
+          if (reader) {
+            void reader
+              .cancel(new Error("PDF text extraction stopped"))
+              .catch(() => {});
+            reader.releaseLock();
+          }
         }
-        return parts.join("").trim();
       },
       render(number, canvas, scale) {
         let task: RenderTask | undefined;

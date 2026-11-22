@@ -355,19 +355,35 @@ it("yields between pages so cancellation can retire its timer without destroying
 });
 
 it("reads one page's text for assistive technology, within its budget", async () => {
+  const exact = "e".repeat(MAX_PAGE_TEXT_CHARS);
   const pages = [
     page([{ str: "First" }, { str: " line", hasEOL: true }, { str: "next" }]),
     page([{ str: "x".repeat(MAX_PAGE_TEXT_CHARS + 10) }]),
     page(),
+    page([{ str: exact }, { str: " ", hasEOL: true }]),
+    page([{ str: exact }, { str: "more" }]),
   ];
   loading(pages);
   const pdf = await openPdf(new Uint8Array(), signal());
   try {
-    await expect(pdf.pageText(1, signal())).resolves.toBe("First line\nnext");
-    await expect(pdf.pageText(2, signal())).resolves.toHaveLength(
-      MAX_PAGE_TEXT_CHARS,
-    );
-    await expect(pdf.pageText(3, signal())).resolves.toBe("");
+    await expect(pdf.pageText(1, signal())).resolves.toEqual({
+      text: "First line\nnext",
+      truncated: false,
+    });
+    const long = await pdf.pageText(2, signal());
+    expect(long.text).toHaveLength(MAX_PAGE_TEXT_CHARS);
+    expect(long.truncated).toBe(true);
+    await expect(pdf.pageText(3, signal())).resolves.toEqual({
+      text: "",
+      truncated: false,
+    });
+    await expect(pdf.pageText(4, signal())).resolves.toEqual({
+      text: exact,
+      truncated: false,
+    });
+    await expect(pdf.pageText(5, signal())).resolves.toMatchObject({
+      truncated: true,
+    });
     const stopped = new AbortController();
     stopped.abort();
     await expect(pdf.pageText(1, stopped.signal)).rejects.toMatchObject({
@@ -376,4 +392,37 @@ it("reads one page's text for assistive technology, within its budget", async ()
   } finally {
     await pdf.destroy();
   }
+});
+
+it("stops a page's text read that stalls, on abort or close", async () => {
+  const stalledPage = page();
+  const stalledStream = page();
+  const cancel = vi.fn();
+  stalledStream.streamTextContent.mockImplementation(
+    () => new ReadableStream({ cancel }, { highWaterMark: 0 }),
+  );
+  const h = loading([stalledPage, stalledStream]);
+  const pdf = await openPdf(new Uint8Array(), signal());
+  const never = new Promise<typeof stalledStream>(() => {});
+  h.document.getPage.mockImplementation((number: number) =>
+    number === 1 ? never : Promise.resolve(stalledStream),
+  );
+  const acquiring = new AbortController();
+  const acquisition = pdf.pageText(1, acquiring.signal);
+  acquiring.abort();
+  await expect(acquisition).rejects.toMatchObject({ name: "AbortError" });
+  const reading = new AbortController();
+  const read = pdf.pageText(2, reading.signal);
+  await vi.waitFor(() =>
+    expect(stalledStream.streamTextContent).toHaveBeenCalled(),
+  );
+  reading.abort();
+  await expect(read).rejects.toMatchObject({ name: "AbortError" });
+  expect(cancel).toHaveBeenCalled();
+  const closing = pdf.pageText(2, signal());
+  await vi.waitFor(() =>
+    expect(stalledStream.streamTextContent).toHaveBeenCalledTimes(2),
+  );
+  await pdf.destroy();
+  await expect(closing).rejects.toMatchObject({ name: "AbortError" });
 });

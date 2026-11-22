@@ -1,7 +1,13 @@
 import { expect, it, vi } from "vitest";
 import { fileFormat } from "./formats";
 import { decodeText, LoadError, readBytes } from "./load";
-import { MAX_CELLS, MAX_COLUMNS, MAX_ROWS, parseTable } from "./table";
+import {
+  MAX_CELL_CHARS,
+  MAX_CELLS,
+  MAX_COLUMNS,
+  MAX_ROWS,
+  parseTable,
+} from "./table";
 import { fileTarget, isCommunityMedia, parseFileTarget } from "./target";
 
 const ORIGIN = "https://relay.example.org";
@@ -107,6 +113,21 @@ it("counts the columns and rows it leaves out without keeping them", () => {
   const tail = parseTable(`${"r\n".repeat(MAX_ROWS)}"a\nb",c\nd\n`, ",");
   expect(tail.rows).toHaveLength(MAX_ROWS);
   expect(tail.omittedRows).toBe(2);
+});
+
+it("cuts a long cell short without building all of it", () => {
+  const cell = "y".repeat(19 * 1024 * 1024);
+  const table = parseTable(`"${cell}",b\n${cell}\nok\n`, ",");
+  expect(table.rows.map((row) => row.map((value) => value.length))).toEqual([
+    [MAX_CELL_CHARS + 1, 1],
+    [MAX_CELL_CHARS + 1],
+    [2],
+  ]);
+  expect(table.rows[0]?.[0]?.endsWith("…")).toBe(true);
+  expect(table.shortenedCells).toBe(2);
+  expect(
+    parseTable(`"${"q".repeat(MAX_CELL_CHARS)}"\n`, ",").shortenedCells,
+  ).toBe(0);
 });
 
 const respond = (body: BodyInit, headers: HeadersInit = {}, status = 200) =>

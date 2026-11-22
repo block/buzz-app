@@ -24,6 +24,7 @@ import {
   openPdf,
   PdfError,
   type PageSize,
+  type PageText,
   type PdfDocument,
 } from "./pdf";
 import styles from "./FileViewer.module.css";
@@ -174,7 +175,13 @@ function Page({
       {near && <Drawing pdf={pdf} page={page} scale={scale} />}
       {text !== undefined && (
         <div className={styles.pageText}>
-          {text || "This page has no text."}
+          {text === "failed"
+            ? "This page's text couldn't be read."
+            : text.text
+              ? text.truncated
+                ? `${text.text}\n\nThis page's text continues past what can be read here. Download the file to read the rest.`
+                : text.text
+              : "This page has no text."}
         </div>
       )}
     </div>
@@ -184,13 +191,13 @@ function Page({
 /** A page's text is read once it first comes near, then kept for screen
  * readers, which may read pages that have scrolled away. */
 function usePageText(pdf: PdfDocument, page: number, near: boolean) {
-  const [text, setText] = useState<string>();
+  const [text, setText] = useState<PageText | "failed">();
   const wanted = near || text !== undefined;
   useEffect(() => {
     if (!wanted) return;
     const controller = new AbortController();
     pdf.pageText(page, controller.signal).then(setText, () => {
-      if (!controller.signal.aborted) setText("");
+      if (!controller.signal.aborted) setText("failed");
     });
     return () => controller.abort();
   }, [pdf, page, wanted]);

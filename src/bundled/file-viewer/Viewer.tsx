@@ -257,9 +257,12 @@ function TableView({
           ))}
         </tbody>
       </table>
-      {left.length > 0 && (
+      {(left.length > 0 || table.shortenedCells > 0) && (
         <p className={styles.note} role="note">
-          Not shown: {left.join(" and ")}. Download the file to see everything.
+          {left.length > 0 && `Not shown: ${left.join(" and ")}. `}
+          {table.shortenedCells > 0 &&
+            `${table.shortenedCells.toLocaleString()} long ${table.shortenedCells === 1 ? "cell is" : "cells are"} cut short, ending in "…". `}
+          Download the file to see everything.
         </p>
       )}
     </>

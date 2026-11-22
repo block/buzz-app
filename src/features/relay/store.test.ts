@@ -789,6 +789,73 @@ describe("channel store", () => {
       expect(row(older[1])?.reactions).toEqual([]);
     },
   );
+  it("replaces paged rows with a revisit head that meets only their live tail", async () => {
+    const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    let clock = 1_000_000;
+    const queries = createRelaySession(
+      {
+        ...scripted.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { prepared: true, now: () => clock },
+    ).session.channels;
+    live.receive([roster(relay, "c", [viewer.pubkey])]);
+    queries.ensure("c");
+    const [older, head, tail, latest] = [5, 10, 30, 40].map((at) =>
+      message(alice, "c", `at ${at}`, at),
+    );
+    assert(older && head && tail && latest);
+    const take = () => {
+      const read = scripted.pending.find(
+        (entry) => entry.filters[0]?.top_level && !entry.filters[0]?.include_aux,
+      );
+      assert(read);
+      scripted.pending.splice(scripted.pending.indexOf(read), 1);
+      return read;
+    };
+    scripted.next().respond([
+      head,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 10, id: head.id },
+      }),
+    ]);
+    await flush();
+    queries.loadOlder("c");
+    take().respond([
+      older,
+      bounds(relay, "c", `10:${head.id}`, { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    // The stream delivers a row; what it missed before it is unknown.
+    live.receive([tail]);
+    queries.ensure("d");
+    await flush();
+    scripted.pending.length = 0;
+    clock += 61_000;
+    queries.ensure("c");
+    const revisit = scripted.pending.find(
+      (entry) => entry.filters[0]?.top_level && !entry.filters[0]?.until,
+    );
+    assert(revisit);
+    revisit.respond([
+      latest,
+      tail,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 30, id: tail.id },
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([
+      tail.id,
+      latest.id,
+    ]);
+  });
   it("a full window drops its oldest rows for live traffic, but not under an older read", async () => {
     const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
     let live!: LiveCallbacks;

@@ -1431,12 +1431,17 @@ export function createChannelStore(
         const head = await requestHead(state.channelId, "foreground");
         if (!live(state, generation)) return;
         // A reader paged back from the head keeps its older rows when the
-        // newer head meets them; past a gap the head replaces them.
+        // newer head meets them; past a gap the head replaces them. Only rows
+        // read prove continuity: the stream may have missed rows before one
+        // it delivered.
         const ids = rowIds(state);
         if (
           !state.atHead &&
           besideHead &&
-          (!head.hasMore || head.events.some((event) => ids.has(event.id)))
+          (!head.hasMore ||
+            head.events.some(
+              (event) => ids.has(event.id) && !state.traffic.has(event.id),
+            ))
         ) {
           accept(head.events);
           // Its newest notices came with it, or need their own read.

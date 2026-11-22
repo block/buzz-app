@@ -2440,6 +2440,16 @@ it("collapses Working command details", async () => {
   expect(screen.getByText("Latest activity")).toBeVisible();
 });
 
+it("keeps a failed standalone watch run visible", async () => {
+  const f = fixture();
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key: "watch/deploys", status: "Needs attention", detail: "Watch failed" },
+  ]);
+  render(<f.tabs.ActivityTab {...f.props()} />);
+  expect(await screen.findByText("watch/deploys")).toBeInTheDocument();
+  expect(screen.getByText("Watch failed")).toBeInTheDocument();
+});
+
 it("hides a live session's details while it serves a channel its owner cannot read", async () => {
   const f = fixture();
   const key = JSON.stringify(["@community", "@community"]);

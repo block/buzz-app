@@ -453,7 +453,11 @@ it("names each saved session's channel as the community lists it, and omits one 
   );
   saved.set(channel, { id: "s1", seen: 100, at: 5 });
   saved.set("chan-gone/root-1", { id: "s2", seen: 100, at: 3 });
-  expect(runtime.conversations(self)).toEqual([
+  // Internal consumers keep every saved session; the owner sees only theirs.
+  expect(runtime.conversations(self).map(({ sessionId }) => sessionId)).toEqual(
+    ["s1", "s2"],
+  );
+  expect(runtime.ownerConversations(self)).toEqual([
     {
       key: channel,
       agent: self,

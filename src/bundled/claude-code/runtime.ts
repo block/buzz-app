@@ -799,7 +799,12 @@ export class ClaudeRuntime {
     }
     return view;
   }
-  /** The agent's saved sessions, most recently used first. */
+  /** The agent's saved sessions its owner may see, for display. */
+  ownerConversations(agent: AgentKey): SavedConversation[] {
+    return ownerRows(this.conversations(agent), this.reads(agent));
+  }
+  /** The agent's saved sessions, most recently used first, including those in
+   * channels only the agent can read; show them through `ownerConversations`. */
   conversations(agent: AgentKey): SavedConversation[] {
     const reads = this.reads(agent);
     const saved =
@@ -822,26 +827,23 @@ export class ClaudeRuntime {
               ).list();
             })
         : this.savedSessions(agent).list();
-    return ownerRows(
-      saved.map(([key, saved]) => {
-        const { channelId, root, ...location } = sessionSource(
-          this.storage,
-          agent,
-          key,
-        );
-        return {
-          key,
-          agent,
-          sessionId: saved.id,
-          ...location,
-          channelId,
-          ...(root ? { root } : {}),
-          ...ownerLabel(reads, channelId),
-          at: saved.at,
-        };
-      }),
-      reads,
-    );
+    return saved.map(([key, saved]) => {
+      const { channelId, root, ...location } = sessionSource(
+        this.storage,
+        agent,
+        key,
+      );
+      return {
+        key,
+        agent,
+        sessionId: saved.id,
+        ...location,
+        channelId,
+        ...(root ? { root } : {}),
+        ...ownerLabel(reads, channelId),
+        at: saved.at,
+      };
+    });
   }
   /** A conversation's transcript, found from the workspace it ran in. */
   async transcript(

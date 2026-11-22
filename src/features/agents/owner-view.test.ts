@@ -115,6 +115,21 @@ it("hides a turn whose opening prompt was cut off, leaving only a readable steer
   ).toEqual([]);
 });
 
+it("hides a turn whose first prompt is flagged as a steer, even once unwrapped", () => {
+  clock = 0;
+  const [turn] = claudeSession(claudePrompt("1", open, "general"));
+  if (!turn) throw new Error("no turn");
+  const flagged = {
+    ...turn,
+    items: turn.items.map((item) =>
+      item.type === "prompt" ? { ...item, steer: true } : item,
+    ),
+  };
+  expect(
+    ownerTurns([flagged], reads, { channelId: open, community: true }),
+  ).toEqual([]);
+});
+
 it("reads the source channel of a Codex community turn from its context", () => {
   const input = (channel: string, name: string) =>
     turnInput(

@@ -146,6 +146,8 @@ type Row = Readonly<{
   sessions?: readonly string[];
   /** Its channel's name, when the community lists it. */
   name?: string;
+  /** Started outside any conversation, such as a watch's or timer's turn. */
+  standalone?: true;
 }>;
 const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
@@ -199,7 +201,16 @@ export function activityRows(
   const standalone = starts
     .flatMap(({ id, at, title = "", conversation }): Row[] =>
       conversation === null && at !== undefined
-        ? [{ key: id, sessionId: id, title, at, channelId: "" }]
+        ? [
+            {
+              key: id,
+              sessionId: id,
+              title,
+              at,
+              channelId: "",
+              standalone: true as const,
+            },
+          ]
         : [],
     )
     .reverse()
@@ -898,12 +909,16 @@ export function createTabs({
         transcript && {
           ...transcript,
           turns: runtime.prompts(agent.key).shown(
-            // Without a known place, each turn shows only by its own source.
-            runtime.readableTurns(
-              agent.key,
-              row.channelId ? row : { ...row, channelId: "", community: true },
-              transcript.turns,
-            ),
+            row.standalone
+              ? transcript.turns
+              : // Without a known place, each turn shows only by its own source.
+                runtime.readableTurns(
+                  agent.key,
+                  row.channelId
+                    ? row
+                    : { ...row, channelId: "", community: true },
+                  transcript.turns,
+                ),
           ),
         }
       );

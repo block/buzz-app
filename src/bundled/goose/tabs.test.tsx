@@ -1158,7 +1158,31 @@ it("lists conversations by channel name, with running and standalone sessions, o
   expect(listings(fake)).toEqual([]);
 });
 
-it("filters a transcript with no known place by each turn's own source", async () => {
+it("filters a conversation that lost its place by each turn's own source", async () => {
+  const fake = gooseHistory(["s1"]);
+  const readableTurns = vi.fn(() => []);
+  activity(fake, {
+    saved: [{ key: "lost", at: 1, sessions: ["s1"] }],
+    runtime: {
+      readableTurns,
+      source: () => ({ channelId: "" }),
+    } as unknown as Partial<GooseRuntime>,
+  });
+  const [view] = await screen.findAllByRole("button", {
+    name: /View transcript/,
+  });
+  if (!view) throw new Error("no row");
+  await userEvent.setup().click(view);
+  await waitFor(() =>
+    expect(readableTurns).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channelId: "", community: true }),
+      expect.anything(),
+    ),
+  );
+});
+
+it("shows a standalone watch or timer run's transcript, which is the owner's own", async () => {
   const fake = gooseHistory(["timer"]);
   const readableTurns = vi.fn(() => []);
   activity(fake, {
@@ -1171,16 +1195,10 @@ it("filters a transcript with no known place by each turn's own source", async (
     .click(
       await screen.findByRole("button", { name: "View transcript: timer/t" }),
     );
-  await waitFor(() =>
-    expect(readableTurns).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ channelId: "", community: true }),
-      expect.anything(),
-    ),
-  );
   expect(
-    screen.queryByText("Hi from timer", { selector: "summary span" }),
-  ).toBeNull();
+    await screen.findByText("Hi from timer", { selector: "summary span" }),
+  ).toBeInTheDocument();
+  expect(readableTurns).not.toHaveBeenCalled();
 });
 
 it("lists a conversation with more than ten sessions once", () => {

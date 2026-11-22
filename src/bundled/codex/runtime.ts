@@ -1783,6 +1783,8 @@ export class CodexRuntime {
   }
   /** Whether the live session `key` is of a conversation its owner can read. */
   readableSession(agent: AgentKey, key: string) {
+    // A standalone watch or timer run, keyed `type/id`, is the owner's own.
+    if (!key.startsWith("[")) return true;
     try {
       const [channelId] = JSON.parse(key) as unknown[];
       return (

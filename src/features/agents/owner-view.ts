@@ -39,12 +39,14 @@ export function ownerTurns<T extends TranscriptTurn>(
     return reads?.ownerReadable(place.channelId) ? [...turns] : [];
   return turns.filter((turn) => {
     const prompts = turn.items.flatMap((item) =>
-      item.type === "prompt" ? [item.sections] : [],
+      item.type === "prompt" ? [item] : [],
     );
-    const sources = prompts.map(promptChannel);
+    const sources = prompts.map((prompt) => promptChannel(prompt.sections));
+    const [opening] = prompts;
     return (
-      !!prompts[0] &&
-      !prompts[0].some((section) => section.tag === STEER) &&
+      !!opening &&
+      !opening.steer &&
+      !opening.sections.some((section) => section.tag === STEER) &&
       sources.every(
         (channelId) =>
           channelId !== undefined && reads?.ownerReadable(channelId) === true,

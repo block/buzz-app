@@ -1053,7 +1053,12 @@ Quitting Buzz also turns it off.
   (Ctrl+Shift+R) reloads the whole app, which restarts running agents. If a plugin uses
   the same key as another shortcut, Settings → Shortcuts marks it "Also used
   by"; change one of them to choose which fires. In the Mac app, **Buzz →
-  Settings…** in the menu bar also opens Settings.
+  Settings…** in the menu bar also opens Settings, and **Buzz → Check for
+  Updates…** checks for a new version and shows the result in a notification.
+  If an update is already downloading, the command shows its progress; once it
+  is ready, the command points you to the **Update** button in the top bar.
+  Dismissing the download notification leaves the download running; choose
+  **Check for Updates…** again to bring it back.
 - **Message width**: choose **Narrow** or **Wide** in **Settings → Appearance →
   Interface**. Narrow is the default; Wide gives messages and the composer
   50% more room when the pane is wide enough. The choice is saved on this device.

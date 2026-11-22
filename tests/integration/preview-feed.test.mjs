@@ -56,6 +56,8 @@ function fixture(dir, version = "0.0.0-preview.22", embedded = endpoint) {
     `Buzz_${version}_x64_unsigned.exe`,
     `Buzz_${version}_amd64.deb`,
     `Buzz_${version}_x86_64.AppImage`,
+    `Buzz_${version}_arm64.deb`,
+    `Buzz_${version}_aarch64.AppImage`,
   ].map((name) => join(assetDir, name));
   const [archive] = installers;
   const binary = join(dir, "buzz-foundation");
@@ -181,6 +183,8 @@ test("preview feed signs every desktop installer into its updater target", (t) =
     "windows-x86_64",
     "linux-x86_64-deb",
     "linux-x86_64-appimage",
+    "linux-aarch64-deb",
+    "linux-aarch64-appimage",
   ];
   // Linux has no generic target, so a deb install cannot select the AppImage.
   assert.deepEqual(Object.keys(platforms), targets);
@@ -200,6 +204,54 @@ test("preview feed signs every desktop installer into its updater target", (t) =
   assert.match(execute("generate").stderr, /Archive signature invalid/);
   rmSync(`${windows}.sig`);
   assert.match(execute("generate").stderr, /ENOENT/);
+});
+
+test("a release built before the Linux arm64 leg is served without arm64 targets", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "preview-before-arm64-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { installers, manifest, execute } = fixture(
+    dir,
+    "1.0.2",
+    feedUrl("stable-feed"),
+  );
+  const signedArm64 = installers
+    .slice(-2)
+    .flatMap((file) => [file, `${file}.sig`]);
+  const saved = signedArm64.map((file) => [file, readFileSync(file)]);
+  assert.equal(execute("generate").status, 0, execute("generate").stderr);
+  const withArm64 = join(dir, "with-arm64.json");
+  writeFileSync(withArm64, readFileSync(manifest));
+  // One file of the four left: the release has the leg, so nothing is optional.
+  for (const kept of signedArm64) {
+    for (const file of signedArm64) if (file !== kept) rmSync(file);
+    assert.match(execute("generate").stderr, /ENOENT/, kept);
+    for (const [file, bytes] of saved) writeFileSync(file, bytes);
+  }
+  for (const file of signedArm64) rmSync(file);
+  assert.equal(execute("generate").status, 0, execute("generate").stderr);
+  const { platforms } = JSON.parse(readFileSync(manifest, "utf8"));
+  assert.deepEqual(Object.keys(platforms), [
+    "darwin-aarch64",
+    "darwin-x86_64",
+    "windows-x86_64",
+    "linux-x86_64-deb",
+    "linux-x86_64-appimage",
+  ]);
+  assert.equal(execute("verify").status, 0, execute("verify").stderr);
+  // Repromoting the version a pre-arm64 feed already serves stays a no-op.
+  const current = join(dir, "current.json");
+  writeFileSync(current, readFileSync(manifest));
+  assert.equal(execute("generate", current).status, 0);
+  assert.equal(execute("verify", current).status, 0);
+  // A feed that serves arm64 never loses it to a release without it.
+  const serving = JSON.parse(readFileSync(withArm64, "utf8"));
+  writeFileSync(current, JSON.stringify({ ...serving, version: "1.0.1" }));
+  for (const action of ["generate", "verify"])
+    assert.match(
+      execute(action, current).stderr,
+      /Candidate drops linux-aarch64-deb from the feed/,
+      action,
+    );
 });
 
 test("preview rollback compares the complete canonical SemVer without number rounding", (t) => {

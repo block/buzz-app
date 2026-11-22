@@ -41,6 +41,14 @@ const assets = {
   "linux-x86_64-deb": "amd64.deb",
   "linux-x86_64-appimage": "x86_64.AppImage",
 };
+// A preview built before the Linux arm64 leg is served without these two
+// targets; a feed with either one must have both.
+const arm64Assets = {
+  "linux-aarch64-deb": "arm64.deb",
+  "linux-aarch64-appimage": "aarch64.AppImage",
+};
+if (Object.keys(arm64Assets).some((target) => target in manifest.platforms))
+  Object.assign(assets, arm64Assets);
 assert.deepEqual(
   Object.keys(manifest.platforms).sort(),
   Object.keys(assets).sort(),

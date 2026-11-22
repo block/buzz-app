@@ -60,6 +60,8 @@ function fixture(t) {
         "windows-x86_64": "x64_unsigned.exe",
         "linux-x86_64-deb": "amd64.deb",
         "linux-x86_64-appimage": "x86_64.AppImage",
+        "linux-aarch64-deb": "arm64.deb",
+        "linux-aarch64-appimage": "aarch64.AppImage",
       }).map(([target, asset]) => [
         target,
         {
@@ -138,6 +140,30 @@ test("dry run reads all pages and preserves the newest ten plus the feed target"
   assert.match(result.stdout, /Would delete v0\.0\.0-preview\.3$/m);
   assert.match(result.stdout, /Would delete v0\.0\.0-preview\.2$/m);
   assert.match(result.stdout, /Dry run: 2/);
+});
+
+test("a feed serving a preview built before the Linux arm64 leg is still pruned", (t) => {
+  const { run, manifest } = fixture(t);
+  const {
+    "linux-aarch64-deb": deb,
+    "linux-aarch64-appimage": appimage,
+    ...before
+  } = manifest.platforms;
+  const result = run({ manifest: { ...manifest, platforms: before } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Dry run: 2/);
+  // Either arm64 target alone is not such a preview: both are required.
+  for (const partial of [
+    { "linux-aarch64-deb": deb },
+    { "linux-aarch64-appimage": appimage },
+  ]) {
+    const refused = run({
+      args: ["--apply"],
+      manifest: { ...manifest, platforms: { ...before, ...partial } },
+    });
+    assert.notEqual(refused.status, 0, JSON.stringify(partial));
+    assert.ok(refused.calls.every((args) => args[1] !== "delete"));
+  }
 });
 
 test("apply deletes only eligible preview releases and their tags, leaving other releases untouched", (t) => {

@@ -50,7 +50,7 @@ export function apply(ctx) {
 - **Plugin id:** lowercase letters, digits, `.` and `-`, starting with a letter, at most 80 bytes, no empty segments, no underscores. Bundled plugins' ids are reserved. Updates match on `id`.
 - **Contribution ids** (pages, panels, shortcuts and so on) match `/^[a-z0-9][a-z0-9._-]*$/` and are unique within the plugin.
 - **No work at module top level.** Do everything in `apply`. Enabled plugins activate even when their page is never opened.
-- **Declare every service in `inject`.** `apply` runs only once all are available, so a missing one means it never runs; check `plugin_status` after installing. Optional services (`sidebarSections`, `subjectLift`, `pluginInstaller`, `seen`, `ui`, `communityJoin`) aren't listed in `inject`: read them with `ctx.reflect.get("name")`, which returns `undefined` on hosts without them.
+- **Declare every service in `inject`.** `apply` runs only once all are available, so a missing one means it never runs; check `plugin_status` after installing. Optional services (`sidebarSections`, `subjectLift`, `notices`, `pluginInstaller`, `seen`, `ui`, `communityJoin`) aren't listed in `inject`: read them with `ctx.reflect.get("name")`, which returns `undefined` on hosts without them.
 - **Own everything you start** with `ctx.effect(() => { start(); return () => stop(); })`. Everything you register through `ctx` is removed when the plugin is disabled or replaced.
 - **State:** React state resets on reload. The module is evaluated once per revision per app session. Use the `seen` service to remember a one-time experience.
 - **Errors:** an invalid `register` call fails activation, and the error shows in Settings and `plugin_status`. Pages and panels render in error boundaries, but loops and global side effects aren't contained.
@@ -73,6 +73,7 @@ Each line is the main call. Read the types for every field.
 | `notifications` | OS notifications | `ctx.notifications.register({ id, label }).submit({ sourceKey, target, title?, body? })` |
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, community })`. It never rejects. |
 | `browser` | An embedded website (macOS) | `ctx.browser.View` inside a panel |
+| `notices` (optional) | A notice on any page, with up to three buttons | `await ctx.reflect.get("notices")?.show({ title, description?, actions? }, { signal? })` resolves with the picked action's `id`, or `undefined` if dismissed or aborted. Proceed only on an allow `id`. Pass a tool call's `client.signal` to ask the owner before it runs. |
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
 
@@ -98,6 +99,7 @@ Declare in `manifest.json` the commands, processes, network origins and files yo
 
 - `await ctx.host.runCommand("status", input?)` runs a declared command with no shell and a 5 s deadline. It returns stdout, or `null` on failure.
 - `await ctx.host.request({ url, method?, headers?, body? })` calls a declared HTTPS origin and returns `{ status, headers, body }`. Plain `fetch` to other origins is blocked, so use this.
+- `await ctx.host.writeClipboardText?.(text)` copies plain text the way Buzz does. It needs no grant; check it exists.
 - `ctx.host.spawn?.(id, { args?, onStdout? })` starts a declared process (desktop only).
 - `files: true` enables `ctx.host.readFile` and `ctx.host.resolveDirectory`.
 

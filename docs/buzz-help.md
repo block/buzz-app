@@ -122,9 +122,7 @@ In a Codex agent’s settings, open **Huddle voice** in the **Settings** tab to 
   with no **Join Community** confirmation. Other Builderlab deployments do not
   offer it during setup. Later, **Create community** in **Settings → Plugins →
   Builderlab → Communities** opens the join for the new community at once; after its profile
-  step it opens and is listed in the community picker. When the owner of a community with no channels yet
-  opens Messages, Buzz creates one open **#general**, marked as the starter
-  channel for new members, and opens it.
+  step it opens and is listed in the community picker.
   The picker's **Create community** opens that form directly. If Builderlab is
   signed out, sign in remains available in both management sections; a picker
   creation resumes after sign-in.

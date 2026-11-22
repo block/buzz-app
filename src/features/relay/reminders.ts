@@ -56,7 +56,7 @@ export type Reminders = Readonly<{
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
   create(
-    target: ReminderTarget,
+    target: ReminderTarget | undefined,
     notBefore: number,
     note?: string,
   ): Promise<void>;
@@ -342,17 +342,20 @@ export function createReminders(options: {
       loading = read;
       return loading;
     },
-    create: (target, notBefore, note) =>
-      write({
+    async create(target, notBefore, note) {
+      const text = note?.trim();
+      if (!target && !text) throw new Error("Reminder text is required");
+      await write({
         d: randomD(),
         createdAt: now(),
         notBefore,
         content: {
-          target,
-          ...(note?.trim() ? { note: note.trim() } : {}),
+          ...(target ? { target } : {}),
+          ...(text ? { note: text } : {}),
           status: "pending",
         },
-      }),
+      });
+    },
     snooze: (id, notBefore) =>
       replace(id, (current) => ({
         notBefore,

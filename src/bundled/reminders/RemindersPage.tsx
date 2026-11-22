@@ -36,6 +36,7 @@ import {
   ArrowSquareOutIcon,
   CheckIcon,
   DotsThreeIcon,
+  PlusIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
@@ -173,6 +174,27 @@ export function RemindersPage({
                 title="Reminders"
                 icon={<AlarmIcon size="1rem" />}
               />
+            }
+            actions={
+              reminders && scope ? (
+                <IconButton
+                  size="sm"
+                  variant="ghost"
+                  aria-label="New reminder"
+                  title="New reminder"
+                  icon={<PlusIcon size="1rem" />}
+                  onClick={() =>
+                    void navigator.open({
+                      version: 1,
+                      kind: "page",
+                      pluginId: "buzz.reminders",
+                      pageId: "reminders",
+                      scope,
+                      route: { version: 1, params: "new" },
+                    })
+                  }
+                />
+              ) : undefined
             }
           />
           {error && (
@@ -408,7 +430,7 @@ function ReminderSections({
                 <EmptyState
                   icon={<AlarmIcon size={24} />}
                   title={done ? "You're all caught up" : "No reminders yet"}
-                  description="Choose Remind me from any message's menu to bring it back here when it matters."
+                  description="Choose New reminder to write your own, or choose Remind me from a message's menu."
                 />
               </motion.div>
             )}
@@ -554,7 +576,7 @@ function ReminderRow({
     <span className={styles.content}>
       <span
         id={`${id}-preview`}
-        className={`text-body ${pending ? "text-standard" : "text-subtle"} ${styles.preview}`}
+        className={`text-body ${pending ? "text-standard" : "text-subtle"} ${styles.preview} ${!reminder.target?.preview ? styles.note : ""}`}
         data-message={open && reminder.target?.preview ? "" : undefined}
       >
         {preview || sender}

@@ -24,7 +24,7 @@ import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
 import { TypingIndicator } from "./TypingIndicator";
 import { useComposerScope, useOverlayComposerRef } from "./composer-overlay";
-import { DetailsAddressContext, detailsInView } from "./DetailsMessage";
+import { LayerAddressContext, layerInView } from "./view-layer";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { selectNewestMessage } from "./message-selection";
@@ -1748,7 +1748,7 @@ function Composer({
   // Rows above draw their readers around this form; a send answers them.
   const formRef = useOverlayComposerRef(form);
   const composerView = useComposerScope();
-  const detailsAddress = useContext(DetailsAddressContext);
+  const layerAddress = useContext(LayerAddressContext);
   const [announcementHost, setAnnouncementHost] = useState<Element | null>(
     null,
   );
@@ -3930,9 +3930,10 @@ function Composer({
       // A send answers the details read over this composer, as ✕ closes them.
       if (
         composerView &&
-        detailsInView(detailsAddress?.open, channelId, composerView)
+        layerAddress?.open?.messageId &&
+        layerInView(layerAddress.open, channelId, composerView)
       )
-        detailsAddress?.dismiss();
+        layerAddress.dismiss();
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();

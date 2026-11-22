@@ -333,7 +333,7 @@ it("saves new-thread placement, restores it, and follows another window", async 
     screen.getByRole("combobox", { name: "Open threads in" });
   expect(
     screen.getByText(
-      "New threads open here. Inline reads a thread over the conversation; links still open threads in a tab. Already-open threads stay where you placed them.",
+      "New threads open here. Inline opens threads, profiles and links over the conversation instead of in tabs; calls, canvases and apps still open as tabs. Already-open threads stay where you placed them.",
     ),
   ).toBeVisible();
   expect(choice()).toHaveTextContent("Side pane");

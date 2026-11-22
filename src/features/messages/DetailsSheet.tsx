@@ -8,7 +8,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { SidebarRightIcon, XIcon } from "../../shared/design-system/icons";
+import {
+  ArrowSquareOutIcon,
+  SidebarRightIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useFinalFocusUnlessMoved } from "../../shared/design-system/ui/finalFocus";
@@ -316,7 +320,10 @@ export function DetailsSheet({
   finalFocus,
   children,
   containsComposer = false,
+  readerOnly = false,
+  tall = false,
   onMoveToTab,
+  onOpenAsTab,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
@@ -329,24 +336,34 @@ export function DetailsSheet({
   children: ReactNode;
   /** A thread supplies its own reply box in place of the view's composer. */
   containsComposer?: boolean;
+  /** A panel: it takes the full height and covers the composer, which it
+   * leaves untouched underneath. */
+  readerOnly?: boolean;
+  /** Takes the full height while true, as a thread does under a panel, and
+   * settles back to its content after. */
+  tall?: boolean;
   /** Hands what this sheet reads to a side-pane tab. */
   onMoveToTab?: (() => void) | undefined;
+  /** Closes this sheet and opens what it reads as a tab. */
+  onOpenAsTab?: (() => void) | undefined;
 }) {
   const { composer } = host;
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   const [surface, setSurface] = useState<HTMLDivElement | null>(null);
   const style = useComposerGeometry(host, mounted, surface);
-  // The view's own composer stays usable under a reader; a thread's reply box
-  // replaces it.
+  // The view's own composer stays usable under a details reader; a thread's
+  // reply box replaces it, and a panel covers it, keeping its text.
   useLayoutEffect(() => {
-    if (!mounted || !containsComposer) return;
+    if (!mounted || (!containsComposer && !readerOnly)) return;
+    if (readerOnly) composer.dataset.composerCovered = "";
     const inert = composer.inert;
     composer.inert = true;
     return () => {
       composer.inert = inert;
+      if (readerOnly) delete composer.dataset.composerCovered;
     };
-  }, [composer, mounted, containsComposer]);
+  }, [composer, mounted, containsComposer, readerOnly]);
   useComposerHandoff(surface, composer, open, containsComposer);
   const popup = useRef<HTMLDivElement | null>(null);
   const backdrop = useRef<HTMLDivElement | null>(null);
@@ -409,7 +426,10 @@ export function DetailsSheet({
           className={styles.sheet}
           data-details-sheet-surface=""
           data-contained-composer={containsComposer || undefined}
-          // Every sheet fits its content and grows with it, up to its maximum.
+          data-reader-only={readerOnly || undefined}
+          data-tall={tall || undefined}
+          // Threads and details fit their content and grow with it, up to the
+          // maximum; a panel takes the full height (`data-reader-only`).
           data-height="content"
           style={style}
           // A thread places focus in its reply box; a reader takes it itself.
@@ -435,6 +455,17 @@ export function DetailsSheet({
                 )}
               </div>
               <div className="buzz-dialog-header-actions">
+                {onOpenAsTab && (
+                  <IconButton
+                    aria-label="Open as tab"
+                    title="Open as tab"
+                    variant="glass"
+                    shape="round"
+                    size="compact"
+                    icon={<ArrowSquareOutIcon size={16} aria-hidden="true" />}
+                    onClick={onOpenAsTab}
+                  />
+                )}
                 {onMoveToTab && (
                   <IconButton
                     aria-label="Move to side panel"
@@ -464,7 +495,7 @@ export function DetailsSheet({
             </div>
           </div>
           {/* The composer shows through here, inside the sheet's ring. */}
-          {!containsComposer && (
+          {!containsComposer && !readerOnly && (
             <div className={styles.composerSpace} aria-hidden="true" />
           )}
         </BaseDialog.Popup>

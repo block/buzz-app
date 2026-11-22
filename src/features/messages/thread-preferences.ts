@@ -1,8 +1,9 @@
 import { useSyncExternalStore } from "react";
 import type { DeviceSetting } from "../../shared/device-settings";
 
-/** inline reads a new thread over its conversation's composer; main and
- * side open it in a tab in that pane. */
+/** inline opens threads, profiles and link panels as dialogs over the view
+ * they were opened from instead of as tabs; main and side open them in a tab
+ * in that pane. `placeOpening` is where that choice is made. */
 export type ThreadPlacement = "inline" | "main" | "side";
 const preferenceKey = "buzz-thread-placement.v1";
 const changedEvent = "buzz-thread-placement-changed";
@@ -60,10 +61,10 @@ export function setThreadPlacementPreference(value: ThreadPlacement): void {
 export const threadPlacementSetting: DeviceSetting = {
   key: "conversations.thread_placement",
   description:
-    "Where new threads open: inline over the conversation, or in a tab in the side pane or the main pane.",
+    "Where new threads open: inline over the conversation, or in a tab in the side pane or the main pane. Inline also opens profiles and link panels over the view they were opened from.",
   schema: { type: "string", enum: ["side", "main", "inline"] },
   applies:
-    "New threads only; open threads stay where they are, Solo threads always open in the side pane, and thread links open as tabs.",
+    "New openings only; open tabs stay where they are, Solo threads always open in the side pane, and under inline calls, canvases and apps still open as tabs.",
   read: () => ({
     value: threadPlacementPreference(),
     unsaved:

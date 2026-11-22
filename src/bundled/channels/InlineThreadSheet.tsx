@@ -6,16 +6,22 @@ import {
   useComposerScope,
 } from "../../features/messages/composer-overlay";
 import { DetailsSheet } from "../../features/messages/DetailsSheet";
+import { PanelLayer } from "../../features/messages/PanelLayer";
 
 /** The conversation's inline thread: a dialog drawn over the conversation's
  * composer, with the thread's own reply box in its place. The address owns
  * whether it is open; this only presents it. */
 export function InlineThreadSheet({
+  channelId,
   rootId,
+  tall,
   close,
   moveToTab,
 }: {
+  channelId: string;
   rootId: string;
+  /** A panel sits over it: it takes the full height until that closes. */
+  tall: boolean;
   /** Explicit close: ✕, Escape or the scrim. */
   close(): void;
   /** Moves the thread to a side-pane tab. */
@@ -34,11 +40,13 @@ export function InlineThreadSheet({
       host={host}
       title="Thread"
       containsComposer
+      tall={tall}
       onMoveToTab={moveToTab}
     >
-      {/* The thread's own view, for the details its rows open. */}
+      {/* The thread's own view, for the details and panels its rows open. */}
       <ComposerScopeProvider rootId={rootId}>
         <ConversationThread messageId={rootId} focusRequest={1} />
+        <PanelLayer channelId={channelId} />
       </ComposerScopeProvider>
     </DetailsSheet>
   );

@@ -128,7 +128,7 @@ it("moves new threads, saved and announced to open settings screens", () => {
     key: "conversations.thread_placement",
     description: expect.any(String),
     schema: { type: "string", enum: ["side", "main", "inline"] },
-    applies: expect.stringMatching(/New threads only/),
+    applies: expect.stringMatching(/New openings only/),
     value: "main",
     saved: true,
   });

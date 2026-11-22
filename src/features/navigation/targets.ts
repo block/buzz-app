@@ -35,6 +35,18 @@ export type JoinPresentation = Readonly<{
   visit: string;
   community?: string;
 }>;
+/** A dialog on top of a view; see `layer` on a conversation target. */
+export type ViewLayer = Readonly<
+  (
+    | { messageId: string; target?: undefined; threadId?: undefined }
+    | {
+        target: string;
+        threadId?: string;
+        messageId?: undefined;
+      }
+  ) & { rootId?: string; channelId?: string }
+>;
+
 export type OpenTarget = Readonly<{ join?: JoinPresentation }> &
   (
     | Readonly<{ version: 1; kind: "home" }>
@@ -92,15 +104,14 @@ export type OpenTarget = Readonly<{ join?: JoinPresentation }> &
         /** The thread read inline over this conversation's composer: its
          * root. Presentation only; at most one per conversation. */
         inline?: string;
-        /** A details message read over the composer of the view it was
-         * opened in: the conversation without `rootId`, the inline thread
-         * when `rootId` is `inline`, otherwise the thread tab with that root,
-         * in `channelId` when that tab belongs to another channel. Read only. */
-        details?: Readonly<{
-          messageId: string;
-          rootId?: string;
-          channelId?: string;
-        }>;
+        /** The one dialog on top of a view: a details message
+         * (`messageId`) or a panel such as a profile or a pull request
+         * (`target`, opened from a message in `threadId`'s thread). It reads
+         * over the composer of the view it was opened in: the conversation
+         * without `rootId`, the inline thread when `rootId` is `inline`,
+         * otherwise the thread tab with that root, in `channelId` when that
+         * tab belongs to another channel. Read only; one per address. */
+        layer?: ViewLayer;
       }>
   );
 
@@ -469,7 +480,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "forward",
           "detail",
           "inline",
-          "details",
+          "layer",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
           throw invalid();
@@ -496,21 +507,40 @@ export function parseOpenTarget(input: unknown): OpenTarget {
               : {}),
           });
         }
-        let details:
-          | { messageId: string; rootId?: string; channelId?: string }
-          | undefined;
-        if (value.details !== undefined) {
-          const input = record(value.details);
-          fields(input, ["messageId", "rootId", "channelId"]);
-          details = Object.freeze({
-            messageId: text(input.messageId, hex).toLowerCase(),
+        let layer: ViewLayer | undefined;
+        if (value.layer !== undefined) {
+          const input = record(value.layer);
+          fields(input, [
+            "messageId",
+            "target",
+            "threadId",
+            "rootId",
+            "channelId",
+          ]);
+          // Exactly one: a details message or a panel.
+          if ((input.messageId === undefined) === (input.target === undefined))
+            throw invalid();
+          if (input.messageId !== undefined && input.threadId !== undefined)
+            throw invalid();
+          const view = {
             ...(input.rootId !== undefined
               ? { rootId: text(input.rootId, hex).toLowerCase() }
               : {}),
             ...(input.channelId !== undefined
               ? { channelId: text(input.channelId, channelPattern) }
               : {}),
-          });
+          };
+          layer = Object.freeze(
+            input.messageId !== undefined
+              ? { messageId: text(input.messageId, hex).toLowerCase(), ...view }
+              : {
+                  target: text(input.target, /^[!-~]{1,4096}$/),
+                  ...(input.threadId !== undefined
+                    ? { threadId: text(input.threadId, hex).toLowerCase() }
+                    : {}),
+                  ...view,
+                },
+          );
         }
         target = {
           version: 1,
@@ -532,7 +562,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(value.inline !== undefined
             ? { inline: text(value.inline, hex).toLowerCase() }
             : {}),
-          ...(details ? { details } : {}),
+          ...(layer ? { layer } : {}),
         };
         break;
       }

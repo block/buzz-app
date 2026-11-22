@@ -20,6 +20,9 @@ import {
 } from "../../features/panels/service";
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelMediaCard } from "./PanelMediaCard";
+import { PanelSubviewHost } from "../../features/panels/PanelSubview";
+import { PanelView } from "../../features/panels/PanelView";
+import panelStyles from "../../features/panels/Panels.module.css";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
 import { ThreadLoading } from "../../features/messages/ThreadLoading";
 import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
@@ -177,6 +180,7 @@ export function useConversationTabs({
   onVisitPanel,
   onClosePanel,
   onCloseTabs,
+  openInView,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -201,6 +205,14 @@ export function useConversationTabs({
   navigationSignal?: AbortSignal | undefined;
   isLive(): boolean;
   openLink(url: string): boolean;
+  /** Opens a panel as a dialog on the view its link was in, when its
+   * placement says so; false when it opens as a tab instead. */
+  openInView?:
+    | ((
+        opening: PanelOpening,
+        view: Readonly<{ channelId: string; rootId?: string | undefined }>,
+      ) => boolean)
+    | undefined;
   fallbackFocus?: RefObject<HTMLElement | null>;
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
@@ -782,6 +794,12 @@ export function useConversationTabs({
     )
       return openLink(url);
     const next = panelOpening(panels, channelId, url, origin?.rootId);
+    if (
+      next &&
+      origin?.view &&
+      openInView?.(next, { channelId, rootId: origin.view.rootId })
+    )
+      return true;
     if (next) {
       panelTrigger.current =
         document.activeElement instanceof HTMLElement
@@ -1093,7 +1111,42 @@ export function useConversationTabs({
     return true;
   };
 
+  /** Whether a tab already shows `entry`'s target. */
+  const hasPanelTab = (entry: Opening) =>
+    entryList.current.some(
+      (item) => item.panel === entry.panel && item.target === entry.target,
+    );
+  /** A panel read as a dialog over a view. Its own `open` and `push` go
+   * through `navigate`, which replaces the dialog with a visit of its own. */
+  const renderLayerPanel = (
+    entry: Opening,
+    { navigate, close }: { navigate(target: string): boolean; close(): void },
+  ) =>
+    available.includes(entry.panel) ? (
+      <PanelSubviewHost close={close}>
+        {/* The card bounds the content so it scrolls, as in a panel tab. */}
+        <div className={panelStyles.card}>
+          <div className={panelStyles.content}>
+            <PanelView
+              panel={entry.panel}
+              target={entry.target}
+              context={{
+                channelId: entry.channelId,
+                ...(entry.rootId && { rootId: entry.rootId }),
+                canOpen: canOpenLink,
+                open: (target: string) => active() && navigate(target),
+                push: (target: string) => active() && navigate(target),
+              }}
+              close={close}
+            />
+          </div>
+        </div>
+      </PanelSubviewHost>
+    ) : undefined;
+
   return {
+    hasPanelTab,
+    renderLayerPanel,
     open,
     opened,
     panel,

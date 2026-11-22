@@ -1,5 +1,4 @@
 import {
-  createContext,
   type ReactNode,
   useContext,
   useEffect,
@@ -11,43 +10,13 @@ import { formatItemTimestamp } from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import {
-  type ComposerView,
   composerHost,
   useComposerForm,
   useComposerScope,
 } from "./composer-overlay";
 import { DetailsSheet } from "./DetailsSheet";
 import styles from "./Messages.module.css";
-
-/** Which details message is open, and in which view: its channel, and the
- * thread it was opened in, if any. */
-export type OpenDetails = Readonly<{
-  messageId: string;
-  channelId: string;
-  rootId?: string | undefined;
-}>;
-/** A page whose address carries the open details: opening and closing them
- * are navigation. Without one, a details message opens in place. */
-export type DetailsAddress = Readonly<{
-  open: OpenDetails | undefined;
-  show(details: OpenDetails): void;
-  /** Explicit close, as ✕, Escape or a send do: retires the visit. */
-  dismiss(): void;
-}>;
-export const DetailsAddressContext = createContext<DetailsAddress | undefined>(
-  undefined,
-);
-
-/** Whether `open` names details shown in `view` of `channelId`. */
-export const detailsInView = (
-  open: OpenDetails | undefined,
-  channelId: string,
-  view: ComposerView,
-) =>
-  !!open &&
-  view.shown &&
-  open.channelId === channelId &&
-  open.rootId === view.rootId;
+import { LayerAddressContext, layerInView } from "./view-layer";
 
 const HEADING = /^H[1-6]$/;
 
@@ -94,12 +63,12 @@ export function DetailsMessage({
   children: ReactNode;
 }) {
   const view = useComposerScope();
-  const address = useContext(DetailsAddressContext);
+  const address = useContext(LayerAddressContext);
   const [local, setLocal] = useState(false);
   const addressed = !!address && !!view;
   const open = addressed
     ? address.open?.messageId === messageId &&
-      detailsInView(address.open, channelId, view)
+      layerInView(address.open, channelId, view)
     : local;
   const show = () =>
     addressed

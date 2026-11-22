@@ -24,6 +24,7 @@ import { ChannelBody } from "./ChannelBody";
 import { SoloColumn } from "../../features/solo/SoloPresentation";
 import { rootOfTab, type ConversationTab as Tab } from "./useChannelTabState";
 import { ComposerScopeProvider } from "../../features/messages/composer-overlay";
+import { PanelLayer } from "../../features/messages/PanelLayer";
 import type { PageNavigation } from "../../features/navigation/service";
 import styles from "./ChannelTabs.module.css";
 
@@ -194,6 +195,7 @@ export function ConversationTab({
               close={close}
               parent={parent}
             />
+            <PanelLayer channelId={channel.id} />
           </ComposerScopeProvider>
         ) : target && inTimeline === false ? (
           <ConversationThread

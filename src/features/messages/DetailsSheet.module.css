@@ -206,3 +206,51 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
     transition: none;
   }
 }
+
+/* A panel, such as a profile or a pull request, reads at the full height over
+   the composer it covers. Its renderer keeps its own padding and scrolling. */
+.sheet[data-reader-only] {
+  height: var(--sheet-max-height);
+}
+.sheet[data-reader-only] > .content {
+  flex: 1;
+}
+.sheet[data-reader-only] > .content > .body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--space-4) 0 0;
+}
+
+/* A thread under a panel takes the full height, so the panel over its reply
+   box is not as small as a short thread; it settles back after. */
+.sheet[data-contained-composer] {
+  min-height: 0;
+  transition: min-height var(--duration-settle) var(--easing-enter);
+}
+.sheet[data-contained-composer][data-tall] {
+  min-height: var(--sheet-max-height);
+}
+.sheet[data-contained-composer][data-tall] > .content,
+.sheet[data-contained-composer][data-tall] > .content > .body,
+.sheet[data-contained-composer][data-tall] > .content > .body > .reader,
+.sheet[data-contained-composer][data-tall]
+  > .content
+  > .body
+  > .reader
+  :is(
+    [data-reading-surface],
+    [data-thread-history-frame],
+    [data-message-scroller]
+  ) {
+  flex: 1 1 auto;
+}
+html[data-keyboard-navigation] .sheet[data-contained-composer] {
+  transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet[data-contained-composer] {
+    transition: none;
+  }
+}

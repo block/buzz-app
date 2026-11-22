@@ -17,7 +17,7 @@ export function useChannelHistoryFocus(
     !target.threadRootId &&
     !target.panel &&
     !target.detail &&
-    !target.details;
+    !target.layer;
   useEffect(() => {
     pending.current = null;
     if (!plain || !signal || signal.aborted) return;

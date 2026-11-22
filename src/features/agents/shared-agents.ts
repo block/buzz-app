@@ -9,6 +9,11 @@ import {
 export type SharedAgent = {
   /** `owner:d`, unique per publisher and catalog slug. */
   id: string;
+  /** Its catalog slug, which with `owner` makes its NIP-33 address. */
+  d: string;
+  /** The current head's event id and publication time. */
+  event: string;
+  createdAt: number;
   name: string;
   owner: string;
   picture?: string;
@@ -45,6 +50,9 @@ export function sharedAgents(events: readonly EventData[]): SharedAgent[] {
       return [
         {
           id,
+          d: id.slice(event.pubkey.length + 1),
+          event: event.id,
+          createdAt: event.created_at,
           name: String(body.display_name).trim(),
           owner: event.pubkey,
           ...(picture?.startsWith("https:") ? { picture } : {}),

@@ -4144,7 +4144,9 @@ it("links a Marketplace agent's Import to Manage plugins while no agent type plu
     );
     await user.click(screen.getByRole("tab", { name: "Marketplace" }));
     await user.click(
-      await screen.findByRole("button", { name: "Marketplace helper" }),
+      await screen.findByRole("button", {
+        name: "More about Marketplace helper",
+      }),
     );
     await user.click(screen.getByRole("button", { name: "Import" }));
     const dialog = screen.getByRole("dialog", { name: "Marketplace helper" });
@@ -4159,6 +4161,59 @@ it("links a Marketplace agent's Import to Manage plugins while no agent type plu
     expect(
       screen.queryByRole("dialog", { name: "Marketplace helper" }),
     ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    owner.dispose();
+  }
+});
+
+it("marks the Marketplace search in the open shared agent's panel", async () => {
+  const user = userEvent.setup();
+  const view = setup([]);
+  const owner = createRelaySession(null);
+  const session = {
+    ...owner.session,
+    read: vi.fn().mockResolvedValue([
+      {
+        id: "ab".repeat(32),
+        pubkey: "cd".repeat(32),
+        kind: 30175,
+        created_at: 1,
+        tags: [
+          ["d", "helper"],
+          ["shared", "true"],
+        ],
+        content: JSON.stringify({
+          display_name: "Marketplace helper",
+          model: "test-model",
+          system_prompt: "Help with tasks.",
+        }),
+      },
+    ]),
+  };
+  const snapshot = { status: "ready" as const, generation: 1, session };
+  const relay = { ...view.relay, snapshot: () => snapshot };
+  try {
+    view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
+    await user.click(screen.getByRole("tab", { name: "Marketplace" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "More about Marketplace helper",
+      }),
+    );
+    const panel = await screen.findByRole("region", {
+      name: "Shared agent profile",
+    });
+    expect(panel.querySelectorAll("mark")).toHaveLength(0);
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search agents" }),
+      "model",
+    );
+    await vi.waitFor(() =>
+      expect(
+        [...panel.querySelectorAll("mark")].map((mark) => mark.textContent),
+      ).toEqual(["model"]),
+    );
   } finally {
     view.unmount();
     owner.dispose();
@@ -5038,7 +5093,9 @@ it("asks before a marketplace listing opens one of your agents over a draft", as
     await user.type(screen.getByRole("textbox", { name: "Reply" }), "!");
     await user.click(screen.getByRole("tab", { name: "Marketplace" }));
     await user.click(
-      await screen.findByRole("button", { name: "Marketplace helper" }),
+      await screen.findByRole("button", {
+        name: "More about Marketplace helper",
+      }),
     );
     await user.click(screen.getByRole("button", { name: "Import" }));
     const open = within(
@@ -6235,14 +6292,16 @@ it("opens a Marketplace tile in the profile pane and returns focus on close and 
     view.rerender(<AgentsPage agents={view.agents} relay={relay} />);
     await user.click(screen.getByRole("tab", { name: "Marketplace" }));
     const tile = await screen.findByRole("button", {
-      name: "Marketplace helper",
+      name: "More about Marketplace helper",
     });
     await user.click(tile);
     expect(tile).toHaveAttribute("aria-current", "true");
     expect(
       screen.getByRole("heading", { name: "Marketplace helper" }),
     ).toBeVisible();
-    expect(screen.getByText("Help with tasks.")).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Instructions" }),
+    ).toHaveTextContent("Help with tasks.");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: "Close Marketplace helper tab" }),

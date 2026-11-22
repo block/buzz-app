@@ -12,7 +12,10 @@ import type { Agent, RegisteredAgentType } from "./service";
 import type { SharedAgent } from "./shared-agents";
 
 /** A shared agent apart from who shared it. */
-export type SharedDefinition = Omit<SharedAgent, "id" | "owner">;
+export type SharedDefinition = Omit<
+  SharedAgent,
+  "id" | "owner" | "d" | "event" | "createdAt"
+>;
 
 const MAX_JSON_BYTES = 5 * 1024 * 1024;
 export const MAX_PNG_BYTES = 10 * 1024 * 1024;

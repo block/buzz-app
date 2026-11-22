@@ -479,6 +479,96 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
+  it.each([
+    [13, 13],
+    [undefined, undefined],
+    [-1, undefined],
+    [1.5, undefined],
+    ["13", undefined],
+    [16, 15],
+  ])(
+    "reads %s agent-audience descendants as %s, never above the total",
+    (agents, expected) => {
+      const root = message(alice, channel, "root", 10);
+      const rows = foldMessages(channel, relay.pubkey, [
+        root,
+        summary(relay, channel, root.id, {
+          reply_count: 15,
+          descendant_count: 15,
+          agent_descendant_count: agents,
+          participants: [],
+        }),
+      ]);
+      expect([rows[0]?.replyCount, rows[0]?.agentReplyCount]).toEqual([
+        15,
+        expected,
+      ]);
+    },
+  );
+  it("ignores agent-audience descendants beside the direct-reply fallback", () => {
+    const root = message(alice, channel, "root", 10);
+    const [row] = foldMessages(channel, relay.pubkey, [
+      root,
+      summary(relay, channel, root.id, {
+        reply_count: 2,
+        agent_descendant_count: 1,
+        participants: [],
+      }),
+    ]);
+    expect([row?.replyCount, row?.agentReplyCount]).toEqual([2, undefined]);
+  });
+  it("replaces a row when only its agent-audience count changes", () => {
+    const root = message(alice, channel, "root", 10);
+    const fold = (agents: number) =>
+      foldMessages(channel, relay.pubkey, [
+        root,
+        summary(relay, channel, root.id, {
+          reply_count: 3,
+          descendant_count: 3,
+          agent_descendant_count: agents,
+          participants: [],
+        }),
+      ]);
+    const before = fold(1);
+    expect(shareMessageRows(before, fold(1))).toBe(before);
+    expect(shareMessageRows(before, fold(2))[0]?.agentReplyCount).toBe(2);
+  });
+  it("counts pending agent-audience replies beside a summary that counts agent replies", () => {
+    const root = message(alice, channel, "root", 10);
+    const agentReply = message(bob, channel, "progress", 11, [
+      ["e", root.id, "", "reply"],
+      ["audience", "agents"],
+    ]);
+    const fold = (body: Record<string, unknown>) =>
+      foldMessages(
+        channel,
+        relay.pubkey,
+        [root, agentReply, summary(relay, channel, root.id, body)],
+        { pendingReplies: new Set([agentReply.id]) },
+      ).map((row) => [row.replyCount, row.agentReplyCount]);
+    expect(
+      fold({
+        descendant_count: 2,
+        agent_descendant_count: 1,
+        participants: [],
+      }),
+    ).toEqual([[3, 2]]);
+    expect(
+      fold({
+        descendant_count: 2,
+        agent_descendant_count: 0,
+        participants: [],
+      }),
+    ).toEqual([[3, 1]]);
+    // A relay without the agent count cannot subtract the reply once its
+    // summary lands, so the pending reply is not subtracted either.
+    expect(fold({ descendant_count: 2, participants: [] })).toEqual([
+      [3, undefined],
+    ]);
+    expect(fold({ reply_count: 2, participants: [] })).toEqual([
+      [3, undefined],
+    ]);
+  });
   it("layers pending replies on their root's summary and leads participants with their authors", () => {
     const root = message(alice, channel, "root", 10);
     const reply = (key: typeof bob, at: number, channelId = channel) =>

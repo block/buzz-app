@@ -1211,3 +1211,19 @@ it("still catches up agent-only DMs while the owner's mention reads fail", async
   await vi.advanceTimersByTimeAsync(50_000);
   await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
 });
+
+it("finishes a private catch-up window whose last page outlasts a tick", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const f = await gooseSetup();
+  const dm = await agentOnlyDm();
+  f.native.query.mockImplementation(async (member, filters) => {
+    const events = await dm.query(member, filters);
+    const page = (filters as readonly ReadFilter[])[0];
+    if (page?.["#p"] && !events.length)
+      await new Promise((resolve) => setTimeout(resolve, 7_000));
+    return events;
+  });
+  await vi.advanceTimersByTimeAsync(80_000);
+  await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
+  expect(f.deliveries).toHaveLength(1);
+});

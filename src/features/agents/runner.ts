@@ -1324,6 +1324,10 @@ export class AgentRunners {
       classified: Promise.resolve(),
     };
   }
+  private passUnderway(runner: Runner, lane: PassLane) {
+    const pass = this.passes.get(passKey(runner.key, lane));
+    return !!pass && !pass.done && !pass.failedAt;
+  }
   private retire(runner: Runner) {
     for (const lane of PASSES) {
       const key = passKey(runner.key, lane);
@@ -1763,7 +1767,13 @@ export class AgentRunners {
             !community?.session.attendPending(stream.channel)) &&
           (runner.readRetries.get(stream.key)?.failure.retryAt ?? 0) <=
             Date.now() &&
-          !(stream.private && !this.host.privateMentionsDue?.(agent as Agent))
+          // Not due only holds back a new private pass; one under way runs
+          // until its window completes.
+          !(
+            stream.private &&
+            !this.host.privateMentionsDue?.(agent as Agent) &&
+            !this.passUnderway(runner, "private")
+          )
         )
           reading.push(stream);
       }

@@ -352,7 +352,7 @@ describe("channel store", () => {
       await page(first, row(8));
       expect(take(true).filters[0]).toMatchObject({ until: 20 });
     });
-    it("applies an aux closure past the budget without sliding", async () => {
+    it("slides an aux closure past the budget down to the rows paged to", async () => {
       const target = row(10);
       const edit = on(40003, target, "edited");
       const { queries, take, page } = await opened({
@@ -363,11 +363,11 @@ describe("channel store", () => {
       await flush();
       const window = queries.window("c");
       expect(window).toMatchObject({
-        rows: [{ id: target.id, content: "edited" }, { id: newer.id }],
+        hasNewer: true,
+        rows: [{ id: target.id, content: "edited" }],
       });
-      expect(window?.hasNewer).toBeFalsy();
       expect(window?.historyLimited).toBeFalsy();
-      // The next older page slides the window back within its budget.
+      // The next older page slides on within the budget.
       const older = row(8);
       await page(target, older);
       expect(queries.window("c")).toMatchObject({

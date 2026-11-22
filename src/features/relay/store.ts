@@ -1095,14 +1095,31 @@ export function createChannelStore(
           (event) => !ids.has(event.id),
         );
         if (!added.length) continue;
-        const merged = [...state.events, ...added];
-        const rows = Object.freeze(
-          foldChannelMessages(channelId, source.relayAuthor, merged),
-        );
+        const fold = (events: readonly RelayEvent[]) =>
+          Object.freeze(
+            foldChannelMessages(channelId, source.relayAuthor, events),
+          );
+        let merged = [...state.events, ...added];
+        let rows = fold(merged);
+        // Past the byte budget the closure slides the window down to the
+        // rows paged to, as an older page does. One that leaves no row to
+        // show, or is larger than the whole budget, applies as is.
+        if (listByteSize(merged) > maxHistoryBytes) {
+          const slid = slideOlder(
+            state,
+            added,
+            (events) => listByteSize(events) <= maxHistoryBytes,
+          );
+          const floor = state.floor ?? -Infinity;
+          const slidRows = slid && fold(slid.events);
+          if (slid && slidRows?.some((row) => row.createdAt >= floor)) {
+            merged = slid.events;
+            rows = slidRows;
+            state.ceiling = slid.ceiling;
+            state.atHead = false;
+          }
+        }
         state.events = merged;
-        // The closure applies to the rows the window holds, past the budget
-        // too: it never slides away from the reader. The next older page
-        // slides or limits the window over everything it holds.
         setWindow(state, { rows });
       }
     } catch (error) {

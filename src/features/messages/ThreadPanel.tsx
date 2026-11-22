@@ -18,6 +18,7 @@ import {
 import { activityRuns, relayedRuns } from "./activity-groups";
 import { RelayedRunPreview } from "./RelayedRunPreview";
 import { DayDivider } from "./MessageTimestamp";
+import { MessageLoading } from "./MessageLoading";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { usePanelTabHost } from "../panels/PanelWorkspace";
 import { moveMessageSelection } from "./message-selection";
@@ -68,7 +69,6 @@ import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
-import { ThreadLoading } from "./ThreadLoading";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
@@ -446,7 +446,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           }
         />
       ) : (
-        !error && <ThreadLoading />
+        !error && <MessageLoading label="Loading thread…" />
       )}
     </>
   );
@@ -573,7 +573,7 @@ function OwnedThreadPanel({
       canOpenLink={canOpenLink}
     />
   ) : (
-    <ThreadLoading />
+    <MessageLoading label="Loading thread…" />
   );
 }
 function ThreadMessages({
@@ -2476,7 +2476,7 @@ function ThreadMessages({
               </p>
             )}
           {positioning || (snapshot.status === "loading" && !rows.length) ? (
-            <ThreadLoading />
+            <MessageLoading label="Loading thread…" />
           ) : null}
           {selectionNotice && (
             <p role="alert">

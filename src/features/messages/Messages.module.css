@@ -1095,14 +1095,16 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistory[data-positioning] > [data-thread-rows] {
   opacity: 0;
 }
-/* Fills whichever thread area is waiting. The mark waits one state change
-   before appearing, so a thread that loads at once never flashes it. */
+/* Fills whichever message area is waiting. The placeholders wait one state
+   change before appearing, so a read that lands at once never flashes them. */
 .threadLoading {
-  container-type: size;
   flex: 1;
-  display: grid;
-  place-items: center;
-  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: var(--space-8);
+  padding: var(--space-4);
+  color: var(--text-subtle);
   animation: thread-loading-in var(--duration-state) var(--easing-enter)
     var(--duration-state) both;
 }
@@ -1110,26 +1112,16 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   position: absolute;
   inset: 0;
 }
-/* The mark scales with the waiting area: a side pane and a full main pane
-   both read it as the thread's placeholder, not a stray icon. */
-.threadLoading picture {
-  display: block;
-  width: clamp(3.35rem, 16cqmin, 6.7rem);
-  line-height: 0;
-}
-.threadLoading img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-:root[data-color-mode="dark"] .threadLoading picture {
-  filter: invert(1);
-}
 /* A thread sheet sizes to its content, so its waiting area keeps a compact
    height of its own rather than filling (and collapsing with) the sheet. */
 [data-details-sheet-surface][data-height="content"] .threadLoading {
   flex: none;
   min-height: calc(2 * var(--space-16));
+}
+/* A thread sheet's reader runs under its header; so do its placeholders. */
+[data-details-sheet-surface][data-height="content"][data-contained-composer]
+.threadLoading {
+  padding-top: calc(var(--sheet-header-height) + var(--space-3));
 }
 @keyframes thread-loading-in {
   from {

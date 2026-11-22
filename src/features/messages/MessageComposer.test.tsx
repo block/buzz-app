@@ -78,7 +78,11 @@ import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents, Models } from "../agents/service";
-import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import {
+  blankDraft,
+  MessageComposer,
+  type MessageComposerProps,
+} from "./MessageComposer";
 import { ThreadPanel } from "./ThreadPanel";
 import { publishOutgoing, type OutgoingMessage } from "./outgoing-message";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -89,7 +93,10 @@ import { setEditWithUpArrowPreference } from "./edit-key-preference";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
-import type { RelayEvent } from "../relay/events";
+import { eventDto, type RelayEvent } from "../relay/events";
+import { createHash } from "node:crypto";
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { bytesToHex } from "nostr-tools/utils";
 import type {
   ChannelMessage,
   ChannelSummary,
@@ -1958,13 +1965,20 @@ async function mountUploadComposer(
     onSend?: MessageComposerProps["onSend"];
     publish?: (event: RelayEvent, signal?: AbortSignal) => Promise<void>;
     emojiRead?: () => Promise<RelayEvent[]>;
-    profiles?: readonly RelayEvent[];
+    /** Profiles the relay returns; a function signs them for the viewer. */
+    profiles?:
+      | readonly RelayEvent[]
+      | ((viewer: ReturnType<typeof keypair>) => readonly RelayEvent[]);
     editable?: boolean;
     media?: (url: string) => string | undefined;
     extensions?: MessageComposerProps["extensions"];
     agents?: Agents;
     /** Channel members besides the viewer; only members can be mentioned. */
     members?: readonly string[];
+    /** Members the roster marks Guest (Viewing only). */
+    guests?: readonly string[];
+    /** The relay can start Solo chats (kind 9007). */
+    soloChats?: boolean;
     defaultMention?: MessageComposerProps["defaultMention"];
     requireMention?: boolean;
     /** The channel is a generated huddle room, as a legacy room's metadata shows. */
@@ -1980,6 +1994,10 @@ async function mountUploadComposer(
   );
   const viewer = keypair(),
     relay = keypair();
+  const profileEvents =
+    typeof options.profiles === "function"
+      ? options.profiles(viewer)
+      : (options.profiles ?? []);
   const uploadCalls: {
     file: File;
     signal: AbortSignal;
@@ -1998,6 +2016,8 @@ async function mountUploadComposer(
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       scope: "https://relay.example.test",
+      // Solo chats carry labels, which need the relay's channel identity.
+      ...(options.soloChats ? { channelIdentity: true } : {}),
       media: options.media ?? ((url) => url),
       uploadAttachment(file, signal, progress) {
         const result = deferred<ReturnType<typeof uploadDescriptor>>();
@@ -2015,7 +2035,7 @@ async function mountUploadComposer(
               filters.some((filter) => filter.ids?.includes(event.id)),
             );
         if (filters.some((filter) => filter.kinds?.includes(0)))
-          return [...(options.profiles ?? [])];
+          return [...profileEvents];
         if (
           filters.some((filter) => filter.kinds?.includes(30030)) &&
           options.emojiRead
@@ -2028,12 +2048,30 @@ async function mountUploadComposer(
               : [metadata(relay, "other", "Random", other.time)]
             : filter.kinds?.includes(39002)
               ? [
-                  roster(
-                    relay,
-                    "channel",
-                    [viewer.pubkey, ...(options.members ?? [])],
-                    1700000000,
-                  ),
+                  options.guests?.length
+                    ? signed(relay, {
+                        kind: 39002,
+                        content: "",
+                        created_at: 1700000000,
+                        tags: [
+                          ["d", "channel"],
+                          ...[viewer.pubkey, ...(options.members ?? [])].map(
+                            (key) => ["p", key],
+                          ),
+                          ...options.guests.map((key) => [
+                            "p",
+                            key,
+                            "",
+                            "guest",
+                          ]),
+                        ],
+                      })
+                    : roster(
+                        relay,
+                        "channel",
+                        [viewer.pubkey, ...(options.members ?? [])],
+                        1700000000,
+                      ),
                 ]
               : filter.kinds?.includes(39000)
                 ? [
@@ -2065,7 +2103,15 @@ async function mountUploadComposer(
                 : [],
         );
       },
-      writer: { kinds: options.editable ? [9, 40003, 5] : [9], sign, publish },
+      writer: {
+        kinds: [
+          9,
+          ...(options.editable ? [40003, 5] : []),
+          ...(options.soloChats ? [9007] : []),
+        ],
+        sign,
+        publish,
+      },
     },
     { outboxStorage: { load: () => [], save() {} } },
   );
@@ -2238,10 +2284,13 @@ it("attaches the picked files that fit and names an empty one", async () => {
     name: "Could not attach 1 of 5 files",
   });
   expect(notice).toHaveAccessibleDescription("cloud-placeholder.png is empty.");
+  // Each file fades in, so wait for it rather than racing the notice.
   for (const name of names)
-    expect(
-      screen.getByRole("button", { name: `Remove ${name}` }),
-    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: `Remove ${name}` }),
+      ).toBeVisible(),
+    );
   expect(
     screen.queryByRole("button", { name: "Remove cloud-placeholder.png" }),
   ).toBeNull();
@@ -2599,6 +2648,360 @@ it.each(["never", "before the failure", "after the failure"])(
     );
   },
 );
+
+it("asks your Viewing-only agent in a Solo chat with the model and effort chosen for it", async () => {
+  const honey = keypair();
+  const snapshot = {
+    status: "ready",
+    agents: [
+      {
+        key: honey.pubkey,
+        pubkey: honey.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
+  };
+  const models = {
+    current: "fast",
+    models: [
+      {
+        id: "fast",
+        label: "Fast",
+        efforts: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      },
+    ],
+  };
+  const types = [{ key: "test/agent", models: () => models }];
+  const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
+    sessionState: () => "unavailable" as const,
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "fixture",
+      key: "test/fixture",
+      pluginId: "test",
+      revision: "1",
+      title: "Fixture tools",
+      component: (props: ComposerToolProps) => (
+        <button
+          type="button"
+          onClick={() =>
+            props.insertMention({ pubkey: honey.pubkey, name: "Honey" })
+          }
+        >
+          Mention Honey
+        </button>
+      ),
+    },
+  ];
+  const h = await mountUploadComposer({
+    agents,
+    members: [honey.pubkey],
+    guests: [honey.pubkey],
+    soloChats: true,
+    // Honey's owner attestation, signed by the viewer and read through the
+    // relay's checks.
+    profiles: (viewer) => [
+      eventDto(
+        signed(honey, {
+          kind: 0,
+          created_at: 1700000000,
+          content: JSON.stringify({ name: "Honey", bot: true }),
+          tags: [
+            [
+              "auth",
+              viewer.pubkey,
+              "",
+              bytesToHex(
+                schnorr.sign(
+                  new Uint8Array(
+                    createHash("sha256")
+                      .update(`nostr:agent-auth:${honey.pubkey}:`)
+                      .digest(),
+                  ),
+                  viewer.secret,
+                ),
+              ),
+            ],
+          ],
+        }),
+      ),
+    ],
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => [], subscribe: () => () => {} },
+    },
+  });
+  await act(() =>
+    h.owner.session.profiles.ensure([honey.pubkey], "background"),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.profiles.owner?.(honey.pubkey)).toBeDefined(),
+  );
+  await userEvent.type(h.input(), "think hard");
+  await userEvent.click(screen.getByRole("button", { name: "Mention Honey" }));
+  await userEvent.click(
+    await screen.findByRole("button", { name: /Model.*effort/ }),
+  );
+  const slider = await screen.findByLabelText("Effort for Honey's next run");
+  slider.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await userEvent.keyboard("{Escape}");
+  fireEvent.click(h.send());
+  const dialog = await screen.findByRole("dialog", {
+    name: "Honey can’t reply here",
+  });
+  await userEvent.click(
+    within(dialog).getByRole("button", { name: "Ask in a Solo chat" }),
+  );
+  // Signed now; it publishes behind the chat's create.
+  await waitFor(() =>
+    expect(h.sign.mock.calls.some(([event]) => event.kind === 9)).toBe(true),
+  );
+  const asked = h.sign.mock.calls.find(([event]) => event.kind === 9)?.[0];
+  expect(asked?.tags).toEqual(
+    expect.arrayContaining([
+      ["p", honey.pubkey],
+      ["effort", honey.pubkey, "high"],
+    ]),
+  );
+  // It went to the Solo chat, not the channel.
+  expect(asked?.tags).not.toContainEqual(["h", "channel"]);
+});
+
+it("never offers a Solo ask for a draft that carries a forwarded message", async () => {
+  const honey = keypair();
+  const snapshot = {
+    status: "ready",
+    agents: [
+      {
+        key: honey.pubkey,
+        pubkey: honey.pubkey,
+        name: "Honey",
+        type: "test/agent",
+      },
+    ],
+  };
+  const types: readonly unknown[] = [];
+  const agents = {
+    find: (pubkey: string) =>
+      snapshot.agents.find((agent) => agent.pubkey === pubkey),
+    joinable: () => [],
+    sessionState: () => "unavailable" as const,
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "fixture",
+      key: "test/fixture",
+      pluginId: "test",
+      revision: "1",
+      title: "Fixture tools",
+      component: (props: ComposerToolProps) => (
+        <button
+          type="button"
+          onClick={() =>
+            props.insertMention({ pubkey: honey.pubkey, name: "Honey" })
+          }
+        >
+          Mention Honey
+        </button>
+      ),
+    },
+  ];
+  const h = await mountUploadComposer({
+    agents,
+    members: [honey.pubkey],
+    guests: [honey.pubkey],
+    soloChats: true,
+    sourceMessages: true,
+    profiles: (viewer) => [
+      eventDto(
+        signed(honey, {
+          kind: 0,
+          created_at: 1700000000,
+          content: JSON.stringify({ name: "Honey", bot: true }),
+          tags: [
+            [
+              "auth",
+              viewer.pubkey,
+              "",
+              bytesToHex(
+                schnorr.sign(
+                  new Uint8Array(
+                    createHash("sha256")
+                      .update(`nostr:agent-auth:${honey.pubkey}:`)
+                      .digest(),
+                  ),
+                  viewer.secret,
+                ),
+              ),
+            ],
+          ],
+        }),
+      ),
+    ],
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => [], subscribe: () => () => {} },
+    },
+  });
+  await act(() =>
+    h.owner.session.profiles.ensure([honey.pubkey], "background"),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.profiles.owner?.(honey.pubkey)).toBeDefined(),
+  );
+  const id = h.owner.session.messages.send("channel", "Original message");
+  await waitFor(() => expect(h.publish).toHaveBeenCalledOnce());
+  const { forwardClipboard } = await import("./forward-clipboard");
+  const reference = {
+    version: 1 as const,
+    origin: "https://relay.example.test",
+    channelId: "channel",
+    id,
+  };
+  const payload = forwardClipboard(reference, "Clipboard text");
+  await userEvent.click(screen.getByRole("button", { name: "Mention Honey" }));
+  fireEvent.paste(h.input(), {
+    clipboardData: {
+      getData: (type: string) =>
+        type === "text/html" ? payload.html : payload.text,
+      items: [],
+    },
+  });
+  await screen.findByRole("button", { name: "Remove forwarded message" });
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  let offered = false;
+  const watch = new MutationObserver(() => {
+    if (screen.queryByRole("button", { name: "Ask in a Solo chat" }))
+      offered = true;
+  });
+  watch.observe(document.body, { childList: true, subtree: true });
+  try {
+    fireEvent.click(h.send());
+    // The forward goes to the channel through the ordinary send.
+    await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(2));
+  } finally {
+    watch.disconnect();
+  }
+  expect(offered).toBe(false);
+  expect(h.sign.mock.calls.some(([event]) => event.kind === 9007)).toBe(false);
+  // A forward alone is not a blank draft, so a refused Solo ask never
+  // restores over it.
+  expect(blankDraft(JSON.stringify({ text: "", forward: reference }))).toBe(
+    false,
+  );
+  expect(blankDraft(JSON.stringify({ text: "" }))).toBe(true);
+});
+
+it("brings your agent from another community in through its prompt, never a Solo ask", async () => {
+  const honey = keypair();
+  const snapshot = { status: "ready", agents: [] };
+  const types: readonly unknown[] = [];
+  const join = vi.fn(async () => ({ agent: {} as never, notes: [] }));
+  const agents = {
+    find: () => undefined,
+    joinable: () => [
+      {
+        key: honey.pubkey,
+        pubkey: honey.pubkey,
+        name: "Honey",
+        relay: "wss://oss.example.com",
+      },
+    ],
+    join,
+    sessionState: () => "unavailable" as const,
+    subscribe: () => () => {},
+    snapshot: () => snapshot,
+    types: () => types,
+  } as unknown as Agents;
+  const tools: readonly Contribution<ComposerTool>[] = [
+    {
+      id: "fixture",
+      key: "test/fixture",
+      pluginId: "test",
+      revision: "1",
+      title: "Fixture tools",
+      component: (props: ComposerToolProps) => (
+        <button
+          type="button"
+          onClick={() =>
+            props.insertMention({ pubkey: honey.pubkey, name: "Honey" })
+          }
+        >
+          Mention Honey
+        </button>
+      ),
+    },
+  ];
+  const h = await mountUploadComposer({
+    agents,
+    soloChats: true,
+    profiles: (viewer) => [
+      eventDto(
+        signed(honey, {
+          kind: 0,
+          created_at: 1700000000,
+          content: JSON.stringify({ name: "Honey", bot: true }),
+          tags: [
+            [
+              "auth",
+              viewer.pubkey,
+              "",
+              bytesToHex(
+                schnorr.sign(
+                  new Uint8Array(
+                    createHash("sha256")
+                      .update(`nostr:agent-auth:${honey.pubkey}:`)
+                      .digest(),
+                  ),
+                  viewer.secret,
+                ),
+              ),
+            ],
+          ],
+        }),
+      ),
+    ],
+    extensions: {
+      tools: { snapshot: () => tools, subscribe: () => () => {} },
+      inline: { snapshot: () => [], subscribe: () => () => {} },
+    },
+  });
+  await act(() =>
+    h.owner.session.profiles.ensure([honey.pubkey], "background"),
+  );
+  await waitFor(() =>
+    expect(h.owner.session.profiles.owner?.(honey.pubkey)).toBeDefined(),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Mention Honey" }));
+  await userEvent.type(h.input(), "is launch Thursday?");
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  // Its own prompt sets it up in this community; a Solo chat here could
+  // never reach it.
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Bring Honey into",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Ask in a Solo chat" }),
+  ).toBeNull();
+  expect(h.sign.mock.calls.some(([event]) => event.kind === 9007)).toBe(false);
+});
 
 it.each(["cleanup", "restore"] as const)(
   "retains a failed attachment send until %s storage recovers",

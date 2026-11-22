@@ -2083,7 +2083,7 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   GitHub plugin off and on forgets all of this. Supported code files in
   **Changes** use syntax highlighting, including Kotlin, even for small changes
   deep in large files. Oversized, unsupported or unparseable patches remain
-  readable without syntax colors.
+  readable without syntax colors. Added and deleted lines use colored bars.
 - Some desktop plugins can upload images you provide to services they declare.
 - Plugin sharing search groups people who have not been added under **Not yet
   added**, or a heading chosen by the plugin. Its **Copy link** action appears

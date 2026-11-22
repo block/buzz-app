@@ -28,3 +28,15 @@ it("distinguishes rejection from delayed confirmation", () => {
     deliveryFeedback({ delivery: "accepted", createdAt: 100 }, 110000),
   ).toBe("Delivery not yet confirmed.");
 });
+it("says when a reply's thread moved to another conversation", () => {
+  expect(
+    deliveryFeedback(
+      {
+        delivery: "failed",
+        createdAt: 100,
+        deliveryError: "invalid: reply parent not found",
+      },
+      100_000,
+    ),
+  ).toBe("Couldn’t send. This thread moved to another conversation.");
+});

@@ -39,6 +39,8 @@ import {
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { Panel } from "../../shared/design-system/ui/Panel";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import styles from "./Channels.module.css";
@@ -63,6 +65,7 @@ export function ChannelSettingsPanel({
   session,
   canOpenLink,
   onOpenLink,
+  nameConversation,
 }: {
   channel: ChannelSummary | undefined;
   scope: string;
@@ -78,6 +81,8 @@ export function ChannelSettingsPanel({
   session?: RelaySession | undefined;
   canOpenLink?(target: string): boolean;
   onOpenLink?(url: string): boolean;
+  /** An unnamed DM's title opens Name and picture. */
+  nameConversation?: ((trigger: HTMLButtonElement) => void) | undefined;
 }) {
   const tabbed = !!usePanelTabHost();
   const header = useRef<HTMLDivElement>(null);
@@ -150,14 +155,45 @@ export function ChannelSettingsPanel({
           {channel && (
             <>
               <div className={styles.settingsIdentity}>
-                <span className={styles.settingsIcon}>
-                  <ChannelIcon size={32} aria-hidden="true" />
-                </span>
+                {channel.picture ? (
+                  <span className={styles.settingsPicture}>
+                    <Avatar
+                      src={avatarMedia(channel.picture, session?.media)}
+                      alt=""
+                      fallback={channel.name}
+                      size="fill"
+                    />
+                  </span>
+                ) : (
+                  <span className={styles.settingsIcon}>
+                    <ChannelIcon size={32} aria-hidden="true" />
+                  </span>
+                )}
                 <h3
                   className={`text-heading text-primary ${styles.settingsTitle}`}
                   aria-label={channel.name}
                 >
-                  {edit ? (
+                  {nameConversation && channel.channelType === "dm" ? (
+                    <button
+                      type="button"
+                      className={styles.settingsTitleAction}
+                      aria-label="Name and picture"
+                      aria-description={channel.name}
+                      aria-haspopup="dialog"
+                      onClick={(event) => nameConversation(event.currentTarget)}
+                    >
+                      <span>
+                        {channel.name}
+                        {"\u2060"}
+                        <span
+                          className={styles.settingsTitlePencil}
+                          aria-hidden="true"
+                        >
+                          <PencilSimpleIcon size={16} />
+                        </span>
+                      </span>
+                    </button>
+                  ) : edit ? (
                     <button
                       type="button"
                       className={styles.settingsTitleAction}

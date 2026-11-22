@@ -1,3 +1,7 @@
+import {
+  avatarIcon,
+  avatarIconPaths,
+} from "../../shared/design-system/icons/avatar-icons";
 import { prepareAttachment } from "../messages/prepare-attachment";
 import { mediaUrl } from "../relay/transport";
 import type { UploadProgress } from "../relay/attachments";
@@ -67,6 +71,20 @@ export async function uploadAvatar(
   return result.url;
 }
 
+/** Icons are dark on light backgrounds and white on dark ones. */
+export function iconInk(background: string | undefined) {
+  const hex = background?.match(/^#([0-9a-f]{6})$/i)?.[1];
+  if (!hex) return "#1C1C1C";
+  const [r, g, b] = [0, 2, 4].map((at) => {
+    const channel = Number.parseInt(hex.slice(at, at + 2), 16) / 255;
+    return channel <= 0.03928
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance = 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0);
+  return luminance > 0.25 ? "#1C1C1C" : "#FFFFFF";
+}
+
 /** The emoji's longer side as a share of the image: by default the square
  * inscribed in a circular avatar, so clipping never crops it. */
 export const emojiAvatarScale = 0.7;
@@ -80,6 +98,8 @@ export function paintEmojiAvatar(
   scale = emojiAvatarScale,
   offset = 0,
   x = 0,
+  /** What the artwork sits on, when `color` leaves it transparent. */
+  background = color,
 ) {
   canvas.width = canvas.height = 512;
   const context = canvas.getContext("2d");
@@ -90,12 +110,28 @@ export function paintEmojiAvatar(
     throw new Error("Emoji images are unavailable in this browser.");
   // Measure the artwork once, then paint it at the font size that fits, so
   // even a zoomed emoji is drawn at full resolution.
+  const icon = avatarIcon(emoji);
+  const outline = icon && avatarIconPaths(icon.node);
   const paint = (
     target: CanvasRenderingContext2D,
     size: number,
     x: number,
     y: number,
   ) => {
+    if (outline) {
+      // Tabler's 24-unit grid, drawn at the emoji's em size and stroke.
+      const unit = size / 24;
+      target.save();
+      target.translate(x - size / 2, y - size / 2);
+      target.scale(unit, unit);
+      target.lineWidth = 2;
+      target.lineCap = "round";
+      target.lineJoin = "round";
+      target.strokeStyle = iconInk(background);
+      for (const path of outline) target.stroke(path);
+      target.restore();
+      return;
+    }
     target.font = `${size}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
     target.textAlign = "center";
     target.textBaseline = "middle";

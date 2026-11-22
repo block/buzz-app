@@ -138,6 +138,16 @@ html[data-keyboard-navigation] .panelViewport {
   );
 }
 
+/* Line icons sit in the emoji grid's slots. */
+.icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--space-8), 1fr));
+  gap: var(--space-1);
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
 .footerActions {
   display: flex;
   flex-wrap: wrap;

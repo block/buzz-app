@@ -13,6 +13,11 @@ import styles from "./AvatarEditor.module.css";
 import emojiStyles from "../../bundled/emoji/Emoji.module.css";
 import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import {
+  avatarIcon,
+  avatarIconGlyph,
+  avatarIcons,
+} from "../../shared/design-system/icons/avatar-icons";
 import { Input } from "../../shared/design-system/ui/Input";
 import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import { ScrollEdgeMaterial } from "../../shared/design-system/ui/ScrollEdgeMaterial";
@@ -45,6 +50,8 @@ type Props = {
   /** Reuse the active session's already-authorized cached thumbnail in compact previews. */
   thumbnailMedia?: (url: string, size: "small") => string | undefined;
   disabled?: boolean;
+  /** Offer line icons beside emoji, for pictures that aren't a face. */
+  icons?: boolean;
   onChange(value: string): void;
   onBusyChange?: ((busy: boolean) => void) | undefined;
 };
@@ -395,6 +402,7 @@ function EmojiPreview({
       <EmojiArtwork
         key={`${emoji}-${pulse}`}
         emoji={emoji}
+        background={color}
         scale={scale}
         offset={offset}
         animate={!!pulse}
@@ -473,18 +481,29 @@ export function EmojiArtwork({
   offset,
   x,
   animate,
+  background,
 }: {
   emoji: string;
   scale?: number | undefined;
   offset?: number | undefined;
   x?: number | undefined;
   animate: boolean;
+  /** The color behind it, which an icon's ink contrasts with. */
+  background?: string | undefined;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
     if (canvas.current)
-      paintEmojiAvatar(canvas.current, emoji, undefined, scale, offset, x);
-  }, [emoji, scale, offset, x]);
+      paintEmojiAvatar(
+        canvas.current,
+        emoji,
+        undefined,
+        scale,
+        offset,
+        x,
+        background,
+      );
+  }, [emoji, scale, offset, x, background]);
   return (
     <canvas
       ref={canvas}
@@ -507,6 +526,7 @@ function AvatarDraft({
   onPreview,
   sizeTarget,
   disabled = false,
+  icons = false,
   done,
 }: Props & {
   done(value: string): void;
@@ -550,7 +570,9 @@ function AvatarDraft({
     };
   }, [footer]);
   const [picture, setPicture] = useState(value);
-  const [mode, setMode] = useState<"image" | "emoji" | "background">("image");
+  const [mode, setMode] = useState<"image" | "icon" | "emoji" | "background">(
+    "image",
+  );
   const [emoji, setEmoji] = useState("😀");
   const [color, setColor] = useState("#FFF4CC");
   // The slider is relative to the default size, so 100% never crops a circle.
@@ -658,7 +680,9 @@ function AvatarDraft({
 
   const sizeSlider = (
     <label className={styles.emojiScale}>
-      <span className="text-label-sm">Emoji size</span>
+      <span className="text-label-sm">
+        {avatarIcon(emoji) ? "Icon size" : "Emoji size"}
+      </span>
       <input
         type="range"
         min={1}
@@ -737,6 +761,30 @@ function AvatarDraft({
             />
           </InputGroup>
         </Field>
+      </div>
+    ) : tab === "icon" ? (
+      <div className={styles.emojiPanel}>
+        <fieldset className={styles.icons} aria-label="Icons">
+          {avatarIcons.map((icon) => {
+            const glyph = avatarIconGlyph(icon.id);
+            return (
+              <IconButton
+                key={icon.id}
+                aria-label={icon.label}
+                aria-pressed={emoji === glyph}
+                data-selected={emoji === glyph || undefined}
+                size="large"
+                disabled={disabled || busy}
+                icon={<icon.Icon size={24} aria-hidden="true" />}
+                onClick={() => {
+                  setEmoji(glyph);
+                  setPulse(0);
+                }}
+              />
+            );
+          })}
+        </fieldset>
+        {!sizeTarget && sizeSlider}
       </div>
     ) : tab === "emoji" ? (
       <div className={styles.emojiPanel}>
@@ -828,11 +876,16 @@ function AvatarDraft({
           variant="panel"
           items={[
             { value: "image", label: "Image" },
+            ...(icons ? [{ value: "icon" as const, label: "Icon" }] : []),
             { value: "emoji", label: "Emoji" },
             { value: "background", label: "Background" },
           ]}
           onValueChange={(next) => {
             if (!busy && !disabled) {
+              // Icons and emoji share the glyph; each tab starts on its own kind.
+              if (next === "icon" && !avatarIcon(emoji))
+                setEmoji(avatarIconGlyph(avatarIcons[0]?.id ?? "messages"));
+              if (next === "emoji" && avatarIcon(emoji)) setEmoji("😀");
               setMode(next);
               setCustomColorOpen(false);
               setError("");

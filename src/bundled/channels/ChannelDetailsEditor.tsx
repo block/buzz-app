@@ -18,6 +18,8 @@ import {
 } from "../../features/relay/channel-details-protocol";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { AvatarEditor } from "../../features/profiles/AvatarEditor";
+import { splitPartition } from "../../features/relay/partition";
 import { ChannelDurationField } from "./ChannelDurationField";
 import { ChannelTextField } from "./ChannelTextField";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
@@ -159,7 +161,8 @@ export function ChannelDetailsEditor({
       normalized.description !== view.base.description ||
       normalized.visibility !== view.base.visibility ||
       normalized.joinRole !== view.base.joinRole ||
-      normalized.ttlSeconds !== view.base.ttlSeconds);
+      normalized.ttlSeconds !== view.base.ttlSeconds ||
+      (normalized.picture ?? "") !== (view.base.picture ?? ""));
   const temporaryTtl =
     draft?.ttlSeconds ??
     view.temporaryTtl ??
@@ -201,7 +204,8 @@ export function ChannelDetailsEditor({
       draft.description !== view.base.description ||
       draft.visibility !== view.base.visibility ||
       draft.joinRole !== view.base.joinRole ||
-      draft.ttlSeconds !== view.base.ttlSeconds);
+      draft.ttlSeconds !== view.base.ttlSeconds ||
+      (draft.picture ?? "") !== (view.base.picture ?? ""));
   const requestClose = () => {
     if (pending || busy.current) return;
     if (confirmDiscard) patch({ confirmDiscard: false });
@@ -326,6 +330,20 @@ export function ChannelDetailsEditor({
         }}
         dismissOnOutsideClick
         title={confirmDiscard ? "Discard changes?" : "Edit channel details"}
+        artwork={
+          !confirmDiscard && draft ? (
+            <AvatarEditor
+              emptyStyle="dotted-circle"
+              triggerLabel="Choose picture"
+              icons
+              value={draft.picture ?? ""}
+              name={draft.name}
+              community={splitPartition(scope)?.communityOrigin}
+              disabled={locked || !canEdit}
+              onChange={(picture) => patch({ draft: { ...draft, picture } })}
+            />
+          ) : undefined
+        }
         description={
           confirmDiscard
             ? "Your channel details have unsaved changes."

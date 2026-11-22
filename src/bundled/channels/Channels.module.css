@@ -712,6 +712,13 @@ details:not([open]) > summary .sectionChevron {
   top: 50%;
   transform: translateY(-50%);
 }
+/* A named conversation's own picture, at the icon's size. */
+.settingsPicture {
+  display: grid;
+  width: 4.5rem;
+  height: 4.5rem;
+}
+
 .settingsIcon {
   display: grid;
   place-items: center;

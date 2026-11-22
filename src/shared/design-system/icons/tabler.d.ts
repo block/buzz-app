@@ -4,4 +4,9 @@ declare module "@tabler/icons-react/dist/esm/icons/*" {
   import type { TablerIcon } from "@tabler/icons-react";
   const Icon: TablerIcon;
   export default Icon;
+  /** The outline's elements, for drawing an icon outside React. */
+  export const __iconNode: readonly (readonly [
+    string,
+    Readonly<Record<string, string>>,
+  ])[];
 }

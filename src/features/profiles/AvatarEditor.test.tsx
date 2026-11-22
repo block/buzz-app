@@ -431,6 +431,7 @@ it("sizes and moves the emoji in its preview and its uploaded avatar", async () 
     emojiAvatarScale * 1.5,
     0,
     undefined,
+    "#FFF4CC",
   );
   expect(
     within(screen.getByRole("group", { name: "Avatar picker" })).queryByRole(
@@ -449,6 +450,7 @@ it("sizes and moves the emoji in its preview and its uploaded avatar", async () 
     emojiAvatarScale * 1.5,
     0.1,
     undefined,
+    "#FFF4CC",
   );
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
   await waitFor(() => expect(change).toHaveBeenCalledWith(next));

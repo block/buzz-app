@@ -236,12 +236,13 @@ function ChannelSidebarItemCore({
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
   const tiled = useContext(SidebarCardDisplayContext) === "icons";
-  const identityShowsMembers = members.length > 0;
+  const identityShowsMembers = members.length > 0 || !!channel.picture;
   const identity = (
     <ConversationRowIdentity
       members={members}
       profiles={profiles}
       fallback={channel.name}
+      picture={channel.picture}
       session={session}
       presence={presence === "unknown" ? undefined : presence}
     />
@@ -256,6 +257,7 @@ function ChannelSidebarItemCore({
             members={members}
             profiles={profiles}
             fallback={channel.name}
+            picture={channel.picture}
             presence={presence === "unknown" ? undefined : presence}
             session={session}
           />

@@ -90,6 +90,7 @@ export function ConversationRowIdentity({
   members,
   profiles,
   fallback,
+  picture,
   session,
   presence,
 }: {
@@ -97,9 +98,22 @@ export function ConversationRowIdentity({
   profiles: ReadonlyMap<string, Profile>;
   /** The conversation's name, for a face whose profile hasn't loaded. */
   fallback: string;
+  /** A named conversation's own picture, chosen by its owners. */
+  picture?: string | undefined;
   session: RelaySession;
   presence?: Presence;
 }) {
+  if (picture)
+    return (
+      <span className={styles.dmAvatar} data-dm-identity="">
+        <Avatar
+          src={avatarMedia(picture, session.media)}
+          alt=""
+          fallback={fallback}
+          size="fill"
+        />
+      </span>
+    );
   const one = members.length === 1 ? profiles.get(members[0] ?? "") : undefined;
   if (members.length === 1)
     return (
@@ -129,21 +143,32 @@ export function ConversationRowIdentity({
   return <ChatCircleIcon size={16} />;
 }
 
-/** The same identity as a large tile: a face, a cluster of up to three
- * faces, or the chat bubble. */
+/** The same identity as a large tile: its picture, a face, a cluster of up
+ * to three faces, or the chat bubble. */
 export function ConversationTileIdentity({
   members,
   profiles,
   fallback,
+  picture,
   session,
   presence,
 }: {
   members: readonly string[];
   profiles: ReadonlyMap<string, Profile>;
   fallback: string;
+  picture?: string | undefined;
   session: RelaySession;
   presence?: Presence;
 }) {
+  if (picture)
+    return (
+      <Avatar
+        src={avatarMedia(picture, session.media)}
+        alt=""
+        fallback={fallback}
+        size="fill"
+      />
+    );
   if (members.length > 1)
     return (
       <AvatarStack

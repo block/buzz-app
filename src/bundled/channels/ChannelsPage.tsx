@@ -1,6 +1,9 @@
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
+import { NameConversation, canNameConversation } from "./NameConversation";
+import { MenuIcon, MenuItem } from "../../shared/design-system/ui/Menu";
+import { PencilSimpleIcon } from "../../shared/design-system/icons";
 import {
   readLinkedChat,
   linkedDraftKey,
@@ -912,6 +915,10 @@ function ChannelWorkspace({
 
   const conversions = useChatConversions(queries);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const [naming, setNaming] = useState<{
+    channelId: string;
+    trigger: HTMLElement | null;
+  }>();
   const [conversion, setConversion] = useState<{
     channelId: string;
     navigation: PageNavigation | undefined;
@@ -2571,6 +2578,11 @@ function ChannelWorkspace({
         )
       }
       channel={current}
+      nameConversation={
+        current && canNameConversation(queries, current)
+          ? (trigger) => setNaming({ channelId: current.id, trigger })
+          : undefined
+      }
       details={queries.channelDetails}
       lifecycle={queries.channelLifecycle}
       membership={membership}
@@ -3196,6 +3208,23 @@ function ChannelWorkspace({
                       <>
                         {drawer.launchers}
                         <ChannelHeaderMenu
+                          leadingAction={
+                            current && canNameConversation(queries, current) ? (
+                              <MenuItem
+                                onClick={() =>
+                                  setNaming({
+                                    channelId: current.id,
+                                    trigger: settingsTrigger.current,
+                                  })
+                                }
+                              >
+                                <MenuIcon>
+                                  <PencilSimpleIcon size={16} />
+                                </MenuIcon>
+                                Name and picture
+                              </MenuItem>
+                            ) : undefined
+                          }
                           startChat={
                             navigator &&
                             current &&
@@ -3321,6 +3350,19 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
+      {naming && current && naming.channelId === current.id && navigator && (
+        <NameConversation
+          session={queries}
+          navigation={navigator}
+          channel={current}
+          close={() => setNaming(undefined)}
+          finalFocus={() =>
+            naming.trigger?.isConnected
+              ? naming.trigger
+              : (settingsTrigger.current ?? false)
+          }
+        />
+      )}
       {conversion &&
         conversion.channelId === currentId &&
         conversion.navigation === navigation && (

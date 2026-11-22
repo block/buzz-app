@@ -963,19 +963,19 @@ async function agentOnlyDm({
     earlier,
     sent,
   ]);
-  let withheld: number | undefined;
+  let withheld: readonly number[] = [];
   const query = async (_member: unknown, filters: readonly object[]) =>
     (filters as readonly ReadFilter[]).flatMap((filter) =>
       relayPage(
-        records.filter((event) => event.kind !== withheld),
+        records.filter((event) => !withheld.includes(event.kind)),
         filter,
       ),
     );
   return {
     sent,
     query,
-    withhold: (kind?: number) => {
-      withheld = kind;
+    withhold: (...kinds: number[]) => {
+      withheld = kinds;
     },
   };
 }
@@ -1153,24 +1153,30 @@ it("keeps an agent-only DM out of the owner's saved conversations and labels", a
   });
 });
 
-it("keeps a DM mention pending while the relay gives only part of its details", async () => {
-  vi.useFakeTimers({ shouldAdvanceTime: true });
-  const f = await gooseSetup();
-  const dm = await agentOnlyDm();
-  dm.withhold(39002);
-  f.native.query.mockImplementation(dm.query);
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  await vi.advanceTimersByTimeAsync(50_000);
-  expect(f.deliveries).toHaveLength(0);
-  expect(warn).toHaveBeenCalledWith(
-    expect.stringContaining("could not catch up its private mentions"),
-    expect.any(Error),
-  );
-  dm.withhold();
-  await vi.advanceTimersByTimeAsync(300_000);
-  await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
-  expect(f.deliveries).toHaveLength(1);
-});
+it.each([
+  { withheld: [39002], what: "its roster" },
+  { withheld: [39000, 39002], what: "all its details" },
+])(
+  "keeps a DM mention pending while the relay withholds $what",
+  async ({ withheld }) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const f = await gooseSetup();
+    const dm = await agentOnlyDm();
+    dm.withhold(...withheld);
+    f.native.query.mockImplementation(dm.query);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(f.deliveries).toHaveLength(0);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("could not catch up its private mentions"),
+      expect.any(Error),
+    );
+    dm.withhold();
+    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
+    expect(f.deliveries).toHaveLength(1);
+  },
+);
 
 it("keeps the owner's mention catch-up going while the agent's own reads fail", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });

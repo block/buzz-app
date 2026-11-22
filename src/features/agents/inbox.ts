@@ -103,7 +103,7 @@ export class AgentInbox {
     return this.lifetime.aborted ? undefined : this.channels.get(id);
   }
 
-  /** Resolves the channels, returning those the relay gave only part of. */
+  /** Resolves the channels, returning those the relay gave not all of. */
   private async resolve(
     ids: readonly string[],
     signal: AbortSignal,
@@ -132,8 +132,10 @@ export class AgentInbox {
         const id = event.tags.find(([key]) => key === "d")?.[1];
         if (id) kinds.set(id, (kinds.get(id) ?? new Set()).add(event.kind));
       }
-    const partial = ids.filter((id) => kinds.get(id)?.size === 1);
-    // Half an answer neither confirms nor revokes what was verified before.
+    // A channel these come from is one the agent reads, so missing metadata or
+    // roster is unknown, not absent: it neither confirms nor revokes what was
+    // verified before.
+    const partial = ids.filter((id) => kinds.get(id)?.size !== 2);
     for (const id of ids) {
       if (partial.includes(id)) continue;
       this.channels.delete(id);
@@ -173,7 +175,7 @@ export class AgentInbox {
   async readAsAgent(filter: ReadFilter, signal: AbortSignal) {
     const { events, partial } = await this.read(filter, signal);
     if (partial.length)
-      throw new Error("The relay returned only part of a DM's details");
+      throw new Error("The relay did not return all of a DM's details");
     // Only a confirmed DM is read past the owner; the owner's own channels
     // come from the owner's session.
     const owned = await Promise.all(
@@ -191,7 +193,7 @@ export class AgentInbox {
     try {
       const { events, partial } = await this.read(filter, signal);
       if (partial.length)
-        throw new Error("The relay returned only part of a DM's details");
+        throw new Error("The relay did not return all of a DM's details");
       if (events.length < filter.limit) this.schedule(0);
       return events;
     } catch (error) {

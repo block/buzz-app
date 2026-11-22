@@ -23,8 +23,8 @@ export const ownerRows = <T extends Place>(
   );
 
 /** The turns of `place` the owner can read. A community session's turn is
- * read when it took a prompt and every prompt that names a channel names one
- * the owner can read; a turn with no prompt shown has no known source. */
+ * read when it took a prompt and every prompt names a channel the owner can
+ * read; a prompt or turn with no known source is not shown. */
 export function ownerTurns<T extends TranscriptTurn>(
   turns: readonly T[],
   reads: AgentReads | undefined,
@@ -40,7 +40,7 @@ export function ownerTurns<T extends TranscriptTurn>(
       sources.length > 0 &&
       sources.every(
         (channelId) =>
-          channelId === undefined || reads?.ownerReadable(channelId),
+          channelId !== undefined && reads?.ownerReadable(channelId) === true,
       )
     );
   });

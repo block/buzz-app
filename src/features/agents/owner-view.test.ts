@@ -91,6 +91,21 @@ it("hides a turn a steer from an unreadable channel joined, and one with no know
   ).toEqual([]);
 });
 
+it("hides a turn joined by a prompt whose source channel is unknown", () => {
+  clock = 0;
+  const mixed = claudeSession(
+    claudePrompt("1", open, "general"),
+    steerPrompt("Undisclosed body without a channel context"),
+  );
+  expect(mixed).toHaveLength(1);
+  const readable = ownerTurns(mixed, reads, {
+    channelId: open,
+    community: true,
+  });
+  expect(readable).toEqual([]);
+  expect(JSON.stringify(readable)).not.toContain("Undisclosed body");
+});
+
 it("reads the source channel of a Codex community turn from its context", () => {
   const input = (channel: string, name: string) =>
     turnInput(

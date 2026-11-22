@@ -259,7 +259,7 @@ it("keeps verified DM facts when a refresh returns only part of them", async () 
     );
     expect(await f.inbox.reads.channel(channel)).toMatchObject({ dm: true });
     await expect(f.inbox.readAsAgent(filter, signal())).rejects.toThrow(
-      "only part",
+      "all of a DM",
     );
     expect(f.inbox.channel(channel)).toBeDefined();
   } finally {

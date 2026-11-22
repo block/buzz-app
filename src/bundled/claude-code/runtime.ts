@@ -196,6 +196,12 @@ export type SavedConversation = Conversation &
 /** A little over the host's grace (`STOP_GRACE`) before it kills a stopped
  * process. */
 const STOP_WAIT_MS = 5_000;
+/** Conversation processes kept alive at once, across agents, besides the
+ * spare. Each `claude` holds about 150-430 MB, so the host's limit of 64
+ * would let idle ones hold gigabytes; a new conversation past this stops the
+ * one idle longest, which resumes from its saved session when next addressed.
+ * Soft: one that is working is never stopped, so a busy user may pass it. */
+export const LIVE_LIMIT = 8;
 const CONVERSATION_READ_TIMEOUT_MS = 4_000;
 const CHAT = [9, 40002];
 
@@ -576,13 +582,13 @@ export class ClaudeRuntime {
    * which every plugin's processes share: stops the spare, else the
    * conversation process of any agent that has been idle longest, and waits
    * for it to exit, or until the host has had time to kill it. False when
-   * neither is there to stop. Idle processes
+   * neither is there to stop. Without `spare`, the spare stays. Idle processes
    * would stop on their own after `IDLE_MS`; until then they hold places a
    * new conversation needs. */
-  async room() {
+  async room(spare = true) {
     // The spare, started ahead of need, goes before any conversation's. Both
     // are chosen now: a wait that runs out never stops another later.
-    let stopping = this.spare.free();
+    let stopping = spare ? this.spare.free() : undefined;
     if (!stopping) {
       let idlest: ReturnType<AgentSessions["idlest"]>;
       for (const entry of this.agents.values()) {
@@ -602,6 +608,17 @@ export class ClaudeRuntime {
     ]);
     clearTimeout(timer);
     return true;
+  }
+
+  /** Before a conversation's process starts: stops the idlest idle ones, never
+   * the spare, until fewer than `LIVE_LIMIT` run, or none is idle. */
+  private async trim() {
+    const live = () =>
+      [...this.agents.values()].reduce(
+        (count, entry) => count + entry.sessions.size,
+        0,
+      );
+    while (live() >= LIVE_LIMIT && (await this.room(false)));
   }
 
   /** Brings the runtime in line with this type's agents: changed settings
@@ -2249,6 +2266,7 @@ export class ClaudeRuntime {
     entry.sessions = new AgentSessions({
       spawn: (id, options) => this.spawn(id, options),
       room: () => this.room(),
+      trim: () => this.trim(),
       ...(!this.target ? { spare: this.spare } : {}),
       strictResume: !!this.target,
       store: {

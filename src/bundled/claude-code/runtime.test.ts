@@ -49,7 +49,13 @@ import {
 } from "../../features/agents/standalone-sessions";
 import { CLAUDES, type FakeClaude, fakeSpawn, flush } from "./claude-testing";
 import { RESUMED_PROMPT, TOP_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
-import { ClaudeRuntime, config, DEFAULT_CONFIG, modelName } from "./runtime";
+import {
+  ClaudeRuntime,
+  config,
+  DEFAULT_CONFIG,
+  LIVE_LIMIT,
+  modelName,
+} from "./runtime";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
 import {
   AgentSessions,
@@ -709,6 +715,84 @@ it("leaves a working conversation running and refuses the new one when none is i
   expect(claudes()).toHaveLength(1);
   working?.finish();
   await refused;
+});
+
+/** `count` thread mentions, oldest first, with the events a runtime reads;
+ * `extra` is one more than the live limit allows. */
+const threads = (count: number) => {
+  const all = Array.from({ length: count }, (_, index) =>
+    threadMention(`t${index}`, 100 + index * 10),
+  );
+  const mentions = all.map(([, mention]) => mention);
+  const extra = mentions.at(-1);
+  if (!extra) throw new Error("Expected a thread");
+  return { events: all.flat(), mentions, extra };
+};
+
+it("stops the idlest idle conversation when a new one passes the live limit", async () => {
+  vi.useFakeTimers();
+  const { events, mentions, extra } = threads(LIVE_LIMIT + 1);
+  const { deliver, claudes } = setup(events);
+  try {
+    for (const event of mentions.slice(0, LIVE_LIMIT)) {
+      await deliver({ type: "mention", event });
+      // Each conversation is used a moment after the last.
+      await vi.advanceTimersByTimeAsync(10);
+    }
+    expect(claudes().filter((process) => !process.killed)).toHaveLength(
+      LIVE_LIMIT,
+    );
+    const [oldest, ...rest] = claudes();
+    await deliver({ type: "mention", event: extra });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(oldest?.killed).toBe(true);
+    expect(rest.some((process) => process.killed)).toBe(false);
+    const live = claudes().filter((process) => !process.killed);
+    expect(live).toHaveLength(LIVE_LIMIT);
+    expect(live.at(-1)?.prompts[0]).toContain(extra.id);
+  } finally {
+    for (const process of claudes()) process.exit(null);
+    vi.useRealTimers();
+  }
+});
+
+it("never stops a working conversation for the live limit, and spawns anyway", async () => {
+  const { events, mentions } = threads(LIVE_LIMIT + 1);
+  const { deliver, claudes } = setup(events, { hold: true });
+  const turns: Promise<unknown>[] = [];
+  for (const event of mentions) {
+    turns.push(Promise.resolve(deliver({ type: "mention", event })));
+    await flush(10);
+  }
+  // Every process is in a turn: none is offered, so the host's own limit is
+  // the only one.
+  expect(claudes()).toHaveLength(LIVE_LIMIT + 1);
+  expect(claudes().some((process) => process.killed)).toBe(false);
+  for (const process of claudes()) process.finish();
+  await Promise.all(turns);
+});
+
+it("stops only the idle conversation when others at the live limit are working", async () => {
+  const { events, mentions, extra } = threads(LIVE_LIMIT + 1);
+  const { deliver, claudes } = setup(events, { hold: true });
+  const turns: Promise<unknown>[] = [];
+  for (const event of mentions.slice(0, LIVE_LIMIT)) {
+    turns.push(Promise.resolve(deliver({ type: "mention", event })));
+    await flush(10);
+  }
+  const first = claudes();
+  expect(first).toHaveLength(LIVE_LIMIT);
+  // The second conversation's turn ends, so it is the only one idle, though
+  // not the one used longest ago.
+  const idle = first[1];
+  idle?.finish();
+  await turns[1];
+  turns.push(Promise.resolve(deliver({ type: "mention", event: extra })));
+  await flush(10);
+  expect(first.filter((process) => process.killed)).toEqual([idle]);
+  expect(claudes()).toHaveLength(LIVE_LIMIT + 1);
+  for (const process of claudes()) process.finish();
+  await Promise.all(turns);
 });
 
 it("shares projected native history with incoming and combined action reviews", async () => {

@@ -2440,6 +2440,22 @@ it("collapses Working command details", async () => {
   expect(screen.getByText("Latest activity")).toBeVisible();
 });
 
+it("hides a live session's details while it serves a channel its owner cannot read", async () => {
+  const f = fixture();
+  const key = JSON.stringify(["@community", "@community"]);
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key, status: "Working", detail: "cat private-dm-notes" },
+  ]);
+  const readable = vi.spyOn(f.runtime, "readableDetail").mockReturnValue(false);
+  const { rerender } = render(<f.tabs.ActivityTab {...f.props()} />);
+  await screen.findByText(key);
+  expect(screen.queryByText("cat private-dm-notes")).toBeNull();
+  expect(readable).toHaveBeenCalledWith(expect.anything(), key);
+  readable.mockReturnValue(true);
+  rerender(<f.tabs.ActivityTab {...f.props()} />);
+  expect(await screen.findByText("cat private-dm-notes")).toBeInTheDocument();
+});
+
 it("shows why the conversation it was opened from failed, as plain text", async () => {
   const key = JSON.stringify(["channel", "channel"]);
   const f = fixture({

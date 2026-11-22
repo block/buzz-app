@@ -129,14 +129,17 @@ export class AgentInbox {
         const id = event.tags.find(([key]) => key === "d")?.[1];
         if (id) kinds.set(id, (kinds.get(id) ?? new Set()).add(event.kind));
       }
+    const partial = ids.filter((id) => kinds.get(id)?.size === 1);
+    // Half an answer neither confirms nor revokes what was verified before.
     for (const id of ids) {
+      if (partial.includes(id)) continue;
       this.channels.delete(id);
       const channel = discovery.get(id);
       if (discovery.authorized(id) && channel?.channelType === "dm")
         this.channels.set(id, channel);
     }
     for (const listener of this.listeners) listener();
-    return ids.filter((id) => kinds.get(id)?.size === 1);
+    return partial;
   }
 
   private async read(filter: ReadFilter, signal: AbortSignal) {
@@ -162,15 +165,18 @@ export class AgentInbox {
     return { events, partial };
   }
 
+  /** Reads as the agent, failing while any DM it returns is only partly
+   * known, so a caller retries rather than acts on it. */
   async readAsAgent(filter: ReadFilter, signal: AbortSignal) {
-    return (await this.read(filter, signal)).events;
+    const { events, partial } = await this.read(filter, signal);
+    if (partial.length)
+      throw new Error("The relay returned only part of a DM's details");
+    return events;
   }
 
   async mentions(filter: ReadFilter, signal: AbortSignal) {
     try {
-      const { events, partial } = await this.read(filter, signal);
-      if (partial.length)
-        throw new Error("The relay returned only part of a DM's details");
+      const events = await this.readAsAgent(filter, signal);
       if (events.length < filter.limit) this.schedule(0);
       return events;
     } catch (error) {

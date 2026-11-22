@@ -246,3 +246,23 @@ it("keeps backing off until a whole catch-up window reads", async () => {
     random.mockRestore();
   }
 });
+
+it("keeps verified DM facts when a refresh returns only part of them", async () => {
+  const f = fixture();
+  try {
+    await f.inbox.mentions(filter, signal());
+    expect(f.inbox.channel(channel)).toBeDefined();
+    f.query.mockImplementation(async (filters: readonly ReadFilter[]) =>
+      filters[0]?.kinds?.includes(39000)
+        ? eventsDto([roster(relay, channel, [agent.pubkey, sibling.pubkey], 1)])
+        : eventsDto([mention]),
+    );
+    expect(await f.inbox.reads.channel(channel)).toMatchObject({ dm: true });
+    await expect(f.inbox.readAsAgent(filter, signal())).rejects.toThrow(
+      "only part",
+    );
+    expect(f.inbox.channel(channel)).toBeDefined();
+  } finally {
+    f.controller.abort();
+  }
+});

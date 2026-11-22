@@ -1113,8 +1113,12 @@ it("keeps an interrupted private turn for retry when the agent's read fails", as
     ),
   );
   expect(f.deliveries).toHaveLength(0);
+  const failures = f.native.query.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(20_000);
+  // Backed off, not read again on every service tick.
+  expect(f.native.query.mock.calls.length - failures).toBeLessThanOrEqual(2);
   f.native.query.mockImplementation(dm.query);
-  await vi.advanceTimersByTimeAsync(50_000);
+  await vi.advanceTimersByTimeAsync(300_000);
   await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
   expect(f.deliveries[0]?.trigger).toMatchObject({
     type: "mention",

@@ -568,6 +568,10 @@ export class CodexRuntime {
     Map<AgentExecution, { done: Promise<void>; failed: boolean }>
   >();
   private views = new Map<AgentKey, readonly SessionView[]>();
+  /** The channels each live session has taken requests from, by
+   * `agent\nkey`: a community session's details show only while its owner
+   * can read every one. */
+  private sources = new Map<string, Set<string>>();
   private inventories = new Map<AgentKey, SavedConversation[] | null>();
   private inventoryReads = new Map<AgentKey, object>();
   private inventoryVersions = new Map<AgentKey, number>();
@@ -1195,8 +1199,15 @@ export class CodexRuntime {
     ]);
     for (const listener of this.listeners) listener();
   }
+  private source(agent: AgentKey, key: string, request: Request) {
+    const id = `${agent}\n${key}`;
+    const sources = this.sources.get(id) ?? new Set<string>();
+    sources.add(request.conversation.channelId);
+    this.sources.set(id, sources);
+  }
   /** Stops listing `key`'s session. */
   private forget(agent: AgentKey, key: string) {
+    this.sources.delete(`${agent}\n${key}`);
     const views = this.sessions(agent);
     if (!views.some((view) => view.key === key)) return;
     this.views.set(
@@ -1780,6 +1791,14 @@ export class CodexRuntime {
     } catch {
       return false;
     }
+  }
+  /** Whether the live session `key`'s details came only from requests in
+   * channels its owner can read. */
+  readableDetail(agent: AgentKey, key: string) {
+    const reads = this.reads(agent);
+    return [...(this.sources.get(`${agent}\n${key}`) ?? [])].every(
+      (channelId) => reads?.ownerReadable(channelId) === true,
+    );
   }
   /** The turns of `conversation` its owner can read. */
   readable(
@@ -2552,6 +2571,7 @@ export class CodexRuntime {
         (request.model && request.model !== targetModel) ||
         (request.effort && request.effort !== targetEffort));
     entry.waiting.add(request);
+    this.source(agent.key, key, request);
     delivery.interruptible?.(() =>
       this.interrupt(entry, key, request, reserved),
     );
@@ -2854,6 +2874,7 @@ export class CodexRuntime {
         },
       };
       entry.waiting.add(request);
+      this.source(agent.key, key, request);
       try {
         const handoff = this.controls.deliver(
           `${agent.key}/${key}`,

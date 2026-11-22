@@ -72,12 +72,14 @@ measurements in the default gate. The explicit measurement command above uses
 `--no-deps` so all selected measurements repeat, with `--workers=1` to retain
 isolation and one invocation to preserve both engines' evidence.
 
-Compiled frontend assets are worker-scoped, split by `developmentReact` and
-`pluginFixtures`, and removed when that worker ends. They are never reused across
+Compiled frontend assets are built once per variant (`developmentReact`,
+`pluginFixtures` and the other worker build options) per invocation: the first
+worker that needs a variant builds it, and other and restarted workers in the same
+invocation reuse it. Global teardown removes them; they are never reused across
 invocations. Every built-app test still gets a fresh preview server/port, ephemeral
 signing keys, signed histories, relay state and browser context/storage. Evidence records
-the worker and its build time, plus history counts and signing time; worker
-restarts rebuild rather than reuse stale assets.
+the worker, whether it built the assets and its build or wait time, plus history
+counts and signing time.
 
 Declare `historyCounts` with `test.use` for built-app tests that do not need large
 histories, for example `{ alpha: 1, beta: 0 }`. Counts apply per community. Keep

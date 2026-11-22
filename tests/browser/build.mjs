@@ -1,7 +1,8 @@
 import { fixtureAliases } from "../relay-config.ts";
-import { build } from "./vite-server.mjs";
+import { appBuildsVariable, build } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { link, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +13,59 @@ const PAIRING_IMPORT = 'import { PairingSettings } from "./PairingSettings";';
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-// Playwright owns this worker-scoped build. Only compiled assets are shared;
-// each test still owns its server, identities, relay state and browser storage.
+// Within one Playwright run, the workers share each variant's build: the first
+// worker to need it builds it while the others wait for its completion marker.
+// A lock whose builder process has exited is taken over. Returns whether this
+// worker built it.
+async function buildOnce(directory, run) {
+  const complete = join(directory, "complete");
+  const lock = `${directory}.lock`;
+  const exists = (path) =>
+    stat(path).then(
+      () => true,
+      () => false,
+    );
+  for (;;) {
+    if (await exists(complete)) return false;
+    // Linking a written file creates the lock with its holder's pid at once.
+    const claim = `${lock}.${process.pid}`;
+    await writeFile(claim, String(process.pid));
+    const held = await link(claim, lock).then(
+      () => true,
+      (error) => {
+        if (error.code === "EEXIST") return false;
+        throw error;
+      },
+    );
+    await rm(claim, { force: true });
+    if (held) {
+      try {
+        if (await exists(complete)) return false;
+        await run();
+        await writeFile(complete, "");
+        return true;
+      } finally {
+        await rm(lock, { force: true });
+      }
+    }
+    const holder = Number(await readFile(lock, "utf8").catch(() => ""));
+    if (holder && !isRunning(holder)) await rm(lock, { force: true });
+    else await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+function isRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+// Playwright owns this worker-scoped fixture; with the globalSetup's directory,
+// workers share each variant's build (see buildOnce). Only compiled assets are
+// shared; each test still owns its server, identities, relay state and storage.
 export async function buildApp(
   {
     developmentReact,
@@ -27,7 +79,26 @@ export async function buildApp(
   },
   use,
 ) {
-  const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
+  const shared = process.env[appBuildsVariable];
+  const directory = shared
+    ? join(
+        shared,
+        createHash("sha256")
+          .update(
+            JSON.stringify([
+              developmentReact,
+              builderlabLogin,
+              federatedIdentity,
+              pluginFixtures,
+              companionFixture,
+              localAgentActivity,
+              pairingFixture,
+              startupFailureFixture,
+            ]),
+          )
+          .digest("hex"),
+      )
+    : await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
   let pairingSwapped = false;
   try {
     const config = {
@@ -187,9 +258,11 @@ export async function buildApp(
         },
       });
     const start = performance.now();
-    await build(config);
-    await use({ config, durationMs: performance.now() - start });
+    let built = true;
+    if (shared) built = await buildOnce(directory, () => build(config));
+    else await build(config);
+    await use({ config, durationMs: performance.now() - start, built });
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    if (!shared) await rm(directory, { recursive: true, force: true });
   }
 }

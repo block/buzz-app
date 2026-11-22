@@ -739,7 +739,7 @@ async function addMemberBatch(
           );
           if (!recipients.length) continue;
           dispatched = true;
-          const checkRetry = () => {
+          const checkRecipients = () => {
             signal.throwIfAborted();
             const members = channelOf(session, channelId)?.members;
             if (
@@ -749,7 +749,9 @@ async function addMemberBatch(
                   agentUnavailable(session, key) || members?.includes(key),
               )
             )
-              throw new Error("Membership changed during retry. Try again.");
+              throw new Error(
+                "Membership changed before the addition. Try again.",
+              );
           };
           const id = await attempt(async () => {
             let origin: string | undefined;
@@ -823,7 +825,7 @@ async function addMemberBatch(
                       )
                     : id;
                 await withRecovery(target, recovery, () => {
-                  checkRetry();
+                  checkRecipients();
                   sharedJournal.adopt(saved);
                   outbox.retry(target);
                   return waitForAddition(outbox, target, signal);
@@ -831,8 +833,9 @@ async function addMemberBatch(
                 return target;
               }
             }
-            const send = () =>
-              outbox.send(
+            const send = () => {
+              if (sharedJournal) checkRecipients();
+              return outbox.send(
                 {
                   kind: 9000,
                   content: "",
@@ -848,6 +851,7 @@ async function addMemberBatch(
                   value: origin ?? "1",
                 },
               );
+            };
             return batchReceipt === undefined
               ? send()
               : withMigrationBatch(
@@ -857,10 +861,7 @@ async function addMemberBatch(
                   migration,
                   channelId,
                   recipients,
-                  () => {
-                    checkRetry();
-                    return send();
-                  },
+                  send,
                 );
           });
           if (!id) continue;

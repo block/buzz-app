@@ -1344,6 +1344,7 @@ function batchSetup(applyAll = true) {
   let onPublish: (event: RelayEvent) => unknown = () => {};
   let onSign: () => void | Promise<void> = () => {};
   let onLockWait = () => {};
+  let onJournalRead: () => void | Promise<void> = () => {};
   let rosterReads = 0;
   let failRosterRead = 0;
   let rosterDown = false;
@@ -1409,7 +1410,10 @@ function batchSetup(applyAll = true) {
       void work.then(clear, clear);
       return work;
     },
-    load: () => records,
+    async load(options) {
+      if (options?.readOnly) await onJournalRead();
+      return records;
+    },
     save: (next) => {
       records = structuredClone(next);
     },
@@ -1442,6 +1446,9 @@ function batchSetup(applyAll = true) {
     onLockWait(run: typeof onLockWait) {
       onLockWait = run;
     },
+    onJournalRead(run: typeof onJournalRead) {
+      onJournalRead = run;
+    },
     /** Fails the relay's nth roster read from now. */
     failRosterRead(nth: number) {
       failRosterRead = rosterReads + nth;
@@ -1465,6 +1472,14 @@ function batchSetup(applyAll = true) {
 }
 const people = (count: number) =>
   Array.from({ length: count }, () => keypair().pubkey);
+
+function gate<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((finish) => {
+    resolve = finish;
+  });
+  return { promise, resolve };
+}
 
 it("adds people requested together in one write per role and 100 people", async () => {
   const t = batchSetup();
@@ -1692,13 +1707,6 @@ it("waits for the original batch when a different window loaded it before signin
   const t = batchSetup();
   await t.ready();
   const members = people(3);
-  function gate<T = void>() {
-    let resolve!: (value: T) => void;
-    const promise = new Promise<T>((finish) => {
-      resolve = finish;
-    });
-    return { promise, resolve };
-  }
   const signing = gate();
   const signed = gate();
   const delivery = gate();
@@ -1783,7 +1791,10 @@ it("stops a migration single retry when the member joins while recovery waits", 
   await t.ready();
   const person = keypair().pubkey;
   const add = (retry?: true) =>
-    t.session.memberAdditions.add(t.id, person, { migration: "slack", retry });
+    t.session.memberAdditions.add(t.id, person, {
+      migration: "slack",
+      ...(retry && { retry }),
+    });
   t.onPublish(() => {
     throw new PublishRejected("Not sent");
   });
@@ -1793,12 +1804,12 @@ it("stops a migration single retry when the member joins while recovery waits", 
   if (!receipt?.recovery || !outbox?.withRecovery)
     throw new Error("Expected a recoverable addition");
 
-  const entered = Promise.withResolvers<void>();
-  const releaseAdoption = Promise.withResolvers<void>();
-  const releaseReplay = Promise.withResolvers<void>();
-  const adoptionQueued = Promise.withResolvers<void>();
-  const otherQueued = Promise.withResolvers<void>();
-  const replayQueued = Promise.withResolvers<void>();
+  const entered = gate();
+  const releaseAdoption = gate();
+  const releaseReplay = gate();
+  const adoptionQueued = gate();
+  const otherQueued = gate();
+  const replayQueued = gate();
   const { recovery } = receipt;
   const holdAdoption = outbox.withRecovery(receipt.event.id, recovery, () => {
     entered.resolve();
@@ -1842,6 +1853,48 @@ it("stops a migration single retry when the member joins while recovery waits", 
     await Promise.allSettled(work);
   }
   expect(t.publish).toHaveBeenCalledOnce();
+});
+
+it("checks fresh migration recipients after reading the journal before publishing", async () => {
+  const t = batchSetup();
+  await t.ready();
+  const first = keypair().pubkey;
+  const second = keypair().pubkey;
+  const entered = gate();
+  const release = gate();
+  t.onJournalRead(() => {
+    // Pause the batch's receipt lookup after the initial pending singles read.
+    t.onJournalRead(() => {
+      entered.resolve();
+      return release.promise;
+    });
+  });
+  const add = () =>
+    Promise.allSettled(
+      [first, second].map((key) =>
+        t.session.memberAdditions.add(t.id, key, { migration: "slack" }),
+      ),
+    );
+  const initial = add();
+  try {
+    await entered.promise;
+    t.admit(first);
+    await t.session.channelWrites.refreshMembership(t.id);
+  } finally {
+    release.resolve();
+    await initial;
+  }
+  expect(await initial).toEqual(
+    [first, second].map(() => ({
+      status: "rejected",
+      reason: new Error("Membership changed before the addition. Try again."),
+    })),
+  );
+  expect(t.publish).not.toHaveBeenCalled();
+  await add();
+  expect(
+    t.published.map((event) => event.tags.filter(([tag]) => tag === "p")),
+  ).toEqual([[["p", second]]]);
 });
 
 it("leaves a pending single addition to resume, never batching its person again", async () => {

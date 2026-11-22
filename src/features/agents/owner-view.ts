@@ -2,7 +2,11 @@
 // agent can read channels its owner cannot, such as a DM with a sibling agent,
 // and its harness saves those conversations like any other, so every
 // owner-facing list, label and transcript passes through these.
-import { promptChannel, type TranscriptTurn } from "./activity-transcript";
+import {
+  promptChannel,
+  STEER,
+  type TranscriptTurn,
+} from "./activity-transcript";
 import type { AgentReads } from "./reads";
 import type { SessionUsage } from "./service";
 
@@ -23,8 +27,9 @@ export const ownerRows = <T extends Place>(
   );
 
 /** The turns of `place` the owner can read. A community session's turn is
- * read when it took a prompt and every prompt names a channel the owner can
- * read; a prompt or turn with no known source is not shown. */
+ * read when it opens with its own prompt, not a steer whose opening was cut
+ * off, and every prompt names a channel the owner can read; a prompt or turn
+ * with no known source is not shown. */
 export function ownerTurns<T extends TranscriptTurn>(
   turns: readonly T[],
   reads: AgentReads | undefined,
@@ -33,11 +38,13 @@ export function ownerTurns<T extends TranscriptTurn>(
   if (!place.community)
     return reads?.ownerReadable(place.channelId) ? [...turns] : [];
   return turns.filter((turn) => {
-    const sources = turn.items.flatMap((item) =>
-      item.type === "prompt" ? [promptChannel(item.sections)] : [],
+    const prompts = turn.items.flatMap((item) =>
+      item.type === "prompt" ? [item.sections] : [],
     );
+    const sources = prompts.map(promptChannel);
     return (
-      sources.length > 0 &&
+      !!prompts[0] &&
+      !prompts[0].some((section) => section.tag === STEER) &&
       sources.every(
         (channelId) =>
           channelId !== undefined && reads?.ownerReadable(channelId) === true,

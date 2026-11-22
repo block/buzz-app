@@ -106,6 +106,15 @@ it("hides a turn joined by a prompt whose source channel is unknown", () => {
   expect(JSON.stringify(readable)).not.toContain("Undisclosed body");
 });
 
+it("hides a turn whose opening prompt was cut off, leaving only a readable steer", () => {
+  clock = 0;
+  const [turn] = claudeSession(steerPrompt(claudePrompt("1", open, "general")));
+  if (!turn) throw new Error("no turn");
+  expect(
+    ownerTurns([turn], reads, { channelId: open, community: true }),
+  ).toEqual([]);
+});
+
 it("reads the source channel of a Codex community turn from its context", () => {
   const input = (channel: string, name: string) =>
     turnInput(

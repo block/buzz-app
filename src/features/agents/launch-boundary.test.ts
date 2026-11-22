@@ -138,7 +138,11 @@ const relayPage = (records: readonly RelayEvent[], filter: ReadFilter) =>
  * While `offline`, every request fails as an unreachable relay's does. */
 function countedTransport(records: RelayEvent[]) {
   const requests: Request[] = [];
-  const state = { offline: false, afterRuns: () => false };
+  const state = {
+    offline: false,
+    failMentionCatchUp: false,
+    afterRuns: () => false,
+  };
   let live!: LiveCallbacks;
   const transport = {
     viewer: owner.pubkey,
@@ -153,6 +157,8 @@ function countedTransport(records: RelayEvent[]) {
       };
       requests.push(request);
       if (state.offline) throw new Error("Relay unreachable");
+      if (state.failMentionCatchUp && filters[0]?.["#p"] && !filters[0]["#h"])
+        throw new Error("Owner mention read refused");
       // A mention catch-up pages by time, as the relay does.
       if (filters.length === 1 && filters[0]?.["#p"])
         return relayPage(records, filters[0]);
@@ -1193,4 +1199,15 @@ it("keeps the owner's mention catch-up going while the agent's own reads fail", 
   );
   await vi.advanceTimersByTimeAsync(100_000);
   expect(ownerReads()).toBeGreaterThan(first);
+});
+
+it("still catches up agent-only DMs while the owner's mention reads fail", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const f = await gooseSetup();
+  const dm = await agentOnlyDm();
+  f.native.query.mockImplementation(dm.query);
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  f.transport.failMentionCatchUp = true;
+  await vi.advanceTimersByTimeAsync(50_000);
+  await vi.waitFor(() => expect(f.goose.geese[0]?.turns).toHaveLength(1));
 });

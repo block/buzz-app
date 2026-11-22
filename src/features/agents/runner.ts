@@ -1917,14 +1917,21 @@ export class AgentRunners {
     const { signal } = community.controller;
     // Not read(): it returns the owner's own mentions as unproven outbox copies.
     const read = async () => {
-      const owned = await community.session.readRemote(
-        [{ ids, limit: ids.length }],
-        { signal, fresh: true },
-      );
+      // Each read failing leaves its turns for the next try; the other still
+      // resumes what it finds.
+      let retry: readonly string[] = [];
+      let privateFailed = false;
+      const owned = await community.session
+        .readRemote([{ ids, limit: ids.length }], { signal, fresh: true })
+        .catch((error) => {
+          if (signal.aborted) throw error;
+          console.warn(`Agent ${agent.name} could not resume its turns`, error);
+          retry = ids;
+          return [] as RelayEvent[];
+        });
       const found = new Set(owned.filter(hasEventProof).map(({ id }) => id));
       const hidden = ids.filter((id) => !found.has(id));
       let agents: readonly RelayEvent[] | undefined;
-      let retry: readonly string[] = [];
       if (hidden.length)
         try {
           agents = await this.host.readAsAgent?.(
@@ -1934,17 +1941,26 @@ export class AgentRunners {
           );
         } catch (error) {
           if (signal.aborted) throw error;
-          retry = hidden;
+          retry = [...new Set([...retry, ...hidden])];
+          privateFailed = true;
           console.warn(
             `Agent ${agent.name} could not resume its private turns`,
             error,
           );
         }
-      return { events: [...owned, ...(agents ?? [])], retry };
+      const recovered = new Set(
+        (agents ?? []).filter(hasEventProof).map(({ id }) => id),
+      );
+      return {
+        events: [...owned, ...(agents ?? [])],
+        retry: retry.filter((id) => !recovered.has(id)),
+        privateFailed,
+      };
     };
     void read().then(
-      ({ events, retry }) => {
-        if (!retry.length) this.resumeRetries.delete(runner.key);
+      ({ events, retry, privateFailed }) => {
+        // Only the agent's own reads back off; the owner's retry as before.
+        if (!privateFailed) this.resumeRetries.delete(runner.key);
         else {
           const delay = Math.min(
             (this.resumeRetries.get(runner.key)?.delay ??

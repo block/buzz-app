@@ -651,6 +651,32 @@ describe("channel store", () => {
         ids: [after.id, latest.id],
       });
     });
+    it("a failed return to the head keeps the aux work of the rows it shows", async () => {
+      const { queries, take, page, scripted } = await opened({
+        maxHistoryRows: 2,
+      });
+      const [a, b] = [row(10), row(8)];
+      await page(newer, a);
+      const held = take(true);
+      await page(a, b);
+      expect(queries.window("c").hasNewer).toBe(true);
+      queries.attach?.("c");
+      expect(held.signal?.aborted).toBe(true);
+      await flush();
+      // No aux read while the head loads.
+      expect(
+        scripted.pending.some((read) => read.filters[0]?.include_aux && read.filters[0]?.until),
+      ).toBe(false);
+      const head = scripted.pending.find(
+        (read) => !read.filters[0]?.until && read.filters[0]?.["#h"],
+      );
+      assert(head);
+      scripted.pending.splice(scripted.pending.indexOf(head), 1);
+      head.fail(new ReadError("unavailable", "Relay is down"));
+      await flush();
+      expect(queries.window("c").hasNewer).toBe(true);
+      expect(take(true).filters[0]).toMatchObject({ until: 20 });
+    });
     it("returning to the head ends the aux work of the rows it replaces", async () => {
       const { queries, take, page, scripted } = await opened({
         maxHistoryRows: 2,

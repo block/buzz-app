@@ -134,6 +134,8 @@ type WindowState = {
   auxRead?:
     | { controller: AbortController; generation: number; dropped?: boolean }
     | undefined;
+  /** Aux work waits while a head read may replace its rows (`reattach`). */
+  auxPaused?: boolean;
   /** A refused aux read's retry hint: no aux read before it, one at it. */
   auxRetryAt?: number;
   auxRetry?: ReturnType<typeof setTimeout>;
@@ -1039,7 +1041,7 @@ export function createChannelStore(
       !reading.controller.signal.aborted
     )
       return;
-    if (!transport || !state.auxPages.length) return;
+    if (!transport || !state.auxPages.length || state.auxPaused) return;
     // Only the open channel reads aux; another channel's wait for its
     // revisit (see `ensure`).
     if (current !== state.channelId) return;
@@ -1607,7 +1609,10 @@ export function createChannelStore(
   function reattach(state: WindowState) {
     state.controller?.abort();
     state.controller = undefined;
-    dropAux(state);
+    // The segment's aux work waits for the head: it ends with the rows the
+    // head replaces, or continues past a failed read.
+    state.auxPaused = true;
+    state.auxRead?.controller.abort();
     const above = new Map<string, RelayEvent>();
     state.above = above;
     state.generation++;
@@ -1615,6 +1620,9 @@ export function createChannelStore(
     // A failed read leaves the segment; the next head read has these rows.
     return loadPage(state, null).finally(() => {
       if (state.above === above) state.above = undefined;
+      state.auxPaused = undefined;
+      if (state.ceiling === undefined) dropAux(state);
+      else if (windows.get(state.channelId) === state) void fillAux(state);
     });
   }
   /** Replace the window with a seek page; a null ceiling is the head page. */

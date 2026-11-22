@@ -4446,6 +4446,14 @@ export function createChannelStore(
             state.controller = undefined;
             state.above = undefined;
           }
+          // A read cancelled under the window (a stream drop) ends its page.
+          if (
+            !state.controller &&
+            state.snapshot.loadingNewer &&
+            !disposed &&
+            windows.get(channelId) === state
+          )
+            setWindow(state, { loadingNewer: undefined });
         }
       })();
     },

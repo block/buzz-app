@@ -357,6 +357,22 @@ describe("channel store", () => {
         error: undefined,
       });
     });
+    it("ends a newer page a stream drop cancels", async () => {
+      const { queries, page, scripted } = await opened({ maxHistoryRows: 2 });
+      const [a, b, c] = [row(10), row(8), row(6)];
+      await page(newer, a);
+      await page(a, b);
+      await page(b, c);
+      expect(queries.window("c").hasNewer).toBe(true);
+      const before = new Set(scripted.pending);
+      queries.loadNewer?.("c");
+      expect(queries.window("c").loadingNewer).toBe(true);
+      const read = scripted.pending.find((entry) => !before.has(entry));
+      assert(read);
+      read.fail(new DOMException("Relay read cancelled", "AbortError"));
+      await flush();
+      expect(queries.window("c").loadingNewer).toBeFalsy();
+    });
     it("reads a cancelled aux read again with the next fill", async () => {
       const { take, page } = await opened();
       const first = row(10);

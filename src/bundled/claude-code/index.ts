@@ -27,6 +27,7 @@ import { createTabs } from "./tabs";
 import { targetKey } from "../../features/navigation/targets";
 import type { ClaudeConnection } from "./ClaudeSettings";
 import { readUsage } from "./usage";
+import { claudeLiveUsage } from "./live-usage";
 import { usageOn } from "../../features/agents/standalone-sessions";
 
 export { TYPE_ID };
@@ -319,6 +320,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
           );
         },
       }),
+    liveUsage: async (agent) => {
+      if (await agents.inspectExecution(agent.key))
+        throw new Error("Live usage is unavailable for remote Claude agents.");
+      return claudeLiveUsage(setup.snapshot());
+    },
     provider: {
       snapshot: setup.providerSnapshot,
       subscribe: setup.subscribe,

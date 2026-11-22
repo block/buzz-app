@@ -51,6 +51,7 @@ import {
   type SettingsSchema,
   type Subject,
 } from "./agent-config";
+import type { ProviderUsageSnapshot } from "./live-usage";
 import { isSynced, type Mode, resolveStart } from "./agent-start";
 import {
   type CommunityConfig,
@@ -1254,6 +1255,13 @@ export type AgentType<Config = unknown> = {
     agent: Agent<Config>,
     options: Readonly<{ since: number; signal: AbortSignal }>,
   ): Promise<readonly SessionUsage[]>;
+  /** Current provider account and allowance state for a native conversation
+   * meter. Reading never sends a model turn and must return no account
+   * identifiers, emails or credentials. */
+  liveUsage?(
+    agent: Agent<Config>,
+    options: Readonly<{ signal: AbortSignal }>,
+  ): Promise<ProviderUsageSnapshot>;
   /** The settings that sync across devices and how they merge into this
    * device's config. Without it, the type's settings never sync. */
   syncedSettings?: Readonly<{

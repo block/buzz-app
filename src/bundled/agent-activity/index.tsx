@@ -4,6 +4,7 @@ import {
   ActivityAccessory,
   ActivityTypingReplacement,
 } from "./ActivityAccessory";
+import { UsageMeterAccessory } from "./UsageMeterAccessory";
 export const inject = ["relay", "conversation", "agents"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
@@ -36,5 +37,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "typing-presentation",
     title: "Agent typing presentation",
     component: ActivityTypingReplacement,
+  });
+  ctx.conversation.registerAccessory({
+    id: "native-live-usage",
+    title: "Live model usage",
+    order: 20,
+    placement: "composer",
+    component: (props) => (
+      <UsageMeterAccessory {...props} agents={ctx.agents} />
+    ),
   });
 };

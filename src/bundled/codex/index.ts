@@ -12,6 +12,7 @@ import { CodexRuntime } from "./runtime";
 import { CodexSetup, explainTurn, reviewHome, withScript } from "./setup";
 import { CodexProvider, createTabs } from "./tabs";
 import { readUsage } from "./usage";
+import { readCodexLiveUsage } from "./live-usage";
 import { reviewModel } from "./security-review";
 import {
   candidatesFor,
@@ -279,6 +280,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
           return readUsage({ spawn, readFile }, agent, since, signal);
         },
       }),
+    ...(spawn && {
+      liveUsage: async (agent, { signal }) => {
+        if (await ctx.agents.inspectExecution(agent.key))
+          throw new Error("Live usage is unavailable for remote Codex agents.");
+        return readCodexLiveUsage(spawn, signal);
+      },
+    }),
     provider: {
       snapshot: providerController.snapshot,
       subscribe: providerController.subscribe,

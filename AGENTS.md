@@ -17,6 +17,38 @@ stricter review. Escalate needed changes rather than editing without authorizati
 When reviewing CI or test-cost changes, inspect job-summary counts, elapsed wall
 time, summed test execution time, and slowest-test/file evidence for regressions.
 
+## Core or external plugin
+
+Before creating a branch for a change people will see or use, decide whether it
+belongs in this repository or in an external plugin, and tell the human which
+and why. Here, "core" means this repository, including its bundled plugins under
+`src/bundled/`. An external plugin lives in its own repository and is installed
+through Settings → Plugins (see the [authoring guide](docs/plugin-authoring-guide.md)).
+
+Core takes:
+
+- Bug fixes and rough-edge fixes in existing flows.
+- Small improvements that make an existing flow easier without adding new
+  settings, surfaces, or visual options.
+- Accessibility, performance, security, reliability, and onboarding work.
+- General-purpose extension points that external plugins need, under
+  [Open-source boundary](#open-source-boundary).
+- New experiences the design maintainers have already agreed to take into core.
+
+An external plugin is the default for:
+
+- New pages, panels, sidebar sections, tools, or experiences.
+- New visual options or settings: themes, density, layout alternatives,
+  appearance toggles, or a second way to do something that already exists.
+- Integrations with a specific service or workflow, and experiments.
+- Anything that only serves one organization (also required by
+  [Open-source boundary](#open-source-boundary)).
+
+If the change fits the external-plugin list but the human believes it belongs in
+core, ask the design maintainers before building it. When the plugin needs a
+host capability that does not exist yet, propose that extension point as its own
+core PR and keep the feature in the plugin.
+
 ## UI and design-system work
 
 For any Buzz UI change—including features, shell, bundled plugins, and fixes to
@@ -319,7 +351,11 @@ confirmation, not app runs.
    (through the app or `curl`), or by running the changed command. Agent testing
    does not substitute. Agents give the human exact steps and what working looks
    like, then wait for explicit confirmation. Never mark this step done yourself.
-4. **Add `buzz-review-completed` to the PR description** once steps 1–3 hold. It
+4. **Visual changes include a video.** If the PR changes what people see or how
+   they interact, attach a short screen recording of the changed flow to the PR
+   description, with a before and after when existing UI changes. Screenshots
+   alone do not show interaction. Agents that cannot record ask the human to.
+5. **Add `buzz-review-completed` to the PR description** once steps 1–4 hold. It
    attests the checklist, and automated reviewers may skip review because of it.
    If later edits change behavior, remove it and return the PR to draft until the
    affected steps are redone.

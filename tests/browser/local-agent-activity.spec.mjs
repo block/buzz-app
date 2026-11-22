@@ -15,7 +15,6 @@ test.use({
   threadUnread: true,
   historyCounts: { alpha: 2, beta: 1 },
   localAgentActivity: true,
-  video: "on",
 });
 test("local agent receipt, work and failure agree across sidebar, thread and exact message", async ({
   page,

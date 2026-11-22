@@ -23,7 +23,7 @@ type Selection = Readonly<{
   agent: Agent;
   type: RegisteredAgentType;
   turnId: string;
-  state: "working" | "unknown" | "ended";
+  state: string;
   timestamp: number;
   run?: RunUsage;
 }>;
@@ -94,6 +94,30 @@ function selectedUsage(
             },
           }
         : {}),
+    };
+  }
+  const local = (activity?.local ?? [])
+    .filter(
+      (work) =>
+        work.channelId === props.channelId &&
+        (props.threadRootId
+          ? work.threadRootId === props.threadRootId
+          : !work.thread),
+    )
+    .sort((a, b) => b.startedAt - a.startedAt);
+  for (const work of local) {
+    const agent = agentList.find(
+      (candidate) => candidate.pubkey === work.agent,
+    );
+    const type =
+      agent && types.find((candidate) => candidate.key === agent.type);
+    if (!agent || !type?.liveUsage || agent.place !== "here") continue;
+    return {
+      agent,
+      type,
+      turnId: work.messageId,
+      state: work.state,
+      timestamp: work.startedAt,
     };
   }
   return undefined;

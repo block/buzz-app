@@ -5,7 +5,7 @@ import type { RelaySession } from "../relay/session";
 import { useMessageEditScope } from "./MessageEditScope";
 import { useMessageKeyActions } from "./MessageManagement";
 import type { ComposerInputElement } from "./composer-dom";
-import { registerMessageList } from "./message-selection";
+import { registerMessageList, type MessageList } from "./message-selection";
 import { lastEditableMessage } from "./useMessageEdit";
 
 /** Makes a rendered message list keyboard-selectable within its edit scope. */
@@ -14,12 +14,13 @@ export function useMessageSelection(
   rows: readonly ChannelMessage[],
   session: RelaySession,
   conversationId: string | undefined,
+  expose?: MessageList["expose"],
 ) {
   const editScope = useMessageEditScope();
   const actions = useMessageKeyActions(session);
   // Action availability changes with outbox state, not the list's lifetime.
-  const latest = useRef({ rows, actions, conversationId });
-  latest.current = { rows, actions, conversationId };
+  const latest = useRef({ rows, actions, conversationId, expose });
+  latest.current = { rows, actions, conversationId, expose };
   useLayoutEffect(() => {
     const element = list.current;
     if (!element) return;
@@ -49,6 +50,7 @@ export function useMessageSelection(
               : newest,
           undefined,
         )?.id,
+      expose: (id, step) => latest.current.expose?.(id, step),
       canEdit: (row) =>
         !!editScope?.current && !!lastEditableMessage(session, [row]),
       edit: (row) => editScope?.current?.(row),
@@ -74,12 +76,14 @@ export function MessageSelection(props: {
   rows: readonly ChannelMessage[];
   session: RelaySession;
   conversationId: string | undefined;
+  expose?: MessageList["expose"];
 }) {
   useMessageSelection(
     props.list,
     props.rows,
     props.session,
     props.conversationId,
+    props.expose,
   );
   return null;
 }

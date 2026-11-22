@@ -84,7 +84,10 @@ with its position in the thread ("Message #142"), with the
 panel's window of ten pages (460 replies) filled at the newest end first.
 `thread-scroll-deep-page` reads one older page into a window that has slid ten
 pages deep and reports its cadence, `readingShiftPx` (how far the row being read
-moved) and the window's top-level rows. Chromium scrolls threads off the main thread, so its
+moved) and the window's top-level rows. The panel mounts only the replies near its viewport, so samples count the
+rows the window holds from its items' `aria-setsize` and report the rows actually
+mounted as `mountedRows`; scroll gestures count replies traversed
+(`repliesTraversed`), since Virtua's measurement corrections move the offset. Chromium scrolls threads off the main thread, so its
 frame spacing stays smooth even when compositing is slow; read its counters
 instead. `--browser webkit` shows those stalls in frame spacing, but has no
 counters, CPU throttling or real gesture timing. Neither shows trackpad momentum

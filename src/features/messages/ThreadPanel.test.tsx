@@ -14,6 +14,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { selectNewestMessage } from "./message-selection";
+import { viewport } from "./virtua.testing";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
 import { createAgentLibrary } from "../agents/library";
@@ -38,6 +39,9 @@ import type {
   ChannelSummary,
 } from "../relay/contracts";
 import { formatPublicKey } from "../../shared/identity/public-key";
+
+// jsdom has no layout; mount every virtual item.
+vi.mock("virtua", () => import("./virtua.testing"));
 
 // Real React owns effects, refs and subscriptions. Only independent child UI is
 // reduced here; MessageRow/MessageComposer retain their own mounted suites.
@@ -128,6 +132,7 @@ vi.mock("./MessageComposer", () => ({
 }));
 afterEach(() => {
   cleanup();
+  viewport.holds = () => true;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -395,6 +400,40 @@ it("registers its messages for keyboard selection and leaves an Escape the selec
   fireEvent.keyDown(selected as Element, { key: "Escape" });
   expect(h.close).toHaveBeenCalledOnce();
   h.unmount();
+});
+function unmountedReplies(held: (index: number) => boolean) {
+  const h = messagesHarness();
+  h.snapshot.replies = ["c", "d", "e", "f", "g"].map((id, index) => ({
+    ...threadReply(id, row.id),
+    createdAt: 2 + index,
+  }));
+  viewport.holds = held;
+  h.render();
+  const at = (id: string) =>
+    h.element.querySelector<HTMLElement>(
+      `[data-message-id="${id.repeat(64)}"]`,
+    );
+  return { h, at };
+}
+it("keyboard selection steps to the loaded reply beside it, mounting it, not past a gap in the mounted replies", () => {
+  const { at } = unmountedReplies((index) => index >= 3);
+  expect(at("e")).toBeNull();
+  const selected = at("f");
+  if (!selected) throw new Error("Missing mounted reply");
+  selected.tabIndex = -1;
+  selected.focus();
+  fireEvent.keyDown(selected, { key: "ArrowUp" });
+  expect(at("e")).toHaveFocus();
+  fireEvent.keyDown(at("e") as Element, { key: "ArrowDown" });
+  expect(at("f")).toHaveFocus();
+});
+it("selects the newest reply by mounting it when scrolling has unmounted it", () => {
+  const { h, at } = unmountedReplies((index) => index < 2);
+  expect(at("g")).toBeNull();
+  act(() => {
+    expect(selectNewestMessage(h.element)).toBe(true);
+  });
+  expect(at("g")).toHaveFocus();
 });
 it("allocation failure exposes an effective retry rather than leaving a spinner", () => {
   const h = messagesHarness();
@@ -2889,6 +2928,59 @@ it("a retained reader reveals its exact selected message, again for each new req
   expect(revealedReply()).toBe(false);
 });
 
+it("an exact target keeps its place in the viewport when a page lands after rows above it resized", async () => {
+  const { linked } = visitPlaces();
+  const reply = (id: string, createdAt: number) => ({
+    ...row,
+    id: id.repeat(64),
+    content: `reply ${id}`,
+    replyParentId: row.id,
+    createdAt,
+  });
+  const target = reply("d", 5);
+  const navigation = linked("exact-visit", undefined, target.id);
+  const h = messagesHarness(navigation);
+  const offsets = new Map([[target.id, 300]]);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+    function (this: HTMLElement) {
+      const offset = offsets.get(this.dataset.messageId ?? "");
+      return offset === undefined
+        ? new DOMRect(0, 0, 500, 600)
+        : new DOMRect(
+            0,
+            offset - (this.closest("[data-message-scroller]")?.scrollTop ?? 0),
+            500,
+            40,
+          );
+    },
+  );
+  h.snapshot.replies = [target];
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  h.snapshot.direction = "older";
+  h.snapshot.canLoadMore = true;
+  Object.assign(h.props as ThreadPanelProps, { messageId: target.id });
+  h.render();
+  await waitFor(() =>
+    expect(navigation.complete).toHaveBeenCalledWith({ status: "opened" }),
+  );
+  // The reader has scrolled on with the target 300 px into the viewport; the panel
+  // learns of it from the resize.
+  offsets.set(target.id, 2300);
+  h.element.scrollTop = 2000;
+  h.resize(4100);
+  h.deliverResize();
+  // Virtua measures rows above the target and moves scrollTop with them
+  // before the panel hears of it: the target keeps its place in the viewport.
+  offsets.set(target.id, 2222);
+  h.element.scrollTop = 1922;
+  // An older page lands above, shifting the target 1,000 px down the range.
+  offsets.set(target.id, 3222);
+  h.snapshot.replies = [reply("c", 4), reply("b", 3), target];
+  h.render();
+  expect(h.element.scrollTop).toBe(2922);
+});
+
 it("an open relayed group stays open when paging adds an earlier member", async () => {
   const h = messagesHarness();
   const relayed = ["d", "e", "f"].map((id, index) => ({
@@ -3087,6 +3179,19 @@ it.each([
   // it: the place, not the end of the thread.
   expect(h.element.scrollTop).toBe(100);
   expect(h.element).not.toHaveAttribute("data-positioning");
+});
+
+it("Back restores a gone reply's parent that sits outside the mounted replies", () => {
+  const { places, visit } = visitPlaces();
+  const parent = threadReply("d", row.id);
+  places.set("thread-visit:thread", {
+    anchor: { id: "e".repeat(64), top: -100, ancestors: [parent.id] },
+  });
+  viewport.holds = () => false;
+  const h = messagesHarness(visit("thread-visit", true));
+  h.snapshot.replies = [parent];
+  h.render();
+  expect(h.element.scrollTop).toBe(100);
 });
 
 it("Back to a place inside a folded relayed group reopens that group at it", () => {
@@ -3623,6 +3728,70 @@ it("releases bottom following after a jump that included child-only resizing", (
   expect(h.element.scrollTop).toBe(2000);
 });
 
+it("follows the latest replies again when End lands where an earlier correction left the reader", () => {
+  const h = messagesHarness();
+  const replies = ["c", "d", "e"].map((id) => threadReply(id, row.id));
+  layOutRows([row.id, ...replies.map((reply) => reply.id)]);
+  h.snapshot.replies = replies;
+  h.render();
+  h.scroll(2000);
+  // The content shrinks under the reader: the browser clamps the offset and the
+  // panel's correction records where it left it.
+  h.resize(2400);
+  h.element.scrollTop = 2000;
+  h.deliverResize();
+  expect(h.element.scrollTop).toBe(1800);
+  h.scroll(500);
+  fireEvent.keyDown(h.element, { key: "End" });
+  h.scroll(1800);
+  expect(h.element).not.toHaveAttribute("data-jump-visible");
+  h.resize(2700);
+  h.snapshot.replies = [...replies, threadReply("f", row.id)];
+  h.render();
+  expect(h.element.scrollTop).toBe(2100);
+});
+
+it("keeps the item holding an activity group mounted for an exact link to its later step", async () => {
+  const h = messagesHarness();
+  const step = (id: string, content: string, createdAt: number) => ({
+    ...row,
+    id: id.repeat(64),
+    content,
+    audience: "agents" as const,
+    threadRootId: row.id,
+    replyParentId: row.id,
+    createdAt,
+  });
+  const target = step("d", "Second tool result", 3);
+  h.snapshot.replies = [
+    step("c", "First tool result", 2),
+    target,
+    {
+      ...row,
+      id: "e".repeat(64),
+      content: "Final response",
+      threadRootId: row.id,
+      replyParentId: row.id,
+      createdAt: 4,
+    },
+  ];
+  h.snapshot.target = target;
+  h.snapshot.targetStatus = "ready";
+  Object.assign(h.props, {
+    messageId: target.id,
+    retainThread: true,
+    revealSelected: true,
+    revealRequest: 1,
+  });
+  h.render();
+  const shown = await screen.findByText("Second tool result");
+  // The step renders inside the group's first item; that item is the one kept.
+  const item = shown.closest("[data-thread-rows] > ol > li");
+  const list = item?.parentElement;
+  if (!item || !list) throw new Error("Missing virtual item");
+  const index = [...list.children].indexOf(item);
+  expect(list.dataset.keepMounted?.split(",")).toContain(String(index));
+});
 it("reveals a completed step selected by an exact thread link", async () => {
   const h = messagesHarness();
   const target = {

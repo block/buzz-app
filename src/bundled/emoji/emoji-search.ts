@@ -187,7 +187,15 @@ function rankEmoji(
       .map(({ item }) => item)
       .filter((item) => !semanticIds.has(item.id)),
   ];
-  const strong = rank(combined).filter(({ tier }) => tier <= 1);
+  const literal = query.toLowerCase();
+  const strong = rank(combined)
+    .filter(({ tier }) => tier <= 1)
+    // The typed shortcode itself leads its separator-insensitive namesakes.
+    .map((match) =>
+      match.item.shortcode.toLowerCase() === literal
+        ? { ...match, tier: -1 }
+        : match,
+    );
   const promoted = new Set(strong.map(({ item }) => item.id));
   const ranked = [
     ...strong,
@@ -195,7 +203,7 @@ function rankEmoji(
       .filter((item) => !promoted.has(item.id))
       .map((item) => ({ item, tier: semanticIds.has(item.id) ? 2 : 3 })),
   ]
-    // Within exact, prefix, name or keyword, and fuzzy matches, the more often
+    // Within literal, exact, prefix, name or keyword, and fuzzy matches, the more often
     // chosen emoji comes first; ties and unused emoji keep their query order.
     .sort((a, b) => a.tier - b.tier || uses(b.item.id) - uses(a.item.id))
     .map(({ item }) => item);

@@ -131,7 +131,7 @@ function mountPeople(
   }: {
     items?: readonly object[];
     bundled?: boolean;
-    replace?: () => boolean;
+    replace?: () => boolean | "typed";
     tokens?: readonly { start: number; end: number }[];
     identityMarks?: Contribution<IdentityMark>[];
   } = {},
@@ -289,8 +289,8 @@ it("ignores the agent flag from providers outside the bundled people providers",
 });
 
 const folder = { kind: "folder", id: "/notes", label: "@notes" };
-it.each([true, false])(
-  "tells the provider once about an accepted choice, never a rejected one (accepted: %s)",
+it.each([true, false, "typed"] as const)(
+  "tells the provider once about an applied choice, never a rejected or typed-only one (accepted: %s)",
   async (accepted) => {
     const onSelect = vi.fn();
     mountPeople("test.plugin", {
@@ -304,7 +304,7 @@ it.each([true, false])(
     fireEvent.pointerMove(option);
     expect(onSelect).not.toHaveBeenCalled();
     fireEvent.click(option);
-    expect(onSelect).toHaveBeenCalledTimes(accepted ? 1 : 0);
+    expect(onSelect).toHaveBeenCalledTimes(accepted === true ? 1 : 0);
   },
 );
 it.each([true, false])(

@@ -189,12 +189,13 @@ export function ComposerCompletions({
     pending?: readonly Readonly<{ start: number; end: number }>[] | undefined;
     tokens?: readonly Readonly<{ start: number; end: number }>[] | undefined;
   }>;
+  /** `"typed"`: the key landed literally, but the edit did not. */
   replace(
     edit: HostCompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
-  ): boolean;
+  ): boolean | "typed";
 }) {
   const providers = useSyncExternalStore(
     registry.subscribe,
@@ -342,12 +343,13 @@ function OwnedCompletion({
   pointerPosition: RefObject<
     Pick<PointerEvent, "clientX" | "clientY"> | undefined
   >;
+  /** `"typed"`: the key landed literally, but the edit did not. */
   replace(
     edit: HostCompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
     key?: string,
-  ): boolean;
+  ): boolean | "typed";
 }) {
   const id = useId();
   const compact = provider.pluginId === "buzz.emoji";
@@ -547,15 +549,15 @@ function OwnedCompletion({
     const accepted = withHumanMentionSelection(event, () =>
       current.current.replace(item.edit, source.query, observation, key),
     );
-    if (accepted) {
-      current.current.editor.invalidate();
+    if (accepted) current.current.editor.invalidate();
+    if (accepted === true) {
       try {
         item.onSelect?.();
       } catch {
         /* A provider callback cannot undo the accepted edit. */
       }
     }
-    return accepted;
+    return !!accepted;
   }
   useLayoutEffect(() => {
     const element = input.current;

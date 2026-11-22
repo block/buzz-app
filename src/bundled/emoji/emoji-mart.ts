@@ -37,8 +37,16 @@ function checkMartPropTimer(picker: HTMLElement) {
 // windows' choices, and counts a pick before the tone prompt confirms it.
 Object.assign(FrequentlyUsed, {
   add() {},
-  get: (props: { maxFrequentRows: number; perLine: number }) =>
-    frequentEmoji(props, FrequentlyUsed.DEFAULTS, (id) => !!Data?.emojis[id]),
+  get(props: { maxFrequentRows: number; perLine: number }) {
+    // Mart fills this row last, after dropping from the other categories what
+    // this client cannot render or this picker does not offer.
+    const shown = new Set<string>();
+    for (const category of Data?.categories ?? [])
+      if (category.id !== "frequent")
+        for (const emoji of category.emojis)
+          shown.add(typeof emoji === "string" ? emoji : emoji.id);
+    return frequentEmoji(props, FrequentlyUsed.DEFAULTS, (id) => shown.has(id));
+  },
 });
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
@@ -120,7 +128,8 @@ export function mountEmojiMart({
   searchChange(value: string): void;
   entries: readonly CustomEmoji[];
   media(url: string): string | undefined;
-  select(value: string, customEmoji?: string): void;
+  /** Return false when the host rejects the insertion; it then does not count. */
+  select(value: string, customEmoji?: string): unknown;
   close(): void;
   /** With `preview`, the footer's skin-tone action renders the saved tone (1–6). */
   skinToneChange?(tone: number, open: boolean): void;
@@ -191,14 +200,13 @@ export function mountEmojiMart({
       if (!emoji.id) return;
       if (emoji.native) {
         if (promptSkinTone(emoji.id)) return;
-        addEmojiUsage(emoji.id);
-        select(emoji.native);
+        if (select(emoji.native) !== false) addEmojiUsage(emoji.id);
         return;
       }
       const custom = values.get(emoji.id);
       if (!custom) return;
-      addEmojiUsage(emoji.id);
-      select(custom.literal, custom.shortcode);
+      if (select(custom.literal, custom.shortcode) !== false)
+        addEmojiUsage(emoji.id);
     },
   }) as unknown as HTMLElement;
   // The documented web-component attribute updates in place: do not recreate the
@@ -679,8 +687,7 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
     const tone = chosenTone;
     const native = tone && Data?.emojis[id]?.skins[tone - 1]?.native;
     if (!native || disposed) return false;
-    addEmojiUsage(id);
-    select(native);
+    if (select(native) !== false) addEmojiUsage(id);
     return true;
   };
   // Mart clears the preview whenever the pointer leaves an emoji, so crossing

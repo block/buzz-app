@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import data from "@emoji-mart/data";
-import { FrequentlyUsed, init } from "emoji-mart";
+import { Data, FrequentlyUsed, init } from "emoji-mart";
 import { afterEach, expect, it } from "vitest";
 import "./emoji-mart";
 import {
@@ -91,4 +91,19 @@ it("keeps Mart's pickers on the shared history", async () => {
     get(props: { maxFrequentRows: number; perLine: number }): string[];
   };
   expect(mart.get({ maxFrequentRows: 1, perLine: 2 })).toEqual(["smirk", "+1"]);
+  // Mart drops emoji newer than the client renders from their categories
+  // first; those leave the row to the defaults rather than an empty slot.
+  const category: { emojis: string[] } = Data.categories.find(
+    (category: { emojis: string[] }) => category.emojis.includes("smirk"),
+  );
+  const at = category.emojis.indexOf("smirk");
+  category.emojis.splice(at, 1);
+  try {
+    expect(mart.get({ maxFrequentRows: 1, perLine: 2 })).toEqual([
+      "+1",
+      "grinning",
+    ]);
+  } finally {
+    category.emojis.splice(at, 0, "smirk");
+  }
 });

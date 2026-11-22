@@ -2166,7 +2166,11 @@ function Composer({
     !!input.current?.isConnected &&
     !input.current.disabled &&
     !input.current.readOnly;
-  function insert(
+  /** Like `insertTerminated`, counting a typed terminator alone as inserted. */
+  function insert(...args: Parameters<typeof insertTerminated>) {
+    return !!insertTerminated(...args);
+  }
+  function insertTerminated(
     text: string,
     recipient?: MentionRecipient,
     range?: CompletionQuery,
@@ -2195,13 +2199,14 @@ function Composer({
     }
     completion.invalidate();
     const selected = recipient && editorMention(recipient);
-    if (!field.insertText(text, selected, range, terminator, focus)) {
+    const inserted = field.insertText(text, selected, range, terminator, focus);
+    if (!inserted) {
       setError("Message is too long to insert text");
       return false;
     }
     if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
-    return true;
+    return inserted;
   }
   /** Completed and picked emoji are followed by a space, so typing continues
    * as a new word. A space or tab already at `at` is reused: the caret moves
@@ -2219,22 +2224,27 @@ function Composer({
       /\d/.test(valueRef.current.text[start - 1] ?? "")
         ? ` ${text}`
         : text;
-    if (!insert(separated ? value : `${value} `, undefined, range, terminator))
-      return false;
+    const inserted = insertTerminated(
+      separated ? value : `${value} `,
+      undefined,
+      range,
+      terminator,
+    );
+    if (!inserted) return false;
     const field = input.current;
     const end = field?.selectionEnd ?? 0;
     // A typed colon can land without conversion at the length limit; the
     // caret then stays after the literal colon.
     if (separated && field?.value.slice(end - text.length, end) === text)
       field.setSelectionRange(end + 1, end + 1);
-    return true;
+    return inserted;
   }
   function insertToolText(text: string) {
     const end = input.current?.selectionEnd;
     return (
       attachGif(text) ??
       (end !== undefined && isEmojiOnly(text, emojiCatalog.entries)
-        ? insertEmoji(text, end)
+        ? !!insertEmoji(text, end)
         : insert(text))
     );
   }
@@ -2679,7 +2689,7 @@ function Composer({
     const terminator = key === ":" ? key : undefined;
     return isEmojiOnly(edit.text, emojiCatalog.entries)
       ? insertEmoji(edit.text, query.end, query, terminator)
-      : insert(`${edit.text} `, undefined, query, terminator);
+      : insertTerminated(`${edit.text} `, undefined, query, terminator);
   }
   const currentAdmission = () =>
     live.current &&

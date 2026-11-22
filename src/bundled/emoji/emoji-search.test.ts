@@ -183,6 +183,13 @@ it("puts often chosen emoji first within exact, prefix and other matches", async
   expect(
     (await shortcodes("smile", usage({ "unicode/smiley": 5 }))).slice(0, 2),
   ).toEqual(["smile", "smiley"]);
+  // The typed shortcode leads a separator-insensitive namesake used more.
+  expect(
+    (await shortcodes("icecream", usage({ "unicode/ice_cream": 9 })))[0],
+  ).toBe("icecream");
+  expect(
+    (await shortcodes("ice_cream", usage({ "unicode/icecream": 9 })))[0],
+  ).toBe("ice_cream");
   expect(
     await shortcodes("sm", usage({ "unicode/smile": 1, "unicode/smirk": 1 })),
   ).toEqual(plain);

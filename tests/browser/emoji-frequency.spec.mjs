@@ -177,3 +177,40 @@ test("choices in two windows of one profile keep each other", async ({
     .toEqual({ smirk: 1, rocket: 1, tada: 1 });
   for (const watched of errors) expect(watched.unexplained()).toEqual([]);
 });
+
+test("emoji a full composer cannot insert teach nothing", async ({ page }) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/emoji.html");
+  const input = page.getByRole("textbox", { name: "Message #general" });
+  const search = page.getByRole("searchbox", { name: "Search emoji" });
+  const counts = () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+    );
+  const pickRocket = async () => {
+    await page
+      .getByRole("button", { name: "Emoji and GIFS", exact: true })
+      .click();
+    await search.fill("rocket");
+    await page
+      .locator('em-emoji-picker .category button[aria-label="🚀"]')
+      .first()
+      .click();
+  };
+  // The closing colon fits under the limit; the flag that replaces it does not.
+  const draft = `${"a".repeat(16000 - 13)} :flag-wales`;
+  await input.fill(draft);
+  await expect(page.getByRole("option").first()).toHaveText(/:flag-wales:/);
+  await input.press(":");
+  await expect(input).toHaveJSProperty("value", `${draft}:`);
+  // A picker choice does not fit the full draft either.
+  await pickRocket();
+  await expect(page.getByRole("alert")).toContainText("too long");
+  await expect(input).toHaveJSProperty("value", `${draft}:`);
+  expect(await counts()).toEqual({});
+  await input.fill("");
+  await pickRocket();
+  await expect(input).toHaveJSProperty("value", "🚀 ");
+  await expect.poll(counts).toEqual({ rocket: 1 });
+  expect(errors.unexplained()).toEqual([]);
+});

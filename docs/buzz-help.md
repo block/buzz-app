@@ -1135,7 +1135,9 @@ Quitting Buzz also turns it off.
 - **Open links in your browser**: on desktop, ⌘-click (Ctrl-click on Windows
   and Linux) an HTTP(S) link in a message to open it in your default browser
   instead of a side panel. You can also right-click the link and choose
-  **Open in browser**.
+  **Open in browser**. To always use your default browser on a Mac, turn on
+  **Open links in your system browser** in Settings → Appearance. It applies to
+  links opened afterwards; tabs already open stay open.
 - **Skill links**: Bare GitHub URLs to a skill directory's `SKILL.md` and links
   labeled `SKILL.md` show the skill name and repository. Descriptive labels keep
   their text and formatting. Links open through the usual document viewer or

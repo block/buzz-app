@@ -131,6 +131,16 @@ function mentionChoice(member: WorkflowMentionMember): MentionChoice {
   };
 }
 
+// The relay reads a workflow `@Name` as plain text and does not start a name
+// after CJK punctuation, so here a query opens only at the start or after
+// whitespace, `(`, `[` or `{`.
+function workflowQuery(text: string, caret: number) {
+  const query = mentionQuery(text, caret);
+  return query?.start && !/[\s([{]/u.test(text[query.start - 1] ?? "")
+    ? null
+    : query;
+}
+
 /**
  * Message text whose `@` suggests the workflow channel's members as the
  * composer does, inserting the plain `@Name` the relay resolves.
@@ -160,7 +170,7 @@ export function WorkflowMessageText({
   // Only navigation pins a member; otherwise the first result is selected.
   const [pinned, setPinned] = useState<{ start: number; pubkey: string }>();
   const query =
-    caret === null || !choices.length ? null : mentionQuery(value, caret);
+    caret === null || !choices.length ? null : workflowQuery(value, caret);
   const search = query?.query;
   const matches = useMemo(
     () =>
@@ -251,7 +261,7 @@ export function WorkflowMessageText({
           onValueChange(element.value);
           readCaret(element);
           // Once that `@` is gone, a new one in its place suggests again.
-          if (!mentionQuery(element.value, element.selectionStart))
+          if (!workflowQuery(element.value, element.selectionStart))
             setDismissed(undefined);
         }}
         onSelect={(event) => readCaret(event.currentTarget)}

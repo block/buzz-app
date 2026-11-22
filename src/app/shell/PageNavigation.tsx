@@ -8,12 +8,20 @@ import {
   type ComponentProps,
   type ComponentType,
   type ReactElement,
+  type ReactNode,
 } from "react";
+import type { KeyBinding } from "../../features/shortcuts/bindings";
+import { KeyCombo } from "../../features/shortcuts/KeyCombo";
+import { KeyboardShortcut } from "../../shared/design-system/ui/KeyboardShortcut";
+import { DOCK_HINT_ID, type DockKeyState } from "./DockKeys";
 import type {
   PagePreviewProps,
   RegisteredPage,
 } from "../../features/pages/service";
-import type { NavigationOpenOptions } from "../../features/navigation/controller";
+import type {
+  NavigationOpenOptions,
+  OpenResult,
+} from "../../features/navigation/controller";
 import {
   ContributionBoundary,
   contributionKey,
@@ -38,16 +46,23 @@ export function PageNavigation({
   onSelect,
   placement = "sidebar",
   previews = false,
+  dockKeys,
 }: {
   pages: readonly RegisteredPage[];
   selected: string;
   /** The open destination when `selected` is the app that lists it. */
   currentPage?: string;
-  onSelect(key: string, options?: Pick<NavigationOpenOptions, "focus">): void;
+  onSelect(
+    key: string,
+    options?: Pick<NavigationOpenOptions, "focus" | "onAttempt">,
+    // biome-ignore lint/suspicious/noConfusingVoidType: Selectors that ignore the open result stay valid.
+  ): Promise<OpenResult> | void;
   /** The app dock is a vertical icon tablist; the sidebar lists rows. */
   placement?: "sidebar" | "dock";
   /** Show inactive page previews in this navigation surface on hover-capable devices. */
   previews?: boolean;
+  /** The dock's keyboard mode: numbers, spoken keys and the shortcut hint. */
+  dockKeys?: DockKeyState | undefined;
 }) {
   const presentation = usePagePresentation();
   const hover = useHoverPointer();
@@ -65,14 +80,27 @@ export function PageNavigation({
         onReselect={(key) => {
           if (key !== currentPage) onSelect(key, { focus: "preserve" });
         }}
-        items={pages.map((page) => {
+        items={pages.map((page, index) => {
           const Badge = page.badge;
           const Preview = page.preview;
           const { icon, image, avatar, label, placeholder } =
             presentation(page);
+          const digit = index < 9 ? String(index + 1) : undefined;
+          const numbered = dockKeys?.active ? digit : undefined;
+          const hint = dockKeys?.chord && (
+            <DockShortcut
+              chord={dockKeys.chord}
+              then={page.key === dockKeys.entry ? undefined : digit}
+              apple={dockKeys.apple}
+            />
+          );
           return {
             value: page.key,
             label,
+            keyMarker: numbered,
+            keyShortcuts: numbered,
+            describedBy: numbered && DOCK_HINT_ID,
+            hint: page.key === dockKeys?.entry || digit ? hint : undefined,
             icon: placeholder ? (
               <EmptyBestieAvatar key={page.key} compact />
             ) : avatar ? (
@@ -95,6 +123,9 @@ export function PageNavigation({
                     label={label}
                     enabled={previewed(page)}
                     dockHint
+                    hint={
+                      page.key === dockKeys?.entry || digit ? hint : undefined
+                    }
                   >
                     {tab}
                   </PagePreview>
@@ -206,6 +237,7 @@ function PagePreview({
   label,
   enabled,
   dockHint = false,
+  hint,
   children,
 }: {
   page: RegisteredPage;
@@ -214,6 +246,8 @@ function PagePreview({
   enabled: boolean;
   /** Dock tabs show their label as an instant hint beside the dock. */
   dockHint?: boolean;
+  /** Shown after the dock label, such as its shortcut. */
+  hint?: ReactNode;
   children: ReactElement<ComponentProps<"button">>;
 }) {
   const [open, setOpen] = useState(false);
@@ -265,7 +299,16 @@ function PagePreview({
       {/* Marked transient, so a conversation's default focus is not held back. */}
       {dockHint ? (
         <Tooltip
-          content={label}
+          content={
+            hint ? (
+              <span className="buzz-tabs-hint">
+                {label}
+                {hint}
+              </span>
+            ) : (
+              label
+            )
+          }
           hint="dock"
           side="right"
           // Keyboard focus opens only the label; the preview replaces it once
@@ -300,5 +343,27 @@ function PagePreview({
         </ContributionBoundary>
       </PopoverPopup>
     </PopoverRoot>
+  );
+}
+
+/** "⌘D ⌘D" for the tab dock mode starts on, "⌘D 2" for the rest. */
+function DockShortcut({
+  chord,
+  then,
+  apple,
+}: {
+  chord: KeyBinding;
+  then: string | undefined;
+  apple: boolean;
+}) {
+  return (
+    <>
+      <KeyCombo binding={chord} apple={apple} />
+      {then ? (
+        <KeyboardShortcut text={then} label={then} />
+      ) : (
+        <KeyCombo binding={chord} apple={apple} />
+      )}
+    </>
   );
 }

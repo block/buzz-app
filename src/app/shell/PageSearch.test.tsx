@@ -19,6 +19,7 @@ import {
   createShortcutBindings,
   SHORTCUT_BINDINGS_KEY,
 } from "../../features/shortcuts/preferences";
+import type { KeyBinding } from "../../features/shortcuts/bindings";
 import { ShortcutsService } from "../../features/shortcuts/service";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { createRelaySession } from "../../features/relay/session";
@@ -1444,14 +1445,14 @@ it("does nothing on Replace once the person has switched community", async () =>
 
 /** A connected search whose viewer has joined `design`, `design-crit` and
  * `release-notes`, for the place search keeps between openings. */
-function memorySearch() {
+function memorySearch(native: readonly KeyBinding[] = []) {
   const root = new Context();
   root.provide("pluginStatus", {
     isActive: () => true,
     subscribe: () => () => {},
   });
   const bindings = createShortcutBindings(window);
-  const shortcuts = new ShortcutsService(root, window, bindings);
+  const shortcuts = new ShortcutsService(root, window, bindings, native);
   const viewer = keypair(),
     relay = keypair();
   const channels = [
@@ -1763,6 +1764,46 @@ it("goes back to Top results on Escape from a clicked group filter, and closes o
     await userEvent.keyboard("{Escape}");
     await t.closed();
   } finally {
+    await t.dispose();
+  }
+});
+
+it("a saved macOS profile with ⌘D on Search Buzz and on Next result shows and matches their defaults", async () => {
+  Object.defineProperty(navigator, "platform", {
+    configurable: true,
+    value: "MacIntel",
+  });
+  // Saved before ⌘D became the native Go to Dock chord.
+  localStorage.setItem(
+    SHORTCUT_BINDINGS_KEY,
+    JSON.stringify({
+      "global-search": { key: "d", mod: true },
+      "search-next-result": { key: "d", mod: true },
+    }),
+  );
+  const t = memorySearch([{ key: "d", mod: true }]);
+  try {
+    const trigger = screen.getByRole("button", { name: "Search Buzz" });
+    expect(within(trigger).getByText("⌘K")).toBeInTheDocument();
+    expect(within(trigger).queryByText("⌘D")).not.toBeInTheDocument();
+    await t.open();
+    const rows = await t.recentRows();
+    const hints = () =>
+      [...document.querySelectorAll(".search-peek-keys kbd")]
+        .slice(0, 2)
+        .map((key) => key.textContent);
+    expect(hints()).toEqual(["↑", "↓"]);
+    const before = t.field().getAttribute("aria-activedescendant");
+    // ⌘D belongs to the menu: the field neither steps nor takes it.
+    expect(fireEvent.keyDown(t.field(), { key: "d", metaKey: true })).toBe(
+      true,
+    );
+    expect(t.field().getAttribute("aria-activedescendant")).toBe(before);
+    expect(fireEvent.keyDown(t.field(), { key: "ArrowDown" })).toBe(false);
+    expect(t.field()).toHaveAttribute("aria-activedescendant", rows[0]?.id);
+  } finally {
+    localStorage.removeItem(SHORTCUT_BINDINGS_KEY);
+    Reflect.deleteProperty(navigator, "platform");
     await t.dispose();
   }
 });

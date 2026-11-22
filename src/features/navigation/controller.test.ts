@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createNavigationController, NAVIGATION_ABORTED } from "./controller";
+import {
+  createNavigationController,
+  NAVIGATION_ABORTED,
+  type AttemptObserver,
+  type TrackedOpen,
+} from "./controller";
 import { createMemoryHistory, homeTarget } from "./history";
 import { joinBeneath, type OpenTarget } from "./targets";
 const settings: OpenTarget = {
@@ -857,5 +862,172 @@ describe("reopening a visit refused for missing sign-in", () => {
     auth.signedIn();
     expect(nav.snapshot().attempt).toBe(elsewhere);
     expect(nav.snapshot().entry.target).toEqual(settings);
+  });
+});
+
+describe("an open's attempt observer", () => {
+  const draft: OpenTarget = { ...page, pageId: "draft" };
+  type Observer = AttemptObserver;
+  type Tracked = TrackedOpen;
+  function only<T>(items: readonly T[]): T {
+    const [item] = items;
+    if (items.length !== 1 || !item)
+      throw new Error(`expected one delivery, saw ${items.length}`);
+    return item;
+  }
+  /** Records each delivery with the attempt the snapshot held at that moment. */
+  function observe(nav: ReturnType<typeof setup>["navigation"]) {
+    const deliveries: { tracked: Tracked; current: Tracked["attempt"] }[] = [];
+    const onAttempt: Observer = (tracked) => {
+      deliveries.push({ tracked, current: nav.snapshot().attempt });
+    };
+    return { deliveries, onAttempt };
+  }
+
+  it("is delivered once, after the attempt commits, with this open's result", async () => {
+    const { host, navigation: nav } = setup();
+    const { deliveries, onAttempt } = observe(nav);
+    const opened = nav.open(page, { onAttempt });
+    expect(deliveries).toHaveLength(1);
+    const { tracked, current } = only(deliveries);
+    expect(current).toBe(tracked.attempt);
+    expect(nav.snapshot().attempt).toBe(tracked.attempt);
+    expect(tracked.attempt.entry.target).toEqual(page);
+    host.complete(tracked.attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    await expect(tracked.result).resolves.toEqual({ status: "opened" });
+    expect(deliveries).toHaveLength(1);
+  });
+
+  it("a throwing observer is logged and navigation continues", async () => {
+    const { host, navigation: nav } = setup();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const opened = nav.open(page, {
+        onAttempt: () => {
+          throw new Error("private plugin details");
+        },
+      });
+      host.complete(nav.snapshot().attempt, { status: "opened" });
+      await expect(opened).resolves.toEqual({ status: "opened" });
+      expect(error).toHaveBeenCalledWith("Navigation attempt observer failed");
+      expect(JSON.stringify(error.mock.calls)).not.toContain("private plugin");
+      const later = nav.open(settings);
+      host.complete(nav.snapshot().attempt, { status: "opened" });
+      await expect(later).resolves.toEqual({ status: "opened" });
+      expect(nav.snapshot().entry.target).toEqual(settings);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("waits for a departure guard's approval, then delivers the new attempt", async () => {
+    const { host, navigation: nav } = setup();
+    void nav.open(settings);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    const leaving = nav.snapshot().attempt;
+    let decide: ((proceed: boolean) => void) | undefined;
+    host.guardDeparture((_next, decision) => {
+      decide = decision;
+      return true;
+    });
+    const { deliveries, onAttempt } = observe(nav);
+    const opened = nav.open(page, { onAttempt });
+    expect(decide).toBeDefined();
+    expect(deliveries).toHaveLength(0);
+    expect(nav.snapshot().attempt).toBe(leaving);
+    decide?.(true);
+    expect(deliveries).toHaveLength(1);
+    const { tracked, current } = only(deliveries);
+    expect(tracked.attempt).not.toBe(leaving);
+    expect(tracked.attempt.entry.target).toEqual(page);
+    expect(current).toBe(tracked.attempt);
+    // The guarded caller's own promise settles only after the destination does.
+    host.complete(tracked.attempt, { status: "opened" });
+    await expect(tracked.result).resolves.toEqual({ status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    expect(deliveries).toHaveLength(1);
+  });
+
+  it("is never delivered when the departure guard refuses", async () => {
+    const { host, navigation: nav } = setup();
+    void nav.open(settings);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    let decide: ((proceed: boolean) => void) | undefined;
+    host.guardDeparture((_next, decision) => {
+      decide = decision;
+      return true;
+    });
+    const { deliveries, onAttempt } = observe(nav);
+    const refused = nav.open(page, { onAttempt });
+    decide?.(false);
+    await expect(refused).resolves.toEqual({ status: "cancelled" });
+    expect(deliveries).toHaveLength(0);
+    expect(nav.snapshot().entry.target).toEqual(settings);
+  });
+
+  it("an observer that starts another open supersedes its own attempt without throwing", async () => {
+    const { host, navigation: nav } = setup();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let second: ReturnType<typeof nav.open> | undefined;
+      const { deliveries, onAttempt } = observe(nav);
+      const first = nav.open(page, {
+        onAttempt: (tracked) => {
+          onAttempt(tracked);
+          second = nav.open(settings);
+        },
+      });
+      expect(error).not.toHaveBeenCalled();
+      const { tracked } = only(deliveries);
+      expect(tracked.attempt.entry.target).toEqual(page);
+      expect(nav.snapshot().attempt).not.toBe(tracked.attempt);
+      expect(nav.snapshot().entry.target).toEqual(settings);
+      expect(tracked.attempt.signal.aborted).toBe(true);
+      await expect(tracked.result).resolves.toEqual({ status: "superseded" });
+      await expect(first).resolves.toEqual({ status: "superseded" });
+      host.complete(nav.snapshot().attempt, { status: "opened" });
+      await expect(second).resolves.toEqual({ status: "opened" });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("an open of the visit already shown still delivers its new attempt", async () => {
+    const { host, navigation: nav } = setup();
+    void nav.open(page);
+    const before = nav.snapshot().attempt;
+    host.complete(before, { status: "opened" });
+    const { deliveries, onAttempt } = observe(nav);
+    const again = nav.open(page, { onAttempt });
+    expect(deliveries).toHaveLength(1);
+    const { tracked, current } = only(deliveries);
+    expect(tracked.attempt).not.toBe(before);
+    expect(tracked.attempt.entry).toBe(before.entry);
+    expect(current).toBe(tracked.attempt);
+    host.complete(tracked.attempt, { status: "opened" });
+    await expect(tracked.result).resolves.toEqual({ status: "opened" });
+    await expect(again).resolves.toEqual({ status: "opened" });
+  });
+
+  it("a return to the opener from a passing visit delivers the observer on the opener's attempt, not the departing one", async () => {
+    const { host, navigation: nav } = setup();
+    void nav.open(page);
+    const opener = nav.snapshot().entry;
+    void nav.open(draft);
+    host.passThrough(nav.snapshot().entry.id, () => true);
+    const departing = nav.snapshot().attempt;
+    const { deliveries, onAttempt } = observe(nav);
+    const returned = nav.open(page, { onAttempt });
+    expect(deliveries).toHaveLength(1);
+    const { tracked, current } = only(deliveries);
+    expect(tracked.attempt).not.toBe(departing);
+    expect(tracked.attempt.entry).toBe(opener);
+    expect(current).toBe(tracked.attempt);
+    // A synchronous driver lands before open() returns, so both promises
+    // follow the opener; the browser driver case differs (browser-history.test).
+    host.complete(tracked.attempt, { status: "opened" });
+    await expect(tracked.result).resolves.toEqual({ status: "opened" });
+    await expect(returned).resolves.toEqual({ status: "opened" });
   });
 });

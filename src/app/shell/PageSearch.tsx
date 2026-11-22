@@ -17,13 +17,16 @@ import type { RegisteredPage } from "../../features/pages/service";
 import { communityDestination } from "../../features/communities/destination";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
 import type { ChannelQueries } from "../../features/relay/contracts";
-import type { KeyBinding } from "../../features/shortcuts/bindings";
+import {
+  sameBinding,
+  type KeyBinding,
+} from "../../features/shortcuts/bindings";
+import { useResolvedBindings } from "../../features/shortcuts/useResolvedBindings";
 import {
   formatBinding,
   isApplePlatform,
 } from "../../features/shortcuts/format";
 import { KeyCombo } from "../../features/shortcuts/KeyCombo";
-import type { ShortcutBindingsSnapshot } from "../../features/shortcuts/preferences";
 import type { AppServices } from "../services";
 import { HOST_SHORTCUT_ORDER } from "../shortcuts";
 import { conversationFocusTarget } from "../focus-navigation";
@@ -75,9 +78,7 @@ const CONVERSATION_SEARCH_ID = "conversation-search";
 const CONVERSATION_SEARCH_BINDING: KeyBinding = { key: "f", mod: true };
 const PREVIOUS_RESULT_ID = "search-previous-result";
 const NEXT_RESULT_ID = "search-next-result";
-const NO_OVERRIDES: ShortcutBindingsSnapshot = { overrides: {}, error: null };
 const noSubscribe = () => () => {};
-const noOverrides = () => NO_OVERRIDES;
 /** How long a closed search keeps its place for the next opening. */
 const SEARCH_MEMORY = 5 * 60_000;
 
@@ -253,18 +254,30 @@ export function PageSearch({
       for (const dispose of remove) dispose();
     };
   }, [services]);
-  // The hint follows the person's rebind, derived from the same binding object.
-  const { overrides } = useSyncExternalStore(
-    services?.shortcutBindings.subscribe ?? noSubscribe,
-    services?.shortcutBindings.snapshot ?? noOverrides,
+  // Hints and result keys follow what the dispatcher resolves, so a saved
+  // chord a native menu took over, or a default someone assigned elsewhere,
+  // is never shown or matched here.
+  const resolved = useResolvedBindings(
+    services?.shortcuts,
+    services?.shortcutBindings,
   );
-  const binding = overrides[SEARCH_ID] ?? SEARCH_BINDING;
+  const effective = (key: string, preferred: KeyBinding) => {
+    const chords = resolved?.get(key)?.effective ?? [preferred];
+    return chords.find((chord) => sameBinding(chord, preferred)) ?? chords[0];
+  };
+  const binding = effective(SEARCH_ID, SEARCH_BINDING);
+  // Bare Up and Down always step, so an unbound step shows those.
   const previous =
-    overrides[PREVIOUS_RESULT_ID] ?? DEFAULT_SEARCH_STEPS.previous;
-  const next = overrides[NEXT_RESULT_ID] ?? DEFAULT_SEARCH_STEPS.next;
+    effective(PREVIOUS_RESULT_ID, DEFAULT_SEARCH_STEPS.previous) ??
+    DEFAULT_SEARCH_STEPS.previous;
+  const next =
+    effective(NEXT_RESULT_ID, DEFAULT_SEARCH_STEPS.next) ??
+    DEFAULT_SEARCH_STEPS.next;
   const steps = useMemo(() => ({ previous, next }), [previous, next]);
-  const conversationBinding =
-    overrides[CONVERSATION_SEARCH_ID] ?? CONVERSATION_SEARCH_BINDING;
+  const conversationBinding = effective(
+    CONVERSATION_SEARCH_ID,
+    CONVERSATION_SEARCH_BINDING,
+  );
   const apple = isApplePlatform(navigator.platform);
   // Every search surface reads pages from here, so rank and underline them
   // here too: the disconnected and personal-space views show this list as is.
@@ -322,7 +335,11 @@ export function PageSearch({
         size="sm"
         shape="capsule"
         aria-label="Search Buzz"
-        title={`Search Buzz (${formatBinding(binding, apple).text})`}
+        title={
+          binding
+            ? `Search Buzz (${formatBinding(binding, apple).text})`
+            : "Search Buzz"
+        }
         onClick={() => {
           trigger.current?.focus();
           begin();
@@ -331,9 +348,11 @@ export function PageSearch({
         <span className="shell-search-content">
           <MagnifyingGlassIcon size={16} aria-hidden="true" />
           <span className="shell-search-label">Search</span>
-          <span className="shell-search-shortcut">
-            <KeyCombo binding={binding} apple={apple} />
-          </span>
+          {binding && (
+            <span className="shell-search-shortcut">
+              <KeyCombo binding={binding} apple={apple} />
+            </span>
+          )}
         </span>
       </Button>
       <Dialog

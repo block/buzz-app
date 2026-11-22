@@ -58,7 +58,18 @@ export type NavigationOpenOptions = {
   focus?: NavigationFocus;
   /** Keep sidebar scope, scroll and disclosure state. The caller owns row selection. */
   sidebar?: "preserve";
+  /** Called once with this open's own attempt and result, after the
+   * controller commits it. A departure guard defers it until approval; a
+   * return through asynchronous history delivers it when that traversal
+   * lands. open()'s own promise can describe the visit being left, so a
+   * caller that needs this open's result reads `result` here. */
+  onAttempt?: AttemptObserver;
 };
+export type TrackedOpen = Readonly<{
+  attempt: OpenAttempt;
+  result: Promise<OpenResult>;
+}>;
+export type AttemptObserver = (tracked: TrackedOpen) => void;
 export type OpenAttempt = Readonly<{
   id: string;
   entry: NavigationEntry;
@@ -68,6 +79,12 @@ export type OpenAttempt = Readonly<{
   /** History traversal returned to a visit it already held; not opened again. */
   traversal?: true;
 }>;
+/** Whether two attempts are one open: resolving a destination's address
+ * replaces the attempt object but keeps its id and signal. */
+export const sameOpen = (
+  current: OpenAttempt | undefined,
+  attempt: OpenAttempt,
+) => current?.id === attempt.id && current.signal === attempt.signal;
 export type NavigationSnapshot = Readonly<{
   entry: NavigationEntry;
   attempt: OpenAttempt;
@@ -258,6 +275,7 @@ export function createNavigationController(
     focus: NavigationFocus = "content",
     traversal = false,
     sidebar?: "preserve",
+    onAttempt?: AttemptObserver,
   ): Promise<OpenResult> {
     if (disposed) return Promise.resolve({ status: "cancelled" });
     ingressRetry = undefined;
@@ -298,6 +316,15 @@ export function createNavigationController(
       canGoBack: state.canGoBack,
       canGoForward: state.canGoForward,
     });
+    // Caller code runs after this transition commits, never inside it.
+    if (onAttempt)
+      effects.push(() => {
+        try {
+          onAttempt({ attempt, result: promise });
+        } catch {
+          console.error("Navigation attempt observer failed");
+        }
+      });
     if (state.invalidAddress) {
       finish(operation, { status: "failed", reason: "invalid-target" }, "host");
       return promise;
@@ -326,9 +353,12 @@ export function createNavigationController(
   // Both host drivers publish pushes synchronously; consume this opening only.
   let openingFocus: NavigationFocus | undefined;
   let openingSidebar: "preserve" | undefined;
+  let openingOnAttempt: AttemptObserver | undefined;
   // A dismissal's traversal may publish after open() returns; it keeps its focus.
   let returningFocus: NavigationFocus | undefined;
   let returningSidebar: "preserve" | undefined;
+  // Delivered only to the traversal that lands on the visit it returns to.
+  let returning: { entryId: string; onAttempt: AttemptObserver } | undefined;
   const unsubscribe = history.attach(() => {
     transaction(() => {
       if (resolving && active === resolving) {
@@ -397,8 +427,15 @@ export function createNavigationController(
         }
         const focus = openingFocus ?? returningFocus;
         const sidebar = openingSidebar ?? returningSidebar;
+        const onAttempt =
+          openingOnAttempt ??
+          (returning?.entryId === state.current.id
+            ? returning.onAttempt
+            : undefined);
         openingFocus = returningFocus = undefined;
         openingSidebar = returningSidebar = undefined;
+        openingOnAttempt = undefined;
+        returning = undefined;
         // A return lands on a visit history already held. open() publishes
         // while opening, and a driver mints a new visit for an edited address
         // or a dismissal's fallback; none of those returns.
@@ -406,6 +443,7 @@ export function createNavigationController(
           focus,
           !opening && !!snapshot.retainedVisits?.includes(state.current.id),
           sidebar,
+          onAttempt,
         );
       }
     });
@@ -467,12 +505,19 @@ export function createNavigationController(
             !history.snapshot().invalidAddress &&
             targetKey(target) === targetKey(history.snapshot().current.target)
           )
-            return start(options?.focus, false, options?.sidebar);
+            return start(
+              options?.focus,
+              false,
+              options?.sidebar,
+              options?.onAttempt,
+            );
           opening = true;
           openingFocus = options?.focus;
           openingSidebar = options?.sidebar;
+          openingOnAttempt = options?.onAttempt;
           returningFocus = undefined;
           returningSidebar = undefined;
+          returning = undefined;
           // A passing visit leaves as a dismissal does: back to its opener when
           // that is the page opening, else replaced by it. Settings and the
           // join dialog return to that visit, so they never replace it. Any
@@ -489,6 +534,8 @@ export function createNavigationController(
           ) {
             if (openingFocus) returningFocus = openingFocus;
             if (openingSidebar) returningSidebar = openingSidebar;
+            if (openingOnAttempt)
+              returning = { entryId: previous.id, onAttempt: openingOnAttempt };
             return active.promise;
           }
           if (options?.replace || dismiss) history.replace(target);
@@ -548,6 +595,7 @@ export function createNavigationController(
           opening = false;
           openingFocus = undefined;
           openingSidebar = undefined;
+          openingOnAttempt = undefined;
         }
       });
     },

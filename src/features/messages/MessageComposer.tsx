@@ -352,6 +352,29 @@ function recoveryFor(session: ComposerSession) {
   return recovery;
 }
 
+/** Focus asked for by an owner that re-checks its own conditions first. */
+export type ComposerFocusRequest = Readonly<{
+  seq: number;
+  /** Re-run right before focusing; false leaves focus alone. */
+  valid?(): boolean;
+  /** Reports whether the editor ended up focused. */
+  done?(focused: boolean): void;
+}>;
+
+/**
+ * Default focus must not take over an inert editor, or interrupt a focused
+ * dialog, menu or open popup trigger that doesn't hold the editor: moving
+ * focus away also dismisses non-modal menus. A hover preview is transient and
+ * owns no focus.
+ */
+export function focusBlocked(editor: HTMLElement) {
+  if (editor.closest("[inert]")) return true;
+  const owner = document.activeElement?.closest(
+    'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
+  );
+  return !!owner && !owner.contains(editor);
+}
+
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
   scope: string;
@@ -408,7 +431,8 @@ export type MessageComposerProps = {
   clearMediaTime?(): void;
   /** Focus once on entry; an owner can cancel its target before a delayed mount. */
   autoFocus?: boolean | RefObject<HTMLElement | null>;
-  focusRequest?: number;
+  /** A counter focuses on each change; a guarded request re-checks first. */
+  focusRequest?: number | ComposerFocusRequest;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
@@ -1214,15 +1238,7 @@ function Composer({
       )
         return;
       const editor = input.current;
-      if (!editor || editor.closest("[inert]")) return;
-      // A conversation can finish loading behind an already-focused dialog,
-      // menu, or open popup trigger. Its default focus must not interrupt that
-      // explicit owner: moving focus away also dismisses non-modal menus. A
-      // hover preview is transient and owns no focus.
-      const owner = document.activeElement?.closest(
-        'dialog[open], [aria-modal="true"], [role="menu"], [data-popup-open]:not([data-popup-preview])',
-      );
-      if (owner && !owner.contains(editor)) return;
+      if (!editor || focusBlocked(editor)) return;
       const end = editor.value.length;
       // Let the visit's listener recognize its own successful focus handoff.
       if (handoff) handoff.current = editor;
@@ -1271,11 +1287,20 @@ function Composer({
   });
   useEffect(() => {
     const editor = input.current;
-    if (!focusRequest || !editor) return;
+    const guarded = typeof focusRequest === "object" ? focusRequest : undefined;
+    if (!focusRequest || (guarded && !guarded.seq)) return;
+    if (
+      !editor ||
+      (guarded && (guarded.valid?.() === false || focusBlocked(editor)))
+    ) {
+      guarded?.done?.(false);
+      return;
+    }
     // A new editor starts after its saved draft; a retained editor owns its caret.
     if (!hasFocused.current)
       editor.setSelectionRange(editor.value.length, editor.value.length);
     editor.focus();
+    guarded?.done?.(document.activeElement === editor);
   }, [focusRequest]);
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,

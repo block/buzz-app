@@ -39,11 +39,15 @@ import {
 import { ProfileButton } from "./ProfileButton";
 import { CommunityShortcuts } from "./CommunityShortcuts";
 import { MarkAllReadShortcut } from "./MarkAllReadShortcut";
+import { DOCK_HINT, DOCK_HINT_ID, useDockKeys } from "./DockKeys";
 import type { Appearance } from "../../shared/theme/service";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { FindInPage } from "./FindInPage";
 import { BestieNavigationProvider } from "./BestieNavigation";
-import type { NavigationOpenOptions } from "../../features/navigation/controller";
+import type {
+  NavigationOpenOptions,
+  OpenResult,
+} from "../../features/navigation/controller";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { useRelayConnection } from "../../features/relay/react";
 import { macTitleBarDragHandlers } from "./title-bar";
@@ -106,8 +110,11 @@ function AppShellContent({
   navigationAttempt: string;
   onSelect: (
     key: string,
-    options?: Pick<NavigationOpenOptions, "focus"> & { section?: string },
-  ) => void;
+    options?: Pick<NavigationOpenOptions, "focus" | "onAttempt"> & {
+      section?: string;
+    },
+    // biome-ignore lint/suspicious/noConfusingVoidType: Selectors that ignore the open result stay valid.
+  ) => Promise<OpenResult> | void;
   tone: string;
   workspace?: boolean;
   /** Centered modal frame below window chrome. */
@@ -291,6 +298,14 @@ function AppShellContent({
     "dock",
   );
   const selectedDockPage = dockPages.some((page) => page.key === owner);
+  const dockKeys = useDockKeys({
+    shortcuts: searchServices?.shortcuts,
+    bindings: searchServices?.shortcutBindings,
+    communities,
+    navigation: searchServices?.navigation,
+    pages: dockPages,
+    onSelect,
+  });
   return (
     <div
       data-shell-tone={tone}
@@ -382,7 +397,13 @@ function AppShellContent({
               onSelect={onSelect}
               placement="dock"
               previews
+              dockKeys={dockKeys}
             />
+            {dockKeys.active && (
+              <span id={DOCK_HINT_ID} hidden>
+                {DOCK_HINT}
+              </span>
+            )}
           </div>
           <div className="shell-community-switcher">
             <CommunityPicker

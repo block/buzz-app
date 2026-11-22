@@ -23,6 +23,7 @@ import type {
   Navigation,
   NavigationOpenOptions,
   NavigationSnapshot,
+  OpenResult,
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
@@ -493,11 +494,14 @@ export function useAppNavigation(
   const select = useCallback(
     (
       key: string,
-      options?: Pick<NavigationOpenOptions, "focus" | "replace"> & {
+      options?: Pick<
+        NavigationOpenOptions,
+        "focus" | "replace" | "onAttempt"
+      > & {
         /** Settings only: open at this section. */
         section?: string;
       },
-    ) => {
+    ): Promise<OpenResult> => {
       const selectedClient = services.communities.snapshot();
       let destination: OpenTarget;
       if (key === "settings")
@@ -517,7 +521,7 @@ export function useAppNavigation(
         };
       else {
         const selected = pages.find((page) => page.key === key);
-        if (!selected) return;
+        if (!selected) return Promise.resolve({ status: "cancelled" });
         destination = {
           version: 1,
           kind: "page",
@@ -534,12 +538,13 @@ export function useAppNavigation(
             : { scope: null }),
         };
       }
-      void navigation.open(
+      return navigation.open(
         destination,
-        options?.focus || options?.replace
+        options?.focus || options?.replace || options?.onAttempt
           ? {
               ...(options.focus ? { focus: options.focus } : {}),
               ...(options.replace ? { replace: true } : {}),
+              ...(options.onAttempt ? { onAttempt: options.onAttempt } : {}),
             }
           : undefined,
       );

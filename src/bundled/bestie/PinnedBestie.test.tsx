@@ -44,7 +44,11 @@ import { rememberFirstAgent } from "./FirstAgentWelcome";
 import { PinnedBestie } from "./PinnedBestie";
 import { bestieRoute } from "./routes";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
-import { useBestieConversation } from "../../app/shell/bestie-context";
+import {
+  bestieFocusRequests,
+  useBestieConversation,
+  type BestieFocusRequest,
+} from "../../app/shell/bestie-context";
 import type { RegisteredPage } from "../../features/pages/service";
 
 // jsdom has no virtualized layout. Keep the real rows, thread reader and React
@@ -94,6 +98,7 @@ const disposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
   for (const dispose of disposals.splice(0)) dispose();
+  bestieFocusRequests.clear();
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -1145,4 +1150,118 @@ it("opens the DM an addition lands in, when Bestie's Members starts or finds ano
       channelId: fizzDM,
     }),
   );
+});
+
+/** The dock's ⌘D ⌘D request for the visit the navigator holds now. */
+function composerRequest(
+  f: Awaited<ReturnType<typeof threadHistoryFixture>>,
+  patch: Partial<BestieFocusRequest> = {},
+): BestieFocusRequest {
+  return {
+    attempt: f.navigator.snapshot().attempt,
+    session: f.session,
+    channelId: pollenDM,
+    inScope: () => true,
+    cancelled: () => false,
+    expires: performance.now() + 1000,
+    ...patch,
+  };
+}
+
+it("the dock's request puts the cursor in the conversation composer once", async () => {
+  const f = await threadHistoryFixture();
+  const composer = await screen.findByRole("textbox", {
+    name: "Message Pollen",
+  });
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  outside.focus();
+  const request = composerRequest(f);
+  act(() => bestieFocusRequests.post(request));
+  await waitFor(() => expect(composer).toHaveFocus());
+  expect(bestieFocusRequests.snapshot()).toBeUndefined();
+  // Consumed: a re-render does not take focus again.
+  outside.focus();
+  f.rerender();
+  expect(outside).toHaveFocus();
+  outside.remove();
+});
+
+it("the dock's request still applies after the open replaced its attempt token", async () => {
+  const f = await threadHistoryFixture();
+  const composer = await screen.findByRole("textbox", {
+    name: "Message Pollen",
+  });
+  const outside = document.createElement("button");
+  document.body.append(outside);
+  outside.focus();
+  // Resolving an address keeps the open's id and signal in a new object.
+  const token = Object.freeze({ ...f.navigator.snapshot().attempt });
+  act(() => bestieFocusRequests.post(composerRequest(f, { attempt: token })));
+  await waitFor(() => expect(composer).toHaveFocus());
+  expect(bestieFocusRequests.snapshot()).toBeUndefined();
+  outside.remove();
+});
+
+it("the dock's request selects the conversation over an open thread, which stays open", async () => {
+  const f = await threadHistoryFixture();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "View thread: 1 reply" }),
+  );
+  f.rerender();
+  const reply = await screen.findByRole("textbox", {
+    name: "Reply to thread",
+  });
+  reply.focus();
+  act(() => bestieFocusRequests.post(composerRequest(f)));
+  const composer = screen.getByRole("textbox", { name: "Message Pollen" });
+  await waitFor(() => expect(composer).toHaveFocus());
+  expect(
+    screen.getByRole("tab", { name: /Are you there\?/ }),
+  ).toBeInTheDocument();
+});
+
+it.each([
+  [
+    "another attempt",
+    (f: Awaited<ReturnType<typeof threadHistoryFixture>>) => ({
+      attempt: {
+        ...f.navigator.snapshot().attempt,
+        id: "another-attempt",
+        signal: new AbortController().signal,
+      },
+    }),
+  ],
+  ["a cancelled press", () => ({ cancelled: () => true })],
+  ["another community", () => ({ inScope: () => false })],
+  ["another DM", () => ({ channelId: "other-dm" })],
+  ["an expired request", () => ({ expires: performance.now() - 1 })],
+])(
+  "the dock's request for %s leaves focus alone and is dropped",
+  async (_, patch) => {
+    const f = await threadHistoryFixture();
+    await screen.findByRole("textbox", { name: "Message Pollen" });
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    act(() => bestieFocusRequests.post(composerRequest(f, patch(f))));
+    expect(outside).toHaveFocus();
+    expect(bestieFocusRequests.snapshot()).toBeUndefined();
+    outside.remove();
+  },
+);
+
+it("the dock's request is refused behind a dialog", async () => {
+  const f = await threadHistoryFixture();
+  await screen.findByRole("textbox", { name: "Message Pollen" });
+  const dialog = document.createElement("div");
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  const inside = document.createElement("button");
+  dialog.append(inside);
+  document.body.append(dialog);
+  inside.focus();
+  act(() => bestieFocusRequests.post(composerRequest(f)));
+  expect(inside).toHaveFocus();
+  dialog.remove();
 });

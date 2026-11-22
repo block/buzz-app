@@ -1,3 +1,4 @@
+import { nativeShortcutChords } from "./shell/dock-shortcut";
 import { ArtifactStorageService } from "../features/artifact-storage/service";
 import { provideArtifactStoreSync } from "../features/relay/artifact-store-sync";
 import { createAdminAccess } from "../bundled/admin-access";
@@ -114,7 +115,12 @@ export function createServices() {
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const browser = new BrowserService(ctx);
-  const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
+  const shortcuts = new ShortcutsService(
+    ctx,
+    undefined,
+    shortcutBindings,
+    nativeShortcutChords(),
+  );
   const decisions = new DecisionsService(ctx);
   const pages = new PagesService(ctx);
   const sidebarSections = new SidebarSectionsService(ctx);

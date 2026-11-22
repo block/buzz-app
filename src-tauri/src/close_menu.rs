@@ -4,13 +4,15 @@
 //! Edit → Paste and Match Style (Cmd+Shift+V) pastes the clipboard as plain text.
 //! Buzz → Settings… runs the app's Open Settings shortcut. It has no native
 //! accelerator, so Cmd+, keeps the web shortcut's rebinding and IME rules.
+//! Window → Go to Dock (Cmd+D) moves keyboard focus to the app dock, also
+//! from a guest page; the app's dock shortcut decides what happens.
 //! Ctrl+Tab bypasses macOS menu highlighting latency. Menu commands and the
 //! native key handler both work while a raw guest webview owns keyboard focus.
 use std::{cell::RefCell, ptr::NonNull};
 
 use block2::RcBlock;
 use objc2::{rc::Retained, runtime::AnyObject, sel, MainThreadMarker};
-use objc2_app_kit::{NSApplication, NSEvent, NSEventMask, NSEventModifierFlags};
+use objc2_app_kit::{NSApplication, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, WINDOW_SUBMENU_ID},
     AppHandle, Manager, Runtime,
@@ -22,6 +24,11 @@ const NEXT: &str = "buzz-next-tab";
 const PREVIOUS: &str = "buzz-previous-tab";
 const PASTE_PLAIN: &str = "buzz-paste-plain";
 const SETTINGS: &str = "buzz-settings";
+const GO_TO_DOCK: &str = "buzz-go-to-dock";
+// The app's go-to-dock shortcut applies its own eligibility; the focused guest
+// (or null) lets Escape give typing back to that page.
+const GO_TO_DOCK_REQUEST: &str =
+    "window.dispatchEvent(new CustomEvent(\"buzz:go-to-dock\", { detail: { browserSessionId } }));";
 // The focused composer marks the paste that follows as raw, whether or not a
 // key fired. A focused guest browser takes the paste itself.
 const PASTE_PLAIN_REQUEST: &str = "if (browserSessionId === null) document.activeElement?.dispatchEvent(new Event(\"buzz:paste-plain\"));";
@@ -92,6 +99,8 @@ pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         if let Some(window) = window.as_submenu() {
             window.append_items(&[
                 &PredefinedMenuItem::separator(app)?,
+                &MenuItem::with_id(app, GO_TO_DOCK, "Go to Dock", true, Some("CmdOrCtrl+D"))?,
+                &PredefinedMenuItem::separator(app)?,
                 &MenuItem::with_id(app, NEXT, "Show Next Tab", true, Some("Ctrl+Tab"))?,
                 &MenuItem::with_id(
                     app,
@@ -115,6 +124,9 @@ pub(crate) fn handle<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEve
         NEXT => format!("{{ const tabEvent = \"buzz:next-tab\";\n{SWITCH}}}"),
         PREVIOUS => format!("{{ const tabEvent = \"buzz:previous-tab\";\n{SWITCH}}}"),
         SETTINGS => return open_settings(app),
+        // Holding Cmd+D repeats the key equivalent; one press enters the dock once.
+        GO_TO_DOCK if repeated_key_equivalent() => return,
+        GO_TO_DOCK => GO_TO_DOCK_REQUEST.to_string(),
         PASTE_PLAIN => {
             // On the UI thread the script is sent to the page at once, so it
             // runs before the paste command that follows it.
@@ -124,6 +136,20 @@ pub(crate) fn handle<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEve
         _ => return,
     };
     dispatch_request(app, &script, event.id().as_ref());
+}
+
+fn repeated_key_equivalent() -> bool {
+    let Some(marker) = MainThreadMarker::new() else {
+        return false;
+    };
+    NSApplication::sharedApplication(marker)
+        .currentEvent()
+        .is_some_and(|event| is_repeat(event.r#type(), || event.isARepeat()))
+}
+
+// AppKit raises if a non-key event is asked whether it repeats.
+fn is_repeat(kind: NSEventType, repeat: impl FnOnce() -> bool) -> bool {
+    kind == NSEventType::KeyDown && repeat()
 }
 
 // Unlike a tab request, Settings brings back a hidden or minimized window, as
@@ -280,9 +306,23 @@ mod tests {
         ] {
             assert!(!closes_window(CLOSE, result));
         }
-        for action in [CLOSE_ALL, NEXT, PREVIOUS, PASTE_PLAIN, ""] {
+        for action in [CLOSE_ALL, NEXT, PREVIOUS, PASTE_PLAIN, GO_TO_DOCK, ""] {
             assert!(!closes_window(action, r#""unhandled""#));
         }
+    }
+
+    #[test]
+    fn only_a_held_key_equivalent_is_dropped() {
+        assert!(is_repeat(NSEventType::KeyDown, || true));
+        assert!(!is_repeat(NSEventType::KeyDown, || false));
+        // A mouse-chosen menu item is never asked, and never a repeat.
+        assert!(!is_repeat(NSEventType::LeftMouseUp, || panic!("asked")));
+    }
+
+    #[test]
+    fn go_to_dock_reports_the_focused_guest_to_the_app() {
+        assert!(GO_TO_DOCK_REQUEST.contains("\"buzz:go-to-dock\""));
+        assert!(GO_TO_DOCK_REQUEST.contains("detail: { browserSessionId }"));
     }
 
     #[test]

@@ -8,6 +8,7 @@ import {
   Fragment,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,9 +16,11 @@ import {
 import { isTauri } from "@tauri-apps/api/core";
 import { Button } from "../shared/design-system/ui/Button";
 import {
+  resolveBindings,
   sameBinding,
   type KeyBinding,
   type NormalizedShortcut,
+  type ResolvedBinding,
 } from "../features/shortcuts/bindings";
 import { formatBinding, isApplePlatform } from "../features/shortcuts/format";
 import {
@@ -52,6 +55,8 @@ type Row = Readonly<{
   defaults: readonly KeyBinding[];
   override: KeyBinding | undefined;
   effective: readonly KeyBinding[];
+  /** A native menu chord took over this row's saved override. */
+  masked?: ResolvedBinding["masked"];
 }>;
 type Group = Readonly<{
   id: string;
@@ -207,6 +212,17 @@ function useShortcutGroups({
     plugins.snapshot,
   );
   const sendWithModEnter = useSendWithModEnterPreference();
+  // The dispatcher's own resolution, so this page shows exactly what fires.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: The registries and overrides read here are the snapshots above.
+  const resolved = useMemo(
+    () =>
+      resolveBindings(
+        shortcuts.bindingRows(),
+        (key) => bindings.resolve(key),
+        shortcuts.native,
+      ),
+    [shortcuts, bindings, host, contributed, overrides],
+  );
 
   const pluginName = (id: string) =>
     (configuration.status === "ready"
@@ -222,6 +238,7 @@ function useShortcutGroups({
     local = false,
   ): Row => {
     const override = overrides[key];
+    const current = resolved.get(key);
     return {
       key,
       title: shortcut.title,
@@ -231,7 +248,9 @@ function useShortcutGroups({
       local,
       defaults: shortcut.binding,
       override,
-      effective: override ? [override] : shortcut.binding,
+      effective:
+        current?.effective ?? (override ? [override] : shortcut.binding),
+      ...(current?.masked ? { masked: current.masked } : {}),
     };
   };
   // Group ids are namespaced so a plugin whose manifest id is "buzz" or "host"
@@ -247,8 +266,10 @@ function useShortcutGroups({
           shortcut,
           "Buzz",
           desktop &&
-            shortcut.binding.some((binding) =>
-              includes(DESKTOP_CHORDS, binding),
+            shortcut.binding.some(
+              (binding) =>
+                includes(DESKTOP_CHORDS, binding) ||
+                includes(shortcuts.native, binding),
             ),
           shortcut.local,
         ),
@@ -357,6 +378,30 @@ export function ShortcutSettings({
         ),
     );
   const modified = Object.keys(overrides).length > 0;
+  // A saved chord a native menu item now owns: say what applies instead.
+  const maskedNote = (row: Row) => {
+    if (!row.masked) return undefined;
+    const saved = row.masked.override[0];
+    const savedText = saved ? formatBinding(saved, apple).text : "";
+    const owner = rows.find(
+      (other) =>
+        other.readOnly &&
+        other.defaults.some((chord) => saved && sameBinding(chord, saved)),
+    );
+    const lead = `${savedText} is now ${owner ? `${owner.title} in the menu` : "a menu shortcut"}.`;
+    const usual = row.defaults[0]
+      ? formatBinding(row.defaults[0], apple).text
+      : "";
+    if (row.masked.restored) return `${lead} This action is back on ${usual}.`;
+    const taker = rows.find(
+      (other) =>
+        competes(row, other) &&
+        other.effective.some((chord) =>
+          row.defaults.some((current) => sameBinding(current, chord)),
+        ),
+    );
+    return `${lead} ${usual} is used by ${taker ? taker.title : "another action"}, so this action has no shortcut. Choose one.`;
+  };
 
   const start = (key: string) => {
     setEditing(key);
@@ -416,6 +461,16 @@ export function ShortcutSettings({
       return refuse(
         `${chord} is reserved for switching or closing tabs and quitting Buzz. Try another.`,
       );
+    if (includes(shortcuts.native, binding)) {
+      const owner = rows.find(
+        (row) =>
+          row.readOnly &&
+          row.defaults.some((chord) => sameBinding(chord, binding)),
+      );
+      return refuse(
+        `${chord} is reserved for ${owner?.title ?? "the Buzz menu"}. Try another.`,
+      );
+    }
     const conflict = rows.find(
       (row) =>
         competes(target, row) &&
@@ -477,6 +532,7 @@ export function ShortcutSettings({
                       explained={!!group.description}
                       apple={apple}
                       sharedWith={sharedWith(row)}
+                      maskedNote={maskedNote(row)}
                       listening={editing === row.key}
                       notice={notice?.key === row.key ? notice : null}
                       onStart={() => start(row.key)}
@@ -570,6 +626,7 @@ function ShortcutRow({
   explained,
   apple,
   sharedWith,
+  maskedNote,
   listening,
   notice,
   onStart,
@@ -583,6 +640,8 @@ function ShortcutRow({
   apple: boolean;
   /** Other listed shortcuts whose effective chord this row also answers to. */
   sharedWith: readonly Row[];
+  /** Why a saved chord no longer applies, when a menu item took it over. */
+  maskedNote?: string | undefined;
   listening: boolean;
   notice: Notice | null;
   onStart: () => void;
@@ -623,6 +682,9 @@ function ShortcutRow({
           ) : row.override || sharedWith.length > 0 ? (
             <>
               {row.override && <span className="block">Modified</span>}
+              {maskedNote && (
+                <span className="block text-subtle">{maskedNote}</span>
+              )}
               {sharedWith.length > 0 && (
                 <span className="block text-subtle">
                   Also used by{" "}
@@ -644,8 +706,10 @@ function ShortcutRow({
                 onCapture={onCapture}
                 onCancel={onCancel}
               />
-            ) : (
+            ) : row.effective.length ? (
               <ShortcutChords chords={row.effective} apple={apple} />
+            ) : (
+              <span className="text-body-sm text-subtle">Not set</span>
             )}
             {!row.readOnly && (
               <IconButton

@@ -17,6 +17,7 @@ import {
   type OpenTarget,
 } from "../features/navigation/targets";
 import type { PageNavigation } from "../features/navigation/service";
+import { HISTORY_CAPACITY } from "../features/navigation/history";
 import type {
   OpenAttempt,
   OpenFailure,
@@ -26,6 +27,7 @@ import type {
 } from "../features/navigation/controller";
 import { isBuiltInSettingsSection } from "./settings-sections";
 import { linkedPage, linkedPageTarget } from "../features/pages/plugin-link";
+import { dockOwner, dockReturn } from "./dock-return";
 
 const channelsKey = "buzz.channels/channels";
 /** Presentation-only lease for an already-confirmed Settings departure. */
@@ -489,6 +491,60 @@ export function useAppNavigation(
       void navigation.retry();
     }
   }, [navigation, state, failure, offline, relay.status]);
+  // The visits opened inside each dock app that history still holds, oldest
+  // first; the dock returns to the newest. A dismissal retires its visits at
+  // once, whether or not its fallback opens. A new branch or history's
+  // capacity drops visits too, and the app's older visits stay its place.
+  const dockVisits = useRef(
+    new Map<string, { id: string; target: OpenTarget }[]>(),
+  );
+  const dockPages = useRef(pages);
+  dockPages.current = pages;
+  // A visit that fails while the connection is down reopens by itself.
+  const dockOffline = useRef(offline);
+  dockOffline.current = offline;
+  useEffect(() => {
+    const remember = () => {
+      const { status, entry, retainedVisits } = navigation.snapshot();
+      if (retainedVisits) {
+        const retained = new Set(retainedVisits);
+        for (const [owner, visits] of dockVisits.current) {
+          const kept = visits.filter((visit) => retained.has(visit.id));
+          if (!kept.length) dockVisits.current.delete(owner);
+          else if (kept.length < visits.length)
+            dockVisits.current.set(owner, kept);
+        }
+      }
+      // A join dialog shows once over its visit: the visit beneath stays the
+      // app's place.
+      if (status !== "opened" || entry.target.join) return;
+      const owner = dockOwner(dockPages.current, entry.target);
+      if (!owner) return;
+      // A page opened with no scope (an Activity shortcut, say) opened in the
+      // account and community selected when it opened, not on a later update.
+      const visits = dockVisits.current.get(owner) ?? [];
+      const known = visits.find((visit) => visit.id === entry.id);
+      const target =
+        entry.target.kind === "page" && entry.target.scope === undefined
+          ? {
+              ...entry.target,
+              scope:
+                known?.target.kind === "page" &&
+                known.target.scope !== undefined
+                  ? known.target.scope
+                  : dockScope(services),
+            }
+          : entry.target;
+      dockVisits.current.set(owner, [
+        ...visits
+          .filter((visit) => visit.id !== entry.id)
+          .slice(1 - HISTORY_CAPACITY),
+        { id: entry.id, target },
+      ]);
+    };
+    remember();
+    return navigation.subscribe(remember);
+  }, [navigation, services]);
   // Stable, so the shell's page navigation renders only when pages change.
   const select = useCallback(
     (
@@ -496,43 +552,68 @@ export function useAppNavigation(
       options?: Pick<NavigationOpenOptions, "focus" | "replace"> & {
         /** Settings only: open at this section. */
         section?: string;
+        /** Return to the app's last visit when it is still in scope. */
+        resume?: boolean;
       },
     ) => {
-      const selectedClient = services.communities.snapshot();
+      const scope = dockScope(services);
       let destination: OpenTarget;
       if (key === "settings")
         destination = {
           version: 1,
           kind: "settings",
           ...(options?.section ? { section: options.section } : {}),
-          ...(selectedClient.viewer && selectedClient.selected
-            ? {
-                scope: {
-                  viewer: selectedClient.viewer,
-                  communityOrigin: communityDestination(selectedClient.selected)
-                    .url,
-                },
-              }
-            : { scope: null }),
+          scope,
         };
       else {
         const selected = pages.find((page) => page.key === key);
         if (!selected) return;
-        destination = {
+        const own: OpenTarget = {
           version: 1,
           kind: "page",
           pluginId: selected.pluginId,
           pageId: selected.id,
-          ...(selectedClient.viewer && selectedClient.selected
-            ? {
-                scope: {
-                  viewer: selectedClient.viewer,
-                  communityOrigin: communityDestination(selectedClient.selected)
-                    .url,
-                },
-              }
-            : { scope: null }),
+          scope,
         };
+        const last = options?.resume
+          ? dockVisits.current.get(key)?.at(-1)
+          : undefined;
+        const returned = last && dockReturn(pages, key, last.target, scope);
+        destination = returned || own;
+        if (returned) {
+          const focus = options?.focus ? { focus: options.focus } : {};
+          const opening = navigation.open(returned, {
+            ...focus,
+            ...(options?.replace ? { replace: true } : {}),
+          });
+          const visit = navigation.snapshot().entry.id;
+          // A place that no longer opens (a deleted channel, or one the person
+          // lost access to) is forgotten, and the app's own page takes its
+          // visit. A failure its page shows in place, beside its own Retry, or
+          // one that may pass (a timeout, a sign-in, no connection) keeps it.
+          void opening.then((result) => {
+            if (
+              result.status !== "failed" ||
+              result.presented ||
+              result.reauthorize ||
+              result.reason === "timeout" ||
+              dockOffline.current
+            )
+              return;
+            const failed = targetKey(last.target);
+            const kept = dockVisits.current
+              .get(key)
+              ?.filter((visit) => targetKey(visit.target) !== failed);
+            if (kept?.length) dockVisits.current.set(key, kept);
+            else dockVisits.current.delete(key);
+            // Only while that failure is still what shows: a newer visit, or a
+            // retry of this one, is the person's.
+            const now = navigation.snapshot();
+            if (now.entry.id === visit && now.status === "failed")
+              void navigation.open(own, { ...focus, replace: true });
+          });
+          return;
+        }
       }
       void navigation.open(
         destination,
@@ -752,4 +833,12 @@ function sameVisitBeneath(
     targetKey(joinBeneath(retained.entry.target)) ===
     targetKey(joinBeneath(join.entry.target))
   );
+}
+
+/** The account and community a dock visit belongs to: those selected now. */
+function dockScope(services: AppServices): NavigationScope | null {
+  const { viewer, selected } = services.communities.snapshot();
+  return viewer && selected
+    ? { viewer, communityOrigin: communityDestination(selected).url }
+    : null;
 }

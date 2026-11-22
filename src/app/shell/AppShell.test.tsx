@@ -571,6 +571,7 @@ it("shows global pages in the side dock and keeps the conversation mounted acros
   await user.keyboard("{Enter}");
   expect(onSelect).toHaveBeenLastCalledWith("buzz.reminders/reminders", {
     focus: "preserve",
+    resume: true,
   });
   view.rerender(tree());
   expect(screen.getByRole("textbox", { name: "Message draft" })).toBe(draft);
@@ -853,6 +854,7 @@ it.each(["sidebar", "dock", "topbar", "toolbar"] as const)(
       } else {
         expect(onSelect).toHaveBeenLastCalledWith("example/Healthy", {
           focus: "preserve",
+          resume: true,
         });
         expect(healthy).toHaveFocus();
       }
@@ -985,7 +987,9 @@ it.each(["sidebar", "topbar"] as const)(
       await user.click(broken);
       expect(onSelect).toHaveBeenLastCalledWith(
         "example/Broken",
-        ...(placement === "topbar" ? [{ focus: "preserve" }] : []),
+        ...(placement === "topbar"
+          ? [{ focus: "preserve", resume: true }]
+          : []),
       );
       await user.unhover(broken);
       await waitFor(() =>
@@ -996,7 +1000,9 @@ it.each(["sidebar", "topbar"] as const)(
       await user.click(inbox);
       expect(onSelect).toHaveBeenLastCalledWith(
         "example/Inbox",
-        ...(placement === "topbar" ? [{ focus: "preserve" }] : []),
+        ...(placement === "topbar"
+          ? [{ focus: "preserve", resume: true }]
+          : []),
       );
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 

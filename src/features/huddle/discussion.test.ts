@@ -550,3 +550,33 @@ it("retries a failed older page instead of reloading metadata", async () => {
     h.dispose();
   }
 });
+
+it("carries the relay's thread summary so replies stay discoverable", async () => {
+  const h = harness();
+  const agent = "cd".repeat(32);
+  try {
+    await vi.waitFor(() => expect(h.discussion.snapshot().writable).toBe(true));
+    h.rows([
+      {
+        id: "question",
+        channelId: "room",
+        authorId: "ab".repeat(32),
+        createdAt: 1,
+        content: "@Robin say hello",
+        mentions: [agent],
+        attachments: [],
+        reactions: [],
+        participants: [agent],
+        replyCount: 1,
+      },
+    ]);
+    h.profiles.set(agent, { name: "Robin", picture: "" });
+    expect(h.discussion.snapshot().rows[0]).toMatchObject({
+      replyCount: 1,
+      participants: [agent],
+      mentionNames: { [agent]: "Robin" },
+    });
+  } finally {
+    h.dispose();
+  }
+});

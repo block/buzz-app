@@ -127,8 +127,8 @@ export function HuddleDiscussionView({
                   attachmentSeams: row.attachmentSeams ?? [],
                   mentionReferences: row.mentionReferences ?? [],
                   reactions: [],
-                  replyCount: 0,
-                  participants: [],
+                  replyCount: row.replyCount ?? 0,
+                  participants: row.participants ?? [],
                 }}
                 participantProfiles={
                   new Map(
@@ -170,6 +170,12 @@ export function HuddleDiscussionView({
                 }}
                 day={false}
                 retry={undefined}
+                startsThreads={false}
+                onOpenThread={(messageId, threadRootId) =>
+                  openLink?.(
+                    `buzz://message?channel=${row.channelId}&id=${messageId}&thread=${threadRootId}`,
+                  )
+                }
                 layout="thread"
               />
               {["failed", "unknown"].includes(row.delivery) && (

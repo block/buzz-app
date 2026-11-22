@@ -1434,6 +1434,7 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
                 | "buzz.changesets"
                 | "buzz.charts"
                 | "buzz.performance-diagnostics"
+                | "buzz.smart-routing"
         );
         assert_eq!(plugin.enabled, default, "{id}");
         if id == "buzz.channels" {

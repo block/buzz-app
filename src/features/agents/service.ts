@@ -2507,6 +2507,7 @@ export class AgentsService extends Service implements Agents {
       options.accepts,
       options.milliseconds,
       options.compose,
+      options.join,
     );
   }
   private readonly contributions;

@@ -34,13 +34,18 @@ token or other secret in one**. Open-source builds leave them all unset.
 | `BUZZ_BUILD_REPOSITORY_ACCESS` | Default [repository access rules](repository-access.md#default-rules). |
 | `BUZZ_DATABRICKS_HOST` | An `https://` Databricks workspace URL passed to every bundled goose as `DATABRICKS_HOST`. Only the host; model and sign-in stay goose's. |
 | `BUZZ_MOBILE_APP_IOS_URL`, `BUZZ_MOBILE_APP_ANDROID_URL` | Store links shown with QR codes on the mobile Settings card, for people whose Builderlab account holds this device's backed-up key. |
-| `BUZZ_VOICE_TRANSCRIPTION_URL` | An `https://` endpoint that returns a short-lived OpenAI Realtime transcription key for voice jump; native code keeps the key out of the webview. A process value wins. Empty means no voice jump. |
+| `BUZZ_VOICE_TRANSCRIPTION_URL` | An `https://` endpoint that returns a short-lived OpenAI Realtime transcription key for voice jump; native code keeps the key out of the webview. A process value wins. Empty means no hosted voice jump. |
 | `BUZZ_UPDATER_PUBLIC_KEY`, `BUZZ_UPDATER_ENDPOINT` | Release builds only. Both together turn on the updater; the release workflow sets them (see [releases](releases.md)). |
 
 **Development only:** `BUZZ_RELAY_URL`, `BUZZ_DEV_VIEWER`,
 `BUZZ_COMMUNITY_ALIASES`, `BUZZ_DEV_NOTIFICATIONS`, `BUZZ_DEV_OPEN_RELAY`,
 `BUZZ_BUILD_AUTO_CONNECT_DEFAULT_RELAY` (see [CONTRIBUTING](../CONTRIBUTING.md)),
 and [`BUZZ_DEV_FIRST_RUN_ACCOUNT`](#first-run-account-seed-development).
+
+Debug native builds also read `BUZZ_VOICE_BACKEND=apple` from the process
+environment to use on-device speech on macOS instead, and with it
+`BUZZ_VOICE_AUDIO_FILE`, an audio file voice jump hears instead of the
+microphone, and `BUZZ_VOICE_RECOGNIZER=legacy`, the pre-macOS 26 recognizer.
 
 `BUZZ_BUILD_AGENT_ENV`, `BUZZ_BUILD_BUZZ_AGENT_PROVIDER`,
 `BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY` and `BUZZ_OWNER_MCP_COMMUNITIES` are no

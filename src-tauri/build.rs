@@ -48,6 +48,9 @@ fn main() {
         )
         .expect("Could not prepare executable resources");
     }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        compile_voice_search();
+    }
     let mut attributes = tauri_build::Attributes::new();
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
@@ -260,9 +263,12 @@ fn main() {
             "app_agent_state_load",
             "app_agent_state_set",
             "decide",
-            "voice_search_available",
+            "voice_search_backend",
             "voice_search_prepare",
             "voice_search_connect",
+            "voice_search_start",
+            "voice_search_finish",
+            "voice_search_cancel",
             "title_bar_double_click",
             "notification_show",
             "notification_permission_state",
@@ -305,6 +311,104 @@ fn main() {
         ])),
     )
     .expect("Could not build Tauri resources")
+}
+
+/// Builds voice jump's on-device speech recognition (`src/voice_search.swift`,
+/// Swift-only Apple APIs) into a static library linked into the app. Its
+/// macOS 26 path needs the macOS 26 SDK (Swift 6.2); an older SDK builds only
+/// the pre-macOS 26 recognizer.
+fn compile_voice_search() {
+    use std::process::Command;
+    let source = "src/voice_search.swift";
+    println!("cargo:rerun-if-changed={source}");
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
+    let arch = match std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() {
+        Ok("aarch64") => "arm64",
+        Ok("x86_64") => "x86_64",
+        other => panic!("Unsupported macOS architecture {other:?}"),
+    };
+    let deployment = std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "12.0".into());
+    let target = format!("{arch}-apple-macosx{deployment}");
+    let xcrun = |args: &[&str]| {
+        let output = Command::new("xcrun")
+            .args(args)
+            .output()
+            .unwrap_or_else(|error| panic!("Could not run xcrun {args:?}: {error}"));
+        assert!(
+            output.status.success(),
+            "xcrun {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("xcrun output is UTF-8")
+    };
+    let sdk = xcrun(&["--sdk", "macosx", "--show-sdk-path"]);
+    let sdk = sdk.trim();
+    let library = out.join("libbuzz_voice_search.a");
+    let cache = out.join("swift-module-cache");
+    let mut swiftc = vec![
+        "--sdk",
+        "macosx",
+        "swiftc",
+        "-emit-library",
+        "-static",
+        "-parse-as-library",
+        "-swift-version",
+        "5",
+        "-O",
+        "-module-name",
+        "BuzzVoiceSearch",
+        "-target",
+        &target,
+        "-sdk",
+        sdk,
+        "-module-cache-path",
+        cache.to_str().expect("UTF-8 OUT_DIR"),
+        source,
+        "-o",
+        library.to_str().expect("UTF-8 OUT_DIR"),
+    ];
+    // Debug builds can hear a file instead of the microphone and force the
+    // older recognizer (docs/configuration.md); release builds never compile
+    // either in.
+    if std::env::var("PROFILE").as_deref() == Ok("debug") {
+        swiftc.extend(["-D", "BUZZ_VOICE_FILE_INPUT"]);
+    }
+    xcrun(&swiftc);
+    #[derive(serde::Deserialize)]
+    struct Info {
+        paths: Paths,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Paths {
+        runtime_library_paths: Vec<String>,
+    }
+    let info: Info = serde_json::from_str(&xcrun(&[
+        "--sdk",
+        "macosx",
+        "swiftc",
+        "-print-target-info",
+        "-target",
+        &target,
+    ]))
+    .expect("swiftc target info");
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=static=buzz_voice_search");
+    // The Swift runtime ships with macOS; the SDK has its link stubs and the
+    // toolchain its back-deployment libraries.
+    let runtime = std::iter::once(format!("{sdk}/usr/lib/swift"))
+        .chain(info.paths.runtime_library_paths)
+        .filter(|path| std::path::Path::new(path).is_dir());
+    for path in runtime {
+        println!("cargo:rustc-link-search=native={path}");
+    }
+    // Linking may resolve the runtime to the toolchain's back-deployment
+    // copies, which load through @rpath; macOS 12 and later have them here.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
+    for framework in ["AppKit", "AVFoundation", "Speech"] {
+        println!("cargo:rustc-link-lib=framework={framework}");
+    }
 }
 
 fn configure_nsec_backup() {

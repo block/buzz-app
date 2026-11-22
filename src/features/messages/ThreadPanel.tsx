@@ -2257,6 +2257,8 @@ function ThreadMessages({
       <section
         ref={scroller}
         data-message-scroller
+        data-thread-channel={channelId}
+        data-thread-root={snapshot.root?.id ?? messageId}
         className={styles.threadHistory}
         style={
           {

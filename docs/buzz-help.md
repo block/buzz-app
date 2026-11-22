@@ -110,9 +110,11 @@ if that desktop app is up and running.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.
-- **Jumping by voice**: where the build offers it, ⇧⌘K (Shift+Ctrl+K
+- **Jumping by voice**: when hosted voice is configured, ⇧⌘K (Ctrl+Shift+K
   elsewhere) or the microphone beside Search listens and opens the
-  conversation you name, listing the likeliest as you talk.
+  conversation you name, listing the likeliest as you talk. Speech is
+  transcribed by OpenAI Realtime. If microphone access is denied, press the
+  microphone to try again; typing still works.
 - **Charts.** With the Charts plugin on, a `buzz-chart` code block of JSON
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.

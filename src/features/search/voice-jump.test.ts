@@ -6,13 +6,13 @@ import type {
   ChannelWindow,
 } from "../relay/contracts";
 import type { InboxItem } from "../relay/inbox";
-import { mergeTranscript } from "./voice-dictation";
 import {
   type JumpPlace,
   holdsLead,
   jumpPlaces,
   pickPlace,
   placeOptions,
+  voiceHints,
 } from "./voice-jump";
 
 const message = (
@@ -309,20 +309,38 @@ describe("placeOptions", () => {
   });
 });
 
-describe("mergeTranscript", () => {
-  const delta = "conversation.item.input_audio_transcription.delta";
-  const completed = "conversation.item.input_audio_transcription.completed";
-  it("appends deltas and skips a completed segment already heard", () => {
-    let text = mergeTranscript("", { type: delta, delta: "Open" });
-    text = mergeTranscript(text, { type: delta, delta: " design" });
-    expect(text).toBe("Open design");
-    expect(
-      mergeTranscript(text, { type: completed, transcript: "Open design" }),
-    ).toBe("Open design");
-    expect(mergeTranscript("", { type: completed, transcript: "hi" })).toBe(
-      "hi",
+describe("voiceHints", () => {
+  const place = (
+    kind: JumpPlace["kind"],
+    name: string,
+    key = name,
+  ): JumpPlace => ({ key, kind, channelId: key, name, at: 0 });
+  it("hints place and people names as said", () => {
+    const hints = voiceHints([
+      place("channel", "buzz-security"),
+      place("dm", "Dana Lee, murderbot"),
+      place("chat", "Fizz"),
+      place("thread", "Logo options"),
+      place("channel", "Buzz-Security", "again"),
+      place("dm", "murderbot", "solo"),
+    ]);
+    expect(hints.slice(0, 5)).toEqual([
+      "buzz-security",
+      "buzz security",
+      "Dana Lee",
+      "murderbot",
+      "Fizz",
+    ]);
+    expect(hints).not.toContain("Logo options");
+  });
+  it("keeps to a hundred hints, most recent first", () => {
+    const places = Array.from({ length: 150 }, (_, n) =>
+      place("channel", `room${n}`),
     );
-    expect(mergeTranscript(text, { type: "session.created" })).toBe(text);
+    const hints = voiceHints(places);
+    expect(hints).toHaveLength(100);
+    expect(hints[0]).toBe("room0");
+    expect(hints.at(-1)).toBe("room99");
   });
 });
 

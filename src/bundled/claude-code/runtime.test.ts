@@ -441,7 +441,7 @@ function setup(
   };
 }
 
-it("names each saved session's channel as the community lists it", () => {
+it("names each saved session's channel as the community lists it, and omits one it does not", () => {
   const { runtime, data } = setup();
   const saved = localSessions(
     localStore({
@@ -462,14 +462,6 @@ it("names each saved session's channel as the community lists it", () => {
       name: "general",
       channelType: "stream",
       at: 5,
-    },
-    {
-      key: "chan-gone/root-1",
-      agent: self,
-      sessionId: "s2",
-      channelId: "chan-gone",
-      root: "root-1",
-      at: 3,
     },
   ]);
 });

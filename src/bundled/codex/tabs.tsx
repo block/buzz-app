@@ -1205,7 +1205,11 @@ export function createTabs(
           return (
             transcript && {
               ...transcript,
-              turns: runtime.prompts(agent.key).shown(transcript.turns),
+              turns: runtime
+                .prompts(agent.key)
+                .shown(
+                  runtime.readable(agent.key, conversation, transcript.turns),
+                ),
             }
           );
         }}
@@ -1315,7 +1319,10 @@ export function createTabs(
     );
     const saved = new Set(conversations.map((row) => row.key));
     const views = new Map(sessions.map((view) => [view.key, view]));
-    const unbound = sessions.filter((view) => !saved.has(view.key));
+    const unbound = sessions.filter(
+      (view) =>
+        !saved.has(view.key) && runtime.readableSession(agent.key, view.key),
+    );
     const current = here && views.get(here.key);
     const detail = (text: string, status?: string) =>
       status !== "Working" ? (

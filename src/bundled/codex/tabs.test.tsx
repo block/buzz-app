@@ -2410,7 +2410,11 @@ it.each(["Needs attention", "Session could not be saved"])(
   async (status) => {
     const f = fixture();
     vi.spyOn(f.runtime, "sessions").mockReturnValue([
-      { key: "unbound", status, detail: "First line\nSecond line" },
+      {
+        key: JSON.stringify(["channel", "channel"]),
+        status,
+        detail: "First line\nSecond line",
+      },
     ]);
     render(<f.tabs.ActivityTab {...f.props()} />);
     const diagnostic = await screen.findByText("First line Second line");
@@ -2423,7 +2427,11 @@ it.each(["Needs attention", "Session could not be saved"])(
 it("collapses Working command details", async () => {
   const f = fixture();
   vi.spyOn(f.runtime, "sessions").mockReturnValue([
-    { key: "unbound", status: "Working", detail: "git status" },
+    {
+      key: JSON.stringify(["channel", "channel"]),
+      status: "Working",
+      detail: "git status",
+    },
   ]);
   render(<f.tabs.ActivityTab {...f.props()} />);
   expect(

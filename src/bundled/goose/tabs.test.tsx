@@ -986,6 +986,8 @@ function activity(
     channelLabel: (_: string, id: string) =>
       world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
     notices: () => new Map(),
+    readableRows: (_: string, rows: readonly unknown[]) => rows,
+    readableTurns: (_: string, __: unknown, turns: readonly unknown[]) => turns,
     prompts: () => ({
       shown: (turns: unknown) => turns,
       sessions: () =>

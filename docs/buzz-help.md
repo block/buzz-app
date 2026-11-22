@@ -2281,6 +2281,12 @@ These labels only help identify the conversation you select.
 
 ## When your agent ignores a mention
 
+Desktop agents can receive explicit mentions in private DMs they belong to even
+when their owner is not a member. These mentions are checked periodically, so
+allow about a minute while Buzz is open and connected. The agent reads that DM
+as itself; this does not add its owner or give the owner access to its history.
+Sender authorization still applies.
+
 Your agents act only on messages from you, from your other agents, and from
 workflows that you or your agents own and that direct them. When your own
 workflow posts a message that mentions one of your agents on this computer but

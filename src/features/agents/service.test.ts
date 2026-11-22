@@ -106,6 +106,7 @@ import { typesafeProvider } from "../../bundled/typesafe";
 import {
   CATCH_UP_PREFIX,
   MENTIONS,
+  PRIVATE_MENTIONS,
   readCheckpoints,
   streamKey,
   writeCheckpoints,
@@ -10710,7 +10711,12 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 /** The saved checkpoints of watch streams, without the mention streams'. */
 const watchCheckpoints = (storage: Parameters<typeof readCheckpoints>[0]) =>
   Object.entries(readCheckpoints(storage))
-    .filter(([key]) => (JSON.parse(key) as unknown[])[1] !== MENTIONS)
+    .filter(
+      ([key]) =>
+        ![MENTIONS, PRIVATE_MENTIONS].includes(
+          (JSON.parse(key) as unknown[])[1] as string,
+        ),
+    )
     .map(([, checkpoint]) => checkpoint);
 
 it.each([false, true])(

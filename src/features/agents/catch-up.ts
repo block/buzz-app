@@ -331,8 +331,6 @@ export async function splitLegacyCheckpoints(storage: AgentStore) {
  * on or off, and one for each channel of each event watch, enabled or not. */
 export function streamsOf(agent: Pick<Agent, "key" | "attention">) {
   const streams: Stream[] = [
-    // Private first: its failures are contained, so an owner read failing
-    // later in the same pass cannot starve it.
     {
       key: streamKey(agent.key, PRIVATE_MENTIONS),
       slug: PRIVATE_MENTIONS,

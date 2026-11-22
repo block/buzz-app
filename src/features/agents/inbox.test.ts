@@ -306,3 +306,30 @@ it("applies a signed roster that removes the agent even when metadata is missing
     f.controller.abort();
   }
 });
+
+it("judges a read's DMs by that read, even when they overflow the fact cache", async () => {
+  const f = fixture();
+  const dms = Array.from({ length: 130 }, (_, i) => `dm-${i}`);
+  const mentions = dms.map((id, i) =>
+    message(sibling, id, `ask ${i}`, 100 + i, [["p", agent.pubkey]]),
+  );
+  f.query.mockImplementation(async (filters: readonly ReadFilter[]) =>
+    filters[0]?.kinds?.includes(39000)
+      ? eventsDto(
+          dms.flatMap((id) => [
+            metadata(relay, id, id, 1, [["private"], ["t", "dm"]]),
+            roster(relay, id, [agent.pubkey, sibling.pubkey], 1),
+          ]),
+        )
+      : eventsDto(mentions),
+  );
+  try {
+    const read = await f.inbox.readAsAgent(
+      { ids: mentions.map(({ id }) => id), limit: mentions.length },
+      signal(),
+    );
+    expect(read).toHaveLength(130);
+  } finally {
+    f.controller.abort();
+  }
+});

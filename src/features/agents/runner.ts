@@ -470,8 +470,13 @@ function watchReadErrorSummary(error: unknown): string {
 
 const seconds = () => Math.floor(Date.now() / 1000);
 /** The key of an agent's mention or watch catch-up pass. */
-const passKey = (agent: AgentKey, mentions: boolean) =>
-  `${agent}:${mentions ? "mentions" : "watches"}`;
+/** Catch-up lanes, each its own pass: neither mentions nor private mentions
+ * wait behind the other's backlog, nor behind watch work. */
+const PASSES = ["mentions", "private", "watches"] as const;
+type PassLane = (typeof PASSES)[number];
+const passOf = (stream: Stream): PassLane =>
+  stream.private ? "private" : stream.mentions ? "mentions" : "watches";
+const passKey = (agent: AgentKey, lane: PassLane) => `${agent}:${lane}`;
 const message = (error: unknown) =>
   String(error instanceof Error ? error.message : error);
 
@@ -1320,8 +1325,8 @@ export class AgentRunners {
     };
   }
   private retire(runner: Runner) {
-    for (const mentions of [true, false]) {
-      const key = passKey(runner.key, mentions);
+    for (const lane of PASSES) {
+      const key = passKey(runner.key, lane);
       this.passes.get(key)?.controller.abort();
       this.passes.delete(key);
     }
@@ -1775,11 +1780,10 @@ export class AgentRunners {
         if (created < mentioned - POLL_OVERLAP) runner.mentioned.delete(id);
       // Mentions have their own pass, so watch work waiting for room never
       // holds up the next mention read.
-      for (const mentions of [true, false]) {
-        const key = passKey(runner.key, mentions);
-        const streams = reading.filter(
-          (stream) => !!stream.mentions === mentions,
-        );
+      for (const lane of PASSES) {
+        const mentions = lane !== "watches";
+        const key = passKey(runner.key, lane);
+        const streams = reading.filter((stream) => passOf(stream) === lane);
         const pass = this.passes.get(key);
         // Only a watch's live events wait for its catch-up.
         const catching = (slugs: readonly Stream[]) => {

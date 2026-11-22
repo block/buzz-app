@@ -107,8 +107,8 @@ export class AgentInbox {
   private async resolve(
     ids: readonly string[],
     signal: AbortSignal,
-  ): Promise<string[]> {
-    if (!ids.length) return [];
+  ): Promise<{ partial: string[]; dms: string[] }> {
+    if (!ids.length) return { partial: [], dms: [] };
     const events = await this.reader.reader.read(
       [
         {
@@ -156,7 +156,15 @@ export class AgentInbox {
         this.channels.set(id, channel);
     }
     for (const listener of this.listeners) listener();
-    return partial;
+    return {
+      partial,
+      dms: ids.filter(
+        (id) =>
+          !partial.includes(id) &&
+          discovery.authorized(id) &&
+          discovery.get(id)?.channelType === "dm",
+      ),
+    };
   }
 
   private async read(filter: ReadFilter, signal: AbortSignal) {
@@ -175,28 +183,23 @@ export class AgentInbox {
       ),
     ];
     const known = await Promise.all(ids.map((id) => this.owner.channel(id)));
-    const partial = await this.resolve(
+    const { partial, dms } = await this.resolve(
       ids.filter((_, index) => !known[index]),
       signal,
     );
-    return { events, partial };
+    const owned = new Set(ids.filter((_, index) => known[index]));
+    return { events, partial, readable: new Set([...owned, ...dms]) };
   }
 
   /** Reads as the agent, failing while any DM it returns is only partly
    * known, so a caller retries rather than acts on it. */
   async readAsAgent(filter: ReadFilter, signal: AbortSignal) {
-    const { events, partial } = await this.read(filter, signal);
+    const { events, partial, readable } = await this.read(filter, signal);
     if (partial.length)
       throw new Error("The relay did not return all of a DM's details");
-    // Only a confirmed DM is read past the owner; the owner's own channels
-    // come from the owner's session.
-    const owned = await Promise.all(
-      events.map((event) => this.owner.channel(channelOf(event) ?? "")),
-    );
-    return events.filter((event, index) => {
-      const channel = channelOf(event);
-      return !!channel && (!!owned[index] || !!this.channel(channel));
-    });
+    // Only a confirmed DM is read past the owner, judged by this read rather
+    // than the bounded cache it may have overflowed.
+    return events.filter((event) => readable.has(channelOf(event) ?? ""));
   }
 
   /** A catch-up page as the relay gave it, whole, so its paging holds; the

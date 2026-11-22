@@ -43,8 +43,10 @@ import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
 import styles from "./Channels.module.css";
 import { SidebarRowRenderer } from "../../features/channel-navigation/SidebarRowRenderer";
+import { TeamRowChannelGroup } from "../../features/channel-navigation/RegionChannelGroup";
 import { ContributionBoundary } from "../../features/conversation/ContributionBoundary";
 import {
+  pluginRowSectionKey,
   sidebarRow,
   type RegisteredSidebarRows,
 } from "../../features/channel-navigation/sidebar-rows-service";
@@ -213,7 +215,7 @@ function ChannelSidebarItemCore({
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
   const Icon = channelIcon(channel);
-  const row = (
+  const plainRow = (
     <ChannelSidebarRow
       channel={channel}
       title={
@@ -422,6 +424,16 @@ function ChannelSidebarItemCore({
       {...(onHideDm ? { onHideDm } : {})}
     />
   );
+  // Part of the host row: contributions wrap or hide the group with it.
+  const row =
+    sectionKey &&
+    (channel.channelType === "stream" || channel.channelType === "forum") ? (
+      <TeamRowChannelGroup session={session} channelId={channel.id}>
+        {plainRow}
+      </TeamRowChannelGroup>
+    ) : (
+      plainRow
+    );
   const rendered =
     sectionKey && rowContributions ? (
       <ContributionBoundary fallback={row} resetIdentity={rowContributions}>
@@ -495,12 +507,7 @@ function ContributedChannelRow({
   );
   const unread = useSyncExternalStore(subscribe, snapshot, snapshot);
   const live = useLiveChannelSummary(session.channels, channel);
-  const pluginSection =
-    channel.channelType === "solo"
-      ? sectionKey.startsWith("group:")
-        ? sectionKey.slice(6)
-        : ""
-      : sectionKey;
+  const pluginSection = pluginRowSectionKey(channel, sectionKey);
   const row = useMemo(
     () => sidebarRow(live, pluginSection, unread),
     [live, pluginSection, unread],

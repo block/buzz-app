@@ -4,6 +4,7 @@ import { openPage } from "./navigation.mjs";
 const channel = "11111111-1111-4111-8111-111111111111";
 const chat = "33333333-3333-4333-8333-333333333333";
 test.use({
+  video: "on",
   diagnostics: false,
   productionBroker: true,
   openingAdminSetup: true,

@@ -13,6 +13,7 @@ import {
   abandonableSetup,
   type AbandonableSetup,
 } from "../../features/solo/AdminSetupRecovery";
+import { migrationSource } from "../../features/relay/migration";
 
 /** A batch names everyone its Retry re-adds. */
 function additionLabel(tags: readonly (readonly string[])[]) {
@@ -109,17 +110,22 @@ export function OutboxStatus({
                         // admission, so each person is checked again. A guest
                         // addition is retried as one, so it never sends a
                         // writing role. A single addition finishes only its own
-                        // receipt. A batch is never resumed, so each person it
-                        // names is added again; it clears once all are settled.
+                        // receipt. Retry a batch through Add for each person
+                        // so the session rechecks the roster before writing.
                         const guest = item.event.tags.some(
                           ([tag, value]) => tag === "role" && value === "guest",
                         );
                         const batch = isBatchAddition(item);
+                        const migration = migrationSource(item.event.tags);
                         const results = await Promise.allSettled(
                           pubkeys.map((pubkey) =>
                             memberAdditions.add(channelId, pubkey, {
                               ...(guest ? { role: "guest" as const } : {}),
                               ...(batch ? {} : { retry: true as const }),
+                              ...(migration === undefined ? {} : { migration }),
+                              ...(batch && migration !== undefined
+                                ? { batchReceipt: item.event.id }
+                                : {}),
                             }),
                           ),
                         );

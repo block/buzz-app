@@ -382,6 +382,8 @@ Inject `panels` to use these host members:
   plugin-ID prefixes keep different plugins from sharing a name. Width is saved per scope/name and follows saves
   from other windows; undefined scope keeps it in memory. Double-click resets
   the preferred width. `primary`, when supplied, is `{ defaultWidth, maxRatio }`.
+  `min` is in pixels at the default text size and grows with the text size,
+  like a rem floor; the handle always leaves the primary pane 20rem.
 
 Inject `agents` to render `ctx.agents.ui?.Transcript` inside an agent type's
 Activity tab. Feature-detect `ctx.agents.ui?.Transcript` and keep a fallback on

@@ -272,7 +272,11 @@ it("kills a dispatched REST request when the controlled 20-second deadline fires
     }),
   });
   try {
-    const request = rest?.("GET", "repos/example-org/sample/pulls/1");
+    const request = rest?.(
+      "POST",
+      "repos/example-org/sample/pulls/1/comments",
+      { body: "Test" },
+    );
     const rejection = expect(request).rejects.toMatchObject({
       name: "TimeoutError",
     });

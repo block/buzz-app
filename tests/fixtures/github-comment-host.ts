@@ -111,8 +111,6 @@ export function githubCommentHost() {
           return;
         }
         if (id === "graphql") {
-          if (String(value.query).startsWith("mutation"))
-            throw new Error("Read-only fixture refused mutation");
           if (String(value.query).includes("r0:")) {
             answer({
               r0: {
@@ -224,8 +222,6 @@ export function githubCommentHost() {
         if (id !== "rest")
           throw new Error(`Undeclared fixture operation ${id}`);
         const [method, path = ""] = options.args ?? [];
-        if (method !== "GET")
-          throw new Error("Read-only fixture refused write");
         if (path === "user") {
           answer({ login: state.viewer });
           return;
@@ -251,6 +247,48 @@ export function githubCommentHost() {
             });
           return;
         }
+        if (state.mode === "denied" || state.mode === "validation") {
+          answer(
+            {
+              message:
+                state.mode === "denied"
+                  ? "Resource not accessible"
+                  : "Invalid diff line",
+            },
+            state.mode === "denied" ? 403 : 422,
+          );
+          return;
+        }
+        if (state.mode === "hold")
+          await new Promise<void>((resolve) => {
+            state.release = resolve;
+          });
+        const rootId = /\/comments\/(\d+)\/replies$/.exec(path)?.[1];
+        const root = rootId
+          ? state.comments.find((row) => row.id === Number(rootId))
+          : undefined;
+        const nextId = state.comments.length + 1;
+        const row: Row = {
+          id: nextId,
+          node_id: `comment-${nextId}`,
+          body: String(value.body),
+          user: { login: state.viewer },
+          html_url: `https://github.com/example-org/sample/pull/1#discussion_r${nextId}`,
+          created_at: "2026-01-01T00:00:00Z",
+          commit_id: String(value.commit_id ?? root?.commit_id ?? state.head),
+          original_commit_id: String(
+            value.commit_id ?? root?.commit_id ?? state.head,
+          ),
+          path: String(value.path ?? root?.path),
+          side: String(value.side ?? root?.side),
+          line: Number(value.line ?? root?.line),
+          original_line: Number(value.line ?? root?.line),
+          in_reply_to_id: root?.id,
+        };
+        state.comments.push(row);
+        if (state.mode === "timeout")
+          throw new Error("Synthetic timeout after GitHub stored the comment");
+        answer(row, 201);
       },
     };
   };

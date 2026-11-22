@@ -260,7 +260,7 @@ function PierreFile({
         setKeyboardLine(undefined);
         onSelect?.(path, [target], () => {
           setKeyboardLine(undefined);
-          element.focus();
+          element.focus({ preventScroll: true });
         });
       }
     },

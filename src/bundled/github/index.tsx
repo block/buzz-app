@@ -630,6 +630,7 @@ function ObjectPanel({
               }}
               head={files.head}
               base={files.base}
+              delivery={memory.delivery(reference.url)}
             />
           ) : (
             <PullFiles

@@ -1,9 +1,11 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -16,6 +18,8 @@ import {
 } from "../diffs/DiffViewer";
 import { parsePatch } from "../diffs/parse";
 import { GitHubComment } from "./GitHubComment";
+import { InlineCommentForm } from "./InlineCommentForm";
+import type { InlineDeliveryStore } from "./inline-delivery";
 import {
   anchorInSnapshot,
   type Anchor,
@@ -23,9 +27,23 @@ import {
   type PullRef,
   type Snapshot,
   type Thread,
+  type WriteResult,
 } from "./pr-comments";
 import { readable } from "./object";
 import styles from "./InlineComments.module.css";
+
+type InlineTarget = Anchor & { viewer: string; replyTo?: number | undefined };
+type Composer = {
+  target: InlineTarget;
+  operation: string;
+  draft: { body: string };
+  focusRequest: number;
+  restoreFocus(): void;
+};
+const composerKey = (target: InlineTarget) =>
+  target.replyTo
+    ? `reply:${target.replyTo}`
+    : rowKey(target.path, target.side, target.line);
 
 const rowKey = (path: string, side: string, line: number) =>
   JSON.stringify([path, side, line]);
@@ -34,13 +52,34 @@ export function PrFiles({
   pull,
   head,
   base,
+  delivery,
+  active = true,
 }: {
   api: PrComments;
   pull: PullRef;
   head: string;
   base: string;
+  delivery: InlineDeliveryStore;
   active?: boolean;
 }) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const status = useSyncExternalStore(delivery.subscribe, delivery.get);
+  const [composers, setComposers] = useState<Composer[]>([]);
+  const root = useRef<HTMLDivElement>(null);
+  const scrollRestore = useRef<(() => void) | undefined>(undefined);
+  useLayoutEffect(() => {
+    scrollRestore.current?.();
+    scrollRestore.current = undefined;
+  });
+  const composersRef = useRef(composers);
+  composersRef.current = composers;
+  const pendingOperation = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!active) {
+      setComposers([]);
+    }
+  }, [active]);
   const [snapshot, setSnapshot] = useState<Snapshot>();
   const snapshotRef = useRef<Snapshot | undefined>(undefined);
   const threadVersion = useRef(0);
@@ -53,6 +92,11 @@ export function PrFiles({
   const [layout, setLayout] = useState<"unified" | "split">("unified");
   const [available, setAvailable] = useState<ReadonlySet<string>>(new Set());
   const refreshButton = useRef<HTMLButtonElement>(null);
+  const restoreFocus = (composer: Composer) => {
+    composer.restoreFocus();
+    if (document.activeElement === document.body)
+      refreshButton.current?.focus({ preventScroll: true });
+  };
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -98,6 +142,7 @@ export function PrFiles({
     snapshotRef.current = undefined;
     setSnapshot(undefined);
     setAvailable(new Set());
+    setComposers([]);
     setLoading(true);
     setCommentsLoading(true);
     setError(undefined);
@@ -144,6 +189,11 @@ export function PrFiles({
         .map((content) => ({ content, files: parsePatch(content) })),
     [snapshot],
   );
+  const stale = (composer: Composer) =>
+    !snapshot ||
+    composer.target.head !== snapshot.head ||
+    composer.target.base !== snapshot.base ||
+    composer.target.viewer !== snapshot.viewer;
   const mapped = useCallback(
     (thread: Thread) =>
       !!snapshot &&
@@ -158,6 +208,212 @@ export function PrFiles({
         base: snapshot.base,
       }),
     [snapshot, loading, available],
+  );
+  const targetMapped = (composer: Composer) =>
+    !stale(composer) &&
+    !loading &&
+    available.has(composer.target.path) &&
+    !!snapshot &&
+    anchorInSnapshot(snapshot, composer.target);
+  const choose = useCallback(
+    function choose(
+      path: string,
+      line: DiffLine,
+      returnFocus: () => void,
+      replyTo?: number,
+    ) {
+      if (!snapshot || loading || !activeRef.current) return;
+      const target: InlineTarget = {
+        path,
+        side: line.side === "deletions" ? "LEFT" : "RIGHT",
+        line: line.lineNumber,
+        head: snapshot.head,
+        base: snapshot.base,
+        viewer: snapshot.viewer,
+        replyTo,
+      };
+      setComposers((previous) => {
+        const existing = previous.find(
+          (entry) => composerKey(entry.target) === composerKey(target),
+        );
+        return existing
+          ? previous.map((entry) =>
+              entry === existing
+                ? { ...entry, focusRequest: entry.focusRequest + 1 }
+                : entry,
+            )
+          : [
+              ...previous,
+              {
+                operation: crypto.randomUUID(),
+                draft: { body: "" },
+                target,
+                focusRequest: 0,
+                restoreFocus: returnFocus,
+              },
+            ];
+      });
+      if (!status.busy && !status.unknown)
+        delivery.update({ error: undefined, sentUrl: undefined });
+    },
+    [snapshot, loading, status.busy, status.unknown, delivery],
+  );
+  async function applyResult(
+    result: WriteResult,
+    current: Snapshot | undefined,
+    composer?: Composer,
+  ) {
+    if (result.status === "sent") {
+      delivery.update({
+        busy: false,
+        unknown: false,
+        attempt: undefined,
+        error: undefined,
+        sentUrl: result.comment.url,
+      });
+      if (alive.current && composer) {
+        const focused =
+          document.activeElement?.closest("form")?.dataset.operation ===
+          composer.operation;
+        setComposers((previous) =>
+          previous.filter((entry) => entry.operation !== composer.operation),
+        );
+        if (focused && active) restoreFocus(composer);
+      }
+      if (!current || !alive.current || snapshotRef.current !== current) return;
+      const version = ++threadVersion.current;
+      try {
+        const rows = await readThreads(current);
+        if (
+          alive.current &&
+          snapshotRef.current === current &&
+          threadVersion.current === version
+        ) {
+          setThreads(rows);
+          setThreadError(undefined);
+        }
+      } catch (failure) {
+        if (
+          alive.current &&
+          snapshotRef.current === current &&
+          threadVersion.current === version
+        )
+          setThreadError(
+            `Comment sent. Refresh failed: ${readable(failure).message}`,
+          );
+      } finally {
+        if (
+          alive.current &&
+          snapshotRef.current === current &&
+          threadVersion.current === version
+        )
+          setCommentsLoading(false);
+      }
+    } else if (result.status === "unknown") {
+      delivery.update({
+        busy: false,
+        unknown: true,
+        attempt: result.attempt,
+        error:
+          "Delivery unknown. Check delivery before trying another submission.",
+      });
+    } else if (result.status === "stale") {
+      delivery.update({
+        busy: false,
+        error: "PR changed. Select a line again in the refreshed diff.",
+      });
+      if (alive.current) setRevision((previous) => previous + 1);
+    } else delivery.update({ busy: false, error: result.error.message });
+  }
+  async function submit(composer: Composer, body: string) {
+    if (
+      !snapshot ||
+      !body.trim() ||
+      !composersRef.current.some(
+        (entry) => entry.operation === composer.operation,
+      ) ||
+      stale(composer) ||
+      !active ||
+      loading ||
+      (!targetMapped(composer) && !composer.target.replyTo)
+    )
+      return;
+    if (!delivery.begin()) return;
+    const { target, operation } = composer;
+    pendingOperation.current = operation;
+    try {
+      const result =
+        target.replyTo === undefined
+          ? await api.create(snapshot, target, body, operation)
+          : await api.reply(snapshot, target.replyTo, body, operation);
+      await applyResult(result, snapshot, composer);
+    } catch (failure) {
+      // An unexpected rejection cannot establish whether a mutation happened.
+      delivery.update({
+        busy: false,
+        unknown: true,
+        error: `Delivery unknown: ${readable(failure).message}`,
+      });
+    }
+  }
+  async function reconcile() {
+    if (!status.attempt || status.busy) return;
+    delivery.update({ busy: true });
+    try {
+      await applyResult(
+        await api.reconcile(status.attempt),
+        snapshot,
+        composers.find((entry) => entry.operation === pendingOperation.current),
+      );
+    } catch (failure) {
+      delivery.update({ busy: false, error: readable(failure).message });
+    }
+  }
+  const form = (composer: Composer) => (
+    <InlineCommentForm
+      key={composer.operation}
+      operation={composer.operation}
+      draft={composer.draft}
+      focusRequest={composer.focusRequest}
+      busy={status.busy}
+      blocked={
+        stale(composer) ||
+        loading ||
+        status.unknown ||
+        !snapshot ||
+        (!targetMapped(composer) && !composer.target.replyTo)
+      }
+      notice={
+        stale(composer) ? "Select a line again in the latest diff." : undefined
+      }
+      onSubmit={(body) => void submit(composer, body)}
+      onCancel={() => {
+        const positions: { element: HTMLElement; top: number; left: number }[] =
+          [];
+        for (
+          let element: HTMLElement | null = root.current;
+          element;
+          element = element.parentElement
+        ) {
+          positions.push({
+            element,
+            top: element.scrollTop,
+            left: element.scrollLeft,
+          });
+        }
+        // Rebuilding annotation slots can temporarily collapse the scrollable content.
+        scrollRestore.current = () => {
+          for (const { element, top, left } of positions) {
+            element.scrollTop = top;
+            element.scrollLeft = left;
+          }
+        };
+        setComposers((previous) =>
+          previous.filter((entry) => entry.operation !== composer.operation),
+        );
+        restoreFocus(composer);
+      }}
+    />
   );
   const more = useCallback(
     async (thread: Thread) => {
@@ -235,11 +491,35 @@ export function PrFiles({
                 Load more replies
               </Button>
             )}
+            <Button
+              size="sm"
+              disabled={
+                !snapshot ||
+                loading ||
+                status.busy ||
+                status.unknown ||
+                !thread.rootCommentId
+              }
+              onClick={(event) => {
+                const button = event.currentTarget;
+                choose(
+                  thread.path,
+                  {
+                    side: thread.side === "LEFT" ? "deletions" : "additions",
+                    lineNumber: thread.line ?? 0,
+                  },
+                  () => button.focus({ preventScroll: true }),
+                  thread.rootCommentId,
+                );
+              }}
+            >
+              Reply
+            </Button>
           </div>
         </section>
       );
     },
-    [more],
+    [snapshot, loading, status.busy, status.unknown, choose, more],
   );
   const renderedThreads = useMemo(
     () =>
@@ -259,7 +539,7 @@ export function PrFiles({
     }
   >();
   function annotate(
-    target: Pick<Anchor, "path" | "side" | "line">,
+    target: Pick<InlineTarget, "path" | "side" | "line">,
     content: ReactNode,
   ) {
     const key = rowKey(target.path, target.side, target.line);
@@ -278,19 +558,33 @@ export function PrFiles({
   for (const { thread, inline, content } of renderedThreads)
     if (inline && thread.line !== null)
       annotate({ ...thread, line: thread.line }, content);
+  for (const composer of composers)
+    if (targetMapped(composer)) annotate(composer.target, form(composer));
+  const onSelect = useCallback<DiffComments["onSelect"]>(
+    (path, lines, restoreFocus) => {
+      if (
+        !snapshot?.files.some((file) => file.path === path) ||
+        status.busy ||
+        status.unknown ||
+        loading
+      )
+        return;
+      if (lines.length === 1 && lines[0]) choose(path, lines[0], restoreFocus);
+    },
+    [snapshot, status.busy, status.unknown, loading, choose],
+  );
   const comments: DiffComments = {
     annotations: [...annotations.values()],
     onAvailabilityChange: availability,
-    readOnly: true,
-    onSelect() {},
+    onSelect,
   };
   return (
-    <div className={styles.files}>
+    <div ref={root} className={styles.files}>
       <div className={styles.actions}>
         <Button
           size="sm"
           ref={refreshButton}
-          disabled={loading}
+          disabled={loading || status.busy}
           onClick={() => setRevision((previous) => previous + 1)}
         >
           Refresh changes
@@ -313,6 +607,37 @@ export function PrFiles({
           }
         />
       </div>
+      {status.sentUrl && (
+        <p role="status">
+          Comment sent.{" "}
+          <a
+            className="text-link"
+            href={status.sentUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View on GitHub
+          </a>
+        </p>
+      )}
+      {status.busy && (
+        <p role="status">
+          {status.unknown ? "Checking delivery…" : "Posting comment…"}
+        </p>
+      )}
+      {status.error && <p role="alert">{status.error}</p>}
+      {status.unknown && (
+        <div className={styles.actions}>
+          <Button
+            size="sm"
+            disabled={status.busy || !status.attempt}
+            onClick={() => void reconcile()}
+          >
+            Check delivery
+          </Button>
+        </div>
+      )}
+      {composers.filter((composer) => !targetMapped(composer)).map(form)}
       {error && <p role="alert">{error}</p>}
       {threadError && <p role="alert">{threadError}</p>}
       <LoadingRegion pending={loading} label="Loading GitHub changes…">

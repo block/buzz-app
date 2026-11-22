@@ -919,6 +919,10 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   expect(screen.queryByLabelText("Default model")).not.toBeInTheDocument();
   expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  // A key has no sign-in to offer again.
+  expect(
+    screen.queryByRole("button", { name: "Sign in again" }),
+  ).not.toBeInTheDocument();
   cleanup();
   const Settings = tab(installedType, 0);
   render(<Settings agent={agent()} save={vi.fn()} />);
@@ -930,6 +934,51 @@ it("keeps provider readiness quiet and agent sessions out of Settings", async ()
   expect(
     screen.getByText("No other conversations saved in this app yet."),
   ).toBeInTheDocument();
+});
+
+it("offers a ready interactive sign-in again, with its progress and Cancel", async () => {
+  interactive.signIn = true;
+  interactive.process = true;
+  const processes: { kill(): Promise<void> }[] = [];
+  try {
+    const { type, spawn } = installed();
+    const Setup = providerSetup(type);
+    const onClose = vi.fn();
+    render(<Setup onClose={onClose} />);
+    const user = userEvent.setup();
+    // `claude auth status` still reads a sign-in whose refresh was refused
+    // as ready, so the sign-in is offered beside Done.
+    await user.click(
+      await screen.findByRole("button", { name: "Sign in again" }),
+    );
+    const signIns = () =>
+      spawn.mock.calls.filter(
+        ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
+      );
+    await waitFor(() => expect(signIns()).toHaveLength(1));
+    const index = spawn.mock.calls.findIndex(
+      ([, options]) => options?.args?.slice(-2).join(" ") === "auth login",
+    );
+    const process = await spawn.mock.results[index]?.value;
+    if (!process) throw new Error("Sign-in process missing");
+    processes.push(process);
+    const kill = vi.spyOn(process, "kill");
+    // While it runs, the dialog's button cancels it rather than closing.
+    expect(
+      screen.queryByRole("button", { name: "Sign in again" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await process.exited;
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    await screen.findByRole("button", { name: "Sign in again" });
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(onClose).toHaveBeenCalledOnce();
+  } finally {
+    for (const process of processes) await process.kill();
+    interactive.process = false;
+    interactive.signIn = false;
+  }
 });
 
 it("edits the model through the Settings dropdown and preserves agent inheritance", async () => {

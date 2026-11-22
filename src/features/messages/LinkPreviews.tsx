@@ -99,7 +99,7 @@ function LinkPreviewSetup({
 }
 
 function shownWithin(element: HTMLElement, root: HTMLElement): boolean {
-  if (element.closest("[inert]")) return false;
+  if (element.closest("[inert], [aria-hidden='true']")) return false;
   const view = root.ownerDocument.defaultView;
   if (!view) return false;
   const { visibility } = view.getComputedStyle(element);

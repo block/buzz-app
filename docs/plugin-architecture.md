@@ -3348,7 +3348,7 @@ is its accessible name. The host draws that card only while the plugin's
 Settings card is registered and visible to the viewer, and outside the plugin's error boundary, so a
 preview that failed to render can still ask for setup later. When a status
 change removes a focused setup card, focus moves to another setup card, the
-first visible control that takes focus, or the message's "Link previews" group, which shows a
+first visible, exposed control that takes focus, or the message's "Link previews" group, which shows a
 focus ring, rather than the page. A renderer whose `subscribe` throws
 can't report changes, so its links draw as if it had no status until they mount
 again.

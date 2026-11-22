@@ -625,7 +625,7 @@ it("focuses the labelled previews group when a ready preview has nothing to focu
   );
 });
 
-it("skips hidden controls when a focused setup card becomes a ready preview", () => {
+it("skips hidden, inert and aria-hidden controls when a focused setup card becomes a ready preview", () => {
   const state = provider("needs-setup");
   const Hidden = ({ url }: LinkPreviewProps) => (
     <div>
@@ -640,6 +640,9 @@ it("skips hidden controls when a focused setup card becomes a ready preview", ()
       </a>
       <div inert>
         <button type="button">Inert</button>
+      </div>
+      <div aria-hidden="true">
+        <button type="button">Unexposed</button>
       </div>
       <button type="button">Open {url}</button>
     </div>

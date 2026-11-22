@@ -133,6 +133,31 @@ test.describe("Inline", () => {
     await expect(side(page).getByRole("tab")).toHaveCount(0);
   });
 
+  test.describe("Membership", () => {
+    test.use({
+      membershipActivity: true,
+      readState: false,
+      threadUnread: false,
+      historyCounts: { alpha: 1, beta: 1 },
+    });
+
+    test("a name in a membership notice opens its profile over the conversation", async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      await page
+        .locator("[data-membership-row]")
+        .getByRole("button", { name: "View Pinky profile" })
+        .click();
+      await expect(profile(page)).toContainText("Pinky");
+      expect((await address(page)).layer).toMatchObject({
+        target: expect.stringMatching(/^nostr:/),
+      });
+      await expect(side(page).getByRole("tab")).toHaveCount(0);
+    });
+  });
+
   test("a pull request and a profile open over the conversation; Open as tab hands them to a tab", async ({
     page,
     app,

@@ -1375,6 +1375,19 @@ function ThreadMessages({
     (!!snapshot.target && snapshot.target.id !== rootId);
   // Media opens over this thread's view while its reply box shows.
   const composerView = useComposerScope();
+  // Links outside a message row, such as profiles in an activity preview,
+  // open over this thread's view, as a row's do.
+  const viewRoot = composerView?.rootId;
+  const inView = !!composerView;
+  const threadRoot = snapshot.root?.id ?? messageId;
+  const openViewLink = useCallback(
+    (url: string) =>
+      onOpenLink(url, {
+        rootId: threadRoot,
+        ...(inView && { view: { rootId: viewRoot } }),
+      }),
+    [onOpenLink, threadRoot, inView, viewRoot],
+  );
   const openRootMedia = useCallback(
     (
       _rowId: string,
@@ -2099,14 +2112,14 @@ function ThreadMessages({
                   onToggle={toggleGroup}
                   extensions={extensions}
                   scope={scope}
-                  onOpenLink={onOpenLink}
+                  onOpenLink={openViewLink}
                   layout="thread"
                 />
               ) : (
                 <ActivityGroupPreview
                   session={session}
                   group={group}
-                  openActivity={onOpenLink}
+                  openActivity={openViewLink}
                   canOpenActivity={canOpenLink}
                   renderHistory={renderHistory}
                   profiles={profiles}

@@ -1354,22 +1354,27 @@ export function ChannelInventory({
       ),
     ))
       actions.push(
-        <MenuItem
+        <ContributionBoundary
           key={item.key}
-          disabled={surface?.pending ?? readWrite?.pending ?? false}
-          onClick={() => {
-            try {
-              void Promise.resolve(item.onSelect()).catch((error) =>
-                console.error(`Row menu item failed: ${item.key}`, error),
-              );
-            } catch (error) {
-              console.error(`Row menu item failed: ${item.key}`, error);
-            }
-          }}
+          fallback={null}
+          resetIdentity={rowContributions}
         >
-          <MenuIcon>{item.icon}</MenuIcon>
-          {item.label}
-        </MenuItem>,
+          <MenuItem
+            disabled={surface?.pending ?? readWrite?.pending ?? false}
+            onClick={() => {
+              try {
+                void Promise.resolve(item.onSelect()).catch((error) =>
+                  console.error(`Row menu item failed: ${item.key}`, error),
+                );
+              } catch (error) {
+                console.error(`Row menu item failed: ${item.key}`, error);
+              }
+            }}
+          >
+            <MenuIcon>{item.icon}</MenuIcon>
+            {item.label}
+          </MenuItem>
+        </ContributionBoundary>,
       );
     if (readable)
       actions.push(

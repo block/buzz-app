@@ -4596,18 +4596,18 @@ it("adds a plugin's row menu items after Mute, with their icons, waiting while t
           menuItems: (row: SidebarRow) => [
             {
               id: "watch",
+              label: "Plain icon",
+              icon: "★" as never,
+              onSelect: () => {},
+            },
+            {
+              id: "watch",
               label: `${watching ? "Unwatch" : "Watch"} ${row.label}`,
               icon: <svg data-testid="watch-icon" />,
               onSelect: () => {
                 watching = !watching;
                 selected(row.id);
               },
-            },
-            {
-              id: "plain",
-              label: "Plain icon",
-              icon: "★" as never,
-              onSelect: () => {},
             },
             {
               id: "watch",
@@ -4729,6 +4729,82 @@ it("adds a plugin's row menu items after Mute, with their icons, waiting while t
     await root.fiber.dispose();
   }
 });
+
+it.each(["row", "header"] as const)(
+  "omits a plugin menu item whose icon throws from the %s menu, keeping the sidebar and the other items",
+  async (menu) => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const preferences = createSidebarPreferencesStore({
+      read: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      }),
+      available: true,
+      writeMute: async () => [],
+    });
+    try {
+      await preferences.queries.ensure();
+      const h = fixture(
+        preferences.queries,
+        "ready",
+        undefined,
+        undefined,
+        rowRegistry({
+          version: 1,
+          id: "icons",
+          menuItems: () => [
+            {
+              id: "broken",
+              label: "Broken icon",
+              icon: <BrokenRow />,
+              onSelect: () => {},
+            },
+            {
+              id: "healthy",
+              label: "Healthy item",
+              icon: <svg />,
+              onSelect: () => {},
+            },
+          ],
+        }),
+      );
+      render(
+        h.view(
+          "alpha",
+          <ChannelHeaderMenu
+            channel={h.list.channels[0]}
+            session={h.session}
+            trigger={createRef<HTMLButtonElement>()}
+            openDetails={() => {}}
+          />,
+        ),
+      );
+      const user = userEvent.setup();
+      const row = await screen.findByRole("button", { name: "alpha" });
+      if (menu === "row") fireEvent.keyDown(row, { key: "ContextMenu" });
+      else
+        await user.click(
+          screen.getByRole("button", { name: "Channel actions" }),
+        );
+      expect(
+        await screen.findByRole("menuitem", { name: "Healthy item" }),
+      ).toBeVisible();
+      expect(screen.getByRole("menuitem", { name: "Mute" })).toBeVisible();
+      expect(
+        screen.queryByRole("menuitem", { name: "Broken icon" }),
+      ).toBeNull();
+      await user.keyboard("{Escape}");
+      for (const name of ["alpha", "beta", "gamma"])
+        expect(screen.getByRole("button", { name })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      error.mockRestore();
+      preferences.dispose();
+    }
+  },
+);
 
 it("gives a Solo row's plugin menu items the same section key as its render", async () => {
   const keys = vi.fn();

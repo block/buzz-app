@@ -165,14 +165,17 @@ export function sidebarRowMenuItems(
       return Array.isArray(items)
         ? items
             .filter(
-              (item, index) =>
+              (item) =>
                 typeof item?.id === "string" &&
                 idPattern.test(item.id) &&
-                items.findIndex((other) => other?.id === item.id) === index &&
                 typeof item.label === "string" &&
                 !!item.label.trim() &&
                 isValidElement(item.icon) &&
                 typeof item.onSelect === "function",
+            )
+            .filter(
+              (item, index, valid) =>
+                valid.findIndex((other) => other.id === item.id) === index,
             )
             .map((item) => ({ ...item, key: `${entry.key}/${item.id}` }))
         : [];

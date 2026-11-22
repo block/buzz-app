@@ -312,6 +312,8 @@
   position: relative;
   isolation: isolate;
   display: grid;
+  /* A long avatar-type strip scrolls inside the surface, never past it. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3);
   min-width: 0;
   padding: var(--avatar-inset);

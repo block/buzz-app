@@ -1,4 +1,5 @@
 import { AcpProcess } from "../agent-harness/acp/process";
+import { forwardRef, lazy, memo } from "react";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
 import { bundledOwner } from "../../plugins/provenance";
@@ -80,6 +81,7 @@ import { huddleDescription } from "../huddle/lifecycle";
 import type { AgentIdentity } from "./native";
 import {
   type Agent,
+  type AgentAvatarSource,
   type Agents,
   type AgentHandle,
   type AgentSession,
@@ -560,6 +562,33 @@ it("creates an agent in the community shown, with its type's defaults, and publi
     "watch/channel",
   ]);
   expect(service.find(bot)).toEqual(agent);
+});
+
+it("creates nothing when the selected community is not the one Create was prepared for", async () => {
+  const { service, native, second, select } = await setup();
+  select(second.origin);
+  await expect(
+    service.create({
+      type: "example/echo",
+      name: "Echo",
+      picture: "https://images.example/face",
+      community: "https://relay.example.test",
+    }),
+  ).rejects.toMatchObject({ name: "CommunityChanged" });
+  expect(native.create).not.toHaveBeenCalled();
+  expect(native.setPicture).not.toHaveBeenCalled();
+  select("https://relay.example.test");
+  await service.create({
+    type: "example/echo",
+    name: "Echo",
+    community: "https://relay.example.test/",
+  });
+  expect(native.create).toHaveBeenCalledWith(
+    "https://relay.example.test",
+    viewer,
+    "example/echo",
+    "Echo",
+  );
 });
 
 it("brings over an identity not already an agent, with its type's defaults and what it adopts, and publishes its profile", async () => {
@@ -15532,6 +15561,69 @@ it("adds a plugin's tab to every agent's settings until the plugin goes", async 
   );
   await first.dispose();
   expect(service.addedTabs()).toEqual([]);
+});
+
+it("lists plugins' avatar sources in key order while each plugin is on", async () => {
+  const { service, ctx } = await setup();
+  const owner = (id: string) =>
+    ctx.extend({ pluginOwner: Object.freeze({ id, revision: "bundled" }) });
+  const source = {
+    id: "faces",
+    title: "Faces",
+    icon: null,
+    component: () => null,
+  };
+  const listener = vi.fn();
+  service.subscribe(listener);
+  const later = owner("buzz.zeta").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => plugin.agents.registerAvatarSource(source),
+  });
+  const earlier = owner("buzz.alpha").plugin({
+    inject: ["agents"],
+    apply: (plugin: Context) => plugin.agents.registerAvatarSource(source),
+  });
+  await Promise.all([later, earlier]);
+  // Activation order never moves a tab.
+  expect(service.avatarSources().map(({ key }) => key)).toEqual([
+    "buzz.alpha/faces",
+    "buzz.zeta/faces",
+  ]);
+  expect(listener).toHaveBeenCalled();
+  const stable = service.avatarSources();
+  expect(service.avatarSources()).toBe(stable);
+  for (const bad of [
+    { ...source, id: "Not An Id" },
+    { ...source, id: "x".repeat(65) },
+    { ...source, title: " " },
+    { ...source, title: "x".repeat(65) },
+    { ...source, component: undefined as never },
+    { ...source, component: {} as never },
+    { ...source, id: ["faces"] as never },
+  ])
+    expect(() => owner("buzz.other").agents.registerAvatarSource(bad)).toThrow(
+      /Avatar sources need/,
+    );
+  await earlier.dispose();
+  expect(service.avatarSources().map(({ key }) => key)).toEqual([
+    "buzz.zeta/faces",
+  ]);
+  await later.dispose();
+  expect(service.avatarSources()).toEqual([]);
+  // Any ComponentType is admitted, as the public type says.
+  const wrapped: [string, AgentAvatarSource["component"]][] = [
+    ["memo", memo(() => null)],
+    ["forward", forwardRef(() => null)],
+    ["lazy", lazy(async () => ({ default: () => null }))],
+  ];
+  for (const [id, component] of wrapped)
+    expect(() =>
+      owner("buzz.wrapped").agents.registerAvatarSource({
+        ...source,
+        id,
+        component,
+      }),
+    ).not.toThrow();
 });
 
 it("renders a tab's views again when its `when` may answer differently", async () => {

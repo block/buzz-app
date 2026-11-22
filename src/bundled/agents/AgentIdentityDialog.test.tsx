@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+import {
+  noAvatarSources,
+  stubAvatarBrowserApis,
+} from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
   cleanup,
@@ -53,7 +56,7 @@ const reupload = (...later: string[]) => {
     vi.mocked(uploadAvatar).mockResolvedValueOnce(url);
   const agents = {
     save: vi.fn(async () => {}),
-    subscribe: () => () => {},
+    ...noAvatarSources,
     memberships: () => [],
   } as unknown as Agents & { save: ReturnType<typeof vi.fn> };
   const onClose = vi.fn();

@@ -75,6 +75,8 @@ import * as pluginDevelopment from "./plugin-development";
 import performanceDiagnosticsManifest from "./performance-diagnostics/manifest.json";
 import * as performanceDiagnostics from "./performance-diagnostics";
 
+import bittiesManifest from "./bitties/manifest.json";
+import * as bitties from "./bitties";
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
 
@@ -100,6 +102,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...relayNotesManifest, apiVersion: 1 },
     module: relayNotes,
     enabledByDefault: false,
+  },
+  {
+    manifest: { ...bittiesManifest, apiVersion: 1 },
+    module: bitties,
+    // The first avatar source: a Bitties tab in the avatar picker.
+    enabledByDefault: true,
   },
   {
     manifest: { ...huddlesManifest, apiVersion: 1 },

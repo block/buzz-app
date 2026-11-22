@@ -18,3 +18,10 @@ export function stubAvatarBrowserApis() {
     }));
   });
 }
+
+const noSources: readonly never[] = [];
+/** The avatar picker's view of an Agents service with no avatar sources. */
+export const noAvatarSources = {
+  subscribe: () => () => {},
+  avatarSources: () => noSources,
+};

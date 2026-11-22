@@ -48,6 +48,7 @@ import { type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
 import { ClaudeAuth, KEY_ONCE } from "./auth";
 import { ClaudeDefaults } from "./defaults";
+import { noAvatarSources } from "../../features/agents/avatar-testing";
 
 const desktop = vi.hoisted(() => ({ tauri: true }));
 /** Native's Claude key store (`claude_key.rs`), which a test sets up. */
@@ -1468,7 +1469,7 @@ it.each(["unrelated", "thinking", "model"])(
     const onSave = vi.fn(async (_input: NewAgent) => undefined);
     render(
       <AgentCreateDialog
-        agents={{} as Agents}
+        agents={noAvatarSources as unknown as Agents}
         types={[{ ...type, key: existing.type } as RegisteredAgentType]}
         onCreated={vi.fn()}
         onClose={vi.fn()}
@@ -1538,7 +1539,7 @@ it("passes the real Claude Thinking choice through Create agent", async () => {
     };
     return saved;
   });
-  const agents = { create } as unknown as Agents;
+  const agents = { ...noAvatarSources, create } as unknown as Agents;
   const view = render(
     <AgentCreateDialog
       agents={agents}
@@ -1850,7 +1851,7 @@ it("offers Set up Claude beside Harness when Claude is picked, then its models",
   render(
     <ToastProvider>
       <AgentCreateDialog
-        agents={{} as Agents}
+        agents={noAvatarSources as unknown as Agents}
         types={[other, claude]}
         onCreated={vi.fn()}
         onClose={vi.fn()}
@@ -2322,6 +2323,7 @@ it.each(["Identity", "Settings"])(
       controlAttention: () => {},
       memberships: () => [],
       subscribe: () => () => {},
+      avatarSources: noAvatarSources.avatarSources,
     } as unknown as Agents;
     const type = {
       tabs: [
@@ -2716,6 +2718,7 @@ function syncedSettings() {
     configHistory: () => undefined,
     addedTabs: () => [],
     subscribe: () => () => {},
+    avatarSources: noAvatarSources.avatarSources,
     memberships: () => [],
   } as unknown as Agents;
   const type = {

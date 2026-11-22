@@ -1,0 +1,9 @@
+{
+  "id": "buzz.bitties",
+  "name": "Bitties",
+  "apiVersion": 1,
+  "description": "Adds a Bitties tab to the agent avatar picker: a pixel avatar drawn from the agent's name.",
+  "discovery": {
+    "category": "agents"
+  }
+}

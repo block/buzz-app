@@ -45,6 +45,7 @@ import { CodexRuntime } from "./runtime";
 import type { Wire } from "./rpc";
 import type { PreviewHost } from "./voice-preview";
 import { CodexSetup } from "./setup";
+import { noAvatarSources } from "../../features/agents/avatar-testing";
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -1498,7 +1499,7 @@ it.each(["unrelated", "thinking", "model"])(
     const onSave = vi.fn(async (_input: NewAgent) => undefined);
     render(
       <AgentCreateDialog
-        agents={{} as Agents}
+        agents={noAvatarSources as unknown as Agents}
         types={[registeredType]}
         onCreated={vi.fn()}
         onClose={vi.fn()}
@@ -1578,7 +1579,7 @@ it("passes the real Codex Thinking choice through Create agent", async () => {
   });
   const view = render(
     <AgentCreateDialog
-      agents={{ create } as unknown as Agents}
+      agents={{ ...noAvatarSources, create } as unknown as Agents}
       types={[registeredType]}
       onCreated={vi.fn()}
       onClose={vi.fn()}
@@ -1639,7 +1640,7 @@ it("returns an unsupported Codex effort to Default after a successful catalog re
   });
   const view = render(
     <AgentCreateDialog
-      agents={{ create } as unknown as Agents}
+      agents={{ ...noAvatarSources, create } as unknown as Agents}
       types={[registeredType]}
       onCreated={vi.fn()}
       onClose={vi.fn()}
@@ -2318,6 +2319,7 @@ it.each(["Identity", "Settings"])(
       controlAttention: () => {},
       memberships: () => [],
       subscribe: () => () => {},
+      avatarSources: noAvatarSources.avatarSources,
     } as unknown as Agents;
     const type = {
       tabs: [

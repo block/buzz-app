@@ -50,7 +50,12 @@ import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Select } from "../../shared/design-system/ui/Select";
-import { AgentAvatarPicker, type AvatarSelection } from "./AgentAvatarPicker";
+import {
+  AgentAvatarPicker,
+  effectiveAvatar,
+  useAvatarSources,
+  type AvatarSelection,
+} from "./AgentAvatarPicker";
 import styles from "./AgentCreate.module.css";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
@@ -63,6 +68,15 @@ import { RemoteAgentIntroduction } from "./RemoteAgentIntroduction";
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+/** As the Agents service throws when its selected community moved; matched
+ * by name, so this plugin needs no runtime import from the service. */
+const communityChanged = () =>
+  Object.assign(
+    new Error(
+      "The community changed while saving. Save again to create the agent here.",
+    ),
+    { name: "CommunityChanged" },
+  );
 // Focused controls and save errors must clear the dialog's sticky chrome.
 const reveal = (element: HTMLElement | null) => {
   if (!element) return;
@@ -367,7 +381,13 @@ export function AgentCreateDialog({
   const [error, setError] = useState("");
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [configurationReady, setConfigurationReady] = useState(false);
-  const avatarRef = useRef<{ prepare(): Promise<string> }>(null);
+  const avatarRef = useRef<{
+    prepare(destination: string | undefined): Promise<string>;
+  }>(null);
+  const avatarSources = useAvatarSources(agents);
+  const liveCommunity = useRef(community);
+  liveCommunity.current = community;
+  const shownAvatar = effectiveAvatar(avatar, avatarSources);
   const nameField = useRef<HTMLInputElement>(null);
   const proposalHeading = useRef<HTMLHeadingElement>(null);
   const createButton = useRef<HTMLButtonElement>(null);
@@ -487,6 +507,13 @@ export function AgentCreateDialog({
     }
     setPending(true);
     setError("");
+    // The avatar uploads to the community bound when Save began; the agent
+    // is written there too, or not at all. The service checks its own
+    // selection at the write, since this prop can lag behind it.
+    const scope = liveCommunity.current;
+    // A source's upload stays in its community, so saving again elsewhere
+    // is refused; other avatars upload again wherever Save runs.
+    const held = shownAvatar.kind === "source";
     try {
       // The pick was ready when found; it may have been signed out since.
       // A check that fails or takes too long counts as not ready.
@@ -496,9 +523,18 @@ export function AgentCreateDialog({
         setPending(false);
         return;
       }
+      // The check above can outlast a community switch; nothing uploads then.
+      if (liveCommunity.current !== scope) throw communityChanged();
+      // The upload goes to `scope` itself, so a switch away and back during
+      // it can't split the avatar from the agent.
+      const prepared = await avatarRef.current?.prepare(scope);
+      if (liveCommunity.current !== scope) throw communityChanged();
       const picture =
-        (await avatarRef.current?.prepare()) ??
-        (avatar.kind === "emoji" ? "" : avatar.picture);
+        prepared ??
+        // A source's picture is local until the picker uploads it.
+        (shownAvatar.kind === "emoji" || shownAvatar.kind === "source"
+          ? ""
+          : shownAvatar.picture);
       const input = {
         type: type.key,
         name: name.trim(),
@@ -515,11 +551,23 @@ export function AgentCreateDialog({
             : {}),
       };
       if (update) await update.onSave(input);
-      else onCreated(await (onCreate ? onCreate(input) : agents.create(input)));
+      else
+        onCreated(
+          await (onCreate
+            ? onCreate(input)
+            : agents.create({
+                ...input,
+                ...(scope ? { community: scope } : {}),
+              })),
+        );
     } catch (reason) {
       setPending(false);
       if (settings) throw reason;
-      setError(message(reason));
+      setError(
+        reason instanceof Error && reason.name === "CommunityChanged" && held
+          ? "The community changed while saving. Switch back to it to create the agent with this avatar, or choose another avatar."
+          : message(reason),
+      );
     }
   };
   const saveSettings: AgentViewProps["save"] = (config) =>
@@ -739,6 +787,8 @@ export function AgentCreateDialog({
                 selection={avatar}
                 disabled={pending}
                 community={community}
+                sources={avatarSources}
+                liveSources={agents.avatarSources}
                 onBusyChange={setAvatarBusy}
                 onChange={(selection) => {
                   setAvatar(selection);
@@ -933,7 +983,7 @@ export function AgentCreateDialog({
         <div className="grid gap-3">
           <RemoteAgentIntroduction
             name={name.trim()}
-            avatar={avatar}
+            avatar={shownAvatar}
             community={community}
             builderlab={type?.key === "block.builderlab/builderlab"}
           />

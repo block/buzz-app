@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+import {
+  noAvatarSources,
+  stubAvatarBrowserApis,
+} from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
   act,
@@ -110,6 +113,7 @@ it("keeps one provider footer across tabs and measures its changing height for t
   } as RegisteredAgentType;
   const agents = {
     subscribe: () => () => {},
+    avatarSources: noAvatarSources.avatarSources,
     snapshot: () => ({ agents: [agent] }),
     configHistory: () => undefined,
     agentSync: () => undefined,
@@ -278,6 +282,7 @@ it.each([
     const agents = {
       save: vi.fn(),
       subscribe: () => () => {},
+      avatarSources: noAvatarSources.avatarSources,
       snapshot: () => ({ agents: [agent] }),
       configHistory: () => undefined,
       agentSync: () => undefined,
@@ -494,6 +499,7 @@ it("shows every affected community with unsaved shared settings and submits the 
     configHistory: () => undefined,
     agentSync: () => undefined,
     addedTabs: () => [],
+    avatarSources: noAvatarSources.avatarSources,
     registerTab: () => {},
     controlAttention: () => {},
     memberships: () => [

@@ -797,6 +797,8 @@ Segmented tracks default to `size="md"` (40px); `size="sm"` uses the 32px
 control step, paired with `IconButton size="sm"` for adjacent actions.
 Proposed: `Tabs variant="segmented-icons"` uses the same track for icon-only
 avatar choices, retaining accessible labels and titles. Each item supplies an icon.
+Its segments keep their size and scroll within the track, with the panel tabs'
+edge fades, when plugins add more choices than fit.
 Use `Tabs variant="chrome"` for a flat pill selection on the shell and `variant="panel"`
 for an underline on a plain surface. IconButton also provides a `chrome` variant.
 Use `IconButton variant="inset"` for a secondary action beside segmented filters;

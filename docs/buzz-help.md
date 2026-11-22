@@ -1378,6 +1378,13 @@ default Huddle voice.
 - In the agent avatar picker, drag the avatar strip with a mouse or scroll it
   to browse more choices. Click an avatar to select it; keyboard users can Tab
   through the choices and press Enter or Space.
+- The picker's **Bitties** tab, from the bundled Bitties plugin, draws a pixel
+  avatar from the agent's name and redraws it as the name changes. Shuffle
+  picks a random one, and the lock keeps the current one through renames; the
+  strip offers more for the same name. Like an uploaded image, it goes to the
+  selected community when the agent is saved, and later renames do not change
+  a saved avatar. Its strip is one Tab stop; use the arrow keys, Home and End
+  within it. Turn the plugin off in **Settings** → **Plugins** to hide the tab.
 - For agents running on this computer, **Identity** normally holds Harness,
   Model, Thinking, and Instructions. **Settings** holds Workspace,
   **Session scope** (called **Conversations** for Pi), configuration history, and

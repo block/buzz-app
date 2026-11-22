@@ -11,7 +11,10 @@ import {
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import closeRequest from "../../../src-tauri/src/close-request.js?raw";
-import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
+import {
+  noAvatarSources,
+  stubAvatarBrowserApis,
+} from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
 import {
   act,
@@ -460,6 +463,8 @@ function setup(
     teamUpdateRequests: () => [],
     dismissTeamUpdate: vi.fn(),
     approveTeamUpdate: vi.fn(async () => {}),
+    registerAvatarSource: vi.fn(),
+    avatarSources: noAvatarSources.avatarSources,
     addedTabs: () =>
       linkTab
         ? [

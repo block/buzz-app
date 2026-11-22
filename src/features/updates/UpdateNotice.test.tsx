@@ -7,12 +7,14 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { UpdateAction } from "./UpdateAction";
 import { UpdateNotice } from "./UpdateNotice";
-import { createUpdates, type Updates } from "./updates";
+import { type AgentWork, createUpdates, type Updates } from "./updates";
 
 let updates: Updates | undefined;
 afterEach(() => {
@@ -41,7 +43,7 @@ function UpdateSurfaces({ updates }: { updates: Updates }) {
   );
 }
 
-async function readyUpdate() {
+async function readyUpdate(work?: AgentWork, ready = READY) {
   const download = deferred();
   const install = deferred();
   const update = {
@@ -52,16 +54,19 @@ async function readyUpdate() {
   };
   const checks = [update, null, update];
   const relaunch = vi.fn(async () => {});
-  updates = createUpdates({
-    desktop: true,
-    check: async () => checks.shift() ?? null,
-    relaunch,
-  });
+  updates = createUpdates(
+    {
+      desktop: true,
+      check: async () => checks.shift() ?? null,
+      relaunch,
+    },
+    work,
+  );
   const view = render(<UpdateSurfaces updates={updates} />);
   await waitFor(() => expect(updates?.snapshot().state).toBe("downloading"));
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   download.resolve();
-  await screen.findByRole("button", { name: READY });
+  await screen.findByRole("button", { name: ready });
   return { updates, update, install, relaunch, view };
 }
 
@@ -71,6 +76,10 @@ it("offers restart from the top bar without a toast once the download is ready",
   expect(screen.getByRole("button", { name: READY })).toHaveTextContent(
     "Update",
   );
+  // An app without agents has nothing to wait for.
+  expect(
+    screen.queryByRole("button", { name: "More update options" }),
+  ).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: READY }));
   expect(
@@ -145,4 +154,86 @@ it("a dismissed failure stays hidden across remounts and later checks", async ()
   void updates.checkForUpdate();
   expect(await screen.findByRole("button", { name: READY })).toBeVisible();
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+
+/** Local agents with `count` working. */
+function agentWork(count: number) {
+  const listeners = new Set<() => void>();
+  return {
+    isWorking: () => count > 0,
+    workingCount: () => count,
+    subscribeWorking(listener: () => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    set(next: number) {
+      count = next;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+    },
+  };
+}
+
+const openOptions = async () => {
+  fireEvent.click(screen.getByRole("button", { name: "More update options" }));
+  return screen.findByRole("menu");
+};
+
+it("says how many agents Update interrupts, following the working count", async () => {
+  const work = agentWork(2);
+  await readyUpdate(
+    work,
+    "Update ready. Restarting Buzz now interrupts 2 agents",
+  );
+  work.set(1);
+  expect(
+    screen.getByRole("button", {
+      name: "Update ready. Restarting Buzz now interrupts 1 agent",
+    }),
+  ).toBeVisible();
+  work.set(0);
+  expect(screen.getByRole("button", { name: READY })).toBeVisible();
+});
+
+it("shows sighted users the interruption warning on hover of the split Update button", async () => {
+  const user = userEvent.setup();
+  const warning = "Update ready. Restarting Buzz now interrupts 2 agents";
+  await readyUpdate(agentWork(2), warning);
+  await user.hover(screen.getByRole("button", { name: warning }));
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(warning);
+});
+
+it("schedules the update from the top bar, and cancels it or installs at once", async () => {
+  const work = agentWork(1);
+  const { updates, update } = await readyUpdate(
+    work,
+    "Update ready. Restarting Buzz now interrupts 1 agent",
+  );
+  fireEvent.click(
+    within(await openOptions()).getByRole("menuitem", {
+      name: "Update when agents are idle",
+    }),
+  );
+  const scheduled =
+    "Update scheduled for when agents are idle; 1 agent working. Restart Buzz now to install";
+  expect(
+    await screen.findByRole("button", { name: scheduled }),
+  ).toHaveTextContent("Scheduled");
+  expect(updates.snapshot().state).toBe("scheduled");
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+  fireEvent.click(
+    within(await openOptions()).getByRole("menuitem", {
+      name: "Cancel scheduled update",
+    }),
+  );
+  await waitFor(() => expect(updates.snapshot().state).toBe("ready"));
+
+  updates.installWhenIdle();
+  fireEvent.click(await screen.findByRole("button", { name: scheduled }));
+  expect(update.install).toHaveBeenCalledOnce();
+  expect(
+    await screen.findByRole("button", { name: "Updating Buzz" }),
+  ).toHaveAttribute("aria-disabled", "true");
 });

@@ -1997,6 +1997,13 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   repository. If the message says the repository has more than 20,000 files,
   choose **Back** and enter the plugin folder in **Folder**; a smaller folder
   can bring that file count under the limit.
+- On desktop, a downloaded Buzz update shows **Update** in the top bar.
+  Updating restarts Buzz, which stops agent turns running on this device; the
+  button's label says how many agents are working. Its menu, and **Settings →
+  Software updates**, offer **Update when agents are idle**: Buzz waits until no
+  agent on this device has queued or running work for one minute, then
+  restarts. While it waits the top bar shows **Scheduled**; click it to update
+  now, or cancel from its menu or Settings. Reloading Buzz drops the wait.
 - On desktop, plugins can support update checks and set them on or off by default.
   Use **Check for updates automatically** in the plugin's actions menu to change
   this choice. Buzz saves your choice across updates and restarts. Plugins without

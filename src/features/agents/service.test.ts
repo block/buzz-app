@@ -1799,6 +1799,44 @@ it("keeps the Mac awake while a turn works and for the chosen time after it", as
   }
 });
 
+it("counts agents working, for the update notice to wait on", async () => {
+  const { service, run, emit } = await setup();
+  const changed = vi.fn();
+  const stop = service.work.subscribeWorking(changed);
+  let finish = () => {};
+  try {
+    expect(service.work.isWorking()).toBe(false);
+    expect(service.work.workingCount()).toBe(0);
+    await service.create({ type: "example/echo", name: "Echo" });
+    const turn = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    run.mockImplementationOnce(async ({ workingUntil }) => workingUntil(turn));
+    emit({
+      events: [
+        event("m", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    await vi.waitFor(() => expect(service.work.workingCount()).toBe(1));
+    expect(service.work.isWorking()).toBe(true);
+    expect(changed).toHaveBeenCalled();
+    changed.mockClear();
+    finish();
+    await vi.waitFor(() => expect(service.work.workingCount()).toBe(0));
+    expect(service.work.isWorking()).toBe(false);
+    expect(changed).toHaveBeenCalled();
+  } finally {
+    finish();
+    stop();
+  }
+});
+
 it.each([
   [{ ok: true, stopped: true }, "stopped"],
   [{ ok: false, error: "Broke", stopped: true }, "error"],
@@ -5888,6 +5926,39 @@ it.each(["mention", "watch"] as const)(
   },
 );
 
+it("counts a queued mention as work until custody elsewhere drops it", async () => {
+  const f = await setup();
+  const claimStarted = runnerGate();
+  const claim = runnerGate<boolean>();
+  f.native.claim.mockImplementationOnce(async () => {
+    claimStarted.resolve(undefined);
+    return claim.promise;
+  });
+  try {
+    await f.service.create({ type: "example/echo", name: "Echo" });
+    await claimStarted.promise;
+    f.emit({
+      events: [
+        event("queued-mention", {
+          tags: [
+            ["h", channel],
+            ["p", bot],
+          ],
+        }),
+      ],
+      channelId: channel,
+    });
+    // Accepted but not started: a restart now would lose it.
+    expect(f.run).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(f.service.work.workingCount()).toBe(1));
+    claim.resolve(false);
+    await vi.waitFor(() => expect(f.service.work.workingCount()).toBe(0));
+    expect(f.run).not.toHaveBeenCalled();
+  } finally {
+    claim.resolve(false);
+  }
+});
+
 it.each([false, new Error("Custody unavailable")])(
   "rechecks native custody before an immediate session mutation: %s",
   async (denied) => {
@@ -9939,6 +10010,21 @@ it("runs a watch's classifier after its selectors and passes the event with each
   );
 });
 
+it("counts an event being classified as work until it is dropped", async () => {
+  const jev = fakeJev();
+  const decided = runnerGate<ReturnType<typeof answered>>();
+  jev.decide.mockImplementationOnce(() => decided.promise);
+  const { service, run, emit } = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(service.classifier()).toBe("available"));
+  emit({ events: [event("w", { content: "lunch?" })] });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
+  // Accepted but not queued yet: a restart now would lose it.
+  expect(service.work.workingCount()).toBe(1);
+  decided.resolve(answered(0.2));
+  await vi.waitFor(() => expect(service.work.workingCount()).toBe(0));
+  expect(run).not.toHaveBeenCalled();
+});
+
 it("drops an event every answer rejects, and does not classify an event the selectors reject", async () => {
   const jev = fakeJev();
   jev.decide.mockResolvedValue(answered(0.2));
@@ -11936,6 +12022,49 @@ it.each([false, true])(
     }
   },
 );
+
+it("counts a live event waiting on its watch's catch-up as work", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  try {
+    const { service, run, session, emit, recover } = await setup({
+      identities: [echo],
+    });
+    const now = nowSeconds();
+    await service.save(bot, {
+      attentionEnabled: true,
+      attention: { ...chat, "watch/channel": null },
+    });
+    await settle();
+    vi.setSystemTime((now + 60) * 1000);
+    const read = vi.mocked(session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    const reading = runnerGate();
+    const page = runnerGate();
+    let first = true;
+    read.mockImplementation(async (filters, options) => {
+      if (filters[0]?.kinds?.includes(9) && !filters[0]["#p"] && first) {
+        first = false;
+        reading.resolve(undefined);
+        await page.promise;
+      }
+      return original(filters, options);
+    });
+    recover();
+    await reading.promise;
+    emit({ events: [event("live", { created_at: now + 50 })] });
+    await settle();
+    // Already saved as heard: a restart now would not give it again.
+    expect(run).not.toHaveBeenCalled();
+    expect(service.work.workingCount()).toBe(1);
+    page.resolve(undefined);
+    await vi.waitFor(() => expect(heard(run)).toEqual(["hello live"]));
+    await vi.waitFor(() => expect(service.work.workingCount()).toBe(0));
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("starts catch-up again when its watch is edited while a page is being read", async () => {
   vi.useFakeTimers({ toFake: ["Date"] });

@@ -26,6 +26,7 @@ export function UpdateNotice({ updates }: { updates: Updates }) {
     idle: "",
     ready: "",
     installing: "",
+    scheduled: "",
     checking: "Checking for updates...",
     available: "Preparing update...",
     downloading: "Downloading update...",

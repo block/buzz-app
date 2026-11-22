@@ -124,9 +124,11 @@ type WindowState = {
   noticeRead?: { controller: AbortController; generation: number } | undefined;
   /** Older pages shown without their aux closure, oldest last, with their
    * rows, and the read that adds it to them one page at a time. */
+  /** Older pages shown without their aux closure: the rows each still needs
+   * it for, read down from `cursor` to no older than `floor` (unix seconds). */
   auxPages: {
     cursor: WindowCursor;
-    limit: number | undefined;
+    floor: number;
     rows: ReadonlySet<string>;
   }[];
   auxRead?:
@@ -1060,8 +1062,8 @@ export function createChannelStore(
         const held = rowIds(state);
         if (![...next.rows].some((id) => held.has(id))) continue;
         const page = next;
-        const { cursor, limit = WINDOW_PAGE_SIZE } = page;
-        const chunk = Math.min(limit, AUX_PAGE);
+        const { cursor } = page;
+        const chunk = Math.min(page.rows.size, AUX_PAGE);
         // The rows' thread summaries came with them.
         const events = await retryRead(
           (signal) =>
@@ -1076,12 +1078,12 @@ export function createChannelStore(
         if (!live(state, generation) || controller.signal.aborted)
           return keep(page);
         const read = parseWindow(channelId, cursor, source.relayAuthor, events);
-        if (read.cursor && limit > chunk)
-          state.auxPages.unshift({
-            ...page,
-            cursor: read.cursor,
-            limit: limit - chunk,
-          });
+        // A row written into the range since the page was read takes a place
+        // in this limited read: continue until every row of the page is read.
+        const seen = new Set(read.events.map((event) => event.id));
+        const rest = new Set([...page.rows].filter((id) => !seen.has(id)));
+        if (read.cursor && rest.size && read.cursor.createdAt >= page.floor)
+          state.auxPages.unshift({ ...page, cursor: read.cursor, rows: rest });
         // Only aux about rows the window still holds: a row it has since
         // dropped stays dropped. The closure spans the events held too, so a
         // held edit's deletion arrives.
@@ -1496,15 +1498,15 @@ export function createChannelStore(
       });
       void fillNotices(state, !cursor && !besideHead);
       if (cursor) {
-        state.auxPages.push({
-          cursor,
-          limit,
-          rows: new Set(
-            page.events
-              .filter((event) => WINDOW_KINDS.includes(event.kind))
-              .map((event) => event.id),
-          ),
-        });
+        const pageRows = page.events.filter((event) =>
+          WINDOW_KINDS.includes(event.kind),
+        );
+        if (pageRows.length)
+          state.auxPages.push({
+            cursor,
+            floor: Math.min(...pageRows.map((event) => event.created_at)),
+            rows: new Set(pageRows.map((event) => event.id)),
+          });
         void fillAux(state);
       }
       void fetchProfiles(rows);

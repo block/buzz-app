@@ -856,13 +856,14 @@ describe("channel store", () => {
       loadingOlder: false,
       rows: [{ id: older.id }, { id: newer.id }],
     });
-    // The same page then reads in full, adding its aux closure to the rows.
+    // The same page then reads in full, adding its aux closure to the rows:
+    // as many rows as it showed.
     const aux = next();
     expect(aux.filters[0]).toMatchObject({
       until: 20,
       before_id: newer.id,
       include_aux: true,
-      limit: 20,
+      limit: 2,
     });
     expect(aux.filters[0]).not.toHaveProperty("include_summaries");
     aux.respond([
@@ -987,6 +988,83 @@ describe("channel store", () => {
       { include_aux: true, limit: 50, until: rows[49]?.created_at },
       { include_aux: true, limit: 20, until: rows[99]?.created_at },
     ]);
+    expect(pending.filter((entry) => entry.filters[0]?.top_level)).toEqual([]);
+  });
+  it("reads on past a row written into a page's range until its aux covers every row", async () => {
+    const { queries, pending } = setup();
+    queries.ensure("c");
+    const newer = message(alice, "c", "newer", 200);
+    const take = () => {
+      const read = pending.find((entry) => entry.filters[0]?.top_level);
+      assert(read);
+      pending.splice(pending.indexOf(read), 1);
+      return read;
+    };
+    take().respond([
+      newer,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 200, id: newer.id },
+      }),
+    ]);
+    await flush();
+    queries.loadOlder("c");
+    const rows = [190, 180, 170].map((at) =>
+      message(alice, "c", `older ${at}`, at),
+    );
+    const [, second, last] = rows;
+    assert(second && last);
+    take().respond([
+      ...rows,
+      bounds(relay, "c", `200:${newer.id}`, {
+        has_more: true,
+        next_cursor: { created_at: last.created_at, id: last.id },
+      }),
+    ]);
+    await flush();
+    // A backdated row takes a place in the limited aux read.
+    const backdated = message(alice, "c", "backdated", 175);
+    const first = take();
+    expect(first.filters[0]).toMatchObject({ include_aux: true, limit: 3 });
+    first.respond([
+      rows[0],
+      second,
+      backdated,
+      bounds(relay, "c", `200:${newer.id}`, {
+        has_more: true,
+        next_cursor: { created_at: backdated.created_at, id: backdated.id },
+      }),
+    ]);
+    await flush();
+    const rest = take();
+    expect(rest.filters[0]).toMatchObject({
+      include_aux: true,
+      limit: 1,
+      until: backdated.created_at,
+      before_id: backdated.id,
+    });
+    const reaction = signed(viewer, {
+      kind: 7,
+      content: "+",
+      created_at: 171,
+      tags: [
+        ["h", "c"],
+        ["e", last.id],
+      ],
+    });
+    rest.respond([
+      last,
+      reaction,
+      bounds(relay, "c", `175:${backdated.id}`, {
+        has_more: true,
+        next_cursor: { created_at: last.created_at, id: last.id },
+      }),
+    ]);
+    await flush();
+    expect(
+      queries.window("c").rows.find((row) => row.id === last.id)?.reactions,
+    ).toHaveLength(1);
+    // Every row of the page is covered: no further aux read.
     expect(pending.filter((entry) => entry.filters[0]?.top_level)).toEqual([]);
   });
   it("evicting a window aborts its pages' aux read and drops the rest", async () => {

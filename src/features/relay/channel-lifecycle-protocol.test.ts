@@ -62,6 +62,32 @@ it.each([
   ],
   ["Solo chat member", { channelType: "solo" }, false, ["leave"]],
   ["DM", { channelType: "dm", owners: [] }, false, ["hide"]],
+  // Whatever role the relay lists, a DM is never archived or deleted; naming it
+  // is what makes it a channel that can be.
+  [
+    "DM whose viewer is an owner",
+    { channelType: "dm", viewerRole: "owner" },
+    false,
+    ["hide"],
+  ],
+  [
+    "DM whose viewer is an owner's agent",
+    { channelType: "dm" },
+    true,
+    ["hide"],
+  ],
+  [
+    "DM archived",
+    { channelType: "dm", viewerRole: "admin", archived: true },
+    false,
+    ["hide"],
+  ],
+  [
+    "named DM, now a stream",
+    { channelType: "stream", viewerRole: "owner" },
+    false,
+    ["archive", "delete"],
+  ],
 ] as const)("offers a %s %j", (_, overrides, agentOwner, actions) => {
   expect(
     offered(channel(overrides as Partial<ChannelSummary>), agentOwner),

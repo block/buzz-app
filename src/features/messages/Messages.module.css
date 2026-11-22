@@ -1661,9 +1661,6 @@ button.mediaPreview {
 }
 /* A media sheet keeps playback beside its comments and comment box. */
 .sheetReview {
-  /* Its letterbox follows the sheet's theme; the stage itself is dark for its
-     controls, so resolve the fill here. */
-  --sheet-media-fill: var(--surface-inset);
   display: grid;
   flex: 1;
   grid-template-columns: minmax(0, 1fr) 25rem;
@@ -1677,7 +1674,9 @@ button.mediaPreview {
   min-height: 0;
   padding: 0;
   overflow: hidden;
-  background: var(--sheet-media-fill);
+  /* No letterbox of its own: media sits straight on the sheet, in either
+     theme, though the stage itself is dark for its controls. */
+  background: transparent;
 }
 .sheetReview > .mediaReviewConversation {
   max-height: none;
@@ -2894,7 +2893,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   background: var(--bg-media-canvas);
 }
 .sheetReview :is(.mediaViewerImage, .mediaViewerVideo) {
-  background: var(--sheet-media-fill);
+  background: transparent;
 }
 
 .imageReviewStage > img[data-gallery-departing] {

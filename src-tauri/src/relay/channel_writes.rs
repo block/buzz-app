@@ -20,7 +20,7 @@ fn common(event: &EventTemplate) -> bool {
     event.content.is_empty() && event.created_at <= i64::MAX as u64
 }
 fn details(event: &EventTemplate) -> bool {
-    if event.kind != 9002 || !common(event) || !(3..=14).contains(&event.tags.len()) {
+    if event.kind != 9002 || !common(event) || !(3..=15).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(about)) = (
@@ -54,6 +54,13 @@ fn details(event: &EventTemplate) -> bool {
         }
         index += 1;
     }
+    // An empty picture clears it, as the relay does.
+    if let Some(picture) = tag(event, index, "picture") {
+        if !channel_picture(picture) {
+            return false;
+        }
+        index += 1;
+    }
     let labels = &event.tags[index..];
     let labels_valid = details_labels(labels);
     uuid(id)
@@ -66,6 +73,16 @@ fn details(event: &EventTemplate) -> bool {
             == name
         && about.chars().count() <= 1000
         && !about.contains("Buzz Huddle (")
+}
+
+/// Whether `value` is a storable channel picture, as the relay checks it:
+/// empty, or an http(s) URL of at most 2048 bytes with no whitespace or
+/// control characters.
+fn channel_picture(value: &str) -> bool {
+    value.is_empty()
+        || (value.len() <= 2048
+            && (value.starts_with("https://") || value.starts_with("http://"))
+            && !value.chars().any(|c| c.is_whitespace() || c.is_control()))
 }
 
 fn details_labels(labels: &[Vec<String>]) -> bool {
@@ -380,6 +397,220 @@ pub(crate) async fn relay_direct_message(
         return Err("The relay returned an invalid direct message.".into());
     }
     Ok(id.into())
+}
+
+/// The longest conversation name, in characters, as the relay counts it.
+const MAX_CONVERSATION_NAME: usize = 255;
+/// The longest conversation description, as a channel's `about`.
+const MAX_CONVERSATION_ABOUT: usize = 1000;
+
+/// The name as the relay canonicalizes it: leading `#` and whitespace and
+/// trailing whitespace dropped. Refused when empty or too long.
+fn conversation_name(name: &str) -> Result<String> {
+    let name = name
+        .trim_start_matches(|c: char| c == '#' || c.is_whitespace())
+        .trim_end();
+    if name.is_empty() {
+        return Err("Give this conversation a name.".into());
+    }
+    if name.chars().count() > MAX_CONVERSATION_NAME {
+        return Err("That name is too long.".into());
+    }
+    Ok(name.to_owned())
+}
+
+/// The tags of naming the DM `channel` (kind:41013): `h`, `name`, then a
+/// `picture` and an `about` when given. An empty picture is none.
+pub(super) fn name_direct_message_tags(
+    channel: &str,
+    name: &str,
+    picture: Option<&str>,
+    about: Option<&str>,
+) -> Result<Vec<Vec<String>>> {
+    if !uuid(channel) {
+        return Err("Choose a conversation.".into());
+    }
+    let mut tags = vec![
+        vec!["h".into(), channel.into()],
+        vec!["name".into(), conversation_name(name)?],
+    ];
+    match picture {
+        Some("") | None => {}
+        Some(picture) if channel_picture(picture) => {
+            tags.push(vec!["picture".into(), picture.into()])
+        }
+        Some(_) => return Err("The picture must be a web address.".into()),
+    }
+    if let Some(about) = about {
+        if about.chars().count() > MAX_CONVERSATION_ABOUT {
+            return Err("That description is too long.".into());
+        }
+        tags.push(vec!["about".into(), about.into()]);
+    }
+    Ok(tags)
+}
+
+/// The tags of moving the DM `channel`'s history from the message `cut`
+/// (kind:41014): `h`, `e`, a `name` for a new channel, and a `p` per person
+/// added. Without a name the new conversation is a DM and must add someone.
+pub(super) fn move_direct_message_history_tags(
+    viewer: &str,
+    channel: &str,
+    cut: &str,
+    name: Option<&str>,
+    add: Vec<String>,
+) -> Result<Vec<Vec<String>>> {
+    let unique: std::collections::HashSet<_> = add.iter().collect();
+    if !uuid(channel)
+        || cut.len() != 64
+        || !cut
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || add.len() > MAX_DIRECT_MESSAGE_ADDITIONS
+        || unique.len() != add.len()
+        || add.iter().any(|p| !super::hex_key(p) || p == viewer)
+    {
+        return Err("Choose where to move this history.".into());
+    }
+    let mut tags = vec![
+        vec!["h".into(), channel.into()],
+        vec!["e".into(), cut.into()],
+    ];
+    match name {
+        Some(name) => tags.push(vec!["name".into(), conversation_name(name)?]),
+        None if add.is_empty() => {
+            return Err("Add someone, or give the new conversation a name.".into())
+        }
+        None => {}
+    }
+    tags.extend(add.into_iter().map(|p| vec!["p".into(), p]));
+    Ok(tags)
+}
+
+/// What to show for the relay's refusal of naming a DM (41013) or moving its
+/// history (41014), from its exact reason, as `directMessageCommandRefusal`
+/// in `direct-message-policy.ts` words it. Nothing unrecognized is shown.
+fn direct_message_command_refusal(naming: bool, reason: Option<&str>) -> &'static str {
+    let text = reason.unwrap_or("");
+    let has = |needle: &str| text.contains(needle);
+    if has("only a person") || has("only people") || has("agents cannot") {
+        "Only people can do that. Agents can’t."
+    } else if has("at most 9 people") {
+        "A conversation holds up to 9 people, not counting agents."
+    } else if naming {
+        if has("name is required") {
+            "Give this conversation a name."
+        } else if has("name is longer") {
+            "That name is too long."
+        } else {
+            "Couldn’t name this conversation. Try again."
+        }
+    } else if has("already exists") {
+        "A conversation with these people already exists."
+    } else if has("add people or a name") {
+        "Add someone, or give the new conversation a name."
+    } else if has("not a top-level message") {
+        "Start from a message that isn’t a reply."
+    } else if has("too much history") {
+        "That’s too much history to move. Start from a later message."
+    } else if has("changed during the move") {
+        "This conversation changed while moving. Try again."
+    } else if has("name is required") {
+        "Give the new conversation a name."
+    } else if has("name is longer") {
+        "That name is too long."
+    } else {
+        "Couldn’t move this history. Try again."
+    }
+}
+
+/// Signs and posts a DM command, kind:41013 or 41014, and returns the
+/// conversation the relay answered with and whether it created it. The
+/// answer is bound to the signed event's receipt.
+async fn direct_message_command(
+    host: &IdentityHost,
+    fi: &FederatedIdentity,
+    community: &str,
+    kind: u16,
+    tags: Vec<Vec<String>>,
+) -> Result<(String, bool)> {
+    let naming = kind == 41013;
+    let failed = direct_message_command_refusal(naming, None);
+    let url = request_url(community, "/events", "POST")?;
+    let event = host
+        .sign(EventTemplate {
+            kind,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| "System clock is unavailable")?
+                .as_secs(),
+            content: String::new(),
+            tags,
+        })
+        .await?;
+    let body = serde_json::to_string(&event).map_err(|_| "Invalid channel lifecycle command")?;
+    let response = send(host, Some(fi), url, "POST", Some(body), true, MAX_RESPONSE).await?;
+    if response.status != 200 {
+        let reason = serde_json::from_str::<Value>(&response.body)
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+        return Err(direct_message_command_refusal(naming, reason.as_deref()).into());
+    }
+    let receipt: Value = serde_json::from_str(&response.body).map_err(|_| failed)?;
+    if receipt.get("event_id") != event.get("id")
+        || receipt.get("accepted") != Some(&Value::Bool(true))
+    {
+        return Err(failed.into());
+    }
+    let payload = receipt
+        .get("message")
+        .and_then(Value::as_str)
+        .and_then(|m| m.strip_prefix("response:"))
+        .ok_or(failed)?;
+    let result: Value =
+        serde_json::from_str(payload).map_err(|_| "The relay returned an invalid conversation.")?;
+    let id = result
+        .get("channel_id")
+        .and_then(Value::as_str)
+        .filter(|id| uuid(id))
+        .ok_or("The relay returned an invalid conversation.")?;
+    Ok((id.into(), result.get("created") == Some(&Value::Bool(true))))
+}
+
+/// Names the DM `channel` (kind:41013): it becomes a private channel in
+/// place. Returns the same channel. Only people can name a DM.
+#[tauri::command]
+pub(crate) async fn relay_name_direct_message(
+    host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
+    community: String,
+    channel: String,
+    name: String,
+    picture: Option<String>,
+    about: Option<String>,
+) -> Result<String> {
+    let tags = name_direct_message_tags(&channel, &name, picture.as_deref(), about.as_deref())?;
+    let (id, _) = direct_message_command(host.inner(), fi.inner(), &community, 41013, tags).await?;
+    Ok(id)
+}
+
+/// Moves the DM `channel`'s history from the message `cut` into a new
+/// conversation (kind:41014). Returns `{channelId, created}`.
+#[tauri::command]
+pub(crate) async fn relay_move_direct_message_history(
+    host: tauri::State<'_, IdentityHost>,
+    fi: tauri::State<'_, FederatedIdentity>,
+    community: String,
+    channel: String,
+    cut: String,
+    name: Option<String>,
+    add: Vec<String>,
+) -> Result<Value> {
+    let viewer = host.viewer().await?;
+    let tags = move_direct_message_history_tags(&viewer, &channel, &cut, name.as_deref(), add)?;
+    let (id, created) =
+        direct_message_command(host.inner(), fi.inner(), &community, 41014, tags).await?;
+    Ok(serde_json::json!({ "channelId": id, "created": created }))
 }
 
 /// What to show for the relay's refusal of a DM command, from its exact
@@ -724,6 +955,34 @@ mod boundary_tests {
             .into_iter()
             .chain(extra)
             .collect(),
+        }
+    }
+
+    #[test]
+    fn details_admit_one_picture_after_join_role_and_before_labels() {
+        let pic = |v: &str| vec!["picture".to_string(), v.to_string()];
+        let t = |v: &str| vec!["t".to_string(), v.to_string()];
+        assert!(details(&details_event(vec![pic(
+            "https://example.org/a.png"
+        )])));
+        // An empty picture clears it.
+        assert!(details(&details_event(vec![pic("")])));
+        assert!(details(&details_event(vec![
+            vec!["join_role".into(), "guest".into()],
+            pic("http://example.org/a.png"),
+            t("alpha"),
+        ])));
+        for bad in [
+            vec![pic("ftp://example.org/a.png")],
+            vec![pic("https://example.org/a b")],
+            vec![pic(&format!("https://example.org/{}", "a".repeat(2048)))],
+            vec![t("alpha"), pic("https://example.org/a.png")],
+            vec![
+                pic("https://example.org/a.png"),
+                pic("https://example.org/b.png"),
+            ],
+        ] {
+            assert!(!details(&details_event(bad)));
         }
     }
 
@@ -1286,6 +1545,94 @@ mod direct_message_tests {
                 "Couldn’t add them. Try again."
             );
         }
+    }
+
+    #[test]
+    fn naming_carries_the_canonical_name_and_optional_picture_and_about() {
+        let dm = uuid::Uuid::nil().to_string();
+        let tags = name_direct_message_tags(&dm, "  #Plans ", None, None).unwrap();
+        assert_eq!(
+            tags,
+            vec![
+                vec!["h".to_string(), dm.clone()],
+                vec!["name".to_string(), "Plans".to_string()]
+            ]
+        );
+        let full = name_direct_message_tags(
+            &dm,
+            "Plans",
+            Some("https://example.org/a.png"),
+            Some("About"),
+        )
+        .unwrap();
+        assert_eq!(full[2][0], "picture");
+        assert_eq!(full[3], vec!["about".to_string(), "About".to_string()]);
+        // An empty picture is none.
+        assert_eq!(
+            name_direct_message_tags(&dm, "Plans", Some(""), None)
+                .unwrap()
+                .len(),
+            2
+        );
+        for (channel, name, picture) in [
+            ("not-a-uuid", "Plans", None),
+            (dm.as_str(), " # ", None),
+            (dm.as_str(), "Plans", Some("javascript:alert(1)")),
+            (dm.as_str(), "Plans", Some("https://example.org/a b")),
+        ] {
+            assert!(name_direct_message_tags(channel, name, picture, None).is_err());
+        }
+        assert!(name_direct_message_tags(&dm, &"n".repeat(256), None, None).is_err());
+    }
+
+    #[test]
+    fn a_move_names_its_cut_and_either_a_name_or_people() {
+        let viewer = key('a');
+        let dm = uuid::Uuid::nil().to_string();
+        let cut = key('c');
+        let named =
+            move_direct_message_history_tags(&viewer, &dm, &cut, Some("Plans"), vec![]).unwrap();
+        assert_eq!(named[1], vec!["e".to_string(), cut.clone()]);
+        assert_eq!(named[2], vec!["name".to_string(), "Plans".to_string()]);
+        let dm_move =
+            move_direct_message_history_tags(&viewer, &dm, &cut, None, vec![key('b')]).unwrap();
+        assert_eq!(dm_move[2], vec!["p".to_string(), key('b')]);
+        for (name, add) in [
+            (None, vec![]),
+            (None, vec![viewer.clone()]),
+            (None, vec![key('b'), key('b')]),
+            (Some("Plans"), vec!["b".to_string()]),
+        ] {
+            assert!(move_direct_message_history_tags(&viewer, &dm, &cut, name, add).is_err());
+        }
+        for cut in ["", "XYZ", &key('G')] {
+            assert!(
+                move_direct_message_history_tags(&viewer, &dm, cut, Some("Plans"), vec![]).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn command_refusals_are_worded_for_each_command() {
+        assert_eq!(
+            direct_message_command_refusal(true, Some("forbidden: only a person can name a DM")),
+            "Only people can do that. Agents can’t."
+        );
+        assert_eq!(
+            direct_message_command_refusal(
+                false,
+                Some("invalid: the cut is not a top-level message in this DM")
+            ),
+            "Start from a message that isn’t a reply."
+        );
+        assert_eq!(
+            direct_message_command_refusal(true, Some("error: db: boom")),
+            "Couldn’t name this conversation. Try again."
+        );
+        assert_eq!(
+            direct_message_command_refusal(false, None),
+            "Couldn’t move this history. Try again."
+        );
     }
 
     #[test]

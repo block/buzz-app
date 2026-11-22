@@ -1260,6 +1260,55 @@ it("opens direct messages through a purpose-bound command and validates the resu
   ).rejects.toThrow("invalid direct message");
 });
 
+it("names a DM and moves its history through purpose-bound commands", async () => {
+  const transport = await connectNativeTransport(community);
+  assert.exists(transport.nameDirectMessage);
+  assert.exists(transport.moveDirectMessageHistory);
+  const id = "11111111-1111-4111-8111-111111111111";
+  const moved = "22222222-2222-4222-8222-222222222222";
+  const signal = new AbortController().signal;
+  vi.mocked(invoke).mockResolvedValueOnce(id);
+  expect(await transport.nameDirectMessage(id, { name: "Plans" }, signal)).toBe(
+    id,
+  );
+  expect(vi.mocked(invoke).mock.lastCall?.[0]).toBe(
+    "relay_name_direct_message",
+  );
+  expect(vi.mocked(invoke).mock.lastCall?.[1]).toMatchObject({
+    community,
+    channel: id,
+    name: "Plans",
+  });
+  const cut = "c".repeat(64);
+  vi.mocked(invoke).mockResolvedValueOnce({ channelId: moved, created: true });
+  expect(
+    await transport.moveDirectMessageHistory(
+      id,
+      { cut, name: "Plans", add: [relay.pubkey] },
+      signal,
+    ),
+  ).toEqual({ channelId: moved, created: true });
+  expect(vi.mocked(invoke).mock.lastCall).toEqual([
+    "relay_move_direct_message_history",
+    { community, channel: id, cut, name: "Plans", add: [relay.pubkey] },
+  ]);
+  // A refusal arrives as words in an Error; a malformed answer is refused.
+  vi.mocked(invoke).mockRejectedValueOnce(
+    "Only people can do that. Agents can’t.",
+  );
+  await expect(
+    transport.nameDirectMessage(id, { name: "Plans" }, signal),
+  ).rejects.toThrow("Only people can do that.");
+  vi.mocked(invoke).mockResolvedValueOnce({ channelId: "bad", created: true });
+  await expect(
+    transport.moveDirectMessageHistory(
+      id,
+      { cut, add: [relay.pubkey] },
+      signal,
+    ),
+  ).rejects.toThrow("invalid conversation");
+});
+
 it("hands the command's refusal words to every caller as an Error, so an addition can ask", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.openDirectMessage);

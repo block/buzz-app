@@ -166,6 +166,8 @@ export function createChannelDetails({
       details.visibility !== draft.visibility ||
       details.ttlSeconds !== draft.ttlSeconds ||
       (draft.joinRole !== undefined && details.joinRole !== draft.joinRole) ||
+      (draft.picture !== undefined &&
+        (details.picture ?? "") !== draft.picture) ||
       (draft.labels !== undefined &&
         JSON.stringify([...new Set(draft.labels)].sort()) !==
           JSON.stringify([...(details.labels ?? [])].sort()))

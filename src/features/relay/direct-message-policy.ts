@@ -87,6 +87,106 @@ export function directMessageRefusal(adding: boolean, reason: unknown): string {
     : "Could not open the direct message. Try again.";
 }
 
+/** The longest conversation name, in characters, as the relay counts it. */
+export const MAX_CONVERSATION_NAME_LENGTH = 255;
+/** The longest conversation description, as a channel's `about`. */
+export const MAX_CONVERSATION_ABOUT_LENGTH = 1000;
+/** The longest picture URL the relay stores, in bytes. */
+export const MAX_CONVERSATION_PICTURE_LENGTH = 2048;
+
+/** A conversation name as the relay canonicalizes it: leading `#` and
+ * whitespace and trailing whitespace dropped. Empty when nothing is left. */
+export const conversationName = (name: string) =>
+  name.replace(/^[#\s]+/u, "").trimEnd();
+
+/** Whether `value` is a picture the relay stores: an http(s) URL with no
+ * whitespace or control characters. Empty means no picture. */
+export const validConversationPicture = (value: string) =>
+  value === "" ||
+  (new TextEncoder().encode(value).length <= MAX_CONVERSATION_PICTURE_LENGTH &&
+    /^https?:\/\//.test(value) &&
+    !/[\s\p{Cc}]/u.test(value));
+
+/** What naming a DM sends, once checked: the canonical name and the optional
+ * picture and about. Throws the words to show for anything the relay would
+ * refuse. */
+export function conversationNameDetails(input: {
+  name: string;
+  picture?: string | undefined;
+  about?: string | undefined;
+}) {
+  const name = conversationName(input.name);
+  if (!name) throw new Error("Give this conversation a name.");
+  if (Array.from(name).length > MAX_CONVERSATION_NAME_LENGTH)
+    throw new Error("That name is too long.");
+  if (input.picture !== undefined && !validConversationPicture(input.picture))
+    throw new Error("The picture must be a web address.");
+  if (
+    input.about !== undefined &&
+    Array.from(input.about).length > MAX_CONVERSATION_ABOUT_LENGTH
+  )
+    throw new Error("That description is too long.");
+  return {
+    name,
+    ...(input.picture ? { picture: input.picture } : {}),
+    ...(input.about !== undefined ? { about: input.about } : {}),
+  };
+}
+
+/** The kinds of the commands that name a DM and move its history. */
+export const NAME_DM_KIND = 41013;
+export const MOVE_DM_HISTORY_KIND = 41014;
+
+const NAME_REFUSALS = {
+  people: "Only people can do that. Agents can’t.",
+  full: "A conversation holds up to 9 people, not counting agents.",
+  nameRequired: "Give this conversation a name.",
+  nameLong: "That name is too long.",
+  generic: "Couldn’t name this conversation. Try again.",
+};
+const MOVE_REFUSALS = {
+  exists: "A conversation with these people already exists.",
+  nothing: "Add someone, or give the new conversation a name.",
+  reply: "Start from a message that isn’t a reply.",
+  large: "That’s too much history to move. Start from a later message.",
+  changed: "This conversation changed while moving. Try again.",
+  nameRequired: "Give the new conversation a name.",
+  generic: "Couldn’t move this history. Try again.",
+};
+const SHOWN = new Set([
+  ...Object.values(NAME_REFUSALS),
+  ...Object.values(MOVE_REFUSALS),
+]);
+
+/** What to show for the relay's refusal of naming a DM (41013) or moving its
+ * history (41014), from its exact reason. Anything unrecognized gets the
+ * command's generic words: a refusal never reaches the app verbatim. The
+ * browser host maps a refusal at admission and again on its way out, so words
+ * already chosen here map to themselves. */
+export function directMessageCommandRefusal(
+  kind: number,
+  reason: unknown,
+): string {
+  const text = typeof reason === "string" ? reason : "";
+  if (SHOWN.has(text)) return text;
+  if (/only a person|only people|agents cannot/.test(text))
+    return NAME_REFUSALS.people;
+  if (/at most 9 people/.test(text)) return NAME_REFUSALS.full;
+  if (kind === NAME_DM_KIND) {
+    if (/name is required/.test(text)) return NAME_REFUSALS.nameRequired;
+    if (/name is longer/.test(text)) return NAME_REFUSALS.nameLong;
+    return NAME_REFUSALS.generic;
+  }
+  if (/already exists/.test(text)) return MOVE_REFUSALS.exists;
+  if (/add people or a name/.test(text)) return MOVE_REFUSALS.nothing;
+  if (/not a top-level message/.test(text)) return MOVE_REFUSALS.reply;
+  if (/too much history/.test(text)) return MOVE_REFUSALS.large;
+  if (/changed during the move/.test(text)) return MOVE_REFUSALS.changed;
+  if (/name is required/.test(text)) return MOVE_REFUSALS.nameRequired;
+  if (/name is longer/.test(text)) return NAME_REFUSALS.nameLong;
+  return MOVE_REFUSALS.generic;
+}
+
 /** Whether a DM of `members` is the DM of `expected`, as the relay decides:
  * by its people when it has two or more, so agents never change which DM it
  * is; otherwise by every member. */

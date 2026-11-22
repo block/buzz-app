@@ -98,6 +98,19 @@ async function nativeReadInvoke<T>(
   }
 }
 
+/** The command rejects with its refusal's words; callers expect an Error. */
+const refusal = (error: unknown): never => {
+  throw typeof error === "string" ? new Error(error) : error;
+};
+const conversationId = (id: unknown) => {
+  if (
+    typeof id !== "string" ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id)
+  )
+    throw new Error("The relay returned an invalid conversation.");
+  return id;
+};
+
 export const nativeWriteKinds = [
   48103,
   30078,
@@ -709,6 +722,36 @@ export async function connectNativeTransport(
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))
         throw new Error("The relay returned an invalid direct message.");
       return id;
+    },
+    async nameDirectMessage(channelId, details, signal) {
+      signal.throwIfAborted();
+      const id = await invoke<string>("relay_name_direct_message", {
+        community: origin,
+        channel: channelId,
+        name: details.name,
+        picture: details.picture,
+        about: details.about,
+      }).catch(refusal);
+      signal.throwIfAborted();
+      return conversationId(id);
+    },
+    async moveDirectMessageHistory(channelId, move, signal) {
+      signal.throwIfAborted();
+      const moved = await invoke<{ channelId: string; created: boolean }>(
+        "relay_move_direct_message_history",
+        {
+          community: origin,
+          channel: channelId,
+          cut: move.cut,
+          name: move.name,
+          add: move.add,
+        },
+      ).catch(refusal);
+      signal.throwIfAborted();
+      return {
+        channelId: conversationId(moved?.channelId),
+        created: moved?.created === true,
+      };
     },
     channelKit: {
       async prepare(record: PrivateRecord, signal) {

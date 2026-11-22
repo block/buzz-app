@@ -148,6 +148,8 @@ fn main() {
             "relay_kit_prepare",
             "relay_kit_decode",
             "relay_direct_message",
+            "relay_name_direct_message",
+            "relay_move_direct_message_history",
             "relay_decode_sidebar",
             "relay_sign_sidebar",
             "relay_decode_reminders",

@@ -50,6 +50,9 @@ export type ChannelSummary = Readonly<{
   /** `system` (NIP-CL): access control for app data; never in list().
    * `solo`: a stream with the Solo label (`SOLO_LABEL`), regardless of visibility. */
   channelType?: "stream" | "forum" | "dm" | "solo" | "system";
+  /** Relay-published picture URL from the signed metadata; absent when none is set.
+   * Owners and admins change it with kind 9002. */
+  picture?: string | undefined;
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
   /** Relay-advertised default: the relay joins new community members here. */

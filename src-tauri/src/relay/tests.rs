@@ -1251,6 +1251,14 @@ fn native_write_commands_reach_handlers_through_production_ipc() {
             "relay_direct_message",
             serde_json::json!({"community":"invalid","pubkeys":[]}),
         ),
+        (
+            "relay_name_direct_message",
+            serde_json::json!({"community":"invalid","channel":"invalid","name":"x"}),
+        ),
+        (
+            "relay_move_direct_message_history",
+            serde_json::json!({"community":"invalid","channel":"invalid","cut":"x","add":[]}),
+        ),
     ];
     for (command, body) in requests {
         let result = get_ipc_response(

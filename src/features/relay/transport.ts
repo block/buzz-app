@@ -78,7 +78,12 @@ import { PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
-import { directMessageRefusal } from "./direct-message-policy";
+import {
+  directMessageCommandRefusal,
+  directMessageRefusal,
+  MOVE_DM_HISTORY_KIND,
+  NAME_DM_KIND,
+} from "./direct-message-policy";
 import {
   createEventVerifier,
   eventDto,
@@ -142,6 +147,21 @@ export interface ReadTransport {
     signal: AbortSignal,
     history?: DirectMessageHistory,
   ) => Promise<string>;
+  /** Host-owned naming of a DM (kind 41013): it becomes a private channel
+   * in place. Returns the same channel id. Only people can name a DM. */
+  readonly nameDirectMessage?: (
+    channelId: string,
+    details: { name: string; picture?: string; about?: string },
+    signal: AbortSignal,
+  ) => Promise<string>;
+  /** Host-owned move of a DM's history from the top-level message `cut`
+   * into a new conversation (kind 41014): a named channel, or without a
+   * name a new DM that adds `add`. Everyone in the source comes along. */
+  readonly moveDirectMessageHistory?: (
+    channelId: string,
+    move: { cut: string; name?: string; add: readonly string[] },
+    signal: AbortSignal,
+  ) => Promise<{ channelId: string; created: boolean }>;
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
@@ -550,6 +570,43 @@ export async function connectBrokerTransport(
   const endpoint = `${base}/api/relay${community ? `/${encodeURIComponent(community)}` : ""}`;
   const profiling = createRelayProfiler();
   const verify = createEventVerifier();
+  /** Naming a DM or moving its history, through the direct-message route.
+   * The broker words the relay's refusal; the result is bound to its receipt. */
+  const directMessageCommand = async (
+    body: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => {
+    const result = await fetch(`${endpoint}/direct-message`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+    });
+    if (!result.ok) {
+      const failure = await result.json().catch(() => undefined);
+      throw new Error(
+        typeof failure?.error === "string"
+          ? failure.error
+          : directMessageCommandRefusal(
+              body.command === "name" ? NAME_DM_KIND : MOVE_DM_HISTORY_KIND,
+              undefined,
+            ),
+      );
+    }
+    const value = await result.json();
+    if (
+      typeof value?.channelId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        value.channelId,
+      )
+    )
+      throw new Error("The relay returned an invalid conversation.");
+    return {
+      channelId: value.channelId as string,
+      created: value.created === true,
+    };
+  };
   const response = await fetch(`${endpoint}/session`, {
     credentials: "same-origin",
     signal: signal ?? null,
@@ -779,6 +836,28 @@ export async function connectBrokerTransport(
             )
               throw new Error("The relay returned an invalid direct message.");
             return value.channelId;
+          },
+          async nameDirectMessage(
+            channelId: string,
+            details: { name: string; picture?: string; about?: string },
+            signal: AbortSignal,
+          ) {
+            const value = await directMessageCommand(
+              { command: "name", channel: channelId, ...details },
+              signal,
+            );
+            return value.channelId;
+          },
+          async moveDirectMessageHistory(
+            channelId: string,
+            move: { cut: string; name?: string; add: readonly string[] },
+            signal: AbortSignal,
+          ) {
+            const value = await directMessageCommand(
+              { command: "move", channel: channelId, ...move },
+              signal,
+            );
+            return { channelId: value.channelId, created: value.created };
           },
         }
       : {}),

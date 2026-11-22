@@ -3052,6 +3052,7 @@ export function createRelaySession(
       () => profiles.queries.verifiedAuthority?.(),
       profiles.queries,
       identityNames,
+      details.capability,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,

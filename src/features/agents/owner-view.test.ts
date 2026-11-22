@@ -176,3 +176,28 @@ it("keeps a hidden channel's usage but not where or what it was", () => {
     observations: [],
   });
 });
+
+it("keeps a session's cost but not its title when its channel is unknown", () => {
+  const [kept] = ownerUsage(
+    [
+      {
+        id: "standalone",
+        revision: "1",
+        gaps: [],
+        title: "About a private DM",
+        startedAt: 1,
+        lastAt: 2,
+        observations: [],
+      },
+    ],
+    reads,
+  );
+  expect(kept).toEqual({
+    id: "standalone",
+    revision: "1",
+    gaps: [],
+    startedAt: 1,
+    lastAt: 2,
+    observations: [],
+  });
+});

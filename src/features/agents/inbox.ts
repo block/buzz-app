@@ -121,6 +121,7 @@ export class AgentInbox {
       { signal: AbortSignal.any([this.lifetime, signal]), fresh: true },
     );
     const kinds = new Map<string, Set<number>>();
+    const excluded = new Set<string>();
     const discovery = new DiscoveryState(
       this.pubkey,
       this.authority,
@@ -131,12 +132,23 @@ export class AgentInbox {
         discovery.accept(event);
         const id = event.tags.find(([key]) => key === "d")?.[1];
         if (id) kinds.set(id, (kinds.get(id) ?? new Set()).add(event.kind));
+        if (
+          id &&
+          event.kind === 39002 &&
+          event.pubkey === this.authority &&
+          !event.tags.some(
+            ([key, value]) => key === "p" && value === this.pubkey,
+          )
+        )
+          excluded.add(id);
       }
     // A channel these come from is one the agent reads, so missing metadata or
     // roster is unknown, not absent: it neither confirms nor revokes what was
     // verified before.
     const partial = ids.filter((id) => kinds.get(id)?.size !== 2);
     for (const id of ids) {
+      // A signed roster without the agent revokes it, whatever else is missing.
+      if (excluded.has(id)) this.channels.delete(id);
       if (partial.includes(id)) continue;
       this.channels.delete(id);
       const channel = discovery.get(id);

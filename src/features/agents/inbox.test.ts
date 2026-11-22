@@ -289,3 +289,20 @@ it("reads past the owner only into confirmed DMs", async () => {
     f.controller.abort();
   }
 });
+
+it("applies a signed roster that removes the agent even when metadata is missing", async () => {
+  const f = fixture();
+  try {
+    await f.inbox.mentions(filter, signal());
+    expect(f.inbox.channel(channel)).toBeDefined();
+    f.query.mockImplementation(async (filters: readonly ReadFilter[]) =>
+      filters[0]?.kinds?.includes(39000)
+        ? eventsDto([roster(relay, channel, [sibling.pubkey], 2)])
+        : eventsDto([mention]),
+    );
+    expect(await f.inbox.reads.channel(channel)).toBeUndefined();
+    expect(f.inbox.channel(channel)).toBeUndefined();
+  } finally {
+    f.controller.abort();
+  }
+});

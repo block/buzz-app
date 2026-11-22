@@ -1158,6 +1158,31 @@ it("lists conversations by channel name, with running and standalone sessions, o
   expect(listings(fake)).toEqual([]);
 });
 
+it("filters a transcript with no known place by each turn's own source", async () => {
+  const fake = gooseHistory(["timer"]);
+  const readableTurns = vi.fn(() => []);
+  activity(fake, {
+    saved: [],
+    ids: [{ id: "timer", at: 1, title: "Gander · timer/t" }],
+    runtime: { readableTurns } as unknown as Partial<GooseRuntime>,
+  });
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole("button", { name: "View transcript: timer/t" }),
+    );
+  await waitFor(() =>
+    expect(readableTurns).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channelId: "", community: true }),
+      expect.anything(),
+    ),
+  );
+  expect(
+    screen.queryByText("Hi from timer", { selector: "summary span" }),
+  ).toBeNull();
+});
+
 it("lists a conversation with more than ten sessions once", () => {
   const ids = Array.from({ length: 12 }, (_, i) => `s${i}`);
   activity(gooseHistory(), {

@@ -897,13 +897,14 @@ export function createTabs({
       return (
         transcript && {
           ...transcript,
-          turns: runtime
-            .prompts(agent.key)
-            .shown(
-              row.channelId
-                ? runtime.readableTurns(agent.key, row, transcript.turns)
-                : transcript.turns,
+          turns: runtime.prompts(agent.key).shown(
+            // Without a known place, each turn shows only by its own source.
+            runtime.readableTurns(
+              agent.key,
+              row.channelId ? row : { ...row, channelId: "", community: true },
+              transcript.turns,
             ),
+          ),
         }
       );
     };

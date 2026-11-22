@@ -46,14 +46,14 @@ export function ownerTurns<T extends TranscriptTurn>(
   });
 }
 
-/** The sessions' usage, without where and what a session was about when the
- * owner cannot read its channel: its cost is the owner's, its content not. */
+/** The sessions' usage, without where and what a session was about unless the
+ * owner can read its channel: its cost is the owner's, its content not. */
 export const ownerUsage = (
   sessions: readonly SessionUsage[],
   reads: AgentReads | undefined,
 ) =>
   sessions.map((session) => {
-    if (!session.channelId || reads?.ownerReadable(session.channelId))
+    if (session.channelId && reads?.ownerReadable(session.channelId))
       return session;
     const { channelId: _, root: __, title: ___, ...rest } = session;
     return rest;

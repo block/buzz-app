@@ -19,11 +19,13 @@ keys are fixed, bundled fonts are loaded, and captures exclude unrelated chrome.
 
 ## Coverage and provenance
 
-Both light and dark themes capture a grouped channel run collapsed and expanded,
-and an individual thread row collapsed and expanded. A real nested reply forces
-that row out of the grouped renderer. The person-directed sibling must retain its
-content preview, and original text/source links remain inspectable on expansion.
-These snapshots are not native-host or live-relay acceptance.
+Both light and dark themes capture the existing activity-history disclosure in
+channel history and an individual thread row, before and after opening it. These
+states, including the grouped participant avatars, already exist on main; they
+are not introduced by the dependent quieter-presentation change. A real nested
+reply forces that row out of the grouped renderer. The person-directed sibling
+must retain its content preview, and original text/source links remain inspectable
+on expansion. These snapshots are not native-host or live-relay acceptance.
 
 The historical goldens were first rendered and then compared successfully on
 unchanged product source `f373cea21d979a23f27920bbb89b98cf05b8c73d`, with only this
@@ -32,6 +34,12 @@ pre-change baseline; it is not a claim that screenshot tests existed before the
 feature was implemented. This tooling/baseline layer leaves product source
 unchanged. A dependent behavior PR updates the same image identities to the
 quieter presentation, exposing the visual delta against this baseline.
+
+The complete image set was also freshly rendered on main
+`ac0b9bbd619b73a08ca1e48d1af1ec588bf4f40b`, with only this visual tooling added
+and no dependent feature source. All 16 generated PNGs were byte-identical to
+the historical set. That independently confirms the existing disclosure states
+rather than assuming what pre-change messages should look like.
 
 Goldens are separated by engine and OS. The initial set is **macOS only**;
 Linux CI is not wired to this opt-in suite and macOS images must not be renamed

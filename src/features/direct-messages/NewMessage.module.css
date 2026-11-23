@@ -51,8 +51,14 @@
 [data-appearance="field"] .toField {
   min-height: var(--size-control);
   padding: var(--space-1) var(--space-control-inset);
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
   background: var(--surface-inset);
+  transition: border-color var(--duration-field-focus) var(--easing-state);
+}
+/* The same focus stroke as any field. */
+[data-appearance="field"] .toField:focus-within {
+  border-color: var(--interaction-border);
 }
 [data-appearance="field"] .toField:has(.toInput:disabled) {
   background: var(--affordance-disabled);

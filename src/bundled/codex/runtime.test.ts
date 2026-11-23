@@ -98,11 +98,13 @@ const env = vi.hoisted(() => ({
   unknown: new Set<string>(),
   asked: 0,
   gate: undefined as Promise<void> | undefined,
+  failure: undefined as Error | undefined,
 }));
 vi.mock("../agents/agent-env", () => ({
   hasOwnEnv: async (agent: string) => {
     env.asked++;
     await env.gate;
+    if (env.failure) throw env.failure;
     return env.unknown.has(agent) ? undefined : env.own.has(agent);
   },
 }));
@@ -1737,6 +1739,72 @@ it.each(["dispose", "retire"] as const)(
     }
   },
 );
+it("ends a removed agent's turn quietly while its environment read is out", async () => {
+  const f = fixture();
+  const answer = deferred<void>();
+  env.gate = answer.promise;
+  env.asked = 0;
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(env.asked).toBe(1));
+    f.runtime.sync([]);
+    // Retirement and the turn settle while the read is still held.
+    await f.runtime.retire(pubkey);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.starts()).toHaveLength(0);
+    expect(f.publish).not.toHaveBeenCalled();
+    answer.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.starts()).toHaveLength(0);
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    env.gate = undefined;
+    env.asked = 0;
+    f.runtime.dispose();
+  }
+});
+it("ends a removed agent's run-once quietly while its environment read is out", async () => {
+  const f = fixture();
+  const answer = deferred<void>();
+  env.gate = answer.promise;
+  env.asked = 0;
+  try {
+    const running = f.runtime.runOnce({
+      delivery: f.delivery("check"),
+      key: "source/check",
+      signal: new AbortController().signal,
+      prompt: async () => "check",
+    });
+    await vi.waitFor(() => expect(env.asked).toBe(1));
+    f.runtime.sync([]);
+    await f.runtime.retire(pubkey);
+    await expect(running).resolves.toEqual({
+      ok: false,
+      error: "Codex was stopped",
+    });
+    answer.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.starts()).toHaveLength(0);
+    expect(f.publish).not.toHaveBeenCalled();
+  } finally {
+    env.gate = undefined;
+    env.asked = 0;
+    f.runtime.dispose();
+  }
+});
+it("still reports a routing failure on a live agent", async () => {
+  const f = fixture();
+  env.failure = new Error("routing broke");
+  try {
+    await f.runtime.run(f.delivery("work"));
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+    expect(contents(f.publish)[0]).toContain("routing broke");
+    expect(f.starts()).toHaveLength(0);
+  } finally {
+    env.failure = undefined;
+    f.runtime.dispose();
+  }
+});
 it("chooses an agent's server again after its own one exits", async () => {
   const f = fixture();
   env.own.add(pubkey);

@@ -1567,6 +1567,23 @@ export class CodexRuntime {
     this.envReads.set(key, read);
     return read;
   }
+  /** Waits for `route` unless `stopped` fires first, so a retired agent's
+   * start ends quietly while its read is still out. False when stopped;
+   * synchronous when there is nothing to read, so a start keeps its order. */
+  private routed(
+    agent: Pick<AgentHandle, "key" | "pubkey" | "protection">,
+    stopped: AbortSignal,
+  ): boolean | Promise<boolean> {
+    const routing = this.route(agent);
+    if (!routing) return !stopped.aborted;
+    return abortable(routing, stopped).then(
+      () => true,
+      (error) => {
+        if (!stopped.aborted) throw error;
+        return false;
+      },
+    );
+  }
   /** Whether `rpc` is an unprotected server's, shared or an agent's own. */
   private ordinary(rpc: AppServer) {
     if (this.server?.rpc === rpc) return true;
@@ -2992,8 +3009,9 @@ export class CodexRuntime {
     await entry.after;
     if (entry.abort.signal.aborted)
       return { ok: false, error: "Codex was stopped" };
-    const routing = this.route(agent);
-    if (routing) await routing;
+    const routed = this.routed(agent, entry.abort.signal);
+    if (routed !== true && !(await routed))
+      return { ok: false, error: "Codex was stopped" };
     const server = this.open(agent);
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
     /** Why this turn ran without the Buzz context, for its Activity status. */
@@ -4185,8 +4203,11 @@ export class CodexRuntime {
     let notReady!: (error: unknown) => void;
     let release!: () => void;
     const turnAbort = new AbortController();
-    const routing = this.route(request.agent);
-    if (routing) await routing;
+    const routed = this.routed(request.agent, entry.abort.signal);
+    if (routed !== true && !(await routed)) {
+      request.failActivity("Codex was stopped");
+      return;
+    }
     const server = this.open(request.agent);
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([

@@ -119,8 +119,8 @@ const checked = (check: () => string | undefined) => {
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches";
 
-/** The set that `events`, the channel's current heads, describe (Reader step
- * 3): a record that fails its checks is skipped and reported, the others
+/** The set that `events`, the channel's current heads, describe (Reading
+ * attention, step 3): a record that fails its checks is skipped and reported, the others
  * apply. Over a count limit, each group applies its first records by slug. */
 export async function attentionSet(
   channel: string,
@@ -220,7 +220,7 @@ export async function attentionSet(
 const sameValue = (a: unknown, b: unknown) =>
   JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 
-/** `record` showing `set` (Reader step 7). Each changed object goes through
+/** `record` showing `set` (Reading attention). Each changed object goes through
  * `setAttention`, so the runtime state rules are a local edit's; an object
  * whose value is unchanged stays the same object, so work in flight for it
  * goes on. The objects' times are their revisions'. */
@@ -256,7 +256,7 @@ export type AttentionEdit = Readonly<{
 }>;
 
 /** The objects an edit changes, from `before` to `after`, one revision each
- * (Writer step 3), in an order that never leaves a watch without its
+ * (Writing attention, "Order"), in an order that never leaves a watch without its
  * Interest: removed watches, then Interests, then watches, then removed
  * Interests. A skipped record's removal counts. */
 export function attentionChanges(
@@ -304,7 +304,7 @@ export const addWritten = (
 };
 
 /** Publishes `changes` over `set`, the writer's fresh read, one revision at a
- * time (Writer steps 4 to 6). Stops at the first that fails; those before it
+ * time (Writing attention, steps 3 to 5). Stops at the first that fails; those before it
  * stay published. Returns the heads each replaced. */
 export async function publishChanges(
   io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
@@ -404,7 +404,7 @@ export type Sent =
 export type RevisionSender = (event: Revision) => Promise<Sent>;
 
 /** An owner's send through its session's artifact writer: a resend sends the
- * same signed event (Writer step 5). */
+ * same signed event (Writing attention, step 4). */
 export function ownerSender(
   writer: RelayWriter,
   signal: AbortSignal,
@@ -459,7 +459,7 @@ export function agentDelivery(error: unknown, unconfirmed?: string): Sent {
     : { status: "refused", refusal: kind, message: reason };
 }
 
-/** Publishes the one change of an edit (Writer steps 4 to 6) over `set`, the
+/** Publishes the one change of an edit (Writing attention, steps 3 to 5) over `set`, the
  * writer's fresh read. Settles with the record's new head, or null once it
  * is deleted; throws a conflict when another writer changed it first. */
 export async function publishChange(
@@ -576,7 +576,7 @@ export async function publishChange(
   throw new AttentionError("conflict", `${slug} already exists; show it again`);
 }
 
-/** The sync filter for one attention channel (Reader step 2). */
+/** The sync filter for one attention channel (Writing attention, step 1). */
 export const syncFilter = (channel: string) => ({
   artifact: "current" as const,
   kinds: [ARTIFACT_KIND] as const,
@@ -584,7 +584,7 @@ export const syncFilter = (channel: string) => ({
   "#type": [ATTENTION_TYPE],
 });
 
-/** One complete set from a new sync, then closed (Writer step 1). Anything
+/** One complete set from a new sync, then closed (Writing attention, step 1). Anything
  * but EOSE fails the read. */
 export function readOnce(
   sync: (filter: unknown) => ArtifactSyncView,
@@ -617,7 +617,7 @@ export function readOnce(
 
 /** One agent's attention on the relay while its community is live: its
  * channel, found from its owner, and the set its owner's session keeps
- * current (Reader steps 1, 2, 5 and 6). */
+ * current (Reading attention, steps 1, 2 and 5, and Lost access). */
 export type RelayAttention = Readonly<{
   /** The last complete set; undefined before the first, and while access
    * to the channel is checked again. */
@@ -635,8 +635,8 @@ export type RelayAttention = Readonly<{
 /** No usable attention channel, as a complete lookup showed. */
 class LostChannel extends Error {}
 
-/** The longest wait before Find runs again for a lost channel. */
-const LOST_RETRY_MAX_MS = 10 * 60_000;
+/** The longest wait before Find runs again after failures in a row. */
+const RETRY_MAX_MS = 10 * 60_000;
 
 export function relayAttention(input: {
   agent: string;
@@ -682,11 +682,15 @@ export function relayAttention(input: {
     problem = next;
     input.reported();
   };
-  const close = () => {
+  /** With `keepFollow`, the channel's metadata and roster are still heard,
+   * so lost access is checked again at once when they change. */
+  const close = (keepFollow = false) => {
     stopView();
     stopView = () => {};
-    stopFollow();
-    stopFollow = () => {};
+    if (!keepFollow) {
+      stopFollow();
+      stopFollow = () => {};
+    }
     view?.dispose();
     view = undefined;
     channel = undefined;
@@ -710,9 +714,14 @@ export function relayAttention(input: {
   };
   /** From Find again after `delay`. With `suspend`, nothing runs from the
    * last set until Find and a new set verify it. */
-  const later = (reason: string, delay: number, suspend = false) => {
+  const later = (
+    reason: string,
+    delay: number,
+    suspend = false,
+    keepFollow = false,
+  ) => {
     generation++;
-    close();
+    close(keepFollow);
     const dropped = suspend && set !== undefined;
     if (suspend) set = undefined;
     if (reason !== problem) report(reason);
@@ -722,16 +731,20 @@ export function relayAttention(input: {
     if (!signal.aborted)
       retry = setTimeout(start, delay * (0.5 + Math.random() / 2));
   };
+  /** The wait before the next try, growing with each failure in a row
+   * until a complete set resets it (NIP-AR rule 7). */
+  const backoff = () => Math.min(RETRY_MAX_MS, retryMs * 2 ** misses++);
   /** Lost access: nothing runs until a later Find finds a channel again,
-   * backing off while it stays lost. */
+   * at once when the channel's metadata or roster changes, else after the
+   * backoff. */
   const loseAccess = (reason: string) => {
     lost = true;
-    later(reason, Math.min(LOST_RETRY_MAX_MS, retryMs * 2 ** misses++), true);
+    later(reason, backoff(), true, true);
   };
   const failed = (run: number, error: unknown) => {
     if (run !== generation || signal.aborted) return;
     if (error instanceof LostChannel) loseAccess(error.message);
-    else later(`Attention channel unavailable: ${message(error)}`, retryMs);
+    else later(`Attention channel unavailable: ${message(error)}`, backoff());
   };
   /** Find again after the channel's metadata or roster changed: the same
    * channel goes on, another one starts over, and none stops it. */
@@ -763,7 +776,7 @@ export function relayAttention(input: {
     try {
       opened = input.sync(syncFilter(id));
     } catch (error) {
-      later(`Attention can't sync: ${message(error)}`, retryMs);
+      later(`Attention can't sync: ${message(error)}`, backoff());
       return;
     }
     view = opened;
@@ -773,17 +786,24 @@ export function relayAttention(input: {
         id,
         (events) => {
           if (
-            run === generation &&
-            events.some((event) => event.kind === 39000 || event.kind === 39002)
+            !events.some(
+              (event) => event.kind === 39000 || event.kind === 39002,
+            )
           )
-            recheck();
+            return;
+          if (run === generation) recheck();
+          // Kept while access is lost: Find again now, not at the backoff.
+          else if (lost && !channel && !signal.aborted) {
+            clearTimeout(retry);
+            void start();
+          }
         },
         () => {
           if (run === generation) recheck();
         },
       );
     } catch (error) {
-      later(`Attention can't follow its channel: ${message(error)}`, retryMs);
+      later(`Attention can't follow its channel: ${message(error)}`, backoff());
       return;
     }
     let applied = Promise.resolve();
@@ -806,7 +826,7 @@ export function relayAttention(input: {
           .catch((error) => console.warn("Attention set not applied", error));
       } else if (snapshot.error?.startsWith("resync:"))
         // Access may have changed (NIP-AR Resync): nothing runs from the
-        // last set until Find and a new set verify it (Reader step 6). Soon,
+        // last set until Find and a new set verify it (Reading attention, step 5). Soon,
         // backing off when it repeats.
         later(
           "Attention may be out of date; reading it again",
@@ -820,7 +840,7 @@ export function relayAttention(input: {
       else if (snapshot.status === "unsupported" || snapshot.status === "error")
         later(
           `Attention can't sync: ${snapshot.error ?? snapshot.status}`,
-          retryMs,
+          backoff(),
         );
     };
     stopView = opened.subscribe(seen);

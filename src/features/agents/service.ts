@@ -325,6 +325,7 @@ import {
   pendingSet,
   publishChanges,
   relayAttention,
+  type AttentionSet,
   type RelayAttention,
   type Written,
 } from "./attention-relay";
@@ -2360,6 +2361,9 @@ const serializable = (value: unknown) => {
 };
 /** Bounds one cleanup attempt, whose relay steps otherwise wait on the outbox. */
 const CLEANUP_TIMEOUT_MS = 60_000;
+/** How long this device's own relay attention writes show before a set
+ * from the relay must show them. */
+const WRITTEN_MS = 60_000;
 const TIMER_TICK_MS = 5_000;
 /** How often a failed connection to an unselected community is tried again. */
 const RETRY_MS = 30_000;
@@ -2429,14 +2433,19 @@ function changed(record: AgentRecord, change: AgentChange): AgentRecord {
         };
     }
   }
-  // As the spec's writer: an Interest stays while anything still uses it.
+  // As the spec's writer: an Interest stays while anything still uses it,
+  // a skipped watch too, which would otherwise run without it.
+  const uses = [
+    ...Object.values(next.attention),
+    ...Object.values(next.skipped ?? {}),
+  ].map(({ value }) => value as { type?: unknown; interest_id?: unknown });
   for (const [slug, value] of Object.entries(change.attention ?? {})) {
     const id = parseSlug(slug)?.id;
     if (value !== null || !slug.startsWith("interest/") || !id) continue;
     if (
-      Object.values(next.attention).some(
-        (object) =>
-          object.value.type !== "interest" && object.value.interest_id === id,
+      uses.some(
+        (value) =>
+          value && value.type !== "interest" && value.interest_id === id,
       )
     )
       throw new Error(
@@ -7887,6 +7896,8 @@ export class AgentsService extends Service implements Agents {
   ) {
     const channels = attentionChannels(binding);
     if (!channels || !binding.session.channels.findLabeled) return;
+    // A relay without NIP-CL holds no system channel, so none to leave.
+    if (binding.session.channels.channelIdentity?.() === false) return;
     const found = await channels.find(
       "agent-attention",
       agentSubject(pubkey),
@@ -8880,7 +8891,17 @@ export class AgentsService extends Service implements Agents {
           (checked || attentionChanges(base, next).length)
         ) {
           const relay = this.relayWriter(key, writer);
+          // An unreadable record is removed only at the revision shown,
+          // never at one that replaced it since (Writing attention).
+          const shown = this.relayAttention.get(key)?.relay.current()?.heads;
+          const removed = Object.keys(base.skipped ?? {}).filter(
+            (slug) => !next?.skipped?.[slug] && !next?.attention[slug],
+          );
           const set = await relay.attention.read();
+          if (removed.some((slug) => set.heads[slug]?.id !== shown?.[slug]?.id))
+            throw new Error(
+              "This record changed in its community. Review it and try again.",
+            );
           // What the read found shows, even when the change then fails.
           const fresh = mirrored(base, set);
           if (fresh !== base) {
@@ -8903,14 +8924,29 @@ export class AgentsService extends Service implements Agents {
           const changes = next ? attentionChanges(base, next) : [];
           const replaced = await publishChanges(relay.io, set, changes);
           // Kept with earlier writes: the live view can be behind this read.
-          if (replaced.size)
+          if (replaced.size) {
+            const at = Date.now();
             this.attentionWritten.set(key, {
               written: addWritten(
                 this.attentionWritten.get(key)?.written,
                 replaced,
               ),
-              at: Date.now(),
+              at,
             });
+            // With the channel idle no new set comes, so the current one is
+            // applied again when the minute ends: a write another member
+            // undid meanwhile stops showing and running here.
+            const entry = relay.attention;
+            setTimeout(() => {
+              if (this.attentionWritten.get(key)?.at !== at) return;
+              if (this.relayAttention.get(key)?.relay !== entry) return;
+              const current = entry.current();
+              if (current)
+                void this.applyRelaySet(key, current).catch((error) =>
+                  console.warn(`Agent ${key} attention not applied`, error),
+                );
+            }, WRITTEN_MS);
+          }
         }
         await this.commit(key, base, next);
         saved?.(next);
@@ -9060,7 +9096,7 @@ export class AgentsService extends Service implements Agents {
     );
   }
   /** Why its attention on the relay is not current here, if it is not
-   * (Reader step 6): it is not read yet, can't be read, or may be stale. */
+   * (Reading attention, step 5): it is not read yet, can't be read, or may be stale. */
   private attentionProblem(key: AgentKey, record: AgentRecord) {
     if (record.attentionStorage !== "relay") return undefined;
     const relay = this.relayAttention.get(key)?.relay;
@@ -9112,26 +9148,7 @@ export class AgentsService extends Service implements Agents {
         follow: (channel, changed, revoked) =>
           session.artifacts.follow([channel], changed, () => revoked()),
         changed: (set) =>
-          void this.change(key, (saved) => {
-            // A record that moved off the relay, or is gone, stays as it is.
-            if (saved?.attentionStorage !== "relay")
-              return saved as AgentRecord;
-            const written = this.attentionWritten.get(key);
-            if (!written || Date.now() - written.at > 60_000) {
-              this.attentionWritten.delete(key);
-              return mirrored(saved, set);
-            }
-            const shown = pendingSet(set, saved, written.written);
-            const left = new Map(written.written);
-            for (const slug of shown.settled) left.delete(slug);
-            if (left.size)
-              this.attentionWritten.set(key, {
-                written: left,
-                at: written.at,
-              });
-            else this.attentionWritten.delete(key);
-            return mirrored(saved, shown.set);
-          }).then(
+          void this.applyRelaySet(key, set).then(
             () => {
               if (this.relayAttention.get(key)?.relay !== relay) return;
               if (this.attentionLive.has(key)) return;
@@ -9151,6 +9168,26 @@ export class AgentsService extends Service implements Agents {
       });
       this.relayAttention.set(key, { relay, binding });
     }
+  }
+  /** Mirrors `set` into the agent's record, still showing this device's
+   * writes it does not show yet, until a minute after they were written. */
+  private applyRelaySet(key: AgentKey, set: AttentionSet) {
+    return this.change(key, (saved) => {
+      // A record that moved off the relay, or is gone, stays as it is.
+      if (saved?.attentionStorage !== "relay") return saved as AgentRecord;
+      const written = this.attentionWritten.get(key);
+      if (!written || Date.now() - written.at >= WRITTEN_MS) {
+        this.attentionWritten.delete(key);
+        return mirrored(saved, set);
+      }
+      const shown = pendingSet(set, saved, written.written);
+      const left = new Map(written.written);
+      for (const slug of shown.settled) left.delete(slug);
+      if (left.size)
+        this.attentionWritten.set(key, { written: left, at: written.at });
+      else this.attentionWritten.delete(key);
+      return mirrored(saved, shown.set);
+    });
   }
   /** The relay head of `slug` in the agent's current attention set, when
    * its attention is on the relay. */

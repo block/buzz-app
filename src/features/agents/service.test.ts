@@ -7432,6 +7432,23 @@ describe("an agent in several communities", () => {
     }
   });
 
+  it("leaves a community whose relay has no NIP-CL system channels", async () => {
+    const { service, second } = await joined();
+    Object.assign(second.session, { relayAuthor: "c".repeat(64) });
+    // NIP-11 lacks nip-cl, so the relay store's findLabeled throws: such a
+    // relay holds no system channel, so none to leave.
+    Object.assign(second.session.channels, {
+      channelIdentity: () => false,
+      findLabeled: vi.fn(async () => {
+        throw new Error(
+          "This community's relay does not support channel labels or system channels yet.",
+        );
+      }),
+    });
+    await service.leave(away);
+    expect(service.memberships(bot).map(({ key }) => key)).toEqual([bot]);
+  });
+
   it("takes it out of its attention channel there when it leaves", async () => {
     const { service, second } = await joined();
     const attention = "6a1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b";
@@ -18473,6 +18490,17 @@ it("keeps a relay agent's timer that its owner saved again during its last task"
   await vi.advanceTimersByTimeAsync(60_000);
   await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
   await vi.advanceTimersByTimeAsync(1_000);
+  // Barrier: the removal's fresh Find ran, and its change has settled.
+  await vi.waitFor(() => expect(f.finds()).toBe(2));
+  await vi.waitFor(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.service.find(bot)?.attentionEnabled).toBe(true);
+    expect(
+      (f.service as unknown as { changing: Map<string, number> }).changing.has(
+        bot,
+      ),
+    ).toBe(false);
+  });
   // The finished task removes nothing it did not run from.
   expect(f.heads.get(d)?.id).toBe(added?.id);
   expect(
@@ -18485,6 +18513,96 @@ it("keeps a relay agent's timer that its owner saved again during its last task"
       ),
   ).toBe(false);
   expect(f.service.find(bot)?.attention["watch/once"]).toBeDefined();
+});
+
+it("keeps an unreadable Interest while a skipped watch still names it", async () => {
+  const f = await relayAttentionSetup();
+  const interest = `interest/${(chat["watch/chat"] as { interest_id: string }).interest_id}`;
+  // Unreadable, so its watch is skipped too and runs nothing.
+  await f.seed(interest, { type: "interest" } as unknown as AttentionValue);
+  await f.seed("watch/chat", chat["watch/chat"] as AttentionValue);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.skipped["watch/chat"]).toBeDefined(),
+  );
+  // Removing the Interest alone would let the watch run without it.
+  await expect(
+    f.service.save(bot, { attention: { [interest]: null } }),
+  ).rejects.toThrow("Remove or move the watches and timers");
+  expect(f.service.find(bot)?.skipped[interest]).toBeDefined();
+});
+
+it("refuses Remove unreadable once another writer repaired the record", async () => {
+  const f = await relayAttentionSetup();
+  // An unreadable record: an Interest with no instructions.
+  await f.seed("interest/broken", {
+    type: "interest",
+  } as unknown as AttentionValue);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.skipped["interest/broken"]).toBeDefined(),
+  );
+  // Another member repairs it before this device's live view shows that.
+  await f.behind("interest/broken", {
+    type: "interest",
+    instructions: "Fixed.",
+  });
+  const d = await attentionD(f.home, "interest/broken");
+  const repaired = f.heads.get(d);
+  // The owner confirmed removing the unreadable record it was shown.
+  await expect(
+    f.service.save(bot, { attention: { "interest/broken": null } }),
+  ).rejects.toThrow();
+  expect(f.heads.get(d)?.id).toBe(repaired?.id);
+});
+
+it("drops a watch this device created once the relay deleted it, with the channel idle", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  try {
+    const f = await relayAttentionSetup({ enabled: true });
+    await f.seed("interest/default", { type: "interest", instructions: "Hi." });
+    await vi.waitFor(() =>
+      expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+    );
+    // The owner's create lands before the live view shows it.
+    const writer = (
+      f.session as unknown as {
+        configArtifactWriter: { publish(event: RelayEvent): Promise<void> };
+      }
+    ).configArtifactWriter;
+    writer.publish = async (event: RelayEvent) => {
+      f.ownerWrites.push(event);
+      f.heads.set(event.tags.find((t) => t[0] === "d")?.[1] ?? "", event);
+    };
+    await f.service.save(bot, {
+      attention: { "watch/chat": chat["watch/chat"] },
+    });
+    // Another writer deletes it before this device's live view shows it.
+    const d = await attentionD(f.home, "watch/chat");
+    const created = f.heads.get(d) as RelayEvent;
+    f.heads.set(
+      d,
+      finalizeEvent(
+        {
+          created_at: nowSeconds(),
+          ...revision({
+            channel: f.home,
+            d,
+            slug: "watch/chat",
+            op: "delete",
+            prev: created.id,
+          }),
+        } as never,
+        generateSecretKey(),
+      ) as RelayEvent,
+    );
+    // NIP-AR sync rule 3: in scope neither before nor after, so the relay
+    // sends this device nothing for it.
+    await vi.advanceTimersByTimeAsync(0);
+    // Past the minute this device's write is kept for, with no other change.
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(f.service.find(bot)?.attention["watch/chat"]).toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("shows why a relay agent's attention is not current", async () => {

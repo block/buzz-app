@@ -635,13 +635,13 @@ describe("one writer revision", () => {
   });
 
   it("resends the owner's same signed event after a lost answer", async () => {
-    const published: string[] = [];
+    const published: RelayEvent[] = [];
     let lose = true;
     const send = ownerSender(
       {
         sign: async (template) => finalizeEvent(template, key) as RelayEvent,
         publish: async (event) => {
-          published.push(event.id);
+          published.push(event);
           if (lose) {
             lose = false;
             throw new Error("socket closed");
@@ -659,7 +659,8 @@ describe("one writer revision", () => {
     });
     expect((await send(event)).status).toBe("uncertain");
     expect((await send(event)).status).toBe("accepted");
-    expect(published[0]).toBe(published[1]);
+    // The same signed event, not one signed again in the same second.
+    expect(published[1]).toBe(published[0]);
   });
 
   it("reads typed refusals from the agent's post", () => {
@@ -955,4 +956,88 @@ describe("the kept-current set", () => {
     expect(Object.keys(f.sets[2]?.attention ?? {})).toEqual(["interest/x"]);
     f.stop();
   });
+});
+
+it("runs Find at once when a roster change lets a lost agent back in", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const agent = "a".repeat(64);
+  let members = [agent];
+  const followers = new Set<(events: readonly RelayEvent[]) => void>();
+  const controller = new AbortController();
+  const attention = relayAttention({
+    agent,
+    find: async () => ({ id, archived: false, members }),
+    artifactSync: true,
+    sync: () => ({
+      snapshot: () => ({ status: "live", events: [] }),
+      subscribe: () => () => {},
+      dispose() {},
+    }),
+    follow(_channel, changed) {
+      followers.add(changed);
+      return () => followers.delete(changed);
+    },
+    changed: () => {},
+    reported: () => {},
+    signal: controller.signal,
+    // The default wait: a lost channel's first retry is 15 to 30 seconds.
+    retryMs: 30_000,
+  });
+  const roster = () => {
+    for (const follower of [...followers])
+      follower([{ kind: 39002, tags: [["d", id]] } as RelayEvent]);
+  };
+  await vi.waitFor(() => expect(attention.current()).toBeDefined());
+  members = ["b".repeat(64)];
+  roster();
+  await vi.waitFor(() => expect(attention.lost()).toBe(true));
+  // Its owner lets it back in (NIP-AT Lost access: Find runs at once).
+  members = [agent];
+  roster();
+  await vi.waitFor(() => expect(attention.lost()).toBe(false), {
+    timeout: 1_000,
+  });
+  controller.abort();
+});
+
+it("waits longer after each failed Find in a row", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  const controller = new AbortController();
+  try {
+    let finds = 0;
+    relayAttention({
+      agent: "a".repeat(64),
+      find: async () => {
+        finds++;
+        throw new Error("relay down");
+      },
+      artifactSync: true,
+      sync: () => {
+        throw new Error("not reached");
+      },
+      follow: () => () => {},
+      changed: () => {},
+      reported: () => {},
+      signal: controller.signal,
+      retryMs: 1_000,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finds).toBe(1);
+    // 1 s, then 2 s, then 4 s (NIP-AR rule 7).
+    for (const [wait, total] of [
+      [1_000, 2],
+      [1_999, 2],
+      [1, 3],
+      [3_999, 3],
+      [1, 4],
+    ]) {
+      await vi.advanceTimersByTimeAsync(wait as number);
+      expect(finds).toBe(total);
+    }
+  } finally {
+    controller.abort();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
 });

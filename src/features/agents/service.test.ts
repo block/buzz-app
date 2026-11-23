@@ -19324,6 +19324,27 @@ it("finishes a move to this device's set that keeps an Interest only the communi
   );
 });
 
+it("moves without asking when the only Interest the community adds is one a watch here names", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "watch/chat": {
+        slug: "watch/chat",
+        value: chat["watch/chat"] as AttentionValue,
+        modifiedAt: 1,
+      },
+    },
+  });
+  const interest = `interest/${(chat["watch/chat"] as { interest_id: string }).interest_id}`;
+  await f.seed(interest, { type: "interest", instructions: "There." });
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: true,
+    kept: [interest],
+  });
+  expect(f.service.find(bot)?.attention[interest]?.value).toMatchObject({
+    instructions: "There.",
+  });
+});
+
 it("runs the set it read back at the switch, with no wait for the agent's first sync", async () => {
   const f = await relayAttentionSetup({
     enabled: true,

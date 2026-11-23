@@ -721,8 +721,11 @@ export async function moveAttention(
   const first = compared(attention, before);
   const snapshot = moveSnapshot(attention, first);
   const refused = { moved: false, set: before, found: first, snapshot };
+  // An Interest that only the relay holds and a watch here names is no
+  // difference: either choice keeps it, and the switch takes it here too.
+  const kept = new Set(first.kept);
   const differs =
-    first.extra.length ||
+    first.extra.some((slug) => !kept.has(slug)) ||
     first.skipped.length ||
     first.different.some((slug) => before.attention[slug]);
   if (choice ? !sameSnapshot(choice.snapshot, snapshot) : differs)
@@ -775,16 +778,14 @@ export async function moveAttention(
   const set = await read();
   const found = compared(attention, set);
   // The community's versions may differ; each object here must be there.
-  // "device" keeps the Interests a watch here names, so they may stay extra.
+  // Interests a watch here names may stay extra: they are kept.
   const moved =
     choice?.use === "community"
       ? !found.skipped.length &&
         Object.keys(attention).every((slug) => set.attention[slug])
       : !found.different.length &&
         !found.skipped.length &&
-        found.extra.every(
-          (slug) => choice?.use === "device" && named.has(slug),
-        );
+        found.extra.every((slug) => named.has(slug));
   return { moved, set, found, snapshot: moveSnapshot(attention, found) };
 }
 

@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DotsThreeIcon, PlusIcon } from "../../shared/design-system/icons";
+import { Badge } from "../../shared/design-system/ui/Badge";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
@@ -15,6 +16,7 @@ import {
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
+import styles from "./AgentEnvironment.module.css";
 
 type Status = { names: string[] };
 /** The one row open for editing: a saved name to replace, or a new one. */
@@ -125,6 +127,7 @@ export function AgentEnvironment({
       ) : (
         <Input
           aria-label="Variable name"
+          controlSize="sm"
           placeholder="NAME"
           value={open.name}
           disabled={locked}
@@ -136,6 +139,7 @@ export function AgentEnvironment({
       )}
       <Input
         aria-label={`Value of ${open.replacing ?? (open.name.trim() || "new variable")}`}
+        controlSize="sm"
         type="password"
         placeholder={open.replacing ? "New value" : "Value"}
         value={open.value}
@@ -190,7 +194,10 @@ export function AgentEnvironment({
             No variables yet
           </p>
         ) : (
-          <div className={`${ROW} text-body-sm text-subtle`} aria-hidden="true">
+          <div
+            className={`${ROW} ${styles.headings} text-caption text-subtle`}
+            aria-hidden="true"
+          >
             <span>Variable</span>
             <span>Value</span>
           </div>
@@ -201,13 +208,15 @@ export function AgentEnvironment({
           ) : (
             <div key={name} className={ROW}>
               <span className="truncate font-mono text-body-sm">{name}</span>
-              <span className="text-body-sm text-subtle">
-                <span aria-hidden="true">•••••• </span>Saved
+              <span>
+                <Badge>
+                  <span aria-hidden="true">•••••• </span>Saved
+                </Badge>
               </span>
               <span className="flex items-center gap-1">
                 <Button
-                  size="sm"
-                  variant="ghost"
+                  size="xs"
+                  variant="link"
                   aria-label={`Replace ${name}`}
                   disabled={locked || !!draft}
                   onClick={() => setDraft({ replacing: name, name, value: "" })}

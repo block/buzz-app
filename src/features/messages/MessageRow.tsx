@@ -62,6 +62,7 @@ import {
   useRef,
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useSyncExternalStore,
   type ReactNode,
@@ -120,7 +121,12 @@ import {
 } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { useForwardMessage } from "./ForwardMessage";
-import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
+import {
+  FlagIcon,
+  ListBulletsIcon,
+  PinIcon,
+} from "../../shared/design-system/icons";
+import { usePinnedMessages } from "./use-pins";
 import {
   MenuIcon,
   MenuItem,
@@ -1645,6 +1651,9 @@ function MessageRowContent({
                   )}
               </div>
             </div>
+            {session?.relayAuthor && !row.membership && !row.huddle && (
+              <PinnedMarker session={session} row={row} />
+            )}
             {row.sentFromThread && (
               <div className={styles.sentFromThread}>
                 Sent from{" "}
@@ -1860,6 +1869,9 @@ export const MessageRow = memo(function AudienceMessageRow(
   );
 });
 
+// What can hold focus in an activity entry. Its line is the first.
+const focusStops =
+  "a[href], button, input, select, textarea, summary, audio[controls], video[controls], [tabindex]";
 function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   const {
     row,
@@ -1904,6 +1916,25 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
   }, [open, keepMounted, row.id]);
+  // Changing container replaces the entry. A reader whose focus was in it
+  // stays on the same stop in its replacement, or else on its line, so Tab
+  // continues from this row. Focus that had left the entry is not moved.
+  const entry = useRef<HTMLDivElement | null>(null);
+  const focused = useRef<{ entry: Element; stop: Element } | null>(null);
+  useLayoutEffect(() => {
+    void bubble;
+    const was = focused.current;
+    const now = entry.current;
+    if (!was || !now || was.stop.isConnected) return;
+    const stops = (root: Element) => [
+      ...root.querySelectorAll<HTMLElement>(focusStops),
+    ];
+    const [line, ...rest] = stops(now);
+    const same = rest[stops(was.entry).indexOf(was.stop as HTMLElement) - 1];
+    (same?.tagName === was.stop.tagName ? same : line)?.focus({
+      preventScroll: true,
+    });
+  }, [bubble]);
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const { recipients, body } = useMemo(
@@ -2026,6 +2057,16 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
               data-highlight-surface=""
               data-thread-open={props.threadOpen || undefined}
               aria-current={props.threadOpen ? true : undefined}
+              ref={entry}
+              onFocus={(event) => {
+                focused.current = {
+                  entry: event.currentTarget,
+                  stop: event.target,
+                };
+              }}
+              onBlur={() => {
+                focused.current = null;
+              }}
               // One stable anchor survives both animation directions. Not the
               // button: revealing an anchor takes it out of the Tab order.
               data-message-id={row.id}
@@ -2397,4 +2438,24 @@ function useThreadAgents(
       library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? [],
     waiting: state === "waiting",
   };
+}
+
+/** A quiet line on a message that is pinned in its channel. */
+function PinnedMarker({
+  session,
+  row,
+}: {
+  session: RelaySession;
+  row: ChannelMessage;
+}) {
+  const pins = usePinnedMessages(session, row.channelId);
+  if (!pins.set.has(row.id)) return null;
+  return (
+    <div className={styles.pinnedMarker}>
+      <span>
+        <PinIcon size={12} aria-hidden="true" />
+        Pinned
+      </span>
+    </div>
+  );
 }

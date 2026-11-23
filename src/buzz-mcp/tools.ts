@@ -268,6 +268,12 @@ export const TOOLS: readonly Tool[] = [
     { id: str, emoji: str, off: { type: "boolean" } },
     ["id", "emoji"],
   ),
+  tool(
+    "pin",
+    "Pin a message to its channel for everyone; off unpins it.",
+    { id: str, off: { type: "boolean" } },
+    ["id"],
+  ),
   tool("read", "Read a thread (default: current) or a channel's latest.", {
     channel: str,
     thread: str,
@@ -886,6 +892,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!reaction) return "no such reaction";
     await client.publish({ kind: 5, content: "", tags: [["e", reaction.id]] });
     return "removed";
+  },
+
+  async pin(tools, args) {
+    const id = required(args, "id");
+    const channel = tag(await tools.event(id), "h");
+    if (!channel) throw new Error(`${id} is not a channel message.`);
+    await tools.client.publish({
+      kind: args.off === true ? 40011 : 40010,
+      content: "",
+      tags: [
+        ["h", channel],
+        ["e", id],
+        // NIP-PM: each new command is a distinct event.
+        ["client-id", crypto.randomUUID()],
+      ],
+    });
+    return args.off === true ? "unpinned" : "pinned";
   },
 
   async read(tools, args) {

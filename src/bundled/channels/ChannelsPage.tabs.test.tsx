@@ -46,6 +46,7 @@ import { ChannelsPage } from "./ChannelsPage";
 import type { CommunityMembership } from "../moderation/membership";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { BrowserHostView } from "../../features/browser/BrowserHostView";
+import { UploadError } from "../../features/relay/attachments";
 import { BrowserSessions } from "../../features/browser/sessions";
 import type { BrowserPlatform } from "../../features/browser/platform";
 
@@ -123,6 +124,7 @@ async function page(
   routed = false,
   appComponent?: RegisteredPanel["component"],
   sidebarPreferences?: RelaySession["sidebarPreferences"],
+  uploadAttachment?: (file: File) => Promise<never>,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -152,6 +154,7 @@ async function page(
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
+      ...(uploadAttachment && { uploadAttachment }),
       query: async (filters) => relayQuery(authority, events, filters),
       writer: {
         sign: async (template) => signed(viewer, template),
@@ -983,6 +986,57 @@ it("the conversation identity menu clears the page's side tabs too", async () =>
   );
   expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
   expect(channel).toHaveFocus();
+});
+
+it("holds the notice for a type the relay refuses while another main tab covers the channel composer", async () => {
+  let refuse = (_reason: Error) => {};
+  const upload = vi.fn(
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        refuse = reject;
+      }),
+  );
+  const h = await page(
+    "stream",
+    undefined,
+    false,
+    undefined,
+    undefined,
+    upload,
+  );
+  fireEvent.paste(h.composer, {
+    clipboardData: {
+      items: [{ kind: "file", getAsFile: () => new File(["MZ"], "setup.exe") }],
+      getData: () => "",
+    },
+  });
+  await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  // The channel's composer stays mounted, uploading, under the thread's tab.
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() =>
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
+  );
+  const [conversation, thread] = within(
+    screen.getByRole("tablist", { name: "Channel tabs" }),
+  ).getAllByRole("tab");
+  if (!conversation || !thread) throw new Error("missing main-pane tabs");
+  expect(thread).toHaveAttribute("aria-selected", "true");
+  await act(async () => refuse(new UploadError("type")));
+  // The covered chip has the refusal, so the notice could have been raised.
+  await vi.waitFor(() =>
+    expect(
+      screen.getByText(/This file type isn’t supported/),
+    ).toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("dialog", { name: "Could not attach file" })).toBe(
+    null,
+  );
+  await h.user.click(conversation);
+  expect(conversation).toHaveAttribute("aria-selected", "true");
+  expect(
+    await screen.findByRole("dialog", { name: "Could not attach file" }),
+  ).toHaveAccessibleDescription("setup.exe isn’t a supported file type.");
 });
 
 it("close-all works while a main-pane thread covers the channel conversation", async () => {

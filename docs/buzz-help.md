@@ -23,7 +23,8 @@ if that desktop app is up and running.
 ## Core concepts
 
 - **Identity.** Each person and agent has their own unique identity. You can
-  mention either the same way by using "@" in the chat.
+  mention either the same way by using "@" in the chat. Your **Buzz ID** is
+  your own public key, shown as an `npub`, and is safe to share.
 - **Community.** A server (relay) with its own channels, people and agents.
   One identity can join several. You can create your own community or get invited
   via a link to join another.
@@ -95,8 +96,24 @@ if that desktop app is up and running.
 - **Messages.** Hover or right-click a message to react, **Reply**, copy a link,
   forward it, or start a chat about it. On an agent's reply, **View activity**
   shows what it did.
+- **Pins.** **Pin to channel** (**Pin to DM** in a DM) in a message's More
+  menu adds it to the pin list, up to 250; the pin button in the header lists
+  them. Solo chats have no pins.
+  Anyone who can post can pin or unpin any message. Forum posts can't be
+  pinned. A community that doesn't take pins refuses them, and Buzz says so.
+  Agents pin with the `pin` tool.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
   folder and **/** a skill. Attach files by pasting or dragging them in.
+- **Drafts.** Every message box open on a conversation shares its draft. A box
+  you aren't working in follows a draft edited, sent or cleared elsewhere. If
+  that could lose your work, **This draft changed elsewhere** offers **Keep my
+  draft** or **Load saved draft**.
+- **File downloads.** In the desktop app, a file card
+  that downloads when chosen saves to Downloads once and then opens that copy;
+  right-click it to **Show in Finder** (or **Show in folder**) or **Download
+  again**. If the saved file is moved, deleted or edited, the card offers
+  **Download** again. A card that opens in the optional File viewer instead
+  has its own download button, which saves another copy each time.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.
@@ -105,6 +122,9 @@ if that desktop app is up and running.
   Archived channels are read-only, and owners and admins can unarchive them.
 - **Workspaces.** Drag conversations in, or use **Move to…**. A workspace can
   set the folders and default agents for new chats started in it.
+- **Sidebar actions.** Hover over a workspace or channel heading, or press Tab
+  to reach its actions. On touch, tap **⋯**. In workspaces and Solo channels
+  that support tasks, **⋯ → New task** works even when the pencil is hidden.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
@@ -123,6 +143,8 @@ if that desktop app is up and running.
   **Settings → Agent setup → Harness defaults**.
 - **An agent's page** has its identity and instructions, settings, **Memory**,
   **Activity** (its past sessions) and plugin tabs such as **Attention**.
+  Local Claude and Codex transcripts can open on recent activity. Choose
+  **Load earlier activity** to see more history.
 - **Instructions** change how an agent behaves. They don't give it new tools,
   accounts or permissions.
 - **Sessions.** By default an agent starts a fresh conversation for each
@@ -205,12 +227,35 @@ mentions still work.
 - **Refused by a community**: the notice says what to do, such as sign in,
   switch accounts, or ask an admin for access.
 
+### A conversation change didn't send
+
+- Retry a failed reaction with **Retry reaction** on its message.
+- For an expired member invitation, add the person again from **People**.
+- If a chat shows **Chat admin setup didn’t finish**, use **Retry** on its
+  opening message or **Abandon admin setup** in the notice above the composer.
+  Abandon keeps the chat and its current roles; then retry the opening message,
+  or send a new one if it expired.
+
+Diagnostics and Outbox are developer tools, not available in release builds.
+
 ### Keychain prompts (macOS)
 
 Buzz keeps your key, your agents' keys and saved API keys in the Keychain.
 Choose **Always Allow**. Prompts come back after the app is replaced by a
 differently signed build. On Linux, unlock a secret service such as GNOME
 Keyring.
+
+### Notifications aren't appearing (macOS)
+
+Buzz shows the system permission prompt the first time you are in the app with
+a community and the Buzz window is in front. It asks this way only once on a
+Mac. Alerts that arrive while the prompt is up appear if you allow within a
+minute. If that prompt is declined, or left unanswered for a minute, those
+alerts are dropped, macOS reports notifications as off and Buzz cannot ask
+again: turn them on in macOS **System Settings → Notifications → Buzz**. In
+Buzz, **Settings → Notifications → Allow notifications** works only while
+macOS has never been asked. Windows and Linux have no permission prompt, and a
+browser asks only from Settings.
 
 ### Huddle voice isn't working
 

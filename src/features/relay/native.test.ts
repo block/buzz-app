@@ -1106,6 +1106,12 @@ it("advertises purpose-bound channel capabilities and gates creation on NIP-29",
   );
 });
 
+it("offers pin commands without an advertisement", async () => {
+  expect((await connectNativeTransport(community)).writer?.kinds).toEqual(
+    expect.arrayContaining([40010, 40011]),
+  );
+});
+
 it("routes lifecycle sign/publish separately from the message writer and preserves definitive rejection", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.channelLifecycle);
@@ -1646,7 +1652,10 @@ it("uploads exact bytes natively and validates the relay descriptor", async () =
 
 it.each([
   [422, { error: "metadata forbidden" }, "metadata"],
-  [415, { error: "unsupported container" }, "rejected"],
+  [415, { error: "unsupported container" }, "type"],
+  [415, { error: "disallowed content type: application/x-msdownload" }, "type"],
+  // A refusal the relay does not name as a type is not called one.
+  [415, { error: "unsupported" }, "rejected"],
   [500, "internal error", "failed"],
 ])(
   "maps relay upload status %i to a user-facing failure",

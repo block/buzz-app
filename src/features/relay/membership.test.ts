@@ -34,6 +34,15 @@ const addition = (target = pinky.pubkey, time = 20) =>
 const end = () =>
   bounds(relay, "a", "head", { has_more: false, next_cursor: null });
 
+it("shows no row for a relay-signed pin notice", () => {
+  const pin = activity({
+    type: "message_pinned",
+    actor: viewer.pubkey,
+    target_event_id: "d".repeat(64),
+  });
+  expect(foldMessages("a", relay.pubkey, [pin])).toEqual([]);
+});
+
 it("admits only recognized, channel-scoped relay-authored membership payloads", () => {
   const joined = addition();
   const left = activity({ type: "member_left", actor: pinky.pubkey });

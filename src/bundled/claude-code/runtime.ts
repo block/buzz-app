@@ -133,7 +133,10 @@ import {
   readLatestTurns,
   readSessionTitle,
   readTranscript,
+  readTranscriptPreview,
   withNotices,
+  type ClaudeTranscript,
+  type WorkingPoll,
   type Conversation,
   type SessionsPlace,
 } from "./transcript";
@@ -841,6 +844,7 @@ export class ClaudeRuntime {
     workspace: string,
     working: boolean,
     signal: AbortSignal,
+    poll?: WorkingPoll,
   ) {
     if (await this.inspect?.(conversation.agent))
       // Where the gateway would attribute it, also say that it isn't.
@@ -849,20 +853,70 @@ export class ClaudeRuntime {
           ? `${REMOTE_TRANSCRIPTS}. They aren't attributed in the agent gateway yet.`
           : `${REMOTE_TRANSCRIPTS}.`,
       );
+    return this.readActivity(
+      readTranscript,
+      conversation,
+      workspace,
+      working,
+      signal,
+      undefined,
+      poll,
+    );
+  }
+
+  async transcriptPreview(
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+  ) {
+    const { agent, sessionId } = conversation;
+    const key = conversation.community
+      ? COMMUNITY_SESSION
+      : conversationKey(conversation.channelId, conversation.root);
+    const saved = () => this.savedSessions(agent).get(key)?.id;
+    if (
+      !sessionId ||
+      saved() !== sessionId ||
+      !this.host.spawn ||
+      this.target ||
+      this.bound(agent) ||
+      (await this.inspect?.(agent))
+    )
+      return undefined;
+    signal.throwIfAborted();
+    const preview: ClaudeTranscript | undefined = await this.readActivity(
+      readTranscriptPreview,
+      conversation,
+      workspace,
+      working,
+      signal,
+      key,
+    );
+    signal.throwIfAborted();
+    return saved() === sessionId && !this.bound(agent) ? preview : undefined;
+  }
+
+  private readActivity(
+    read: typeof readTranscript,
+    conversation: Conversation,
+    workspace: string,
+    working: boolean,
+    signal: AbortSignal,
+    key = conversation.community
+      ? COMMUNITY_SESSION
+      : conversationKey(conversation.channelId, conversation.root),
+    poll?: WorkingPoll,
+  ) {
     const prompts = this.prompts(conversation.agent);
-    return readTranscript(
+    return read(
       this.spawn,
-      this.place(
-        conversation.agent,
-        conversation.community
-          ? COMMUNITY_SESSION
-          : conversationKey(conversation.channelId, conversation.root),
-        workspace,
-      ),
+      this.place(conversation.agent, key, workspace),
       conversation,
       working,
       signal,
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+      poll,
     ).then(
       (transcript) =>
         transcript && {
@@ -896,6 +950,7 @@ export class ClaudeRuntime {
     working: boolean,
     signal: AbortSignal,
     held: readonly TranscriptTurn[],
+    poll?: WorkingPoll,
   ) {
     if (await this.inspect?.(conversation.agent)) return undefined;
     const read = await readLatestTurns(
@@ -911,6 +966,7 @@ export class ClaudeRuntime {
       working,
       signal,
       (pubkey) => this.reads(conversation.agent)?.name(pubkey),
+      poll,
     );
     if (!read) return undefined;
     // Turns older than all `held` keeps are left.

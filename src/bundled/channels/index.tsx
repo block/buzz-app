@@ -11,6 +11,7 @@ import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { ConversationWorkspace, PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
+import { registerPins } from "./pins-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
@@ -66,6 +67,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.reflect.get("sidebarSections")?.registerSource?.(soloSidebarSource);
   ctx.reflect.get("sidebarSections")?.registerSource?.(teamSidebarSource);
   registerCanvas(ctx);
+  registerPins(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",

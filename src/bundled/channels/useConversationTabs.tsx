@@ -812,7 +812,8 @@ export function useConversationTabs({
       : undefined;
   }
   // A thread names its conversation as Inbox rows do, bounding a group DM's
-  // names where its tab lists them all; the name opens it there.
+  // names where its tab lists them all; the name opens it there. A one-to-one
+  // DM keeps its name here, where no sender beside it already says it.
   const resolveName = useIdentityNames(queries.names);
   function parentOf(tab: Tab, target: ChannelSummary) {
     const open = openInChannel(tab, target);

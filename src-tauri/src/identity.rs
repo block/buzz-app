@@ -510,6 +510,9 @@ fn valid_compact_workspace_id(row: &str) -> bool {
     }
 }
 
+/// Mirrors `MAX_SIDEBAR_PLUGIN_CARDS` in the renderer.
+const MAX_SIDEBAR_PLUGIN_CARDS: usize = 64;
+
 // Reject renderer-supplied arbitrary ciphertext/plaintext at the purpose-bound signer.
 fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Result<()> {
     let invalid = || "Invalid sidebar payload".to_owned();
@@ -566,20 +569,34 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                     .get("sectionOrder")
                     .and_then(|order| order.as_array())
                     .ok_or_else(invalid)?;
+                // Mirrors `validWorkspaceSectionOrder`: plugin and Solo region
+                // cards share the order under `plugin:` / `solo-region:` keys.
+                let plugin_card = |key: &str| {
+                    ["plugin:", "solo-region:"].iter().any(|prefix| {
+                        key.strip_prefix(prefix)
+                            .is_some_and(|id| !id.trim().is_empty())
+                    }) && key.encode_utf16().count() <= 320
+                };
                 let mut keys = std::collections::HashSet::new();
-                if order.len() > section_limit + 6
+                let mut plugin_cards = 0;
+                if order.len() > section_limit + 6 + MAX_SIDEBAR_PLUGIN_CARDS
                     || order.iter().any(|key| {
                         let Some(key) = key.as_str() else {
                             return true;
                         };
+                        if plugin_card(key) {
+                            plugin_cards += 1;
+                        }
                         !keys.insert(key)
                             || (!matches!(
                                 key,
                                 "pages" | "starred" | "solo" | "channels" | "forums" | "dms"
-                            ) && !key.strip_prefix("group:").is_some_and(|id| {
-                                !id.trim().is_empty() && id.encode_utf16().count() <= 256
-                            }))
+                            ) && !plugin_card(key)
+                                && !key.strip_prefix("group:").is_some_and(|id| {
+                                    !id.trim().is_empty() && id.encode_utf16().count() <= 256
+                                }))
                     })
+                    || plugin_cards > MAX_SIDEBAR_PLUGIN_CARDS
                 {
                     return Err(invalid());
                 }

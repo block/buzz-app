@@ -1,3 +1,4 @@
+import { DndContext } from "@dnd-kit/core";
 // @vitest-environment jsdom
 import type { InboxItem } from "../relay/inbox";
 import "@testing-library/jest-dom/vitest";
@@ -77,7 +78,6 @@ function mount(
   const navigator = { ...h.navigator, open } as Navigation;
   function View() {
     const [collapsed, setCollapsed] = useState<string[]>([]);
-    const [order, setOrder] = useState<string[]>([]);
     const list = useRef<HTMLElement>(null);
     const toggle = useCallback((key: string, expanded: boolean) => {
       setCollapsed((keys) =>
@@ -99,8 +99,7 @@ function mount(
           list,
           savedLocation: undefined,
           collapsed,
-          contributionOrder: order,
-          setContributionOrder: (next) => setOrder([...next]),
+          contributionOrder: [],
           toggle,
           retryReveal,
           revealAgain,
@@ -110,7 +109,12 @@ function mount(
       />
     );
   }
-  const mounted = render(<ToastProvider>{wrap(<View />)}</ToastProvider>);
+  // Region cards drag in the sidebar's one drag group.
+  const mounted = render(
+    <ToastProvider>
+      <DndContext>{wrap(<View />)}</DndContext>
+    </ToastProvider>,
+  );
   return {
     ...mounted,
     open,
@@ -119,7 +123,11 @@ function mount(
     navigate(next: OpenTarget) {
       target = next;
       void h.navigate(next);
-      mounted.rerender(<ToastProvider>{wrap(<View />)}</ToastProvider>);
+      mounted.rerender(
+        <ToastProvider>
+          <DndContext>{wrap(<View />)}</DndContext>
+        </ToastProvider>,
+      );
     },
   };
 }
@@ -1327,7 +1335,11 @@ it.each([true, false])(
         </ToastProvider>
       );
     };
-    render(<View />);
+    render(
+      <DndContext>
+        <View />
+      </DndContext>,
+    );
     const viewport = screen.getByTestId("region-viewport");
     const heading = screen.getByLabelText("Work");
     expect(heading.parentElement).not.toHaveAttribute("open");
@@ -1543,13 +1555,16 @@ it("keeps recovery chats reachable while distinguishing installed, unknown and n
     screen.getByText("The plugin for these chats is off."),
   ).toBeInTheDocument();
   await act(() => h.plugins({ status: "loading" }));
-  expect(screen.getByRole("status")).toHaveTextContent("Loading Plugin chats…");
+  expect(screen.getByText("Loading Plugin chats…")).toHaveAttribute(
+    "role",
+    "status",
+  );
   await act(() =>
     h.plugins({ status: "recovery", reason: "Unavailable", canReset: false }),
   );
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "The plugin for these chats is off.",
-  );
+  expect(
+    screen.getAllByText("The plugin for these chats is off.").at(-1),
+  ).toHaveAttribute("role", "status");
   await act(() =>
     h.plugins({
       status: "ready",
@@ -1702,7 +1717,9 @@ it.each([
     render(
       <ToastProvider>
         <ChannelNavigationProvider relay={h.relay}>
-          <Inventory />
+          <DndContext>
+            <Inventory />
+          </DndContext>
           <SoloHeading
             session={h.session}
             scope={h.scope}

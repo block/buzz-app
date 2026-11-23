@@ -33,6 +33,7 @@ import { useDroppable } from "@dnd-kit/core";
 import {
   ChannelSidebarDnd,
   DraggableChannel,
+  useSidebarCardOrder,
   useSidebarSectionDrag,
 } from "../../features/channel-navigation/ChannelSidebarDnd";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
@@ -291,6 +292,9 @@ export function SoloWorkspaces({
     name: string;
   }>();
   const order = workspaceSectionOrder(snapshot.data);
+  // Composed workspaces are cards of the sidebar's one card order.
+  const cards = useSidebarCardOrder();
+  const cardOrder = cards?.order ?? order;
   const sections = snapshot.data?.sections ?? [];
   const groups = snapshot.data?.sectionOrder
     ? order.flatMap((key) => sections.filter(({ id }) => key === `group:${id}`))
@@ -305,13 +309,6 @@ export function SoloWorkspaces({
     setOrderFocus(undefined);
   }, [orderFocus]);
   const moveProject = (id: string, to: number) => {
-    if (workspaceComposition) {
-      const key = workspaceSectionKey(id);
-      const next = order.filter((section) => section !== key);
-      next.splice(to, 0, key);
-      void preferences.reorderSections(key, next).catch(() => {});
-      return;
-    }
     const ids = groups.map((group) => group.id).filter((key) => key !== id);
     ids.splice(to, 0, id);
     if (!snapshot.data?.sectionOrder) {
@@ -569,15 +566,31 @@ export function SoloWorkspaces({
     snapshot.moves?.filter((move) =>
       chats.some((item) => item.id === move.channelId),
     ) ?? [];
+  // Composed workspaces move among each other inside their card.
+  const composedKeys = workspaceComposition
+    ? visible.flatMap((project) =>
+        project.id ? [workspaceSectionKey(project.id)] : [],
+      )
+    : [];
   const entries = visible.map((project) => {
     const sharedFrame = !!workspaceComposition && !!project.id;
     const projectKey = sharedFrame
       ? workspaceSectionKey(project.id)
       : DROP + project.id;
     const groupIndex = workspaceComposition
-      ? order.indexOf(projectKey)
+      ? cardOrder.indexOf(projectKey)
       : groups.findIndex((group) => group.id === project.id);
-    const lastIndex = (workspaceComposition ? order.length : groups.length) - 1;
+    const sibling = composedKeys.indexOf(projectKey);
+    const moveTo = (offset: -1 | 1) => {
+      if (!workspaceComposition)
+        return moveProject(project.id, groupIndex + offset);
+      const over = composedKeys[sibling + offset];
+      if (over) cards?.reorder(projectKey, over);
+    };
+    const canMove = (offset: -1 | 1) =>
+      workspaceComposition
+        ? !!cards && sibling >= 0 && !!composedKeys[sibling + offset]
+        : groupIndex >= 0 && !!groups[groupIndex + offset];
     const reorderable = !!project.id && orderWritable;
     const open =
       !collapsed.includes(project.id) || renamingProject === project.id;
@@ -594,6 +607,7 @@ export function SoloWorkspaces({
           project.id ? workspaceComposition?.registerFrame : undefined
         }
         groupIndex={groupIndex}
+        within={sharedFrame ? COMPOSED_WORKSPACES : undefined}
         reorderable={reorderable}
         disabled={
           !preferences.writable || (!!workspaceComposition && !sharedFrame)
@@ -640,8 +654,8 @@ export function SoloWorkspaces({
                 menuAnchor,
               )}
             <MenuItem
-              disabled={!orderWritable || groupIndex <= 0}
-              onClick={() => moveProject(project.id, groupIndex - 1)}
+              disabled={!orderWritable || !canMove(-1)}
+              onClick={() => moveTo(-1)}
             >
               <MenuIcon>
                 <ArrowUpIcon size={14} />
@@ -649,8 +663,8 @@ export function SoloWorkspaces({
               Move up
             </MenuItem>
             <MenuItem
-              disabled={!orderWritable || groupIndex >= lastIndex}
-              onClick={() => moveProject(project.id, groupIndex + 1)}
+              disabled={!orderWritable || !canMove(1)}
+              onClick={() => moveTo(1)}
             >
               <MenuIcon>
                 <ArrowDownIcon size={14} />
@@ -737,6 +751,7 @@ export function SoloWorkspaces({
             <WorkspaceDragHandle
               sectionKey={projectKey}
               groupIndex={groupIndex}
+              within={sharedFrame ? COMPOSED_WORKSPACES : undefined}
               reorderable={reorderable}
               capturePointerDown={trailing?.hasInteractiveDecoration ?? false}
             >
@@ -1344,12 +1359,16 @@ function ContributedSoloRow({
   );
 }
 
+/** Drags of composed workspaces stay among the workspaces of their card. */
+const COMPOSED_WORKSPACES = "composed-workspaces";
+
 /** A drop reports only its destination, so it saves exactly like Move to. */
 function DropProject({
   projectKey,
   shared,
   registerFrame,
   groupIndex,
+  within,
   reorderable,
   disabled,
   ...props
@@ -1358,6 +1377,7 @@ function DropProject({
   shared: boolean;
   registerFrame?: WorkspaceSidebarComposition["registerFrame"] | undefined;
   groupIndex: number;
+  within: string | undefined;
   reorderable: boolean;
   disabled: boolean;
 }) {
@@ -1370,6 +1390,7 @@ function DropProject({
     data: {
       group: reorderable,
       groupIndex,
+      within,
       accepts: shared ? sidebarDropRowKinds(projectKey) : undefined,
     },
     disabled,
@@ -1404,6 +1425,7 @@ function WorkspaceDragHandle({
   children: ReactNode;
   sectionKey: string;
   groupIndex: number;
+  within: string | undefined;
   reorderable: boolean;
   capturePointerDown: boolean;
 }) {

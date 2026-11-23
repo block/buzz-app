@@ -16,7 +16,7 @@ import type {
   RegisteredSidebarSection,
   SidebarSections,
 } from "./sidebar-sections-service";
-import { DroppableSidebarSection } from "./ChannelSidebarDnd";
+import { DroppableSidebarSection, useSidebarCard } from "./ChannelSidebarDnd";
 import { sidebarTarget } from "./routes";
 
 function isSelectedDestination(destination: OpenTarget, target: OpenTarget) {
@@ -57,9 +57,6 @@ export function SidebarContributionSection({
   target,
   open,
   onToggle,
-  groupIndex,
-  reorderable,
-  move,
   onRowsCommitted,
 }: {
   entry: RegisteredSidebarSection;
@@ -68,15 +65,14 @@ export function SidebarContributionSection({
   target: OpenTarget;
   open: boolean;
   onToggle: (open: boolean) => void;
-  groupIndex: number;
-  reorderable: boolean;
-  move: { up?: () => void; down?: () => void } | undefined;
   onRowsCommitted?: () => void;
 }) {
   // A failed section stops observing its rows; Retry renders it again.
   const [attempt, setAttempt] = useState(0);
   const retry = useRef<HTMLButtonElement>(null);
   const sectionKey = `plugin:${entry.key}`;
+  // Its menu holds only moves.
+  const movable = !!useSidebarCard(sectionKey).move;
   useLayoutEffect(() => {
     // Retry remounts the section: focus the new Retry, or the recovered header.
     if (!attempt || document.activeElement !== document.body) return;
@@ -95,15 +91,12 @@ export function SidebarContributionSection({
       fallback={
         <DroppableSidebarSection
           disabled={false}
-          reorderable={reorderable}
-          groupIndex={groupIndex}
-          groupDomain="contributions"
+          accepts={[]}
           sectionKey={sectionKey}
           title={entry.title}
           open={open}
           onToggle={onToggle}
-          move={move}
-          hideMoreActions={!reorderable}
+          hideMoreActions={!movable}
         >
           <p role="alert">
             {entry.title} is unavailable. Other sidebar sections remain
@@ -127,9 +120,7 @@ export function SidebarContributionSection({
           target={target}
           open={open}
           onToggle={onToggle}
-          groupIndex={groupIndex}
-          reorderable={reorderable}
-          move={move}
+          movable={movable}
           onRowsCommitted={onRowsCommitted}
         />
       )}
@@ -144,9 +135,7 @@ function SectionContents({
   target,
   open,
   onToggle,
-  groupIndex,
-  reorderable,
-  move,
+  movable,
   onRowsCommitted,
 }: {
   entry: RegisteredSidebarSection;
@@ -155,9 +144,7 @@ function SectionContents({
   target: OpenTarget;
   open: boolean;
   onToggle: (open: boolean) => void;
-  groupIndex: number;
-  reorderable: boolean;
-  move: { up?: () => void; down?: () => void } | undefined;
+  movable: boolean;
   onRowsCommitted: (() => void) | undefined;
 }) {
   const subscribe = useCallback(
@@ -223,17 +210,14 @@ function SectionContents({
   ));
   return (
     <DroppableSidebarSection
-      groupDomain="contributions"
       disabled={false}
-      reorderable={reorderable}
-      groupIndex={groupIndex}
+      accepts={[]}
       sectionKey={`plugin:${entry.key}`}
       title={entry.title}
       icon={entry.icon}
       open={open}
       onToggle={onToggle}
-      move={move}
-      hideMoreActions={!reorderable}
+      hideMoreActions={!movable}
       headerActions={actions}
       headerNotice={
         actionError && (

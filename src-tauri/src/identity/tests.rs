@@ -987,3 +987,29 @@ async fn managed_consent_commit_is_fenced_by_identity_close_and_never_restores()
             .is_err());
     }
 }
+
+#[test]
+fn workspace_section_order_accepts_plugin_cards_within_cap() {
+    use serde_json::json;
+    let record = |order: serde_json::Value| json!({"version": 1, "sections": [], "assignments": {}, "sectionOrder": order});
+    let valid =
+        |order| super::validate_sidebar_payload("channel-workspaces", &record(order)).is_ok();
+    assert!(valid(json!([
+        "pages",
+        "plugin:notes/list",
+        "solo-region:pinned",
+        "dms"
+    ])));
+    for bad in [
+        json!(["plugin:"]),
+        json!(["solo-region: "]),
+        json!(["other:x"]),
+        json!([format!("plugin:{}", "x".repeat(320))]),
+        json!(["plugin:a", "plugin:a"]),
+    ] {
+        assert!(!valid(bad));
+    }
+    let cards = |n: usize| (0..n).map(|i| format!("plugin:p/{i}")).collect::<Vec<_>>();
+    assert!(valid(json!(cards(super::MAX_SIDEBAR_PLUGIN_CARDS))));
+    assert!(!valid(json!(cards(super::MAX_SIDEBAR_PLUGIN_CARDS + 1))));
+}

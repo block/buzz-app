@@ -146,38 +146,49 @@ test.describe("plugin sidebar contributions", () => {
     },
   );
 
-  appTest(
-    "shows a drag preview for contributed sections",
-    async ({ page, app }) => {
-      await page.goto(app.origin);
-      await openPage(page, "Messages");
+  // Plugin cards move in the synced card order, so the host must save it.
+  appTest.describe("with a saved card order", () => {
+    appTest.use({ savedSidebar: true, productionBroker: true });
 
-      const section = page.locator(
-        '[data-sidebar-section="plugin:fixture.sidebar-sections/work"]',
-      );
-      const header = section.locator("summary");
-      await expect(section).toBeVisible();
-      const bounds = await header.boundingBox();
-      if (!bounds)
-        throw new Error("Sidebar contribution header is unavailable");
+    appTest(
+      "shows a drag preview for contributed sections",
+      async ({ page, app }) => {
+        await page.goto(app.origin);
+        await openPage(page, "Messages");
 
-      const x = bounds.x + bounds.width / 2;
-      const y = bounds.y + bounds.height / 2;
-      await page.mouse.move(x, y);
-      await page.mouse.down();
-      await page.mouse.move(x + 12, y + 12, { steps: 3 });
+        const section = page.locator(
+          '[data-sidebar-section="plugin:fixture.sidebar-sections/work"]',
+        );
+        const header = section.locator("summary");
+        await expect(section).toBeVisible();
+        const bounds = await header.boundingBox();
+        if (!bounds)
+          throw new Error("Sidebar contribution header is unavailable");
 
-      await expect(section).toHaveAttribute("data-section-dragging");
-      await expect(page.getByText("Workspace", { exact: true })).toHaveCount(2);
+        const x = bounds.x + bounds.width / 2;
+        const y = bounds.y + bounds.height / 2;
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x + 12, y + 12, { steps: 3 });
 
-      await page.keyboard.press("Escape");
-      await page.mouse.up();
-      await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
-    },
-  );
+        await expect(section).toHaveAttribute("data-section-dragging");
+        await expect(page.getByText("Workspace", { exact: true })).toHaveCount(
+          2,
+        );
+
+        await page.keyboard.press("Escape");
+        await page.mouse.up();
+        await expect(page.locator("[data-section-dragging]")).toHaveCount(0);
+      },
+    );
+  });
 
   appTest.describe("failed section icon recovery", () => {
-    appTest.use({ expectedSidebarIconFailure: true });
+    appTest.use({
+      expectedSidebarIconFailure: true,
+      savedSidebar: true,
+      productionBroker: true,
+    });
 
     appTest(
       "contains a failed contributed icon while dragging its fallback section",

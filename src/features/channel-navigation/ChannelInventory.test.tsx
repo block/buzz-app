@@ -674,7 +674,7 @@ it("ignores local and legacy filter state", async () => {
   expect(screen.getByRole("button", { name: "gamma" })).toBeVisible();
 });
 
-it("preserves disabled contribution positions when active sections reorder", async () => {
+it("moves plugin cards in the synced card order, keeping this device's earlier order until then", async () => {
   const makeSection = (id: string): RegisteredSidebarSection => {
     const rows = [{ id: `${id}-row`, label: `${id.toUpperCase()} item` }];
     return {
@@ -689,64 +689,87 @@ it("preserves disabled contribution positions when active sections reorder", asy
       revision: "one",
     };
   };
-  const [a, b, c] = ["a", "b", "c"].map(makeSection);
-  assert(a && b && c);
-  let active: readonly RegisteredSidebarSection[] = [a, c];
-  const listeners = new Set<() => void>();
+  const active = ["a", "c"].map(makeSection);
+  const [a, c] = active;
+  assert(a && c);
   const registry: SidebarSections = {
     version: 1,
     snapshot: () => active,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
+    subscribe: () => () => {},
     register: () => {},
   };
-  const h = fixture(undefined, "ready", [], registry);
+  const data: SidebarPreferences = {
+    sections: [],
+    assignments: {},
+    sectionOrder: ["solo", "starred", "channels", "dms"],
+    starred: [],
+    muted: [],
+  };
+  const writeOrder = vi.fn(async (ids: readonly string[]) => ({
+    sections: [],
+    assignments: {},
+    sectionOrder: ids,
+  }));
+  const preferences = createSidebarPreferencesStore({
+    read: async () => data,
+    available: true,
+    write: async () => data,
+    writeStar: async () => [],
+    writeOrder,
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", undefined, registry);
   const scope = h.snapshot.scope;
   assert.exists(scope);
-  // A raw key saved before canonical section keys keeps its position, and
-  // another owner's section key keeps its slot.
-  const solo = "solo-region:buzz.region:example:work";
+  // Saved before the synced order, as a raw key and a section key.
   writeView(scope, "channel-sidebar", {
     collapsed: [],
-    contributionOrder: [a.key, solo, `plugin:${b.key}`, c.key],
+    contributionOrder: [c.key, `plugin:${a.key}`],
     scrollTop: 0,
   });
-  const visibleOrder = () =>
+  const cards = () =>
     [
       ...document.querySelectorAll<HTMLElement>(
-        '[data-sidebar-section^="plugin:example.plugin/"]',
+        "[data-sidebar-cards] [data-sidebar-section]",
       ),
     ].map((section) => section.dataset.sidebarSection);
   const user = userEvent.setup();
 
   render(h.view("alpha"));
   await waitFor(() =>
-    expect(visibleOrder()).toEqual([
-      "plugin:example.plugin/a",
+    expect(cards()).toEqual([
+      "pages",
+      "solo",
+      "starred",
+      "channels",
+      "dms",
       "plugin:example.plugin/c",
+      "plugin:example.plugin/a",
     ]),
   );
   await user.click(screen.getByRole("button", { name: "More actions for C" }));
   await user.click(await screen.findByRole("menuitem", { name: "Move up" }));
 
-  expect(readView(scope, "channel-sidebar", {})).toMatchObject({
-    contributionOrder: [
-      `plugin:${c.key}`,
-      solo,
-      `plugin:${b.key}`,
-      `plugin:${a.key}`,
-    ],
-  });
-  act(() => {
-    active = [a, b, c];
-    for (const listener of listeners) listener();
-  });
-  await waitFor(() =>
-    expect(visibleOrder()).toEqual([
+  expect(writeOrder).toHaveBeenCalledWith(
+    [
+      "pages",
+      "solo",
+      "starred",
+      "channels",
       "plugin:example.plugin/c",
-      "plugin:example.plugin/b",
+      "dms",
+      "plugin:example.plugin/a",
+    ],
+    expect.anything(),
+  );
+  await waitFor(() =>
+    expect(cards()).toEqual([
+      "pages",
+      "solo",
+      "starred",
+      "channels",
+      "plugin:example.plugin/c",
+      "dms",
       "plugin:example.plugin/a",
     ]),
   );

@@ -344,8 +344,21 @@ export function projectWorkspaceGroups(workspaces: unknown): SidebarGroups {
   };
 }
 
+/** Plugin cards (`plugin:<plugin>/<id>`) and extra Solo regions
+ * (`solo-region:<key>`) share the synced card order. Plugins install per
+ * device, so a saved key may name a card this device doesn't show. */
+export const MAX_SIDEBAR_PLUGIN_CARDS = 64;
+export function isSidebarPluginCardKey(key: string) {
+  const prefix = ["plugin:", "solo-region:"].find((p) => key.startsWith(p));
+  return !!prefix && !!key.slice(prefix.length).trim() && key.length <= 320;
+}
+
+/** Saved order first. Unsaved Pages and Starred lead, new workspaces follow
+ * the existing ones, then other unsaved home cards, then unsaved plugin
+ * cards in the order given. */
 export function workspaceSectionOrder(
   groups: Pick<SidebarGroups, "sections" | "sectionOrder"> | undefined,
+  pluginCards: readonly string[] = [],
 ): readonly string[] {
   const [starred, solo, ...rest] = HOME_SIDEBAR_SECTIONS;
   // Forums list under Channels; "forums" stays valid in saved preferences.
@@ -358,8 +371,9 @@ export function workspaceSectionOrder(
     ...(groups?.sections ?? []).map(({ id }) => `group:${id}`),
     ...otherHomes,
   ];
-  if (!groups?.sectionOrder?.length) return defaults;
-  const available = new Set(defaults);
+  const cards = pluginCards.filter((key) => !defaults.includes(key));
+  if (!groups?.sectionOrder?.length) return [...defaults, ...cards];
+  const available = new Set([...defaults, ...cards]);
   const order = groups.sectionOrder.filter((key) => available.delete(key));
   if (available.delete(starred)) order.unshift(starred);
   if (available.delete(SIDEBAR_PAGES_SECTION))
@@ -373,23 +387,33 @@ export function workspaceSectionOrder(
   );
   const insertion = lastWorkspace + 1 || order.indexOf(starred) + 1;
   order.splice(insertion, 0, ...newWorkspaces);
-  return [...order, ...home.filter((key) => available.has(key))];
+  return [
+    ...order,
+    ...home.filter((key) => available.has(key)),
+    ...cards.filter((key) => available.has(key)),
+  ];
 }
 
 export function validWorkspaceSectionOrder(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
-    value.length <= MAX_WORKSPACES + HOME_SIDEBAR_SECTIONS.length + 1 &&
+    value.length <=
+      MAX_WORKSPACES +
+        HOME_SIDEBAR_SECTIONS.length +
+        1 +
+        MAX_SIDEBAR_PLUGIN_CARDS &&
     new Set(value).size === value.length &&
     value.every(
       (key) =>
         typeof key === "string" &&
         (key === SIDEBAR_PAGES_SECTION ||
           HOME_SIDEBAR_SECTIONS.some((home) => home === key) ||
+          isSidebarPluginCardKey(key) ||
           (key.startsWith("group:") &&
             !!key.slice(6).trim() &&
             key.length <= 262)),
-    )
+    ) &&
+    value.filter(isSidebarPluginCardKey).length <= MAX_SIDEBAR_PLUGIN_CARDS
   );
 }
 export type SidebarSortMutator = (

@@ -1,6 +1,9 @@
 import { teamSidebarSlotsReady, teamSidebarSource } from "./TeamSidebarSource";
 import { soloSidebarSource } from "./SoloSidebarSource";
 import { SidebarSectionSlotView } from "../../features/channel-navigation/SidebarSectionSources";
+import type { SidebarSectionSlot } from "../../features/channel-navigation/sidebar-section-components";
+import { SidebarCardOrderProvider } from "../../features/channel-navigation/ChannelSidebarDnd";
+import { sidebarCardOrder } from "./sidebar-sections";
 import {
   MessagesSidebarEnvironment,
   type MessagesSidebarState,
@@ -16,7 +19,10 @@ import {
 } from "react";
 import { sidebarTarget } from "../../features/channel-navigation/routes";
 import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
-import { ChannelInventory } from "./ChannelInventory";
+import {
+  ChannelInventory,
+  type ChannelInventoryCards,
+} from "./ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
 import { SidebarUnread } from "./SidebarUnread";
@@ -94,6 +100,46 @@ export type MessagesSidebarProps = Pick<
   children: ReactNode;
   creationAction?: ReactNode;
 };
+
+const bundledSources = new Set([
+  teamSidebarSource.component,
+  soloSidebarSource.component,
+]);
+/** A slot's key in the card order: its own id from the bundled sources, the
+ * plugin key form from any other source. */
+const cardKey = (slot: SidebarSectionSlot) =>
+  bundledSources.has(slot.source.component) ? slot.id : `plugin:${slot.key}`;
+
+/** Every card in one list and one order, under one drag group. Among cards
+ * the order hasn't saved, team cards come before Solo ones. */
+function SidebarCards({
+  cards: { groups, localOrder, writable, save },
+  slots,
+  children,
+}: {
+  cards: ChannelInventoryCards;
+  slots: readonly SidebarSectionSlot[];
+  children(slots: readonly SidebarSectionSlot[]): ReactNode;
+}) {
+  const ordered = [
+    ...slots.filter((slot) => slot.scope !== "solo"),
+    ...slots.filter((slot) => slot.scope === "solo"),
+  ];
+  const keys = JSON.stringify(ordered.map(cardKey));
+  const order = useMemo(
+    () =>
+      sidebarCardOrder(groups, JSON.parse(keys), localOrder, writable, save),
+    [groups, keys, localOrder, writable, save],
+  );
+  const rank = new Map(order.order.map((key, index) => [key, index]));
+  const position = (slot: SidebarSectionSlot) =>
+    rank.get(cardKey(slot)) ?? Number.MAX_SAFE_INTEGER;
+  return (
+    <SidebarCardOrderProvider value={order}>
+      {children([...ordered].sort((a, b) => position(a) - position(b)))}
+    </SidebarCardOrderProvider>
+  );
+}
 
 /** Filters the navigation inventory without replacing the current conversation. */
 export function MessagesSidebar(props: MessagesSidebarProps) {
@@ -207,6 +253,7 @@ function ScopedSidebar({
             sidebar,
             workspaceComposition,
             dmPreviews,
+            cards,
             frame,
             before,
             content,
@@ -228,95 +275,91 @@ function ScopedSidebar({
               {props.renderSections({
                 settled: sourcesSettled,
                 onReady: slotsCommitted,
-                children: (slots, sources) => {
-                  const teamContent = (
-                    <>
-                      {slots
-                        .filter(
-                          (slot) =>
-                            slot.scope === "team" &&
-                            (!restriction ||
-                              slot.source.component ===
-                                teamSidebarSource.component),
-                        )
-                        .map((slot) => (
-                          <SidebarSectionSlotView key={slot.key} slot={slot} />
-                        ))}
-                      {content}
-                    </>
-                  );
-                  return (
-                    <>
-                      {sources(
-                        "solo",
-                        (source) =>
-                          source.component !== soloSidebarSource.component,
-                      )}
-                      {team(
-                        <>
-                          {sources("team")}
-                          {sources(
-                            "solo",
-                            (source) =>
-                              source.component === soloSidebarSource.component,
-                          )}
-                        </>,
-                      )}
-                      <props.Frame
-                        scope={scope}
-                        resizable
-                        cards
-                        label="Sidebar"
-                        header={header}
-                        footer={footer}
-                        {...frame}
-                        launchPending={
-                          committedSlots?.generation === slotGeneration
-                            ? frame.launchPending
-                            : "required"
-                        }
-                      >
-                        {/* Relay outages for every inventory recover through one
-                    automatic owner; its one notice shows on every page. */}
-                        {!connection.cached && (
-                          <RecoveryNotice
-                            recovery={connection.session.recovery}
-                          />
+                children: (slots, sources) => (
+                  <SidebarCards
+                    cards={cards}
+                    // A restriction shows only Solo cards and the team source.
+                    slots={slots.filter(
+                      (slot) =>
+                        slot.scope === "solo" ||
+                        (slot.scope === "team" &&
+                          (!restriction ||
+                            slot.source.component ===
+                              teamSidebarSource.component)),
+                    )}
+                  >
+                    {(cardSlots) => (
+                      <>
+                        {sources(
+                          "solo",
+                          (source) =>
+                            source.component !== soloSidebarSource.component,
                         )}
-                        <LiveSignIn
-                          session={connection.session}
-                          identity={communityIdentity(
-                            props.federatedIdentity,
-                            connection.origin,
-                          )}
-                          relay={connection.origin}
-                          memberships={props.memberships}
-                          tryAgain={() => props.relay.tryAgain()}
-                        />
-                        {before}
-                        <SidebarUnread
-                          listRef={sidebar.list}
-                          adjustScrollAnchor={sidebar.adjustScrollAnchor}
-                          captureScrollAnchor={sidebar.captureScrollAnchor}
-                          dmPreviews={dmPreviews}
-                          floatingAction={footer ? floatingAction : undefined}
+                        {team(
+                          <>
+                            {sources("team")}
+                            {sources(
+                              "solo",
+                              (source) =>
+                                source.component ===
+                                soloSidebarSource.component,
+                            )}
+                          </>,
+                        )}
+                        <props.Frame
+                          scope={scope}
+                          resizable
+                          cards
+                          label="Sidebar"
+                          header={header}
+                          footer={footer}
+                          {...frame}
+                          launchPending={
+                            committedSlots?.generation === slotGeneration
+                              ? frame.launchPending
+                              : "required"
+                          }
                         >
-                          {teamContent}
-                          {slots
-                            .filter((slot) => slot.scope === "solo")
-                            .map((slot) => (
+                          {/* Relay outages for every inventory recover through one
+                    automatic owner; its one notice shows on every page. */}
+                          {!connection.cached && (
+                            <RecoveryNotice
+                              recovery={connection.session.recovery}
+                            />
+                          )}
+                          <LiveSignIn
+                            session={connection.session}
+                            identity={communityIdentity(
+                              props.federatedIdentity,
+                              connection.origin,
+                            )}
+                            relay={connection.origin}
+                            memberships={props.memberships}
+                            tryAgain={() => props.relay.tryAgain()}
+                          />
+                          {before}
+                          <SidebarUnread
+                            listRef={sidebar.list}
+                            adjustScrollAnchor={sidebar.adjustScrollAnchor}
+                            captureScrollAnchor={sidebar.captureScrollAnchor}
+                            dmPreviews={dmPreviews}
+                            floatingAction={footer ? floatingAction : undefined}
+                          >
+                            {content}
+                            {cardSlots.map((slot) => (
                               <SidebarSectionSlotView
                                 key={slot.key}
                                 slot={slot}
                               />
                             ))}
-                        </SidebarUnread>
-                        {after}
-                      </props.Frame>
-                      {dialogs}
-                    </>
-                  );
-                },
+                          </SidebarUnread>
+                          {after}
+                        </props.Frame>
+                        {dialogs}
+                      </>
+                    )}
+                  </SidebarCards>
+                ),
               })}
             </SidebarEnvironment>
           )}

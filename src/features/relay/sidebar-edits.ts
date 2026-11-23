@@ -4,6 +4,8 @@ import {
   HOME_SIDEBAR_SECTIONS,
   MAX_WORKSPACES,
   MAX_WORKSPACE_ASSIGNMENTS,
+  isSidebarPluginCardKey,
+  MAX_SIDEBAR_PLUGIN_CARDS,
   validWorkspaceSectionOrder,
   workspaceSectionOrder,
   type SidebarAssignmentIntent,
@@ -81,7 +83,10 @@ export function editSidebarSectionRename(
   return editSidebarRecord("channel-sections", current, createdAt, writes, now);
 }
 
-/** Requested live sections first, then unlisted live ones; every order is restamped. */
+/** A workspace record's requested cards take their own places in the saved
+ * order, in the requested order; unrequested cards keep theirs. A legacy
+ * record lists requested live sections first, then unlisted live ones; every
+ * order is restamped. */
 export function editSidebarSectionOrder(
   current: Record<string, unknown>,
   createdAt: number,
@@ -99,10 +104,34 @@ export function editSidebarSectionOrder(
       undefined,
       true,
     );
-    const live = workspaceSectionOrder(groups);
-    const wanted = new Set(sectionIds.filter((id) => live.includes(id)));
-    const order = [...wanted, ...live.filter((id) => !wanted.has(id))];
-    return order.every((key, index) => key === live[index])
+    // Plugin cards saved by other devices keep their places even when this
+    // device doesn't show them.
+    const saved = workspaceSectionOrder(
+      groups,
+      groups.sectionOrder?.filter(isSidebarPluginCardKey),
+    );
+    const known = new Set(saved);
+    const wanted = sectionIds.filter(
+      (id) => known.has(id) || isSidebarPluginCardKey(id),
+    );
+    const requested = new Set(wanted);
+    let next = 0;
+    const order = saved.map((key) =>
+      requested.has(key) ? (wanted[next++] as string) : key,
+    );
+    order.push(...wanted.slice(next));
+    // Over the limit, unrequested plugin cards give up their places last first.
+    let excess =
+      order.filter(isSidebarPluginCardKey).length - MAX_SIDEBAR_PLUGIN_CARDS;
+    for (let index = order.length - 1; excess > 0 && index >= 0; index--) {
+      const key = order[index] as string;
+      if (isSidebarPluginCardKey(key) && !requested.has(key)) {
+        order.splice(index, 1);
+        excess--;
+      }
+    }
+    return order.length === saved.length &&
+      order.every((key, index) => key === saved[index])
       ? current
       : { ...current, sectionOrder: order };
   }

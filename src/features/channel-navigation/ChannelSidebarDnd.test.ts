@@ -76,3 +76,44 @@ it("decides the side by the target's header, which a person drags by", () => {
   // Anywhere in the card below its header lands after it.
   expect(over("d", 400, 100)).toBe("c");
 });
+
+it("moves a card among its siblings, never into or out of a composing card", () => {
+  // b composes w1 and w2 inside its body.
+  const all: { id: string; top: number; height: number; within?: string }[] = [
+    ...cards,
+    { id: "w1", top: 100, height: 40, within: "b" },
+    { id: "w2", top: 148, height: 40, within: "b" },
+  ];
+  const target = (dragging: string, y: number) => {
+    const rect = ({ top, height }: { top: number; height: number }) => ({
+      top,
+      height,
+      bottom: top + height,
+      left: 0,
+      right: 200,
+      width: 200,
+    });
+    const index = (id: string) => all.findIndex((card) => card.id === id);
+    const data = (id: string) => ({
+      group: true,
+      groupIndex: index(id),
+      within: all[index(id)]?.within,
+    });
+    return sidebarCollisions({
+      active: { id: dragging, data: { current: data(dragging) } },
+      droppableContainers: all.map(({ id }) => ({
+        id,
+        data: { current: data(id) },
+      })),
+      droppableRects: new Map(all.map((card) => [card.id, rect(card)])),
+      pointerCoordinates: { x: 100, y },
+      collisionRect: { top: y, left: 100, width: 1, height: 1 },
+    } as unknown as Args)[0]?.id;
+  };
+  // Over w1, a top-level card still lands by the composing card.
+  expect(target("d", 110)).toBe("b");
+  // A composed card lands among the cards composed with it.
+  expect(target("w2", 110)).toBe("w1");
+  // Outside its siblings, it has no target.
+  expect(target("w1", 20)).toBeUndefined();
+});

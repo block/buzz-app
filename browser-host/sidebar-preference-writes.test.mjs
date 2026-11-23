@@ -707,12 +707,13 @@ it("real broker reorders sections through the signed, confirmed narrow command",
   expect(
     await h.transport.writeSidebarSectionOrder(reversed, signal),
   ).toMatchObject({
+    // Requested cards trade places among their own saved places.
     sectionOrder: [
-      `group:${ids[1]}`,
-      `group:${ids[0]}`,
       "pages",
       "solo",
       "starred",
+      `group:${ids[1]}`,
+      `group:${ids[0]}`,
       "channels",
       "dms",
     ],

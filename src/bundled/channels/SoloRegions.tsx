@@ -26,9 +26,11 @@ import {
   type RefObject,
 } from "react";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
-import { SidebarSection } from "./SidebarSection";
+import {
+  DroppableSidebarSection,
+  useSidebarCard,
+} from "../../features/channel-navigation/ChannelSidebarDnd";
 import styles from "./Channels.module.css";
-import { orderContributedSidebarSections } from "./sidebar-sections";
 import type { useSidebarView } from "./useSidebarView";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -62,16 +64,12 @@ import type {
   SoloRegionProps,
 } from "../../features/channel-navigation/solo-navigation-contract";
 
-export function visibleSoloRegions(
-  regions: readonly SoloRegion[],
-  order: readonly string[],
-) {
-  return orderContributedSidebarSections(
-    regions
-      .filter((region) => !region.hidden && region.reason !== "disabled")
-      .map((region) => ({ key: `solo-region:${region.key}`, region })),
-    order,
-  ).map(({ region }) => region);
+/** Regions with a card, in their sources' order. The first with a source
+ * composes ordinary chats wherever its card sits. */
+export function visibleSoloRegions(regions: readonly SoloRegion[]) {
+  return regions.filter(
+    (region) => !region.hidden && region.reason !== "disabled",
+  );
 }
 
 export function SoloRegions({
@@ -84,6 +82,7 @@ export function SoloRegions({
   composeOrdinary,
   fallback,
   pendingClick: sharedPendingClick,
+  only,
 }: {
   session: RelaySession;
   navigator: Navigation;
@@ -94,6 +93,8 @@ export function SoloRegions({
   composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
   fallback?: ReactNode;
   pendingClick?: RefObject<ReturnType<typeof setTimeout> | undefined>;
+  /** Renders only this region's card; each card is its own sidebar slot. */
+  only?: string | undefined;
 }) {
   const localPendingClick = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -101,42 +102,30 @@ export function SoloRegions({
   const pendingClick = sharedPendingClick ?? localPendingClick;
   const snapshot = useSoloNavigation(session);
   const service = soloNavigationFor(session);
-  const regions = visibleSoloRegions(
-    snapshot.regions,
-    sidebar.contributionOrder,
-  );
+  const regions = visibleSoloRegions(snapshot.regions);
   const primary = regions.findIndex((region) => region.source);
   if (!service) return fallback ?? null;
   return (
     <>
       {/* Each region renders its card directly, unwrapped, so the cards'
           sibling gap rules reach it like every other card. */}
-      {regions.map((region, index) => (
-        <RegionFrame
-          key={`${region.key}:${snapshot.binding?.incarnation ?? "recovery"}`}
-          region={region}
-          service={service}
-          session={session}
-          scope={scope}
-          navigator={navigator}
-          pendingClick={pendingClick}
-          target={target}
-          sidebar={sidebar}
-          move={(offset) => {
-            const ids = regions.map((item) => `solo-region:${item.key}`);
-            ids.splice(index, 1);
-            ids.splice(index + offset, 0, `solo-region:${region.key}`);
-            sidebar.setContributionOrder([
-              ...sidebar.contributionOrder.filter((key) => !ids.includes(key)),
-              ...ids,
-            ]);
-          }}
-          first={index === 0}
-          last={index === regions.length - 1}
-          ordinary={index === primary ? ordinary : undefined}
-          composeOrdinary={index === primary ? composeOrdinary : undefined}
-        />
-      ))}
+      {regions.map((region, index) =>
+        only !== undefined && region.key !== only ? null : (
+          <RegionFrame
+            key={`${region.key}:${snapshot.binding?.incarnation ?? "recovery"}`}
+            region={region}
+            service={service}
+            session={session}
+            scope={scope}
+            navigator={navigator}
+            pendingClick={pendingClick}
+            target={target}
+            sidebar={sidebar}
+            ordinary={index === primary ? ordinary : undefined}
+            composeOrdinary={index === primary ? composeOrdinary : undefined}
+          />
+        ),
+      )}
       {primary < 0 ? fallback : null}
     </>
   );
@@ -150,9 +139,6 @@ function RegionFrame({
   navigator,
   target,
   sidebar,
-  move,
-  first,
-  last,
   ordinary,
   composeOrdinary,
   pendingClick,
@@ -165,9 +151,6 @@ function RegionFrame({
   pendingClick: RefObject<ReturnType<typeof setTimeout> | undefined>;
   target: OpenTarget;
   sidebar: ReturnType<typeof useSidebarView>;
-  move(offset: number): void;
-  first: boolean;
-  last: boolean;
   ordinary?: ReactNode;
   composeOrdinary?: ((compose: ComposeWorkspaces) => ReactNode) | undefined;
 }) {
@@ -181,6 +164,8 @@ function RegionFrame({
       ? target.channelId
       : undefined;
   const sectionKey = `solo-region:${region.key}`;
+  // Its menu holds only moves.
+  const movable = !!useSidebarCard(sectionKey).move;
   useLayoutEffect(() => {
     // The card itself, so focus inside it can recover when the region leaves.
     const node = document.querySelector(
@@ -403,22 +388,21 @@ function RegionFrame({
     : body;
   return (
     <RegionDestinationContext.Provider value={destination}>
-      <SidebarSection
+      <DroppableSidebarSection
+        // A card drop target that accepts no rows.
+        disabled={false}
+        accepts={[]}
         sectionKey={sectionKey}
         title={region.title}
         icon={source?.icon}
         open={open}
         onToggle={(open) => sidebar.toggle(sectionKey, open)}
-        move={{
-          ...(!first ? { up: () => move(-1) } : {}),
-          ...(!last ? { down: () => move(1) } : {}),
-        }}
-        hideMoreActions={first && last}
+        hideMoreActions={!movable}
         headerActions={headerActions}
         headerNotice={headerNotice}
       >
         <RegionChannelGroups session={session}>{contents}</RegionChannelGroups>
-      </SidebarSection>
+      </DroppableSidebarSection>
       {composing ? null : ordinary}
     </RegionDestinationContext.Provider>
   );

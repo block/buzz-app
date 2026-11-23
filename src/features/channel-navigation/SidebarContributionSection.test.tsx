@@ -98,7 +98,7 @@ it("isolates a contribution render failure and keeps sibling section actions usa
       onReorder={() => {}}
       overlay={() => null}
     >
-      {[broken, good].map((entry, index) => (
+      {[broken, good].map((entry) => (
         <SidebarContributionSection
           key={entry.key}
           entry={entry}
@@ -107,9 +107,6 @@ it("isolates a contribution render failure and keeps sibling section actions usa
           target={target}
           open
           onToggle={() => {}}
-          groupIndex={index}
-          reorderable={false}
-          move={{}}
         />
       ))}
     </ChannelSidebarDnd>,
@@ -174,9 +171,6 @@ it("keeps failed header-action feedback visible while the section is collapsed",
         target={target}
         open={false}
         onToggle={() => {}}
-        groupIndex={0}
-        reorderable={false}
-        move={{}}
       />
     </ChannelSidebarDnd>,
   );
@@ -264,9 +258,6 @@ it("selects an unscoped page row in its current community only", () => {
         target={current}
         open
         onToggle={() => {}}
-        groupIndex={0}
-        reorderable={false}
-        move={{}}
       />
     </ChannelSidebarDnd>,
   );
@@ -357,9 +348,6 @@ it("keeps conversation-level rows selected through in-conversation navigation", 
         target={target}
         open
         onToggle={() => {}}
-        groupIndex={0}
-        reorderable={false}
-        move={{}}
       />
     </ChannelSidebarDnd>
   );
@@ -450,9 +438,6 @@ it("preserves the receiver for an external row store", () => {
         target={target}
         open
         onToggle={() => {}}
-        groupIndex={0}
-        reorderable={false}
-        move={{}}
       />
     </ChannelSidebarDnd>,
   );

@@ -82,6 +82,54 @@ it("reorders live sections as one whole-list write and keeps unlisted ones after
   expect(editSidebarSectionOrder(next, 0, ["work", "home"], 43)).toBe(next);
 });
 
+it("keeps plugin cards this device doesn't show in their saved places", () => {
+  const current = {
+    version: 1,
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+    sectionOrder: [
+      "pages",
+      "plugin:away/notes",
+      "solo",
+      "starred",
+      "group:work",
+      "channels",
+      "dms",
+    ],
+  };
+  // This device shows a different plugin card and moves Channels first.
+  const next = editSidebarSectionOrder(current, 0, [
+    "channels",
+    "pages",
+    "solo",
+    "starred",
+    "group:work",
+    "dms",
+    "solo-region:here/chats",
+  ]);
+  expect(next.sectionOrder).toEqual([
+    "channels",
+    "plugin:away/notes",
+    "pages",
+    "solo",
+    "starred",
+    "group:work",
+    "dms",
+    "solo-region:here/chats",
+  ]);
+  expect(
+    editSidebarSectionOrder(next, 0, [
+      "channels",
+      "pages",
+      "solo",
+      "starred",
+      "group:work",
+      "dms",
+      "solo-region:here/chats",
+    ]),
+  ).toBe(next);
+});
+
 it("validates bounded unique section orders", () => {
   expect(validSidebarSectionOrder([])).toBe(true);
   expect(validSidebarSectionOrder(["a", "b"])).toBe(true);

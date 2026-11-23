@@ -69,6 +69,48 @@ it.each([
   },
 );
 
+it("orders plugin cards with the saved cards and puts unsaved ones last", () => {
+  const sectionOrder = [
+    "plugin:tasks/today",
+    "pages",
+    "solo",
+    "starred",
+    "plugin:away/notes",
+    "channels",
+    "dms",
+  ];
+  expect(
+    workspaceSectionOrder({ sections: [], sectionOrder }, [
+      "solo-region:new/chats",
+      "plugin:tasks/today",
+    ]),
+  ).toEqual([
+    "plugin:tasks/today",
+    "pages",
+    "solo",
+    "starred",
+    "channels",
+    "dms",
+    "solo-region:new/chats",
+  ]);
+  const record = { version: 1, sections: [], assignments: {}, sectionOrder };
+  expect(
+    projectSidebarPreferences(record, undefined, undefined, undefined, [], true)
+      .sectionOrder,
+  ).toEqual(sectionOrder);
+  for (const key of ["plugin:", "solo-region: ", "other:x"])
+    expect(() =>
+      projectSidebarPreferences(
+        { ...record, sectionOrder: [key] },
+        undefined,
+        undefined,
+        undefined,
+        [],
+        true,
+      ),
+    ).toThrow("Invalid workspace section order");
+});
+
 it("decodes four individually bounded populated preferences beyond the former aggregate limit", async () => {
   const viewer = keypair();
   const key = nip44.v2.utils.getConversationKey(viewer.secret, viewer.pubkey);

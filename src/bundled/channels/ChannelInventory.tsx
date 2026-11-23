@@ -50,7 +50,7 @@ import {
 import { SpringLoadedNavigationItem } from "../../features/channel-navigation/SpringLoadedNavigationItem";
 import {
   SIDEBAR_PAGES_SECTION,
-  workspaceSectionOrder,
+  type SidebarGroups,
 } from "../../features/relay/sidebar-preferences";
 import type { RelayData } from "../../features/relay/service";
 import type { Agents } from "../../features/agents/service";
@@ -131,7 +131,6 @@ import {
   contributedSidebarSectionKey,
   sidebarHome,
   sidebarDropRowKinds,
-  orderContributedSidebarSections,
   recentAt,
 } from "./sidebar-sections";
 import { activityTranscript } from "./working-agents";
@@ -168,10 +167,19 @@ function sidebarEntryLocation(target: OpenTarget) {
       : target.kind;
 }
 
+export type ChannelInventoryCards = Readonly<{
+  groups: SidebarGroups | undefined;
+  localOrder: readonly string[];
+  writable: boolean;
+  save(key: string, order: readonly string[]): Promise<unknown>;
+}>;
+
 type Inventory = {
   sidebar: ReturnType<typeof useSidebarView>;
   workspaceComposition: WorkspaceSidebarComposition;
   dmPreviews: ReadonlyMap<string, UnreadDmPreview>;
+  /** What orders every card: the saved order and who may change it. */
+  cards: ChannelInventoryCards;
   frame: Pick<ComponentProps<typeof SidebarFrame>, "busy" | "launchPending">;
   before: ReactNode;
   team(children: ReactNode): ReactNode;
@@ -534,10 +542,9 @@ export function ChannelInventory({
       channel.id ===
       (target.kind === "conversation" ? target.channelId : undefined),
   );
-  const composesChats = !!visibleSoloRegions(
-    regions.regions,
-    sidebar.contributionOrder,
-  ).find((region) => region.source)?.source?.composeWorkspaces;
+  const composesChats = !!visibleSoloRegions(regions.regions).find(
+    (region) => region.source,
+  )?.source?.composeWorkspaces;
   // A region can compose ordinary chats. Mixed workspaces and Starred retain
   // their unified sidebar placement.
   const composedChatSections = new Set<string>();
@@ -1047,58 +1054,6 @@ export function ChannelInventory({
     preferences.writable && preferences.starWritable && !!preferences.data;
   // Group drags land on the placement drop targets, so they need both writers.
   const orderWritable = placementWritable && preferences.sectionOrderWritable;
-  const groupIds = workspaceSectionOrder(preferences.data);
-  const visibleGroupIds = shownSections.map(({ key }) => key);
-  // Saved order uses the same section keys as collapse and drag.
-  const orderedContributions = orderContributedSidebarSections(
-    contributions.map((entry) => ({
-      key: contributedSidebarSectionKey(entry.key),
-      entry,
-    })),
-    sidebar.contributionOrder,
-  ).map(({ entry }) => entry);
-  const reorderContributions = (sectionKey: string, overKey: string) => {
-    const ids = orderedContributions.map(({ key }) =>
-      contributedSidebarSectionKey(key),
-    );
-    const from = ids.indexOf(sectionKey);
-    const to = ids.indexOf(overKey);
-    if (from < 0 || to < 0) return;
-    ids.splice(from, 1);
-    ids.splice(to, 0, sectionKey);
-    const activeKeys = new Set(ids);
-    const seenSavedKeys = new Set<string>();
-    const order: string[] = [];
-    let nextActive = 0;
-    for (const savedKey of sidebar.contributionOrder) {
-      if (!activeKeys.has(savedKey)) {
-        order.push(savedKey);
-        continue;
-      }
-      if (seenSavedKeys.has(savedKey)) continue;
-      seenSavedKeys.add(savedKey);
-      order.push(ids[nextActive++] ?? savedKey);
-    }
-    order.push(...ids.slice(nextActive));
-    sidebar.setContributionOrder(order);
-  };
-  const moveGroup = (sectionId: string, to: number) => {
-    const ids = groupIds.filter((id) => id !== sectionId);
-    ids.splice(to, 0, sectionId);
-    void preferences.reorderSections(sectionId, ids).catch(() => {});
-  };
-  const sectionMove = (key: string) => {
-    if (!orderWritable) return undefined;
-    const index = visibleGroupIds.indexOf(key);
-    const previous = visibleGroupIds[index - 1];
-    const next = visibleGroupIds[index + 1];
-    return {
-      up: previous
-        ? () => moveGroup(key, groupIds.indexOf(previous))
-        : undefined,
-      down: next ? () => moveGroup(key, groupIds.indexOf(next)) : undefined,
-    };
-  };
   const setSectionSort = (key: string, mode: SidebarSortMode) => {
     void preferences
       .setSort(
@@ -1743,6 +1698,12 @@ export function ChannelInventory({
       newAction: workspaceNewAction,
     },
     dmPreviews: unreadDmPreviews,
+    cards: {
+      groups: preferences.data,
+      localOrder: sidebar.contributionOrder,
+      writable: orderWritable,
+      save: preferences.reorderSections,
+    },
     frame: {
       launchPending: connectionError
         ? undefined
@@ -1811,31 +1772,31 @@ export function ChannelInventory({
                 : undefined,
             );
         }}
-        onReorder={(sectionKey, overKey) =>
-          sectionKey.startsWith("plugin:")
-            ? reorderContributions(sectionKey, overKey)
-            : moveGroup(sectionKey, groupIds.indexOf(overKey))
-        }
         overlay={(id, group) => {
           if (group) {
             const section = sections.find(({ key }) => key === id);
             const contribution = section
               ? undefined
-              : orderedContributions.find(
+              : contributions.find(
                   ({ key }) => contributedSidebarSectionKey(key) === id,
                 );
-            const title = section?.title ?? contribution?.title;
+            const region = regions.regions.find(
+              ({ key }) => `solo-region:${key}` === id,
+            );
+            const title =
+              section?.title ?? contribution?.title ?? region?.title;
             if (!title) return null;
+            const plugin = contribution ?? region?.source;
             return (
               <>
                 {section?.icon ? (
                   <SidebarGroupIcon icon={section.icon} session={queries} />
-                ) : contribution?.icon ? (
+                ) : plugin?.icon ? (
                   <ContributionBoundary
-                    key={contributionKey(contribution)}
+                    key={contributionKey(plugin)}
                     fallback={null}
                   >
-                    {contribution.icon}
+                    {plugin.icon}
                   </ContributionBoundary>
                 ) : null}
                 <span className={styles.sectionTitle}>{title}</span>
@@ -1865,12 +1826,9 @@ export function ChannelInventory({
                     section.key === SIDEBAR_PAGES_SECTION ? (
                       <DroppableSidebarSection
                         key={section.key}
-                        groupIndex={groupIds.indexOf(section.key)}
                         // A section drop target that accepts no rows.
                         disabled={false}
                         accepts={[]}
-                        reorderable={orderWritable}
-                        move={sectionMove(section.key)}
                         sectionKey={section.key}
                         title={section.title}
                         hideMoreActions={!orderWritable}
@@ -1882,14 +1840,11 @@ export function ChannelInventory({
                     ) : (
                       <DroppableSidebarSection
                         key={section.key}
-                        groupIndex={groupIds.indexOf(section.key)}
                         disabled={
                           !placementWritable ||
                           !sidebarDropRowKinds(section.key).length
                         }
                         accepts={sidebarDropRowKinds(section.key)}
-                        reorderable={orderWritable}
-                        move={sectionMove(section.key)}
                         sectionKey={section.key}
                         title={section.title}
                         icon={section.icon}
@@ -2211,11 +2166,8 @@ export function ChannelInventory({
                 />
               ),
             })),
-            ...orderedContributions.map((entry, index) => {
+            ...contributions.map((entry, index) => {
               const sectionKey = contributedSidebarSectionKey(entry.key);
-              const previousKey = orderedContributions[index - 1]?.key;
-              const nextKey = orderedContributions[index + 1]?.key;
-              const reorderable = contributions.length > 1;
               return {
                 id: sectionKey,
                 title: entry.title,
@@ -2229,33 +2181,7 @@ export function ChannelInventory({
                     target={target}
                     open={!sidebar.collapsed.includes(sectionKey)}
                     onToggle={(open) => sidebar.toggle(sectionKey, open)}
-                    groupIndex={index}
-                    reorderable={reorderable}
                     onRowsCommitted={sidebar.retryReveal}
-                    move={
-                      reorderable
-                        ? {
-                            ...(previousKey
-                              ? {
-                                  up: () =>
-                                    reorderContributions(
-                                      sectionKey,
-                                      contributedSidebarSectionKey(previousKey),
-                                    ),
-                                }
-                              : {}),
-                            ...(nextKey
-                              ? {
-                                  down: () =>
-                                    reorderContributions(
-                                      sectionKey,
-                                      contributedSidebarSectionKey(nextKey),
-                                    ),
-                                }
-                              : {}),
-                          }
-                        : undefined
-                    }
                   />
                 ),
               };

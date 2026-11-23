@@ -31,24 +31,59 @@ import styles from "../../bundled/channels/Channels.module.css";
 
 const Writable = createContext(false);
 
+/** Every card of the sidebar in its one saved order. */
+export type SidebarCardOrder = Readonly<{
+  /** Every card key in order, including cards composed inside another. */
+  order: readonly string[];
+  /** The cards the sidebar lists, in order. */
+  shown: readonly string[];
+  writable: boolean;
+  /** Places the card where a drop on the other card lands. */
+  reorder(key: string, overKey: string): void;
+}>;
+const CardOrder = createContext<SidebarCardOrder | undefined>(undefined);
+export const SidebarCardOrderProvider = CardOrder.Provider;
+export const useSidebarCardOrder = () => useContext(CardOrder);
+
+/** A card's place in the one order, and its menu moves when it can move. */
+export function useSidebarCard(key: string) {
+  const cards = useContext(CardOrder);
+  const groupIndex = cards?.order.indexOf(key) ?? -1;
+  const reorderable = !!cards?.writable && groupIndex >= 0;
+  const index = cards?.shown.indexOf(key) ?? -1;
+  const previous = index > 0 ? cards?.shown[index - 1] : undefined;
+  const next = index >= 0 ? cards?.shown[index + 1] : undefined;
+  return {
+    groupIndex,
+    reorderable,
+    move:
+      cards && reorderable && (previous || next)
+        ? {
+            ...(previous ? { up: () => cards.reorder(key, previous) } : {}),
+            ...(next ? { down: () => cards.reorder(key, next) } : {}),
+          }
+        : undefined,
+  };
+}
+
 // Group gaps target the neighbour whose insertion edge lies in that same gap.
 export const sidebarCollisions: CollisionDetection = (args) => {
-  const domain = args.active.data.current?.groupDomain ?? "channels";
   if (!args.active.data.current?.group)
     return pointerWithin({
       ...args,
       droppableContainers: args.droppableContainers.filter(
         ({ data }) =>
-          (data.current?.groupDomain ?? "channels") === domain &&
-          (!data.current?.accepts ||
-            data.current.accepts.includes(args.active.data.current?.rowKind)),
+          !data.current?.accepts ||
+          data.current.accepts.includes(args.active.data.current?.rowKind),
       ),
     });
+  // A card moves among its siblings: top-level cards, or the cards composed
+  // inside one card.
   const groups = args.droppableContainers
     .filter(
       ({ data }) =>
         data.current?.group &&
-        (data.current?.groupDomain ?? "channels") === domain,
+        data.current.within === args.active.data.current?.within,
     )
     .sort((a, b) => a.data.current?.groupIndex - b.data.current?.groupIndex);
   const pointer = args.pointerCoordinates;
@@ -120,10 +155,13 @@ export function ChannelSidebarDnd({
 }: {
   writable: boolean;
   onMove: (channelId: string, sectionKey: string) => void;
-  onReorder: (sectionKey: string, overKey: string) => void;
+  /** Card moves; the sidebar's card order by default. */
+  onReorder?: ((sectionKey: string, overKey: string) => void) | undefined;
   overlay: (id: string, group: boolean) => ReactNode;
   children: ReactNode;
 }) {
+  const cards = useContext(CardOrder);
+  const reorder = onReorder ?? cards?.reorder;
   const [dragging, setDragging] = useState<{ id: string; group: boolean }>();
   const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
   return (
@@ -146,7 +184,7 @@ export function ChannelSidebarDnd({
         if (!over) return;
         if (active.data.current?.group) {
           if (over.id !== active.id)
-            onReorder(String(active.id), String(over.id));
+            reorder?.(String(active.id), String(over.id));
         } else if (over.id !== active.data.current?.sectionKey)
           onMove(String(active.id), String(over.id));
       }}
@@ -377,7 +415,7 @@ export function DraggableChannel({
 }) {
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: channelId,
-    data: { sectionKey, groupDomain: "channels", rowKind },
+    data: { sectionKey, rowKind },
     disabled: !useContext(Writable),
   });
   return (
@@ -396,18 +434,19 @@ export function useSidebarSectionDrag({
   sectionKey,
   reorderable,
   groupIndex,
-  groupDomain = "channels",
+  within,
   capturePointerDown = false,
 }: {
   sectionKey: string;
   reorderable: boolean;
   groupIndex: number;
-  groupDomain?: string;
+  /** The card this one is composed inside, if any. */
+  within?: string | undefined;
   capturePointerDown?: boolean;
 }) {
   const drag = useDraggable({
     id: sectionKey,
-    data: { group: true, groupIndex, groupDomain },
+    data: { group: true, groupIndex, within },
     disabled: !reorderable,
   });
   const suppressClick = useRef(false);
@@ -466,28 +505,23 @@ export function useSidebarSectionDrag({
   };
 }
 
-/** A reorderable saved group drags by its header, never its rows or actions. */
+/** A card drags by its header, never its rows or actions, and takes its
+ * place and moves from the sidebar's card order. */
 export function DroppableSidebarSection({
   disabled,
-  reorderable,
-  groupIndex,
-  groupDomain = "channels",
   accepts,
   ...section
-}: ComponentProps<typeof SidebarSection> & {
+}: Omit<ComponentProps<typeof SidebarSection>, "move"> & {
   disabled: boolean;
-  reorderable: boolean;
-  groupIndex: number;
-  groupDomain?: string;
   /** Row kinds a drop may place here; every row when omitted. */
   accepts?: readonly SidebarRowKind[];
 }) {
+  const { groupIndex, reorderable, move } = useSidebarCard(section.sectionKey);
   const { setNodeRef, isOver, active } = useDroppable({
     id: section.sectionKey,
     data: {
       group: reorderable,
       groupIndex,
-      groupDomain,
       accepts,
       header: () => headerOf(section.sectionKey)?.getBoundingClientRect(),
     },
@@ -503,7 +537,6 @@ export function DroppableSidebarSection({
     sectionKey: section.sectionKey,
     reorderable,
     groupIndex,
-    groupDomain,
   });
   const group = !!active?.data.current?.group;
   const from = active?.data.current?.groupIndex;
@@ -523,6 +556,7 @@ export function DroppableSidebarSection({
             : "before"
           : undefined
       }
+      move={move}
       dragHandle={drag.handle}
       dragging={drag.isDragging}
     />

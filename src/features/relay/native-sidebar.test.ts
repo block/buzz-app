@@ -895,7 +895,10 @@ it("reorders sections through native signing and readback, never rewriting a sat
     transport.writeSidebarSectionOrder(["group:work", "group:work"], signal),
   ).rejects.toThrow("Invalid sidebar section order intent");
   expect(
-    await transport.writeSidebarSectionOrder(["group:later"], signal),
+    await transport.writeSidebarSectionOrder(
+      ["group:later", "pages", "solo", "starred", "group:work"],
+      signal,
+    ),
   ).toEqual({
     sections: [
       { id: "work", name: "Work", order: 0 },
@@ -1083,8 +1086,8 @@ it("does not report a section order overwritten before readback as saved", async
 });
 
 it.each([
-  { live: ["c", "b", "a"], conflict: true },
-  { live: ["b", "c", "a"], conflict: true },
+  { live: ["a", "c", "b"], conflict: true },
+  { live: ["c", "b", "a"], conflict: false },
   { live: ["b", "a", "c"], conflict: false },
   { live: ["b", "c"], conflict: false },
 ])(

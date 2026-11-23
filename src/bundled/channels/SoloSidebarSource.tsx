@@ -6,12 +6,18 @@ import {
 } from "./sidebar-environment";
 import type { SidebarSectionSource } from "../../features/channel-navigation/sidebar-section-components";
 import { SoloInventory } from "./SoloInventory";
-import { SoloRegions } from "./SoloRegions";
+import { SoloRegions, visibleSoloRegions } from "./SoloRegions";
 
-function SoloSidebarContents(props: MessagesSidebarState) {
+/** One region's card. Only the region that composes chats needs the Solo
+ * inventory around it. */
+function SoloSidebarContents({
+  region,
+  ...props
+}: MessagesSidebarState & { region: string }) {
   const { regions } = useSoloNavigation(props.session);
-  if (!regions.length) return null;
-  if (!props.workspaceComposition.sections.size)
+  const composing =
+    visibleSoloRegions(regions).find((item) => item.source)?.key === region;
+  if (!composing || !props.workspaceComposition.sections.size)
     return (
       <SoloRegions
         session={props.session}
@@ -20,6 +26,7 @@ function SoloSidebarContents(props: MessagesSidebarState) {
         target={props.target}
         sidebar={props.sidebar}
         pendingClick={props.workspaceComposition.pendingChatClick}
+        only={region}
       />
     );
   return (
@@ -41,6 +48,7 @@ function SoloSidebarContents(props: MessagesSidebarState) {
           sidebar={props.sidebar}
           composeOrdinary={composeOrdinary}
           pendingClick={pendingClick}
+          only={region}
         />
       )}
     />
@@ -55,12 +63,15 @@ export const soloSidebarSource: SidebarSectionSource = {
     const environment = useContext(MessagesSidebarEnvironment);
     if (!environment)
       throw new Error("Solo navigation requires its Messages context");
-    return render([
-      {
-        id: "solo-regions",
-        defaultPosition: 0,
-        element: <SoloSidebarContents {...environment} />,
-      },
-    ]);
+    const { regions } = useSoloNavigation(environment.session);
+    // Each region is a card of its own in the sidebar's one card order.
+    return render(
+      visibleSoloRegions(regions).map((region, index) => ({
+        id: `solo-region:${region.key}`,
+        title: region.title,
+        defaultPosition: index,
+        element: <SoloSidebarContents {...environment} region={region.key} />,
+      })),
+    );
   },
 };

@@ -6,6 +6,9 @@ import { contributedSidebarSectionKey } from "./sidebar-sections";
 type SidebarView = {
   collapsed: string[];
   importedWorkspaceCollapse?: true;
+  /** This device's plugin card order from before the synced card order. It
+   * only orders plugin cards the synced order hasn't saved yet; the first
+   * reorder saves them all there. */
   contributionOrder: string[];
   scrollTop: number;
   /** The destination whose sidebar entry the saved position shows. */
@@ -333,19 +336,12 @@ export function useSidebarView(
     },
     [update],
   );
-  const setContributionOrder = useCallback(
-    (contributionOrder: readonly string[]) => {
-      update({ ...intent.current, contributionOrder: [...contributionOrder] });
-    },
-    [update],
-  );
   return useMemo(
     () => ({
       list,
       savedLocation,
       collapsed: view.collapsed,
       contributionOrder: view.contributionOrder,
-      setContributionOrder,
       toggle,
       retryReveal,
       revealAgain,
@@ -356,7 +352,6 @@ export function useSidebarView(
       savedLocation,
       view.collapsed,
       view.contributionOrder,
-      setContributionOrder,
       toggle,
       retryReveal,
       revealAgain,

@@ -262,11 +262,11 @@ it("gives an existing unified record without a saved order the new default", () 
   expect(
     workspacePayloadForSigning(reordered, legacy, current).sectionOrder,
   ).toEqual([
+    "pages",
     "starred",
     "group:release",
     "group:notes",
     "solo",
-    "pages",
     "channels",
     "dms",
   ]);

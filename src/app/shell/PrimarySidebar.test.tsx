@@ -680,7 +680,7 @@ it("contains a Solo render failure without rendering the failed inventory in its
     soloFailure.active = false;
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Retry sidebar" }));
+      .click(screen.getByRole("button", { name: "Retry Work" }));
     expect(await screen.findByRole("button", { name: /^Chat$/ })).toBeVisible();
   } finally {
     soloFailure.active = false;

@@ -35,6 +35,11 @@ import {
 } from "./SoloWorkspaces";
 import { createSoloRegionFixture } from "../../features/channel-navigation/solo-navigation-testing";
 import { readView } from "../../shared/view-state";
+import {
+  ChannelSidebarDnd,
+  SidebarCardOrderProvider,
+} from "../../features/channel-navigation/ChannelSidebarDnd";
+import type { WorkspaceSidebarComposition } from "./sidebar-environment";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
@@ -132,9 +137,11 @@ function fixture(projectName = "Work") {
       { id: "other", title: "Existing chat" },
     ],
     compose?: ComposeWorkspaces,
+    workspaceComposition?: WorkspaceSidebarComposition,
   ) => (
     <SoloWorkspaces
       compose={compose}
+      workspaceComposition={workspaceComposition}
       onNew={onNew}
       session={
         {
@@ -235,6 +242,68 @@ it("moves workspaces with the section menu, keeps collapse and filing, and retri
   expect(h.write).not.toHaveBeenCalled();
   mounted.unmount();
   first.dispose();
+});
+
+it("moves a composed workspace past its composed neighbour, not the next card", async () => {
+  const h = fixture();
+  h.setSaved({
+    ...h.saved(),
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "home", name: "Home", order: 1 },
+    ],
+    sectionOrder: ["group:work", "channels", "group:home"],
+  });
+  const store = h.store();
+  await store.queries.ensure();
+  const reorder = vi.fn();
+  const composition: WorkspaceSidebarComposition = {
+    sections: new Set(["group:work", "group:home"]),
+    pendingChatClick: { current: undefined },
+    collapsed: [],
+    toggle: () => {},
+    registerFrame: () => () => {},
+    newAction: () => null,
+  };
+  const user = userEvent.setup();
+  render(
+    <SidebarCardOrderProvider
+      value={{
+        order: ["group:work", "channels", "group:home"],
+        shown: ["channels"],
+        writable: true,
+        reorder,
+      }}
+    >
+      <ChannelSidebarDnd writable onMove={() => {}} overlay={() => null}>
+        {h.view(
+          store.queries,
+          undefined,
+          undefined,
+          undefined,
+          (parts) => (
+            <WorkspaceCompositionContext value={parts}>
+              <RegionWorkspace id="work" />
+              <RegionWorkspace id="home" />
+            </WorkspaceCompositionContext>
+          ),
+          composition,
+        )}
+      </ChannelSidebarDnd>
+    </SidebarCardOrderProvider>,
+  );
+  try {
+    await user.click(
+      await screen.findByRole("button", { name: "Actions for Work" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Move up" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("menuitem", { name: "Move down" }));
+    expect(reorder).toHaveBeenCalledExactlyOnceWith("group:work", "group:home");
+  } finally {
+    store.dispose();
+  }
 });
 
 it("returns focus to the workspace title after a failed order save", async () => {

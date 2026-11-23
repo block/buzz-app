@@ -40,6 +40,37 @@ it("reads whole choices from the picker's counts for Unicode and community sugge
   expect(emojiUsage("wss://relay.test/a")("unicode/smile")).toBe(0);
 });
 
+it("removes the defaults Mart stored as picks once, keeping real picks", () => {
+  // What Mart 5.6 saves at perLine 9 (module.js:487-505): its seed, then the
+  // picks rocket once and grinning twice.
+  const seed = [
+    "+1",
+    "grinning",
+    "kissing_heart",
+    "heart_eyes",
+    "laughing",
+    "stuck_out_tongue_winking_eye",
+    "sweat_smile",
+    "joy",
+    "scream",
+  ];
+  const mart: Record<string, number> = Object.fromEntries(
+    seed.map((id, i) => [id, 9 - i]),
+  );
+  mart.grinning = (mart.grinning ?? 0) + 2;
+  mart.rocket = 1;
+  localStorage.setItem("emoji-mart.frequently", JSON.stringify(mart));
+  const uses = emojiUsage("s");
+  expect(uses("unicode/rocket")).toBe(1);
+  expect(uses("unicode/grinning")).toBe(2);
+  expect(uses("unicode/+1")).toBe(0);
+  expect(uses("unicode/scream")).toBe(0);
+  expect(stored()).toEqual({ grinning: 2, rocket: 1 });
+  // Only once: later counts that look like a seed are real picks.
+  localStorage.setItem("emoji-mart.frequently", JSON.stringify({ "+1": 1 }));
+  expect(emojiUsage("s")("unicode/+1")).toBe(1);
+});
+
 it("counts each choice against the latest history, keeping other windows' choices", () => {
   recordEmojiUsage("wss://relay.test/a", "unicode/smirk");
   // Another window chooses from the same storage.

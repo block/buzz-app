@@ -3,6 +3,27 @@
 // It is read fresh on every use, so each window keeps the others' choices.
 const STORE = "emoji-mart.frequently";
 const LAST = "emoji-mart.last";
+const SEED_REMOVED = "buzz.emoji-usage.seed-removed";
+// Emoji Mart 5.6 seeded a new history with these defaults at perLine - i, as
+// if chosen, and saved them with the first pick. Copied so that suggestions do
+// not load Mart.
+const MART_SEED = [
+  "+1",
+  "grinning",
+  "kissing_heart",
+  "heart_eyes",
+  "laughing",
+  "stuck_out_tongue_winking_eye",
+  "sweat_smile",
+  "joy",
+  "scream",
+  "disappointed",
+  "unamused",
+  "weary",
+  "sob",
+  "sunglasses",
+  "heart",
+];
 
 /** The picker's ID for a community emoji, scoped like its catalog. */
 export const customEmojiId = (scope: string, shortcode: string) =>
@@ -17,14 +38,43 @@ function usageId(scope: string, id: string) {
 }
 
 function readCounts(): Record<string, unknown> {
+  let counts: Record<string, unknown> = {};
   try {
     const stored: unknown = JSON.parse(localStorage.getItem(STORE) ?? "{}");
     if (stored && typeof stored === "object" && !Array.isArray(stored))
-      return stored as Record<string, unknown>;
+      counts = stored as Record<string, unknown>;
   } catch {
     /* Without storage, nothing has been chosen. */
   }
-  return {};
+  try {
+    if (localStorage.getItem(SEED_REMOVED) === null) {
+      if (removeMartSeed(counts))
+        localStorage.setItem(STORE, JSON.stringify(counts));
+      localStorage.setItem(SEED_REMOVED, "1");
+    }
+  } catch {
+    /* Retried on the next read. */
+  }
+  return counts;
+}
+
+/** Subtracts Mart's seed once, keeping the picks made on top of it. The seed
+ * width is unknown, so take the widest run every count can contain. */
+function removeMartSeed(counts: Record<string, unknown>) {
+  const count = (i: number) => uses(counts, MART_SEED[i] ?? "");
+  let width = 0;
+  for (let size = 1; size <= MART_SEED.length; size++) {
+    let fits = true;
+    for (let i = 0; i < size && fits; i++) fits = count(i) >= size - i;
+    if (fits) width = size;
+  }
+  for (let i = 0; i < width; i++) {
+    const id = MART_SEED[i] ?? "";
+    const left = count(i) - (width - i);
+    if (left > 0) counts[id] = left;
+    else delete counts[id];
+  }
+  return width > 0;
 }
 
 function uses(counts: Record<string, unknown>, key: string) {

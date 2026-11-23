@@ -193,16 +193,20 @@ test("leaving while a provider decides aborts its offer and ignores its late res
   page,
   app,
 }) => {
+  await page.clock.install();
   const { activate } = await links(page, app);
   await page.evaluate(() => {
     window.fixtureMessageLinks.mode = "hold";
   });
-  await activate(1);
+  await pauseClock(page);
   try {
+    await activate(1);
     await expect
       .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
       .toBe(true);
-    await page.getByRole("button", { name: "Beta", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Beta", exact: true })
+      .press("Enter");
     await expect
       .poll(async () => (await state(page)).entry.target.channelId)
       .toBe("beta");
@@ -212,6 +216,7 @@ test("leaving while a provider decides aborts its offer and ignores its late res
       )
       .toBe("AbortError");
   } finally {
+    await page.clock.resume();
     await page.evaluate(() => window.fixtureMessageLinks.release?.());
   }
   await expect.poll(async () => (await state(page)).status).toBe("opened");
@@ -234,18 +239,15 @@ test("changing tabs cancels offers from retained thread and timeline readers", a
   const conversation = page
     .locator("[data-main-workspace]")
     .getByRole("tab", { name: "Alpha", exact: true });
+  // Give the relay time to prove the root and keep the provider deadline
+  // paused until the tab change cancels the offer.
+  await pauseClock(page);
   try {
-    // Let the relay deliver root proof before time can select ordinary reveal.
-    await pauseClock(page);
-    try {
-      await activate(0);
-      await expect
-        .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
-        .toBe(true);
-    } finally {
-      await page.clock.resume();
-    }
-    await conversation.click();
+    await activate(0);
+    await expect
+      .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
+      .toBe(true);
+    await conversation.press("Enter");
     await expect(conversation).toHaveAttribute("aria-selected", "true");
     await expect
       .poll(() =>
@@ -254,6 +256,7 @@ test("changing tabs cancels offers from retained thread and timeline readers", a
       .toBe("AbortError");
     await expect.poll(async () => (await state(page)).status).toBe("opened");
   } finally {
+    await page.clock.resume();
     await page.evaluate(() => window.fixtureMessageLinks.release?.());
   }
   await expect(conversation).toHaveAttribute("aria-selected", "true");
@@ -262,15 +265,16 @@ test("changing tabs cancels offers from retained thread and timeline readers", a
   await page.evaluate(() => {
     delete window.fixtureMessageLinks.release;
   });
-  await activate(1);
   const thread = page.locator(
     '[data-main-workspace] [role="tab"][data-tab-value^="thread:"]',
   );
+  await pauseClock(page);
   try {
+    await activate(1);
     await expect
       .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
       .toBe(true);
-    await thread.click();
+    await thread.press("Enter");
     await expect(thread).toHaveAttribute("aria-selected", "true");
     await expect
       .poll(() =>
@@ -279,6 +283,7 @@ test("changing tabs cancels offers from retained thread and timeline readers", a
       .toBe("AbortError");
     await expect.poll(async () => (await state(page)).status).toBe("opened");
   } finally {
+    await page.clock.resume();
     await page.evaluate(() => window.fixtureMessageLinks.release?.());
   }
   await expect(thread).toHaveAttribute("aria-selected", "true");

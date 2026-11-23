@@ -401,7 +401,12 @@ export function useAppNavigation(
       };
     if (owner.waiting || owner.failure) return;
     const previous = workspace.current;
-    if (!settings && previous?.owner === owner) return;
+    if (
+      !settings &&
+      previous?.owner === owner &&
+      !previous.presentation.request.signal.aborted
+    )
+      return;
     if (!settings && previous?.presentation.resume(owner.attempt)) {
       presented.set({ owner, request: previous.presentation.request });
       previous.owner = owner;

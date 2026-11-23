@@ -217,6 +217,42 @@ it("locks the list while a save runs", async () => {
   expect(button("Add variable")).toBeEnabled();
 });
 
+it("keeps Restart agent off while a row is open", async () => {
+  const user = userEvent.setup();
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  const restart = await saveOnce(user);
+  expect(restart).not.toHaveAttribute("aria-disabled", "true");
+  await user.click(button("Add variable"));
+  expect(restart).toHaveAttribute("aria-disabled", "true");
+  await user.click(restart);
+  expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+});
+
+it("keeps Restart agent off while a save runs", async () => {
+  const user = userEvent.setup();
+  names = ["SAVED_KEY", "OTHER"];
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  const restart = await saveOnce(user);
+  let finish = () => {};
+  native.invoke.mockImplementation(async (command) => {
+    if (command === "agent_env_status") return { names };
+    if (command === "agent_env_set")
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    return undefined;
+  });
+  await user.click(button("OTHER actions"));
+  await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+  expect(restart).toHaveAttribute("aria-disabled", "true");
+  await user.click(restart);
+  expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
+  finish();
+  await waitFor(() =>
+    expect(restart).not.toHaveAttribute("aria-disabled", "true"),
+  );
+});
+
 it("offers Retry for a list it cannot read, never an empty one", async () => {
   const user = userEvent.setup();
   let readable = false;

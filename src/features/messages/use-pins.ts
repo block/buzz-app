@@ -37,6 +37,10 @@ export type PinnedMessages = Readonly<{
 const REFRESH_MS = 10 * 60_000;
 /** Live edits and deletions wait this long, so a burst becomes one read. */
 const SETTLE_MS = 250;
+/** A failed read is retried after this, doubled per failure up to the cap
+ * and jittered, so a relay outage does not get every open panel at once. */
+const RETRY_MS = 5_000;
+const RETRY_CAP_MS = 5 * 60_000;
 const EDIT_KIND = 40003;
 const DELETION_KINDS = [5, 9005];
 
@@ -44,9 +48,9 @@ const DELETION_KINDS = [5, 9005];
  * a live edit reloads the pin it names, and a deletion the pins whose edit it
  * withdraws (a deleted pin leaves the list itself). `attempt`, catch-up and the period
  * reload every row; an agent's owner learned after its pin loaded reloads
- * that pin. One read runs at a time; triggers meanwhile wait for it.
- * Earlier rows the list still names stay shown while a read runs or after it
- * fails. */
+ * that pin. One read runs at a time; triggers meanwhile wait for it. A
+ * failed read is retried in the background with backoff. Earlier rows the
+ * list still names stay shown while a read runs or after it fails. */
 export function usePinnedRows(
   source: PinSource,
   channelId: string,
@@ -100,15 +104,19 @@ function rowLoader(
   let ids: readonly string[] = [];
   let reading = false;
   let failed = false;
+  let failures = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const show = () =>
     publish({
-      status:
-        reading || dirty.size
-          ? "loading"
-          : failed || ids.some((id) => !rows.has(id))
-            ? "error"
-            : "ready",
+      status: reading
+        ? "loading"
+        : failed
+          ? "error"
+          : dirty.size
+            ? "loading"
+            : ids.some((id) => !rows.has(id))
+              ? "error"
+              : "ready",
       rows: ids.flatMap((id) => {
         const row = rows.get(id);
         return row ? [row] : [];
@@ -138,11 +146,21 @@ function rowLoader(
       for (const id of batch)
         if (named.has(id)) rows.set(id, found.rows.get(id) ?? null);
       failed = false;
+      failures = 0;
     } catch {
+      // Retried in the background; rows already loaded stay shown.
       failed = true;
+      failures++;
+      for (const id of batch) if (named.has(id)) dirty.add(id);
     }
     reading = false;
-    if (!controller.signal.aborted) schedule(0);
+    if (!controller.signal.aborted)
+      schedule(
+        failed
+          ? Math.min(RETRY_MS * 2 ** (failures - 1), RETRY_CAP_MS) *
+              (0.5 + Math.random() / 2)
+          : 0,
+      );
   }
   const named = new Set<string>();
   const stopLive = source.subscribeLive(
@@ -193,6 +211,9 @@ function rowLoader(
   );
   function reload() {
     for (const id of ids) dirty.add(id);
+    // An explicit or periodic reload does not wait out a retry delay.
+    clearTimeout(timer);
+    timer = undefined;
     schedule(0);
   }
   return {

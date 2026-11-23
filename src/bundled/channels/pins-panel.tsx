@@ -134,9 +134,10 @@ function PinnedList({
     );
   return (
     <>
-      {(error || pinned.status === "error") && (
+      {/* A failed refresh retries in the background, keeping these rows. */}
+      {error && (
         <p role="alert" className={styles.status}>
-          {error ?? "Couldn’t refresh pinned messages."}
+          {error}
         </p>
       )}
       <ul className={styles.list} aria-label="Pinned messages">

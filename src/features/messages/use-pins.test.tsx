@@ -231,6 +231,40 @@ it("reloads a pin when its agent's owner becomes known", async () => {
   ]);
 });
 
+it("retries a failed refresh in the background, keeping the loaded rows", async () => {
+  vi.useFakeTimers();
+  try {
+    let reply: () => readonly EventData[] = () => [message(one, "before")];
+    const s = source(async ([filter]) => (filter?.ids ? reply() : []));
+    const { result } = renderHook(() => usePinnedRows(s.value, "c", [one]));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.rows[0]?.content).toBe("before");
+    reply = () => {
+      throw new Error("offline");
+    };
+    act(() => s.catchUp("c"));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(result.current.status).toBe("error");
+    expect(result.current.rows[0]?.content).toBe("before");
+    // Backoff: no read before the first delay's jittered floor, one by its
+    // ceiling, and the next waits about twice as long.
+    reply = () => {
+      throw new Error("still offline");
+    };
+    await act(() => vi.advanceTimersByTimeAsync(2_400));
+    expect(idsRead(s)).toHaveLength(2);
+    await act(() => vi.advanceTimersByTimeAsync(2_700));
+    expect(idsRead(s)).toHaveLength(3);
+    reply = () => [message(one, "after")];
+    await act(() => vi.advanceTimersByTimeAsync(10_100));
+    expect(idsRead(s)).toHaveLength(4);
+    expect(result.current).toMatchObject({ status: "ready" });
+    expect(result.current.rows[0]?.content).toBe("after");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("holds triggers that arrive during a read for one read after it", async () => {
   const gates: (() => void)[] = [];
   const s = source(async ([filter]) => {

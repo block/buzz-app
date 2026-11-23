@@ -824,10 +824,16 @@ function Composer({
       ? draftKey
       : undefined,
   );
+  // `dirty`: an edit that is not in storage. `edited`: typed in since the
+  // draft was last loaded, saved or not.
   const dirty = useRef(!!reopenedConflict);
+  const edited = useRef(!!reopenedConflict);
   const writing = useRef(false);
   const [conflict, setConflict] = useState(!!reopenedConflict);
+  // A shown conflict protects the text until the user resolves it, whatever
+  // the draft's saved state was when it was raised.
   function reportConflict(draft = valueRef.current) {
+    dirty.current = true;
     // Only a distinct edit needs a backup when the shared draft is absent.
     if (
       !conflictDraft.current &&
@@ -1359,6 +1365,7 @@ function Composer({
     }
     cancelDraftSave();
     dirty.current = true;
+    edited.current = true;
     if (conflictDraft.current) conflictDraft.current.draft = next;
     else if (conflict && !accepted) reportConflict(next);
     if (conflict || conflictDraft.current || accepted) return;
@@ -1417,6 +1424,9 @@ function Composer({
       draftAtRevision.current = next;
       savedCursor.current = draftRetirementCursor(scope, draftKey);
       forgetConflict();
+      // Saved text has no unsaved edits left to protect: a later change made
+      // elsewhere is loaded unless the user is in this composer.
+      dirty.current = false;
     }
     if (result === "changed" && next === valueRef.current && dirty.current)
       reportConflict(next);
@@ -1794,6 +1804,7 @@ function Composer({
     draftAtRevision.current = next;
     savedCursor.current = draftRetirementCursor(scope, draftKey);
     dirty.current = false;
+    edited.current = false;
     valueRef.current = next;
     updateDraft(next);
     input.current?.reset(next);
@@ -1827,6 +1838,8 @@ function Composer({
       restored?: MentionDraft,
       recoveredPicks?: DraftPicks,
       deletedRevision?: string,
+      // The draft was hidden until now, behind a message edit.
+      hidden = false,
     ) => {
       traceDraft(scope, draftKey, "reconcile", diagnosticEditor);
       if (submission || editing.target || writing.current) return;
@@ -1864,19 +1877,30 @@ function Composer({
           setPicks(recoveredPicks ?? {});
         return;
       }
+      const empty =
+        !valueRef.current.text.trim() &&
+        !valueRef.current.recipients.length &&
+        !composerMarkdown(valueRef.current).trim();
       // An explicit successful recovery may replace only the cleared follow-up,
       // never a meaningful unsaved edit. Ordinary external revisions keep their
       // conflict behavior. The storage notification may have just backed up
       // that empty follow-up before the explicit recovery reaches this editor.
-      if (
-        recovering &&
-        !valueRef.current.text.trim() &&
-        !valueRef.current.recipients.length &&
-        !composerMarkdown(valueRef.current).trim() &&
-        !sendAttempt.current
-      )
-        loadSaved(current);
-      else if (dirty.current || sendAttempt.current) {
+      if (recovering && empty && !sendAttempt.current) loadSaved(current);
+      else if (
+        dirty.current ||
+        sendAttempt.current ||
+        // Loading closes an open link dialog and discards what it holds.
+        linkEdit ||
+        // Text typed here is never replaced under the user: storage can lose
+        // a save that read back, and another window can write mid-typing. The
+        // user is here while focus is in this composer, its controls included.
+        // A composer holding nothing has nothing to offer back.
+        (edited.current &&
+          !(empty && !valueRef.current.forward) &&
+          !hidden &&
+          form.current?.contains(document.activeElement) &&
+          document.hasFocus())
+      ) {
         const pending = cancelDraftSave();
         // Two windows can independently arrive at the same draft before saving.
         if (pending && current === JSON.stringify(pending.draft)) {
@@ -1895,6 +1919,7 @@ function Composer({
   );
   const editingDraft = !!editing.target;
   const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
+  const wasEditing = useRef(false);
   useEffect(() => {
     if (submission) return;
     const stop = subscribeView(
@@ -1908,10 +1933,15 @@ function Composer({
       draftKey,
     );
     // Reconcile changes while message-edit mode or mounting paused this listener.
+    // The draft restored on leaving an edit was hidden throughout it, so a
+    // fully saved one follows wherever focus lands afterwards.
     reconcileDraft(
       deferredRecovery.current?.draft,
       deferredRecovery.current?.picks,
+      undefined,
+      wasEditing.current && !editingDraft,
     );
+    wasEditing.current = editingDraft;
     if (!editingDraft && deferredRecovery.current) {
       takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
@@ -1979,6 +2009,7 @@ function Composer({
       return;
     }
     dirty.current = false;
+    edited.current = false;
     onDraftSaved?.();
   }
   useEffect(() => {
@@ -3793,6 +3824,9 @@ function Composer({
     } finally {
       admission.current = false;
       if (sendAttempt.current === attempt) {
+        // A change saved elsewhere during an attempt that did not send is a
+        // conflict even if its notification arrives after the attempt ends.
+        reconcileDraft();
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);

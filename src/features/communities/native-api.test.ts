@@ -11,6 +11,8 @@ import {
 import { keypair, nativeSignatureChecks, signed } from "../relay/testing";
 import { fetchCommunityPresentation } from "./community-icon";
 import { NOT_A_COMMUNITY_ERROR } from "../relay/native";
+import { PublishRejected } from "../relay/outbox";
+import { failureKind, refusalReason } from "../relay/user-copy";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -170,7 +172,8 @@ it.each([
       pubkey: "2".repeat(64),
     }).catch((reason: Error) => reason);
     // Only allowlisted relay refusals reach the UI; no upstream body or parser text.
-    expect(error).toEqual(new Error(shown));
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(shown);
     expect(requests).toMatchObject([{ path: "/events", body: { kind: 9031 } }]);
   },
 );
@@ -290,6 +293,47 @@ it("restores a signed community profile and preserves extra fields when publishi
   await expect(
     publishProfile(community, found.profile, found.existing),
   ).rejects.toThrow("not confirmed");
+});
+
+it("types a native profile failure as refused, not sent or not confirmed", async () => {
+  const profile = { name: "Ada", picture: "", about: "" };
+  const publish = () =>
+    publishProfile(community, profile, {}).catch((reason: unknown) => reason);
+  respond = () => ({
+    status: 403,
+    body: { error: "restricted: you are timed out until 1794000000" },
+  });
+  const refused = await publish();
+  expect(refused).toMatchObject({
+    status: 403,
+    message: "Community request failed (403)",
+    reason: "restricted: you are timed out until 1794000000",
+  });
+  expect(failureKind(refused)).toBe("refused");
+  expect(refusalReason(refused)).toBe("You’re timed out in this community.");
+  // `OK false` answered with the relay's text is a refusal as well.
+  respond = (_path, body) => ({
+    body: {
+      accepted: false,
+      event_id: (body as { id: string }).id,
+      message: "blocked: you are not allowed to do that",
+    },
+  });
+  const rejected = await publish();
+  expect(rejected).toBeInstanceOf(PublishRejected);
+  expect(refusalReason(rejected)).toBe("You don’t have permission to do this.");
+  // A server error is not a refusal, and its text stays out of the message.
+  respond = () => ({ status: 500, body: undefined, raw: "<html>oops</html>" });
+  const unavailable = await publish();
+  expect(failureKind(unavailable)).toBe("unknown");
+  expect((unavailable as Error).message).toBe("Community request failed (500)");
+  // An answer for another event may still have published this one.
+  respond = () => ({ body: { accepted: true, event_id: "unrelated" } });
+  expect(await publish()).toMatchObject({
+    name: "ReadError",
+    kind: "invalid-response",
+    message: "Profile publication was not confirmed",
+  });
 });
 
 it("signs the NIP-43 leave request for the community and classifies the relay's answer", async () => {

@@ -14,6 +14,8 @@ import type {
   Communities,
 } from "../features/communities/service";
 import * as api from "../features/communities/api";
+import { ReadError } from "../features/relay/errors";
+import { PublishNotSent, PublishRejected } from "../features/relay/outbox";
 import { ProfileSettings } from "./ProfileSettings";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { useSyncExternalStore } from "react";
@@ -251,7 +253,7 @@ it("failed publication retains edits for explicit retry; Cancel restores the loa
     new Error("Publication unconfirmed"),
   );
   save();
-  await screen.findByText("Publication unconfirmed");
+  await screen.findByText("Couldn’t save your profile. Try again.");
   expect(screen.getByLabelText("Display name")).toHaveValue("Changed");
   save();
   await screen.findByText("Profile updated");
@@ -261,6 +263,80 @@ it("failed publication retains edits for explicit retry; Cancel restores the loa
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.getByLabelText("Display name")).toHaveValue("Changed");
   expect(api.publishProfile).toHaveBeenCalledTimes(2);
+});
+
+const SAVE_FAILED = "Couldn’t save your profile. Try again.";
+const SAVE_REFUSED = "This community didn’t accept your profile change.";
+const SAVE_UNCONFIRMED =
+  "Buzz couldn’t confirm your profile was saved. Save again to check.";
+
+it.each([
+  ["not sent", () => new PublishNotSent("offline"), SAVE_FAILED],
+  [
+    "a server error",
+    () => new ReadError("unavailable", "internal error", 500),
+    SAVE_FAILED,
+  ],
+  ["a network failure", () => new TypeError("Failed to fetch"), SAVE_FAILED],
+  [
+    "a reply that does not confirm the change",
+    () => new ReadError("invalid-response", "not confirmed"),
+    SAVE_UNCONFIRMED,
+  ],
+  [
+    "a refusal Buzz has no wording for",
+    () => new PublishRejected("invalid: nope", "invalid: nope"),
+    SAVE_REFUSED,
+  ],
+  [
+    "a refusal with a known reason",
+    () => new PublishRejected("no", "blocked: you are not allowed to do that"),
+    `${SAVE_REFUSED} You don’t have permission to do this.`,
+  ],
+])("words a save failed by %s without raw text", async (_name, make, text) => {
+  setup();
+  await editName();
+  vi.mocked(api.publishProfile).mockRejectedValueOnce(make());
+  save();
+  expect(await screen.findByRole("alert")).toHaveTextContent(text);
+  const shown = screen.getByRole("alert").textContent ?? "";
+  expect(shown).not.toMatch(
+    /Failed to fetch|internal error|offline|nope|ReadError/,
+  );
+  // Edits stay, and Save stays enabled to try again, for every variant.
+  expect(screen.getByLabelText("Display name")).toHaveValue("Changed");
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  // Refusals do not promise that trying again helps.
+  expect(/Try again/.test(shown)).toBe(text.startsWith("Couldn’t save"));
+});
+
+it("names a timeout the community refused the profile change with", async () => {
+  setup();
+  await editName();
+  vi.mocked(api.publishProfile).mockRejectedValueOnce(
+    new PublishRejected(
+      "restricted: you are timed out until 1794000000",
+      "restricted: you are timed out until 1794000000",
+    ),
+  );
+  save();
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(
+    "This community didn’t accept your profile change. You’re timed out in this community.",
+  );
+  expect(alert).not.toHaveTextContent(/1794000000|restricted/);
+});
+
+it("clears the failure message when the form is edited", async () => {
+  setup();
+  await editName();
+  vi.mocked(api.publishProfile).mockRejectedValueOnce(new Error("boom"));
+  save();
+  await screen.findByText(SAVE_FAILED);
+  fireEvent.change(screen.getByLabelText("Display name"), {
+    target: { value: "Changed again" },
+  });
+  expect(screen.queryByText(SAVE_FAILED)).not.toBeInTheDocument();
 });
 
 it("late initial reads cannot replace another community's profile", async () => {
@@ -325,7 +401,7 @@ it("accepted but superseded publication retains the avatar draft for explicit re
   vi.mocked(api.publishProfile).mockResolvedValueOnce(undefined);
   save();
   await screen.findByText(
-    "Your profile change is not current. Your edits are retained; save again to retry.",
+    "Buzz couldn’t confirm your profile was saved. Save again to check.",
   );
   expect(screen.queryByText("Profile updated")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
@@ -349,7 +425,9 @@ it("failed confirmation keeps edits and does not automatically republish", async
     .mockResolvedValueOnce(original("Alpha human"))
     .mockRejectedValueOnce(new Error("Confirmation unavailable"));
   save();
-  await screen.findByText("Confirmation unavailable");
+  await screen.findByText(
+    "Buzz couldn’t confirm your profile was saved. Save again to check.",
+  );
   expect(screen.getByLabelText("Display name")).toHaveValue("Changed");
   expect(api.publishProfile).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("Profile updated")).not.toBeInTheDocument();

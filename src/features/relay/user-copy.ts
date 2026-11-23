@@ -221,11 +221,8 @@ export function refusalReason(error: unknown): string | undefined {
           : undefined;
   const text = raw?.trim();
   if (!text) return undefined;
-  const timedOut = /\btimed out until (\d{9,11})\b/i.exec(text);
-  if (timedOut) {
-    const until = formatUntil(Number(timedOut[1]));
-    return until ? `You’re timed out until ${until}.` : "You’re timed out.";
-  }
+  if (/\btimed out until\b/i.test(text))
+    return "You’re timed out in this community.";
   if (/\bnot allowed to add members\b/i.test(text))
     return "You don’t have permission to add people to this channel.";
   if (/\bnot allowed to remove members\b/i.test(text))
@@ -244,14 +241,4 @@ export function refusalReason(error: unknown): string | undefined {
     return "You don’t have permission to do this.";
   if (/^mute:/i.test(text)) return "You’re muted in this community.";
   return undefined;
-}
-
-function formatUntil(unixSeconds: number) {
-  if (!Number.isSafeInteger(unixSeconds) || unixSeconds <= 0) return undefined;
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(unixSeconds * 1000));
 }

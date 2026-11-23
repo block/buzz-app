@@ -1,7 +1,12 @@
 import { nativeIdentityEnabled } from "../identity/service";
 import { retryRead } from "../relay/read-retry";
 import { ReadError, transientStatus } from "../relay/errors";
-import { nativeCommunityRequest } from "./native-api";
+import {
+  bodyError,
+  CommunityRefused,
+  nativeCommunityRequest,
+} from "./native-api";
+import { PublishRejected } from "../relay/outbox";
 import { connectCommunityTransport, registerCommunity } from "./connection";
 import { settledRefusal, type SettledRefusal } from "./leave-protocol";
 import { registerBrokerCommunity } from "../relay/transport";
@@ -43,16 +48,25 @@ export async function communityRequest<T>(
       signal,
     },
   );
-  const result = await response.json();
+  // Check `ok` before parsing: an error page that is not JSON must not become
+  // a parser error. Only the body's `error` string is read, and only as the
+  // community's own words in `reason`; the UI maps typed errors, not this text.
   if (!response.ok) {
-    const message =
-      result.error ?? `Community request failed (${response.status})`;
+    const reason = bodyError(await response.json().catch(() => undefined));
+    const message = reason ?? `Community request failed (${response.status})`;
     // Preserve retryable HTTP failures across the broker boundary without
     // reclassifying validation or admission refusals as network outages.
     if (transientStatus(response.status))
       throw new ReadError("unavailable", message, response.status);
-    throw new Error(message);
+    throw new CommunityRefused(message, response.status, reason);
   }
+  const result: unknown = await response.json().catch(() => {
+    throw new ReadError(
+      "invalid-response",
+      "Invalid community response",
+      response.status,
+    );
+  });
   return result as T;
 }
 export async function inspectProfile(id: string, session?: RelaySession) {
@@ -115,8 +129,13 @@ export async function publishProfile(
     event_id: string;
     message?: string;
   }>(id, "profile", { ...profile, existing });
-  if (!receipt.accepted || !receipt.event_id)
-    throw new Error(receipt.message ?? "Profile publication was not confirmed");
+  if (!receipt.accepted || !receipt.event_id) {
+    const message = receipt.message ?? "Profile publication was not confirmed";
+    // The relay answered `OK false`: refused. Anything else may have published.
+    if (receipt.accepted === false && receipt.message)
+      throw new PublishRejected(message, receipt.message);
+    throw new ReadError("invalid-response", message);
+  }
 }
 export type LeaveOutcome = "left" | SettledRefusal;
 /** Publishes a NIP-43 leave request to the community's relay by origin, without

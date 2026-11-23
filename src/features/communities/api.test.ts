@@ -1,5 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { communityRequest } from "./api";
+import { communityRequest, publishProfile } from "./api";
+import { CommunityRefused } from "./native-api";
+import { ReadError } from "../relay/errors";
+import { PublishRejected } from "../relay/outbox";
+import { failureKind, refusalReason } from "../relay/user-copy";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -102,3 +106,134 @@ it.each([408, 429, 500, 502, 503])(
     });
   },
 );
+
+function answer(status: number, body: BodyInit | null, type?: string) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/register")
+        ? Response.json({})
+        : new Response(body, {
+            status,
+            ...(type ? { headers: { "Content-Type": type } } : {}),
+          }),
+    ),
+  );
+}
+
+it.each([
+  [502, "<html><body>Bad gateway</body></html>", "text/html"],
+  [500, "", undefined],
+  [503, "upstream connect error", "text/plain"],
+])(
+  "checks the status before parsing: a non-JSON %s answer is a typed failure, not a parser error",
+  async (status, body, type) => {
+    answer(status, body, type);
+    const error = await communityRequest(
+      "https://unvisited.example",
+      "profile",
+      {},
+    ).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ReadError);
+    expect(error).toMatchObject({
+      kind: "unavailable",
+      status,
+      message: `Community request failed (${status})`,
+    });
+    expect(error).not.toBeInstanceOf(SyntaxError);
+  },
+);
+
+it("carries a refusal's status and the community's own reason without a parser error", async () => {
+  answer(
+    403,
+    JSON.stringify({ error: "restricted: you are timed out until 1794000000" }),
+    "application/json",
+  );
+  const error = await communityRequest(
+    "https://unvisited.example",
+    "profile",
+    {},
+  ).catch((reason: unknown) => reason);
+  expect(error).toBeInstanceOf(CommunityRefused);
+  expect(error).toMatchObject({
+    status: 403,
+    reason: "restricted: you are timed out until 1794000000",
+  });
+  expect(failureKind(error)).toBe("refused");
+  expect(refusalReason(error)).toBe("You’re timed out in this community.");
+});
+
+it("keeps a 403 without a usable body a refusal with no reason", async () => {
+  answer(403, "<html>Forbidden</html>", "text/html");
+  const error = await communityRequest(
+    "https://unvisited.example",
+    "profile",
+    {},
+  ).catch((reason: unknown) => reason);
+  expect(error).toMatchObject({
+    status: 403,
+    message: "Community request failed (403)",
+  });
+  expect(error).not.toHaveProperty("reason", expect.any(String));
+  expect(failureKind(error)).toBe("refused");
+  expect(refusalReason(error)).toBeUndefined();
+});
+
+it("reports a successful answer that is not JSON as an invalid response", async () => {
+  answer(200, "<html>ok</html>", "text/html");
+  const error = await communityRequest(
+    "https://unvisited.example",
+    "profile",
+    {},
+  ).catch((reason: unknown) => reason);
+  expect(error).toBeInstanceOf(ReadError);
+  expect(error).toMatchObject({
+    kind: "invalid-response",
+    message: "Invalid community response",
+  });
+});
+
+it("types a relay OK false as refused and any other missing receipt as unconfirmed", async () => {
+  const profile = { name: "Ada", picture: "" };
+  const reply = (receipt: unknown) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        Response.json(url.endsWith("/register") ? {} : receipt),
+      ),
+    );
+  reply({
+    accepted: false,
+    event_id: "",
+    message: "restricted: you are timed out until 1794000000",
+  });
+  const refused = await publishProfile(
+    "https://unvisited.example",
+    profile,
+    {},
+  ).catch((reason: unknown) => reason);
+  expect(refused).toBeInstanceOf(PublishRejected);
+  expect(failureKind(refused)).toBe("refused");
+  expect(refusalReason(refused)).toBe("You’re timed out in this community.");
+  for (const receipt of [
+    { accepted: true },
+    { accepted: false, event_id: "" },
+  ]) {
+    reply(receipt);
+    const unconfirmed = await publishProfile(
+      "https://unvisited.example",
+      profile,
+      {},
+    ).catch((reason: unknown) => reason);
+    expect(unconfirmed).toMatchObject({
+      name: "ReadError",
+      kind: "invalid-response",
+      message: "Profile publication was not confirmed",
+    });
+  }
+  reply({ accepted: true, event_id: "e".repeat(64) });
+  await expect(
+    publishProfile("https://unvisited.example", profile, {}),
+  ).resolves.toBeUndefined();
+});

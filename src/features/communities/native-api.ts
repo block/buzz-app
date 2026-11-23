@@ -13,8 +13,34 @@ import { adminReason, memberCommand } from "./admin-protocol";
 import { readRelayLibrary } from "../agents/relay-library";
 import { eventDto } from "../relay/events";
 import { readApiFailure } from "../relay/http-admission";
+import { PublishRejected } from "../relay/outbox";
+import { ReadError, transientStatus } from "../relay/errors";
 import { admitSignedRequest } from "../relay/transport";
 import type { PersonalProfile } from "./service";
+
+/** A community request the community answered with a non-retryable status.
+ * `PublishRejected` has the relay's `reason` but no status and `ReadError` the
+ * status but no reason, so this carries both. `message` stays a status summary;
+ * `reason` is the community's own text, for classification and diagnostics. */
+export class CommunityRefused extends PublishRejected {
+  constructor(
+    message: string,
+    readonly status: number,
+    reason?: string,
+  ) {
+    super(message, reason);
+  }
+}
+
+/** The `error` text of a failure body, bounded; `undefined` for any other body
+ * (proxy HTML, plain text, no `error`). */
+export function bodyError(body: unknown): string | undefined {
+  const error =
+    body && typeof body === "object" ? (body as { error?: unknown }).error : "";
+  return typeof error === "string" && error.trim()
+    ? error.trim().slice(0, 256)
+    : undefined;
+}
 
 export async function nativeCommunityRequest(
   community: string,
@@ -200,8 +226,14 @@ export async function nativeCommunityRequest(
     const result = await readResponse(
       await nativeRelayRequest(community, "/events", event, signal),
     );
-    if (result.event_id !== event.id || result.accepted !== true)
-      throw new Error("Profile publication was not confirmed");
+    if (result.event_id !== event.id || result.accepted !== true) {
+      const message = "Profile publication was not confirmed";
+      // `OK false` with the relay's text is a refusal; any other answer that
+      // does not confirm this event may still have published it.
+      if (result.accepted === false && typeof result.message === "string")
+        throw new PublishRejected(message, result.message.slice(0, 256));
+      throw new ReadError("invalid-response", message);
+    }
     return result;
   }
   if (route === "member") {
@@ -280,10 +312,17 @@ async function readResponse(
   // A body that is not JSON (proxy HTML, plain text) is never shown: it maps to
   // the status-based failure or, on success, an invalid response.
   const result: unknown = await response.json().catch(() => undefined);
-  if (!response.ok)
-    throw new Error(
-      refusal(result) ?? `Community request failed (${response.status})`,
+  if (!response.ok) {
+    const known = refusal(result);
+    const message = known ?? `Community request failed (${response.status})`;
+    // Retryable statuses stay plain: callers treat them as an unknown failure.
+    if (transientStatus(response.status)) throw new Error(message);
+    throw new CommunityRefused(
+      message,
+      response.status,
+      known ?? bodyError(result),
     );
+  }
   if (!result || typeof result !== "object" || Array.isArray(result))
     throw new Error("Invalid community response");
   return result as Record<string, unknown>;

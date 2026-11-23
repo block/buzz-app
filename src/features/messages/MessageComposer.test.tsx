@@ -7951,6 +7951,36 @@ it("restores live profile avatars with one removal control per exact recipient",
   ).not.toBeInTheDocument();
 });
 
+it("names one tagged agent and says where it will answer", () => {
+  const choose = vi.fn();
+  const h = mount({
+    replyChoice: { level: "top", checked: true, choose },
+    replyContext: undefined,
+  });
+  h.setProfiles(new Map([[second.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  // A person alone is named too, but nobody answers in a thread.
+  const region = screen.getByRole("region", { name: "Explicit mentions" });
+  expect(within(region).getByRole("button")).toHaveTextContent("Honey");
+  expect(screen.queryByText(/will reply/)).toBeNull();
+  act(() => {
+    h.commands().insertMention(second);
+  });
+  expect(screen.getByText("Honey will reply in a thread")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Reply here instead" }));
+  expect(choose).toHaveBeenCalledWith(false);
+  // Replying to a message already says where agents answer.
+  h.retarget({ replyContext: <span>Replying to Honey</span> });
+  expect(screen.queryByText("Honey will reply in a thread")).toBeNull();
+  h.retarget({
+    replyContext: undefined,
+    replyChoice: { level: "subthread", checked: true, choose },
+  });
+  expect(screen.queryByText(/will reply/)).toBeNull();
+});
+
 // Explicit notification intent must remain visible even where Markdown previews are suppressed.
 it.each([
   ["inline code", "`", " `"],

@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
 import type { ReplyPlacement } from "../relay/thread-reference";
+import { ReplyPlacementNotice, type ReplyChoice } from "./reply-placement";
 import { ForwardDisclosure } from "./ForwardDisclosure";
 import { pastedForward } from "./forward-clipboard";
 import { ComposerForward, useComposerForward } from "./ComposerForward";
@@ -65,6 +66,7 @@ import { useListedChannel } from "../relay/listed-channel";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -98,7 +100,7 @@ import {
 import {
   ArrowUpIcon,
   ChatCircleIcon,
-  LockIcon,
+  HashIcon,
   PaperclipIcon,
   PencilSimpleIcon,
   XIcon,
@@ -380,8 +382,8 @@ export type MessageComposerProps = {
   requireMention?: boolean | undefined;
   chatPresentation?: boolean | undefined;
   trailingTool?: ReactNode;
-  /** A control beside Send for how this message goes out, shown while writing. */
-  sendOption?: ReactNode;
+  /** Where agents the draft tags answer, shown above it once it tags one. */
+  replyChoice?: ReplyChoice | undefined;
   /** Only while the chat is new: `#` then offers its workspaces first. */
   workspace?: WorkspaceCompletionTarget | undefined;
   inviteAgents?: boolean | undefined;
@@ -623,7 +625,7 @@ function Composer({
   chatPresentation = false,
   inviteAgents = false,
   trailingTool,
-  sendOption,
+  replyChoice,
   workspace,
   ownerProvenance,
 }: OwnedComposerProps) {
@@ -1508,6 +1510,25 @@ function Composer({
   const named = routing
     ? recipients.filter((person) => !referenced(person.pubkey))
     : recipients;
+  const profileSnapshot = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const knownAgents = useKnownAgentPubkeys(session, profileSnapshot);
+  // The agents the text tags; stand-ins from a Solo chat's toolbar answer
+  // where they always do.
+  const taggedAgents = [
+    ...new Map(
+      named
+        .filter((person) => knownAgents.has(person.pubkey))
+        .map((person) => [person.pubkey, person.name]),
+    ).values(),
+  ];
+  const replyNotice =
+    replyChoice && replyChoice.level !== "subthread" && taggedAgents.length ? (
+      <ReplyPlacementNotice choice={replyChoice} agents={taggedAgents} />
+    ) : undefined;
   /** Who hears this message: a draft that opens with a tag is for whoever it
    * tags; otherwise its tags join the toolbar's agents. */
   const routedAudience = routing
@@ -1715,7 +1736,7 @@ function Composer({
   const iconPlaceholder =
     channelLabel && placeholder === undefined && ChannelIcon !== ChatCircleIcon;
   const label = channelLabel
-    ? `Message ${ChannelIcon === LockIcon ? "" : "#"}${channelName}`
+    ? `Message ${ChannelIcon === HashIcon ? "#" : ""}${channelName}`
     : editing.target
       ? "Edit message"
       : (customLabel ?? "Reply to thread");
@@ -4100,7 +4121,10 @@ function Composer({
       <div
         className={styles.composerLeadingTools}
         data-recipients={
-          (routing ? severalAddressed : !!value.recipients.length) || undefined
+          (routing
+            ? severalAddressed
+            : new Set(value.recipients.map((person) => person.pubkey)).size >
+              1) || undefined
         }
       >
         {severalAddressed && (
@@ -4357,7 +4381,7 @@ function Composer({
                 />
               </div>
             ) : (
-              replyContext
+              replyContext || replyNotice
             )}
           </ComposerContext>
           <div className={styles.composerContent}>
@@ -4687,7 +4711,6 @@ function Composer({
                   )}
                 </ComposerFormattingTools>
               )}
-              {active && !editing.target && sendOption}
               {active &&
                 !editing.target &&
                 (!submission || ownSoloConversation) &&
@@ -5017,6 +5040,43 @@ function RecipientAvatars({
   ];
   const mentioned = (pubkey: string) =>
     typeof mentions === "boolean" ? mentions : mentions.includes(pubkey);
+  const [only] = unique;
+  // One recipient is named, as a Solo chat's agent is; several are avatars.
+  if (only && unique.length === 1) {
+    const agent = agentPubkeys.has(only.pubkey);
+    return (
+      <section
+        aria-label={mentioned(only.pubkey) ? "Explicit mentions" : "Sending to"}
+      >
+        <Button
+          variant="subtle"
+          size="sm"
+          type="button"
+          title={`Remove ${mentioned(only.pubkey) ? "explicit mention of " : ""}${only.name} (${only.pubkey.slice(0, 8)})`}
+          aria-label={`Remove ${mentioned(only.pubkey) ? "mention" : "agent"} ${only.name} ${only.pubkey}`}
+          disabled={disabled}
+          onClick={() => remove(only.pubkey)}
+        >
+          <AvatarStack
+            size="small"
+            items={[
+              {
+                id: only.pubkey,
+                name: only.name,
+                src: avatarMedia(
+                  profiles.get(only.pubkey)?.picture,
+                  session.media,
+                ),
+                shape: agent ? "squircle" : "circle",
+              },
+            ]}
+          />
+          {only.name}
+          <XIcon size={12} aria-hidden="true" />
+        </Button>
+      </section>
+    );
+  }
   return (
     <section
       className={styles.mentionRecipients}

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { Button } from "../../shared/design-system/ui/Button";
+import { ThreadIcon } from "../../shared/design-system/icons/index";
+import styles from "./Messages.module.css";
 import type { ReplyPlacement } from "../relay/thread-reference";
 
 /**
@@ -113,24 +115,50 @@ export function useReplyPlacement(
   };
 }
 
-/** The checkbox beside Send. In a subthread it stays visible but off: there
- * is no deeper level to ask for. */
-export function ReplyPlacementOption({
-  level,
-  checked,
-  onCheckedChange,
-}: {
+/** The composer's choice, for the notice above it. */
+export type ReplyChoice = Readonly<{
   level: ReplyLevel;
   checked: boolean;
-  onCheckedChange(checked: boolean): void;
+  choose(checked: boolean): void;
+}>;
+
+function agentNames(names: readonly string[]) {
+  if (names.length > 2) return `${names.length} agents`;
+  return names.join(" and ");
+}
+
+/** Above the composer once the draft tags an agent: where it will answer,
+ * and the one other place it could. A subthread has no deeper level, so it
+ * never shows there. */
+export function ReplyPlacementNotice({
+  choice,
+  agents,
+}: {
+  choice: ReplyChoice;
+  agents: readonly string[];
 }) {
+  const nested = choice.level === "thread";
+  const names = agentNames(agents);
   return (
-    <Checkbox
-      size="sm"
-      label={level === "top" ? "Reply in thread" : "Reply in subthread"}
-      checked={checked}
-      disabled={level === "subthread"}
-      onCheckedChange={onCheckedChange}
-    />
+    <div className={styles.replyContext}>
+      <ThreadIcon size={18} aria-hidden="true" />
+      <div role="status">
+        {choice.checked
+          ? `${names} will reply in a ${nested ? "subthread" : "thread"}`
+          : `${names} will reply here`}
+      </div>
+      <Button
+        variant="subtle"
+        size="sm"
+        type="button"
+        onClick={() => choice.choose(!choice.checked)}
+      >
+        {choice.checked
+          ? "Reply here instead"
+          : nested
+            ? "Use a subthread"
+            : "Use a thread"}
+      </Button>
+    </div>
   );
 }

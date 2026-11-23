@@ -1,10 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  ReplyPlacementOption,
-  useReplyPlacement,
-} from "../../features/messages/reply-placement";
+import { useReplyPlacement } from "../../features/messages/reply-placement";
 import {
   conversationOthers,
   conversationPeople,
@@ -40,13 +37,7 @@ export function useConversationReplyPlacement(
   const reply = useReplyPlacement(channel?.id, "top", suggested);
   return {
     replyPlacement: reply.placement,
-    sendOption: (
-      <ReplyPlacementOption
-        level="top"
-        checked={reply.checked}
-        onCheckedChange={reply.choose}
-      />
-    ),
+    replyChoice: reply,
     sent: reply.sent,
   };
 }

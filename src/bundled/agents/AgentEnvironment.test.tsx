@@ -44,10 +44,15 @@ const calls = (command: string) =>
   native.invoke.mock.calls.filter(([name]) => name === command);
 const button = (name: string) => screen.getByRole("button", { name });
 
-async function saveOnce(user: ReturnType<typeof userEvent.setup>) {
+async function replaceSaved(user: ReturnType<typeof userEvent.setup>) {
   await user.click(
-    await screen.findByRole("button", { name: "Replace SAVED_KEY" }),
+    await screen.findByRole("button", { name: "SAVED_KEY actions" }),
   );
+  await user.click(await screen.findByRole("menuitem", { name: "Replace" }));
+}
+
+async function saveOnce(user: ReturnType<typeof userEvent.setup>) {
+  await replaceSaved(user);
   await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
   await user.click(button("Save"));
   return screen.findByRole("button", { name: "Restart agent" });
@@ -180,12 +185,11 @@ it("locks the list until a restart finishes", async () => {
   await user.click(button("Restart"));
   try {
     expect(button("Add variable")).toBeDisabled();
-    expect(button("Replace SAVED_KEY")).toBeDisabled();
     expect(button("SAVED_KEY actions")).toBeDisabled();
   } finally {
     finish();
   }
-  await waitFor(() => expect(button("Replace SAVED_KEY")).toBeEnabled());
+  await waitFor(() => expect(button("SAVED_KEY actions")).toBeEnabled());
 });
 
 it("locks the list while a save runs", async () => {
@@ -200,9 +204,7 @@ it("locks the list while a save runs", async () => {
     return undefined;
   });
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Replace SAVED_KEY" }),
-  );
+  await replaceSaved(user);
   await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
   await user.click(button("Save"));
   expect(screen.getByLabelText("Value of SAVED_KEY")).toBeDisabled();
@@ -261,9 +263,7 @@ it("tells the agent's page about an open row, through the save and its reload", 
     </AgentSaveState>,
   );
   const last = () => reports.at(-1);
-  await user.click(
-    await screen.findByRole("button", { name: "Replace SAVED_KEY" }),
-  );
+  await replaceSaved(user);
   expect(last()).toEqual({ dirty: true, saving: false });
   await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
   await user.click(button("Save"));

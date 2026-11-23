@@ -24,9 +24,9 @@ type Status = { names: string[] };
 type Draft = { replacing?: string; name: string; value: string };
 
 // One set of tracks for every row, so the columns line up: the name takes
-// the room, Value fits the Saved pill and the actions fit Replace and ⋯.
+// the room, Value fits the Saved pill and the actions fit the ⋯ menu.
 const ROW =
-  "grid grid-cols-[minmax(0,1fr)_6.5rem_5.5rem] items-center gap-2 px-3 py-2";
+  "grid grid-cols-[minmax(0,1fr)_6.5rem_1.75rem] items-center gap-2 px-3 py-2";
 
 /** Variables one local agent starts with, held natively in the OS credential
  * store. Values are never read back. */
@@ -228,16 +228,7 @@ export function AgentEnvironment({
                   <span aria-hidden="true">•••••• </span>Saved
                 </Badge>
               </span>
-              <span className="flex items-center justify-end gap-1">
-                <Button
-                  size="xs"
-                  variant="link"
-                  aria-label={`Replace ${name}`}
-                  disabled={locked || !!draft}
-                  onClick={() => setDraft({ replacing: name, name, value: "" })}
-                >
-                  Replace
-                </Button>
+              <span className="flex justify-end">
                 <MenuRoot>
                   <MenuTrigger
                     render={
@@ -250,6 +241,13 @@ export function AgentEnvironment({
                     }
                   />
                   <MenuPopup align="end" size="compact">
+                    <MenuItem
+                      onClick={() =>
+                        setDraft({ replacing: name, name, value: "" })
+                      }
+                    >
+                      Replace
+                    </MenuItem>
                     <MenuItem tone="danger" onClick={() => remove(name)}>
                       Remove
                     </MenuItem>

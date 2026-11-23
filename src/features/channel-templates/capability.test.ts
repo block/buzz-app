@@ -385,6 +385,35 @@ it.each(["failed", "unknown"] as const)(
     expect(f.pending).toEqual([]);
   },
 );
+it("never replaces a failed chat message, another Canvas or another recipe", async () => {
+  const f = fixture();
+  const failed = (template: Parameters<typeof signed>[1]): OutgoingEvent => ({
+    event: signed(viewer, { created_at: 1_600_000_000, ...template }),
+    delivery: "failed",
+    error: "Delivery timed out",
+  });
+  const unrelated = [
+    failed({ kind: 9, tags: [["h", channel]], content: "Chat message" }),
+    failed({
+      kind: 40100,
+      tags: [["h", "22222222-2222-4222-8222-222222222222"]],
+      content: "Other Canvas",
+    }),
+    failed({
+      kind: 30078,
+      tags: [
+        ["d", coordinate(other)],
+        ["t", KIT_TAG],
+      ],
+      content: JSON.stringify(other),
+    }),
+  ];
+  f.pending.push(...unrelated);
+  await f.canvas.save(channel, "New", undefined);
+  await f.capability.save(record.value, undefined);
+  expect(f.outbox.replace).not.toHaveBeenCalled();
+  expect(f.pending).toEqual(unrelated);
+});
 const recipeEvent = (content: string, created_at: number) =>
   signed(viewer, {
     kind: 30078,

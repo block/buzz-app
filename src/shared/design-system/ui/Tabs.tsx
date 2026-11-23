@@ -373,6 +373,7 @@ export function TabMenu({
   closeOthers: (() => boolean) | undefined;
   children: ReactNode;
 }) {
+  const hasMenu = !!(actions?.length || onRename || closeAll || closeOthers);
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement>(null);
   const [anchor, setAnchor] = useState<HTMLElement>();
@@ -380,6 +381,11 @@ export function TabMenu({
   // A host action runs once the menu has closed, from its tab, so a
   // destination it opens can take focus from there.
   const afterClose = useRef<() => void>(undefined);
+  useLayoutEffect(() => {
+    if (hasMenu) return;
+    afterClose.current = undefined;
+    setOpen(false);
+  }, [hasMenu]);
   // Middle-click closes a closable tab, without the browser's own default.
   const item = {
     className: "buzz-tabs-item",
@@ -393,12 +399,15 @@ export function TabMenu({
       onClose();
     },
   };
-  if (!actions?.length && !onRename && !closeAll)
-    return <span {...item}>{children}</span>;
   return (
     <ContextMenuRoot
-      open={open}
-      onOpenChange={(next) => {
+      disabled={!hasMenu}
+      open={hasMenu && open}
+      onOpenChange={(next, details) => {
+        if (next && !hasMenu) {
+          details.cancel();
+          return;
+        }
         if (next) closingAll.current = false;
         setOpen(next);
       }}
@@ -406,7 +415,7 @@ export function TabMenu({
         if (next) return;
         const action = afterClose.current;
         afterClose.current = undefined;
-        if (!action) return;
+        if (!hasMenu || !action) return;
         trigger.current
           ?.querySelector<HTMLElement>('[role="tab"], button')
           ?.focus();
@@ -422,8 +431,9 @@ export function TabMenu({
         onTouchStart={() => setAnchor(undefined)}
         onKeyDown={(event) => {
           if (
-            event.key === "ContextMenu" ||
-            (event.shiftKey && event.key === "F10")
+            hasMenu &&
+            (event.key === "ContextMenu" ||
+              (event.shiftKey && event.key === "F10"))
           ) {
             event.preventDefault();
             closingAll.current = false;

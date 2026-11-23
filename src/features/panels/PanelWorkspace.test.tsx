@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { StrictMode, useRef, useState } from "react";
+import { StrictMode, useCallback, useMemo, useRef, useState } from "react";
 import {
   act,
   cleanup,
@@ -136,6 +136,61 @@ test("a plugin panel names its tab with panels.useTabTitle, and renders without 
   render(<Build id="3" />);
   expect(screen.getByText("Build 3")).toBeInTheDocument();
 });
+
+test("a plugin-only tab menu preserves focus and closes when its action is withdrawn", async () => {
+  const user = userEvent.setup();
+  function BuildTitle({ showLogs }: { showLogs: () => void }) {
+    const actions = useMemo(
+      () => [{ label: "Show logs", run: showLogs }],
+      [showLogs],
+    );
+    usePanelTabTitle("Build", undefined, actions);
+    return null;
+  }
+  function Workspace({ hasBuild }: { hasBuild: boolean }) {
+    const [showLogs, setShowLogs] = useState(false);
+    const openLogs = useCallback(() => setShowLogs(true), []);
+    return (
+      <PanelWorkspace
+        value="build"
+        select={() => {}}
+        items={[
+          {
+            id: "build",
+            label: "Build",
+            content: (
+              <>
+                {hasBuild && <BuildTitle showLogs={openLogs} />}
+                <p>{showLogs ? "Build logs" : "Build summary"}</p>
+              </>
+            ),
+          },
+        ]}
+      />
+    );
+  }
+
+  const { rerender } = render(<Workspace hasBuild={false} />);
+  tab("Build").focus();
+  rerender(<Workspace hasBuild />);
+  expect(tab("Build")).toHaveFocus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await screen.findByRole("menuitem", { name: "Show logs" });
+  await vi.waitFor(() => expect(screen.getByRole("menu")).toHaveFocus());
+
+  rerender(<Workspace hasBuild={false} />);
+  await vi.waitFor(() => expect(tab("Build")).toHaveFocus());
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(screen.queryByRole("menu")).toBeNull();
+
+  rerender(<Workspace hasBuild />);
+  expect(tab("Build")).toHaveFocus();
+  expect(screen.queryByRole("menu")).toBeNull();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  await user.click(await screen.findByRole("menuitem", { name: "Show logs" }));
+  expect(await screen.findByText("Build logs")).toBeVisible();
+});
+
 test("switches retained panels, associates their tabs, and closes inactive or active tabs with focus recovery", async () => {
   const user = userEvent.setup();
   render(

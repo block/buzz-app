@@ -122,9 +122,10 @@
 .pickerPositioner {
   z-index: var(--layer-popover);
 }
+/* The people list spans the field it drops from. */
 .picker {
   @apply popover-surface;
-  width: min(23.75rem, var(--available-width));
+  width: min(var(--anchor-width), var(--available-width));
   padding: var(--space-1);
 }
 .people {
@@ -311,22 +312,24 @@
   padding: var(--space-6);
 }
 /* The picked people, then their DM and named conversations. */
-.people {
+.group {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-6);
   width: min(26rem, 100%);
 }
-.people > * {
+.group > * {
   align-self: stretch;
 }
-.people > :first-child {
+.group > :first-child {
   align-self: center;
 }
-/* The optional name and To, as two fields. */
+/* The optional name and To, as two fields as wide as the composer. */
 .header {
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-6);
+  width: min(calc(100% - 2 * var(--space-4)), var(--buzz-message-width, 52rem));
+  margin-inline: auto;
+  padding-block: var(--space-4);
 }

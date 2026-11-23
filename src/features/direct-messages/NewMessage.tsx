@@ -739,7 +739,7 @@ export function NewMessage({
       <div className={styles.blank} data-new-message-body="">
         {people.length > 0 && (
           <div className={styles.introduction}>
-            <div className={styles.people}>
+            <div className={styles.group}>
               <AvatarStack
                 animateEntrance
                 size="hero-large"

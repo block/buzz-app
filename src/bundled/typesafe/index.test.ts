@@ -1,9 +1,16 @@
 import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
+import { clearCommunityTypeSafeKey } from "../../features/decisions/keys";
 import { DecisionsService } from "../../features/decisions/service";
 import { flush } from "../../features/relay/testing";
 import { createApply, inject } from ".";
 import type { TypeSafeNative } from "./key";
+
+const tauri = vi.hoisted(() => ({ desktop: false }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => tauri.desktop,
+  invoke: vi.fn(async () => {}),
+}));
 
 const ONE = "wss://one.example";
 const TWO = "wss://two.example";
@@ -230,6 +237,29 @@ it("reads a community's key again after it is left and joined again", async () =
   expect(
     native.status.mock.calls.slice(reads).map(([community]) => community),
   ).toEqual(["https://one.example"]);
+});
+
+it("reads a left community's key again once leaving has removed it", async () => {
+  const native = fakeNative(["one.example"]);
+  const communities = reader();
+  const decisions = await setup(() => native, communities);
+  decisions.status(ONE);
+  await flush();
+  communities.set({ status: "ready", memberships: [{ id: TWO }] });
+  // A read between the leave and the removal still finds the key.
+  decisions.status(ONE);
+  await flush();
+  expect(decisions.status(ONE)).toBe("ready");
+  native.keys.delete("one.example");
+  tauri.desktop = true;
+  try {
+    await clearCommunityTypeSafeKey("https://one.example");
+  } finally {
+    tauri.desktop = false;
+  }
+  expect(decisions.status(ONE)).toBe("checking");
+  await flush();
+  expect(decisions.status(ONE)).toBe("needs-setup");
 });
 
 it.each([

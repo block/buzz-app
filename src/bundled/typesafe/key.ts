@@ -2,6 +2,7 @@
 // Native code reads and sends the keys; the app only learns whether one is
 // saved.
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { onCommunityTypeSafeKeyCleared } from "../../features/decisions/keys";
 import {
   communityKey,
   type DecisionProvider,
@@ -98,8 +99,8 @@ export class TypeSafeKeys {
   /** Once the joined communities are known, gives them the old device-wide
    * key, then reads their keys; any other community's is read when first
    * asked about. Afterwards, a community that is left or joined is read
-   * again, as leaving removes its key. Returns the function that stops
-   * following the joined communities. */
+   * again, as leaving removes its key, and again once the key is removed.
+   * Returns the function that stops following the joined communities. */
   load(): () => void {
     const { native, joined } = this;
     if (!native || !joined || this.started) return () => {};
@@ -135,8 +136,17 @@ export class TypeSafeKeys {
         });
     };
     const stop = joined.subscribe(changed);
+    // Leaving clears the key after the membership is gone, so a read in
+    // between may have found it still saved.
+    const stopCleared = onCommunityTypeSafeKeyCleared((community) => {
+      const key = communityKey(community);
+      if (key !== undefined) this.forget(key);
+    });
     changed();
-    return stop;
+    return () => {
+      stop();
+      stopCleared();
+    };
   }
   desktop = () => this.native !== undefined;
   subscribe = (listener: () => void) => {

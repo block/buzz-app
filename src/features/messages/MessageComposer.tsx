@@ -103,6 +103,7 @@ import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
   attachmentDraft,
+  unsupportedTypes,
   useAttachmentDraft,
   type AttachmentDraft,
 } from "./attachment-draft";
@@ -1636,6 +1637,27 @@ function Composer({
     !!submission?.attachments,
     host ? [scope, `${draftKey}:files`] : undefined,
   );
+  // The relay refuses a type only at upload, after the file's chip is shown.
+  // Its notice names the files refused while this composer held them, until
+  // dismissed. A file that arrives already refused is left to its chip: its
+  // draft returned with it, or a failed send restored it under that send's
+  // own notice.
+  const held = useRef(attachments.items);
+  const [refusedTypes, setRefusedTypes] = useState<readonly string[]>([]);
+  useEffect(() => {
+    const before = held.current;
+    held.current = attachments.items;
+    const refused = attachments.items.filter(
+      (item) =>
+        item.unsupported &&
+        before.some((prior) => prior.id === item.id && !prior.unsupported),
+    );
+    if (refused.length)
+      setRefusedTypes((ids) => [...ids, ...refused.map((item) => item.id)]);
+  }, [attachments.items]);
+  const unsupported = attachments.items.filter((item) =>
+    refusedTypes.includes(item.id),
+  );
   const picker = useRef<HTMLInputElement>(null);
   const pickerFocus = useRef<
     { ids: readonly string[]; owner: Element | null } | undefined
@@ -1726,7 +1748,7 @@ function Composer({
       !voice.capturing,
     attachFiles,
   );
-  function attachFiles(files: readonly File[]) {
+  function attachFiles(files: readonly File[], folders?: ReadonlySet<File>) {
     if (
       !permitted.current ||
       editingDisabled ||
@@ -1746,9 +1768,15 @@ function Composer({
       );
       return;
     }
+    // A drop can hold folders, which the notice must not call files.
+    const kind = !folders?.size
+      ? "file"
+      : folders.size === files.length
+        ? "folder"
+        : "item";
     try {
       const before = attachments.store.snapshot().length;
-      const left = attachments.store.add(files);
+      const left = attachments.store.add(files, undefined, folders);
       const added = attachments.store
         .snapshot()
         .slice(before)
@@ -1758,17 +1786,19 @@ function Composer({
         left.length
           ? {
               title: added.length
-                ? `Could not attach ${refused} of ${files.length} files`
-                : `Could not attach ${refused} files`,
+                ? `Could not attach ${refused} of ${files.length} ${kind}s`
+                : `Could not attach ${refused} ${kind}s`,
               description: left.join(" "),
             }
           : undefined,
       );
       return added;
     } catch (reason) {
-      refuseAttachment(
-        reason instanceof Error ? reason.message : "Could not attach files.",
-      );
+      setAttachmentError({
+        title: `Could not attach ${kind}`,
+        description:
+          reason instanceof Error ? reason.message : "Could not attach files.",
+      });
     }
   }
   const outbox = session.outbox;
@@ -4125,6 +4155,21 @@ function Composer({
             title={attachmentError.title}
             description={attachmentError.description}
             onDismiss={() => setAttachmentError(undefined)}
+          />
+        )}
+        {/* A composer under a covering tab keeps uploading. This notice
+            names no conversation, so it waits until its own is shown. */}
+        {presented && unsupported.length > 0 && (
+          <ToastNotice
+            title={
+              unsupported.length === 1
+                ? "Could not attach file"
+                : `Could not attach ${unsupported.length} files`
+            }
+            description={unsupportedTypes(
+              unsupported.map((item) => item.file.name),
+            )}
+            onDismiss={() => setRefusedTypes([])}
           />
         )}
         <ComposerContext key={editing.target ? "edit" : "reply"}>

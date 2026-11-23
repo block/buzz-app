@@ -167,6 +167,8 @@ fn main() {
             "media_cache_clear",
             "media_cache_forget",
             "media_cache_usage",
+            "media_download_status",
+            "media_download_open",
             "file_download",
             "media_copy_image",
             "media_lift_subject",

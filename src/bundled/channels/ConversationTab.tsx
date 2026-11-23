@@ -171,6 +171,7 @@ export function ConversationTab({
             intro={intro}
             latestRequest={active ? latestRequest : undefined}
             active={active}
+            shown={active}
             messageId={tab.messageId}
             subthreadId={subthreadId}
             sourceThreadId={subthreadId ? tab.rootId : undefined}
@@ -194,6 +195,7 @@ export function ConversationTab({
           <ConversationThread
             intro={intro}
             active={active}
+            shown={active}
             messageId={target}
             retainThread
             tabbed

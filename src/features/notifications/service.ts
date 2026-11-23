@@ -107,6 +107,8 @@ export class NotificationsService extends Service implements Notifications {
   private generation = 0;
   private permissionGeneration = 0;
   private permissionRequest: Promise<void> | undefined;
+  private entered = false;
+  private askedAutomatically = false;
   private scheduled = false;
   private state: NotificationSnapshot;
   constructor(
@@ -118,6 +120,10 @@ export class NotificationsService extends Service implements Notifications {
       !("scope" in target && target.scope),
     private readonly playSound: (name: SoundName) => void = (name) =>
       void playNotificationSound(name),
+    private readonly present: () => boolean = () =>
+      typeof document !== "undefined" &&
+      document.visibilityState === "visible" &&
+      document.hasFocus(),
   ) {
     super(ctx, "notifications");
     this.contributions =
@@ -212,24 +218,41 @@ export class NotificationsService extends Service implements Notifications {
   reloadPreferences() {
     this.preferences.reload();
   }
-  async refreshPermission() {
+  /** `ask` is false for a read that no entry or window focus caused, such as
+   * the Settings check or the read after a failed request: it publishes the
+   * status and never sends the automatic request. */
+  async refreshPermission({ ask = true } = {}) {
     if (this.closed || this.permissionRequest) return;
     const generation = ++this.permissionGeneration;
     try {
       const permission = await this.platform.permission();
       if (generation === this.permissionGeneration) {
         this.publish({ permission });
+        if (ask && permission === "default") this.requestAutomatically();
         this.schedule();
       }
     } catch (error) {
       if (generation === this.permissionGeneration) this.reportError(error);
     }
   }
-  requestPermission() {
+  /** Whether the person is in the app with a community right now. Only
+   * records that: the one automatic system prompt follows from this read or a
+   * later window focus, and from neither once they are no longer there. */
+  setEntered(entered: boolean) {
+    if (this.entered === entered || !this.platform.requestsAutomatically)
+      return;
+    this.entered = entered;
+    if (entered) void this.refreshPermission();
+  }
+  /** `quiet` is the automatic request: nobody acted, so an ignored system
+   * prompt (a native timeout) is not reported and no shown error is cleared. */
+  requestPermission({ quiet = false } = {}) {
     if (this.closed || this.state.developmentPaused) return Promise.resolve();
     if (this.permissionRequest) return this.permissionRequest;
     const generation = ++this.permissionGeneration;
-    this.publish({ requesting: true, error: null });
+    const report = quiet ? () => {} : this.reportError;
+    let failed = false;
+    this.publish({ requesting: true, ...(quiet ? {} : { error: null }) });
     // Keep the browser's user gesture: no asynchronous probe before the request.
     try {
       this.permissionRequest = this.platform
@@ -237,18 +260,49 @@ export class NotificationsService extends Service implements Notifications {
         .then((permission) => {
           if (generation === this.permissionGeneration)
             this.publish({ permission });
-          this.schedule();
         })
-        .catch(this.reportError)
+        .catch((error: unknown) => {
+          failed = true;
+          report(error);
+        })
         .finally(() => {
           this.permissionRequest = undefined;
+          // A read sent while the prompt was up says denied whatever the
+          // answer. Supersede it, so its alert follows the published status.
+          this.permissionGeneration++;
           this.publish({ requesting: false });
+          // Allow is answered with Buzz in front, and the Dock dot otherwise
+          // re-reads its permission only at the next window focus. A Dock
+          // read still in flight was sent while the prompt was up.
+          void this.indicator.reread();
+          // A request that failed says nothing, and macOS reports the prompt
+          // it left unanswered as denied: read what the status is now. Only
+          // read: a failure is never followed by a request nobody caused.
+          if (failed) void this.refreshPermission({ ask: false });
+          // Alerts held for the answer are examined once nothing is in flight.
+          this.schedule();
         });
     } catch (error) {
-      this.reportError(error);
+      report(error);
       this.publish({ requesting: false });
     }
     return this.permissionRequest ?? Promise.resolve();
+  }
+  /** Sends the one automatic system prompt per device. Its caller has a
+   * status the OS itself just reported as not yet asked. A person who is not
+   * looking, or who has alerts off, is asked at a later window focus. */
+  private requestAutomatically() {
+    if (
+      !this.entered ||
+      this.askedAutomatically ||
+      this.state.developmentPaused ||
+      !this.state.preferences.enabled ||
+      !this.present()
+    )
+      return;
+    this.askedAutomatically = true;
+    if (this.preferences.claimAutomaticRequest())
+      void this.requestPermission({ quiet: true });
   }
   private allowed(item: Candidate) {
     return (
@@ -466,7 +520,11 @@ export class NotificationsService extends Service implements Notifications {
         return;
       }
       if (permission !== "granted" && permission !== "unknown") {
-        if (permission !== "default") this.pending.delete(item);
+        // Not yet asked holds the alert for an Allow, and so does a request
+        // in flight: macOS reports its unanswered prompt as denied. An alert
+        // never asks by itself.
+        if (permission !== "default" && !this.permissionRequest)
+          this.pending.delete(item);
         return;
       }
       if (item.eligible() !== true) {

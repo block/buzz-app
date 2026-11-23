@@ -70,6 +70,10 @@ if that desktop app is up and running.
   - **Buzz**: **Identity**, **Security** (desktop only), **Appearance**,
     **Notifications**, **Shortcuts**, **Agent setup**, **Decisions API**,
     **External apps** and **Software updates**.
+    In **Appearance → Conversations → Message alignment**, choose **Bottom**
+    to start short conversations and threads above the message box. Earlier
+    messages move up as new ones arrive. **Top** is the default, and the choice
+    is saved on this device.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
 
@@ -102,10 +106,12 @@ if that desktop app is up and running.
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my
   draft** or **Load saved draft**.
-- **Message alignment.** In **Settings → Buzz → Appearance → Conversations**,
-  choose **Bottom** to start short conversations and threads above the message
-  box. Earlier messages move up as new ones arrive. **Top** is the default, and
-  the choice is saved on this device.
+- **File downloads.** In the desktop app, a file card
+  that downloads when chosen saves to Downloads once and then opens that copy;
+  right-click it to **Show in Finder** (or **Show in folder**) or **Download
+  again**. If the saved file is moved, deleted or edited, the card offers
+  **Download** again. A card that opens in the optional File viewer instead
+  has its own download button, which saves another copy each time.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.
@@ -135,6 +141,8 @@ if that desktop app is up and running.
   **Settings → Agent setup → Harness defaults**.
 - **An agent's page** has its identity and instructions, settings, **Memory**,
   **Activity** (its past sessions) and plugin tabs such as **Attention**.
+  Local Claude and Codex transcripts can open on recent activity. Choose
+  **Load earlier activity** to see more history.
 - **Instructions** change how an agent behaves. They don't give it new tools,
   accounts or permissions.
 - **Sessions.** By default an agent starts a fresh conversation for each
@@ -234,6 +242,18 @@ Buzz keeps your key, your agents' keys and saved API keys in the Keychain.
 Choose **Always Allow**. Prompts come back after the app is replaced by a
 differently signed build. On Linux, unlock a secret service such as GNOME
 Keyring.
+
+### Notifications aren't appearing (macOS)
+
+Buzz shows the system permission prompt the first time you are in the app with
+a community and the Buzz window is in front. It asks this way only once on a
+Mac. Alerts that arrive while the prompt is up appear if you allow within a
+minute. If that prompt is declined, or left unanswered for a minute, those
+alerts are dropped, macOS reports notifications as off and Buzz cannot ask
+again: turn them on in macOS **System Settings → Notifications → Buzz**. In
+Buzz, **Settings → Notifications → Allow notifications** works only while
+macOS has never been asked. Windows and Linux have no permission prompt, and a
+browser asks only from Settings.
 
 ### Huddle voice isn't working
 

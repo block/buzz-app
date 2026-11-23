@@ -86,6 +86,8 @@ entry has a unique `id`, a `label`, and an `onSelect` callback.
 heading. With `placement: "team-row"`, the channel group uses the native
 Team menu and ignores these entries.
 
+For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
+
 ## Migration writes
 
 Check `ctx.relay.snapshot().session.supportsMigrationWrites === true` before
@@ -137,6 +139,7 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - Use the `ui` controls for buttons, fields, switches and dialogs. Use `className="ui-card"` for a card, `var(--space-panel-inset)` and `var(--space-2)` for spacing, and inline styles for layout. Plain `h1`–`h3`, `p` and `button` get host styling.
 - Use host color tokens (`var(--...)`) so light and dark themes both work. Rely only on the `core` roles in `src/shared/design-system/tokens/registry.ts`; other custom properties, classes and `data-*` attributes are internal.
 - Avoid fixed widths; pages can be narrow.
+- For `ctx.agents.ui.Transcript`, set `endedAt` on a finished turn, or supply `outcome` if its end time is unknown. Use `at: 0` for an unknown item timestamp. Omit `completedAt` when a tool's start time is unknown.
 
 ## Common mistakes
 

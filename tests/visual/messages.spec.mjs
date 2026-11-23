@@ -2,8 +2,8 @@ import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { test, expect } from "../browser/fixture.mjs";
 import { open, settle } from "../browser/timeline.mjs";
 
-// Deliberate visual coverage for coordination disclosure; behavior contracts
-// remain in the cheaper component tests. All identities and text are synthetic.
+// Focused visual coverage for existing message activity history; behavior
+// contracts remain in component tests. All identities and text are synthetic.
 test.use({
   productionBroker: true,
   readState: true,
@@ -14,7 +14,7 @@ test.use({
 });
 
 for (const colorScheme of ["light", "dark"]) {
-  test(`${colorScheme} coordination in channel history and an individual thread branch`, async ({
+  test(`${colorScheme} activity history in channel messages and an individual thread branch`, async ({
     page,
     app,
   }) => {

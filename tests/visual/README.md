@@ -1,9 +1,12 @@
-# Coordination visual review
+# Messages visual review
 
-This opt-in suite adds screenshot comparison for the coordination disclosure
-change. It is separate from the behavioral browser journeys and their CI shards;
-it does not change the general preference for behavioral tests. It uses the
-existing production frontend/broker fixture, not a reimplemented renderer.
+This opt-in messages suite starts with one focused activity-history scenario to
+provide comparable evidence for the dependent quieter-presentation change. It is
+separate from behavioral browser journeys and their CI shards; it does not change
+the general preference for behavioral tests. It uses the existing production
+frontend/broker fixture, not a reimplemented renderer. The suite is organized by
+product area, not by the feature in the dependent PR; broader message coverage is
+outside this change.
 
 ```sh
 bin/pnpm test:visual                        # compare both engines

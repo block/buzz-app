@@ -18022,8 +18022,10 @@ it("waits for a new set after a relay resync, then runs again", async () => {
   );
   expect(f.service.find(bot)?.attentionEnabled).toBe(false);
   f.sync();
-  await vi.waitFor(() =>
-    expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+  // Find runs again after the first resync wait: half a second to a second.
+  await vi.waitFor(
+    () => expect(f.service.find(bot)?.attentionEnabled).toBe(true),
+    { timeout: 3_000 },
   );
   expect(f.finds()).toBe(2);
 });

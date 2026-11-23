@@ -423,25 +423,27 @@ it("does not open the speed menu by hover while Option is held", async () => {
   expect(await screen.findByRole("menu")).toBeInTheDocument();
 });
 
-it("does not open the speed menu by hover when Option is pressed after the pointer stopped", async () => {
-  render(<MediaAttachment attachment={videoAttachment} media={media} />);
-  const control = screen.getByRole("button", { name: "Playback speed: 1x" });
-  const pastHoverDelay = () =>
-    act(async () => {
+it.each(["keyup", "blur"])(
+  "suppresses hover when Option is pressed after the pointer stops and restores it after %s",
+  async (recovery) => {
+    render(<MediaAttachment attachment={videoAttachment} media={media} />);
+    const control = screen.getByRole("button", { name: "Playback speed: 1x" });
+    // The hover delay starts with Option up and the pointer never moves again.
+    rest(control);
+    fireEvent.keyDown(document.body, { key: "Alt", altKey: true });
+    await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 200));
     });
-  // The hover delay starts with Option up and the pointer never moves again.
-  rest(control);
-  fireEvent.keyDown(document.body, { key: "Alt", altKey: true });
-  await pastHoverDelay();
-  expect(screen.queryByRole("menu")).toBeNull();
-  // Releasing Option, or the window losing focus while it is down, restores hover.
-  fireEvent.keyUp(document.body, { key: "Alt" });
-  fireEvent.keyDown(document.body, { key: "Alt", altKey: true });
-  fireEvent.blur(window);
-  fireEvent.mouseMove(control, { movementX: 4 });
-  expect(await screen.findByRole("menu")).toBeInTheDocument();
-});
+    expect(screen.queryByRole("menu")).toBeNull();
+    if (recovery === "keyup") {
+      fireEvent.keyUp(document.body, { key: "Alt" });
+    } else {
+      fireEvent.blur(window);
+    }
+    fireEvent.mouseMove(control, { movementX: 4 });
+    expect(await screen.findByRole("menu")).toBeInTheDocument();
+  },
+);
 
 it.each([
   ["hover", (control: Element) => rest(control)],

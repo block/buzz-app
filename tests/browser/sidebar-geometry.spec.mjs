@@ -643,9 +643,14 @@ test("the unified sidebar fills its rows and keeps heading actions in their row 
             parseFloat(style.paddingInlineStart)
           )
             problems.push(`${name}: reserves trailing space`);
-          // Starred and custom workspaces can lead with an icon.
-          const leading = trigger.firstElementChild?.firstElementChild;
-          if (leading) leadingEdges.push(leading.getBoundingClientRect().left);
+          // A caret or an icon can precede the title in visual order.
+          const parts = [...trigger.children].filter(shown);
+          if (parts.length)
+            leadingEdges.push(
+              Math.min(
+                ...parts.map((part) => part.getBoundingClientRect().left),
+              ),
+            );
         }
         const buttons =
           actions && !collapsed ? [...actions.children].filter(shown) : [];

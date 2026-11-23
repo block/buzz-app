@@ -7747,8 +7747,9 @@ it("offers to finish this build's unfinished credential setup, confirming before
   const identity = createIdentity();
   await identity.ready;
   const user = userEvent.setup();
+  const onClose = vi.fn();
   vi.mocked(invoke).mockResolvedValueOnce(null);
-  render(<SignOutDialog identity={identity} onClose={() => {}} />);
+  render(<SignOutDialog identity={identity} onClose={onClose} />);
   vi.mocked(invoke).mockResolvedValueOnce(key);
   await user.click(screen.getByRole("button", { name: "Reveal private key" }));
   await user.click(screen.getByRole("checkbox", { name: "I have my key" }));
@@ -7762,23 +7763,49 @@ it("offers to finish this build's unfinished credential setup, confirming before
   expect(await screen.findByRole("alert")).toHaveTextContent(unknown);
   const offer = () =>
     screen.getByRole("button", { name: "Finish credential setup" });
-  // Cancel is the safe starting point and returns with the sign-out intact.
-  await user.click(offer());
-  const confirmation = screen.getByRole("alertdialog", {
-    name: "Finish credential setup?",
-  });
-  expect(confirmation).toHaveAccessibleDescription(/then restarts/);
-  await waitFor(() =>
+  const signOuts = () =>
+    vi.mocked(invoke).mock.calls.filter(([command]) => command === "sign_out")
+      .length;
+  const attempted = signOuts();
+  // Cancel is the safe starting point; Cancel or Escape returns one step,
+  // to the offer in the restored sign-out with it intact.
+  for (const leave of ["Cancel", "Escape"] as const) {
+    await user.click(offer());
+    const confirmation = screen.getByRole("alertdialog", {
+      name: "Finish credential setup?",
+    });
+    expect(confirmation).toHaveAccessibleDescription(/then restarts/);
+    await waitFor(() =>
+      expect(
+        within(confirmation).getByRole("button", { name: "Cancel" }),
+      ).toHaveFocus(),
+    );
+    if (leave === "Cancel")
+      await user.click(
+        within(confirmation).getByRole("button", { name: "Cancel" }),
+      );
+    else await user.keyboard("{Escape}");
+    const restored = screen.getByRole("alertdialog", {
+      name: "Remove your key from this device?",
+    });
+    await waitFor(() =>
+      expect(
+        within(restored).getByRole("button", {
+          name: "Finish credential setup",
+        }),
+      ).toHaveFocus(),
+    );
     expect(
-      within(confirmation).getByRole("button", { name: "Cancel" }),
-    ).toHaveFocus(),
-  );
+      screen.queryByRole("alertdialog", { name: "Finish credential setup?" }),
+    ).toBeNull();
+    expect(
+      within(restored).getByRole("checkbox", { name: "I have my key" }),
+    ).toBeChecked();
+    expect(within(restored).getByRole("alert")).toHaveTextContent(unknown);
+  }
+  expect(onClose).not.toHaveBeenCalled();
   expect(invoke).not.toHaveBeenCalledWith("finish_credential_setup");
-  await user.click(
-    within(confirmation).getByRole("button", { name: "Cancel" }),
-  );
-  expect(screen.getByRole("checkbox", { name: "I have my key" })).toBeChecked();
-  expect(screen.getByRole("alert")).toHaveTextContent(unknown);
+  expect(signOuts()).toBe(attempted);
   // A refusal stays in the confirmation; nothing restarts.
   await user.click(offer());
   vi.mocked(invoke).mockRejectedValueOnce({

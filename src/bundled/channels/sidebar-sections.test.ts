@@ -32,13 +32,13 @@ it("identifies custom and general channel sections", () => {
   expect(isChannelSectionKey("forums")).toBe(false);
   expect(isChannelSectionKey("dms")).toBe(false);
 });
-it("allows every kind in Starred and workspaces, and each kind in its home section", () => {
+it("allows every kind in Starred, workspaces and Messages, and none in the retired sections", () => {
   for (const [key, kinds] of [
     ["starred", ["solo", "channel", "forum", "dm"]],
     ["group:work", ["solo", "channel", "forum", "dm"]],
-    ["solo", ["solo"]],
-    ["channels", ["channel", "forum"]],
-    ["dms", ["dm"]],
+    ["solo", ["solo", "channel", "forum", "dm"]],
+    ["channels", []],
+    ["dms", []],
     ["forums", []],
   ] as const)
     expect(sidebarDropRowKinds(key)).toEqual(kinds);
@@ -124,11 +124,12 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       ).toHaveLength(1);
   };
   const expectedProjection = [
-    { key: "solo", ids: [] },
+    {
+      key: "solo",
+      ids: ["home-dm", "loose-forum", "other"],
+    },
     { key: "starred", ids: ["forum", "solo", "star", "starred-dm"] },
     { key: "group:channels", ids: ["grouped-dm", "grouped-forum", "work"] },
-    { key: "channels", ids: ["loose-forum", "other"] },
-    { key: "dms", ids: ["home-dm"] },
   ];
   expect(project(roster, new Set(["hidden-dm"]))).toEqual(expectedProjection);
   assertExactlyOnce(project(roster, new Set(["hidden-dm"])), [
@@ -157,26 +158,25 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
   ).toEqual(["forum", "solo", "star"]);
   // Forums shows only once there is a forum to list.
   expect(sidebarSections([])).toEqual([
-    { key: "solo", title: "Solo", icon: undefined, rows: [] },
+    { key: "solo", title: "Messages", icon: undefined, rows: [] },
     { key: "starred", title: "Favorites", icon: undefined, rows: [] },
-    { key: "channels", title: "Team", icon: undefined, rows: [] },
-    { key: "dms", title: "Direct messages", icon: undefined, rows: [] },
   ]);
   expect(
     sidebarSections(roster, undefined, new Set(["hidden-dm"])).flatMap(
       (section) => section.rows.map((channel) => channel.id),
     ),
   ).toEqual([
-    "solo",
+    // Messages holds every unfiled conversation, DMs and forums included.
     "forum",
+    "grouped-dm",
     "grouped-forum",
+    "home-dm",
     "loose-forum",
     "other",
+    "solo",
     "star",
-    "work",
-    "grouped-dm",
-    "home-dm",
     "starred-dm",
+    "work",
   ]);
 });
 
@@ -217,18 +217,35 @@ it("sorts every section independently with deterministic inactive and tie fallba
       section.rows.map((channel) => channel.id),
     ]),
   ).toEqual([
-    ["solo", []],
+    ["solo", ["forum-new", "forum-old"]],
     ["starred", []],
     ["group:work", ["new", "a-id", "z-id", "quiet-a", "quiet-b"]],
-    ["channels", ["forum-new", "forum-old"]],
-    ["dms", []],
   ]);
-  // Unsaved, a section reads as A–Z.
+  // Unsaved, a workspace or Favorites reads as A–Z.
   expect(
-    sidebarSections(roster)
-      .find(({ key }) => key === "channels")
+    sidebarSections(roster, {
+      ...preferences,
+      sort: {},
+      starred: ["quiet-a", "quiet-b", "new"],
+    })
+      .find(({ key }) => key === "starred")
       ?.rows.map((channel) => channel.id),
-  ).toEqual([
+  ).toEqual(["quiet-a", "quiet-b", "new"]);
+  // Messages defaults to Recent, and A–Z only when chosen.
+  const messages = (sort: Record<string, "recent" | "alpha">) =>
+    sidebarSections(roster, { ...preferences, assignments: {}, sort })
+      .find(({ key }) => key === "solo")
+      ?.rows.map((channel) => channel.id);
+  expect(messages({})).toEqual([
+    "new",
+    "a-id",
+    "z-id",
+    "forum-new",
+    "forum-old",
+    "quiet-a",
+    "quiet-b",
+  ]);
+  expect(messages({ solo: "alpha" })).toEqual([
     "quiet-a",
     "quiet-b",
     "forum-new",
@@ -286,50 +303,42 @@ it("Star projection is exclusive and retains empty saved groups", () => {
     ["solo", []],
     ["starred", ["alpha", "beta"]],
     ["group:work", []],
-    ["channels", []],
-    ["dms", []],
   ]);
   expect(placements(["alpha"])).toEqual([
     ["solo", []],
     ["starred", ["alpha"]],
     ["group:work", ["beta"]],
-    ["channels", []],
-    ["dms", []],
   ]);
   expect(saved.assignments).toEqual({ beta: "work" });
 });
 
-it.each(["starred", "section:work", "channels", "dms"])(
-  "%s Recent affects only its own section",
+it.each(["starred", "section:work", "solo"])(
+  "%s sort affects only its own section",
   (key) => {
-    const keys = ["starred", "section:work", "channels", "dms"];
-    const channels = keys.flatMap((section, i) => [
-      row(`a-${i}`, {
-        name: "Alpha",
-        lastActivityAt: 10,
-        ...(section === "dms" ? { channelType: "dm" as const } : {}),
-      }),
-      row(`z-${i}`, {
-        name: "Zulu",
-        lastActivityAt: 20,
-        ...(section === "dms" ? { channelType: "dm" as const } : {}),
-      }),
+    // Messages defaults to Recent; Favorites and workspaces default to A–Z.
+    const keys = ["starred", "section:work", "solo"];
+    const flipped = key === "solo" ? "alpha" : "recent";
+    const channels = keys.flatMap((_section, i) => [
+      row(`a-${i}`, { name: "Alpha", lastActivityAt: 10 }),
+      row(`z-${i}`, { name: "Zulu", lastActivityAt: 20 }),
     ]);
     const sections = sidebarSections(channels, {
       sections: [{ id: "work", name: "Work", order: 0 }],
       assignments: { "a-1": "work", "z-1": "work" },
       starred: ["a-0", "z-0"],
       muted: [],
-      sort: { [key]: "recent" },
+      sort: { [key]: flipped },
     });
+    const byName = ["Alpha", "Zulu"];
+    const byRecent = ["Zulu", "Alpha"];
     expect(
-      sections
-        .filter((section) => section.key !== "solo")
-        .map((section) => section.rows.map((row) => row.name)),
+      sections.map((section) => section.rows.map((row) => row.name)),
     ).toEqual(
-      keys.map((section) =>
-        section === key ? ["Zulu", "Alpha"] : ["Alpha", "Zulu"],
-      ),
+      ["solo", "starred", "group:work"].map((sectionKey) => {
+        const own = sectionKey === "group:work" ? "section:work" : sectionKey;
+        const base = own === "solo" ? byRecent : byName;
+        return own === key ? [...base].reverse() : base;
+      }),
     );
   },
 );

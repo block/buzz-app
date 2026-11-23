@@ -334,12 +334,11 @@ it("starts every conversation in New message from the + above the sections", asy
   const f = fixture(true, true);
   expect(screen.queryByRole("tab")).toBeNull();
   const solo = document.querySelector('[data-sidebar-section="solo"]');
-  if (!(solo instanceof HTMLElement)) throw new Error("Missing Solo section");
+  if (!(solo instanceof HTMLElement))
+    throw new Error("Missing Messages section");
+  // The old Solo-only + is gone; New message is the one way to start a chat.
   expect(
-    within(solo).getByRole("button", { name: "New Solo chat" }),
-  ).not.toHaveAttribute("aria-haspopup");
-  expect(
-    within(solo).queryByRole("button", { name: "New message" }),
+    within(solo).queryByRole("button", { name: "New Solo chat" }),
   ).toBeNull();
   const plus = newMessageButton();
   expect(plus).not.toHaveAttribute("aria-haspopup");
@@ -354,37 +353,6 @@ it("starts every conversation in New message from the + above the sections", asy
   });
 });
 
-it("collapses the Solo and Team home sections independently", async () => {
-  const user = userEvent.setup();
-  fixture(true);
-  const section = (key: "solo" | "team") => {
-    const summary = document.querySelector<HTMLElement>(
-      `[data-sidebar-section="${key === "team" ? "channels" : key}"] [aria-controls]`,
-    );
-    expect(summary).not.toBeNull();
-    const panel = document.getElementById(
-      summary?.getAttribute("aria-controls") ?? "",
-    );
-    expect(panel).not.toBeNull();
-    return { summary: summary as HTMLElement, panel: panel as HTMLElement };
-  };
-  const solo = section("solo");
-  const team = section("team");
-  expect(solo.panel).not.toHaveAttribute("hidden");
-  expect(team.panel).not.toHaveAttribute("hidden");
-
-  await user.click(solo.summary);
-  expect(solo.panel).toHaveAttribute("hidden");
-  expect(team.panel).not.toHaveAttribute("hidden");
-
-  await user.click(team.summary);
-  expect(solo.panel).toHaveAttribute("hidden");
-  expect(team.panel).toHaveAttribute("hidden");
-
-  expect(section("solo").panel).toHaveAttribute("hidden");
-  expect(section("team").panel).toHaveAttribute("hidden");
-});
-
 it("mounts one action menu for each home section", async () => {
   vi.useFakeTimers();
   try {
@@ -392,15 +360,18 @@ it("mounts one action menu for each home section", async () => {
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const more = (title: string) =>
       document.querySelector(`button[aria-label="More actions for ${title}"]`);
-    expect(more("Solo")).not.toBeNull();
-    expect(more("Team")).not.toBeNull();
+    expect(more("Messages")).not.toBeNull();
+    // Team and Direct messages fold into Messages, so they have no menu.
+    expect(more("Solo")).toBeNull();
+    expect(more("Team")).toBeNull();
+    expect(more("Direct messages")).toBeNull();
     expect(more("Channels")).toBeNull();
   } finally {
     vi.useRealTimers();
   }
 });
 
-it("expands Team when navigation selects one of its conversations", async () => {
+it("expands Messages when navigation selects a team conversation", async () => {
   vi.useFakeTimers();
   try {
     const f = fixture(true);
@@ -410,7 +381,7 @@ it("expands Team when navigation selects one of its conversations", async () => 
     ]);
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const summary = document.querySelector<HTMLElement>(
-      '[data-sidebar-section="channels"] [aria-controls]',
+      '[data-sidebar-section="solo"] [aria-controls]',
     );
     expect(summary).not.toBeNull();
     const panel = document.getElementById(
@@ -505,7 +476,7 @@ it("preserves a source opening only for itself, through a later render", async (
   expect(teamRow()).not.toHaveAttribute("aria-current");
 });
 
-/** The sidebar's own +, apart from the Direct messages section's. */
+/** The sidebar's own +, apart from the Messages section's. */
 function newMessageButton() {
   const button = screen
     .getAllByRole("button", { name: "New message" })

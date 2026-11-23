@@ -13,10 +13,11 @@ export function isChannelSectionKey(key: string) {
 export type SidebarRowKind = "channel" | "dm" | "solo" | "forum";
 
 const anyRow: readonly SidebarRowKind[] = ["solo", "channel", "forum", "dm"];
+// Every conversation lives in the one Messages list (the "solo" key, kept so
+// saved order and sort carry over). Team and Direct messages stay valid keys
+// in saved preferences but list nothing.
 const homeRows: Partial<Record<string, readonly SidebarRowKind[]>> = {
-  solo: ["solo"],
-  channels: ["channel", "forum"],
-  dms: ["dm"],
+  solo: anyRow,
 };
 
 export function sidebarDropRowKinds(key: string): readonly SidebarRowKind[] {
@@ -32,13 +33,9 @@ export function sidebarRowKind(channel: ChannelSummary): SidebarRowKind {
     : "channel";
 }
 
-export function sidebarHome(channel: ChannelSummary) {
-  const kind = sidebarRowKind(channel);
-  return kind === "channel" || kind === "forum"
-    ? "channels"
-    : kind === "dm"
-      ? "dms"
-      : kind;
+/** Every conversation's home is the one Messages list. */
+export function sidebarHome(_channel: ChannelSummary) {
+  return "solo";
 }
 
 export function contributedSidebarSectionKey(key: string) {
@@ -91,7 +88,7 @@ export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
 const titles: Record<string, string> = {
   pages: "Plugins",
   starred: "Favorites",
-  solo: "Solo",
+  solo: "Messages",
   channels: "Team",
   dms: "Direct messages",
 };
@@ -135,6 +132,8 @@ export function sidebarSections<T extends ChannelSummary>(
   }
   return workspaceSectionOrder(preferences).flatMap((key) => {
     if (key === SIDEBAR_PAGES_SECTION && !pages) return [];
+    // Their conversations list in Messages now.
+    if (key === "channels" || key === "dms") return [];
     const group = groups.get(key.slice(6));
     const rows = rowsBySection.get(key) ?? [];
     // The Solo heading owns New and its keyboard shortcut, even when every

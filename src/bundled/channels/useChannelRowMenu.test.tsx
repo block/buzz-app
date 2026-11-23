@@ -20,7 +20,7 @@ const beta: ChannelSummary = {
 const rowActions = ["Row action"];
 const groups = [{ id: "work", name: "Work", order: 0 }];
 const sections = (
-  placement: "channels" | "group:work" | "starred",
+  placement: "solo" | "group:work" | "starred",
   channels = [alpha, beta],
 ) =>
   sidebarSections(channels, {
@@ -43,7 +43,7 @@ function mount() {
   );
 }
 
-it.each(["channels", "group:work", "starred"] as const)(
+it.each(["solo", "group:work", "starred"] as const)(
   "forgets a menu moved away from %s and never reopens it on return",
   (placement) => {
     const view = mount();
@@ -53,7 +53,7 @@ it.each(["channels", "group:work", "starred"] as const)(
     expect(view.result.current.rowMenu?.channelId).toBe("alpha");
     view.rerender({
       ...initial,
-      sections: sections(placement === "starred" ? "channels" : "starred"),
+      sections: sections(placement === "starred" ? "solo" : "starred"),
     });
     expect(view.result.current.rowMenu).toBeUndefined();
     view.rerender(original);
@@ -114,7 +114,7 @@ it("keeps menus with independent actions when the usual row action is unavailabl
   // Test-only action: no new product action or writer is introduced by this seam.
   const actionsFor = () => ["Independent action"];
   view.rerender({ sections: sidebarSections([dm]), actionsFor });
-  act(() => view.result.current.open(dm, "dms"));
+  act(() => view.result.current.open(dm, "solo"));
   expect(view.result.current.rowMenu?.channelId).toBe("dm");
   view.rerender({ sections: sidebarSections([dm]), actionsFor: () => [] });
   expect(view.result.current.rowMenu).toBeUndefined();

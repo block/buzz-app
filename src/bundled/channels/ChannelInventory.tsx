@@ -4,7 +4,6 @@ import {
 } from "../../features/channel-navigation/new-message-route";
 import { WorkspaceNewMenu } from "./WorkspaceNewMenu";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { visibleSoloRegions } from "./SoloRegions";
 import type { ChatIcon, ChatMenu } from "../../features/conversation/service";
 import type { ContributionReader } from "../../features/conversation/contracts";
@@ -20,7 +19,6 @@ import { revealCreatedChannel } from "../../features/channel-navigation/created-
 import {
   newMessage,
   openEmptyChannels,
-  resumeSoloDraftTarget,
   soloDraft,
   soloDraftTarget,
   type SoloDraft,
@@ -47,12 +45,8 @@ import {
 } from "../../features/channel-navigation/solo-navigation";
 import { eligibleSolo } from "../../features/solo/labels";
 import { WorkspaceSettings } from "../../features/solo/WorkspaceSettings";
+import { soloDraftInput } from "../../features/solo/SoloDraft";
 import {
-  resetNewChatProject,
-  soloDraftInput,
-} from "../../features/solo/SoloDraft";
-import {
-  hasSoloDraft,
   useSoloDraftProjects,
   useStarredSoloDraft,
 } from "../../features/solo/draft-projects";
@@ -779,19 +773,6 @@ export function ChannelInventory({
     icon?: string | undefined;
     trigger: RefObject<HTMLButtonElement | null>;
   }>();
-  const newChat = (placement: Pick<SoloDraft, "project" | "starred"> = {}) => {
-    if (relay.snapshot().session !== queries) return;
-    const current = navigator.snapshot().entry.target;
-    const destination = resumeSoloDraftTarget(scope, current, placement);
-    if (destination === current) {
-      soloDraftInput()?.focus();
-      return;
-    }
-    const { project } = placement;
-    if (project && !hasSoloDraft(queries, scope, project))
-      resetNewChatProject(scope, project);
-    void navigator.open(destination);
-  };
   const sectionDrafts = (key: string) =>
     drafts.flatMap((destination) => {
       if (destination.kind !== "page") return [];
@@ -1097,7 +1078,7 @@ export function ChannelInventory({
           ? `group:${sectionId}`
           : channel
             ? sidebarHome(channel)
-            : "channels";
+            : "solo";
     },
     [queries, regions.managed],
   );
@@ -1693,7 +1674,7 @@ export function ChannelInventory({
       const placement = sections.find((section) =>
         section.rows.some((row) => row.id === channel.id),
       );
-      return rowActions(channel, placement?.key ?? "channels", surface);
+      return rowActions(channel, placement?.key ?? "solo", surface);
     });
   });
   useLayoutEffect(() => () => menuActions?.publish(undefined), [menuActions]);
@@ -2105,28 +2086,20 @@ export function ChannelInventory({
                             : undefined
                         }
                         headerActions={
-                          section.key.startsWith("group:") ? (
-                            workspaceNewAction(
-                              section.key.slice(6),
-                              section.title,
-                            )
-                          ) : section.key === "starred" ? (
-                            newMenu({ starred: true }, section.title)
-                          ) : section.key === "solo" ? (
-                            <IconButton
-                              size="compact"
-                              aria-label="New Solo chat"
-                              title="New chat"
-                              icon={<PlusIcon size={15} strokeWidth={2.5} />}
-                              onClick={() => newChat()}
-                            />
-                          ) : null
+                          section.key.startsWith("group:")
+                            ? workspaceNewAction(
+                                section.key.slice(6),
+                                section.title,
+                              )
+                            : section.key === "starred"
+                              ? newMenu({ starred: true }, section.title)
+                              : null
                         }
                         heightScope={scope}
-                        iconView={section.key !== "solo"}
+                        iconView
                         removalFocus={() =>
                           sidebar.list.current?.querySelector<HTMLButtonElement>(
-                            '[data-sidebar-section="channels"] button',
+                            '[data-sidebar-section="solo"] button',
                           )
                         }
                         createChannel={
@@ -2157,7 +2130,7 @@ export function ChannelInventory({
                             : undefined
                         }
                         newMessage={
-                          section.key === "dms"
+                          section.key === "solo"
                             ? () => {
                                 if (
                                   viewer &&

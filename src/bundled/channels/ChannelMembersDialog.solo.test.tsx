@@ -435,7 +435,7 @@ function fixture(
   };
 }
 
-it("shows Public without offering Public and changes its admission to Guest", async () => {
+it("offers Public for a public Solo chat and changes its admission to Guest", async () => {
   const t = fixture(true, { visibility: "public", joinRole: "member" });
   await t.ready();
   t.mount();
@@ -451,10 +451,10 @@ it("shows Public without offering Public and changes its admission to Guest", as
     (await screen.findAllByRole("option")).map((option) =>
       option.getAttribute("aria-label"),
     ),
-  ).toEqual(["View only", "Private"]);
+  ).toEqual(["Public", "View only", "Private"]);
   await user.click(screen.getByRole("option", { name: "View only" }));
   expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-    "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions. People already in the chat keep their access. You won’t be able to switch back to Public here.",
+    "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions. People already in the chat keep their access.",
   );
   expect(t.published).toEqual([]);
   await user.click(screen.getByRole("button", { name: "Change access" }));
@@ -489,7 +489,7 @@ it("opens a Solo chat for view-only visitors and makes it private again without 
     (await screen.findAllByRole("option")).map((option) =>
       option.getAttribute("aria-label"),
     ),
-  ).toEqual(["View only", "Private"]);
+  ).toEqual(["Public", "View only", "Private"]);
   await user.click(await screen.findByRole("option", { name: "View only" }));
   const confirmation = screen.getByRole("alertdialog", {
     name: "Change general access?",

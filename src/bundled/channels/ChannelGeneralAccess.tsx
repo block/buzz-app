@@ -205,7 +205,7 @@ function ChannelGeneralAccessEditor({
   const locked = loading || pending || !!attempt || !shown?.canEdit;
   const solo = soloLabels(shown?.labels);
   const place = policy?.subject ?? (solo ? "chat" : "channel");
-  const restrictPublic = solo || policy?.allowPublic === false;
+  const restrictPublic = policy?.allowPublic === false;
   const policyAllowsChoice =
     !restrictPublic ||
     choice?.visibility !== "public" ||
@@ -236,8 +236,7 @@ function ChannelGeneralAccessEditor({
       signal.aborted ||
       !current?.canEdit ||
       generalAccessValue(current) === value ||
-      ((soloLabels(current.labels) || policy?.allowPublic === false) &&
-        value === "public")
+      (policy?.allowPublic === false && value === "public")
     )
       return;
     setChoice({
@@ -410,7 +409,8 @@ function ChannelGeneralAccessEditor({
               choice.visibility === "private" && autoJoin
                 ? "It’s a starter channel, so new members will be added to it again if it’s made public. To stop that, turn off Starter channel for new members in Settings first."
                 : "",
-              !solo && choice.visibility === "public"
+              choice.visibility === "public" &&
+              (!solo || choice.joinRole !== "guest")
                 ? `New people will ${choice.joinRole === "guest" ? "only be able to view" : "be able to participate"}. People already in the ${place} keep their access.`
                 : "",
             ]

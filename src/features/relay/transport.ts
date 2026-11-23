@@ -61,7 +61,13 @@ export type AccountSettings = Readonly<{
   lifetime: number | null;
   /** Workspaces that override it; one left out follows the default. */
   workspaces: Readonly<Record<string, number | null>>;
+  /** Who can read new conversations by default. */
+  visibility: ConversationVisibility;
+  /** Workspaces that override it; one left out follows the default. */
+  workspaceVisibility: Readonly<Record<string, ConversationVisibility>>;
 }>;
+
+export type ConversationVisibility = "private" | "public";
 import {
   admittedApiRequest,
   ApiPaused,
@@ -251,6 +257,16 @@ export interface ReadTransport {
   /** Null saves ongoing. */
   writeAccountLifetime?(
     lifetime: number | null,
+    signal: AbortSignal,
+  ): Promise<void>;
+  writeAccountVisibility?(
+    visibility: ConversationVisibility,
+    signal: AbortSignal,
+  ): Promise<void>;
+  /** Undefined makes the workspace follow the account default again. */
+  writeWorkspaceVisibility?(
+    workspace: string,
+    visibility: ConversationVisibility | undefined,
     signal: AbortSignal,
   ): Promise<void>;
   /** Undefined makes the workspace follow the account default again. */

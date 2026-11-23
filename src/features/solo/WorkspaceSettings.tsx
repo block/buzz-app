@@ -24,9 +24,13 @@ import {
 } from "./workspace";
 import { useLifetime } from "./Lifetime";
 import { LifetimeSelect } from "./LifetimeSelect";
+import { VisibilitySelect } from "./VisibilitySelect";
 import {
   readWorkspaceLifetime,
+  readWorkspaceVisibility,
   saveWorkspaceLifetime,
+  saveWorkspaceVisibility,
+  useDefaultVisibility,
   useDefaultLifetime,
 } from "./default-lifetime";
 import {
@@ -103,6 +107,16 @@ export function WorkspaceSettings({
   const keptLifetime = useRef(ownLifetime);
   const lifetimeChanged =
     target.kind === "project" && ownLifetime !== keptLifetime.current;
+  // Its own visibility for new conversations; undefined follows the account.
+  const defaultVisibility = useDefaultVisibility(scope);
+  const [ownVisibility, setOwnVisibility] = useState(() =>
+    target.kind === "project"
+      ? readWorkspaceVisibility(scope, target.id)
+      : undefined,
+  );
+  const keptVisibility = useRef(ownVisibility);
+  const visibilityChanged =
+    target.kind === "project" && ownVisibility !== keptVisibility.current;
   const nextName = projectName.trim();
   const nameChanged =
     target.kind === "project" && nextName !== confirmedName.current;
@@ -473,6 +487,17 @@ export function WorkspaceSettings({
         if (failed) throw new Error(failed);
         keptLifetime.current = ownLifetime;
       }
+      if (target.kind === "project" && visibilityChanged) {
+        const failed = await saveWorkspaceVisibility(
+          session,
+          scope,
+          target.id,
+          ownVisibility,
+        );
+        if (!active()) return;
+        if (failed) throw new Error(failed);
+        keptVisibility.current = ownVisibility;
+      }
       if (target.kind === "project" && selectedTemplate !== undefined)
         appliedTemplate.write(session.scope, target.id, selectedTemplate);
       close();
@@ -500,7 +525,8 @@ export function WorkspaceSettings({
         (target.kind === "project" &&
           (projectName !== keptName.current ||
             icon !== keptIcon.current ||
-            lifetimeChanged)) ||
+            lifetimeChanged ||
+            visibilityChanged)) ||
         (loaded && snapshot(draftCanvas, lineup) !== kept.current)
       }
       busy={busy || lifetime.busy}
@@ -602,6 +628,16 @@ export function WorkspaceSettings({
               inherited={{ ttlSeconds: defaultLifetime }}
               disabled={busy}
               onChange={setOwnLifetime}
+            />
+          )}
+          {target.kind === "project" && (
+            <VisibilitySelect
+              variant="field"
+              label="Visibility for new conversations"
+              value={ownVisibility}
+              inherited={defaultVisibility}
+              disabled={busy}
+              onChange={setOwnVisibility}
             />
           )}
           <ChatInstructions

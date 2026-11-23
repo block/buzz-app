@@ -1242,6 +1242,8 @@ it("saves the account's default lifetime and workspace overrides together", asyn
   expect(await transport.readAccountSettings?.(signal)).toEqual({
     lifetime: 604800,
     workspaces: { w1: null, w2: 86400 },
+    visibility: "private",
+    workspaceVisibility: {},
   });
   // Following the default again drops only that workspace's override.
   await transport.writeWorkspaceLifetime?.("w1", undefined, signal);
@@ -1249,8 +1251,35 @@ it("saves the account's default lifetime and workspace overrides together", asyn
   expect(await transport.readAccountSettings?.(signal)).toEqual({
     lifetime: null,
     workspaces: { w2: 86400 },
+    visibility: "private",
+    workspaceVisibility: {},
   });
   await expect(
     transport.writeAccountLifetime?.(1, signal) ?? Promise.resolve(),
   ).rejects.toThrow("Invalid lifetime intent");
+});
+
+it("saves the account's default visibility beside its lifetimes", async () => {
+  const transport = await connectNativeTransport(community);
+  await transport.writeAccountLifetime?.(604800, signal);
+  await transport.writeAccountVisibility?.("public", signal);
+  await transport.writeWorkspaceVisibility?.("w1", "private", signal);
+  await transport.writeWorkspaceVisibility?.("w2", "public", signal);
+  expect(await transport.readAccountSettings?.(signal)).toEqual({
+    lifetime: 604800,
+    workspaces: {},
+    visibility: "public",
+    workspaceVisibility: { w1: "private", w2: "public" },
+  });
+  // Following the default again drops only that workspace's choice.
+  await transport.writeWorkspaceVisibility?.("w1", undefined, signal);
+  expect(await transport.readAccountSettings?.(signal)).toMatchObject({
+    lifetime: 604800,
+    visibility: "public",
+    workspaceVisibility: { w2: "public" },
+  });
+  await expect(
+    transport.writeAccountVisibility?.("open" as never, signal) ??
+      Promise.resolve(),
+  ).rejects.toThrow("Invalid visibility intent");
 });

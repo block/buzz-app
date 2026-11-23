@@ -37,7 +37,11 @@ import {
   type SidebarSortMode,
   type SidebarFilterMode,
 } from "./sidebar-preferences";
-import type { AccountSettings, ReadTransport } from "./transport";
+import type {
+  AccountSettings,
+  ConversationVisibility,
+  ReadTransport,
+} from "./transport";
 
 const coordinates = [
   "channel-sections",
@@ -84,26 +88,45 @@ const validLifetime = (value: unknown): value is number | null =>
     value <= 31_536_000);
 const validWorkspaceId = (id: string) =>
   !!id.trim() && id.length <= 256 && id !== "__proto__";
+const validVisibility = (value: unknown): value is ConversationVisibility =>
+  value === "private" || value === "public";
+/** A record's workspace overrides, or undefined when any is malformed. */
+function overridesOf<T>(
+  value: unknown,
+  valid: (value: unknown) => value is T,
+): Record<string, T> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const entries = Object.entries(value);
+  return entries.length <= 200 &&
+    entries.every(([id, value]) => validWorkspaceId(id) && valid(value))
+    ? (Object.fromEntries(entries) as Record<string, T>)
+    : undefined;
+}
 function accountSettings(value: Record<string, unknown>): AccountSettings {
-  const { version, lifetime, workspaces = {}, ...rest } = value;
-  const overrides =
-    workspaces && typeof workspaces === "object" && !Array.isArray(workspaces)
-      ? Object.entries(workspaces)
-      : undefined;
+  const {
+    version,
+    lifetime,
+    workspaces = {},
+    visibility = "private",
+    workspaceVisibility = {},
+    ...rest
+  } = value;
+  const lifetimes = overridesOf(workspaces, validLifetime);
+  const visibilities = overridesOf(workspaceVisibility, validVisibility);
   if (
     version !== 1 ||
     Object.keys(rest).length ||
     !validLifetime(lifetime) ||
-    !overrides ||
-    overrides.length > 200 ||
-    overrides.some(
-      ([id, value]) => !validWorkspaceId(id) || !validLifetime(value),
-    )
+    !validVisibility(visibility) ||
+    !lifetimes ||
+    !visibilities
   )
     throw new Error("Invalid account settings record");
   return {
     lifetime,
-    workspaces: Object.fromEntries(overrides) as Record<string, number | null>,
+    workspaces: lifetimes,
+    visibility,
+    workspaceVisibility: visibilities,
   };
 }
 const cancelled = (signal: AbortSignal) => signal.throwIfAborted();
@@ -347,6 +370,56 @@ export function nativeSidebar(transport: ReadTransport) {
         }),
         (value) => value.lifetime === lifetime,
         "Your default lifetime changed on another device; reload and try again",
+      );
+    },
+    async writeAccountVisibility(
+      visibility: ConversationVisibility,
+      signal: AbortSignal,
+    ) {
+      if (!validVisibility(visibility))
+        throw new Error("Invalid visibility intent");
+      await mutate(
+        "account-settings",
+        signal,
+        (current) => ({
+          next: { ...current, version: 1, visibility },
+          result: undefined,
+          record: true,
+        }),
+        (value) => accountSettings(value).visibility === visibility,
+        "Your default visibility changed on another device; reload and try again",
+      );
+    },
+    /** Undefined makes the workspace follow the account default again. */
+    async writeWorkspaceVisibility(
+      workspace: string,
+      visibility: ConversationVisibility | undefined,
+      signal: AbortSignal,
+    ) {
+      if (
+        !validWorkspaceId(workspace) ||
+        (visibility !== undefined && !validVisibility(visibility))
+      )
+        throw new Error("Invalid visibility intent");
+      await mutate(
+        "account-settings",
+        signal,
+        (current) => {
+          const { [workspace]: _previous, ...others } =
+            accountSettings(current).workspaceVisibility;
+          const workspaceVisibility =
+            visibility === undefined
+              ? others
+              : { ...others, [workspace]: visibility };
+          return {
+            next: { ...current, version: 1, workspaceVisibility },
+            result: undefined,
+            record: true,
+          };
+        },
+        (value) =>
+          accountSettings(value).workspaceVisibility[workspace] === visibility,
+        "Workspace visibility changed on another device; reload and try again",
       );
     },
     /** Undefined makes the workspace follow the account default again. */

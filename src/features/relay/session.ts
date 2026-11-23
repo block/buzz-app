@@ -122,7 +122,7 @@ import {
 } from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import { attemptEnded } from "./withdraw";
-import type { ReadTransport } from "./transport";
+import type { ConversationVisibility, ReadTransport } from "./transport";
 import type { LiveGlobal, LiveSnapshot, LiveSubscription } from "./live";
 import {
   hasTag,
@@ -2128,6 +2128,8 @@ export function createRelaySession(
     const read = transport?.readAccountSettings;
     const write = transport?.writeAccountLifetime;
     const writeWorkspace = transport?.writeWorkspaceLifetime;
+    const writeVisibility = transport?.writeAccountVisibility;
+    const writeWorkspaceVisibility = transport?.writeWorkspaceVisibility;
     const bounded = (ms: number) =>
       AbortSignal.any([lifetime.signal, AbortSignal.timeout(ms)]);
     // One change at a time, so the last choice is the one confirmed.
@@ -2140,7 +2142,11 @@ export function createRelaySession(
       );
       return next;
     };
-    return read && write && writeWorkspace
+    return read &&
+      write &&
+      writeWorkspace &&
+      writeVisibility &&
+      writeWorkspaceVisibility
       ? Object.freeze({
           read: () => read(bounded(10_000)),
           writeLifetime: (seconds: number | null) =>
@@ -2149,6 +2155,15 @@ export function createRelaySession(
             workspace: string,
             seconds: number | null | undefined,
           ) => queue(() => writeWorkspace(workspace, seconds, bounded(20_000))),
+          writeVisibility: (visibility: ConversationVisibility) =>
+            queue(() => writeVisibility(visibility, bounded(20_000))),
+          writeWorkspaceVisibility: (
+            workspace: string,
+            visibility: ConversationVisibility | undefined,
+          ) =>
+            queue(() =>
+              writeWorkspaceVisibility(workspace, visibility, bounded(20_000)),
+            ),
         })
       : undefined;
   })();

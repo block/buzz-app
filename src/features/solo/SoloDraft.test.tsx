@@ -322,7 +322,7 @@ it("uses restored explicit mentions, not a separate picker", async () => {
     undefined,
     false,
     undefined,
-    { admins: ["b".repeat(64)] },
+    { admins: ["b".repeat(64)], visibility: "private" },
   );
   expect(test.channelWrites.addAgents).not.toHaveBeenCalled();
   expect(test.messages.send).toHaveBeenCalledWith(id, "@Outside agent Help", [
@@ -521,7 +521,7 @@ it("a refused start gives its prompt, files and settings back to a blank New cha
     undefined,
     true,
     undefined,
-    { admins: ["a".repeat(64)] },
+    { admins: ["a".repeat(64)], visibility: "private" },
   );
   expect(test.messages.send).toHaveBeenLastCalledWith(
     retry,
@@ -923,7 +923,7 @@ it("keeps the chosen agent through draft remount, first send, refused-start reco
     undefined,
     false,
     undefined,
-    { admins: ["b".repeat(64)] },
+    { admins: ["b".repeat(64)], visibility: "private" },
   );
   expect(test.messages.send).toHaveBeenLastCalledWith(retry, "Hello", [
     "b".repeat(64),
@@ -1296,7 +1296,7 @@ it.each([true, false])(
       undefined,
       false,
       undefined,
-      { admins: ["a".repeat(64)] },
+      { admins: ["a".repeat(64)], visibility: "private" },
     );
     expect(test.messages.send).toHaveBeenCalledWith(
       id,
@@ -2479,6 +2479,7 @@ it.each(["remember", "off"])(
       expect(f.channelWrites.create).toHaveBeenCalledOnce();
       expect((f.channelWrites.start.mock.calls[0] as unknown[])[6]).toEqual({
         admins: recipients.map((recipient) => recipient.pubkey),
+        visibility: "private",
       });
       const id = started.mock.calls[0]?.[0];
       expect(readView("first-followup", `draft:${id}`, null)).toEqual({
@@ -3660,7 +3661,7 @@ it("shows an editable ordinary source link and sends it to the pill's default ag
     undefined,
     false,
     undefined,
-    { admins: ["a".repeat(64)] },
+    { admins: ["a".repeat(64)], visibility: "private" },
   );
   expect(t.messages.send).toHaveBeenCalledWith(
     id,
@@ -3860,7 +3861,7 @@ function soloDraftWithInventory(
         undefined,
         false,
         undefined,
-        { admins: [aaron.pubkey] },
+        { admins: [aaron.pubkey], visibility: "private" },
       );
       expect(test.messages.send).toHaveBeenCalledWith(id, "@Aaron hi", [
         aaron.pubkey,
@@ -4208,6 +4209,7 @@ it("a region's New chat starts a labeled chat its source can find, without filin
   // Unguarded, so the Outbox replays it after a restart like any New chat.
   expect(startOptions(test)).toEqual({
     admins: ["a".repeat(64)],
+    visibility: "private",
     labels: [REGION],
   });
   expect(readView("test", regionStartKey(id), null)).toEqual({

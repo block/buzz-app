@@ -946,7 +946,7 @@ it("starts a conversation by default, even when these people have a DM, and neve
     undefined,
     false,
     undefined,
-    { solo: false },
+    { solo: false, visibility: "private" },
   );
   const id = t.startConversation.mock.calls[0]?.[0];
   expect(sentTo(t)).toEqual([id]);

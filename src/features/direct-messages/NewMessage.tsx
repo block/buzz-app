@@ -37,7 +37,10 @@ import { NavigationSection } from "../../shared/design-system/ui/NavigationSecti
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { startingChatTitle } from "../solo/chat-title";
-import { effectiveLifetime } from "../solo/default-lifetime";
+import {
+  effectiveLifetime,
+  effectiveVisibility,
+} from "../solo/default-lifetime";
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
@@ -499,7 +502,7 @@ export function NewMessage({
             effectiveLifetime(scope, workspace),
             false,
             undefined,
-            { solo: false },
+            { solo: false, visibility: effectiveVisibility(scope, workspace) },
           );
         }
         controller.signal.throwIfAborted();

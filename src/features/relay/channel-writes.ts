@@ -778,6 +778,7 @@ export function createChannelWrites(
       recovery?: OutboxRecovery,
       /** False for a conversation with people: no Solo labels. */
       solo = true,
+      visibility: "private" | "public" = "private",
     ) {
       writer();
       identifier(id);
@@ -799,7 +800,7 @@ export function createChannelWrites(
           tags: [
             ["h", id],
             ["name", title],
-            ["visibility", "private"],
+            ["visibility", visibility === "public" ? "open" : "private"],
             ["channel_type", "stream"],
             ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
             ...channelLabelTags(
@@ -834,6 +835,8 @@ export function createChannelWrites(
         admins?: readonly string[];
         /** False starts a conversation with people rather than a Solo chat. */
         solo?: boolean;
+        /** Who can read it; private unless chosen. */
+        visibility?: "private" | "public";
       },
     ) {
       const solo = options?.solo ?? true;
@@ -850,6 +853,7 @@ export function createChannelWrites(
         options?.labels,
         recovery,
         solo,
+        options?.visibility,
       );
       channels.start?.({
         id,
@@ -864,6 +868,7 @@ export function createChannelWrites(
           : [...(options?.labels ?? [])],
         ttlSeconds,
         ...(solo ? {} : { channelType: "stream" as const }),
+        ...(options?.visibility ? { visibility: options.visibility } : {}),
       });
       // The relay adds the members in the create, so the chat takes events
       // once the create is OK.

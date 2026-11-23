@@ -41,7 +41,7 @@ import {
 import type { DraftPicks } from "../messages/ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import { useDefaultAgent } from "./default-agent";
-import { draftLifetime } from "./default-lifetime";
+import { draftLifetime, effectiveVisibility } from "./default-lifetime";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import {
@@ -610,7 +610,11 @@ export function SoloDraft({
               }
             : undefined,
           // Unguarded, so a restart can retry it like any New chat.
-          { admins, ...(region ? { labels: [region] } : {}) },
+          {
+            admins,
+            visibility: effectiveVisibility(scope, project || undefined),
+            ...(region ? { labels: [region] } : {}),
+          },
         );
       } catch (reason) {
         if (startKey) writeView(scope, startKey, null);

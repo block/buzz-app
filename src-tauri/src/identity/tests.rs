@@ -939,6 +939,10 @@ async fn account_settings_signer_admits_lifetimes_and_workspace_overrides() {
             json!({"version": 1, "lifetime": 86400, "workspaces": {"w1": null, "w2": 1209600}}),
             102,
         ),
+        (
+            json!({"version": 1, "lifetime": null, "visibility": "public", "workspaceVisibility": {"w1": "private", "w2": "public"}}),
+            103,
+        ),
     ] {
         let event = host
             .sign_sidebar("account-settings".into(), payload.clone(), at)
@@ -961,6 +965,10 @@ async fn account_settings_signer_admits_lifetimes_and_workspace_overrides() {
         json!({"version": 1, "lifetime": null, "workspaces": []}),
         json!({"version": 1, "lifetime": null, "workspaces": {"w1": 0}}),
         json!({"version": 1, "lifetime": null, "workspaces": {" ": null}}),
+        json!({"version": 1, "lifetime": null, "visibility": "open"}),
+        json!({"version": 1, "lifetime": null, "visibility": null}),
+        json!({"version": 1, "lifetime": null, "workspaceVisibility": {"w1": null}}),
+        json!({"version": 1, "lifetime": null, "workspaceVisibility": []}),
     ] {
         assert!(host
             .sign_sidebar("account-settings".into(), invalid, 100)

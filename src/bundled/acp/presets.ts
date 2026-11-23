@@ -55,6 +55,16 @@ export const PRESETS: readonly Preset[] = [
     verified: false,
   },
   {
+    id: "copilot",
+    title: "GitHub Copilot CLI",
+    command: "copilot",
+    args: ["--acp"],
+    install:
+      "Install GitHub Copilot CLI: https://docs.github.com/copilot/how-tos/copilot-cli",
+    login: "Run `copilot login`.",
+    verified: false,
+  },
+  {
     id: "devin",
     title: "Devin",
     command: "devin",

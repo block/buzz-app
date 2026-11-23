@@ -20,9 +20,9 @@ const HANDOVER_MS = 2 * 60_000;
 
 export const inject = ["agents", "host"];
 export const apply: PluginModule["apply"] = (ctx) => {
-  // Only the desktop app can start a harness, and its launch runs POSIX
-  // `env`, which stock Windows lacks; no unusable type elsewhere.
-  if (!isTauri() || !/Mac|Linux/i.test(navigator.platform)) return;
+  // Only the desktop app can start a harness. Its launch runs `env`, which
+  // the host takes from Git for Windows there; no unusable type elsewhere.
+  if (!isTauri()) return;
   const { agents, host } = ctx;
   const spawn = host.spawn?.bind(host);
   if (!spawn) return;

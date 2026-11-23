@@ -86,7 +86,7 @@ export function withPreset(current: Config, id: string): Config {
 }
 
 /** The forms the native host accepts for a process directory. */
-const ABSOLUTE = /^(\/|~$|~\/)/;
+const ABSOLUTE = /^(\/|~$|~\/|~\\|[A-Za-z]:[\\/]|\\\\)/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** Names reserved for the agent's identity; the host strips inherited ones but
  * lets a caller set them, so a harness must never get them from settings. */

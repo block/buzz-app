@@ -47,12 +47,19 @@ describe("problems", () => {
     );
   });
 
-  it.each(["relative/folder", "./here", "~user/x"])(
+  it.each(["relative/folder", "./here", "~user/x", "C:folder"])(
     "rejects the workspace %j",
     (workspace) => {
       expect(problems({ ...base, workspace })).toContain(
         "The workspace must be an absolute path or start with `~/`.",
       );
+    },
+  );
+
+  it.each(["C:\\work\\repo", "c:/work", "\\\\server\\share", "~\\repo"])(
+    "accepts the Windows workspace %j",
+    (workspace) => {
+      expect(problems({ ...base, workspace })).toEqual([]);
     },
   );
 

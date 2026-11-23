@@ -2193,7 +2193,11 @@ function Timeline({
       return;
     // The first page fills the prefetch distance and lands light beside the
     // opening paint; later ones are full.
-    queries.channels.loadOlder(channelId, fillPages.current ? MAX_PAGE : rows);
+    queries.channels.loadOlder(
+      channelId,
+      fillPages.current ? MAX_PAGE : rows,
+      true,
+    );
     if (!queries.channels.window(channelId).loadingOlder) return;
     olderRequested.current = {
       at: performance.now(),

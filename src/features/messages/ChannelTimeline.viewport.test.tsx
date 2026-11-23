@@ -1415,6 +1415,7 @@ it("a settled reader at the bottom fills a screen with nothing to scroll", () =>
     expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       expect.any(Number),
+      true,
     );
   } finally {
     h.dispose();
@@ -1429,6 +1430,7 @@ it("fills past a pending intro and shows it only when verified history reaches i
     expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       expect.any(Number),
+      true,
     );
     expect(
       screen.queryByRole("article", { name: "Local introduction" }),
@@ -1452,7 +1454,7 @@ it("filling reads at most five pages a visit", () => {
     expect(h.loadOlder).toHaveBeenCalledTimes(5);
     // Pages after the first are full.
     for (const call of h.loadOlder.mock.calls.slice(1))
-      expect(call).toEqual(["alpha", 200]);
+      expect(call).toEqual(["alpha", 200, true]);
   } finally {
     h.dispose();
   }
@@ -1520,6 +1522,7 @@ it("reads ahead past a pending saved row without returning the reader to it", ()
     expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       expect.any(Number),
+      true,
     );
     h.geometry.scrollHeight = 2000;
     viewport.scrollToIndex.mockClear();
@@ -1549,6 +1552,7 @@ it("reads ahead for a revisit restored at the bottom, keeping its place", () => 
     expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith(
       "alpha",
       expect.any(Number),
+      true,
     );
     viewport.scrollToIndex.mockClear();
     h.land();

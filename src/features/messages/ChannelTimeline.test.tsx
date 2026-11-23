@@ -764,7 +764,11 @@ it.each([
     // A first page sized to the prefetch distance until 6 screens (4008px)
     // sit above the reader, then no more.
     if (rows)
-      expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel", rows);
+      expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        rows,
+        true,
+      );
     else expect(h.loadOlder).not.toHaveBeenCalled();
     h.unmount();
   },

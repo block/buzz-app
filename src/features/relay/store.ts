@@ -130,7 +130,11 @@ type WindowState = {
     rows: ReadonlySet<string>;
     /** Rows a read takes, below `AUX_PAGE` once a response ran too large. */
     limit?: number;
+    /** Read ahead of the reader: its closure trims, never slides. */
+    ahead?: boolean;
   }[];
+  /** A read-ahead page met the budget: no more until the reader pages. */
+  aheadFull?: boolean | undefined;
   auxRead?:
     | { controller: AbortController; generation: number; dropped?: boolean }
     | undefined;
@@ -283,6 +287,10 @@ function retainAbout(events: readonly RelayEvent[], ids: ReadonlySet<string>) {
 /** Relay query order: time descending, then ID ascending at ties. */
 const newestFirst = (a: RelayEvent, b: RelayEvent) =>
   b.created_at - a.created_at || a.id.localeCompare(b.id);
+/** Whether `event` sorts below `cursor` in relay order: unread by its page. */
+const belowCursor = (event: RelayEvent, cursor: WindowCursor) =>
+  event.created_at < cursor.createdAt ||
+  (event.created_at === cursor.createdAt && event.id > cursor.eventId);
 /** Where the read after a page of notices starts: null when it was the last. */
 const noticeCursor = (events: readonly RelayEvent[]): WindowCursor | null => {
   const last = [...events].sort(newestFirst).at(-1);
@@ -854,6 +862,7 @@ export function createChannelStore(
    * `noticeHead` is false when its newest notices are already being read. */
   function adoptHead(state: WindowState, head: Head, noticeHead = true) {
     state.events = head.events;
+    state.aheadFull = undefined;
     // A head read with its newest notices needs no second read of them.
     if (head.noticesRead && state.ceiling === undefined) {
       takeNotices(state, head.notices ?? [], null);
@@ -1138,12 +1147,22 @@ export function createChannelStore(
           Object.freeze(
             foldChannelMessages(channelId, source.relayAuthor, events),
           );
-        let merged = [...state.events, ...added];
+        let merged: readonly RelayEvent[] = [...state.events, ...added];
         let rows = fold(merged);
+        let slide = false;
+        // A read-ahead page's closure keeps the window at the head: past the
+        // budget it drops the oldest rows instead.
+        if (page.ahead && state.ceiling === undefined) {
+          const trimmed = trimOldest(state, merged);
+          if (trimmed !== merged) {
+            merged = trimmed;
+            rows = fold(merged);
+          }
+        }
         // Past the byte budget the closure slides the window down to the
         // rows paged to, as an older page does. One that leaves no row to
         // show, or is larger than the whole budget, applies as is.
-        if (listByteSize(merged) > maxHistoryBytes) {
+        else if (listByteSize(merged) > maxHistoryBytes) {
           const slid = slideOlder(
             state,
             added,
@@ -1156,10 +1175,11 @@ export function createChannelStore(
             rows = slidRows;
             state.ceiling = slid.ceiling;
             state.atHead = false;
-            dropStrayTraffic(state);
+            slide = true;
           }
         }
         state.events = merged;
+        if (slide) dropStrayTraffic(state);
         setWindow(state, { rows });
       }
       if (failure !== undefined) throw failure;
@@ -1457,6 +1477,7 @@ export function createChannelStore(
     state: WindowState,
     cursor: WindowCursor | null,
     limit?: number,
+    ahead = false,
   ) {
     if (!transport || !canReadRemote(state.channelId)) return;
     const generation = state.generation;
@@ -1497,10 +1518,11 @@ export function createChannelStore(
         }
         // The head replaces the window: the paged floor and live rows below
         // the head go with the rows they belonged to.
-        const below = head.cursor?.createdAt ?? -Infinity;
+        const below = head.cursor;
         state.floor = undefined;
-        for (const [id, event] of state.traffic)
-          if (event.created_at < below) state.traffic.delete(id);
+        if (below)
+          for (const [id, event] of state.traffic)
+            if (belowCursor(event, below)) state.traffic.delete(id);
         adoptHead(state, head);
         return;
       }
@@ -1533,6 +1555,18 @@ export function createChannelStore(
       let rows = fold(retained);
       // An older page past the budget slides the window down to it.
       let ceiling: number | undefined;
+      // A read-ahead page past the budget is dropped: the reader at the head
+      // keeps its rows, and read-ahead stops until the reader pages.
+      if (
+        cursor &&
+        ahead &&
+        state.ceiling === undefined &&
+        over(retained, rows)
+      ) {
+        state.aheadFull = true;
+        setWindow(state, { loadingOlder: false });
+        return;
+      }
       if (cursor && over(retained, rows)) {
         const slid = slideOlder(state, page.events, (events) => !over(events));
         if (slid) {
@@ -1550,6 +1584,7 @@ export function createChannelStore(
         return;
       }
       state.events = retained;
+      if (!ahead) state.aheadFull = undefined;
       if (ceiling !== undefined) {
         state.ceiling = ceiling;
         dropStrayTraffic(state);
@@ -1581,6 +1616,7 @@ export function createChannelStore(
             cursor,
             floor: Math.min(...pageRows.map((event) => event.created_at)),
             rows: new Set(pageRows.map((event) => event.id)),
+            ...(ahead ? { ahead } : {}),
           });
         void fillAux(state);
       }
@@ -1771,10 +1807,7 @@ export function createChannelStore(
     // row below the cursor (a late send) must not skip the rows under it.
     // Paged rows sit at or above the cursor in the relay's order.
     const { cursor } = state;
-    const paged = (event: RelayEvent) =>
-      !cursor ||
-      event.created_at > cursor.createdAt ||
-      (event.created_at === cursor.createdAt && event.id <= cursor.eventId);
+    const paged = (event: RelayEvent) => !cursor || !belowCursor(event, cursor);
     const keptIds = new Set(kept.map((event) => event.id));
     const oldest = kept.at(-1);
     if (
@@ -4402,7 +4435,7 @@ export function createChannelStore(
         setWindow(state, { status: "loading", error: undefined });
       void loadPage(state, null);
     },
-    loadOlder(channelId: string, rows = WINDOW_PAGE_SIZE) {
+    loadOlder(channelId: string, rows = WINDOW_PAGE_SIZE, ahead = false) {
       if (disposed || !transport) return;
       if (!canReadRemote(channelId)) {
         revalidateCached(channelId);
@@ -4415,11 +4448,12 @@ export function createChannelStore(
         state.snapshot.loadingOlder ||
         state.snapshot.historyLimited ||
         !state.cursor ||
-        state.controller
+        state.controller ||
+        (ahead && state.aheadFull)
       )
         return;
       setWindow(state, { loadingOlder: true, error: undefined });
-      void loadPage(state, state.cursor, rows);
+      void loadPage(state, state.cursor, rows, ahead);
     },
     cancelOlder(channelId: string) {
       const state = windows.get(channelId);

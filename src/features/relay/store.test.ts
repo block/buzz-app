@@ -327,7 +327,7 @@ describe("channel store", () => {
         take(false).respond([...rows, below(cursor, rows[0])]);
         await flush();
       };
-      return { queries, take, page, scripted, store };
+      return { queries, take, page, scripted, store, live };
     }
     it("withdraws a held edit its aux read deletes", async () => {
       const { queries, take, page } = await opened();
@@ -418,6 +418,74 @@ describe("channel store", () => {
       await flush();
       // The same fill reads the page behind it.
       expect(take(true).filters[0]).toMatchObject({ until: a.created_at });
+    });
+    it("an aux slide forgets the live rows it drops", async () => {
+      const late = message(alice, "c", "late", 25);
+      const target = row(10);
+      const edit = on(40003, target, "edited");
+      const { queries, take, page, scripted, live } = await opened({
+        maxHistoryBytes: listByteSize([newer, late, target, edit]) - 1,
+      });
+      live.receive([late]);
+      await flush();
+      await page(newer, target);
+      take(true).respond([target, edit, below(newer)]);
+      await flush();
+      // The slide drops the live row for the rows paged to.
+      expect(queries.window("c").hasNewer).toBe(true);
+      expect(queries.window("c").rows.map((row) => row.content)).toEqual([
+        "edited",
+        "newer",
+      ]);
+      // A head without the live row (deleted meanwhile) shows only its own.
+      queries.attach?.("c");
+      const head = scripted.pending.find(
+        (read) => read.filters[0]?.top_level && !read.filters[0]?.until,
+      );
+      head?.respond([
+        newer,
+        bounds(relay, "c", "head", {
+          has_more: true,
+          next_cursor: { created_at: 20, id: newer.id },
+        }),
+      ]);
+      await flush();
+      expect(queries.window("c").rows.map((row) => row.id)).toEqual([newer.id]);
+    });
+    it("drops a read-ahead page past the budget and stays at the head", async () => {
+      const target = row(10);
+      const { queries, take, scripted } = await opened({
+        maxHistoryBytes: listByteSize([newer, target]) - 1,
+      });
+      queries.loadOlder("c", 20, true);
+      take(false).respond([target, below(newer, target)]);
+      await flush();
+      expect(queries.window("c")).toMatchObject({
+        loadingOlder: false,
+        rows: [{ id: newer.id }],
+      });
+      expect(queries.window("c").hasNewer).toBeFalsy();
+      // Read-ahead stops; the reader's own paging still reads.
+      queries.loadOlder("c", 20, true);
+      expect(scripted.pending.some((read) => read.filters[0]?.until)).toBe(
+        false,
+      );
+      queries.loadOlder("c");
+      expect(take(false).filters[0]).toMatchObject({ until: 20 });
+    });
+    it("trims a read-ahead page's closure past the budget at the head", async () => {
+      const target = row(10);
+      const edit = on(40003, target, "edited");
+      const { queries, take } = await opened({
+        maxHistoryBytes: listByteSize([newer, target, edit]) - 1,
+      });
+      queries.loadOlder("c", 20, true);
+      take(false).respond([target, below(newer, target)]);
+      await flush();
+      take(true).respond([target, edit, below(newer)]);
+      await flush();
+      expect(queries.window("c").hasNewer).toBeFalsy();
+      expect(queries.window("c").rows.map((row) => row.id)).toEqual([newer.id]);
     });
     it("keeps a live row from the head read when aux merges", async () => {
       const late = message(alice, "c", "late", 25);
@@ -924,6 +992,76 @@ describe("channel store", () => {
     await flush();
     // The stream delivers a row; what it missed before it is unknown.
     live.receive([stray, tail]);
+    queries.ensure("d");
+    await flush();
+    scripted.pending.length = 0;
+    clock += 61_000;
+    queries.ensure("c");
+    const revisit = scripted.pending.find(
+      (entry) => entry.filters[0]?.top_level && !entry.filters[0]?.until,
+    );
+    assert(revisit);
+    revisit.respond([
+      latest,
+      tail,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 30, id: tail.id },
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c").rows.map((row) => row.id)).toEqual([
+      tail.id,
+      latest.id,
+    ]);
+  });
+  it("a revisit head drops live rows below its cursor in the cursor's second", async () => {
+    const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    let clock = 1_000_000;
+    const queries = createRelaySession(
+      {
+        ...scripted.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { prepared: true, now: () => clock },
+    ).session.channels;
+    live.receive([roster(relay, "c", [viewer.pubkey])]);
+    queries.ensure("c");
+    const [older, head, latest] = [5, 10, 40].map((at) =>
+      message(alice, "c", `at ${at}`, at),
+    );
+    // Relay order at a tie is ID ascending: `after` sorts below the cursor.
+    const [tail, after] = ["a", "c"]
+      .map((name) => message(alice, "c", name, 30))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    assert(older && head && latest && tail && after);
+    scripted.next().respond([
+      head,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 10, id: head.id },
+      }),
+    ]);
+    await flush();
+    queries.loadOlder("c");
+    const page = scripted.pending.find(
+      (entry) => entry.filters[0]?.until && !entry.filters[0]?.include_aux,
+    );
+    assert(page);
+    scripted.pending.splice(scripted.pending.indexOf(page), 1);
+    page.respond([
+      older,
+      bounds(relay, "c", `10:${head.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    live.receive([tail, after]);
     queries.ensure("d");
     await flush();
     scripted.pending.length = 0;

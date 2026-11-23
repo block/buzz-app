@@ -34,11 +34,7 @@ out. CI keeps the filmstrip.
 ## Screenshot baselines
 
 `bin/pnpm test:visual` runs the opt-in messages screenshot suite using the same
-production frontend/broker fixture. It records existing channel and thread
-activity history, collapsed and expanded, in Chromium and WebKit with both themes.
-Public agent messages remain separate; explicitly agent-only messages exercise
-main's existing history disclosure. This suite does not change product behavior
-or replace behavioral tests.
+production frontend/broker fixture.
 
 The checked-in goldens are **macOS only**, separated by engine and OS; Linux CI
 does not run this suite. Install the pinned browsers with `bin/pnpm test:browser:install`.

@@ -984,12 +984,15 @@ function Timeline({
     ids: ReadonlySet<string>;
     floor: number;
     paging: boolean;
+    /** Detached from the head: rows it reads in are history. */
+    detached: boolean;
   }>({
     order: [],
     containedOwners: new Map(),
     ids: new Set(),
     floor: 0,
     paging: false,
+    detached: false,
   });
   // The reader's anchor row and its offset before this render's rows.
   const reader = useRef<{
@@ -1791,8 +1794,13 @@ function Timeline({
     const { floor, order } = edges.current;
     const paged = edges.current.paging && !loadingOlder.current;
     const tail = rows.findIndex((row) => row.id === order.at(-1));
+    // Live rows never enter a detached window: the rows a newer page reads
+    // into it, up to and including the page that reaches the head, are not
+    // new messages.
+    const history = edges.current.detached || detached.current;
     const arrivals = rows.filter(
       (row, index) =>
+        !history &&
         !previousIds.has(row.id) &&
         (!paged || index > tail) &&
         (row.createdAt > floor || (row.createdAt === floor && !paged)),
@@ -1803,6 +1811,7 @@ function Timeline({
       ids: new Set(rows.map((row) => row.id)),
       floor: rows[0]?.createdAt ?? 0,
       paging: loadingOlder.current,
+      detached: detached.current,
     };
     if (
       arrivals > 0 &&

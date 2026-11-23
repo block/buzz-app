@@ -558,6 +558,17 @@ function setup({
       expect(section.props["data-jump-visible"]).toBe(visible || undefined);
       return visible;
     },
+    /** The new-message count Jump to latest shows. */
+    jumpCount() {
+      const button = section.props.children.find(
+        (child) =>
+          !!child &&
+          typeof child === "object" &&
+          "type" in child &&
+          child.type === JumpToLatestButton,
+      ) as ReactElement<{ newMessageCount: number }> | undefined;
+      return button?.props.newMessageCount;
+    },
     unmount() {
       for (const effect of hooks.effects) effect.cleanup?.();
     },
@@ -710,6 +721,8 @@ it("a detached window's end is not followed, and Jump to latest attaches it", ()
   h.render();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
   expect(h.hasJumpToLatest()).toBe(true);
+  // The rows read in are history, not new messages.
+  expect(h.jumpCount()).toBe(0);
   h.jumpToLatest();
   expect(h.attach).toHaveBeenCalledExactlyOnceWith("channel");
   h.unmount();

@@ -31,6 +31,22 @@ crashes the login session after about 1,000 traced WebKit tests.
 Never use it in a loop or with `--repeat-each`; the leak lasts until you log
 out. CI keeps the filmstrip.
 
+## Screenshot baselines
+
+`bin/pnpm test:visual` runs the opt-in messages screenshot suite using the same
+production frontend/broker fixture. It records existing channel and thread
+activity history, collapsed and expanded, in Chromium and WebKit with both themes.
+Public agent messages remain separate; explicitly agent-only messages exercise
+main's existing history disclosure. This suite does not change product behavior
+or replace behavioral tests.
+
+The checked-in goldens are **macOS only**, separated by engine and OS; Linux CI
+does not run this suite. Install the pinned browsers with `bin/pnpm test:browser:install`.
+Use `--project chromium` or `--project webkit` for one engine. Comparisons allow
+zero differing pixels and never retry. Videos, traces and mismatch images go to
+`test-results/visual/`, replaced on each run. Use `--update-snapshots` only after
+inspecting the change on the matching OS; never rename macOS goldens for Linux.
+
 ## Write a test
 
 - Import `test` and `expect` from `fixture.mjs` for whole-app journeys.

@@ -1,0 +1,50 @@
+import { expect, it, vi } from "vitest";
+import type { Navigation } from "../../features/navigation/controller";
+import type { OpenTarget } from "../../features/navigation/targets";
+import type { RelayData } from "../../features/relay/service";
+import { openFromNavigation } from "./open-from-navigation";
+
+it("returning to a channel from another page opens it again", () => {
+  const scope = { communityOrigin: "wss://relay.example", viewer: "viewer" };
+  const alpha: OpenTarget = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "alpha",
+  };
+  const page: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "inbox",
+    pageId: "inbox",
+  };
+  let target: OpenTarget = alpha;
+  const listeners = new Set<() => void>();
+  const navigation = {
+    snapshot: () => ({ attempt: { entry: { target } } }),
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  } as unknown as Navigation;
+  const open = vi.fn();
+  const session = { channels: { open } };
+  const relay = {
+    snapshot: () => ({
+      session,
+      scope: `${scope.communityOrigin}:${scope.viewer}`,
+    }),
+    subscribe: () => () => {},
+  } as unknown as RelayData;
+  const navigate = (next: OpenTarget) => {
+    target = next;
+    for (const listener of listeners) listener();
+  };
+  const stop = openFromNavigation(navigation, relay);
+  navigate(alpha);
+  expect(open.mock.calls).toEqual([["alpha"]]);
+  navigate(page);
+  navigate(alpha);
+  expect(open.mock.calls).toEqual([["alpha"], ["alpha"]]);
+  stop();
+});

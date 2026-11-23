@@ -14,6 +14,10 @@ export function todaysFirstScreenReads<Head>(store: {
   authorized(channelId: string): boolean;
   /** Listen for each change to the channel list. */
   onList(listener: () => void): () => void;
+  /** Why the roster could not confirm channels, while its last read failed. */
+  listFailure(): unknown;
+  /** Read the roster again, to confirm channels. */
+  confirm(): void;
   /** Read the channel's head in the foreground. */
   head(channelId: string, signal: AbortSignal): Promise<Head>;
   /** Of the people `head`'s first screen shows, those not named yet. */
@@ -22,24 +26,29 @@ export function todaysFirstScreenReads<Head>(store: {
   readNames(ids: readonly string[]): Promise<void>;
 }) {
   /** Resolves once the roster confirms a channel that cannot be read yet:
-   * an opening before the list loads, after a reload. */
+   * an opening before the list loads, after a reload. Rejects when the
+   * roster read fails first; an open that starts after a failure (its
+   * Retry) reads the roster again. */
   function readable(channelId: string, signal: AbortSignal) {
     return new Promise<void>((resolve, reject) => {
       const check = () => {
+        const failure = store.listFailure();
         if (
           !signal.aborted &&
           !store.canRead(channelId) &&
-          store.authorized(channelId)
+          store.authorized(channelId) &&
+          failure === undefined
         )
           return;
         stop();
         signal.removeEventListener("abort", check);
         if (store.canRead(channelId)) resolve();
-        else
-          reject(signal.reason ?? new DOMException("No access", "AbortError"));
+        else if (signal.aborted) reject(signal.reason);
+        else reject(failure ?? new DOMException("No access", "AbortError"));
       };
       const stop = store.onList(check);
       signal.addEventListener("abort", check, { once: true });
+      if (store.listFailure() !== undefined) store.confirm();
       check();
     });
   }

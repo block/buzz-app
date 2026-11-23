@@ -191,4 +191,16 @@ test("the line goes above the first unread row after a read one, or none", () =>
       unread: { status: "unknown", unread: false, forced: false },
     }),
   ).toBeUndefined();
+  // Nor does a row whose read state is still resolving, such as a reply
+  // that may count as thread attention instead.
+  expect(
+    line(false, {
+      unread: {
+        status: "eligible",
+        pending: true,
+        unread: true,
+        forced: false,
+      },
+    }),
+  ).toBeUndefined();
 });

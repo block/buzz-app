@@ -18,6 +18,8 @@ import { validVerifiedName } from "./verified-profile";
  * - `a`: the profile says it is an agent, `o`: the owner its auth tag names.
  * - `v`: a verified name, as `[displayName, username, issuerLabel,
  *   verifiedAt, fullName?]`, shown as cached.
+ * - `k`: with `v`, the verified-profile authority's key that verified it. A
+ *   name saved under another authority is never shown.
  */
 export type SavedName = Readonly<{
   p: string;
@@ -28,6 +30,12 @@ export type SavedName = Readonly<{
   a?: 1;
   o?: string;
   v?: readonly [string, string, string, number, string?];
+  k?: string;
+}>;
+/** A saved verified name and the authority key that verified it. */
+export type SavedVerifiedName = Readonly<{
+  name: NonNullable<SavedName["v"]>;
+  authority: string;
 }>;
 
 const key = /^[0-9a-f]{64}$/;
@@ -38,6 +46,9 @@ export function savedName(
   pubkey: string,
   profile: Profile | undefined,
   verified: VerifiedProfile | undefined,
+  /** The authority key `verified` was verified under; without it, no
+   * verified name is saved. */
+  authority: string | undefined,
 ): SavedName {
   return {
     p: pubkey,
@@ -47,8 +58,9 @@ export function savedName(
     ...(profile?.picture ? { i: profile.picture } : {}),
     ...(profile?.isAgent ? { a: 1 as const } : {}),
     ...(profile?.ownerPubkey ? { o: profile.ownerPubkey } : {}),
-    ...(verified
+    ...(verified && authority
       ? {
+          k: authority,
           v:
             verified.fullName !== undefined
               ? ([
@@ -77,10 +89,12 @@ const text = (value: unknown): value is string =>
  * anything malformed. */
 export function restoredName(
   value: unknown,
-): { pubkey: string; profile: Profile; verified?: SavedName["v"] } | undefined {
+):
+  | { pubkey: string; profile: Profile; verified?: SavedVerifiedName }
+  | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return;
   const record = value as Record<string, unknown>;
-  const { p, n, u, i, o, v } = record;
+  const { p, n, u, i, o, v, k } = record;
   if (typeof p !== "string" || !key.test(p) || !text(n)) return;
   if (
     (u !== undefined && !text(u)) ||
@@ -97,18 +111,27 @@ export function restoredName(
     ...(o !== undefined ? { ownerPubkey: o } : {}),
   });
   const verified =
-    Array.isArray(v) && verifiedName(v, false)
-      ? (Object.freeze([...v]) as unknown as SavedName["v"])
+    Array.isArray(v) &&
+    typeof k === "string" &&
+    key.test(k) &&
+    verifiedName(v, false)
+      ? Object.freeze({
+          name: Object.freeze([...v]) as unknown as NonNullable<SavedName["v"]>,
+          authority: k,
+        })
       : undefined;
   return { pubkey: p, profile, ...(verified ? { verified } : {}) };
 }
 
 const resolved = new WeakMap<object, VerifiedProfile>();
-/** A saved verified name, shown as cached under `authority`. */
+/** A saved verified name, shown as cached under `authority`: only the
+ * authority that verified it. */
 export function savedVerifiedName(
-  value: NonNullable<SavedName["v"]>,
+  saved: SavedVerifiedName,
   authority: VerifiedProfileAuthority,
 ): VerifiedProfile | undefined {
+  if (saved.authority !== authority.pubkey) return undefined;
+  const value = saved.name;
   const held = resolved.get(value);
   if (held?.multipleIssuers === authority.multipleIssuers) return held;
   const name = verifiedName(value, authority.multipleIssuers);

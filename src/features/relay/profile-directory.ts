@@ -28,6 +28,7 @@ import {
   savedName,
   savedVerifiedName,
   type SavedName,
+  type SavedVerifiedName,
 } from "./saved-names";
 import type { VerifiedProfile } from "./verified-profile";
 import type { Profile } from "./contracts";
@@ -196,7 +197,7 @@ export function createProfileDirectory(
   // so an ensure still reads the kind 0.
   const savedNames = new Map<
     string,
-    { profile: Profile; verified?: SavedName["v"] | undefined }
+    { profile: Profile; verified?: SavedVerifiedName | undefined }
   >();
   let controller = new AbortController();
   let closed = false;
@@ -332,7 +333,8 @@ export function createProfileDirectory(
     // A saved verified name stands until the verified directory answers.
     const authorityNow = verified?.authority();
     const savedVerified = new Map<string, VerifiedProfile>();
-    for (const [id, name] of savedNames) {
+    for (const [id, saved] of savedNames) {
+      let name = saved;
       const answered =
         !authorityNow || verifiedProfiles.has(id) || verified?.answered(id);
       const shown =
@@ -340,8 +342,14 @@ export function createProfileDirectory(
           ? savedVerifiedName(name.verified, authorityNow)
           : undefined;
       if (shown) savedVerified.set(id, shown);
+      // The verified directory answered, with a name or with none, or the
+      // name was saved under another authority: the saved one is retired.
+      else if (name.verified && authorityNow) {
+        name = { profile: name.profile };
+        savedNames.set(id, name);
+      }
       // Replaced once both the kind 0 and the verified answer are in.
-      else if (loaded.has(id) && (answered || !name.verified))
+      if (!shown && loaded.has(id) && (answered || !name.verified))
         savedNames.delete(id);
     }
     if (verifiedProfiles.size || savedVerified.size)
@@ -798,6 +806,7 @@ export function createProfileDirectory(
             (saved?.verified && authority
               ? savedVerifiedName(saved.verified, authority)
               : undefined),
+          authority?.pubkey,
         );
       });
     },

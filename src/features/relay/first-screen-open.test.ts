@@ -145,6 +145,38 @@ it("an open whose early head lands first waits for the read that covers the gap,
   ]);
 });
 
+it("a route that comes up while an open reads its names paints the covering head, not the early one", async () => {
+  const h = setup();
+  h.live.receive(h.known("alpha"));
+  h.connected();
+  h.channels.open?.("alpha");
+  await flush();
+  const [early] = h.headReads() as [Scripted];
+  const row = message(h.peer, "alpha", "before the route", 1700000001);
+  const missing = message(
+    h.peer,
+    "alpha",
+    "missed by the early head",
+    1700000002,
+  );
+  h.answer(early, [row]);
+  // The head lands, and the open waits a task for the name it shows: the
+  // route comes up in that task.
+  await flush();
+  h.live.established("alpha");
+  await flush();
+  await flush();
+  expect(h.channels.window("alpha").screen).toBe("gathering");
+  const [covering] = h.headReads() as [Scripted];
+  expect(covering).toBeDefined();
+  h.answer(covering, [row, missing]);
+  await flush();
+  await flush();
+  const ready = h.channels.window("alpha");
+  expect(ready.screen).toBe("ready");
+  expect(ready.rows.map((r) => r.id)).toEqual([row.id, missing.id]);
+});
+
 it("an open whose early head lands last paints the covering head, rows and line together", async () => {
   const { h, early, later, row, missing } = await openAcrossEstablishment();
   h.answer(later, [row, missing]);
@@ -221,7 +253,7 @@ it("the first complete roster leaves a confirmed channel's open gathering, and i
   });
 });
 
-it("an access change that retires an open's read starts the open again, which paints", async () => {
+it("an access change that cancels an unconfirmed channel's ensure read reads it again, and its open paints", async () => {
   const h = setup();
   h.live.receive(h.known("about-to-lose"));
   await flush();
@@ -235,7 +267,8 @@ it("an access change that retires an open's read starts the open again, which pa
   await flush();
   await flush();
   expect(first?.signal?.aborted).toBe(true);
-  // The open reads again under the new generation, never stuck gathering.
+  // The window reads again (the open itself waits for the roster to
+  // classify the channel), never stuck gathering.
   const again = h.headReads();
   expect(again).toHaveLength(1);
   expect(again[0]).not.toBe(first);

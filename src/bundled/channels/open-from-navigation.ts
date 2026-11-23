@@ -12,6 +12,9 @@ export function openFromNavigation(navigation: Navigation, relay: RelayData) {
   const open = () => {
     const { target } = navigation.snapshot().attempt.entry;
     const { session, scope } = relay.snapshot();
+    // Leaving for a page that is not a conversation ends the visit: coming
+    // back opens the channel again, with a new screen and line.
+    if (target.kind !== "conversation") opened = undefined;
     if (
       target.kind !== "conversation" ||
       !scope ||

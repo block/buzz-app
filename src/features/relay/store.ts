@@ -653,6 +653,14 @@ export function createChannelStore(
       listWaiters.add(listener);
       return () => listWaiters.delete(listener);
     },
+    listFailure: () =>
+      list.status === "error"
+        ? new ReadError("unavailable", list.error ?? "Channels unavailable")
+        : undefined,
+    confirm() {
+      if (!persistence?.readStartup) void discover(true);
+      else void restore().then(() => discover(true));
+    },
     head: (channelId, signal) => openHead(channelId, signal),
     unnamed: (channelId, head) => unnamedOf(screenIds(channelId, head)),
     readNames: (ids) =>
@@ -782,8 +790,26 @@ export function createChannelStore(
     generation: (channelId) =>
       `${cleared}:${accessVersions.get(channelId) ?? 0}:${openFences.get(channelId) ?? 0}:${streamDrops}`,
     gathered(screen) {
-      const state = windows.get(screen.channelId);
-      if (state?.snapshot.screen === "gathering") showScreen(state, screen);
+      const { channelId, head } = screen;
+      const state = windows.get(channelId);
+      if (state?.snapshot.screen !== "gathering") return;
+      // The route can come up after the head lands, while its names are
+      // read. Painting that head would leave the gap the catch-up fills
+      // after it: the open starts again, and its head joins or follows the
+      // catch-up's read (see `openHead`). Held rows rely on the stream.
+      const since = following.get(channelId);
+      if (
+        head &&
+        !heldReads.has(channelId) &&
+        since !== undefined &&
+        !(head.sentAt !== undefined && head.sentAt >= since)
+      ) {
+        openTrace.mark("local", "first-screen.gap", {}, channelId);
+        const again = firstScreens.start(channelId);
+        if (again) showScreen(state, again);
+        return;
+      }
+      showScreen(state, screen);
     },
     retired(channelId) {
       const state = windows.get(channelId);

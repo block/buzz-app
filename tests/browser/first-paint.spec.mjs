@@ -229,7 +229,11 @@ async function instrument(page, app, held) {
   page.on("request", (request) => {
     if (!request.url().endsWith("/query")) return;
     const filters = request.postDataJSON() ?? [];
-    if (!gate || !holds[held](filters, app.viewer)) inflight.add(request);
+    // The relay holds older pages, such as the read-ahead after an open,
+    // until a test releases them; they are not part of the first screen.
+    const older = filters.some((f) => f.until !== undefined);
+    if (!older && (!gate || !holds[held](filters, app.viewer)))
+      inflight.add(request);
     if (armedAt && filters.some(isAlphaHead))
       requests.push({
         t: Date.now() - armedAt,

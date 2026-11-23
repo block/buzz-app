@@ -376,6 +376,38 @@ describe("channel store", () => {
       await flush();
       expect(queries.window("c").loadingNewer).toBeFalsy();
     });
+    it("reads a closure too large for a response again in smaller parts", async () => {
+      const { take, page } = await opened();
+      await page(newer, row(10), row(9), row(8));
+      const large = take(true);
+      expect(large.filters[0]).toMatchObject({ limit: 3, until: 20 });
+      large.fail(
+        new ReadError(
+          "invalid-response",
+          "Relay response exceeds the read budget",
+        ),
+      );
+      await flush();
+      expect(take(true).filters[0]).toMatchObject({ limit: 2, until: 20 });
+    });
+    it("reads past a failing aux page to the pages behind it", async () => {
+      const { queries, take, page } = await opened();
+      const [a, b] = [row(10), row(8)];
+      await page(newer, a);
+      const failing = take(true);
+      await page(a, b);
+      // One row's closure past the response budget: it reads no smaller.
+      failing.fail(
+        new ReadError(
+          "invalid-response",
+          "Relay response exceeds the read budget",
+        ),
+      );
+      await flush();
+      queries.ensure("d");
+      queries.ensure("c");
+      expect(take(true).filters[0]).toMatchObject({ until: a.created_at });
+    });
     it("reads a cancelled aux read again with the next fill", async () => {
       const { take, page } = await opened();
       const first = row(10);

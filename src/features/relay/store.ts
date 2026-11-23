@@ -122,14 +122,14 @@ type WindowState = {
   /** A head read asked for the newest notices again. */
   noticeHead?: boolean | undefined;
   noticeRead?: { controller: AbortController; generation: number } | undefined;
-  /** Older pages shown without their aux closure, oldest last, with their
-   * rows, and the read that adds it to them one page at a time. */
   /** Older pages shown without their aux closure: the rows each still needs
    * it for, read down from `cursor` to no older than `floor` (unix seconds). */
   auxPages: {
     cursor: WindowCursor;
     floor: number;
     rows: ReadonlySet<string>;
+    /** Rows a read takes, below `AUX_PAGE` once a response ran too large. */
+    limit?: number;
   }[];
   auxRead?:
     | { controller: AbortController; generation: number; dropped?: boolean }
@@ -1068,18 +1068,38 @@ export function createChannelStore(
         if (![...next.rows].some((id) => held.has(id))) continue;
         const page = next;
         const { cursor } = page;
-        const chunk = Math.min(page.rows.size, AUX_PAGE);
-        // The rows' thread summaries came with them.
-        const events = await retryRead(
-          (signal) =>
-            source.read([windowFilter(channelId, cursor, chunk, true, false)], {
-              signal,
-            }),
-          controller.signal,
-        ).catch((error: unknown) => {
-          keep(page);
+        const chunk = Math.min(page.rows.size, page.limit ?? AUX_PAGE);
+        let events: readonly RelayEvent[];
+        try {
+          // The rows' thread summaries came with them.
+          events = await retryRead(
+            (signal) =>
+              source.read(
+                [windowFilter(channelId, cursor, chunk, true, false)],
+                { signal },
+              ),
+            controller.signal,
+          );
+        } catch (error) {
+          // A closure past the response budget reads again in smaller parts.
+          if (
+            readErrorKind(error) === "invalid-response" &&
+            chunk > 1 &&
+            live(state, generation)
+          ) {
+            keep({ ...page, limit: Math.ceil(chunk / 2) });
+            continue;
+          }
+          // A failure with no retry hint goes behind the other pages, so it
+          // does not hold their aux back.
+          if (
+            isAbort(error) ||
+            (error instanceof ReadError && error.retryAfterMs !== undefined)
+          )
+            keep(page);
+          else if (!mine.dropped) state.auxPages.push(page);
           throw error;
-        });
+        }
         if (!live(state, generation) || controller.signal.aborted)
           return keep(page);
         const read = parseWindow(channelId, cursor, source.relayAuthor, events);

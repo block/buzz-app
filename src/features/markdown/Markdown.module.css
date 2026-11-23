@@ -47,7 +47,10 @@
 .document.document :where(ul, ol) {
   padding-left: var(--space-6);
 }
-.document ol {
+/* Doubled like the padding above: a timeline's own `.feed ol` and
+   `.threadHistory ol` reset to no marker at equal specificity, and the
+   bundle loads them after this file, which hid every message's numbers. */
+.document.document ol {
   list-style: decimal;
 }
 .document ul {

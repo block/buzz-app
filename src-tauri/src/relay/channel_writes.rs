@@ -127,15 +127,27 @@ fn archive(event: &EventTemplate) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 fn member_administration(event: &EventTemplate) -> bool {
-    matches!(event.kind, 9000 | 9001)
-        && event.content.is_empty()
-        && event.created_at <= 9_007_199_254_740_991
-        && event.tags.len() == if event.kind == 9000 { 3 } else { 2 }
-        && tag(event, 0, "h").is_some_and(uuid)
-        && (ownership_transfer(event).is_some()
-            || (tag(event, 1, "p").is_some_and(super::hex_key)
-                && (event.kind == 9001
-                    || matches!(tag(event, 2, "role"), Some("admin" | "member" | "guest")))))
+    if !event.content.is_empty()
+        || event.created_at > 9_007_199_254_740_991
+        || !tag(event, 0, "h").is_some_and(uuid)
+    {
+        return false;
+    }
+    let target = tag(event, 1, "p").is_some_and(super::hex_key);
+    let role = matches!(tag(event, 2, "role"), Some("admin" | "member" | "guest"));
+    match (event.kind, event.tags.len()) {
+        (9000, 3) => ownership_transfer(event).is_some() || (target && role),
+        (9001, 2) => target,
+        (9050, 4) => {
+            target
+                && role
+                && matches!(
+                    tag(event, 3, "expected_role"),
+                    Some("admin" | "member" | "guest" | "bot")
+                )
+        }
+        _ => false,
+    }
 }
 /// The stepping-down owner of `[h, ["p", heir, "owner"], ["p", owner, "admin"]]`.
 fn ownership_transfer(event: &EventTemplate) -> Option<&str> {
@@ -442,7 +454,7 @@ pub(super) fn direct_message_tags(
 }
 
 pub(super) fn creation(event: &EventTemplate) -> bool {
-    if event.kind != 9007 || !event.content.is_empty() || !(4..=47).contains(&event.tags.len()) {
+    if event.kind != 9007 || !event.content.is_empty() || !(4..=48).contains(&event.tags.len()) {
         return false;
     }
     let (Some(id), Some(name), Some(visibility), Some(channel_type)) = (
@@ -525,6 +537,16 @@ pub(super) fn creation(event: &EventTemplate) -> bool {
                 .iter()
                 .any(|t| t[1] == member)
         {
+            return false;
+        }
+        index += 1;
+    }
+    if event
+        .tags
+        .get(index)
+        .is_some_and(|t| t.first().is_some_and(|s| s == "migration"))
+    {
+        if !tag(event, index, "migration").is_some_and(|source| !source.is_empty()) {
             return false;
         }
         index += 1;
@@ -907,6 +929,41 @@ mod boundary_tests {
             event.tags[3][1] = other.into();
             assert!(!creation(&event), "{other:?}");
         }
+    }
+
+    #[test]
+    fn channel_creation_signs_one_migration_source_before_the_client_id() {
+        let mut event = EventTemplate {
+            kind: 9007,
+            created_at: 1700000010,
+            content: String::new(),
+            tags: vec![
+                vec!["h".into(), uuid::Uuid::nil().to_string()],
+                vec!["name".into(), "Imported channel".into()],
+                vec!["visibility".into(), "private".into()],
+                vec!["channel_type".into(), "stream".into()],
+                vec!["t".into(), "example-import".into()],
+                vec!["migration".into(), "slack".into()],
+                vec!["client-id".into(), uuid::Uuid::new_v4().to_string()],
+            ],
+        };
+        validate_event("https://example.org", &event).unwrap();
+        let signed = tauri::async_runtime::block_on(
+            IdentityHost::fixture().sign(template(&serde_json::to_value(&event).unwrap()).unwrap()),
+        )
+        .unwrap();
+        super::super::verify_signature(&signed).unwrap();
+        assert_eq!(signed["tags"][5], serde_json::json!(["migration", "slack"]));
+        assert!(creation(&template(&signed).unwrap()));
+
+        event.tags.insert(6, event.tags[5].clone());
+        assert!(!creation(&event));
+        event.tags.remove(6);
+        event.tags[5].push("extra".into());
+        assert!(!creation(&event));
+        event.tags[5].pop();
+        event.tags[5][1].clear();
+        assert!(!creation(&event));
     }
 
     #[test]

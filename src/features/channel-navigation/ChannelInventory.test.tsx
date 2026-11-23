@@ -67,6 +67,10 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
+import {
+  SECTION_ROW_CAP,
+  SECTION_ROW_STEP,
+} from "../../bundled/channels/sidebar-section-caps";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { PageNavigation } from "../../app/shell/PageNavigation";
 import { createAgentChoices } from "../agents/choices";
@@ -1141,6 +1145,63 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
     expect(star).toHaveBeenLastCalledWith(
       { channelId: "dm", starred: false },
       expect.any(AbortSignal),
+    );
+  } finally {
+    preferences.dispose();
+  }
+});
+
+it("lists forums under Channels and moves them into a saved group", async () => {
+  const saved: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {},
+    starred: [],
+    muted: [],
+  };
+  let assignments: Record<string, string> = {};
+  const read = vi.fn(async () => ({ ...saved, assignments }));
+  const write = vi.fn(
+    async (intent: { channelId?: string; sectionId?: string }) => {
+      if (intent.channelId === undefined || intent.sectionId === undefined)
+        throw new Error("Expected a move into a section");
+      assignments = { ...assignments, [intent.channelId]: intent.sectionId };
+      return { sections: saved.sections, assignments };
+    },
+  );
+  const preferences = createSidebarPreferencesStore({
+    read,
+    available: true,
+    write,
+    writeStar: vi.fn(async () => []),
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", [
+    { id: "alpha", name: "alpha", channelType: "stream" },
+    { id: "ideas", name: "ideas", channelType: "forum" },
+  ]);
+  const user = userEvent.setup();
+  try {
+    render(h.view("alpha"));
+    const row = await screen.findByRole("button", { name: "ideas" });
+    expect(
+      document.querySelector('[data-sidebar-section="channels"]'),
+    ).toContainElement(row);
+    expect(
+      document.querySelector('[data-sidebar-section="forums"]'),
+    ).toBeNull();
+    fireEvent.keyDown(row, { key: "ContextMenu" });
+    await user.hover(await screen.findByRole("menuitem", { name: "Move to…" }));
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Work" }));
+    await waitFor(() =>
+      expect(write).toHaveBeenCalledWith(
+        { channelId: "ideas", sectionId: "work" },
+        expect.any(AbortSignal),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-sidebar-section="group:work"]'),
+      ).toContainElement(screen.getByRole("button", { name: "ideas" })),
     );
   } finally {
     preferences.dispose();
@@ -2577,12 +2638,11 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
     expect(order).toHaveBeenLastCalledWith(
       [
         "pages",
+        "solo",
         "starred",
         "group:later",
         "group:work",
-        "solo",
         "channels",
-        "forums",
         "dms",
       ],
       expect.any(AbortSignal),
@@ -4338,4 +4398,493 @@ it("keeps default Solo recency as live activity changes", async () => {
   await waitFor(() => expect(soloOrder()).toEqual(["alpha", "beta"]));
   h.publish("beta", { lastActivityAt: 4 });
   await waitFor(() => expect(soloOrder()).toEqual(["beta", "alpha"]));
+});
+
+const soloChats = (count: number) =>
+  Array.from({ length: count }, (_, index) => ({
+    id: `chat-${index}`,
+    name: `Chat ${index}`,
+    channelType: "solo" as const,
+    lastActivityAt: count - index,
+  }));
+const sectionRows = (key: string) =>
+  [
+    ...document.querySelectorAll(
+      `[data-sidebar-section="${key}"] [data-channel-id]:not([inert] *)`,
+    ),
+  ].map((row) => row.getAttribute("data-channel-id"));
+
+it("caps Solo at its newest chats and remembers Show more and Show fewer", async () => {
+  const h = fixture(undefined, "ready", [
+    ...soloChats(SECTION_ROW_CAP + 3),
+    { id: "gamma", name: "gamma", channelType: "stream" },
+  ]);
+  const user = userEvent.setup();
+  const { unmount } = render(h.view("gamma"));
+  await waitFor(() =>
+    expect(sectionRows("solo")).toEqual(
+      soloChats(SECTION_ROW_CAP).map(({ id }) => id),
+    ),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Show fewer in Solo" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Show more in Solo" }));
+  expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP + 3);
+  // Show more is spent; focus stays on the row's remaining action.
+  expect(
+    screen.queryByRole("button", { name: "Show more in Solo" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Show fewer in Solo" }),
+  ).toHaveFocus();
+  unmount();
+  render(h.view("gamma"));
+  await waitFor(() =>
+    expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP + 3),
+  );
+  await user.click(screen.getByRole("button", { name: "Show fewer in Solo" }));
+  expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP);
+});
+
+it("keeps the Show more steps Solo saved before sections were unified", async () => {
+  const h = fixture(undefined, "ready", [
+    ...soloChats(SECTION_ROW_CAP + 3),
+    { id: "gamma", name: "gamma", channelType: "stream" },
+  ]);
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  writeView(scope, "solo:expanded-projects", { "": SECTION_ROW_STEP });
+  render(h.view("gamma"));
+  await waitFor(() =>
+    expect(sectionRows("solo")).toHaveLength(SECTION_ROW_CAP + 3),
+  );
+  expect(
+    screen.getByRole("button", { name: "Show fewer in Solo" }),
+  ).toBeVisible();
+});
+
+it("keeps the open chat listed past Solo's cap", async () => {
+  const chats = soloChats(SECTION_ROW_CAP + 3);
+  const open = `chat-${SECTION_ROW_CAP + 2}`;
+  const h = fixture(undefined, "ready", chats);
+  render(h.view(open));
+  await waitFor(() =>
+    expect(sectionRows("solo")).toEqual([
+      ...chats.slice(0, SECTION_ROW_CAP).map(({ id }) => id),
+      open,
+    ]),
+  );
+  expect(
+    screen.getByRole("button", { name: "Show more in Solo" }),
+  ).toBeVisible();
+});
+
+it("starts other workspaces expanded and lets them show fewer", async () => {
+  const channels = Array.from({ length: SECTION_ROW_CAP + 2 }, (_, index) => ({
+    id: `work-${index}`,
+    name: `work ${index}`,
+    channelType: "stream" as const,
+  }));
+  const data: SidebarPreferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: Object.fromEntries(channels.map(({ id }) => [id, "work"])),
+    starred: [],
+    muted: [],
+  };
+  const preferences = createSidebarPreferencesStore({
+    read: async () => data,
+    available: true,
+    write: async () => data,
+    writeStar: async () => [],
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries, "ready", [
+    ...channels,
+    { id: "gamma", name: "gamma", channelType: "stream" },
+  ]);
+  const user = userEvent.setup();
+  render(h.view("gamma"));
+  await waitFor(() =>
+    expect(sectionRows("group:work")).toHaveLength(SECTION_ROW_CAP + 2),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Show more in Work" }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Show fewer in Work" }));
+  expect(sectionRows("group:work")).toHaveLength(SECTION_ROW_CAP);
+  await user.click(screen.getByRole("button", { name: "Show more in Work" }));
+  expect(sectionRows("group:work")).toHaveLength(SECTION_ROW_CAP + 2);
+});
+
+it("starts old Solo workspaces capped with their saved steps and Team ones expanded, after a reload", async () => {
+  const rows = (section: string, channelType: "solo" | "stream") =>
+    Array.from({ length: 12 }, (_, index) => ({
+      id: `${section}-${index}`,
+      name: `${section} ${index}`,
+      channelType,
+      lastActivityAt: 12 - index,
+    }));
+  const channels = [
+    ...rows("buzz", "solo"),
+    ...rows("reviews", "solo"),
+    ...rows("uptop", "stream"),
+    ...rows("fresh", "stream"),
+  ];
+  const sections = [
+    { id: "buzz", name: "Buzz", order: 0 },
+    { id: "reviews", name: "Reviews", order: 1 },
+    { id: "uptop", name: "Uptop", order: 2 },
+    { id: "fresh", name: "Fresh", order: 3 },
+  ];
+  // A saved unified record; the legacy Solo record lists Buzz and Reviews.
+  const data: SidebarPreferences = {
+    sections,
+    assignments: Object.fromEntries(
+      channels.map(({ id }) => [id, id.split("-")[0] ?? ""]),
+    ),
+    sectionOrder: [
+      "group:buzz",
+      "group:reviews",
+      "solo",
+      "starred",
+      "group:uptop",
+      "group:fresh",
+    ],
+    starred: [],
+    muted: [],
+    soloWorkspaces: ["buzz", "reviews"],
+  };
+  const store = (read: SidebarPreferences) =>
+    createSidebarPreferencesStore({
+      read: async () => read,
+      available: true,
+      write: async () => read,
+      writeStar: async () => [],
+    });
+  const first = store(data);
+  await first.queries.ensure();
+  const h = fixture(first.queries, "ready", channels);
+  const scope = h.snapshot.scope;
+  assert.exists(scope);
+  writeView(scope, "solo:expanded-projects", { reviews: SECTION_ROW_STEP });
+  const expectLayout = async () => {
+    await waitFor(() =>
+      expect(sectionRows("group:buzz")).toHaveLength(SECTION_ROW_CAP),
+    );
+    expect(
+      screen.getByRole("button", { name: "Show more in Buzz" }),
+    ).toBeVisible();
+    expect(sectionRows("group:reviews")).toHaveLength(12);
+    expect(
+      screen.getByRole("button", { name: "Show fewer in Reviews" }),
+    ).toBeVisible();
+    // Team and new workspaces list everything.
+    expect(sectionRows("group:uptop")).toHaveLength(12);
+    expect(sectionRows("group:fresh")).toHaveLength(12);
+    expect(
+      screen.queryByRole("button", { name: "Show more in Uptop" }),
+    ).not.toBeInTheDocument();
+  };
+  const { unmount } = render(h.view("uptop-0"));
+  await expectLayout();
+  unmount();
+  first.dispose();
+  // A later launch whose legacy Solo read failed keeps the same starts.
+  const { soloWorkspaces: _solo, ...withoutLegacy } = data;
+  const second = store(withoutLegacy);
+  await second.queries.ensure();
+  try {
+    render(fixture(second.queries, "ready", channels).view("uptop-0"));
+    await expectLayout();
+  } finally {
+    second.dispose();
+  }
+});
+
+it("keeps a chat whose menu is open listed when a newer chat passes it", async () => {
+  const chats = soloChats(SECTION_ROW_CAP);
+  const last = `chat-${SECTION_ROW_CAP - 1}`;
+  const h = fixture(undefined, "ready", [
+    ...chats,
+    {
+      id: "newer",
+      name: "Newer",
+      channelType: "solo",
+      lastActivityAt: 0,
+    },
+    { id: "gamma", name: "gamma", channelType: "stream" },
+  ]);
+  render(h.view("gamma"));
+  await waitFor(() => expect(sectionRows("solo")).toContain(last));
+  fireEvent.keyDown(
+    await screen.findByRole("button", { name: `Chat ${SECTION_ROW_CAP - 1}` }),
+    { key: "ContextMenu" },
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Copy link" }),
+  ).toBeVisible();
+  h.publish("newer", { lastActivityAt: SECTION_ROW_CAP + 1 });
+  await waitFor(() => expect(sectionRows("solo")[0]).toBe("newer"));
+  expect(sectionRows("solo")).toContain(last);
+  expect(screen.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
+});
+
+it("adds a plugin's row menu items after Mute, with their icons, waiting while the row's read change saves, and drops them with the plugin", async () => {
+  const root = new Context();
+  const selected = vi.fn();
+  let watching = false;
+  let saved: (() => void) | undefined;
+  const runtime = new PluginRuntime(root, async (plugin) => ({
+    apply(ctx) {
+      if (plugin.manifest.id === "broken.rows")
+        ctx.reflect.get("sidebarRows")?.register({
+          version: 1,
+          id: "broken",
+          menuItems: () => {
+            throw new Error("plugin bug");
+          },
+        });
+      else
+        ctx.reflect.get("sidebarRows")?.register({
+          version: 1,
+          id: "watch",
+          menuItems: (row: SidebarRow) => [
+            {
+              id: "watch",
+              label: "Plain icon",
+              icon: "★" as never,
+              onSelect: () => {},
+            },
+            {
+              id: "watch",
+              label: `${watching ? "Unwatch" : "Watch"} ${row.label}`,
+              icon: <svg data-testid="watch-icon" />,
+              onSelect: () => {
+                watching = !watching;
+                selected(row.id);
+              },
+            },
+            {
+              id: "watch",
+              label: "Repeated id",
+              icon: <svg />,
+              onSelect: () => {},
+            },
+          ],
+        });
+    },
+  }));
+  const registry = new SidebarRowsService(root);
+  const prefs = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: [],
+      muted: [],
+    }),
+    available: true,
+    writeMute: vi.fn(async () => []),
+  });
+  const plugin = (id: string) => ({
+    manifest: { id, name: id, apiVersion: 1 as const },
+    source: "external" as const,
+    revision: "one",
+    enabled: true,
+    previous: null,
+    reloadable: true,
+    error: null,
+  });
+  const user = userEvent.setup();
+  try {
+    await prefs.queries.ensure();
+    await act(async () => {
+      runtime.reconcile([plugin("watch.rows"), plugin("broken.rows")]);
+    });
+    await vi.waitFor(() => expect(registry.snapshot()).toHaveLength(2));
+    const h = fixture(prefs.queries, "ready", undefined, undefined, registry);
+    const sync = {
+      capability: "frontier-sync",
+      status: "reconciled",
+      completeness: "snapshot",
+    } as const;
+    const snapshots = new Map<string, UnreadSnapshot>();
+    h.session.unread = {
+      ...h.session.unread,
+      sync: () => sync,
+      snapshot: (target) => {
+        const key = JSON.stringify(target);
+        const snapshot = snapshots.get(key) ?? {
+          target,
+          observedCount: 0,
+          attentionCount: 0,
+          manual: "none",
+          coverage: "observed",
+          freshness: "observed",
+        };
+        snapshots.set(key, snapshot);
+        return snapshot;
+      },
+      subscribe: () => () => {},
+      markUnreadLocal: () =>
+        new Promise((resolve) => {
+          saved = () =>
+            resolve({
+              operationId: "held",
+              durability: "saved",
+              sync: "local-only",
+            });
+        }),
+    };
+    render(h.view("alpha"));
+    fireEvent.keyDown(await screen.findByRole("button", { name: "alpha" }), {
+      key: "ContextMenu",
+    });
+    const items = (await screen.findAllByRole("menuitem")).map(
+      (item) => item.textContent,
+    );
+    expect(items.indexOf("Watch alpha")).toBe(items.indexOf("Mute") + 1);
+    expect(items).not.toContain("Plain icon");
+    expect(items).not.toContain("Repeated id");
+    expect(
+      screen.getByRole("menuitem", { name: "Watch alpha" }),
+    ).toContainElement(screen.getByTestId("watch-icon"));
+    await user.click(screen.getByRole("menuitem", { name: "Watch alpha" }));
+    expect(selected).toHaveBeenCalledExactlyOnceWith("alpha");
+    fireEvent.keyDown(screen.getByRole("button", { name: "alpha" }), {
+      key: "ContextMenu",
+    });
+    expect(
+      await screen.findByRole("menuitem", { name: "Unwatch alpha" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Unwatch alpha" }),
+    ).not.toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("menuitem", { name: "Mark as unread" }));
+    expect(saved).toBeTypeOf("function");
+    for (const name of ["Mute", "Unwatch alpha"])
+      expect(screen.getByRole("menuitem", { name })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
+    await act(async () => saved?.());
+    await user.keyboard("{Escape}");
+
+    await act(async () => {
+      runtime.reconcile([plugin("broken.rows")]);
+    });
+    fireEvent.keyDown(screen.getByRole("button", { name: "alpha" }), {
+      key: "ContextMenu",
+    });
+    await screen.findByRole("menuitem", { name: "Mute" });
+    expect(screen.queryByRole("menuitem", { name: /watch/i })).toBeNull();
+  } finally {
+    cleanup();
+    prefs.dispose();
+    await runtime.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it.each(["row", "header"] as const)(
+  "omits a plugin menu item whose icon throws from the %s menu, keeping the sidebar and the other items",
+  async (menu) => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const preferences = createSidebarPreferencesStore({
+      read: async () => ({
+        sections: [],
+        assignments: {},
+        starred: [],
+        muted: [],
+      }),
+      available: true,
+      writeMute: async () => [],
+    });
+    try {
+      await preferences.queries.ensure();
+      const h = fixture(
+        preferences.queries,
+        "ready",
+        undefined,
+        undefined,
+        rowRegistry({
+          version: 1,
+          id: "icons",
+          menuItems: () => [
+            {
+              id: "broken",
+              label: "Broken icon",
+              icon: <BrokenRow />,
+              onSelect: () => {},
+            },
+            {
+              id: "healthy",
+              label: "Healthy item",
+              icon: <svg />,
+              onSelect: () => {},
+            },
+          ],
+        }),
+      );
+      render(
+        h.view(
+          "alpha",
+          <ChannelHeaderMenu
+            channel={h.list.channels[0]}
+            session={h.session}
+            trigger={createRef<HTMLButtonElement>()}
+            openDetails={() => {}}
+          />,
+        ),
+      );
+      const user = userEvent.setup();
+      const row = await screen.findByRole("button", { name: "alpha" });
+      if (menu === "row") fireEvent.keyDown(row, { key: "ContextMenu" });
+      else
+        await user.click(
+          screen.getByRole("button", { name: "Channel actions" }),
+        );
+      expect(
+        await screen.findByRole("menuitem", { name: "Healthy item" }),
+      ).toBeVisible();
+      expect(screen.getByRole("menuitem", { name: "Mute" })).toBeVisible();
+      expect(
+        screen.queryByRole("menuitem", { name: "Broken icon" }),
+      ).toBeNull();
+      await user.keyboard("{Escape}");
+      for (const name of ["alpha", "beta", "gamma"])
+        expect(screen.getByRole("button", { name })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      error.mockRestore();
+      preferences.dispose();
+    }
+  },
+);
+
+it("gives a Solo row's plugin menu items the same section key as its render", async () => {
+  const keys = vi.fn();
+  const h = fixture(
+    undefined,
+    "ready",
+    [...soloChats(1), { id: "gamma", name: "gamma", channelType: "stream" }],
+    undefined,
+    rowRegistry({
+      version: 1,
+      id: "keys",
+      menuItems: (row) => {
+        keys(row.id, row.sectionKey);
+        return [];
+      },
+    }),
+  );
+  render(h.view("gamma"));
+  fireEvent.keyDown(await screen.findByRole("button", { name: "Chat 0" }), {
+    key: "ContextMenu",
+  });
+  expect(
+    await screen.findByRole("menuitem", { name: "Copy link" }),
+  ).toBeVisible();
+  expect(keys).toHaveBeenCalledWith("chat-0", "");
+  expect(keys).not.toHaveBeenCalledWith("chat-0", "solo");
 });

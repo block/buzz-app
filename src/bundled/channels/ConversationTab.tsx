@@ -29,6 +29,8 @@ import styles from "./ChannelTabs.module.css";
 type ConversationTabProps = {
   tab: Tab;
   intro?: ReactNode;
+  subthreadId?: string | undefined;
+  latestRequest?: AbortSignal | undefined;
   active: boolean;
   /** Showing the tab visits its conversation, as Channels does. */
   visit?: boolean | undefined;
@@ -55,6 +57,8 @@ type ConversationTabProps = {
 export function ConversationTab({
   tab,
   intro,
+  subthreadId,
+  latestRequest,
   active,
   visit = true,
   focusOnMount = true,
@@ -165,8 +169,12 @@ export function ConversationTab({
         {tab.kind === "thread" ? (
           <ConversationThread
             intro={intro}
+            latestRequest={active ? latestRequest : undefined}
             active={active}
+            shown={active}
             messageId={tab.messageId}
+            subthreadId={subthreadId}
+            sourceThreadId={subthreadId ? tab.rootId : undefined}
             navigation={navigation}
             retainThread
             tabbed
@@ -187,6 +195,7 @@ export function ConversationTab({
           <ConversationThread
             intro={intro}
             active={active}
+            shown={active}
             messageId={target}
             retainThread
             tabbed
@@ -199,6 +208,7 @@ export function ConversationTab({
           <SoloColumn enabled={soloConversation}>
             <ChannelBody
               intro={intro}
+              latestRequest={active ? latestRequest : undefined}
               viewer={session.viewer}
               cached={!!channel.cached}
               // The composer below mounts TypingIndicator for a live channel.

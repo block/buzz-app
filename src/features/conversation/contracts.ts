@@ -5,6 +5,7 @@ import type { VoiceRecording } from "../relay/voice-media";
 import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "../messages/composer-session";
+import type { OutgoingMessage } from "../messages/outgoing-message";
 
 /**
  * Opens a target, such as a plugin panel URL, where the conversation host
@@ -30,16 +31,17 @@ export type ComposerToolProps = Readonly<{
   /** Read-only: who the draft mentions, in draft order. The tool re-renders when
    * this changes; the array keeps its identity while only the prose changes. */
   recipients: readonly Readonly<{ pubkey: string; name: string }>[];
-  /** Solo, alone with agents: who hears the message. Inline mentions decide
-   * when there are any; otherwise the toolbar's agents stand in. `only`
-   * replaces those stand-ins with a non-empty list and `toggle` adds or
-   * removes one, never the last; they also follow each send. While inline
-   * mentions decide, `toggle` adds or removes that mention instead. Absent
-   * elsewhere, where mentions alone decide. */
+  /** Solo, alone with agents: who hears the message. A draft that opens with
+   * an inline mention is for whoever its mentions name; otherwise its
+   * mentions join the toolbar's agents. `only` replaces those agents with a
+   * non-empty list and `toggle` adds or removes one, never the last unless a
+   * mention remains; they also follow each send. `toggle` removes a mention
+   * from the text, and while mentions decide, `only` and `toggle` edit the
+   * mentions instead. Absent elsewhere, where mentions alone decide. */
   audience?:
     | Readonly<{
         recipients: readonly Readonly<{ pubkey: string; name: string }>[];
-        /** True while inline mentions in the text decide, so picks only change the stand-ins. */
+        /** True while inline mentions alone decide, as when the draft opens with one, so picks edit them. */
         named: boolean;
         only(
           recipients: readonly Readonly<{ pubkey: string; name: string }>[],
@@ -113,6 +115,8 @@ export type ReactionToolProps = Readonly<{
   disabled: boolean;
   /** Host-owned reaction intent; revoked when the tool or target is removed. */
   select(emoji: string): boolean;
+  /** Whether the viewer already reacted with this emoji, so selecting it removes that reaction. */
+  reacted?: ((emoji: string) => boolean) | undefined;
 }>;
 export type ComposerTool = Readonly<{
   id: string;
@@ -306,7 +310,28 @@ export type ConversationExtensions = Readonly<{
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
   annotators?: ContributionReader<ComposerAnnotator>;
+  sendGates?: ContributionReader<SendGate>;
 }>;
+/** Decides whether a message a conversation composer is about to publish
+ * goes out now. The host asks gates in contribution-key order, after the
+ * composer's own prompts and uploads; the first gate that answers true or
+ * `{ refuse }` with a non-blank reason decides. `hold` must answer at once:
+ * true keeps the message, so the host clears the draft as sent and forgets
+ * the message (save it first, then publish it later with `publish`).
+ * `{ refuse }` sends nothing: the draft stays as it is and the composer shows
+ * `refuse` as its send error. Any other answer, such as false, a blank
+ * reason, a promise or a throw, passes to the next gate, and the host
+ * publishes the message now when no gate decides. A message with a pasted
+ * forward is never offered to gates: it publishes at once, and can't be
+ * refused. */
+export type SendGate = Readonly<{
+  id: string;
+  hold(
+    message: OutgoingMessage,
+    session: RelaySession,
+  ): boolean | Readonly<{ refuse: string }>;
+}>;
+export type { OutgoingMessage };
 
 /** One document revision of the draft an annotator may mark: the projected text
  * completion providers observe, without the selection. `prose` lists its
@@ -422,6 +447,8 @@ export type CompletionSuggestion = Readonly<{
   disabled?: string | undefined;
   /** Final synchronous evidence check; false never falls through to sending. */
   canSelect?: ((key: string) => boolean) | undefined;
+  /** Bundled providers only: called once after the host inserts this choice. */
+  onSelect?: (() => void) | undefined;
 }>;
 export type CompletionResult = Readonly<{
   items: readonly CompletionSuggestion[];
@@ -433,6 +460,10 @@ export type CompletionResult = Readonly<{
   status?: string;
   /** Optional explicit recovery. A new query or disposal revokes this action. */
   retry?: () => void;
+  /** Supplements only: something in the provider's whole source, not only its
+   * shown rows, has or extends the typed name, or that source is still
+   * loading. A terminator then never accepts the winner's exact match. */
+  holdAutoSelect?: boolean;
 }>;
 export type ComposerCompletionProps = CompletionContext &
   Readonly<{
@@ -446,6 +477,14 @@ export type ComposerCompletion = Readonly<{
   id: string;
   title: string;
   order?: number;
+  /** Set only by `registerCompletionSupplement`; `registerCompletion` refuses
+   * it. Adds rows beside the provider that owns the caret when this one's match
+   * has the same `start`; never owns it, so never opens alone. Its rows sit
+   * under a host-drawn `title`, sections in `order` then key. A supplement
+   * that has published nothing holds nothing, so one whose source is still
+   * loading publishes `holdAutoSelect: true` in its mount effect, for every
+   * query. Its `spaceId`, `spacePending`, `agent` and `group` are ignored. */
+  supplement?: true;
   /** Pure syntax matcher. Host prefers the closest trigger; order/key break ties. */
   match(
     observation: ComposerObservation,
@@ -464,6 +503,8 @@ export type ComposerCompletion = Readonly<{
 export type PageTabTarget = {
   channelId: string;
   threadId?: string;
+  /** Invocation branch within threadId, for a page-owned task conversation. */
+  subthreadId?: string;
   messageId?: string;
   unreadSince?: number;
 };
@@ -473,6 +514,10 @@ export type ConversationWorkspaceProps = {
   session: RelaySession;
   scope: string;
   target: PageTabTarget;
+  /** A fresh signal opens the main transcript at its latest message once.
+   * Scope it to this opening. Omit it on history traversal. An aborted signal
+   * is ignored, and an explicit target.messageId takes precedence. */
+  latestRequest?: AbortSignal | undefined;
   label: string;
   /** Content at the start of history. It scrolls with the messages. */
   intro?: ReactNode;

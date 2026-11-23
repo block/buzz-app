@@ -50,8 +50,10 @@ import { validChannelCommand } from "./channel-commands.mjs";
 import {
   adminReason,
   claimReason,
+  inviteListPath,
   inviteRequest,
   memberCommand,
+  revokeRequest,
 } from "../src/features/communities/admin-protocol.ts";
 import {
   leaveRefusal,
@@ -266,7 +268,7 @@ function loadIdentity(authorizedViewer) {
   }
   if (!expected)
     throw new Error(
-      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See docs/contributing.md#live-relay-development.",
+      "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See CONTRIBUTING.md#run-it.",
     );
   // The installed Buzz desktop keeps its secrets blob in the OS credential
   // store under service `buzz-desktop`, username `secrets`: the macOS Keychain,
@@ -347,6 +349,9 @@ async function relayAuthority(fetch, relay) {
     channelIdentity:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-cl"),
+    soloMemberRoleUpdates:
+      Array.isArray(nip11.supported_extensions) &&
+      nip11.supported_extensions.includes("buzz-solo-member-role"),
     // NIP-AR sync: REQ with `"artifact": "current"` keeps a set current.
     artifactSync: nip11.artifacts?.sync?.version === 1,
     artifactSupport:
@@ -356,6 +361,9 @@ async function relayAuthority(fetch, relay) {
     searchSort:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("buzz-search-sort"),
+    // NIP-PM is not advertised: a relay without it refuses the commands. Its
+    // lists are verified by `self`, so without it no pin can be shown.
+    pins: nip11.self === author,
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -568,6 +576,36 @@ export function validReport(event) {
       "illegal",
       "other",
     ].includes(target[2])
+  );
+}
+/** A pin (40010) or unpin (40011): one channel and one message, as native
+ * `valid_pin_command`; the relay decides who may pin what. */
+export function validPinCommand(event) {
+  if (
+    ![40010, 40011].includes(event?.kind) ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        ["h", "e", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const named = (name) => event.tags.filter((tag) => tag[0] === name);
+  const [channel] = named("h");
+  const [target] = named("e");
+  return (
+    named("h").length === 1 &&
+    channel[1].length > 0 &&
+    channel[1].length <= 256 &&
+    named("e").length === 1 &&
+    /^[0-9a-f]{64}$/.test(target[1]) &&
+    named("client-id").length <= 1
   );
 }
 /** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
@@ -1732,6 +1770,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).artifactSupport ? [45010] : []),
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
+                ...((await getAuthority(relay)).pins ? [40010, 40011] : []),
               ],
               channelLifecycle: true,
               channelDetails: true,
@@ -2520,6 +2559,8 @@ export function relayBrokerPlugin({
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/invite",
+              "/api/relay/invites",
+              "/api/relay/invite-revoke",
               "/api/relay/member",
               "/api/relay/leave",
               "/api/relay/gifs",
@@ -2834,13 +2875,15 @@ export function relayBrokerPlugin({
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
           const invite = route === "/api/relay/invite";
+          const inviteList = route === "/api/relay/invites";
+          const revoke = route === "/api/relay/invite-revoke";
           const member = route === "/api/relay/member";
           const leave = route === "/api/relay/leave";
           const gifs = route === "/api/relay/gifs";
           const profileSearch = route === "/api/relay/profile-search";
           // Only these routes may surface an exact, allowed relay refusal.
           const refusal =
-            invite || member
+            invite || inviteList || revoke || member
               ? adminReason
               : claim
                 ? claimReason
@@ -2853,18 +2896,24 @@ export function relayBrokerPlugin({
                           body?.error,
                         )
                     : undefined;
-          if (invite || member || leave) {
+          let invitePath;
+          if (invite || inviteList || revoke || member || leave) {
             // Community-bound only; the relay remains the authority for roles.
             if (!scoped)
               return json(res, 400, { error: "Select a community first" });
             try {
               // The viewer's own leave request has one shape; the body carries nothing.
+              if (inviteList) invitePath = inviteListPath(filters);
               filters = invite
                 ? inviteRequest(filters)
-                : finalizeEvent(
-                    leave ? leaveRequestTemplate() : memberCommand(filters),
-                    key,
-                  );
+                : revoke
+                  ? revokeRequest(filters)
+                  : inviteList
+                    ? undefined
+                    : finalizeEvent(
+                        leave ? leaveRequestTemplate() : memberCommand(filters),
+                        key,
+                      );
             } catch (error) {
               return json(res, 400, { error: error.message, sent: false });
             }
@@ -3157,6 +3206,12 @@ export function relayBrokerPlugin({
                   error: "Report rejected",
                   sent: false,
                 });
+            } else if ([40010, 40011].includes(filters?.kind)) {
+              if (!validPinCommand(filters))
+                return json(res, 400, {
+                  error: "Invalid pin command",
+                  sent: false,
+                });
             } else if (filters?.kind === 20002) {
               if (!validTypingTemplate(filters))
                 return json(res, 400, {
@@ -3222,6 +3277,8 @@ export function relayBrokerPlugin({
             !claim &&
             !policy &&
             !invite &&
+            !inviteList &&
+            !revoke &&
             !member &&
             !leave &&
             !gifs &&
@@ -3271,10 +3328,13 @@ export function relayBrokerPlugin({
                 failure.refusal?.startsWith("conflict:");
               // Answer a proven validation refusal as the relay's HTTP API does,
               // 400 with its bounded text, so every publish path shows the same
-              // reason. The text goes to this client only, never to the log.
+              // reason. The text goes to this client only, never to the log. A
+              // relay without NIP-PM refuses pin commands as `restricted:`.
               if (
                 failure?.sent === false &&
-                failure.reason?.startsWith("invalid:") &&
+                (failure.reason?.startsWith("invalid:") ||
+                  ([40010, 40011].includes(filters.kind) &&
+                    failure.reason?.startsWith("restricted:"))) &&
                 !(
                   readPublishing &&
                   failure.refusal === READ_STATE_TIMESTAMP_REFUSAL
@@ -3305,6 +3365,7 @@ export function relayBrokerPlugin({
             return json(res, 404, { error: "GIF search is unavailable" });
           const upstreamPath =
             workflowPath ??
+            invitePath ??
             (gifs
               ? gifSearchPath
               : profileSearch
@@ -3317,8 +3378,10 @@ export function relayBrokerPlugin({
                       ? "/api/invites/accept-policy"
                       : invite
                         ? "/api/invites"
-                        : "/query");
-          const method = workflowPath ? "GET" : "POST";
+                        : revoke
+                          ? "/api/invites/revoke"
+                          : "/query");
+          const method = workflowPath || invitePath ? "GET" : "POST";
           const lane = admissions(relay, viewer).api;
           let releasePresence;
           if (presence) {
@@ -3336,7 +3399,8 @@ export function relayBrokerPlugin({
             });
           if (!presence) inflight.set(relay, (inflight.get(relay) ?? 0) + 1);
           try {
-            const body = workflowPath ? undefined : JSON.stringify(filters);
+            const body =
+              workflowPath || invitePath ? undefined : JSON.stringify(filters);
             const admissionStart = performance.now();
             let connectsBefore, upstreamStart;
             let response;

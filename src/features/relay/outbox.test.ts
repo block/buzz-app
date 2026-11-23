@@ -80,8 +80,11 @@ function setup(storage = memoryStorage(), timeoutMs = 10000) {
         bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
       ]);
     await flush();
-    // Resolve the author directory once so tests control only history and delivery reads.
-    const names = owner.session.profiles.ensure([viewer.pubkey]);
+    // Resolve the author directory and status once so tests control only
+    // history and delivery reads.
+    const names = owner.session.profiles.ensure([viewer.pubkey], undefined, {
+      withStatuses: true,
+    });
     wire.next().respond([
       signed(viewer, {
         kind: 0,
@@ -237,6 +240,27 @@ it("persists before publish, restores uncertain writes without auto-sending, and
   expect(second.sign).not.toHaveBeenCalled();
   expect(second.publications[0]?.event.id).toBe(event.id);
 });
+it.each([40010, 40011])(
+  "completes accepted kind %i, which the relay never echoes",
+  async (kind) => {
+    const storage = memoryStorage();
+    const first = setup(storage);
+    first.outbox.send({
+      kind,
+      content: "",
+      tags: [
+        ["h", "c"],
+        ["e", "a".repeat(64)],
+      ],
+    });
+    await first.signNext();
+    first.publications[0]?.resolve();
+    await flush();
+    expect(first.outbox.snapshot()).toEqual([]);
+    first.dispose();
+    expect(setup(storage).outbox.snapshot()).toEqual([]);
+  },
+);
 it("never publishes when durable storage fails and reports that failure on the shared event", async () => {
   const h = setup({
     load: () => [],

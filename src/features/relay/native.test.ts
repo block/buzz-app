@@ -248,6 +248,21 @@ it("reads back expired delivery with strong consistency without re-signing or pu
   ).toBe(false);
 });
 it.each([
+  [undefined, undefined],
+  [["nip-cl"], undefined],
+  ["buzz-solo-member-role", undefined],
+  [["nip-cl", "buzz-solo-member-role"], true],
+])(
+  "requires an explicit NIP-11 advertisement for Solo role updates: %o",
+  async (supported_extensions, expected) => {
+    discovery = { supported_extensions };
+    expect(
+      (await connectNativeTransport(community)).memberAdministration
+        ?.soloMemberRoleUpdates,
+    ).toBe(expected);
+  },
+);
+it.each([
   {},
   { supported_extensions: null },
   { supported_extensions: [] },
@@ -1091,6 +1106,12 @@ it("advertises purpose-bound channel capabilities and gates creation on NIP-29",
   );
 });
 
+it("offers pin commands without an advertisement", async () => {
+  expect((await connectNativeTransport(community)).writer?.kinds).toEqual(
+    expect.arrayContaining([40010, 40011]),
+  );
+});
+
 it("routes lifecycle sign/publish separately from the message writer and preserves definitive rejection", async () => {
   const transport = await connectNativeTransport(community);
   assert.exists(transport.channelLifecycle);
@@ -1631,7 +1652,10 @@ it("uploads exact bytes natively and validates the relay descriptor", async () =
 
 it.each([
   [422, { error: "metadata forbidden" }, "metadata"],
-  [415, { error: "unsupported container" }, "rejected"],
+  [415, { error: "unsupported container" }, "type"],
+  [415, { error: "disallowed content type: application/x-msdownload" }, "type"],
+  // A refusal the relay does not name as a type is not called one.
+  [415, { error: "unsupported" }, "rejected"],
   [500, "internal error", "failed"],
 ])(
   "maps relay upload status %i to a user-facing failure",
@@ -2151,14 +2175,15 @@ it("routes member administration through the native purpose-bound writer, never 
     await expect(writer.sign(event, signal)).rejects.toThrow();
   const template = memberContract.accepted[0]?.event;
   assert.exists(template);
-  const channelTag = template.tags[0];
-  assert.exists(channelTag);
-  await expect(
-    writer.sign(
-      { ...template, tags: [channelTag, ["p", viewer.pubkey]] },
-      signal,
+  const selfTarget = {
+    ...template,
+    tags: template.tags.map((tag) =>
+      tag[0] === "p" ? ["p", viewer.pubkey] : tag,
     ),
-  ).rejects.toThrow();
+  };
+  await expect(writer.sign(selfTarget, signal)).rejects.toThrow(
+    "Invalid member administration command",
+  );
   await expect(
     writer.publish(signed(relay, template), signal),
   ).rejects.toThrow();

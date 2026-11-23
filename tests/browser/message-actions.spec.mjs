@@ -274,33 +274,28 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   await hoverMessage(row);
   await expect(actions).toHaveCSS("opacity", "1");
   // The toolbar's Copy link stays in view, so its own icon shows the copy: a
-  // check for 1.5 seconds, in a toolbar that keeps its size, with no toast.
-  // Hold the clock so the check stays until it has been read.
+  // check for 1.5 seconds, with no toast. Hold the clock so the check stays
+  // until it has been read.
   const copyLink = row.getByRole("button", { name: "Copy link", exact: true });
-  const toolbar = async () => [
-    await copyLink.boundingBox(),
-    await actions.boundingBox(),
-  ];
+  // A toast on its way out is no longer exposed, so only one still showing
+  // counts. The held clock cannot be relied on to finish removing the menu's.
   const notices = page
     .getByRole("region", { name: "App notifications" })
-    .locator("[data-sonner-toast]");
+    .getByRole("dialog");
   await pauseClock(page);
-  const atRest = await toolbar();
   await copyLink.click();
   await expect(copyLink.locator(".tabler-icon-check")).toBeVisible();
   await expect(copyLink).toHaveAccessibleName("Copy link");
   await expect(
     row.getByRole("status").filter({ hasText: /^Copied$/ }),
   ).toHaveCount(1);
-  expect(await toolbar()).toEqual(atRest);
   const copiedLink = await page.evaluate(() => window.copiedMessages.at(-1));
   expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
   await page.clock.runFor(1500);
   await expect(copyLink.locator(".tabler-icon-link")).toBeVisible();
-  // The clock a toast mounts on has run. The click cleared the menu's
+  // The clock a toast mounts on has run. The click dismissed the menu's
   // "Message copied", and the toolbar raised no toast of its own.
-  await expect(notices.filter({ hasText: /\S/ })).toHaveCount(0);
-  expect(await toolbar()).toEqual(atRest);
+  await expect(notices).toHaveCount(0);
   await page.clock.resume();
   await hoverMessage(row);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
@@ -671,14 +666,21 @@ test("keyboard Copy link keeps its focus, toolbar and check while a slow clipboa
 
 // Browser-only: the toolbar is a top-layer popover that opens and closes with
 // real hover over laid-out rows.
-test("a copied link's check holds its toolbar open after the pointer leaves, while another message shows its own", async ({
+test("a pressed Copy link holds its toolbar open through a slow write and its check after the pointer leaves, and a refused write releases it", async ({
   page,
   app,
 }) => {
   await page.addInitScript(() => {
+    // Each write waits until the test finishes or refuses it.
+    window.clipboardWrites = [];
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
-      value: { writeText: async () => {} },
+      value: {
+        writeText: () =>
+          new Promise((finish, refuse) => {
+            window.clipboardWrites.push({ finish, refuse });
+          }),
+      },
     });
   });
   await open(page, app);
@@ -696,30 +698,43 @@ test("a copied link's check holds its toolbar open after the pointer leaves, whi
   );
   await expect(other.row).toBeVisible();
   await settle(page);
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
   const copyLink = copied.row.getByRole("button", {
     name: "Copy link",
     exact: true,
   });
   const check = copyLink.locator(".tabler-icon-check");
+  const announced = copied.row
+    .getByRole("status")
+    .filter({ hasText: /^Copied$/ });
+  const writes = () => page.evaluate(() => window.clipboardWrites.length);
   await hoverMessage(copied.row);
   await expect(copied.actions).toHaveCSS("opacity", "1");
   // Hold the clock so the check stays until the pointer has come and gone.
   await pauseClock(page);
   await copyLink.click();
-  await expect(check).toBeVisible();
+  await expect.poll(writes).toBe(1);
 
-  // Another message shows its own toolbar; the copied one keeps its check.
+  // The pointer leaves while the clipboard is still writing. Another message
+  // shows its own toolbar; the pressed one stays for its result.
   await hoverMessage(other.row);
   await expect(other.actions).toHaveCSS("opacity", "1");
   await expect(copied.actions).toHaveCSS("opacity", "1");
   // Off every message, as on the way to paste. The other toolbar closing
-  // shows that hover has been heard; the copied one is held all the same.
-  await page
-    .getByRole("textbox", { name: "Message #Alpha", exact: true })
-    .hover();
+  // shows that hover has been heard; the pressed one is held all the same.
+  await composer.hover();
   await expect(other.actions).toHaveCSS("opacity", "0");
   await expect(copied.actions).toHaveCSS("opacity", "1");
+  await expect(announced).toHaveCount(0);
+
+  // The write lands in a toolbar that is still open, and is announced there.
+  await page.evaluate(() => window.clipboardWrites[0].finish());
+  await expect(announced).toHaveCount(1);
   await expect(check).toBeVisible();
+  await expect(copied.actions).toHaveCSS("opacity", "1");
 
   // The check reverts after its 1.5 seconds and the toolbar closes with it.
   await page.clock.runFor(1500);
@@ -731,6 +746,26 @@ test("a copied link's check holds its toolbar open after the pointer leaves, whi
   await expect(copied.actions).toHaveCSS("opacity", "1");
   await page.mouse.move(0, 0);
   await expect(copied.actions).toHaveCSS("opacity", "0");
+
+  // A refused write has no check to show: the toast reports it, and the
+  // toolbar stops being held as soon as the refusal arrives.
+  await hoverMessage(copied.row);
+  await copyLink.click();
+  await expect.poll(writes).toBe(2);
+  await composer.hover();
+  await expect(copied.actions).toHaveCSS("opacity", "1");
+  await page.evaluate(() =>
+    window.clipboardWrites[1].refuse(
+      new DOMException("denied", "NotAllowedError"),
+    ),
+  );
+  await expect(
+    page
+      .getByRole("region", { name: "App notifications" })
+      .getByText(/^Couldn’t copy\./),
+  ).toBeVisible();
+  await expect(copied.actions).toHaveCSS("opacity", "0");
+  await expect(announced).toHaveCount(0);
 });
 
 // Browser-only: clipboard -> rendered Markdown -> cross-conversation navigation

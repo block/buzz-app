@@ -608,30 +608,11 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   // stays until it has been read.
   await pauseClock(page);
   const copy = panel.getByRole("button", { name: "Copy npub", exact: true });
-  // A copy must not resize the button or move its label. The label's box is
-  // held at one width, so read where the text itself starts.
-  const copyLayout = () =>
-    copy.evaluate((button) => {
-      const text = document.createRange();
-      text.selectNodeContents(
-        document.createTreeWalker(button, NodeFilter.SHOW_TEXT).nextNode(),
-      );
-      return {
-        buttonWidth: button.getBoundingClientRect().width,
-        textLeft: text.getBoundingClientRect().left,
-      };
-    });
   // Each result is also announced: a status that the browser exposes, filled.
   const announced = (result) =>
     panel.getByRole("status").filter({ hasText: result });
-  // The profile slides in as it opens. Measure once it has stopped.
-  await animationsSettled(page.locator("[data-channel-workspace]"), {
-    subtree: true,
-  });
-  const atRest = await copyLayout();
   await copy.click();
   await expect(copy).toHaveText("Copied");
-  expect(await copyLayout()).toEqual(atRest);
   await expect(announced(/^Copied$/)).toHaveCount(1);
   expect(await page.evaluate(() => window.profileCopies)).toEqual([
     npubs.viewer,

@@ -226,9 +226,11 @@ function MessageActionBarControls({
     children ? undefined : rowRef,
     barRef,
     slotRef,
-    // A copied link's check holds the bar open as its menu does, so the check
-    // is seen out wherever the pointer or focus goes next.
-    open || toolbarLink.copied,
+    // The bar's own Copy link holds it open as its menu does, from the press
+    // until the check reverts, so a slow write's result lands in an open bar
+    // and is seen out wherever the pointer or focus goes meanwhile. A refused
+    // write releases it: the toast reports that. A menu copy never holds it.
+    open || toolbarLink.pending || toolbarLink.copied,
   );
   const [copying, setCopying] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean }>();

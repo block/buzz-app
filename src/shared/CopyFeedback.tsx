@@ -13,11 +13,14 @@ const results = {
  * how it ended, or to nothing once a newer attempt has begun, so a control
  * that reports a refusal elsewhere reports only the latest. Pass
  * `reportsRefusal` where the button itself shows a refusal; elsewhere `failed`
- * stays false. `status` is the control's `CopyStatus`, to render beside its
- * button: nothing until the first attempt, then in place for good, so a page
- * that copies nothing gains no status. */
+ * stays false. `pending` is true from an attempt's start until its result.
+ * `status` is the control's `CopyStatus`: render it beside the button, with
+ * the button, so it is in the page, empty, before the first copy can fill
+ * it. */
 export function useCopyFeedback({ reportsRefusal = false } = {}) {
-  const [outcome, setOutcome] = useState<keyof typeof results | "none">();
+  const [outcome, setOutcome] = useState<
+    keyof typeof results | "pending" | "none"
+  >("none");
   const generation = useRef(0);
   useEffect(() => {
     if (outcome !== "copied") return;
@@ -29,9 +32,8 @@ export function useCopyFeedback({ reportsRefusal = false } = {}) {
   return {
     copied,
     failed,
-    status: outcome !== undefined && (
-      <CopyStatus copied={copied} failed={failed} />
-    ),
+    pending: outcome === "pending",
+    status: <CopyStatus copied={copied} failed={failed} />,
     copy(write: () => unknown) {
       const current = ++generation.current;
       const settle = (next: keyof typeof results) => () => {
@@ -39,7 +41,7 @@ export function useCopyFeedback({ reportsRefusal = false } = {}) {
         setOutcome(next);
         return next;
       };
-      setOutcome("none");
+      setOutcome("pending");
       return new Promise((written) => written(write())).then(
         settle("copied"),
         settle("failed"),
@@ -91,9 +93,10 @@ export function CopyLabel({
 }
 
 /** Repeats a copy control's result for assistive technology, beside a button
- * whose name does not change. It must be in place, empty, before the result
- * fills it: render the `status` that `useCopyFeedback` hands back, or keep
- * this mounted with the control. */
+ * whose name does not change. It must be in the page, empty, before the
+ * button can be pressed, or a fast copy fills a region nothing is listening
+ * to yet: render the `status` that `useCopyFeedback` hands back, with the
+ * button. */
 export function CopyStatus({
   copied,
   failed = false,

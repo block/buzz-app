@@ -164,9 +164,9 @@ for (const theme of ["light", "dark"]) {
     await page.keyboard.press(tabKey(browserName));
     await expect(receivedLink).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(received.getByRole("status")).toContainText(
-      "Sample link selected",
-    );
+    await expect(
+      received.getByRole("status").filter({ hasText: "Sample link selected" }),
+    ).toBeVisible();
     await page
       .getByRole("button", { name: "Narrow preview", exact: true })
       .click();
@@ -214,7 +214,9 @@ test("long links wrap inside their bubble in a narrow pane", async ({
   await long.screenshot({ path: info.outputPath("long-links.png") });
   // A wrapped link still opens its destination.
   await links.first().click();
-  await expect(long.getByRole("status")).toContainText("Sample link selected");
+  await expect(
+    long.getByRole("status").filter({ hasText: "Sample link selected" }),
+  ).toBeVisible();
 });
 
 test("file anchors and native download buttons stay readable and keyboard reachable", async ({

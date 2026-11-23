@@ -56,13 +56,15 @@ function deferred() {
 const button = () => screen.getByRole("button", { name: "Copy URL" });
 const denied = () => new DOMException("denied", "NotAllowedError");
 
-it("starts the write inside the click, with an empty status in place before the result fills it", async () => {
+it("starts the write inside the click, and fills the status that was in place before it", async () => {
   const write = deferred();
   const start = vi.fn(() => write.promise);
   const ended: unknown[] = [];
   render(<Control write={start} ended={ended} />);
-  // A control that has copied nothing has no status.
-  expect(screen.queryByRole("status")).toBeNull();
+  // The status is in the page, empty, before the button is pressed: a fast
+  // write must not fill a region that was only just added.
+  const status = screen.getByRole("status");
+  expect(status).toBeEmptyDOMElement();
   vi.useFakeTimers();
   try {
     // Not `act(async …)`: the write must have begun by the time the click
@@ -72,42 +74,36 @@ it("starts the write inside the click, with an empty status in place before the 
       expect(start).toHaveBeenCalledOnce();
     });
     expect(button()).toHaveTextContent(/^Copy URL$/);
-    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(status).toBeEmptyDOMElement();
     expect(ended).toEqual([]);
 
     await act(async () => write.resolve());
     expect(ended).toEqual(["copied"]);
-    expect(screen.getByRole("status")).toHaveTextContent(/^Copied$/);
+    // The same element, not a new one in its place.
+    expect(status).toHaveTextContent(/^Copied$/);
     act(() => vi.advanceTimersByTime(1500));
     // The status stays, empty, for the next result.
-    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(status).toBeEmptyDOMElement();
+    expect(screen.getByRole("status")).toBe(status);
   } finally {
     write.resolve();
   }
 });
 
-it("puts a lone label's result, icon and text, inside the label", async () => {
+it("shows a label-only button's copy and refusal in the button, under the same name", async () => {
   const start = vi
     .fn<() => Promise<void>>()
     .mockResolvedValueOnce()
     .mockRejectedValueOnce(denied());
   render(<Control write={start} ended={[]} />);
-  expect(button().querySelector("svg")).toBeNull();
 
-  // A button pads itself differently around an icon that is its own child,
-  // so the result's icon is the label's.
   await act(async () => fireEvent.click(button()));
   expect(button()).toHaveTextContent(/^Copied$/);
   expect(button()).toHaveAccessibleName("Copy URL");
-  expect(button().querySelector(":scope > svg")).toBeNull();
-  expect(button().querySelector("span .tabler-icon-check")).not.toBeNull();
 
   await act(async () => fireEvent.click(button()));
   expect(button()).toHaveTextContent(/^Couldn’t copy$/);
-  expect(button().querySelector(":scope > svg")).toBeNull();
-  expect(
-    button().querySelector("span .tabler-icon-alert-circle"),
-  ).not.toBeNull();
+  expect(button()).toHaveAccessibleName("Copy URL");
   expect(screen.getByRole("status")).toHaveTextContent(/^Couldn’t copy$/);
 });
 

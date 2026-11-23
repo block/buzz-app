@@ -1151,7 +1151,7 @@ it("shows a forwarding problem before submission and offers a working Copy link"
   expect(copy).toHaveTextContent(/^Copied$/);
   expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
   expect(copy).toHaveAccessibleName("Copy link");
-  expect(copyStatus()).toHaveTextContent(/^Copied$/);
+  expect(copyStatus()).toBe("Copied");
   act(() => vi.advanceTimersByTime(1499));
   expect(copy).toHaveTextContent(/^Copied$/);
   // The clock a toast mounts on has run: the button and its status are all.
@@ -1159,7 +1159,7 @@ it("shows a forwarding problem before submission and offers a working Copy link"
   expect(document.querySelector("[data-sonner-toast]")).toBeNull();
   act(() => vi.advanceTimersByTime(1));
   expect(copy).toHaveTextContent(/^Copy link$/);
-  expect(copyStatus()).toBeEmptyDOMElement();
+  expect(copyStatus()).toBe("");
   // Reading the clipboard back takes the real clock.
   vi.useRealTimers();
   expect(await navigator.clipboard.readText()).toBe(
@@ -1168,11 +1168,13 @@ it("shows a forwarding problem before submission and offers a working Copy link"
 });
 
 const pasteHint = "Paste the copy in any message box to forward it.";
-/** The status of the one copy button pressed so far. */
+/** Everything the dialog's copy statuses say. Each copy button shown has one,
+ * and only the one pressed speaks. */
 const copyStatus = () =>
-  within(screen.getByRole("dialog", { name: "Forward message" })).getByRole(
-    "status",
-  );
+  within(screen.getByRole("dialog", { name: "Forward message" }))
+    .getAllByRole("status")
+    .map((status) => status.textContent)
+    .join("");
 /** A clipboard that takes the rich copy Copy as forward writes. */
 function richClipboard(write: () => Promise<void>) {
   vi.stubGlobal(
@@ -1203,7 +1205,7 @@ it("shows a copied forward in the Copy as forward button, beside the standing pa
   expect(copy).toHaveTextContent(/^Copied$/);
   expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();
   expect(copy).toHaveAccessibleName("Copy as forward");
-  expect(copyStatus()).toHaveTextContent(/^Copied$/);
+  expect(copyStatus()).toBe("Copied");
 
   act(() => vi.advanceTimersByTime(1499));
   expect(copy).toHaveTextContent(/^Copied$/);
@@ -1213,7 +1215,7 @@ it("shows a copied forward in the Copy as forward button, beside the standing pa
   act(() => vi.advanceTimersByTime(1));
   expect(copy).toHaveTextContent(/^Copy as forward$/);
   expect(copy.querySelector("svg")).toBeNull();
-  expect(copyStatus()).toBeEmptyDOMElement();
+  expect(copyStatus()).toBe("");
   expect(screen.getByText(pasteHint)).toBeVisible();
 });
 
@@ -1248,5 +1250,5 @@ it("reports a refused Copy as forward in a toast, and leaves the button's label 
   );
   expect(refusal.closest(".buzz-toast")).not.toBeNull();
   expect(copy).toHaveTextContent(/^Copy as forward$/);
-  expect(copyStatus()).toBeEmptyDOMElement();
+  expect(copyStatus()).toBe("");
 });

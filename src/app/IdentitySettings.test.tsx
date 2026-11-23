@@ -205,7 +205,6 @@ it("shows a copied Buzz ID in the badge's Copy button, and keeps a refusal's not
   } as unknown as Clipboard);
   render(<IdentitySettings viewer={viewer} />, { wrapper: ToastProvider });
   const copy = screen.getByRole("button", { name: "Copy Buzz ID" });
-  expect(screen.queryByRole("status")).toBeNull();
   // Only the timers: with the clock faked too, this test leaves it ahead of
   // the real one, and the tests after it fail to open their menus.
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -383,9 +382,9 @@ it("shows a renewal in progress with a Cancel that ends only the browser step", 
   });
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Renew sign-in" }));
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Finish in your browser",
-  );
+  expect(
+    screen.getByText("Finish in your browser", { selector: '[role="status"]' }),
+  ).toBeVisible();
   expect(screen.queryByRole("button", { name: "Renew sign-in" })).toBeNull();
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
@@ -538,9 +537,9 @@ it("shows a renewal that native reports as waiting, after the page reopens", asy
   render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
     wrapper: ToastProvider,
   });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Finish in your browser",
-  );
+  expect(
+    screen.getByText("Finish in your browser", { selector: '[role="status"]' }),
+  ).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
   expect(h.service.cancelSignIn).toHaveBeenCalledOnce();
   expect(

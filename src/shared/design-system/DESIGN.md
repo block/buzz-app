@@ -109,13 +109,14 @@ A new copy button that stays in view shows a copy that works in the button
 itself, for 1.5 seconds, and raises no toast: a labelled button's label becomes
 a check and “Copied” without changing width, and an icon button's icon becomes a
 check. The button keeps its accessible name, and a screen-reader status beside
-it says “Copied”. Build these from `useCopyFeedback`, which hands back that
-status, and `CopyLabel`, in `src/shared/CopyFeedback.tsx`.
+it says “Copied”. That status is in the page, empty, as soon as the button is.
+Build these from `useCopyFeedback`, which hands back that status, and
+`CopyLabel`, in `src/shared/CopyFeedback.tsx`.
 
 - Keep the button focusable while the copy is pending
   (`focusableWhenDisabled`), so focus, and a surface that follows it, stays.
 - A surface that closes when the pointer or focus leaves, such as floating
-  message actions, stays open until the check reverts.
+  message actions, stays open from the press until the check reverts.
 - Words a person needs after the copy, such as where to paste it, stay beside
   the button whenever it can be pressed. A result that needs a sentence, such
   as text cut at a limit, goes on a line of its own, so no control moves.

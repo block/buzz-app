@@ -87,7 +87,9 @@ it("saves an explicit device name and resets to the default without changing the
   expect(input).toHaveAttribute("placeholder", "Published");
   await user.type(input, "Work");
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(screen.getByRole("status")).toHaveTextContent("saved on this device");
+  expect(
+    screen.getByText(/saved on this device/, { selector: '[role="status"]' }),
+  ).toBeVisible();
   expect(communities.snapshot().memberships[0]?.localName).toBe("Work");
   await user.click(screen.getByRole("button", { name: "Reset name" }));
   expect(input).toHaveValue("");
@@ -108,7 +110,7 @@ it("retains the draft when storage is denied and lets the same Save retry", asyn
     });
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(screen.getByRole("alert")).toHaveTextContent("Couldn’t save");
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByText(/saved on this device/)).toBeNull();
   expect(input).toHaveValue("Work");
   expect(communities.snapshot().memberships[0]?.localName).toBeUndefined();
   write.mockRestore();

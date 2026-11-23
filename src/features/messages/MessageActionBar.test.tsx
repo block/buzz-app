@@ -785,8 +785,6 @@ it("shows the toolbar's copied link as a check in its button for 1.5 seconds, wi
   const write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
   render(<MessageActionBar link="buzz://link" copyText={() => "Hello"} />);
   const link = screen.getByRole("button", { name: "Copy link" });
-  // A message that copies nothing adds no status to its conversation.
-  expect(screen.queryByRole("status")).toBeNull();
   vi.useFakeTimers();
   await act(async () => fireEvent.click(link));
   expect(write).toHaveBeenCalledExactlyOnceWith("buzz://link");

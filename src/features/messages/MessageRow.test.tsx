@@ -1028,8 +1028,11 @@ it.each([undefined, { width: 640, height: 400 }])(
       expect(view.container.querySelector("img, canvas, a[href]")).toBeNull();
       expect(screen.queryByText("Image unavailable")).not.toBeInTheDocument();
       view.rerender(show(false));
-      const unavailable = screen.getByRole("status");
-      expect(unavailable).toHaveTextContent("Image unavailable");
+      // The row's toolbar keeps an empty status of its own.
+      const unavailable = screen
+        .getAllByRole("status")
+        .find((status) => status.textContent === "Image unavailable");
+      expect(unavailable).toBeDefined();
       if (dimensions)
         expect(unavailable).toHaveStyle({
           width: "360px",

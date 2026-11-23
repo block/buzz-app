@@ -413,7 +413,10 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       );
     await expect(history.locator("[data-message-id]")).toHaveCount(62);
     // Loading belongs to history; the composer retains its live region idle.
-    await expect(history.getByRole("status")).toHaveCount(0);
+    // A message's toolbar keeps an empty status for its copy; none speaks.
+    await expect(
+      history.getByRole("status").filter({ hasText: /\S/ }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Load more replies", exact: true }),
     ).toHaveCount(0);

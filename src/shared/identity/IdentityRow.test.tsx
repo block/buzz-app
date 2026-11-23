@@ -41,7 +41,6 @@ it("previews on hover and shows a copy of the full npub in its button, with no t
   expect(card).toHaveTextContent(npubEncode(pubkey));
   expect(trigger).toHaveAttribute("aria-details", card.id);
   const copy = screen.getByRole("button", { name: "Copy npub" });
-  expect(within(card).queryByRole("status")).toBeNull();
   vi.useFakeTimers();
   await act(async () => fireEvent.click(copy));
   expect(write).toHaveBeenCalledExactlyOnceWith(npubEncode(pubkey));

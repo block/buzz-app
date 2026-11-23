@@ -264,9 +264,11 @@ it.each([
       }
       expect(publish).toHaveBeenCalledOnce();
       if (!outcome.endsWith("while hidden")) {
-        expect(screen.getByRole("status").textContent).toContain(
-          "Submitting report",
-        );
+        expect(
+          screen.getByText(/Submitting report/, {
+            selector: '[role="status"]',
+          }),
+        ).toBeDefined();
         await act(async () =>
           settle(
             outcome === "success" ? undefined : new PublishRejected("blocked"),

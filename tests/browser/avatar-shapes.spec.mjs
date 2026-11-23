@@ -167,7 +167,9 @@ test("representative avatars preserve identity, inset artwork and profile contro
   const button = page.getByRole("button", { name: "View Agent profile" });
   await button.hover();
   await button.click();
-  await expect(page.getByRole("status")).toHaveText("Profile opened");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Profile opened" }),
+  ).toBeVisible();
   await expect(button).toHaveCSS("outline-style", "none");
   await page.getByRole("button", { name: "Before avatars" }).focus();
   // Safari on macOS uses Option-Tab to include all controls, like the other focus journeys.
@@ -182,7 +184,9 @@ test("representative avatars preserve identity, inset artwork and profile contro
   await expect(button).toHaveCSS("clip-path", "none");
   await expect(button).toHaveCSS("overflow", "visible");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("status")).toHaveText("Profile opened");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Profile opened" }),
+  ).toBeVisible();
   // Shape clips artwork, never the agent-first thread-summary control (#342).
   const thread = page.getByRole("button", { name: "View thread: 2 replies" });
   await expect(thread).toHaveCSS("mask-image", "none");

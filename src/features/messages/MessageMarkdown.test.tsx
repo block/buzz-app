@@ -1308,8 +1308,6 @@ describe("code block copy", () => {
       wrapper: ToastProvider,
     });
     const copy = screen.getByRole("button", { name: "Copy code block" });
-    // A message that copies nothing adds no status to its conversation.
-    expect(screen.queryByRole("status")).toBeNull();
     vi.useFakeTimers();
     await act(async () => fireEvent.click(copy));
     expect(copy.querySelector(".tabler-icon-check")).not.toBeNull();

@@ -1,6 +1,7 @@
 import { nativeHookOutput } from "../hook-output";
 import {
   hookedToolName,
+  missingToolPolicyDenial,
   nativeToolDenial,
 } from "../../features/agents/tool-access";
 import { CLAUDE_HOOK_EVENTS } from "./hooks";
@@ -139,12 +140,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const configured = agents
         .snapshot()
         .running.find((item) => item.key === agent);
-      const denied = nativeToolDenial(
-        "claude",
-        event,
-        hookedToolName(input) ?? "",
-        configured?.config,
-      );
+      const name = hookedToolName(input) ?? "";
+      const denied = configured
+        ? nativeToolDenial("claude", event, name, configured.config)
+        : missingToolPolicyDenial("claude", event, name);
       if (denied) return denied;
       return ((await agents.dispatchHook(
         typeKey,

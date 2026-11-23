@@ -1,6 +1,7 @@
 import { nativeHookOutput } from "../hook-output";
 import {
   hookedToolName,
+  missingToolPolicyDenial,
   nativeToolDenial,
 } from "../../features/agents/tool-access";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
@@ -72,12 +73,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
             const configured = ctx.agents
               .snapshot()
               .running.find((item) => item.key === agent);
-            const denied = nativeToolDenial(
-              "codex",
-              event,
-              hookedToolName(input) ?? "",
-              configured?.config,
-            );
+            const name = hookedToolName(input) ?? "";
+            const denied = configured
+              ? nativeToolDenial("codex", event, name, configured.config)
+              : missingToolPolicyDenial("codex", event, name);
             if (denied) return denied;
             return ((await ctx.agents.dispatchHook(
               typeKey,

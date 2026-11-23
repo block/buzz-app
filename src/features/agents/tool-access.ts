@@ -247,8 +247,7 @@ export function isBuzzNativeTool(name: string) {
   return (
     normalized.startsWith("buzz_") ||
     normalized.startsWith("buzz.") ||
-    normalized.includes("mcp__buzz") ||
-    normalized.includes("__buzz__")
+    normalized.startsWith("mcp__buzz__")
   );
 }
 
@@ -376,15 +375,11 @@ export function nativeToolAllowed(
   }
 }
 
-/** Native hook output in the selected harness's existing trusted format. */
-export function nativeToolDenial(
+const nativeDenial = (
   harness: "claude" | "codex" | "pi",
   event: string,
-  name: string,
-  config: ToolConfig | ToolPolicy | unknown,
-): Record<string, unknown> | undefined {
-  if (!name || nativeToolAllowed(name, config)) return undefined;
-  const reason = `${name} is disabled by this agent's Tools setting (${nativeCapability(name)}).`;
+  reason: string,
+) => {
   if (harness === "pi") return { block: reason };
   return {
     hookSpecificOutput: {
@@ -393,6 +388,36 @@ export function nativeToolDenial(
       permissionDecisionReason: reason,
     },
   };
+};
+
+/** Native hook output in the selected harness's existing trusted format. */
+export function nativeToolDenial(
+  harness: "claude" | "codex" | "pi",
+  event: string,
+  name: string,
+  config: ToolConfig | ToolPolicy | unknown,
+): Record<string, unknown> | undefined {
+  if (!name || nativeToolAllowed(name, config)) return undefined;
+  return nativeDenial(
+    harness,
+    event,
+    `${name} is disabled by this agent's Tools setting (${nativeCapability(name)}).`,
+  );
+}
+
+/** Full access is the compatibility default for saved configs, never for a
+ * running native call whose agent config disappeared from the live snapshot. */
+export function missingToolPolicyDenial(
+  harness: "claude" | "codex" | "pi",
+  event: string,
+  name: string,
+) {
+  if (!name) return;
+  return nativeDenial(
+    harness,
+    event,
+    `${name} is disabled because this agent's live Tools setting is unavailable.`,
+  );
 }
 
 /** Goose's actual developer tools. Every real name goes through the same

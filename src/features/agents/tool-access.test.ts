@@ -3,6 +3,7 @@ import {
   buzzToolAllowed,
   goosePlatform,
   hookedToolName,
+  missingToolPolicyDenial,
   nativeCapability,
   nativeToolAllowed,
   nativeToolDenial,
@@ -119,6 +120,15 @@ it("never mistakes Buzz MCP tools for unknown native tools", () => {
   expect(
     nativeToolAllowed("mcp__other__read_file", { toolPreset: "research" }),
   ).toBe(false);
+  expect(
+    nativeToolAllowed("mcp__buzzfeed__write", { toolPreset: "research" }),
+  ).toBe(false);
+  expect(
+    nativeToolAllowed("mcp__other__buzz__write", { toolPreset: "research" }),
+  ).toBe(false);
+  expect(nativeToolAllowed("mcp__buzz__send", { toolPreset: "chat" })).toBe(
+    true,
+  );
 });
 
 it("returns native denials only for tool events and in each harness shape", () => {
@@ -146,6 +156,23 @@ it("returns native denials only for tool events and in each harness shape", () =
   expect(hookedToolName({ tool_name: "Bash" })).toBe("Bash");
   expect(hookedToolName({ call: { name: "bash" } })).toBe("bash");
   expect(hookedToolName({ name: "read" })).toBe("read");
+});
+
+it("fails closed when a running agent's live policy is unavailable", () => {
+  expect(missingToolPolicyDenial("pi", "policy", "bash")).toEqual({
+    block:
+      "bash is disabled because this agent's live Tools setting is unavailable.",
+  });
+  for (const harness of ["claude", "codex"] as const)
+    expect(
+      missingToolPolicyDenial(harness, "PreToolUse", "Bash"),
+    ).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+      },
+    });
+  expect(missingToolPolicyDenial("pi", "SessionStart", "")).toBeUndefined();
 });
 
 it("maps Goose's actual tools and never uses an empty allow-all tool list", () => {

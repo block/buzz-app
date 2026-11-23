@@ -3453,6 +3453,8 @@ export function createRelaySession(
     /** The relay advertises NIP-AR sync: `artifacts.sync` can give a complete
      * set. */
     artifactSync: transport?.artifactSync === true,
+    /** The largest set one NIP-AR sync serves, as the relay advertises it. */
+    artifactSyncMaxEvents: transport?.artifactSyncMaxEvents,
     /** NIP-AR sync: an exact, kept-current set of current artifacts for a
      * filter that names its channels with `#h`. Status `unsupported` means
      * this relay has no sync; use read() with `artifact: "current"` instead.

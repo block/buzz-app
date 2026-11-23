@@ -22,6 +22,7 @@ import { fakeSpawn } from "./goose-testing";
 import { type Config, DEFAULT_CONFIG, type GooseRuntime } from "./runtime";
 import { GooseSetup } from "./setup";
 import { createTabs } from "./tabs";
+import { LIVE_READ_MS } from "../../features/agents/TranscriptPanel";
 import { GooseHistory } from "./transcript";
 import { localSessions } from "./sessions";
 import {
@@ -535,6 +536,59 @@ it("offers Create agent a Thinking row with goose's levels for the chosen model"
   );
 });
 
+it("reads Thinking levels for a chosen model when goose's config names a provider but no model", async () => {
+  const fake = fakeSpawn({
+    providers: PROVIDERS,
+    defaults: { providerId: "databricks" },
+    thinking: { "plain-model": { current: "low", levels: ["low", "high"] } },
+  });
+  // A setup each, so neither reads the levels the other cached.
+  const { CreateThinking } = createTabs({
+    setup: new GooseSetup(fake),
+    ...unused,
+  });
+  const { SettingsTab } = createTabs({
+    setup: new GooseSetup(fake),
+    ...unused,
+  });
+  if (!CreateThinking) throw new Error("no Thinking field");
+  const config = { ...DEFAULT_CONFIG, model: "plain-model" };
+  const { unmount } = render(
+    <CreateThinking config={config} disabled={false} onChange={() => {}} />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent("Low · Default"),
+  );
+  unmount();
+  render(
+    <SettingsTab
+      agent={
+        {
+          key: "c".repeat(64),
+          pubkey: "c".repeat(64),
+          name: "Gander",
+          type: "buzz.goose/goose",
+          owner: "a".repeat(64),
+          config,
+        } as Agent<Config>
+      }
+      save={async () => undefined}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("combobox", { name: "Thinking" }),
+    ).toHaveTextContent(/^Low$/),
+  );
+  expect(screen.queryByText(/Could not read goose's levels/)).toBeNull();
+  const opened = fake.geese.flatMap((goose) => goose.opened);
+  expect(opened.length).toBeGreaterThanOrEqual(2);
+  for (const params of opened)
+    expect(params._meta).toMatchObject({ provider: "databricks" });
+});
+
 it("says when Create agent's Thinking cannot read goose's levels, and tries again", async () => {
   let fail = true;
   const fake = fakeSpawn({
@@ -929,8 +983,10 @@ function activity(
       const [channelId = key, root] = key.split("/");
       return { channelId, ...(root ? { root } : {}) };
     },
+    folders: () => new Map<string, string>(),
     channelLabel: (_: string, id: string) =>
       world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
+    notices: () => new Map(),
     prompts: () => ({
       shown: (turns: unknown) => turns,
       sessions: () =>
@@ -990,8 +1046,51 @@ it("lists the agent's saved conversations and reads one's transcript by id, with
   expect(
     await screen.findByText("Hi from goose", { selector: "summary span" }),
   ).toBeInTheDocument();
-  expect(screen.getAllByText(/@Gander what's up\?/).length).toBeGreaterThan(0);
+  await user.click(screen.getByText("Request", { selector: "summary span" }));
+  expect(
+    await screen.findByText(/@Gander what's up\?/, { selector: "p" }),
+  ).toBeVisible();
   expect(listings(fake)).toEqual([]);
+});
+
+it("shows the window notice when a live session grows from 50 to 51 turns", async () => {
+  const prompt = (n: number) => ({
+    role: "user",
+    created: n,
+    content: [{ type: "text", text: `Request ${n}` }],
+  });
+  const conversation = Array.from({ length: 50 }, (_, i) => prompt(i + 1));
+  const fake = fakeSpawn({
+    history: [
+      {
+        sessionId: "s1",
+        title: "Session",
+        cwd: "/w",
+        updatedAt: "",
+        conversation,
+      },
+    ],
+  });
+  const key = `chan/${ROOT}`;
+  const notice = "Showing the latest 50 turns.";
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  try {
+    activity(fake, {
+      saved: [{ key, at: 1, sessions: ["s1"] }],
+      live: [{ key, at: 1, busy: true, sessionId: "s1" }],
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^View transcript/ }));
+    });
+    expect(screen.getAllByRole("article")).toHaveLength(50);
+    expect(screen.queryByText(notice)).toBeNull();
+    conversation.push(prompt(51));
+    await act(async () => vi.advanceTimersByTimeAsync(LIVE_READ_MS));
+    expect(screen.getByText(notice)).toBeVisible();
+    expect(screen.getAllByRole("article")).toHaveLength(50);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("finds a conversation with no saved session by its goose tags", async () => {
@@ -1040,6 +1139,35 @@ it("cancels reading goose's history when Activity is left", async () => {
   expect(signal?.aborted).toBe(false);
   unmount();
   expect(signal?.aborted).toBe(true);
+});
+
+it("reads a transcript with the agent's fallback notices", async () => {
+  const fake = gooseHistory();
+  const history = new GooseHistory(fake);
+  const transcript = vi.spyOn(history, "transcript");
+  const notices = new Map([["turn", "Ran without the agent gateway."]]);
+  activity(
+    fake,
+    {
+      saved: [{ key: `chan/${ROOT}`, at: 1, sessions: ["s1"] }],
+      runtime: { notices: () => notices },
+    },
+    history,
+  );
+  await userEvent.setup().click(
+    screen.getByRole("button", {
+      name: "View transcript: chan · thread 11111111",
+    }),
+  );
+  await waitFor(() =>
+    expect(transcript).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.any(Function),
+      expect.any(Boolean),
+      notices,
+    ),
+  );
 });
 
 it("lists conversations by channel name, with running and standalone sessions, one row each", async () => {

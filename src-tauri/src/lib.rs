@@ -1,3 +1,4 @@
+mod app_navigation;
 mod archive;
 #[cfg(test)]
 mod build_resources;
@@ -22,6 +23,7 @@ use browser::{
 };
 mod agent_state;
 mod app_agents;
+mod build_identity;
 mod decisions;
 mod deep_links;
 mod dock;
@@ -97,6 +99,7 @@ use repositories_folder::{repositories_folder_list, repositories_folder_validate
 mod relaunch;
 mod relay;
 mod relay_admin;
+mod saved_downloads;
 mod sign_out;
 mod system_clock;
 use identity::{
@@ -136,7 +139,8 @@ use host_files::{
 };
 use host_forward::{
     plugin_host_forward_admission, plugin_host_forward_associate, plugin_host_forward_close,
-    plugin_host_forward_open, plugin_host_forward_seal, HostForward,
+    plugin_host_forward_open, plugin_host_forward_register_child, plugin_host_forward_seal,
+    HostForward,
 };
 use host_mcp::{
     plugin_host_mcp_authorize, plugin_host_mcp_close, plugin_host_mcp_pairing,
@@ -366,7 +370,29 @@ async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
     upload: Option<FolderUpload>,
+    path: Option<String>,
+    check_only: Option<bool>,
 ) -> Result<Option<Preview>, String> {
+    // An agent's request names the folder instead of the picker; the folder
+    // reader's checks apply unchanged, and the owner reviews it before install.
+    if let Some(path) = path {
+        let folder = std::path::PathBuf::from(&path);
+        if !folder.is_absolute() || path.chars().any(char::is_control) {
+            return Err("Enter an absolute folder path".into());
+        }
+        if check_only == Some(true) {
+            // Checks must never lock or replace Add's preview.
+            return tauri::async_runtime::spawn_blocking(move || {
+                prepare_folder(&folder).map(|prepared| Some(prepared.preview))
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        return prepare_import(imports.inner().clone(), move || {
+            prepare_folder(&folder).map(Some)
+        })
+        .await;
+    }
     prepare_import(imports.inner().clone(), move || {
         if let Some(upload) = upload {
             return prepare_upload(upload).map(Some);
@@ -776,6 +802,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::socket::relay_socket_close,
         draft_diagnostics::draft_diagnostics_save,
         web_inspector::web_inspector,
+        build_identity::get_build_identity,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,
@@ -816,6 +843,11 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_cancel,
         file_download,
         media_download,
+        relay::media_cache_clear,
+        relay::media_cache_forget,
+        relay::media_cache_usage,
+        saved_downloads::media_download_status,
+        saved_downloads::media_download_open,
         media_copy_image,
         media_lift_subject,
         subject_lift::media_lift_subject_supported,
@@ -863,6 +895,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_forward_admission,
         plugin_host_forward_open,
         plugin_host_forward_associate,
+        plugin_host_forward_register_child,
         plugin_host_forward_seal,
         plugin_host_forward_close,
         plugin_host_read_file,
@@ -998,7 +1031,7 @@ pub fn run() {
             },
         )
         .and_then(|instance| {
-            sign_out::forget_signed_out_key(&instance, identity::remove_current_key)
+            sign_out::forget_signed_out_key(&instance, &paths, identity::remove_current_key)
                 .map(|()| instance)
         })
         .unwrap_or_else(|message| sign_out::exit_with(&message))
@@ -1031,6 +1064,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(app_navigation::init())
         .manage(federated_identity.clone())
         .manage(federated_identity::access::Registrations::default())
         .manage(federated_identity::socket::Sockets::default())
@@ -1110,6 +1144,12 @@ pub fn run() {
             }
             deep_links::setup(app.handle());
             mesh_compute::setup(app.handle());
+            app.manage(relay::MediaCache::new(
+                app.path()
+                    .app_cache_dir()
+                    .ok()
+                    .map(|path| path.join(relay::MEDIA_CACHE_DIR)),
+            ));
             app.manage(relay::Spools::new(
                 app.path()
                     .app_cache_dir()
@@ -1277,6 +1317,7 @@ pub fn run() {
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
         .manage(HuddleWindow::default())
+        .manage(saved_downloads::SavedDownloads::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())

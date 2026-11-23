@@ -28,8 +28,9 @@ import {
 } from "../../features/relay/session";
 import type { RelayData } from "../../features/relay/service";
 import { matchesEvent } from "../../features/relay/projection";
-import type { RelayEvent } from "../../features/relay/events";
+import type { ReadFilter, RelayEvent } from "../../features/relay/events";
 import {
+  bounds,
   keypair,
   metadata,
   roster,
@@ -45,6 +46,7 @@ import { ChannelsPage } from "./ChannelsPage";
 import type { CommunityMembership } from "../moderation/membership";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { BrowserHostView } from "../../features/browser/BrowserHostView";
+import { UploadError } from "../../features/relay/attachments";
 import { BrowserSessions } from "../../features/browser/sessions";
 import type { BrowserPlatform } from "../../features/browser/platform";
 
@@ -67,6 +69,28 @@ vi.mock("./ChannelBody", async (original) => {
 
 composerDOMFixture();
 
+/** The relay's answer: matching events, and each history page's bounds. */
+function relayQuery(
+  authority: ReturnType<typeof keypair>,
+  events: readonly RelayEvent[],
+  filters: readonly ReadFilter[],
+) {
+  return [
+    ...events.filter((event) =>
+      filters.some((filter) => matchesEvent(event, filter)),
+    ),
+    ...filters.flatMap((filter) =>
+      filter.top_level
+        ? (filter["#h"] ?? []).map((channel) =>
+            bounds(authority, channel, "head", {
+              has_more: false,
+              next_cursor: null,
+            }),
+          )
+        : [],
+    ),
+  ];
+}
 const owners: ReturnType<typeof createRelaySession>[] = [];
 const visitSnapshot = { entry: { id: "visit" }, attempt: {} };
 const threadVisitSnapshot = { entry: { id: "thread-visit" }, attempt: {} };
@@ -100,6 +124,7 @@ async function page(
   routed = false,
   appComponent?: RegisteredPanel["component"],
   sidebarPreferences?: RelaySession["sidebarPreferences"],
+  uploadAttachment?: (file: File) => Promise<never>,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -129,10 +154,8 @@ async function page(
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) =>
-        events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
-        ),
+      ...(uploadAttachment && { uploadAttachment }),
+      query: async (filters) => relayQuery(authority, events, filters),
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},
@@ -475,10 +498,7 @@ function workspace(
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
       media: () => undefined,
-      query: async (filters) =>
-        events.filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
-        ),
+      query: async (filters) => relayQuery(authority, events, filters),
       writer: {
         sign: async (template) => signed(viewer, template),
         publish: async () => {},
@@ -966,6 +986,57 @@ it("the conversation identity menu clears the page's side tabs too", async () =>
   );
   expect(screen.queryByRole("tab", { name: "Notes" })).not.toBeInTheDocument();
   expect(channel).toHaveFocus();
+});
+
+it("holds the notice for a type the relay refuses while another main tab covers the channel composer", async () => {
+  let refuse = (_reason: Error) => {};
+  const upload = vi.fn(
+    () =>
+      new Promise<never>((_resolve, reject) => {
+        refuse = reject;
+      }),
+  );
+  const h = await page(
+    "stream",
+    undefined,
+    false,
+    undefined,
+    undefined,
+    upload,
+  );
+  fireEvent.paste(h.composer, {
+    clipboardData: {
+      items: [{ kind: "file", getAsFile: () => new File(["MZ"], "setup.exe") }],
+      getData: () => "",
+    },
+  });
+  await vi.waitFor(() => expect(upload).toHaveBeenCalledOnce());
+  // The channel's composer stays mounted, uploading, under the thread's tab.
+  const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() =>
+    tabs.result.current.openThreadTab("alpha", root, root, undefined, "main"),
+  );
+  const [conversation, thread] = within(
+    screen.getByRole("tablist", { name: "Channel tabs" }),
+  ).getAllByRole("tab");
+  if (!conversation || !thread) throw new Error("missing main-pane tabs");
+  expect(thread).toHaveAttribute("aria-selected", "true");
+  await act(async () => refuse(new UploadError("type")));
+  // The covered chip has the refusal, so the notice could have been raised.
+  await vi.waitFor(() =>
+    expect(
+      screen.getByText(/This file type isn’t supported/),
+    ).toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("dialog", { name: "Could not attach file" })).toBe(
+    null,
+  );
+  await h.user.click(conversation);
+  expect(conversation).toHaveAttribute("aria-selected", "true");
+  expect(
+    await screen.findByRole("dialog", { name: "Could not attach file" }),
+  ).toHaveAccessibleDescription("setup.exe isn’t a supported file type.");
 });
 
 it("close-all works while a main-pane thread covers the channel conversation", async () => {

@@ -103,6 +103,7 @@ import { useVoiceCapture } from "./useVoiceCapture";
 import { ComposerAttachments } from "./ComposerAttachments";
 import {
   attachmentDraft,
+  unsupportedTypes,
   useAttachmentDraft,
   type AttachmentDraft,
 } from "./attachment-draft";
@@ -126,6 +127,7 @@ import {
   type RefObject,
 } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
+import { sendWithOwnerMentions } from "../relay/owner-mentions";
 import {
   draftTokens,
   messageTokenTags,
@@ -133,10 +135,17 @@ import {
 } from "./message-tokens";
 import type { RelaySession } from "../relay/session";
 import {
+  conflictDraftKey,
+  draftRetirementCursor,
+  draftWasRetired,
+  parseDraftView,
   readView,
   writeView,
   viewRevision,
+  viewScopePurgeToken,
   replaceView,
+  replaceViewRevision,
+  retireViewDraft,
   subscribeView,
 } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -147,6 +156,9 @@ import {
   MAX_DRAFT_GIFS,
   mentionBoundary,
   mentionDraft,
+  editorMention,
+  hasHumanMentionSelection,
+  hostComposerProvenance,
   stageableGif,
   type MentionDraft,
   type MentionRecipient,
@@ -197,6 +209,7 @@ import { avatarMedia } from "../../shared/avatar-source";
 import { followUpBehaviorPreference } from "./follow-up-preference";
 import { followUpQueue } from "./follow-up-queue";
 import { followUpMessage } from "./follow-up-message";
+import { heldBySendGate } from "./outgoing-message";
 import { QueuedFollowUps } from "./QueuedFollowUps";
 
 const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
@@ -205,10 +218,39 @@ const noChannels: ReturnType<ComposerSession["channels"]["list"]> = {
 };
 const noSubscription = () => () => {};
 const noAgents: readonly string[] = [];
+const cannotOpen = () => false;
+
+type DraftSaveResult = "saved" | "changed" | "failed";
+type FlushDraft = () => DraftSaveResult | undefined;
+const pendingDraftSaves = new Map<string, Set<FlushDraft>>();
+
+function registerDraftSave(key: string, flush: FlushDraft) {
+  let pending = pendingDraftSaves.get(key);
+  if (!pending) {
+    pending = new Set();
+    pendingDraftSaves.set(key, pending);
+  }
+  pending.add(flush);
+  return () => {
+    pending.delete(flush);
+    if (!pending.size) pendingDraftSaves.delete(key);
+  };
+}
+
+/** Operations that retire or replace a saved draft must see pending edits. */
+export function flushPendingDraft(scope: string, key: string) {
+  for (const flush of pendingDraftSaves.get(`${scope}:${key}`) ?? []) {
+    const result = flush();
+    if (result === "changed" || result === "failed") return false;
+  }
+  return true;
+}
 
 type AcceptedDraft = {
   next: MentionDraft;
   revision: string | null | undefined;
+  retirementCursor: number | undefined;
+  retiredByOwner?: boolean;
 };
 // Failed post-acceptance cleanup survives composer remounts within this session.
 // This is recovery evidence only, not another persistent draft inventory.
@@ -353,6 +395,8 @@ export type MessageComposerProps = {
     | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  /** Physical source thread when threadRootId is a task anchor. */
+  sourceRootId?: string | undefined;
   /** The viewer's latest message in this thread, once the thread has loaded.
    * An empty thread composer starts with the agents it notified (see
    * seedMentions); other composers read their own channel window. */
@@ -395,12 +439,17 @@ export type MessageComposerProps = {
       picks?: MentionPicks,
       draftPicks?: DraftPicks,
       draftPicksRevision?: string | null,
+      explicitRecipientIds?: readonly string[],
     ) => void;
   };
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
-export function MessageComposer(props: MessageComposerProps) {
+export function MessageComposer({
+  evidenceOwner,
+  ...props
+}: MessageComposerProps & { evidenceOwner?: typeof hostComposerProvenance }) {
+  const ownerProvenance = evidenceOwner === hostComposerProvenance;
   const key = `${props.submission?.draftKey ?? ""}:${messageViewKey(
     props.session,
     props.scope,
@@ -411,16 +460,17 @@ export function MessageComposer(props: MessageComposerProps) {
     <TypingPresentation active key={key}>
       <TargetOpenerProvider canOpen={props.canOpenLink} open={props.onOpenLink}>
         {props.ownSoloConversation ? (
-          <PersonalComposer {...props} />
+          <PersonalComposer {...props} ownerProvenance={ownerProvenance} />
         ) : (
-          <Composer {...props} />
+          <Composer {...props} ownerProvenance={ownerProvenance} />
         )}
       </TargetOpenerProvider>
     </TypingPresentation>
   );
 }
 
-function PersonalComposer(props: MessageComposerProps) {
+type OwnedComposerProps = MessageComposerProps & { ownerProvenance: boolean };
+function PersonalComposer(props: OwnedComposerProps) {
   const { session, channelId, submission, agentFilter } = props;
   const choices = useAgentChoices(session, true, true);
   const profiles = useSyncExternalStore(
@@ -541,6 +591,7 @@ function Composer({
   onOpenLink,
   canOpenLink,
   threadRootId,
+  sourceRootId,
   threadSeed,
   replyParentId,
   mediaTargetUrl,
@@ -561,7 +612,8 @@ function Composer({
   inviteAgents = false,
   trailingTool,
   workspace,
-}: MessageComposerProps) {
+  ownerProvenance,
+}: OwnedComposerProps) {
   const active = useConversationPresentation();
   // Previews replace the list on every message; subscribe to this channel's facts.
   const listed =
@@ -592,11 +644,13 @@ function Composer({
   );
   const inputId = useId();
   const forwardDisclosureId = useId();
+  const threadDraftKey = threadRootId
+    ? sourceRootId
+      ? `draft:${channelId}:thread:${sourceRootId}:subthread:${threadRootId}`
+      : `draft:${channelId}:thread:${threadRootId}`
+    : undefined;
   const draftKey =
-    submission?.draftKey ??
-    (threadRootId
-      ? `draft:${channelId}:thread:${threadRootId}`
-      : `draft:${channelId}`);
+    submission?.draftKey ?? threadDraftKey ?? `draft:${channelId}`;
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);
@@ -646,7 +700,104 @@ function Composer({
     }
     return pending;
   });
-  const revision = useRef(viewRevision(scope, draftKey));
+  const [initialRevision] = useState(() => viewRevision(scope, draftKey));
+  const [purgeToken] = useState(() => viewScopePurgeToken(scope));
+  const revision = useRef(initialRevision);
+  const [initialCursor] = useState(() =>
+    draftRetirementCursor(scope, draftKey),
+  );
+  const savedCursor = useRef(initialCursor);
+  // A losing edit belongs to this window until the user resolves it.
+  const conflictKey = useMemo(
+    () => conflictDraftKey(scope, draftKey),
+    [scope, draftKey],
+  );
+  const [conflictOnOpen] = useState(() => {
+    if (submission || accepted || purgeToken === undefined) return;
+    try {
+      const raw = sessionStorage.getItem(conflictKey);
+      if (!raw) return;
+      const split = raw.indexOf("\n");
+      if (split < 0) return { stale: raw };
+      const savedRevision = raw.slice(split + 1);
+      const [savedPurgeToken, savedCursor] = JSON.parse(raw.slice(0, split));
+      const cursor = typeof savedCursor === "number" ? savedCursor : undefined;
+      if (
+        savedRevision === initialRevision ||
+        savedPurgeToken !== purgeToken ||
+        draftWasRetired(scope, draftKey, savedRevision, cursor)
+      )
+        return { stale: raw };
+      const saved = parseDraftView(savedRevision);
+      if (saved && saved !== "oversized")
+        return {
+          draft: mentionDraft(saved.value),
+          revision: savedRevision,
+          cursor,
+        };
+    } catch {
+      // The canonical draft remains available if session storage is blocked.
+    }
+  });
+  const reopenedConflict = conflictOnOpen?.draft;
+  const staleConflict = conflictOnOpen?.stale;
+  useLayoutEffect(() => {
+    if (!staleConflict) return;
+    try {
+      if (sessionStorage.getItem(conflictKey) === staleConflict)
+        sessionStorage.removeItem(conflictKey);
+    } catch {
+      // The discarded backup cannot be recovered.
+    }
+  }, [conflictKey, staleConflict]);
+  const conflictDraft = useRef<
+    | {
+        draft: MentionDraft;
+        saved?: {
+          draft: MentionDraft;
+          revision: string;
+          cursor: number | undefined;
+        };
+      }
+    | undefined
+  >(
+    conflictOnOpen?.draft
+      ? { draft: conflictOnOpen.draft, saved: conflictOnOpen }
+      : undefined,
+  );
+  const flushConflict = useCallback(() => {
+    const pending = conflictDraft.current;
+    if (!pending || pending.draft === pending.saved?.draft) return;
+    if (purgeToken === undefined || viewScopePurgeToken(scope) !== purgeToken)
+      return;
+    try {
+      const saved =
+        pending.draft === draftAtRevision.current
+          ? revision.current
+          : undefined;
+      const raw = saved ?? JSON.stringify(pending.draft);
+      const cursor =
+        saved == null
+          ? draftRetirementCursor(scope, draftKey)
+          : savedCursor.current;
+      sessionStorage.setItem(
+        conflictKey,
+        `${JSON.stringify([purgeToken, cursor])}\n${raw}`,
+      );
+      pending.saved = { draft: pending.draft, revision: raw, cursor };
+    } catch {
+      // Keep the edit available in the mounted editor if storage fails.
+    }
+  }, [conflictKey, draftKey, purgeToken, scope]);
+  function forgetConflict() {
+    if (!conflictDraft.current) return;
+    conflictDraft.current = undefined;
+    try {
+      sessionStorage.removeItem(conflictKey);
+    } catch {
+      // A successful canonical save also supersedes an identical backup.
+    }
+  }
   const [diagnosticEditor] = useState(draftEditorId);
   function diagnose(
     operation: Parameters<typeof traceDraft>[2],
@@ -668,14 +819,33 @@ function Composer({
   // restoring a saved draft that may already have had its tag removed.
   const [seededKey] = useState(() =>
     !accepted?.next &&
+    !reopenedConflict &&
     !submission?.recoveredDraft &&
     (revision.current === null || revision.current === "null")
       ? draftKey
       : undefined,
   );
-  const dirty = useRef(false);
+  // `dirty`: an edit that is not in storage. `edited`: typed in since the
+  // draft was last loaded, saved or not.
+  const dirty = useRef(!!reopenedConflict);
+  const edited = useRef(!!reopenedConflict);
   const writing = useRef(false);
-  const [conflict, setConflict] = useState(false);
+  const [conflict, setConflict] = useState(!!reopenedConflict);
+  // A shown conflict protects the text until the user resolves it, whatever
+  // the draft's saved state was when it was raised.
+  function reportConflict(draft = valueRef.current) {
+    dirty.current = true;
+    // Only a distinct edit needs a backup when the shared draft is absent.
+    if (
+      !conflictDraft.current &&
+      (viewRevision(scope, draftKey) !== null ||
+        JSON.stringify(draft) !== revision.current)
+    ) {
+      conflictDraft.current = { draft };
+      flushConflict();
+    }
+    setConflict(true);
+  }
   const [storageFailed, setStorageFailed] = useState(false);
   // A composer with nothing saved starts with the agents the viewer's latest
   // message in its conversation notified, in memory only: a draft is saved
@@ -694,6 +864,8 @@ function Composer({
   const seedKey = (source: Pick<ChannelMessage, "id">) =>
     `${draftKey}\n${source.id}`;
   const [initial] = useState(() => {
+    if (reopenedConflict)
+      return { value: reopenedConflict, applied: undefined, automatic: false };
     const stored = mentionDraft(
       accepted?.next ??
         submission?.recoveredDraft ??
@@ -755,6 +927,7 @@ function Composer({
     [recipientKey],
   );
   const valueRef = useRef(value);
+  const draftAtRevision = useRef(value);
   // Only a composer holding nothing but its own prefill reads its window, so
   // typing never rescans the history and the always-mounted composers
   // subscribe only while they could seed. Nothing is loaded here: the host
@@ -765,7 +938,8 @@ function Composer({
     seedsFromWindow &&
     presented &&
     ((!value.recipients.length && !value.text.trim()) ||
-      automaticTag.current === JSON.stringify(value));
+      (automaticTag.current !== undefined &&
+        automaticTag.current === JSON.stringify(value)));
   const subscribeRows = useCallback(
     (listener: () => void) =>
       seeking
@@ -1120,63 +1294,147 @@ function Composer({
   );
   const sendWithModEnter = useSendWithModEnterPreference();
   const editWithUpArrow = useEditWithUpArrowPreference();
-  const saveDraft = (next: MentionDraft, save = true) => {
-    next = restoreChatLinks({
-      ...next,
-      ...((next.chatCards ?? valueRef.current.chatCards)
-        ? {
-            chatCards: next.chatCards ?? valueRef.current.chatCards ?? [],
-          }
-        : {}),
-      ...((next.forward !== undefined
-        ? next.forward
-        : valueRef.current.forward) !== undefined
-        ? {
-            forward:
-              next.forward !== undefined
-                ? next.forward
-                : valueRef.current.forward,
-          }
-        : {}),
-      ...((next.gifs ?? valueRef.current.gifs)
-        ? { gifs: next.gifs ?? valueRef.current.gifs ?? [] }
-        : {}),
-    });
-    if (JSON.stringify(next) === JSON.stringify(valueRef.current)) return false;
+  const pendingDraftSave = useRef<{
+    timer: ReturnType<typeof setTimeout>;
+    draft: MentionDraft;
+    save(): DraftSaveResult;
+  }>(null);
+  const cancelDraftSave = useCallback(() => {
+    const pending = pendingDraftSave.current;
+    if (!pending) return;
+    pendingDraftSave.current = null;
+    clearTimeout(pending.timer);
+    return pending;
+  }, []);
+  const flushDraft = useCallback(() => {
+    const result = cancelDraftSave()?.save();
+    flushConflict();
+    return result ?? (conflictDraft.current ? "changed" : undefined);
+  }, [cancelDraftSave, flushConflict]);
+  useLayoutEffect(() => {
+    if (!presented) flushDraft();
+  }, [presented, flushDraft]);
+  useLayoutEffect(() => {
+    const unregister = registerDraftSave(recoveryKey, flushDraft);
+    const hide = () => {
+      if (document.visibilityState === "hidden") flushDraft();
+    };
+    const unload = () => flushDraft();
+    document.addEventListener("visibilitychange", hide);
+    window.addEventListener("pagehide", unload);
+    return () => {
+      document.removeEventListener("visibilitychange", hide);
+      window.removeEventListener("pagehide", unload);
+      unregister();
+      flushDraft();
+    };
+  }, [flushDraft, recoveryKey]);
+
+  const saveDraft = (
+    next: MentionDraft,
+    source: "action" | "editor" | "prefill" = "action",
+  ) => {
+    const { chatCards, forward, gifs } = valueRef.current;
+    if (chatCards || forward !== undefined || gifs)
+      next = restoreChatLinks({
+        ...next,
+        ...(chatCards ? { chatCards: next.chatCards ?? chatCards } : {}),
+        ...(forward !== undefined
+          ? { forward: next.forward !== undefined ? next.forward : forward }
+          : {}),
+        ...(gifs ? { gifs: next.gifs ?? gifs } : {}),
+      });
+    else next = restoreChatLinks(next);
+    if (
+      source === "action" &&
+      JSON.stringify(next) === JSON.stringify(valueRef.current)
+    )
+      return;
     valueRef.current = next;
     updateDraft(next);
-    if (save && !editing.target) {
-      if (submission) {
-        const saved = writeView(scope, draftKey, next);
-        unsavedDraft.current = !saved;
-        submission.unsaved?.(
-          unsavedDraft.current || unsavedPicks.current.size > 0,
-        );
-        submission.onDraftChange?.(next);
-      } else {
-        dirty.current = true;
-        if (!conflict && !accepted) persist(next);
-      }
+    if (source === "prefill" || editing.target) return;
+
+    if (submission) {
+      // Submission recovery checks the durable prompt before restoring a
+      // rejected send. It must see newer edits made in another window.
+      unsavedDraft.current = !writeView(scope, draftKey, next);
+      submission.unsaved?.(
+        unsavedDraft.current || unsavedPicks.current.size > 0,
+      );
+      submission.onDraftChange?.(next);
+      return;
     }
-    return true;
+    cancelDraftSave();
+    dirty.current = true;
+    edited.current = true;
+    if (conflictDraft.current) conflictDraft.current.draft = next;
+    else if (conflict && !accepted) reportConflict(next);
+    if (conflict || conflictDraft.current || accepted) return;
+    if (source === "editor")
+      pendingDraftSave.current = {
+        timer: setTimeout(flushDraft, 300),
+        draft: next,
+        save: () => persist(next),
+      };
+    else persist(next);
   };
-  function persist(next: MentionDraft, expected = revision.current) {
-    writing.current = true;
-    const current = viewRevision(scope, draftKey);
+  function persist(
+    next: MentionDraft,
+    expected = revision.current,
+    acceptedDraft?: AcceptedDraft,
+  ) {
+    const currentPurgeToken = viewScopePurgeToken(scope);
+    if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken)
+      return "changed";
     const serialized = JSON.stringify(next);
+    const current = viewRevision(scope, draftKey);
     diagnose("persist", expected, current, serialized);
-    // A value already saved by another writer, as the Huddle owner saves the
-    // stub after a companion send, is this save's outcome, not a conflict.
-    const result =
-      current === serialized
+    if (acceptedDraft?.retiredByOwner && current === undefined) {
+      setStorageFailed(true);
+      return "failed";
+    }
+    writing.current = true;
+    // Another writer can already have saved the same draft.
+    let result = acceptedDraft?.retiredByOwner
+      ? current === serialized
         ? "saved"
-        : replaceView(scope, draftKey, expected, next);
+        : "changed"
+      : acceptedDraft
+        ? retireViewDraft(
+            scope,
+            draftKey,
+            expected,
+            serialized,
+            acceptedDraft.retirementCursor,
+          )
+        : current === serialized
+          ? "saved"
+          : replaceViewRevision(scope, draftKey, expected, serialized);
     writing.current = false;
-    const saved = viewRevision(scope, draftKey);
-    const nextRevision = JSON.stringify(next);
-    diagnose(result, expected, saved, nextRevision);
-    if (result === "saved") revision.current = nextRevision;
-    setConflict(result === "changed");
+    const observed = viewRevision(scope, draftKey);
+    if (
+      result === "failed" &&
+      observed !== undefined &&
+      observed !== expected &&
+      observed !== serialized
+    )
+      result = "changed";
+    diagnose(result, expected, observed, serialized);
+    if (result === "saved") {
+      revision.current = serialized;
+      draftAtRevision.current = next;
+      savedCursor.current = draftRetirementCursor(scope, draftKey);
+      forgetConflict();
+      // Saved text has no unsaved edits left to protect: a later change made
+      // elsewhere is loaded unless the user is in this composer.
+      dirty.current = false;
+    }
+    if (result === "changed" && next === valueRef.current && dirty.current)
+      reportConflict(next);
+    else
+      setConflict((alreadyConflicted) =>
+        result === "saved" ? false : alreadyConflicted || result === "changed",
+      );
     setStorageFailed(result === "failed");
     return result;
   }
@@ -1326,7 +1584,11 @@ function Composer({
     if (!routing || !named.length || before) return;
     // The composer's own prefill is withdrawn as the pill takes over, not
     // the viewer's choice.
-    if (automaticTag.current === JSON.stringify(valueRef.current)) return;
+    if (
+      automaticTag.current !== undefined &&
+      automaticTag.current === JSON.stringify(valueRef.current)
+    )
+      return;
     setReplacedKey(draftKey);
     setRouted([]);
     writeView(scope, pillKey, null);
@@ -1374,6 +1636,27 @@ function Composer({
     channelId,
     !!submission?.attachments,
     host ? [scope, `${draftKey}:files`] : undefined,
+  );
+  // The relay refuses a type only at upload, after the file's chip is shown.
+  // Its notice names the files refused while this composer held them, until
+  // dismissed. A file that arrives already refused is left to its chip: its
+  // draft returned with it, or a failed send restored it under that send's
+  // own notice.
+  const held = useRef(attachments.items);
+  const [refusedTypes, setRefusedTypes] = useState<readonly string[]>([]);
+  useEffect(() => {
+    const before = held.current;
+    held.current = attachments.items;
+    const refused = attachments.items.filter(
+      (item) =>
+        item.unsupported &&
+        before.some((prior) => prior.id === item.id && !prior.unsupported),
+    );
+    if (refused.length)
+      setRefusedTypes((ids) => [...ids, ...refused.map((item) => item.id)]);
+  }, [attachments.items]);
+  const unsupported = attachments.items.filter((item) =>
+    refusedTypes.includes(item.id),
   );
   const picker = useRef<HTMLInputElement>(null);
   const pickerFocus = useRef<
@@ -1465,7 +1748,7 @@ function Composer({
       !voice.capturing,
     attachFiles,
   );
-  function attachFiles(files: readonly File[]) {
+  function attachFiles(files: readonly File[], folders?: ReadonlySet<File>) {
     if (
       !permitted.current ||
       editingDisabled ||
@@ -1485,9 +1768,15 @@ function Composer({
       );
       return;
     }
+    // A drop can hold folders, which the notice must not call files.
+    const kind = !folders?.size
+      ? "file"
+      : folders.size === files.length
+        ? "folder"
+        : "item";
     try {
       const before = attachments.store.snapshot().length;
-      const left = attachments.store.add(files);
+      const left = attachments.store.add(files, undefined, folders);
       const added = attachments.store
         .snapshot()
         .slice(before)
@@ -1497,17 +1786,19 @@ function Composer({
         left.length
           ? {
               title: added.length
-                ? `Could not attach ${refused} of ${files.length} files`
-                : `Could not attach ${refused} files`,
+                ? `Could not attach ${refused} of ${files.length} ${kind}s`
+                : `Could not attach ${refused} ${kind}s`,
               description: left.join(" "),
             }
           : undefined,
       );
       return added;
     } catch (reason) {
-      refuseAttachment(
-        reason instanceof Error ? reason.message : "Could not attach files.",
-      );
+      setAttachmentError({
+        title: `Could not attach ${kind}`,
+        description:
+          reason instanceof Error ? reason.message : "Could not attach files.",
+      });
     }
   }
   const outbox = session.outbox;
@@ -1537,8 +1828,13 @@ function Composer({
     } catch {
       next = mentionDraft("");
     }
+    cancelDraftSave();
+    forgetConflict();
     revision.current = raw;
+    draftAtRevision.current = next;
+    savedCursor.current = draftRetirementCursor(scope, draftKey);
     dirty.current = false;
+    edited.current = false;
     valueRef.current = next;
     updateDraft(next);
     input.current?.reset(next);
@@ -1549,12 +1845,40 @@ function Composer({
     setConflict(false);
     setStorageFailed(false);
   }
+  function visibleDraftWasRetired(current: string | null, removed?: string) {
+    const backup = conflictDraft.current?.saved;
+    const local = valueRef.current;
+    const unchangedBackup = backup?.draft === local;
+    const raw = unchangedBackup
+      ? backup.revision
+      : draftAtRevision.current === local
+        ? revision.current
+        : undefined;
+    const cursor = unchangedBackup ? backup.cursor : savedCursor.current;
+    return (
+      raw != null &&
+      current !== raw &&
+      (raw === removed || draftWasRetired(scope, draftKey, raw, cursor))
+    );
+  }
   // Message-local picks return with their recovered draft. Solo preferences
   // remain the chat's current choices, including edits made during an upload.
   const reconcileDraft = useEffectEvent(
-    (restored?: MentionDraft, recoveredPicks?: DraftPicks) => {
+    (
+      restored?: MentionDraft,
+      recoveredPicks?: DraftPicks,
+      deletedRevision?: string,
+      // The draft was hidden until now, behind a message edit.
+      hidden = false,
+    ) => {
       traceDraft(scope, draftKey, "reconcile", diagnosticEditor);
       if (submission || editing.target || writing.current) return;
+      const currentPurgeToken = viewScopePurgeToken(scope);
+      if (currentPurgeToken !== undefined && currentPurgeToken !== purgeToken) {
+        setAccepted(undefined);
+        loadSaved(null);
+        return;
+      }
       if (accepted) {
         // The recovered revision can precede attachment adoption. The explicit
         // recovery notification below reconciles the mounted owner afterward.
@@ -1570,6 +1894,10 @@ function Composer({
       }
       const current = viewRevision(scope, draftKey);
       if (current === undefined) return;
+      if (visibleDraftWasRetired(current, deletedRevision)) {
+        loadSaved(current);
+        return;
+      }
       diagnose("reconcile", revision.current, current);
       const recovering = !!restored && current === JSON.stringify(restored);
       if (current === revision.current) {
@@ -1579,20 +1907,41 @@ function Composer({
           setPicks(recoveredPicks ?? {});
         return;
       }
-      // An explicit successful recovery may replace only the cleared follow-up,
-      // never a meaningful unsaved edit. Ordinary external revisions keep their
-      // conflict behavior.
-      if (
-        recovering &&
+      const empty =
         !valueRef.current.text.trim() &&
         !valueRef.current.recipients.length &&
-        !composerMarkdown(valueRef.current).trim() &&
-        !sendAttempt.current
-      )
-        loadSaved(current);
-      else if (dirty.current || sendAttempt.current) {
-        diagnose("changed", revision.current, current);
-        setConflict(true);
+        !composerMarkdown(valueRef.current).trim();
+      // An explicit successful recovery may replace only the cleared follow-up,
+      // never a meaningful unsaved edit. Ordinary external revisions keep their
+      // conflict behavior. The storage notification may have just backed up
+      // that empty follow-up before the explicit recovery reaches this editor.
+      if (recovering && empty && !sendAttempt.current) loadSaved(current);
+      else if (
+        dirty.current ||
+        sendAttempt.current ||
+        // Loading closes an open link dialog and discards what it holds.
+        linkEdit ||
+        // Text typed here is never replaced under the user: storage can lose
+        // a save that read back, and another window can write mid-typing. The
+        // user is here while focus is in this composer, its controls included.
+        // A composer holding nothing has nothing to offer back.
+        (edited.current &&
+          !(empty && !valueRef.current.forward) &&
+          !hidden &&
+          form.current?.contains(document.activeElement) &&
+          document.hasFocus())
+      ) {
+        const pending = cancelDraftSave();
+        // Two windows can independently arrive at the same draft before saving.
+        if (pending && current === JSON.stringify(pending.draft)) {
+          revision.current = current;
+          draftAtRevision.current = pending.draft;
+          savedCursor.current = draftRetirementCursor(scope, draftKey);
+          setStorageFailed(false);
+        } else {
+          diagnose("changed", revision.current, current);
+          reportConflict();
+        }
         return;
       } else loadSaved(current);
       if (!stickyPicks && recovering) setPicks(recoveredPicks ?? {});
@@ -1600,21 +1949,36 @@ function Composer({
   );
   const editingDraft = !!editing.target;
   const deferredRecovery = useRef<RecoveredSend | undefined>(undefined);
+  const wasEditing = useRef(false);
   useEffect(() => {
     if (submission) return;
-    const stop = subscribeView(scope, () => reconcileDraft());
+    const stop = subscribeView(
+      scope,
+      (_key, removed) =>
+        reconcileDraft(
+          undefined,
+          undefined,
+          removed?.find(({ key }) => key === draftKey)?.revision,
+        ),
+      draftKey,
+    );
     // Reconcile changes while message-edit mode or mounting paused this listener.
+    // The draft restored on leaving an edit was hidden throughout it, so a
+    // fully saved one follows wherever focus lands afterwards.
     reconcileDraft(
       deferredRecovery.current?.draft,
       deferredRecovery.current?.picks,
+      undefined,
+      wasEditing.current && !editingDraft,
     );
+    wasEditing.current = editingDraft;
     if (!editingDraft && deferredRecovery.current) {
       takeMissedRecovery(session, recoveryKey);
       setError(errorForRecovery(deferredRecovery.current.preparationError));
       deferredRecovery.current = undefined;
     }
     return stop;
-  }, [scope, submission, editingDraft, session, recoveryKey]);
+  }, [scope, submission, editingDraft, session, recoveryKey, draftKey]);
   const receiveRecovery = useEffectEvent((recovered: RecoveredSend) => {
     if (editing.target) deferredRecovery.current = recovered;
     reconcileDraft(recovered.draft, recovered.picks);
@@ -1639,13 +2003,14 @@ function Composer({
     return stop;
   }, [session, recoveryKey, scope, draftKey]);
   function resolveDraft(keep: boolean) {
+    cancelDraftSave();
     const current = viewRevision(scope, draftKey);
     diagnose(keep ? "keep" : "use-saved", revision.current, current);
     if (current === undefined) {
       setStorageFailed(true);
       return;
     }
-    if (keep) {
+    if (keep && !visibleDraftWasRetired(current)) {
       dirty.current = true;
       persist(valueRef.current, current);
     } else loadSaved(current);
@@ -1655,7 +2020,7 @@ function Composer({
       reconcileDraft();
       return;
     }
-    const result = persist(pending.next, pending.revision);
+    const result = persist(pending.next, pending.revision, pending);
     // No stale sent text needs cleanup if nothing was saved and absence is
     // still readable.
     if (
@@ -1663,15 +2028,18 @@ function Composer({
       (pending.revision !== null || viewRevision(scope, draftKey) !== null)
     )
       return;
+    const peerRevision =
+      result === "changed" ? viewRevision(scope, draftKey) : undefined;
+    if (result === "changed" && peerRevision === undefined) return;
     recoveryFor(session).delete(recoveryKey);
     setAccepted(undefined);
-    if (result === "changed") {
-      // Another editor owns this revision. Acceptance cannot erase its work.
-      const current = viewRevision(scope, draftKey);
-      if (current !== undefined) loadSaved(current);
+    // Another editor owns this revision. Acceptance cannot erase its work.
+    if (peerRevision !== undefined) {
+      loadSaved(peerRevision);
       return;
     }
     dirty.current = false;
+    edited.current = false;
     onDraftSaved?.();
   }
   useEffect(() => {
@@ -1716,6 +2084,7 @@ function Composer({
       input.current.focus();
       return;
     }
+    flushDraft();
     completion.invalidate();
     beforeEdit.current = {
       value: valueRef.current,
@@ -1753,6 +2122,7 @@ function Composer({
       if (!entry?.message)
         throw new Error("This queued message is no longer available to edit.");
       const lease = queue.edit(id);
+      flushDraft();
       completion.invalidate();
       beforeEdit.current = {
         value: valueRef.current,
@@ -1824,7 +2194,8 @@ function Composer({
       return false;
     }
     completion.invalidate();
-    if (!field.insertText(text, recipient, range, terminator, focus)) {
+    const selected = recipient && editorMention(recipient);
+    if (!field.insertText(text, selected, range, terminator, focus)) {
       setError("Message is too long to insert text");
       return false;
     }
@@ -1904,6 +2275,7 @@ function Composer({
       string,
       {
         resolve: CompletionPending["resolve"];
+        explicit?: true;
         controller?: AbortController | undefined;
         /** Settles with the typed name and why when the chip returned to prose. */
         settled?: Promise<PendingRefusal | undefined> | undefined;
@@ -1930,7 +2302,11 @@ function Composer({
           : undefined;
     const accepted =
       recipient && !reason
-        ? { pubkey: recipient.pubkey, name: recipient.name }
+        ? {
+            pubkey: recipient.pubkey,
+            name: recipient.name,
+            ...(entry.explicit ? { explicit: true as const } : {}),
+          }
         : null;
     const name = valueRef.current.pending?.find((chip) => chip.id === id)?.name;
     // Held through an IME composition, the outcome is a promise: the chip is
@@ -2137,7 +2513,9 @@ function Composer({
     )
       return false;
     const unique = [
-      ...new Map(recipients.map((person) => [person.pubkey, person])).values(),
+      ...new Map(
+        recipients.map((person) => [person.pubkey, editorMention(person)]),
+      ).values(),
     ];
     if (unique.length > 32) {
       setError("Choose at most 32 recipients");
@@ -2212,7 +2590,8 @@ function Composer({
     const admitted = admits();
     if (unique.length > 32 || unique.some((person) => !admitted(person.pubkey)))
       return false;
-    if (!input.current.replaceRecipients(unique)) return false;
+    if (!input.current.replaceRecipients(unique.map(editorMention)))
+      return false;
     completion.invalidate();
     setError(undefined);
     return true;
@@ -2280,7 +2659,10 @@ function Composer({
       completion.invalidate();
       const id = field.insertPendingMention(edit.pending.name, query, typed);
       if (!id) return false;
-      pendingMentions.current.set(id, { resolve: edit.pending.resolve });
+      pendingMentions.current.set(id, {
+        resolve: edit.pending.resolve,
+        ...(hasHumanMentionSelection() ? { explicit: true } : {}),
+      });
       setError(undefined);
       return true;
     }
@@ -2407,6 +2789,7 @@ function Composer({
     }
     if (
       !presented ||
+      conflict ||
       sendPending ||
       completion.composing.current ||
       editing.target
@@ -2437,7 +2820,10 @@ function Composer({
     if (autoTagged.current === draftKey) return;
     // Shown again untouched, the prefill retags for the current default. A
     // saved draft is the viewer's, however it was addressed.
-    if (automaticTag.current === JSON.stringify(valueRef.current)) {
+    if (
+      automaticTag.current !== undefined &&
+      automaticTag.current === JSON.stringify(valueRef.current)
+    ) {
       // Until the default can be tagged, as when its evidence is loading.
       if (
         seedMention &&
@@ -2496,17 +2882,16 @@ function Composer({
       seedClosed.current = false;
       return;
     }
-    if (editing.target || completion.composing.current) return;
+    if (conflict || editing.target || completion.composing.current) return;
     // Content the user put in, unlike this effect's own prefill, closes the
     // seed until the composer is shown again, even once it is cleared.
-    const current = JSON.stringify(valueRef.current);
+    const automatic =
+      automaticTag.current !== undefined &&
+      automaticTag.current === JSON.stringify(valueRef.current);
     // Alone with agents, the toolbar holds them, never the text: a prefill
     // made before that was known is withdrawn.
     if (routing) {
-      if (
-        automaticTag.current === current &&
-        valueRef.current.recipients.length
-      ) {
+      if (automatic && valueRef.current.recipients.length) {
         const empty = mentionDraft("");
         valueRef.current = empty;
         updateDraft(empty);
@@ -2515,7 +2900,7 @@ function Composer({
       }
       return;
     }
-    if (!untouchedDraft(valueRef.current) && automaticTag.current !== current) {
+    if (!untouchedDraft(valueRef.current) && !automatic) {
       seedClosed.current = true;
       return;
     }
@@ -2543,7 +2928,7 @@ function Composer({
     const settled = seedEvidenceSettled(session, seedSource);
     if (settled) seedApplied.current = key;
     if (!seed.recipients.length && !settled) return;
-    if (JSON.stringify(seed) === current) return;
+    if (JSON.stringify(seed) === JSON.stringify(valueRef.current)) return;
     valueRef.current = seed;
     updateDraft(seed);
     input.current?.reset(seed);
@@ -2645,7 +3030,7 @@ function Composer({
     }
     return { recipients, references };
   }
-  async function send() {
+  async function send(human = false) {
     if (!permitted.current || voice.isCapturing() || forwarded.blocked) return;
     if (editing.target) {
       if (editDisabled || editing.locked) return;
@@ -2779,12 +3164,13 @@ function Composer({
       input.current?.reset(recovering.next);
       return;
     }
+    const flushed = flushDraft();
     if (!submission) {
       const current = viewRevision(scope, draftKey);
       diagnose("send-start", revision.current, current);
-      if (current !== revision.current) {
+      if (flushed === "changed" || current !== revision.current) {
         diagnose("send-start-conflict", revision.current, current);
-        setConflict(true);
+        reportConflict();
         return;
       }
     }
@@ -2819,9 +3205,17 @@ function Composer({
       return;
     }
     const savedRevision = revision.current;
+    const retirementCursor = draftRetirementCursor(scope, draftKey);
+    let retiredByOwner = false;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
+    const explicit =
+      human && ownerProvenance
+        ? captured.recipients
+            .filter((person) => person.explicit)
+            .map((person) => person.pubkey)
+        : undefined;
     const capturedRecipients = routing ? recipientsNow : captured.recipients;
     const capturedAttachments = attachments.store.snapshot();
     // Mention resolution can update recipients before their picker commits.
@@ -2864,7 +3258,7 @@ function Composer({
             const current = viewRevision(scope, draftKey);
             if (current !== savedRevision) {
               diagnose("send-upload-conflict", savedRevision, current);
-              setConflict(true);
+              reportConflict();
               return;
             }
             const next = mentionDraft("");
@@ -2918,6 +3312,7 @@ function Composer({
           ownSoloConversation ? capturedRunPicks : undefined,
           ownSoloConversation ? capturedPicks : undefined,
           ownSoloConversation ? capturedPicksRevision : undefined,
+          ...(explicit ? [explicit] : []),
         );
         return;
       }
@@ -3023,13 +3418,16 @@ function Composer({
       const preparedRevision = viewRevision(scope, draftKey);
       if (preparedRevision !== savedRevision) {
         diagnose("send-prepare-conflict", savedRevision, preparedRevision);
-        setConflict(true);
+        reportConflict();
         return;
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
+      const explicitRecipientIds = explicit?.filter((id) =>
+        recipients.includes(id),
+      );
       // Alone with agents, the toolbar keeps the agents; the next draft starts empty.
       const next = routing
         ? mentionDraft("")
@@ -3060,7 +3458,7 @@ function Composer({
         const publishRevision = viewRevision(scope, draftKey);
         if (publishRevision !== savedRevision) {
           diagnose("send-publish-conflict", savedRevision, publishRevision);
-          setConflict(true);
+          reportConflict();
           return;
         }
         if (!current()) return;
@@ -3082,16 +3480,42 @@ function Composer({
       ) {
         if (compactingNow(recipients))
           throw new Error("Wait for compaction to finish, or interrupt it.");
-        if (!tokens.length) return publishMessage(uploaded, sender);
+        const publish = () =>
+          sendWithOwnerMentions(
+            sender,
+            explicitRecipientIds,
+            () => publishMessage(uploaded, sender),
+            sourceRootId && threadRootId
+              ? { anchorId: threadRootId, threadId: sourceRootId }
+              : undefined,
+          );
+        if (!tokens.length) return publish();
         // A detached window's relay connection would drop the chips.
         const main = fullSession(sender);
         if (!main) throw new Error("Send chips from the main window.");
-        return signMessageTokens(tokens, () => publishMessage(uploaded, main));
+        return signMessageTokens(tokens, publish);
       }
       function publishMessage(
         uploaded: readonly UploadedAttachment[],
         sender: ComposerSession,
       ) {
+        if (sender.sendDraft && !threadRootId) {
+          return sender
+            .sendDraft({
+              text: content,
+              ...(captured.forward ? { forward: captured.forward } : {}),
+              draft: savedRevision ?? "null",
+              retirementCursor,
+              mentions: recipients,
+              attachments: uploaded,
+              references,
+              picks: sentPicks,
+            })
+            .then(({ id, retirement }) => {
+              retiredByOwner = retirement !== "failed";
+              return id;
+            });
+        }
         if (captured.forward) {
           const main = fullSession(sender);
           if (!main && sender.forwarding)
@@ -3114,7 +3538,7 @@ function Composer({
             content,
             undefined,
             {
-              ...(threadRootId ? { rootId: threadRootId } : {}),
+              ...(threadRootId ? { rootId: sourceRootId ?? threadRootId } : {}),
               ...(replyParentId ? { parentId: replyParentId } : {}),
               ...(mediaTargetUrl ? { mediaTargetUrl } : {}),
               mentions: recipients,
@@ -3127,7 +3551,7 @@ function Composer({
         return threadRootId
           ? sender.messages.reply(
               channelId,
-              threadRootId,
+              sourceRootId ?? threadRootId,
               content,
               recipients,
               uploaded,
@@ -3174,8 +3598,36 @@ function Composer({
             profiles,
             knownAgentPubkeys(profiles, session.agentChoices.snapshot()),
           )
-        )
+        ) {
+          const gate =
+            host &&
+            !captured.forward &&
+            heldBySendGate(
+              extensions?.sendGates,
+              {
+                channelId,
+                ...(threadRootId
+                  ? { threadRootId: sourceRootId ?? threadRootId }
+                  : {}),
+                ...(threadRootId && replyParentId
+                  ? { parentId: replyParentId }
+                  : {}),
+                text: content,
+                recipients,
+                references,
+                attachments: uploaded,
+                picks: sentPicks,
+                ...(threadRootId && mediaTargetUrl
+                  ? { mediaTarget: mediaTargetUrl }
+                  : {}),
+                ...(tokens.length ? { tokens } : {}),
+              },
+              host,
+            );
+          if (gate === true) return undefined;
+          if (gate) throw new Error(gate.refuse);
           return publishNow(uploaded, session);
+        }
         const message = {
           channelId,
           ...(captured.forward ? { forward: captured.forward } : {}),
@@ -3184,6 +3636,7 @@ function Composer({
           attachments: uploaded,
           references,
           picks: sentPicks,
+          ...(explicitRecipientIds ? { explicitRecipientIds } : {}),
           ...(tokens.length ? { tokens } : {}),
         };
         const send = followUpMessage(
@@ -3218,6 +3671,13 @@ function Composer({
         setSending(true);
         const uploaded = await attachments.store.prepareForSend(attempt.signal);
         attempt.signal.throwIfAborted();
+        // The detached owner receives the revision captured for this send.
+        const current = viewRevision(scope, draftKey);
+        if (current !== savedRevision) {
+          diagnose("send-publish-conflict", savedRevision, current);
+          reportConflict();
+          return;
+        }
         id = await publish(uploaded);
       } else if (capturedAttachments.length) {
         // The revision acceptance saves; remembered agents are not a draft.
@@ -3246,6 +3706,7 @@ function Composer({
           (files, preparationError) => {
             // Only the original saved draft or the untouched follow-up can be
             // restored. A later edit belongs to its author, not this job.
+            if (!flushPendingDraft(scope, draftKey)) return "conflict";
             const current = viewRevision(scope, draftKey);
             const capturedRevision = JSON.stringify(captured);
             const cleared = (raw: string | null | undefined) => {
@@ -3336,7 +3797,12 @@ function Composer({
       // in memory, and any composer here, on any device, seeds them from the
       // sent message once it lands (see seedMentions).
       const followUp = next;
-      const pending = { next: mentionDraft(""), revision: savedRevision };
+      const pending = {
+        next: mentionDraft(""),
+        revision: savedRevision,
+        retirementCursor,
+        retiredByOwner,
+      };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       attachments.store.clear();
@@ -3388,6 +3854,9 @@ function Composer({
     } finally {
       admission.current = false;
       if (sendAttempt.current === attempt) {
+        // A change saved elsewhere during an attempt that did not send is a
+        // conflict even if its notification arrives after the attempt ends.
+        reconcileDraft();
         sendAttempt.current = null;
         if (live.current) {
           setSending(false);
@@ -3408,6 +3877,29 @@ function Composer({
     setAttachmentsExiting(!hasAttachments);
   }
   if (attachmentsExiting && editing.target) setAttachmentsExiting(false);
+  // Keystrokes re-render the composer; stable commands let contributed tools
+  // and accessories skip those renders while still calling the latest code.
+  const toolCommands = useLatestCallbacks({
+    insertText: insertToolText,
+    insertMention,
+    insertMentions,
+    replaceRecipients,
+    replaceRecipientsIfEmpty,
+    insertResource,
+    focus: () => input.current?.focus(),
+  });
+  const voiceCommands = useLatestCallbacks({ capture: voice.begin });
+  // Each keystroke projects new arrays; equal ones keep mention consumers still.
+  const selectedRecipients = useEqualList(
+    value.recipients,
+    (a, b) => a.pubkey === b.pubkey && a.name === b.name,
+  );
+  const addressedAgents = useEqualList(addressedKeys, Object.is);
+  // Availability is read during render, so it stays a prop that changes with
+  // the host's panels; dispatch goes through the latest handler.
+  const accessoryCommands = useLatestCallbacks({
+    open: (target: string) => onOpenLink?.(target) ?? false,
+  });
   const context = (
     <div className={styles.composerContext}>
       {!cached && !submission && (
@@ -3425,8 +3917,9 @@ function Composer({
           scope={scope}
           channelId={channelId}
           threadRootId={threadRootId}
-          canOpen={(target) => canOpenLink?.(target) ?? false}
-          open={(target) => onOpenLink?.(target) ?? false}
+          canOpen={canOpenLink ?? cannotOpen}
+          open={accessoryCommands.open}
+          onFocusedRemoval={toolCommands.focus}
         />
       )}
     </div>
@@ -3520,7 +4013,7 @@ function Composer({
       </>
     );
   return (
-    <SelectedMentionContext.Provider value={value.recipients}>
+    <SelectedMentionContext.Provider value={selectedRecipients}>
       {context}
       {active && bringing.dialog}
       {active && nonmembers.dialog}
@@ -3603,7 +4096,7 @@ function Composer({
             value={editing.target ? undefined : workspace}
           >
             <AddressedAgentsContext.Provider
-              value={editing.target ? noAgents : addressedKeys}
+              value={editing.target ? noAgents : addressedAgents}
             >
               <ComposerCompletions
                 registry={extensions.completions}
@@ -3662,6 +4155,21 @@ function Composer({
             title={attachmentError.title}
             description={attachmentError.description}
             onDismiss={() => setAttachmentError(undefined)}
+          />
+        )}
+        {/* A composer under a covering tab keeps uploading. This notice
+            names no conversation, so it waits until its own is shown. */}
+        {presented && unsupported.length > 0 && (
+          <ToastNotice
+            title={
+              unsupported.length === 1
+                ? "Could not attach file"
+                : `Could not attach ${unsupported.length} files`
+            }
+            description={unsupportedTypes(
+              unsupported.map((item) => item.file.name),
+            )}
+            onDismiss={() => setRefusedTypes([])}
           />
         )}
         <ComposerContext key={editing.target ? "edit" : "reply"}>
@@ -3776,11 +4284,17 @@ function Composer({
                 pasteTooLong ? `${inputId}-paste-error` : undefined
               }
               onDraftChange={(next) => {
+                // Remounting the editor can replay our own prefill as a change.
+                if (
+                  automaticTag.current !== undefined &&
+                  automaticTag.current === JSON.stringify(next)
+                )
+                  return;
                 setPasteTooLong(false);
                 const textChanged = next.text !== valueRef.current.text;
                 // The default tag's prefill shows without being saved.
                 if (seeding.current) {
-                  saveDraft(next, false);
+                  saveDraft(next, "prefill");
                   return;
                 }
                 if (!editing.target) {
@@ -3791,7 +4305,7 @@ function Composer({
                   if (seedSource) seedApplied.current = seedKey(seedSource);
                   automaticTag.current = undefined;
                 }
-                saveDraft(next);
+                saveDraft(next, "editor");
                 completion.observe(true);
                 if (textChanged && next.text.trim()) notifyTyping();
               }}
@@ -3837,6 +4351,7 @@ function Composer({
                 completion.observe(true);
               }}
               onBlur={() => {
+                flushDraft();
                 completion.invalidate();
               }}
               onSelect={() => {
@@ -3913,7 +4428,7 @@ function Composer({
                   )
                 ) {
                   event.preventDefault();
-                  if (!event.repeat) send();
+                  if (!event.repeat) send(event.nativeEvent.isTrusted);
                   return;
                 }
                 if (
@@ -3934,7 +4449,7 @@ function Composer({
                     event.currentTarget.insertLineBreak();
                     return;
                   }
-                  send();
+                  send(event.nativeEvent.isTrusted);
                 }
               }}
             />
@@ -3992,7 +4507,7 @@ function Composer({
                   <ComposerTools
                     registry={extensions.tools}
                     {...(canAttach && !editing.target
-                      ? { capture: voice.begin }
+                      ? { capture: voiceCommands.capture }
                       : {})}
                     renderLeading={renderLeadingTools}
                     session={session}
@@ -4003,13 +4518,7 @@ function Composer({
                     inviteAgents={agentChoices && !editing.target}
                     recipients={recipients}
                     audience={audience}
-                    insertText={insertToolText}
-                    insertMention={insertMention}
-                    insertMentions={insertMentions}
-                    replaceRecipients={replaceRecipients}
-                    replaceRecipientsIfEmpty={replaceRecipientsIfEmpty}
-                    insertResource={insertResource}
-                    focus={() => input.current?.focus()}
+                    {...toolCommands}
                   />
                 ) : (
                   renderLeadingTools(null)
@@ -4058,6 +4567,11 @@ function Composer({
               }
               size="toolbar"
               type="submit"
+              onClick={(event) => {
+                if (!event.nativeEvent.isTrusted) return;
+                event.preventDefault();
+                void send(true);
+              }}
               style={editing.target ? undefined : accentButtonStyle}
               aria-label={editing.target ? "Save changes" : "Send message"}
               aria-describedby={
@@ -4163,9 +4677,9 @@ function Composer({
               <p role="alert">
                 {accepted
                   ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
-                  : conflict
-                    ? "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."
-                    : "Could not save this draft on this device. Your edits are kept here."}
+                  : storageFailed
+                    ? "Could not save this draft on this device. Your edits are kept here."
+                    : "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."}
               </p>
               {accepted ? (
                 <Button type="button" onClick={() => finishDraft(accepted)}>
@@ -4230,6 +4744,43 @@ function Composer({
       )}
     </SelectedMentionContext.Provider>
   );
+}
+
+/** Stable functions that call the latest of `callbacks`, which must keep the same keys. */
+function useLatestCallbacks<
+  T extends { [K in keyof T]: (...args: never[]) => unknown },
+>(callbacks: T): T {
+  const latest = useRef(callbacks);
+  useLayoutEffect(() => {
+    latest.current = callbacks;
+  });
+  const [stable] = useState(
+    () =>
+      Object.fromEntries(
+        (Object.keys(callbacks) as (keyof T)[]).map((key) => [
+          key,
+          (...args: never[]) => latest.current[key](...args),
+        ]),
+      ) as T,
+  );
+  return stable;
+}
+
+/** The previous list while `list` holds the same entries, else `list`. */
+function useEqualList<T>(
+  list: readonly T[],
+  same: (a: T, b: T) => boolean,
+): readonly T[] {
+  const [kept, setKept] = useState(list);
+  if (
+    kept !== list &&
+    (kept.length !== list.length ||
+      kept.some((item, index) => !same(item, list[index] as T)))
+  ) {
+    setKept(list);
+    return list;
+  }
+  return kept;
 }
 
 /** Retain the last preview for collapse; context semantics clear immediately. */

@@ -218,8 +218,9 @@ export class NotificationsService extends Service implements Notifications {
   reloadPreferences() {
     this.preferences.reload();
   }
-  /** `ask` is false for a read that no entry or window focus caused: it
-   * publishes the status and never sends the automatic request. */
+  /** `ask` is false for a read that no entry or window focus caused, such as
+   * the Settings check or the read after a failed request: it publishes the
+   * status and never sends the automatic request. */
   async refreshPermission({ ask = true } = {}) {
     if (this.closed || this.permissionRequest) return;
     const generation = ++this.permissionGeneration;

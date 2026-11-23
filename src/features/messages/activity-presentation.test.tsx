@@ -29,6 +29,13 @@ it("keeps row activity props identical while each projection's values are equal"
   const changed = result.current.activity("row", row(true), "history");
   expect(changed).not.toBe(first);
   expect(changed?.active).toBe(true);
+  const outcome = result.current.activity(
+    "row",
+    { ...row(true), hasOutcome: true },
+    "history",
+  );
+  expect(outcome).not.toBe(changed);
+  expect(outcome?.hasOutcome).toBe(true);
   expect(result.current.activity("row", row(true))).toEqual(row(true));
   expect(result.current.activity("row", undefined, "history")).toBeUndefined();
 

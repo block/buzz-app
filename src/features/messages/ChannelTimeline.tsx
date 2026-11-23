@@ -2381,6 +2381,7 @@ function Timeline({
                       <ActivityGroupPreview
                         session={queries}
                         group={disclosure}
+                        agentPubkeys={agentPubkeys}
                         openActivity={onOpenLink}
                         canOpenActivity={canOpenLink}
                         renderHistory={(entry) => renderMessage(entry, true)}

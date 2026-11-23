@@ -4,6 +4,10 @@ import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
 import { AgentResponsePreview } from "./AgentResponsePreview";
+import {
+  coordinationLabel,
+  hasCoordinationPreview,
+} from "./coordination-preview";
 import { useChannelActivitySubscription } from "../agents/use-channel-agent-activity";
 import { useSpringLoaded } from "./spring-loaded-drag";
 import { useActivityIndicator } from "./use-activity-indicator";
@@ -1896,6 +1900,13 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
     activity?.requestId,
   );
   const active = live || (activity?.active ?? false);
+  const coordination =
+    !failure &&
+    !active &&
+    !activity?.hasOutcome &&
+    activity?.container !== "history" &&
+    hasCoordinationPreview(row, agentPubkeys);
+  const coordinationSummary = coordinationLabel(1);
   // Its dots are then its request's working cue, so the conversation shows
   // no second one for that request until a newer message follows its run.
   useActivityTypingReplacement(
@@ -1996,7 +2007,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
       alignViewer={false}
       day={false}
       layout="continuation"
-      stackPrevious
+      stackPrevious={!coordination || bubble}
       stackNext
       renderMessage={(message, trigger) =>
         failure ? (
@@ -2089,7 +2100,11 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                 ref={trigger}
                 data-buzz-ui=""
                 className={styles.audienceLine}
-                aria-label={`${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`}
+                aria-label={
+                  coordination
+                    ? `${open ? "Collapse" : "Show"} activity history: ${coordinationSummary}`
+                    : `${author.name}${to.length ? ` to ${to.map((who) => who.name).join(", ")}` : ""}: ${preview}${row.edited ? " (edited)" : ""}`
+                }
               >
                 {!bubble && avatar(author)}
                 {!open && (
@@ -2104,7 +2119,9 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
                 {open && bubble && "Collapse"}
                 {!open && (
                   <span className={styles.audiencePreviewText}>
-                    <ShimmerText active={active}>{visiblePreview}</ShimmerText>
+                    <ShimmerText active={active}>
+                      {coordination ? coordinationSummary : visiblePreview}
+                    </ShimmerText>
                   </span>
                 )}
                 {!open && row.edited && <EditedMarker />}
@@ -2129,6 +2146,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
       {props.day && <DayDivider createdAt={row.createdAt} />}
       <AgentResponsePreview
         name={author.name}
+        variant={coordination && !open ? "coordination" : "activity"}
         bylineHint={
           <RemoteAgentHint
             session={session}

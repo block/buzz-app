@@ -3695,6 +3695,16 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   border-radius: calc(var(--radius-chip) - var(--space-1));
 }
 
+/* Only eligible, collapsed coordination recedes; expanded prose and lifecycle
+   previews retain the message type role. */
+.message[data-preview-variant="coordination"]
+:is(.messageBubble, .audienceEntry) {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+}
+
 .messageHighlight > .messageBody > .messageContent .messageBubble {
   isolation: isolate;
 }

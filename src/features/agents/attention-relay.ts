@@ -193,9 +193,21 @@ export async function attentionSet(
   }
   const attention: Record<string, AttentionObject> = {};
   const counts = { Interests: 0, watches: 0 };
+  // By slug, every Interest comes before every watch, so a watch sees whether
+  // its Interest was skipped, including over the limit.
   for (const object of valid.sort((a, b) => (a.slug < b.slug ? -1 : 1))) {
     const kind = group(object.value);
-    if (++counts[kind] > OBJECT_LIMIT)
+    const parent =
+      object.value.type === "interest"
+        ? undefined
+        : `interest/${object.value.interest_id}`;
+    // A skipped Interest could be paused, so its watches do not run either.
+    if (parent && skipped[parent])
+      skipped[object.slug] = {
+        ...object,
+        problem: `Its Interest ${parent} is skipped`,
+      };
+    else if (++counts[kind] > OBJECT_LIMIT)
       skipped[object.slug] = {
         ...object,
         problem: `Over the limit of ${OBJECT_LIMIT} ${kind}`,

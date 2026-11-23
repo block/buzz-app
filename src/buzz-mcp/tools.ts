@@ -53,7 +53,10 @@ import {
 } from "../features/agent-harness/turn-records";
 import { parseBuzzLink } from "../features/navigation/buzz-links";
 import { soloChannelMetadata } from "../features/relay/discovery";
-import { channelLabelTags } from "../features/relay/channel-labels";
+import {
+  channelIdentity,
+  channelLabelTags,
+} from "../features/relay/channel-labels";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../features/solo/labels";
 import type { RelayEvent } from "../features/relay/events";
 import {
@@ -3603,6 +3606,7 @@ async function lifecycle(
   const { client } = tools;
   const channel = target(tools, args);
   const { kind, content, tags } = lifecycleTemplate(action, channel);
+  if (action === "leave") await refuseOwnConfigChannel(tools, channel);
   await client.publish({ kind, content, tags });
   const shown = async () => {
     if (action === "join" || action === "leave")
@@ -3644,6 +3648,7 @@ async function changeMembers(
     throw new Error("For yourself, use channel_join or channel_leave.");
   if (pubkeys.length > 50)
     throw new Error("Change at most 50 members at a time.");
+  await refuseOwnConfigChannel(tools, channel);
   const { lines, changed } = await tools.change(
     channel,
     change === "add" ? pubkeys : [],
@@ -3652,6 +3657,27 @@ async function changeMembers(
   );
   if (!changed) throw new Error(lines.join("\n"));
   return lines.join("\n");
+}
+
+/** NIP-AP "Config channels": the agent never changes the roster of its own
+ * config or attention channel, or leaves it; only its owner does. The relay
+ * lets a member add keys and leave, so the tools refuse. (It already refuses
+ * a member's archive or delete.) Labels prove nothing, so a channel that only
+ * looks like one is refused too. */
+async function refuseOwnConfigChannel(tools: Tools, channel: string) {
+  const metadata = await tools.metadata(channel);
+  if (!metadata) return;
+  const { type, labels } = channelIdentity(metadata as RelayEvent);
+  if (
+    type === "system" &&
+    labels.includes(tools.client.pubkey) &&
+    labels.some(
+      (label) => label === "agent-config" || label === "agent-attention",
+    )
+  )
+    throw new Error(
+      "This is your own config or Attention channel. Only your owner manages it.",
+    );
 }
 
 /** The `channel` argument, or the current channel only when it is left out. */

@@ -3793,6 +3793,47 @@ it("changes each member once, however their key is written", async () => {
   expect(published.map((template) => template.kind)).toEqual([9000, 9001]);
 });
 
+it("refuses to change who is in the agent's own config and attention channels", async () => {
+  const own = (id: string, labels: string[]) =>
+    event({
+      kind: 39000,
+      tags: [
+        ["d", id],
+        ["name", id],
+        ["t", "system"],
+        ...labels.map((l) => ["t", l]),
+      ],
+    });
+  const config = "1e4c2f1a-8b3d-4c5e-9f60-718293a4b5c6";
+  const attention = "2e4c2f1a-8b3d-4c5e-9f60-718293a4b5c6";
+  const others = "3e4c2f1a-8b3d-4c5e-9f60-718293a4b5c6";
+  const { client, published } = fake([
+    own(config, ["agent-config", me]),
+    own(attention, ["agent-attention", me]),
+    own(others, ["agent-attention", alice]),
+  ]);
+  const refusal =
+    "This is your own config or Attention channel. Only your owner manages it.";
+  for (const channel of [config, attention]) {
+    await expect(
+      callTool(client, {}, "member_add", { channel, pubkeys: [bob] }),
+    ).rejects.toThrow(refusal);
+    await expect(
+      callTool(client, {}, "member_remove", { channel, pubkeys: [bob] }),
+    ).rejects.toThrow(refusal);
+    await expect(
+      callTool(client, {}, "channel_leave", { channel }),
+    ).rejects.toThrow(refusal);
+  }
+  expect(published).toEqual([]);
+  // Another agent's attention channel is not this agent's to refuse.
+  await callTool(client, {}, "member_add", {
+    channel: others,
+    pubkeys: [bob],
+  }).catch(() => undefined);
+  expect(published.map((template) => template.kind)).toEqual([9000]);
+});
+
 it("refuses member changes that do not fit, before publishing", async () => {
   const { client, published } = relay();
   const call = (name: string, args: Record<string, unknown>) =>

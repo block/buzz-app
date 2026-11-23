@@ -255,6 +255,46 @@ describe("attention records", () => {
       slug(OBJECT_LIMIT + 1),
     ]);
   });
+
+  it("skips a watch whose Interest is skipped, but runs one whose Interest is missing", async () => {
+    const unreadable = sign({
+      ...revision({
+        channel,
+        d: await attentionD(channel, "interest/x"),
+        slug: "interest/x",
+        op: "create",
+        value: interest,
+      }),
+      content: JSON.stringify({
+        schema: "agent-attention/v9",
+        slug: "interest/x",
+        value: { ...interest, paused: true },
+      }),
+    });
+    const over = `interest/i${String(OBJECT_LIMIT).padStart(4, "0")}`;
+    const interests = await Promise.all(
+      Array.from({ length: OBJECT_LIMIT + 1 }, (_, i) =>
+        record(`interest/i${String(i).padStart(4, "0")}`, interest),
+      ),
+    );
+    const set = await attentionSet(channel, [
+      unreadable,
+      ...interests,
+      await record("watch/a", timer),
+      await record("watch/b", { ...timer, interest_id: over.slice(9) }),
+      await record("watch/c", { ...timer, interest_id: "i0000" }),
+      await record("watch/d", { ...timer, interest_id: "gone" }),
+    ]);
+    expect(set.skipped["watch/a"]?.problem).toBe(
+      "Its Interest interest/x is skipped",
+    );
+    expect(set.skipped["watch/b"]?.problem).toBe(
+      `Its Interest ${over} is skipped`,
+    );
+    expect(
+      Object.keys(set.attention).filter((s) => s.startsWith("watch/")),
+    ).toEqual(["watch/c", "watch/d"]);
+  });
 });
 
 describe("the mirror", () => {

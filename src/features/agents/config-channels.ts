@@ -21,7 +21,7 @@ import { attestedOwner } from "./owner-attestation";
 
 export type ConfigFamily = "agent-config" | "team-config";
 /** Every NIP-AP channel family: the config ones, and the agent's attention
- * channel, whose artifacts NIP-AT defines. */
+ * channel, whose artifacts NIP-AP "Agent attention" defines. */
 export type ChannelFamily = ConfigFamily | "agent-attention";
 
 /** What the relay's NIP-11 document lets config use, or why it can't. */

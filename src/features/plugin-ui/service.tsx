@@ -233,7 +233,6 @@ export const pluginUi: PluginUi = Object.freeze({
             return (
               <MenuItem
                 key={text}
-                label={text}
                 tone={tone === "destructive" ? "danger" : "default"}
                 disabled={disabled === true}
                 onClick={select && (() => select())}

@@ -3634,7 +3634,7 @@ it("reveals a completed step selected by an exact thread link", async () => {
 });
 
 it.each(["error", "stopped"] as const)(
-  "preserves the %s outcome veto when replies prevent group rendering",
+  "preserves the %s outcome when folded activity contains replies",
   async (state) => {
     const h = messagesHarness();
     const local = createLocalAgentActivity();
@@ -3679,6 +3679,9 @@ it.each(["error", "stopped"] as const)(
     });
     try {
       h.render();
+      fireEvent.click(
+        await screen.findByRole("button", { name: /Show activity history/ }),
+      );
       const rendered = await screen.findByText(update.content);
       expect(rendered.closest("[data-message-id]")).toHaveAttribute(
         "data-activity-outcome",
@@ -3697,9 +3700,17 @@ it.each(["error", "stopped"] as const)(
           "true",
         ),
       );
+      fireEvent.click(
+        screen.getByRole("button", { name: /Collapse activity history/ }),
+      );
       expect(
-        screen.queryByRole("button", { name: /Show activity history/ }),
-      ).toBeNull();
+        screen.getByRole("button", {
+          name: new RegExp(
+            `Show activity history:.*${state === "error" ? "Couldn’t finish" : "Stopped"}`,
+          ),
+        }),
+      ).toBeVisible();
+      expect(screen.queryByText(/Agent coordination/)).not.toBeInTheDocument();
     } finally {
       release();
       activity.dispose();

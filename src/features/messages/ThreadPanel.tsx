@@ -140,15 +140,17 @@ export type ThreadPanelProps = {
 // Read errors are diagnostics, not copy; the notice says what happened.
 const THREAD_FAILED = "This thread didn’t load.";
 
-/** The ids of the folded group, activity or relayed, that holds a reply. */
+/** Folded history containing a reply or any of its displayed ancestors. */
 function foldedGroupOf(tree: ReturnType<typeof replyTree>, id: string) {
-  return [...tree.children.values()]
+  const path = new Set([id, ...tree.ancestors(id)]);
+  const ids = [...tree.children.values()]
     .flatMap((rows) => [
       ...activityRuns(rows),
       ...relayedRuns(rows).map((run) => run.relayed),
     ])
-    .find((group) => group.some((row) => row.id === id))
-    ?.map((row) => row.id);
+    .filter((group) => group.some((row) => path.has(row.id)))
+    .flatMap((group) => group.map((row) => row.id));
+  return ids.length ? ids : undefined;
 }
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
@@ -961,11 +963,15 @@ function ThreadMessages({
       (row) => tree.parents.get(row.id) ?? [],
     );
     shownTree.current = tree;
-    if (added.length)
+    if (added.length) {
       setExpanded((current) => {
         if (added.every((id) => current.has(id))) return current;
         return new Set([...current, ...added]);
       });
+      const groups = added.flatMap((id) => foldedGroupOf(tree, id) ?? []);
+      if (groups.length)
+        setExpandedActivity((current) => new Set([...current, ...groups]));
+    }
   }, [tree]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
@@ -982,11 +988,15 @@ function ThreadMessages({
       .ancestors(messageId)
       .filter((id) => !revealedAncestors.current.ids.has(id));
     for (const id of ancestors) revealedAncestors.current.ids.add(id);
-    if (ancestors.length)
+    if (ancestors.length) {
       setExpanded((current) => {
         if (ancestors.every((id) => current.has(id))) return current;
         return new Set([...current, ...ancestors]);
       });
+      const groups = ancestors.flatMap((id) => foldedGroupOf(tree, id) ?? []);
+      if (groups.length)
+        setExpandedActivity((current) => new Set([...current, ...groups]));
+    }
   }, [tree, messageId, navigation, revealRequest]);
   const rootTarget =
     navigation?.target.kind === "conversation" &&
@@ -1188,6 +1198,9 @@ function ThreadMessages({
           ? current
           : new Set([...current, ...ancestors]),
       );
+      const group = foldedGroupOf(tree, revealed.id);
+      if (group)
+        setExpandedActivity((current) => new Set([...current, ...group]));
     }
     setBoundary({ ...boundary, id: first?.id ?? null });
   }, [
@@ -1899,10 +1912,10 @@ function ThreadMessages({
     );
     const groups = [
       ...presentation.groups,
-      ...relayedRuns(chronologicalSiblings, lineRow ?? undefined),
-    ].filter((group) =>
-      group.ids.every((id) => !tree.children.get(id)?.length),
-    );
+      ...relayedRuns(chronologicalSiblings, lineRow ?? undefined).filter(
+        (group) => group.ids.every((id) => !tree.children.get(id)?.length),
+      ),
+    ];
     const siblings = chronologicalSiblings;
     const groupsByFirst = new Map(groups.map((group) => [group.ids[0], group]));
     const groupedIds = new Set(groups.flatMap((group) => group.ids));
@@ -1915,7 +1928,7 @@ function ThreadMessages({
     );
     return siblings.map((row, index) => {
       const group = groupsByFirst.get(row.id);
-      if (hidden.has(row.id) && !group) return null;
+      if (groupedIds.has(row.id) && !group) return null;
       const nextRow =
         row.audience === "agents"
           ? siblings[index + 1]
@@ -1938,18 +1951,6 @@ function ThreadMessages({
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
       previousParent = parent;
-      const descendants = branchReplies.get(row.id) ?? [];
-      const unreadCount = descendants.filter(
-        (reply) =>
-          session.unread.attention(
-            channelId,
-            reply.id,
-            unreadRequest?.readThrough,
-          ).unread,
-      ).length;
-      const unreadLabel = unreadCount
-        ? `${unreadCount} new in available replies`
-        : undefined;
       const renderMessage = (row: ChannelMessage, inside = false) => {
         const recordedActivity = presentation.byRow.get(row.id);
         const requestId = presentation.replyRequests.get(row.id);
@@ -2004,9 +2005,70 @@ function ThreadMessages({
           />
         );
       };
+      const renderBranch = (row: ChannelMessage, message: ReactNode) => {
+        const children = tree.children.get(row.id);
+        const descendants = branchReplies.get(row.id) ?? [];
+        const unreadCount = descendants.filter(
+          (reply) =>
+            session.unread.attention(
+              channelId,
+              reply.id,
+              unreadRequest?.readThrough,
+            ).unread,
+        ).length;
+        const unreadLabel = unreadCount
+          ? `${unreadCount} new in available replies`
+          : undefined;
+        return (
+          <ReplyBranch
+            message={message}
+            hasReplies={!!children?.length}
+            layout={continuation ? "continuation" : "thread"}
+            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+            summary={
+              <ReplySummary
+                count={descendants.length}
+                participants={[
+                  ...new Set(
+                    descendants.map((reply) => reply.authorId).reverse(),
+                  ),
+                ]}
+                profiles={profiles}
+                agentPubkeys={agentPubkeys}
+                resolveName={resolveName}
+                media={session.media}
+                unreadLabel={unreadLabel}
+                unreadCount={unreadCount}
+              />
+            }
+            depth={depth}
+            open={expanded.has(row.id)}
+            onExpand={() => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setExpanded((current) => new Set([...current, row.id]));
+            }}
+            collapseLabel={`Collapse ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
+            onCollapse={() => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setExpanded(
+                (current) =>
+                  new Set([...current].filter((id) => id !== row.id)),
+              );
+            }}
+          >
+            {expanded.has(row.id) && (
+              <ol className={styles.threadList}>
+                {renderReplies(row.id, depth + 1)}
+              </ol>
+            )}
+          </ReplyBranch>
+        );
+      };
       const renderHistory = (entry: ChannelMessage) => (
         <div ref={entry.id === messageId ? selectedBranchRef : undefined}>
-          {renderMessage(entry, true)}
+          {renderBranch(entry, renderMessage(entry, true))}
         </div>
       );
       const toggleGroup = () => {
@@ -2100,50 +2162,7 @@ function ThreadMessages({
               )}
             </>
           )}
-          <ReplyBranch
-            message={message}
-            hasReplies={!!children?.length}
-            layout={continuation ? "continuation" : "thread"}
-            label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
-            summary={
-              <ReplySummary
-                count={descendants.length}
-                participants={[
-                  ...new Set(
-                    descendants.map((reply) => reply.authorId).reverse(),
-                  ),
-                ]}
-                profiles={profiles}
-                agentPubkeys={agentPubkeys}
-                resolveName={resolveName}
-                media={session.media}
-                unreadLabel={unreadLabel}
-                unreadCount={unreadCount}
-              />
-            }
-            depth={depth}
-            open={expanded.has(row.id)}
-            onExpand={() => {
-              follow.current = false;
-              targetAnchor.current = undefined;
-              setExpanded((current) => new Set([...current, row.id]));
-            }}
-            collapseLabel={`Collapse ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}`}
-            onCollapse={() => {
-              follow.current = false;
-              targetAnchor.current = undefined;
-              setExpanded(
-                (current) =>
-                  new Set([...current].filter((id) => id !== row.id)),
-              );
-            }}
-          >
-            {expanded.has(row.id) && (
-              <ol className={styles.threadList}>
-                {renderReplies(row.id, depth + 1)}
-              </ol>
-            )}
-          </ReplyBranch>
+          {!group && renderBranch(row, message)}
         </li>
       );
     });

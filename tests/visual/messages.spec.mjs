@@ -179,11 +179,15 @@ for (const colorScheme of ["light", "dark"]) {
       name: "Thread messages",
       exact: true,
     });
-    const branchRow = thread.locator(`[data-message-id="${branch.id}"]`);
-    const disclosure = branchRow.getByRole("button").first();
+    const disclosure = thread
+      .getByRole("button", { name: /^Show activity history:/ })
+      .first();
     await expect(disclosure).toBeVisible();
     await expect(
-      thread.getByText(person.content, { exact: true }),
+      thread.getByRole("button", { name: "View 1 reply" }),
+    ).toHaveCount(0);
+    await expect(
+      thread.getByText(`Reviewer: ${person.content}`, { exact: true }),
     ).toBeVisible();
     await page.mouse.move(0, 0);
     await expect(threadHistory).toHaveScreenshot(
@@ -192,10 +196,19 @@ for (const colorScheme of ["light", "dark"]) {
 
     await disclosure.focus();
     await page.keyboard.press("Enter");
+    const collapse = thread
+      .getByRole("button", { name: /^Collapse activity history:/ })
+      .first();
+    await expect(collapse).toBeFocused();
+    const branchRow = thread.locator(`[data-message-id="${branch.id}"]`);
+    await branchRow.getByRole("button").first().click();
     await expect(
       branchRow.getByText(branch.content, { exact: true }),
     ).toBeVisible();
-    await expect(disclosure).toBeFocused();
+    await thread.getByRole("button", { name: "View 1 reply" }).click();
+    await expect(
+      thread.getByText(nested.content, { exact: true }),
+    ).toBeVisible();
     await page.mouse.move(0, 0);
     await expect(threadHistory).toHaveScreenshot(
       `${colorScheme}-thread-expanded.png`,

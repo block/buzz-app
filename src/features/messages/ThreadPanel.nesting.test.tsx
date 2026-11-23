@@ -203,9 +203,10 @@ it("binds a flattened update to the request it claims in another reply level", (
     // Its send names the nested follow-up, but its reply link is the root.
     { ...update("current"), request: "follow-up" },
   ]);
-  fireEvent.click(
-    screen.getByRole("button", { name: /^Show activity history:/ }),
-  );
+  for (const disclosure of screen.getAllByRole("button", {
+    name: /^Show activity history:/,
+  }))
+    fireEvent.click(disclosure);
   const article = (text: string) => screen.getByText(text).closest("article");
   expect(article("current")).toHaveAttribute("data-request", "follow-up");
   expect(article("old")).toHaveAttribute("data-request", "root");
@@ -284,8 +285,14 @@ it.each(["first update", "second update", "failure"])(
         screen.getByRole("button", { name: /^Show activity history:/ }),
       );
     } else {
-      // Coordination rows with children must still expose their own branch.
-      expect(disclosure()).not.toBeInTheDocument();
+      // The branch belongs to the folded history, not beside its summary.
+      expect(disclosure()).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "View 1 reply" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Show activity history:/ }),
+      );
     }
     expect(screen.getAllByText("failure")).toHaveLength(1);
     expect(screen.getByText("first update")).toBeVisible();
@@ -300,6 +307,15 @@ it.each(["first update", "second update", "failure"])(
       expect(screen.getByText("failure")).toBeVisible();
       expect(screen.getByText("follow-up")).toBeVisible();
       expect(screen.queryByText("first update")).not.toBeInTheDocument();
+    }
+    if (parent !== "failure") {
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Collapse activity history:/ }),
+      );
+      expect(
+        screen.queryByRole("button", { name: "View 1 reply" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText("follow-up")).not.toBeInTheDocument();
     }
     h.update(history);
     expect(disclosure()).toBeVisible();
@@ -544,17 +560,14 @@ it("reveals all available ancestors for a selected descendant, including late hi
     screen.getByText("Earlier reply unavailable in loaded history."),
   ).toBeVisible();
   expect(screen.getByText("grandchild")).toBeVisible();
-  h.update([row("grandchild", "missing"), row("missing", "root")]);
+  const parent = { ...row("missing", "root"), audience: "agents" as const };
+  h.update([row("grandchild", "missing"), parent]);
   expect(screen.getByText("grandchild")).toBeVisible();
   expect(
     screen.queryByText("Earlier reply unavailable in loaded history."),
   ).not.toBeInTheDocument();
   // A deep reply whose chain arrives late still lands in the top-level branch.
-  h.update([
-    row("missing", "root"),
-    row("grandchild", "missing"),
-    row("deeper", "grandchild"),
-  ]);
+  h.update([parent, row("grandchild", "missing"), row("deeper", "grandchild")]);
   expect(screen.getByText("deeper")).toBeVisible();
   expect(branchOf("deeper")).toBe(branchOf("grandchild"));
   expect(screen.getByText("missing").closest("[data-depth]")).toHaveAttribute(

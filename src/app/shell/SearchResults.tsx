@@ -764,7 +764,7 @@ export function SearchResults({
   const [sort, setSort] = useState<SearchSort>(messageSortPreference);
   // The chip or a single resolved `in:` limits results to one conversation.
   const effectiveChannelId = scopedChannelId ?? operatorChannelId;
-  const canRerank = useCanRerank(decisions);
+  const canRerank = useCanRerank(decisions, community);
   // One search: its text within its conversation. Changing either reads a
   // new set of hits.
   const searchKey = JSON.stringify([effectiveChannelId ?? null, query]);

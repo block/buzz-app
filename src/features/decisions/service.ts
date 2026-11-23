@@ -267,6 +267,18 @@ export const communityKey = (community: string | undefined) => {
   }
 };
 
+/** The one spelling every provider sees for `community`: its relay origin
+ * (`https://host`, no final DNS dot), as joined communities spell it. A
+ * value that is not a relay URL passes through as it is. */
+const canonicalCommunity = (community: string | undefined) => {
+  if (community === undefined) return undefined;
+  try {
+    return relayOrigin(community);
+  } catch {
+    return community;
+  }
+};
+
 /** The provider that answers when no other default is registered. */
 export const DEFAULT_DECISION_PROVIDER = "buzz.typesafe/typesafe";
 /** Bundled providers, in order: in a community without the user's choice,
@@ -410,6 +422,7 @@ export class DecisionsService extends Service implements Decisions {
         status: DecisionProviderStatus;
       }>
     | undefined {
+    community = canonicalCommunity(community);
     const key = this.chosenIn(community);
     // Off: nothing answers, not even TypeSafe.
     if (key === DECISIONS_OFF) return undefined;
@@ -485,7 +498,7 @@ export class DecisionsService extends Service implements Decisions {
     return () => void this.listeners.delete(listener);
   };
   async decide(request: DecisionRequest): Promise<DecisionResult> {
-    const { community } = request;
+    const community = canonicalCommunity(request.community);
     let provider = this.current(community);
     let backend = provider?.key;
     const failed = (reason: DecisionFailure): DecisionResult =>
@@ -520,9 +533,14 @@ export class DecisionsService extends Service implements Decisions {
             provider = this.current(community);
             backend = provider?.key;
             if (!provider) return { outcome: "failed", reason: "unavailable" };
-            return provider.decide(Object.freeze({ ...request, timeoutMs }), {
-              signal: abort.signal,
-            });
+            return provider.decide(
+              Object.freeze({
+                ...request,
+                ...(community === undefined ? {} : { community }),
+                timeoutMs,
+              }),
+              { signal: abort.signal },
+            );
           },
         ),
         deadline,

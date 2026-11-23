@@ -569,8 +569,9 @@ it("answers each community with its own sign-in server's account, and leaves the
   await expect(
     decisions.decide({ ...request, community: BLOCK }),
   ).resolves.toMatchObject({ outcome: "answered", backend: BUILDERLAB });
+  // The service names the community by its relay origin.
   expect(decide).toHaveBeenCalledExactlyOnceWith(
-    { ...request, community: BLOCK },
+    { ...request, community: "https://block.example" },
     block.credential(),
   );
   // Asked directly elsewhere, it sends nothing.

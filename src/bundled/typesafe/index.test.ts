@@ -107,7 +107,12 @@ it("is ready in each community with its own key, and asks native to decide", asy
     model: "jev-1.13.0",
     answers: { a: { type: "yes_no", probability: 0.4 } },
   });
-  expect(native.decide).toHaveBeenCalledWith({ ...request, timeoutMs: 30_000 });
+  // The service names the community by its relay origin.
+  expect(native.decide).toHaveBeenCalledWith({
+    ...request,
+    community: "https://one.example",
+    timeoutMs: 30_000,
+  });
 });
 
 it("has no key for a request that names no community, and never asks native", async () => {

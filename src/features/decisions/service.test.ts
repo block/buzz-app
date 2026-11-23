@@ -335,8 +335,9 @@ it("routes to the first default offered, whether or not it can answer", async ()
 
 it("routes each community's requests to its own provider, and no other", async () => {
   const { service, plugin } = setup();
-  const offered = "wss://offered.example";
-  const other = "wss://other.example";
+  // Providers see each community as its relay origin.
+  const offered = "https://offered.example";
+  const other = "https://other.example";
   const asked: (string | undefined)[] = [];
   const typesafe = settable("ready");
   // Builderlab is offered, and answers, only where the community offers it.
@@ -555,6 +556,44 @@ it("treats a provider whose offered() throws as not offered, and never rejects",
   ).resolves.toMatchObject({ outcome: "answered" });
   expect(thrower).not.toHaveBeenCalled();
   expect(typesafe).toHaveBeenCalledOnce();
+});
+
+it("routes every spelling of a community as its relay origin", async () => {
+  const { service, plugin } = setup();
+  const typesafe = vi.fn(async () => reply);
+  const asked: (string | undefined)[] = [];
+  const origin = "https://relay.example";
+  // Builderlab knows the community only by its relay origin, as joined
+  // communities spell it.
+  await plugin("buzz.typesafe", { id: "typesafe", decide: typesafe });
+  await plugin("block.builderlab", {
+    id: "builderlab",
+    status: (community?: string) =>
+      community === origin ? ("ready" as const) : ("needs-setup" as const),
+    offered: (community: string) => community === origin,
+    decide: async (sent: DecisionRequest) => {
+      asked.push(sent.community);
+      return reply;
+    },
+  });
+  const spellings = [
+    origin,
+    "wss://relay.example",
+    "wss://relay.example.",
+    "wss://RELAY.example:443/",
+  ];
+  for (const spelling of spellings) {
+    expect(service.backend(spelling)).toBe("block.builderlab/builderlab");
+    expect(service.status(spelling)).toBe("ready");
+    await expect(
+      service.decide({ ...request, community: spelling }),
+    ).resolves.toMatchObject({
+      outcome: "answered",
+      backend: "block.builderlab/builderlab",
+    });
+  }
+  expect(asked).toEqual(spellings.map(() => origin));
+  expect(typesafe).not.toHaveBeenCalled();
 });
 
 it("ignores malformed saved community choices", async () => {

@@ -47,15 +47,23 @@ const INSTRUCTIONS = (n: number) =>
   ].join("\n");
 
 const noStatus = () => () => {};
-const useStatus = (decisions: Decisions | undefined) =>
+/** The status of the provider that answers decisions in `community`, the
+ * one the search's requests name. */
+const useStatus = (
+  decisions: Decisions | undefined,
+  community: string | undefined,
+) =>
   useSyncExternalStore(
     decisions?.subscribe ?? noStatus,
-    () => decisions?.status() ?? "unavailable",
+    () => decisions?.status(community) ?? "unavailable",
   );
-/** Whether this device's decision provider may answer: a reranked search
- * reads more hits up front. */
-export function useCanRerank(decisions: Decisions | undefined) {
-  return canRerank(useStatus(decisions));
+/** Whether the decision provider for `community` may answer: a reranked
+ * search reads more hits up front. */
+export function useCanRerank(
+  decisions: Decisions | undefined,
+  community: string | undefined,
+) {
+  return canRerank(useStatus(decisions, community));
 }
 const canRerank = (status: DecisionProviderStatus | "unavailable") =>
   status !== "unavailable" && status !== "needs-setup";
@@ -157,7 +165,7 @@ export function useMessageRerank({
 }) {
   const hold = useRef(held);
   hold.current = held;
-  const status = useStatus(decisions);
+  const status = useStatus(decisions, community);
   const answering = answers(status);
   // Facts are read when the calls start, so a profile that loads while the
   // results settle still counts.

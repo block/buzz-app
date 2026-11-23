@@ -7,7 +7,7 @@ import type {
   Decisions,
 } from "../../features/decisions/service";
 import { checkRequest } from "../../features/decisions/service";
-import { useMessageRerank } from "./message-rerank";
+import { useCanRerank, useMessageRerank } from "./message-rerank";
 import type { SearchMessage } from "./useSearchMessages";
 
 const message = (id: string) =>
@@ -296,6 +296,50 @@ it("sends nothing once the person moves during the settle", async () => {
     vi.advanceTimersByTime(500);
   });
   expect(decide).not.toHaveBeenCalled();
+});
+
+it("reranks only where the search's own community's provider answers", async () => {
+  vi.useFakeTimers();
+  const here = "https://here.example";
+  const decide = vi.fn(async (request: DecisionRequest) =>
+    answered(request, (text) => (text === "b" ? 0.9 : 0.1)),
+  );
+  // Ready only in `here`; another community, or none, needs setup.
+  const decisions = {
+    decide,
+    status: (community?: string) =>
+      community === here ? "ready" : "needs-setup",
+  } as unknown as Decisions;
+  const can = (community: string | undefined) =>
+    renderHook(() => useCanRerank(decisions, community)).result.current;
+  expect(can(here)).toBe(true);
+  expect(can("https://elsewhere.example")).toBe(false);
+  expect(can(undefined)).toBe(false);
+  const messages = ["a", "b"].map(message);
+  const { rerender, result } = renderHook(
+    ({ community }) =>
+      useMessageRerank({
+        decisions,
+        community,
+        query: "q",
+        messages,
+        enabled: true,
+        facts,
+        held: false,
+      }),
+    { initialProps: { community: "https://elsewhere.example" } },
+  );
+  await act(async () => {
+    vi.advanceTimersByTime(2_000);
+  });
+  expect(decide).not.toHaveBeenCalled();
+  rerender({ community: here });
+  await act(async () => {
+    vi.advanceTimersByTime(2_000);
+  });
+  expect(decide).toHaveBeenCalledOnce();
+  expect(decide.mock.calls[0]?.[0].community).toBe(here);
+  expect(result.current.messages.map(({ id }) => id)).toEqual(["b", "a"]);
 });
 
 it("asks a provider still checking its setup only once it answers", async () => {

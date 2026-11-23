@@ -134,7 +134,8 @@ it("asks in System One's format as the agent's community, and answers in it", as
   });
   expect(asked()).toEqual({
     state: '{"message":"I was charged twice."}',
-    community: "wss://relay.example.com",
+    // The agent's relay, spelled as its relay origin for the provider.
+    community: "https://relay.example.com",
     timeoutMs: 30_000,
     questions: {
       billing: {

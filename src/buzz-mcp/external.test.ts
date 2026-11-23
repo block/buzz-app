@@ -150,25 +150,21 @@ it("follows plugin tools as they are added and removed", async () => {
   );
 });
 
-it("uses the selected agent's tool policy for both listing and dispatch", async () => {
-  const { call, list, publish } = fixture([], false, { toolPreset: "chat" });
-  expect((await list()).result.tools.map((tool) => tool.name)).toEqual([
-    "send",
-    "reply_in_subthread",
-    "read",
-    "search",
-    "channel_list",
-    "channel_get",
-  ]);
-  expect(
-    await call("channel_create", {
-      name: "Triage",
-      visibility: "private",
-      solo: true,
-      members: [],
-    }),
-  ).toHaveProperty("result.isError", true);
-  expect(publish).not.toHaveBeenCalled();
+it("keeps all Buzz tools available regardless of the selected agent's native policy", async () => {
+  const { call, list, publish } = fixture([], false, {
+    toolPreset: "chat",
+    toolDeny: "channel_create,send",
+  });
+  expect((await list()).result.tools.map((tool) => tool.name)).toEqual(
+    expect.arrayContaining(["channel_create", "watch_add", "mem_set"]),
+  );
+  await call("channel_create", {
+    name: "Triage",
+    visibility: "private",
+    solo: true,
+    members: [],
+  });
+  expect(publish).toHaveBeenCalledOnce();
   expect(
     await call("send", {
       channel: "chan",
@@ -176,7 +172,7 @@ it("uses the selected agent's tool policy for both listing and dispatch", async 
       audience: "agents",
     }),
   ).toHaveProperty("result.content.0.text", `sent ${"d".repeat(64)}`);
-  expect(publish).toHaveBeenCalledOnce();
+  expect(publish).toHaveBeenCalledTimes(2);
 });
 
 it("passes full arguments to the native handler", async () => {

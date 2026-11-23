@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 import {
-  buzzToolAllowed,
   goosePlatform,
   hookedToolName,
   missingToolPolicyDenial,
@@ -40,29 +39,37 @@ it("preserves full access for old configs and normalizes override lists", () => 
   });
 });
 
-it("applies role baselines and explicit Buzz overrides", () => {
-  expect(buzzToolAllowed("send", { toolPreset: "chat" })).toBe(true);
-  expect(buzzToolAllowed("mem_set", { toolPreset: "chat" })).toBe(false);
-  expect(buzzToolAllowed("mem_get", { toolPreset: "research" })).toBe(true);
-  expect(buzzToolAllowed("mem_set", { toolPreset: "research" })).toBe(false);
-  expect(buzzToolAllowed("watch_add", { toolPreset: "coordinator" })).toBe(
+it("applies role baselines to the high-level native controls", () => {
+  expect(
+    nativeToolAllowed("native:agents", { toolPreset: "coordinator" }),
+  ).toBe(true);
+  expect(nativeToolAllowed("native:read", { toolPreset: "coordinator" })).toBe(
+    false,
+  );
+  expect(nativeToolAllowed("native:read", { toolPreset: "research" })).toBe(
     true,
   );
-  expect(
-    buzzToolAllowed("mem_set", { toolPreset: "chat", toolAllow: "mem_set" }),
-  ).toBe(true);
-  expect(buzzToolAllowed("send", { toolDeny: "send" })).toBe(false);
+  expect(nativeToolAllowed("native:web", { toolPreset: "research" })).toBe(
+    true,
+  );
+  expect(nativeToolAllowed("native:write", { toolPreset: "research" })).toBe(
+    false,
+  );
+  expect(nativeToolAllowed("native:meta", { toolPreset: "chat" })).toBe(true);
+  expect(nativeToolAllowed("native:shell", { toolPreset: "chat" })).toBe(false);
 });
 
-it("fails conflicting overrides closed and reports them to the editor", () => {
+it("fails conflicting native overrides closed and ignores legacy Buzz conflicts", () => {
   const policy = toolPolicy({
     toolPreset: "full",
     toolAllow: "send,native:shell",
     toolDeny: "send,native:shell",
   });
-  expect(toolPolicyProblem(policy)).toMatch(/conflicting/);
-  expect(buzzToolAllowed("send", policy)).toBe(false);
+  expect(toolPolicyProblem(policy)).toMatch(/native:shell/);
   expect(nativeToolAllowed("Bash", policy)).toBe(false);
+  expect(
+    toolPolicyProblem(toolPolicy({ toolAllow: "send", toolDeny: "send" })),
+  ).toBeUndefined();
 });
 
 it.each([

@@ -14,11 +14,6 @@ import {
 } from "../features/agent-harness/plugin-instructions";
 import type { AgentHandle } from "../features/agents/service";
 import {
-  buzzToolAllowed,
-  type ToolConfig,
-  type ToolPolicy,
-} from "../features/agents/tool-access";
-import {
   ATTENTION_TOOLS,
   callAttentionTool,
   isAttentionTool,
@@ -100,17 +95,17 @@ export type SessionTool = Listed & Readonly<{ load: "always" | "search" }>;
 /** The tools a session lists: the Buzz tools, then those plugins add. */
 export const sessionTools = (
   added: readonly AddedTool[] = [],
-  access?: ToolConfig | ToolPolicy | unknown,
-): readonly SessionTool[] =>
-  [
-    ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
-    ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-    ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-    ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-    ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-    ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-    ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
-  ].filter((tool) => buzzToolAllowed(tool.name, access));
+  // Kept for existing harness call sites: native policy never restricts Buzz.
+  _access?: unknown,
+): readonly SessionTool[] => [
+  ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
+  ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+  ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
+];
 
 /** What the server (Claude) or namespace (Codex) with the tools says up
  * front, so the model knows what it can search for. */
@@ -187,10 +182,9 @@ export async function callSessionTool(
   name: string,
   args: Record<string, unknown>,
   added: readonly AddedTool[] = [],
-  access?: ToolConfig | ToolPolicy | unknown,
+  // Kept for existing harness call sites: native policy never restricts Buzz.
+  _access?: unknown,
 ): Promise<Reply> {
-  if (!buzzToolAllowed(name, access))
-    throw new Error(`${name} is disabled by this agent's Tools setting.`);
   let client = typeof source === "function" ? source() : source;
   if (client?.settle) {
     await client.settle();

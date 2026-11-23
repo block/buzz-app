@@ -34,16 +34,15 @@ it("changes a role and saves only the tool fields with the rest of the config", 
   render(<AgentToolAccess agents={agents} agent={agent} />);
 
   await user.click(screen.getByRole("combobox", { name: "Tool access role" }));
-  await user.click(screen.getByRole("option", { name: /Chat only/ }));
+  await user.click(await screen.findByRole("option", { name: "Chat" }));
   const effective = screen.getByText(/Effective access:/);
-  expect(effective).toHaveTextContent("Effective access: 6 of");
+  expect(effective).toHaveTextContent("Effective access: all Buzz tools on");
   expect(effective).toHaveTextContent("1 of 7 native capability groups");
+  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
   await user.click(
-    screen.getByRole("button", { name: "Advanced: Buzz tools" }),
+    screen.getByRole("combobox", { name: "native:shell override" }),
   );
-  expect(screen.getByText(/Enabled by the current draft:/)).toHaveTextContent(
-    "send, reply_in_subthread, read, search, channel_list, channel_get",
-  );
+  await user.click(await screen.findByRole("option", { name: "Deny" }));
 
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledExactlyOnceWith(agent.key, {
@@ -52,7 +51,7 @@ it("changes a role and saves only the tool fields with the rest of the config", 
       instructions: "Keep these",
       toolPreset: "chat",
       toolAllow: "",
-      toolDeny: "",
+      toolDeny: "native:shell",
     },
   });
 });

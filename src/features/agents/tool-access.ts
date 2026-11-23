@@ -1,5 +1,5 @@
-// The owner's per-agent tool policy. The same normalized config drives every
-// harness's advertised Buzz tools, Buzz dispatch and native tool gates.
+// The owner's per-agent native tool policy. Buzz tools are always available;
+// the same normalized config drives every harness's native tool gates.
 export const TOOL_PRESETS = [
   "full",
   "coordinator",
@@ -10,7 +10,7 @@ export const TOOL_PRESETS = [
 export type ToolPreset = (typeof TOOL_PRESETS)[number];
 export type ToolConfig = Readonly<{
   toolPreset?: string;
-  /** Comma-separated Buzz tool names or native capability ids. */
+  /** Comma-separated native capability ids. Legacy Buzz names are ignored. */
   toolAllow?: string;
   toolDeny?: string;
 }>;
@@ -103,69 +103,32 @@ export const PRESET_INFO: readonly Readonly<{
   {
     id: "full",
     label: "Full access",
-    description: "All available Buzz and native tools.",
+    description: "All native capabilities. Buzz tools are always available.",
   },
   {
     id: "coordinator",
     label: "Coordinator",
     description:
-      "Act in Buzz and delegate, without direct coding, file or shell tools.",
+      "Native subagents and planning; no native file, shell or web tools.",
   },
   {
     id: "coding",
     label: "Coding",
-    description: "All available Buzz and native tools for implementation work.",
+    description: "All native capabilities for implementation work.",
   },
   {
     id: "research",
     label: "Research",
     description:
-      "Read-only research tools, web and file reads, plus sending findings.",
+      "Native web and file reads plus planning; no native writes, shell or subagents.",
   },
   {
     id: "chat",
-    label: "Chat only",
+    label: "Chat",
     description:
-      "Read, search and reply in Buzz; no file, shell, web or delegation tools.",
+      "Only native planning and tool search; no native file, shell, web or delegation tools.",
   },
 ];
-
-const CHAT = new Set([
-  "send",
-  "reply_in_subthread",
-  "read",
-  "search",
-  "channel_list",
-  "channel_get",
-]);
-const RESEARCH = new Set([
-  ...CHAT,
-  "buzz_help",
-  "agent_types",
-  "agent_read",
-  "team_read",
-  "solo_workspace_list",
-  "member_list",
-  "users",
-  "mem_get",
-  "notes_get",
-  "canvas_get",
-  "canvas_history",
-  "media_get",
-  "interest_show",
-  "interest_list",
-  "watch_show",
-  "watch_list",
-  "solo_worker_connections",
-  "solo_worker_readiness",
-  "solo_worker_read",
-  "solo_worker_list",
-  "plugin_list",
-  "plugin_discover",
-  "plugin_request_status",
-  "settings_list",
-  "settings_get",
-]);
 
 const list = (value: string | undefined): readonly string[] => [
   ...new Set(
@@ -210,7 +173,10 @@ export function toolPolicyKey(config: ToolConfig | ToolPolicy | unknown) {
 
 export function toolPolicyProblem(policy: ToolPolicy): string | undefined {
   const allowed = new Set(policy.allow);
-  const conflicts = policy.deny.filter((name) => allowed.has(name));
+  const native = new Set<string>(NATIVE_TOOLS.map((tool) => tool.id));
+  const conflicts = policy.deny.filter(
+    (name) => native.has(name) && allowed.has(name),
+  );
   return conflicts.length
     ? `Remove the conflicting allow and deny overrides for ${conflicts.join(", ")}.`
     : undefined;
@@ -223,25 +189,8 @@ const overridden = (name: string, policy: ToolPolicy) => {
   return undefined;
 };
 
-export function buzzToolAllowed(
-  name: string,
-  config: ToolConfig | ToolPolicy | unknown,
-) {
-  const policy = toolPolicy(config);
-  const override = overridden(name, policy);
-  if (override !== undefined) return override;
-  switch (policy.preset) {
-    case "chat":
-      return CHAT.has(name);
-    case "research":
-      return RESEARCH.has(name);
-    default:
-      return true;
-  }
-}
-
-/** Maps each harness's native spelling to a capability without treating Buzz's
- * own MCP tools as native tools; their names and arguments are gated centrally. */
+/** Maps each harness's native spelling to a capability. Buzz's own MCP tools
+ * are always available and are not subject to this native capability policy. */
 export function isBuzzNativeTool(name: string) {
   const normalized = name.toLowerCase();
   return (

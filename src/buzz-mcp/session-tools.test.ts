@@ -289,39 +289,37 @@ it("never hands a plugin's tool or operation the owner's workspaces", async () =
   for (const plugin of seen) expect(plugin).not.toHaveProperty("workspaces");
 });
 
-it("filters the session catalog and refuses denied calls before dispatch", async () => {
-  const names = sessionTools([tool("notes_add")], { toolPreset: "chat" }).map(
+it("keeps every Buzz tool available regardless of native policy or legacy overrides", async () => {
+  const access = {
+    toolPreset: "chat",
+    toolAllow: "mem_get",
+    toolDeny: "notes_add,send,channel_create",
+  };
+  const names = sessionTools([tool("notes_add")], access).map(
     (tool) => tool.name,
   );
-  expect(names).toEqual([
-    "send",
-    "reply_in_subthread",
-    "read",
-    "search",
-    "channel_list",
-    "channel_get",
-  ]);
-  expect(
-    sessionTools([], { toolPreset: "chat", toolAllow: "mem_get" }).some(
-      (tool) => tool.name === "mem_get",
-    ),
-  ).toBe(true);
+  expect(names).toEqual(
+    sessionTools([tool("notes_add")]).map((tool) => tool.name),
+  );
+  expect(names).toEqual(
+    expect.arrayContaining(["notes_add", "channel_create", "watch_add"]),
+  );
 
-  const call = vi.fn(async () => "must not run");
+  const call = vi.fn(async () => "allowed");
   await expect(
     callSessionTool(
-      undefined,
+      {} as import("./client").BuzzClient,
       {},
       "notes_add",
       {},
       [{ ...tool("notes_add"), call }],
-      { toolPreset: "chat" },
+      access,
     ),
-  ).rejects.toThrow("disabled by this agent's Tools setting");
-  expect(call).not.toHaveBeenCalled();
+  ).resolves.toBe("allowed");
+  expect(call).toHaveBeenCalledOnce();
 });
 
-it("applies the same policy to MCP listing and calls", async () => {
+it("exposes the complete Buzz catalog through MCP regardless of native policy", async () => {
   const listed = await respond(
     undefined,
     {},
@@ -334,7 +332,7 @@ it("applies the same policy to MCP listing and calls", async () => {
     (listed as { result: { tools: { name: string }[] } }).result.tools.some(
       (tool) => tool.name === "watch_add",
     ),
-  ).toBe(false);
+  ).toBe(true);
   const called = await respond(
     undefined,
     {},
@@ -346,4 +344,8 @@ it("applies the same policy to MCP listing and calls", async () => {
   expect((called as { result: { isError: boolean } }).result.isError).toBe(
     true,
   );
+  expect(
+    (called as { result: { content: { text: string }[] } }).result.content[0]
+      ?.text,
+  ).toContain("Buzz is not ready");
 });

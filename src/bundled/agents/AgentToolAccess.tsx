@@ -1,14 +1,6 @@
-import {
-  useEffect,
-  useId,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { Agent, Agents } from "../../features/agents/service";
-import { sessionTools } from "../../buzz-mcp/session-tools";
 import {
-  buzzToolAllowed,
   joinToolOverrides,
   nativeToolAllowed,
   NATIVE_TOOLS,
@@ -18,10 +10,8 @@ import {
   type ToolPolicy,
 } from "../../features/agents/tool-access";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 
@@ -45,7 +35,6 @@ export function AgentToolAccess({
 }) {
   const saved = useMemo(() => toolPolicy(agent.config), [agent.config]);
   const [draft, setDraft] = useState(saved);
-  const [query, setQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const form = useId();
@@ -53,20 +42,6 @@ export function AgentToolAccess({
   useEffect(() => {
     if (!dirty) setDraft(saved);
   }, [saved, dirty]);
-  const added = useSyncExternalStore(
-    agents.subscribe,
-    agents.tools,
-    agents.tools,
-  );
-  const catalog = useMemo(() => sessionTools(added), [added]);
-  const visible = catalog.filter(
-    (tool) =>
-      !query.trim() ||
-      `${tool.name} ${tool.description}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()),
-  );
-  const enabled = catalog.filter((tool) => buzzToolAllowed(tool.name, draft));
   const enabledNative = NATIVE_TOOLS.filter((tool) =>
     nativeToolAllowed(tool.id, draft),
   );
@@ -122,7 +97,7 @@ export function AgentToolAccess({
     >
       <InlineHeader
         title="Tool access"
-        subtitle="Choose a role, then override individual Buzz tools or native capabilities. Changes on this device apply to new tool calls and sessions."
+        subtitle="Buzz tools are always available. Choose a role, then adjust native capabilities such as files, Shell and Web. Changes on this device apply to new tool calls and sessions."
       />
       <SettingsGroup>
         <PreferenceRow
@@ -157,9 +132,8 @@ export function AgentToolAccess({
       </SettingsGroup>
       <div className="rounded-control border border-line bg-soft p-panel-inset text-body-sm text-subtle">
         <strong className="text-primary">
-          Effective access: {enabled.length} of {catalog.length} Buzz tools;{" "}
-          {enabledNative.length} of {NATIVE_TOOLS.length} native capability
-          groups.
+          Effective access: all Buzz tools on; {enabledNative.length} of{" "}
+          {NATIVE_TOOLS.length} native capability groups.
         </strong>
         <p className="mb-0 mt-2">
           Subagents inherit this policy. Native names differ by harness, so they
@@ -168,69 +142,20 @@ export function AgentToolAccess({
           process.
         </p>
       </div>
-      <Accordion
-        headingLevel={3}
-        items={[
-          {
-            value: "native",
-            title: "Advanced: native capabilities",
-            content: (
-              <SettingsGroup>
-                {NATIVE_TOOLS.map((tool) => (
-                  <ToolRow
-                    key={tool.id}
-                    name={tool.id}
-                    title={tool.label}
-                    description={tool.description}
-                    enabled={nativeToolAllowed(tool.id, draft)}
-                    value={override(tool.id)}
-                    disabled={saving}
-                    onChange={(value) => setOverride(tool.id, value)}
-                  />
-                ))}
-              </SettingsGroup>
-            ),
-          },
-          {
-            value: "buzz",
-            title: "Advanced: Buzz tools",
-            content: (
-              <div className="grid min-w-0 gap-4">
-                <SearchField
-                  value={query}
-                  onValueChange={setQuery}
-                  label="Search Buzz tools"
-                  placeholder="Search tools"
-                  disabled={saving}
-                />
-                <p className="m-0 text-body-sm text-subtle">
-                  Enabled by the current draft:{" "}
-                  {enabled.map((tool) => tool.name).join(", ")}.
-                </p>
-                <SettingsGroup>
-                  {visible.map((tool) => (
-                    <ToolRow
-                      key={tool.name}
-                      name={tool.name}
-                      title={tool.name}
-                      description={tool.description}
-                      enabled={buzzToolAllowed(tool.name, draft)}
-                      value={override(tool.name)}
-                      disabled={saving}
-                      onChange={(value) => setOverride(tool.name, value)}
-                    />
-                  ))}
-                </SettingsGroup>
-                {!visible.length && (
-                  <p className="m-0 text-body-sm text-subtle">
-                    No Buzz tools match this search.
-                  </p>
-                )}
-              </div>
-            ),
-          },
-        ]}
-      />
+      <SettingsGroup>
+        {NATIVE_TOOLS.map((tool) => (
+          <ToolRow
+            key={tool.id}
+            name={tool.id}
+            title={tool.label}
+            description={tool.description}
+            enabled={nativeToolAllowed(tool.id, draft)}
+            value={override(tool.id)}
+            disabled={saving}
+            onChange={(value) => setOverride(tool.id, value)}
+          />
+        ))}
+      </SettingsGroup>
       {(problem || error) && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {problem ?? error}

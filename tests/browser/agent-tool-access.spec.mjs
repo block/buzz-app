@@ -49,30 +49,20 @@ test("changes a role and a targeted override, then saves the complete config", a
   const { errors } = watchPageErrors(page);
   await page.goto(url);
   await page.getByRole("combobox", { name: "Tool access role" }).click();
-  await page.getByRole("option", { name: /Chat only/ }).click();
+  await page.getByRole("option", { name: "Chat", exact: true }).click();
   const effective = page.getByText(/Effective access:/);
-  await expect(effective).toContainText("Effective access: 6 of");
+  await expect(effective).toContainText("Effective access: all Buzz tools on");
   await expect(effective).toContainText("1 of 7 native capability groups");
-
-  await page.getByRole("button", { name: "Advanced: Buzz tools" }).click();
-  await expect(page.getByText(/Enabled by the current draft:/)).toContainText(
-    "send, reply_in_subthread, read, search, channel_list, channel_get",
-  );
-  const search = page.getByRole("searchbox", { name: "Search Buzz tools" });
-  await search.fill("no-such-tool");
-  await expect(
-    page.getByText("No Buzz tools match this search."),
-  ).toBeVisible();
-  await search.fill("send");
+  await expect(page.getByRole("searchbox")).toHaveCount(0);
   const override = page.getByRole("combobox", {
-    name: "send override",
+    name: "native:shell override",
     exact: true,
   });
   await override.click();
   await page.getByRole("option", { name: "Deny", exact: true }).click();
   await expect(
     page.getByRole("combobox", { name: "Tool access role" }),
-  ).toHaveText("Chat only");
+  ).toHaveText("Chat");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => window.toolSave))
@@ -82,7 +72,7 @@ test("changes a role and a targeted override, then saves the complete config", a
         instructions: "Keep these",
         toolPreset: "chat",
         toolAllow: "",
-        toolDeny: "send",
+        toolDeny: "native:shell",
       },
     });
   expect(errors).toEqual([]);
@@ -108,16 +98,13 @@ for (const { name, width, height, query } of [
     await expect(
       page.getByRole("combobox", { name: "Tool access role" }),
     ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Advanced: native capabilities" })
-      .click();
     await expect(
       page.getByRole("combobox", { name: "native:read override", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Advanced: Buzz tools" }).click();
-    await expect(
-      page.getByRole("searchbox", { name: "Search Buzz tools" }),
-    ).toBeVisible();
+    await expect(page.getByRole("searchbox")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Advanced:/ })).toHaveCount(
+      0,
+    );
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

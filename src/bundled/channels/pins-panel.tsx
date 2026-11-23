@@ -34,7 +34,9 @@ function Launcher({
   const current = connection.scope === context.scope;
   const pins = usePinnedMessages(
     connection.session,
-    current && connection.session.relayAuthor ? context.channelId : undefined,
+    current && connection.session.workflowAuthority
+      ? context.channelId
+      : undefined,
   );
   // Where this host sends pin commands, or still lists some pins.
   if (

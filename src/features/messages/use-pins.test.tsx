@@ -25,8 +25,11 @@ function source(
   read: (filters: readonly ReadFilter[]) => Promise<readonly EventData[]>,
 ) {
   const listeners = new Set<LiveListener>();
+  const live = new Set<() => void>();
+  let heads: { channelId: string; state: string }[] = [];
   const value: PinSource = {
     relayAuthor: relay,
+    workflowAuthority: relay,
     read: vi.fn(read),
     async readPage(filters, settings) {
       const events = await value.read(filters, settings);
@@ -37,15 +40,24 @@ function source(
       return () => listeners.delete(listener);
     },
     live: {
-      snapshot: () => ({ heads: [] }),
-      subscribe: () => () => {},
+      snapshot: () => ({ heads }),
+      subscribe(listener) {
+        live.add(listener);
+        return () => live.delete(listener);
+      },
     },
   };
   const deliver = (events: EventData[]) => {
     for (const listener of listeners)
       listener({ events } as unknown as Parameters<LiveListener>[0]);
   };
-  return { value, deliver };
+  const catchUp = (channelId: string) => {
+    for (const state of ["pending", "established"]) {
+      heads = [{ channelId, state }];
+      for (const listener of live) listener();
+    }
+  };
+  return { value, deliver, catchUp };
 }
 
 it("reads a failed list once however often its readers render", async () => {
@@ -156,6 +168,20 @@ it("reloads only the pin an edit or a withdrawn edit names", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("reloads every row when its channel catches up", async () => {
+  const s = source(async ([filter]) =>
+    filter?.ids ? filter.ids.map((id) => message(id)) : [],
+  );
+  const { result } = renderHook(() => usePinnedRows(s.value, "c", [one, two]));
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  // Another channel's catch-up reads nothing.
+  act(() => s.catchUp("other"));
+  expect(idsRead(s)).toEqual([[one, two]]);
+  act(() => s.catchUp("c"));
+  await waitFor(() => expect(idsRead(s)).toHaveLength(2));
+  expect(idsRead(s)[1]).toEqual([one, two]);
 });
 
 it("holds triggers that arrive during a read for one read after it", async () => {

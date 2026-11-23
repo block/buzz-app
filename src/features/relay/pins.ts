@@ -69,7 +69,8 @@ export function pinnedIds(
 /** What the pin list needs from a session; `RelaySession` satisfies it. */
 export type PinSource = Readonly<{
   relayAuthor?: string | undefined;
-  /** Who may sign messages for others (an `actor` tag); see `foldMessages`. */
+  /** The relay's explicit NIP-11 `self`: who signs pin lists and may sign
+   * messages for others (an `actor` tag); see `foldMessages`. */
   workflowAuthority?: string | undefined;
   profiles?: Readonly<{
     owner?: ((pubkey: string) => string | undefined) | undefined;
@@ -141,20 +142,24 @@ function createPinLists(source: PinSource) {
       const channelId = event.tags.find(([name]) => name === "d")?.[1];
       const entry = channelId ? entries.get(channelId) : undefined;
       const ids =
-        entry && channelId && pinnedIds(event, source.relayAuthor, channelId);
+        entry &&
+        channelId &&
+        pinnedIds(event, source.workflowAuthority, channelId);
       if (!entry || !ids || newer(entry.event, event) !== event) continue;
       entry.event = event;
       publish(entry, { status: "ready", ids, set: new Set(ids) });
     }
   }
   function read(channelIds: readonly string[]) {
-    const relayAuthor = source.relayAuthor;
+    // NIP-PM: lists are signed by the relay's explicit NIP-11 `self`, never
+    // the contact key some hosts fall back to for `relayAuthor`.
+    const relayAuthor = source.workflowAuthority;
     const wanted = channelIds.flatMap((id) => {
       const entry = entries.get(id);
       return entry && !entry.reading ? [[id, entry] as const] : [];
     });
     if (!wanted.length) return;
-    // Without NIP-11 `self` no list can be verified: show none.
+    // Without it no list can be verified: show none.
     if (!relayAuthor) {
       for (const [, entry] of wanted) publish(entry, { status: "ready" });
       return;
@@ -308,6 +313,7 @@ export async function readPinnedMessages(
               {
                 kinds: [5, 9005, 40003],
                 "#e": chunk,
+                "#h": [channelId],
                 limit: OVERLAY_LIMIT,
                 consistency: "strong",
                 ...cursor,

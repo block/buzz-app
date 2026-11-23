@@ -188,6 +188,8 @@ async function fixture(
         : {}),
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      // The explicit NIP-11 `self` that pin lists are verified by.
+      archiveAuthority: relay.pubkey,
       media: () => undefined,
       ...(withAttachments
         ? {

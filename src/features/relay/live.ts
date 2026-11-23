@@ -1986,10 +1986,11 @@ export function subscribeRelayTraffic(
             }
           // A reply or a deletion changes a thread summary, which the relay
           // never stores, so no replay carries it.
+          // A pin list (30623) names pins, not replies; its store reads it
+          // again on catch-up.
           else if (
-            targets.length ||
-            incoming.kind === 5 ||
-            incoming.kind === 9005
+            incoming.kind !== 30623 &&
+            (targets.length || incoming.kind === 5 || incoming.kind === 9005)
           )
             owesRepair(route, owners);
         }

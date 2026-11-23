@@ -42,7 +42,7 @@ const DELETION_KINDS = [5, 9005];
 
 /** Loads the rows behind `ids`. A list change reads only ids not loaded yet;
  * a live edit reloads the pin it names, and a deletion the pins whose edit it
- * withdraws (a deleted pin leaves the list itself). `attempt` and the period
+ * withdraws (a deleted pin leaves the list itself). `attempt`, catch-up and the period
  * reload every row. One read runs at a time; triggers meanwhile wait for it.
  * Earlier rows the list still names stay shown while a read runs or after it
  * fails. */
@@ -147,6 +147,20 @@ function rowLoader(
     },
     { replay: true },
   );
+  // A cut replay may miss an edit: reload every row when the channel catches
+  // up after its route re-establishes, as the list itself is read again.
+  const catchingUp = () =>
+    source.live
+      .snapshot()
+      .heads.some(
+        (head) => head.state === "pending" && head.channelId === channelId,
+      );
+  let pending = catchingUp();
+  const stopCatchUp = source.live.subscribe(() => {
+    const now = catchingUp();
+    if (now && !pending) reload();
+    pending = now;
+  });
   const interval = setInterval(
     () => reload(),
     REFRESH_MS + Math.random() * 60_000,
@@ -171,6 +185,7 @@ function rowLoader(
       clearTimeout(timer);
       clearInterval(interval);
       stopLive();
+      stopCatchUp();
     },
   };
 }

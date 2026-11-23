@@ -49,6 +49,7 @@ function source(
   let heads: { channelId: string; state: string }[] = [];
   const value: PinSource = {
     relayAuthor: relayAuthor ?? undefined,
+    workflowAuthority: relayAuthor ?? undefined,
     read: vi.fn(read),
     async readPage(filters, settings) {
       const events = await value.read(filters, settings);
@@ -152,6 +153,15 @@ it("treats no list as empty, shows none without relay self, and retries a failed
   expect(pinLists(anonymous.value).snapshot("c").status).toBe("ready");
   anonymous.deliver([list([one])]);
   expect(pinLists(anonymous.value).snapshot("c").ids).toEqual([]);
+  // A contact key standing in for `relayAuthor` is not the relay's `self`.
+  const contact = source(async () => [list([one])], relay, {
+    workflowAuthority: undefined,
+  });
+  pinLists(contact.value).subscribe("c", () => {});
+  await flush();
+  expect(contact.value.read).not.toHaveBeenCalled();
+  contact.deliver([list([one])]);
+  expect(pinLists(contact.value).snapshot("c").ids).toEqual([]);
 
   let fail = true;
   const flaky = source(async () => {
@@ -312,7 +322,12 @@ it("pages edits newest first over every pin, whoever references them", async () 
     [one, two],
     new AbortController().signal,
   );
-  const overlay = { kinds: [5, 9005, 40003], "#e": [one, two], limit: 500 };
+  const overlay = {
+    kinds: [5, 9005, 40003],
+    "#e": [one, two],
+    "#h": ["c"],
+    limit: 500,
+  };
   expect(overlays).toEqual([
     { ...overlay, consistency: "strong" },
     {

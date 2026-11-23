@@ -904,6 +904,8 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       tags: [
         ["h", channel],
         ["e", id],
+        // NIP-PM: each new command is a distinct event.
+        ["client-id", crypto.randomUUID()],
       ],
     });
     return args.off === true ? "unpinned" : "pinned";

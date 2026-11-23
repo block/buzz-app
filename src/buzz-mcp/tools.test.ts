@@ -790,6 +790,7 @@ it("pins and unpins a message in its own channel", async () => {
       tags: [
         ["h", "chan"],
         ["e", root],
+        ["client-id", expect.any(String)],
       ],
     },
     {
@@ -798,9 +799,12 @@ it("pins and unpins a message in its own channel", async () => {
       tags: [
         ["h", "chan"],
         ["e", root],
+        ["client-id", expect.any(String)],
       ],
     },
   ]);
+  // Each command is its own event.
+  expect(published[0]?.tags.at(-1)).not.toEqual(published[1]?.tags.at(-1));
 });
 
 it("reads no emoji sets for a message without a shortcode", async () => {

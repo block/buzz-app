@@ -21,6 +21,8 @@ import {
 import { SEARCH_MIN_CHARS } from "../../shared/search-debounce";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Input } from "../../shared/design-system/ui/Input";
+import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { XIcon } from "../../shared/design-system/icons/index";
 import { usePeople, type Recipient } from "./usePeople";
@@ -66,7 +68,6 @@ export function RecipientPicker({
   initiallyOpen = true,
   searchOnly = false,
   maxRecipients = 8,
-  appearance = "header",
   channelOptions = noChannels,
   selectedChannel,
   onChannelChange,
@@ -87,8 +88,6 @@ export function RecipientPicker({
   /** Keep results closed until a search is typed. */
   searchOnly?: boolean;
   maxRecipients?: number;
-  /** A panel's header row, or a filled control inside a dialog form. */
-  appearance?: "header" | "field";
   channelOptions?: readonly RecipientChannel[];
   selectedChannel?: RecipientChannel | undefined;
   onChannelChange?(channel: RecipientChannel | undefined): void;
@@ -507,7 +506,6 @@ export function RecipientPicker({
       <fieldset
         aria-label="Recipients"
         className={styles.recipientHeader}
-        data-appearance={appearance}
         ref={field}
         onBlur={(event) => {
           if (
@@ -518,10 +516,15 @@ export function RecipientPicker({
             setOpen(false);
         }}
       >
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: the composite field delegates clicks to its labelled input. */}
-        <div
+        {/* The frame delegates clicks to its labelled input. */}
+        <InputGroup
           ref={anchor}
-          className={styles.toField}
+          wrap
+          leading={
+            <label htmlFor={id} className={styles.toLabel}>
+              To:
+            </label>
+          }
           onClick={focus}
           onKeyDown={(event) => {
             // Escape closes an open list; otherwise it is the host's.
@@ -531,7 +534,6 @@ export function RecipientPicker({
             }
           }}
         >
-          <label htmlFor={id}>To:</label>
           {selectedChannel && (
             <span className={styles.chip}>
               <Button
@@ -587,10 +589,9 @@ export function RecipientPicker({
               )}
             </span>
           ))}
-          <input
+          <Input
             id={id}
             ref={input}
-            className={styles.toInput}
             aria-label="Message recipients"
             role="combobox"
             aria-expanded={visible}
@@ -681,7 +682,7 @@ export function RecipientPicker({
               }
             }}
           />
-        </div>
+        </InputGroup>
         {/* Text left in To holds Send, so say why once the list closes, not
             while a name is typed. Below the list's anchor, so the list keeps
             its place. A polite status, read after whatever focus moved to,

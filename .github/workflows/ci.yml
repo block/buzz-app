@@ -115,13 +115,19 @@ jobs:
   native:
     if: github.event_name != 'workflow_dispatch'
     name: Rust and tool integration
-    # Use the PR author so a human rerunning a bot PR keeps standard runners.
-    # Fork-owned workflows also retain runners they can access.
-    runs-on: &linux_16core_or_standard >-
+    # Select one runner class, shared by native and browser jobs below.
+    # Use the PR author so rerunning a bot PR keeps standard runners.
+    # Fork-owned workflows retain runners they can access.
+    strategy:
+      matrix:
+        runner_class: &runner_class
+          - >-
+            ${{ github.repository == 'block/buzz-app' &&
+                github.event_name == 'pull_request' &&
+                github.event.pull_request.user.type == 'User' && 'large' || 'standard' }}
+    runs-on: >-
       ${{ fromJSON(
-        github.repository == 'block/buzz-app' &&
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.user.type == 'User' &&
+        matrix.runner_class == 'large' &&
         '{"group":"buzz-runners","labels":"buzz-ubuntu-x64-16core"}' ||
         '"ubuntu-24.04"'
       ) }}
@@ -316,11 +322,12 @@ jobs:
   browser_fixture:
     if: github.event_name != 'workflow_dispatch'
     name: Native browser fixture
+    strategy:
+      matrix:
+        runner_class: *runner_class
     runs-on: &linux_8core_or_standard >-
       ${{ fromJSON(
-        github.repository == 'block/buzz-app' &&
-        github.event_name == 'pull_request' &&
-        github.event.pull_request.user.type == 'User' &&
+        matrix.runner_class == 'large' &&
         '{"group":"buzz-runners","labels":"buzz-ubuntu-x64-8core"}' ||
         '"ubuntu-24.04"'
       ) }}
@@ -389,6 +396,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        runner_class: *runner_class
         engine: [chromium, webkit]
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
         exclude:
@@ -430,10 +438,7 @@ jobs:
       - name: Functional journeys
         env:
           # Keep two workers on the standard runners used by main, bots and forks.
-          BUZZ_BROWSER_WORKERS: >-
-            ${{ github.repository == 'block/buzz-app' &&
-                github.event_name == 'pull_request' &&
-                github.event.pull_request.user.type == 'User' && '3' || '2' }}
+          BUZZ_BROWSER_WORKERS: ${{ matrix.runner_class == 'large' && '3' || '2' }}
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=list,json
       - name: Browser evidence

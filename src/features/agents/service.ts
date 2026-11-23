@@ -9272,7 +9272,7 @@ export class AgentsService extends Service implements Agents {
         throw new Error("Connect this agent's community to move its attention");
       if (!read || !artifacts || !channels || !session.artifactSync)
         throw new Error("This community can't store attention");
-      // A full set must fit in one sync (NIP-AT Relay support).
+      // A full set must fit in one sync (NIP-AP "Attention relay support").
       if (!((session.artifactSyncMaxEvents ?? 0) >= HEAD_LIMIT))
         throw new Error(
           `This community can't store attention: its sync limit is under ${HEAD_LIMIT} records`,

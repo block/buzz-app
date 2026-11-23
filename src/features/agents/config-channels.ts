@@ -270,6 +270,16 @@ export function createConfigChannels(
         role ? undefined : { expectedRole: "none", role: "member" },
       );
     },
+    /** Removes `pubkey` when a fresh roster read shows it can write there:
+     * any role but `guest`. A guest, or a key not there, stays as it is. */
+    removeWriter: (channel: string, pubkey: string, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      return administer(channel, pubkey, (role) =>
+        role && role !== "guest"
+          ? { expectedRole: role, role: "remove" }
+          : undefined,
+      );
+    },
     /** Removes `pubkey` with whatever role a fresh roster read verifies. */
     removeMember: (channel: string, pubkey: string) =>
       administer(channel, pubkey, (role) =>

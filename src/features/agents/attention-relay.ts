@@ -594,10 +594,12 @@ export function compared(
   const extra = sorted(
     Object.keys(set.attention).filter((slug) => !attention[slug]),
   );
+  const named = namedInterests(attention);
   return {
     migrated: false,
     different,
     extra,
+    kept: extra.filter((slug) => named.has(slug)),
     skipped: sorted(Object.keys(set.skipped)),
     heads: Object.fromEntries(
       [...different, ...extra, ...Object.keys(set.skipped)].flatMap((slug) => {
@@ -632,6 +634,8 @@ export type AttentionMigration = Readonly<{
   different: readonly string[];
   /** Objects only the relay holds. They stay, unless the move prunes them. */
   extra: readonly string[];
+  /** The Interests in `extra` that a watch here names: pruning keeps them. */
+  kept: readonly string[];
   /** Records skipped, here or on the relay; they are not moved. */
   skipped: readonly string[];
   /** The relay head of each object in `extra` and `skipped`, by slug: what
@@ -656,7 +660,7 @@ export type MoveChoice = Readonly<{
   snapshot: MoveSnapshot;
 }>;
 
-const sameRecord = (
+export const sameRecord = (
   a: Readonly<Record<string, string>>,
   b: Readonly<Record<string, string>>,
 ) => {
@@ -748,11 +752,7 @@ export async function moveAttention(
     }
   }
   // Interests a watch here names stay, even when only the relay holds them.
-  const named = new Set(
-    Object.values(attention).flatMap(({ value }) =>
-      value.type === "interest" ? [] : [`interest/${value.interest_id}`],
-    ),
-  );
+  const named = namedInterests(attention);
   const changes: AttentionEdit[] = [
     ...Object.values(attention)
       .filter(({ slug, value }) => {
@@ -775,13 +775,26 @@ export async function moveAttention(
   const set = await read();
   const found = compared(attention, set);
   // The community's versions may differ; each object here must be there.
+  // "device" keeps the Interests a watch here names, so they may stay extra.
   const moved =
     choice?.use === "community"
       ? !found.skipped.length &&
         Object.keys(attention).every((slug) => set.attention[slug])
-      : !found.different.length && !found.extra.length && !found.skipped.length;
+      : !found.different.length &&
+        !found.skipped.length &&
+        found.extra.every(
+          (slug) => choice?.use === "device" && named.has(slug),
+        );
   return { moved, set, found, snapshot: moveSnapshot(attention, found) };
 }
+
+/** The slug of each Interest a watch in `attention` names. */
+const namedInterests = (attention: AgentRecord["attention"]) =>
+  new Set(
+    Object.values(attention).flatMap(({ value }) =>
+      value.type === "interest" ? [] : [`interest/${value.interest_id}`],
+    ),
+  );
 
 /** Publish order: removed watches, Interests, watches, removed Interests. */
 const rank = ({ slug, value }: AttentionEdit) => {

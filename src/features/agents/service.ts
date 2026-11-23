@@ -328,6 +328,7 @@ import {
   ownerSender,
   pendingSet,
   moveAttention,
+  sameRecord,
   type MoveSnapshot,
   publishChanges,
   readOnce,
@@ -1916,15 +1917,17 @@ export type Agents = {
    * owner, each object in `prune` that only the community holds or could
    * not read: pass the `heads` of the result the owner confirmed, so nothing
    * added or changed since is deleted. With `adopt` (the owner chose the
-   * community's), it publishes only objects the community lacks, then
-   * switches to the community's set as it is, which becomes the agent's
-   * attention here too: the community's versions replace this device's. It
-   * is refused while the community holds objects it can't read. */
+   * community's), again the `heads` of the result confirmed, it publishes
+   * only objects the community lacks, then switches to the community's set
+   * as it is, which becomes the agent's attention here too: the community's
+   * versions replace this device's. It is refused while the community holds
+   * objects it can't read. A choice whose heads are not those of the last
+   * refusal is asked again. */
   migrateAttention(
     agent: AgentKey,
     options?: Readonly<{
       prune?: Readonly<Record<string, string>>;
-      adopt?: boolean;
+      adopt?: Readonly<Record<string, string>>;
     }>,
   ): Promise<AttentionMigration>;
   /** Moves the agent's attention back to this device as its community holds
@@ -9233,10 +9236,10 @@ export class AgentsService extends Service implements Agents {
   async migrateAttention(
     key: AgentKey,
     options: Readonly<{
-      /** "Use this device's", confirmed on the last refusal. */
+      /** "Use this device's", confirmed on the last refusal: its heads. */
       prune?: Readonly<Record<string, string>>;
-      /** "Use the community's", confirmed on the last refusal. */
-      adopt?: boolean;
+      /** "Use the community's", confirmed on the last refusal: its heads. */
+      adopt?: Readonly<Record<string, string>>;
     }> = {},
   ): Promise<AttentionMigration> {
     let result: AttentionMigration | undefined;
@@ -9252,6 +9255,7 @@ export class AgentsService extends Service implements Agents {
           migrated: true,
           different: [],
           extra: [],
+          kept: [],
           skipped: [],
           heads: {},
           names: {},
@@ -9284,18 +9288,34 @@ export class AgentsService extends Service implements Agents {
         : options.prune
           ? "device"
           : undefined;
+      const shown = options.adopt ?? options.prune;
       const seen = this.attentionRefusals.get(key);
       const channel = await this.ensureAttention(
         channels,
         identity.pubkey,
         controller.signal,
       );
+      // Only the owner writes while the set is moved and read back: an agent
+      // already in the channel (from an earlier move) leaves it first, unless
+      // it is a guest there and so can't write.
+      const left = await channels.removeWriter(
+        channel,
+        identity.pubkey,
+        controller.signal,
+      );
+      if (left.status !== "confirmed")
+        throw new Error(
+          `The agent could not leave its attention channel for the move: ${left.error ?? "its result is unknown"}`,
+        );
       const outcome = await moveAttention(
         { read, send: ownerSender(artifacts, controller.signal) },
         () => readOnce((filter) => session.artifacts.sync(filter), channel),
         saved.attention,
-        // Without the refusal it was made on, a choice is asked again.
-        use && seen ? { use, snapshot: seen } : undefined,
+        // A choice applies only to the refusal it was made on: the one whose
+        // heads it names. Otherwise it is asked again.
+        use && seen && shown && sameRecord(shown, seen.heads)
+          ? { use, snapshot: seen }
+          : undefined,
       );
       result = { ...outcome.found, migrated: outcome.moved };
       if (!outcome.moved) {
@@ -9310,9 +9330,20 @@ export class AgentsService extends Service implements Agents {
         identity.pubkey,
         controller.signal,
       );
-      if (added.status === "failed")
+      if (added.status !== "confirmed")
         throw new Error(
-          `The agent could not join its attention channel: ${added.error ?? "the change failed"}`,
+          `The agent could not join its attention channel: ${added.error ?? "its result is unknown"}`,
+        );
+      // Its runtime finds the channel the same way, and runs nothing while
+      // the agent is not in it. The next try moves nothing and adds it.
+      const joined = await channels.find(
+        "agent-attention",
+        agentSubject(identity.pubkey),
+        controller.signal,
+      );
+      if (joined?.id !== channel || !joined.members?.includes(identity.pubkey))
+        throw new Error(
+          "The agent is not in its attention channel yet; Buzz tries again",
         );
       // Its runtime keeps running the set it read back until its own first
       // sync, so nothing is held or dropped across the switch.
@@ -9338,9 +9369,10 @@ export class AgentsService extends Service implements Agents {
     return found.id;
   }
   async revertAttention(key: AgentKey) {
-    this.attentionRefusals.delete(key);
-    this.attentionVerified.delete(key);
     await this.change(key, async (saved) => {
+      // In its turn: a move queued ahead of this one may have just set them.
+      this.attentionRefusals.delete(key);
+      this.attentionVerified.delete(key);
       if (!saved) throw new Error("No such agent on this device");
       if (saved.attentionStorage !== "relay") return saved;
       // `attention` mirrors the community's set while this session's read of

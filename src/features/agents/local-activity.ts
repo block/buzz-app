@@ -786,8 +786,8 @@ export function stepText(step: WorkStep) {
   const known = untargeted[step.tool] ?? verbs[step.tool];
   if (known) return known;
   // Harnesses report a Buzz tool by its bare name, the same string as a tool
-  // of their own with that name. Pi's own `edit` edits a file, so `edit` is
-  // never given the Buzz title.
-  const name = (step.tool !== "edit" && namedToolTitle(step.tool)) || step.tool;
+  // of their own with that name, such as Pi's and goose's file `edit`. A bare
+  // name that common gets a title true of either tool: "Edit", "Search".
+  const name = namedToolTitle(step.tool) ?? step.tool;
   return step.target ? `${name} · ${step.target}` : name;
 }

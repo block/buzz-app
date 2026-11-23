@@ -390,9 +390,6 @@ it("words a Buzz tool's step by its title, after the fixed phrases", () => {
     stepText(target ? { tool, target } : { tool });
   // Every bundled harness reports a Buzz tool by its bare name.
   expect(text("channel_list")).toBe("List channels");
-  expect(text("search", "release notes")).toBe(
-    "Search messages · release notes",
-  );
   // The parser is the transcript's, so a qualified name reads the same.
   for (const tool of [
     "mcp__buzz__channel_list",
@@ -401,6 +398,12 @@ it("words a Buzz tool's step by its title, after the fixed phrases", () => {
     "buzz: channel_list",
   ])
     expect(text(tool), tool).toBe("List channels");
+  // A bare one-word name may be another server's or the harness's own tool,
+  // such as a file `edit`, so its title names no Buzz object.
+  expect(text("search", "release notes")).toBe("Search · release notes");
+  expect(text("edit")).toBe("Edit");
+  expect(text("edit", "notes.md")).toBe("Edit · notes.md");
+  expect(text("buzz.search")).toBe("Search messages");
   // A fixed phrase wins over a title, with or without a target.
   expect(text("send")).toBe("Sending a message");
   expect(text("send", "notes.md")).toBe("Sending a message");
@@ -411,9 +414,6 @@ it("words a Buzz tool's step by its title, after the fixed phrases", () => {
   expect(text("Read", "a.ts")).toBe("Reading a.ts");
   expect(text("Grep", "agent")).toBe("Searching for agent");
   expect(text("Edit")).toBe("Editing a file");
-  // Pi's own `edit` is reported as the Buzz `edit` is: neither is retitled.
-  expect(text("edit")).toBe("edit");
-  expect(text("edit", "notes.md")).toBe("edit · notes.md");
   // Anything else is shown as sent, another server's tool included.
   for (const tool of [
     "mcp__other__channel_list",

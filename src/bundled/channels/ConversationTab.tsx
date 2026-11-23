@@ -204,48 +204,54 @@ export function ConversationTab({
             />
             <LayerReader channelId={channel.id} />
           </ComposerScopeProvider>
-        ) : target && inTimeline === false ? (
-          <ConversationThread
-            intro={intro}
-            active={active}
-            shown={active}
-            messageId={target}
-            retainThread
-            tabbed
-            revealSelected
-            revealRequest={revealRequest}
-            close={close}
-            parent={parent}
-          />
         ) : (
-          <SoloColumn enabled={soloConversation}>
-            <ChannelBody
-              intro={intro}
-              latestRequest={active ? latestRequest : undefined}
-              viewer={session.viewer}
-              cached={!!channel.cached}
-              // The composer below mounts TypingIndicator for a live channel.
-              onOpenThread={onOpenThread}
-              revealMessageId={sent}
-              // Mount the list once, at the message, not while it is sought.
-              holding={!!target && inTimeline === undefined}
-              inlineTarget={
-                target &&
-                reveal &&
-                reveal.key === revealKey &&
-                !reveal.signal.aborted
-                  ? { messageId: target, signal: reveal.signal }
-                  : undefined
-              }
-              marksRead={opening?.markRead !== false}
-            />
-            <ConversationComposer
-              // Shown follows the tab, not whether showing it visits the chat.
-              shown={active}
-              onSend={setSent}
-              {...(focusRequest ? { focusRequest } : {})}
-            />
-          </SoloColumn>
+          // The address names no view in a conversation tab, so its details
+          // open in place.
+          <ComposerScopeProvider local shown={active}>
+            {target && inTimeline === false ? (
+              <ConversationThread
+                intro={intro}
+                active={active}
+                shown={active}
+                messageId={target}
+                retainThread
+                tabbed
+                revealSelected
+                revealRequest={revealRequest}
+                close={close}
+                parent={parent}
+              />
+            ) : (
+              <SoloColumn enabled={soloConversation}>
+                <ChannelBody
+                  intro={intro}
+                  latestRequest={active ? latestRequest : undefined}
+                  viewer={session.viewer}
+                  cached={!!channel.cached}
+                  // The composer below mounts TypingIndicator for a live channel.
+                  onOpenThread={onOpenThread}
+                  revealMessageId={sent}
+                  // Mount the list once, at the message, not while it is sought.
+                  holding={!!target && inTimeline === undefined}
+                  inlineTarget={
+                    target &&
+                    reveal &&
+                    reveal.key === revealKey &&
+                    !reveal.signal.aborted
+                      ? { messageId: target, signal: reveal.signal }
+                      : undefined
+                  }
+                  marksRead={opening?.markRead !== false}
+                />
+                <ConversationComposer
+                  // Shown follows the tab, not whether showing it visits the chat.
+                  shown={active}
+                  onSend={setSent}
+                  {...(focusRequest ? { focusRequest } : {})}
+                />
+              </SoloColumn>
+            )}
+          </ComposerScopeProvider>
         )}
       </section>
     </ConversationChannel>

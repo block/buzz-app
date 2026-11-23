@@ -66,3 +66,38 @@ test("a Solo chat link goes to the chat instead of opening its tab", async ({
   await page.goBack();
   await expect.poll(async () => (await address(page)).channelId).toBe("alpha");
 });
+
+test.describe("Side panel", () => {
+  test.use({ threadPlacement: "side" });
+
+  test("details in a linked Solo chat's tab open in place", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    app.append(
+      "primary",
+      "alpha",
+      "Please review [the chat](buzz://channel/beta)",
+    );
+    await activate(page.getByRole("link", { name: "the chat" }));
+    await expect(side(page).getByRole("tab", { name: "Beta" })).toBeVisible();
+    const filler = "More of it follows here. ".repeat(30).trim();
+    app.append(
+      "primary",
+      "beta",
+      `Solo findings\n\n${filler}`,
+      true,
+      false,
+      undefined,
+      undefined,
+      [["audience", "details"]],
+    );
+    await side(page)
+      .locator("[data-message-id]")
+      .filter({ hasText: "Solo findings" })
+      .getByRole("button", { name: "Show more", exact: true })
+      .click();
+    await expect(page.getByRole("dialog").getByText(filler)).toBeVisible();
+  });
+});

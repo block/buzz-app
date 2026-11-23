@@ -51,6 +51,7 @@ import {
   panelTabId,
   rootOfTab,
   tabPane,
+  threadTab,
   useChannelTabState,
 } from "./useChannelTabState";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
@@ -1780,9 +1781,30 @@ function ChannelWorkspace({
           : undefined;
       if (returned && navigation.entryId !== returned.from)
         pendingReturn.current = undefined;
+      // A layer over a thread tab names that tab as its view, so its visit
+      // selects the tab, as a thread's own visit does, reopening it if gone.
+      const layer =
+        navigation.target.kind === "conversation" &&
+        navigation.target.layer?.rootId !== navigation.target.inline
+          ? navigation.target.layer
+          : undefined;
+      const hostChannel = layer?.channelId ?? currentId;
+      const hostTab =
+        layer?.rootId && hostChannel
+          ? threadTab(routingTabs.current, hostChannel, layer.rootId)
+          : undefined;
+      const host =
+        layer?.rootId && hostChannel
+          ? {
+              channelId: hostChannel,
+              messageId:
+                hostTab?.kind === "thread" ? hostTab.messageId : layer.rootId,
+              rootId: layer.rootId,
+            }
+          : undefined;
       tabState.enterVisit(
         `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`,
-        detail && !detailReply ? undefined : routedThread,
+        detail && !detailReply ? undefined : (routedThread ?? host),
         !!detail,
         detail && currentId
           ? { channelId: currentId, target: detail.target }

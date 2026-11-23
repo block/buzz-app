@@ -103,6 +103,36 @@ test.describe("Side panel", () => {
   });
 });
 
+test.describe("Main pane", () => {
+  test.use({ threadPlacement: "main" });
+
+  test("details from a thread tab chosen in a plain visit read over that tab", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    // Back to the plain channel visit, then choose the tab there.
+    await page.goBack();
+    await threadTab(page, root).click();
+    details(app, "Main findings", root);
+    const main = page.locator("[data-main-workspace]");
+    await showMore(main, "Main findings").click();
+    await expect(detailsSheet(page)).toBeVisible();
+    await expect(threadTab(page, root)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await page.reload();
+    await expect(detailsSheet(page)).toBeVisible();
+    await expect(threadTab(page, root)).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+});
+
 test.describe("Inline", () => {
   test.use({ threadPlacement: "inline" });
 

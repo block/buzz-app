@@ -14,7 +14,9 @@ export function AgentResponsePreview({
   stackPrevious = false,
   bylineHint,
   variant = "activity",
+  fullWidth = false,
 }: {
+  fullWidth?: boolean;
   variant?: "activity" | "coordination";
   bylineHint?: ReactNode;
   stackPrevious?: boolean;
@@ -41,6 +43,7 @@ export function AgentResponsePreview({
       data-stack-previous={stackPrevious || undefined}
       data-layout={layout}
       data-agent-response-preview=""
+      data-full-width={fullWidth || undefined}
       data-preview-variant={variant}
     >
       <span className={styles.messageGutter} />

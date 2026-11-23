@@ -152,6 +152,7 @@ export function ActivityGroupPreview({
     <AgentResponsePreview
       name={name}
       variant={coordination && !expanded ? "coordination" : "activity"}
+      fullWidth={expanded}
       bylineHint={
         <RemoteAgentHint
           session={session}

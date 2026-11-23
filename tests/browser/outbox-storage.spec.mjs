@@ -293,3 +293,236 @@ for (const mode of ["dismiss-first", "adopt-first", "peer-accepted"])
           : { order: ["consumed", "dismissed"], remaining: 0 },
     );
   });
+
+test("a window that loaded a legacy journal cannot retire a row another window migrated and replaced", async ({
+  page,
+  context,
+  sourceOrigin,
+}) => {
+  await context.route(`${sourceOrigin}/outbox-storage-test`, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
+  );
+  await page.goto(`${sourceOrigin}/outbox-storage-test`);
+  const result = await page.evaluate(async () => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const scope = `legacy-retire-${crypto.randomUUID()}`;
+    const row = (id) => ({ event: { id }, delivery: "failed" });
+    localStorage.setItem(
+      `buzz-outbox-v1:${scope}`,
+      JSON.stringify([row("old"), row("other")]),
+    );
+    const first = browserOutboxStorage(scope);
+    const stale = browserOutboxStorage(scope);
+    try {
+      await first.load();
+      await stale.load();
+      await first.save([row("other"), row("first")], { retired: ["old"] });
+      const refusal = await stale
+        .save([row("other"), row("stale")], { retired: ["old"] })
+        .then(
+          () => "",
+          (error) => error.message,
+        );
+      const ids = (await first.load({ readOnly: true }))
+        .map((item) => item.event.id)
+        .sort();
+      return { refusal, ids };
+    } finally {
+      first.close();
+      stale.close();
+      await purgeOutboxStorage(scope);
+    }
+  });
+  expect(result).toEqual({
+    refusal: "This save was replaced in another window. Try again.",
+    ids: ["first", "other"],
+  });
+});
+
+test("a window cannot retire a row another window has since attached recovery to", async ({
+  page,
+  context,
+  sourceOrigin,
+}) => {
+  await context.route(`${sourceOrigin}/outbox-storage-test`, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
+  );
+  await page.goto(`${sourceOrigin}/outbox-storage-test`);
+  const result = await page.evaluate(async () => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const scope = `recovered-retire-${crypto.randomUUID()}`;
+    const old = { event: { id: "old" }, delivery: "failed" };
+    const first = browserOutboxStorage(scope);
+    const stale = browserOutboxStorage(scope);
+    try {
+      await first.load();
+      await first.save([old]);
+      await stale.load();
+      await first.save([{ ...old, recovery: { key: "k", value: "v" } }]);
+      const refusal = await stale
+        .save([{ event: { id: "next" }, delivery: "sending" }], {
+          retired: ["old"],
+        })
+        .then(
+          () => "",
+          (error) => error.message,
+        );
+      const rows = await first.load({ readOnly: true });
+      return {
+        refusal,
+        rows: rows.map((item) => [item.event.id, item.recovery?.key]),
+      };
+    } finally {
+      first.close();
+      stale.close();
+      await purgeOutboxStorage(scope);
+    }
+  });
+  expect(result).toEqual({
+    refusal: "This save is in progress in another window.",
+    rows: [["old", "k"]],
+  });
+});
+
+test("a window opened during another window's save leaves it alone until that window closes", async ({
+  page,
+  context,
+  sourceOrigin,
+}) => {
+  await context.route(`${sourceOrigin}/outbox-storage-test`, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
+  );
+  await page.goto(`${sourceOrigin}/outbox-storage-test`);
+  const result = await page.evaluate(async () => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const scope = `live-writer-${crypto.randomUUID()}`;
+    const writers = async () =>
+      (await navigator.locks.query()).held.filter((lock) =>
+        lock.name.startsWith(`buzz-outbox-writer:${scope}:`),
+      ).length;
+    const edit = { event: { id: "edit" }, delivery: "sending" };
+    const first = browserOutboxStorage(scope);
+    const later = browserOutboxStorage(scope);
+    try {
+      await first.load();
+      await first.save([edit]);
+      // Opens while the first window is still signing, so loads it as unknown.
+      // That update is kept, but the row still belongs to the first window.
+      await later.load();
+      await later.save([{ ...edit, delivery: "unknown" }]);
+      const refusal = await later
+        .save([{ event: { id: "retry" }, delivery: "sending" }], {
+          retired: ["edit"],
+        })
+        .then(
+          () => "",
+          (error) => error.message,
+        );
+      first.close();
+      while ((await writers()) > 1)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      const kept = (await later.load({ readOnly: true })).map((item) => [
+        item.event.id,
+        item.delivery,
+      ]);
+      await later.save([{ event: { id: "retry" }, delivery: "sending" }], {
+        retired: ["edit"],
+      });
+      const replaced = (await later.load({ readOnly: true })).map(
+        (item) => item.event.id,
+      );
+      return { refusal, kept, replaced };
+    } finally {
+      first.close();
+      later.close();
+      await purgeOutboxStorage(scope);
+    }
+  });
+  expect(result).toEqual({
+    refusal: "This save is in progress in another window.",
+    kept: [["edit", "unknown"]],
+    replaced: ["retry"],
+  });
+});
+
+test("rows saved before writer stamps can be retired only while no other window is open", async ({
+  page,
+  context,
+  sourceOrigin,
+}) => {
+  await context.route(`${sourceOrigin}/outbox-storage-test`, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
+  );
+  await page.goto(`${sourceOrigin}/outbox-storage-test`);
+  const result = await page.evaluate(async () => {
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
+      "/src/features/relay/outbox-storage.ts"
+    );
+    const scope = `unstamped-${crypto.randomUUID()}`;
+    const writers = async () =>
+      (await navigator.locks.query()).held.filter((lock) =>
+        lock.name.startsWith(`buzz-outbox-writer:${scope}:`),
+      ).length;
+    const closed = async (...storages) => {
+      for (const storage of storages) storage.close();
+      while (await writers())
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    };
+    const old = { event: { id: "old" }, delivery: "failed" };
+    const seed = browserOutboxStorage(scope);
+    await seed.load();
+    await seed.save([old]);
+    await closed(seed);
+    const db = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("buzz-outbox-v2");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const unstamp = db.transaction("events", "readwrite");
+    unstamp.objectStore("events").put({ scope, id: "old", operation: old });
+    await new Promise((resolve) => {
+      unstamp.oncomplete = resolve;
+    });
+    db.close();
+    const retire = (storage) =>
+      storage
+        .save([{ event: { id: "new" }, delivery: "sending" }], {
+          retired: ["old"],
+        })
+        .then(
+          () => "",
+          (error) => error.message,
+        );
+    const busy = browserOutboxStorage(scope);
+    const shared = browserOutboxStorage(scope);
+    try {
+      await busy.load();
+      await shared.load();
+      const sharedRefusal = await retire(shared);
+      await closed(busy, shared);
+      const alone = browserOutboxStorage(scope);
+      await alone.load();
+      const aloneRefusal = await retire(alone);
+      const ids = (await alone.load({ readOnly: true })).map(
+        (item) => item.event.id,
+      );
+      alone.close();
+      return { sharedRefusal, aloneRefusal, ids };
+    } finally {
+      busy.close();
+      shared.close();
+      await purgeOutboxStorage(scope);
+    }
+  });
+  expect(result).toEqual({
+    sharedRefusal: "This save is in progress in another window.",
+    aloneRefusal: "",
+    ids: ["new"],
+  });
+});

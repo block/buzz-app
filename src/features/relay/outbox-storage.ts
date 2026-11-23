@@ -1,5 +1,7 @@
 import type { OutboxStorage, OutgoingEvent } from "./outbox";
 
+type Row = { operation: OutgoingEvent; writer?: string };
+
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open("buzz-outbox-v2", 2);
@@ -56,6 +58,25 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
   let ownershipRevision = 0;
   const forgotten = new Map<string, number>();
   const open = () => (database ??= openDatabase());
+  // Each window holds its writer lock for life and stamps the rows it creates,
+  // so a row whose writer lock is free was abandoned by a closed window.
+  const prefix = `buzz-outbox-writer:${scope}:`;
+  let writer: Promise<string | undefined> | undefined;
+  let release = () => {};
+  const own = () =>
+    (writer ??= navigator.locks
+      ? new Promise<string>((resolve, reject) => {
+          const name = prefix + crypto.randomUUID();
+          void navigator.locks
+            .request(name, () => {
+              resolve(name);
+              return new Promise<void>((done) => {
+                release = done;
+              });
+            })
+            .catch(reject);
+        })
+      : Promise.resolve(undefined));
   return {
     async lock(id, run) {
       if (!navigator.locks) throw new Error("Window ownership is unavailable.");
@@ -67,6 +88,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
       legacyIds.delete(id);
     },
     async load(options) {
+      if (!options?.readOnly) await own();
       const db = await open();
       let migrated = false;
       const records = await new Promise<readonly OutgoingEvent[]>(
@@ -80,9 +102,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
           tx.oncomplete = () => {
             try {
               migrated = legacy.result === true;
-              const values = entries.result.map(
-                (entry: { operation: OutgoingEvent }) => entry.operation,
-              );
+              const values = entries.result.map((row: Row) => row.operation);
               // The marker distinguishes a migrated empty journal from an un-migrated one.
               resolve(
                 values.length || legacy.result === true
@@ -113,7 +133,26 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
     },
     async save(operations, options) {
       const revision = ownershipRevision;
+      const self = await own();
       const db = await open();
+      const retired = options?.retired ?? [];
+      // A closed window's lock is never held again, so a writer seen closed
+      // here is still closed when the transaction below runs.
+      const held = new Set(
+        retired.length
+          ? ((await navigator.locks?.query?.())?.held ?? []).map(
+              (lock) => lock.name,
+            )
+          : [],
+      );
+      // Rows from before writer stamps are abandoned only while no other
+      // window is open.
+      const abandoned = (row: Row) =>
+        row.writer
+          ? row.writer === self || !held.has(row.writer)
+          : ![...held].some(
+              (name) => name?.startsWith(prefix) && name !== self,
+            );
       const next = new Map(operations.map((item) => [item.event.id, item]));
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(["events", "partitions"], "readwrite", {
@@ -122,6 +161,21 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
         const events = tx.objectStore("events");
         const partitions = tx.objectStore("partitions");
         const migration = legacyIds.size ? partitions.get(scope) : undefined;
+        // Checked before this transaction deletes them.
+        let refusal: string | undefined;
+        for (const id of retired) {
+          const row = events.get([scope, id]);
+          row.onsuccess = () => {
+            const found: Row | undefined = row.result;
+            if (found === undefined) {
+              if (legacyIds.has(id) && migration?.result !== true) return;
+              refusal = "This save was replaced in another window. Try again.";
+            } else if (found.operation.recovery || !abandoned(found))
+              refusal = "This save is in progress in another window.";
+            else return void events.delete([scope, id]);
+            tx.abort();
+          };
+        }
         for (const [id, operation] of next) {
           const old = persisted.get(id);
           if (
@@ -138,17 +192,21 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
           )
             continue;
           if (id === options?.force || (!old && !legacyIds.has(id))) {
-            events.put({ scope, id, operation });
+            events.put({ scope, id, operation, writer: self });
           } else {
             // Another window may have removed this row. Check in the same
             // transaction as the update, including while migrating legacy rows.
-            const key = events.getKey([scope, id]);
-            key.onsuccess = () => {
-              if (
-                key.result !== undefined ||
-                (!old && migration?.result !== true)
-              )
-                events.put({ scope, id, operation });
+            // An update keeps the row's writer.
+            const row = events.get([scope, id]);
+            row.onsuccess = () => {
+              const found: Row | undefined = row.result;
+              if (found || (!old && migration?.result !== true))
+                events.put({
+                  scope,
+                  id,
+                  operation,
+                  writer: found ? found.writer : self,
+                });
             };
           }
         }
@@ -167,11 +225,18 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
           resolve();
         };
         tx.onabort = () =>
-          reject(tx.error ?? new Error("Outbox transaction aborted"));
-        tx.onerror = () => reject(tx.error);
+          reject(
+            refusal
+              ? new Error(refusal)
+              : (tx.error ?? new Error("Outbox transaction aborted")),
+          );
+        tx.onerror = () => {
+          if (!refusal) reject(tx.error);
+        };
       });
     },
     close() {
+      release();
       void database?.then(
         (db) => db.close(),
         () => {},

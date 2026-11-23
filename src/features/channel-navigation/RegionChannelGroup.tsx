@@ -383,6 +383,17 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
                     const item = (
                       <MenuItem
                         key={action.id}
+                        label={action.label}
+                        onBlur={(event) => {
+                          // The menu restores focus to itself as the pointer
+                          // leaves the item. Let the hint track that pointer.
+                          if (
+                            action.hint &&
+                            event.relatedTarget ===
+                              event.currentTarget.closest('[role="menu"]')
+                          )
+                            event.preventBaseUIHandler();
+                        }}
                         onKeyDown={(event) => {
                           if (
                             event.key !== "Escape" ||

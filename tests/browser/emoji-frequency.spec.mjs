@@ -35,7 +35,7 @@ test("emoji chosen in the picker or suggestions rise in both, after reload too",
   };
   const counts = () =>
     page.evaluate(() =>
-      JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+      JSON.parse(localStorage.getItem("buzz.emoji-usage.v1") ?? "{}"),
     );
   const closePicker = async () => {
     await page.keyboard.press("Escape");
@@ -140,7 +140,7 @@ test("choices in two windows of one profile keep each other", async ({
   await expect
     .poll(() =>
       page.evaluate(() =>
-        JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+        JSON.parse(localStorage.getItem("buzz.emoji-usage.v1") ?? "{}"),
       ),
     )
     .toEqual({ smirk: 1, rocket: 1, tada: 1 });
@@ -154,7 +154,7 @@ test("emoji a full composer cannot insert teach nothing", async ({ page }) => {
   const search = page.getByRole("searchbox", { name: "Search emoji" });
   const counts = () =>
     page.evaluate(() =>
-      JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+      JSON.parse(localStorage.getItem("buzz.emoji-usage.v1") ?? "{}"),
     );
   const pickRocket = async () => {
     await page
@@ -194,7 +194,7 @@ test("choosing an existing reaction removes it and teaches nothing", async ({
   const pill = row.locator('button[data-reaction="🚀"]');
   const counts = () =>
     page.evaluate(() =>
-      JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+      JSON.parse(localStorage.getItem("buzz.emoji-usage.v1") ?? "{}"),
     );
   const actions = row
     .getByRole("group", { name: "Message actions", includeHidden: true })

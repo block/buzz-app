@@ -1356,7 +1356,7 @@ test("the first toned pick asks for a default skin tone", async ({ page }) => {
       page.evaluate(() => localStorage.getItem("emoji-mart.skin"));
     const usage = () =>
       page.evaluate(() =>
-        JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+        JSON.parse(localStorage.getItem("buzz.emoji-usage.v1") ?? "{}"),
       );
     const grid = (label) =>
       page

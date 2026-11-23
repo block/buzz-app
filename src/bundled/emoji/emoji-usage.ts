@@ -1,13 +1,14 @@
-// Picker and autocomplete share one usage history under Emoji Mart's storage
-// key: it fills the picker's Frequently used row and ranks colon suggestions.
-// It is read fresh on every use, so each window keeps the others' choices.
-const STORE = "emoji-mart.frequently";
+// Picker and autocomplete share one usage history: it fills the picker's
+// Frequently used row and ranks colon suggestions. It is read fresh on every
+// use, so each window keeps the others' choices.
+const STORE = "buzz.emoji-usage.v1";
 const LAST = "emoji-mart.last";
-const SEED_REMOVED = "buzz.emoji-usage.seed-removed";
-// Emoji Mart 5.6 seeded a new history with these defaults at perLine - i, as
-// if chosen, and saved them with the first pick. Copied so that suggestions do
-// not load Mart.
-const MART_SEED = [
+// Until Buzz records a pick, the history is Emoji Mart's, which Buzz never
+// rewrites. Mart 5.6 stored these defaults as if chosen, and pruning makes
+// them indistinguishable from real picks, so they are left out. Copied so
+// that suggestions do not load Mart.
+const MART_STORE = "emoji-mart.frequently";
+const MART_DEFAULTS = [
   "+1",
   "grinning",
   "kissing_heart",
@@ -37,45 +38,28 @@ function usageId(scope: string, id: string) {
   return undefined;
 }
 
-function readCounts(): Record<string, unknown> {
-  let counts: Record<string, unknown> = {};
+function parseCounts(raw: string | null) {
   try {
-    const stored: unknown = JSON.parse(localStorage.getItem(STORE) ?? "{}");
+    const stored: unknown = JSON.parse(raw ?? "null");
     if (stored && typeof stored === "object" && !Array.isArray(stored))
-      counts = stored as Record<string, unknown>;
+      return stored as Record<string, unknown>;
+  } catch {
+    /* Unreadable history means nothing has been chosen. */
+  }
+  return {};
+}
+
+function readCounts(): Record<string, unknown> {
+  try {
+    const raw = localStorage.getItem(STORE);
+    if (raw !== null) return parseCounts(raw);
+    const counts = parseCounts(localStorage.getItem(MART_STORE));
+    for (const id of MART_DEFAULTS) delete counts[id];
+    return counts;
   } catch {
     /* Without storage, nothing has been chosen. */
   }
-  try {
-    if (localStorage.getItem(SEED_REMOVED) === null) {
-      // Marker first: a failed write can leave the seed, never subtract twice.
-      localStorage.setItem(SEED_REMOVED, "1");
-      if (removeMartSeed(counts))
-        localStorage.setItem(STORE, JSON.stringify(counts));
-    }
-  } catch {
-    /* Without the marker, the seed stays counted until a later read. */
-  }
-  return counts;
-}
-
-/** Subtracts Mart's seed once, keeping the picks made on top of it. The seed
- * width is unknown, so take the widest run every count can contain. */
-function removeMartSeed(counts: Record<string, unknown>) {
-  const count = (i: number) => uses(counts, MART_SEED[i] ?? "");
-  let width = 0;
-  for (let size = 1; size <= MART_SEED.length; size++) {
-    let fits = true;
-    for (let i = 0; i < size && fits; i++) fits = count(i) >= size - i;
-    if (fits) width = size;
-  }
-  for (let i = 0; i < width; i++) {
-    const id = MART_SEED[i] ?? "";
-    const left = count(i) - (width - i);
-    if (left > 0) counts[id] = left;
-    else delete counts[id];
-  }
-  return width > 0;
+  return {};
 }
 
 function uses(counts: Record<string, unknown>, key: string) {

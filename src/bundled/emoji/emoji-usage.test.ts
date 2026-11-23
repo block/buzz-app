@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import data from "@emoji-mart/data";
 import { Data, FrequentlyUsed, init } from "emoji-mart";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import "./emoji-mart";
 import {
   addEmojiUsage,
@@ -13,12 +13,12 @@ import {
 
 const party = customEmojiId("wss://relay.test/a", "party");
 const stored = () =>
-  JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "null");
+  JSON.parse(localStorage.getItem("buzz.emoji-usage.v1") ?? "null");
 afterEach(() => localStorage.clear());
 
 it("reads whole choices from the picker's counts for Unicode and community suggestions", () => {
   localStorage.setItem(
-    "emoji-mart.frequently",
+    "buzz.emoji-usage.v1",
     JSON.stringify({
       smile: 3,
       [party]: 2.5,
@@ -34,73 +34,43 @@ it("reads whole choices from the picker's counts for Unicode and community sugge
   expect(uses("unicode/odd")).toBe(0);
   expect(uses("unicode/constructor")).toBe(0);
   // JSON parses an out-of-range count as Infinity.
-  localStorage.setItem("emoji-mart.frequently", '{"huge":1e400}');
+  localStorage.setItem("buzz.emoji-usage.v1", '{"huge":1e400}');
   expect(emojiUsage("s")("unicode/huge")).toBe(0);
-  localStorage.setItem("emoji-mart.frequently", "not json");
+  localStorage.setItem("buzz.emoji-usage.v1", "not json");
   expect(emojiUsage("wss://relay.test/a")("unicode/smile")).toBe(0);
 });
 
-it("removes the defaults Mart stored as picks once, keeping real picks", () => {
-  // What Mart 5.6 saves at perLine 9 (module.js:487-505): its seed, then the
-  // picks rocket once and grinning twice.
-  const seed = [
-    "+1",
-    "grinning",
-    "kissing_heart",
-    "heart_eyes",
-    "laughing",
-    "stuck_out_tongue_winking_eye",
-    "sweat_smile",
-    "joy",
-    "scream",
-  ];
-  const mart: Record<string, number> = Object.fromEntries(
-    seed.map((id, i) => [id, 9 - i]),
-  );
-  mart.grinning = (mart.grinning ?? 0) + 2;
-  mart.rocket = 1;
-  localStorage.setItem("emoji-mart.frequently", JSON.stringify(mart));
+it("starts from Mart's history without the defaults it stored as picks", () => {
+  // Mart 5.6 at perLine 8 (module.js:487-531): its seed +1:8 … joy:1, then
+  // smirk picked three times and rocket once, then the picker reopened at
+  // perLine 3, pruning the history to its two rows of six.
+  const mart = JSON.stringify({
+    "+1": 8,
+    grinning: 7,
+    kissing_heart: 6,
+    heart_eyes: 5,
+    smirk: 3,
+    rocket: 1,
+  });
+  localStorage.setItem("emoji-mart.frequently", mart);
   const uses = emojiUsage("s");
+  expect(uses("unicode/smirk")).toBe(3);
   expect(uses("unicode/rocket")).toBe(1);
-  expect(uses("unicode/grinning")).toBe(2);
   expect(uses("unicode/+1")).toBe(0);
-  expect(uses("unicode/scream")).toBe(0);
-  expect(stored()).toEqual({ grinning: 2, rocket: 1 });
-  // Only once: later counts that look like a seed are real picks.
-  localStorage.setItem("emoji-mart.frequently", JSON.stringify({ "+1": 1 }));
-  expect(emojiUsage("s")("unicode/+1")).toBe(1);
+  expect(uses("unicode/heart_eyes")).toBe(0);
+  // The first pick starts Buzz's history from that import; Mart's is kept.
+  addEmojiUsage("+1");
+  expect(stored()).toEqual({ smirk: 3, rocket: 1, "+1": 1 });
+  expect(localStorage.getItem("emoji-mart.frequently")).toBe(mart);
+  localStorage.setItem("emoji-mart.frequently", "{}");
+  expect(emojiUsage("s")("unicode/smirk")).toBe(3);
 });
-
-it.each(["buzz.emoji-usage.seed-removed", "emoji-mart.frequently"])(
-  "never subtracts the seed twice when storage refuses %s",
-  (refused) => {
-    const values = new Map([
-      ["emoji-mart.frequently", JSON.stringify({ "+1": 5, rocket: 3 })],
-    ]);
-    vi.stubGlobal("localStorage", {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        if (key === refused)
-          throw new DOMException("full", "QuotaExceededError");
-        values.set(key, value);
-      },
-    });
-    try {
-      // The seed stays counted rather than costing real picks on each read.
-      for (let read = 0; read < 3; read++) emojiUsage("s");
-      expect(emojiUsage("s")("unicode/+1")).toBe(5);
-      expect(emojiUsage("s")("unicode/rocket")).toBe(3);
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  },
-);
 
 it("counts each choice against the latest history, keeping other windows' choices", () => {
   recordEmojiUsage("wss://relay.test/a", "unicode/smirk");
   // Another window chooses from the same storage.
   localStorage.setItem(
-    "emoji-mart.frequently",
+    "buzz.emoji-usage.v1",
     JSON.stringify({ ...stored(), rocket: 1 }),
   );
   recordEmojiUsage("wss://relay.test/a", "custom/party");
@@ -110,7 +80,7 @@ it("counts each choice against the latest history, keeping other windows' choice
   expect(localStorage.getItem("emoji-mart.last")).toBe('"smirk"');
   // Unreadable history starts over rather than blocking choices.
   for (const value of ["[1,2]", "null", "garbage"]) {
-    localStorage.setItem("emoji-mart.frequently", value);
+    localStorage.setItem("buzz.emoji-usage.v1", value);
     addEmojiUsage("smirk");
     expect(stored()).toEqual({ smirk: 1 });
   }
@@ -127,7 +97,7 @@ it("orders the Frequently used row like Mart, filling a first row with defaults"
   expect(row(2)).toEqual(["+1", "grinning"]);
   expect(row(2, 0)).toEqual([]);
   localStorage.setItem(
-    "emoji-mart.frequently",
+    "buzz.emoji-usage.v1",
     JSON.stringify({ b: 2, a: 2, c: 5, hidden: 9, seeded: 0.5, joy: 1 }),
   );
   // Ties sort by ID; unshown and unchosen entries are skipped.

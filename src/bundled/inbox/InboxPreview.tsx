@@ -168,7 +168,8 @@ function InboxPreviewCard({
     }
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const channelOf = (channelId: string) =>
-    list.channels.find((channel) => channel.id === channelId);
+    list.channels.find((channel) => channel.id === channelId) ??
+    session.channels.get?.(channelId);
   const recent = inbox.items
     .map((item) => activityConversation(item, muted))
     .filter((item) => item !== undefined)

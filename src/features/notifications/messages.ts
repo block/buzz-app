@@ -6,6 +6,7 @@ import type { Communities } from "../communities/service";
 import { communityDestination } from "../communities/destination";
 import type { OpenTarget } from "../navigation/targets";
 import type { IncomingListener } from "../relay/incoming";
+import { outsideChannel } from "../relay/inbox";
 import { relayPartition } from "../relay/partition";
 import type { RelaySession } from "../relay/session";
 import type { NotificationsService } from "./service";
@@ -69,12 +70,16 @@ export function notificationAuthorized(
     return false;
   if (target.kind !== "conversation") return true;
   const relay = communities.relay.snapshot();
+  const outside =
+    relay.status === "ready"
+      ? relay.session.channels.get?.(target.channelId)
+      : undefined;
   return (
     !!client.selected &&
     communityDestination(client.selected).url === scope.communityOrigin &&
     relay.status === "ready" &&
     relay.viewer === scope.viewer &&
-    relay.session.channels
+    (relay.session.channels
       .list()
       .channels.some(
         (channel) =>
@@ -82,7 +87,8 @@ export function notificationAuthorized(
           !channel.huddle &&
           !channel.metadataPending &&
           channel.members?.includes(scope.viewer),
-      )
+      ) ||
+      (!!outside && outsideChannel(outside, scope.viewer)))
   );
 }
 
@@ -237,7 +243,8 @@ export function bindMessageNotifications(
               category,
               owned.channels
                 .list()
-                .channels.find((item) => item.id === message.channelId),
+                .channels.find((item) => item.id === message.channelId) ??
+                owned.channels.get?.(message.channelId),
               owned.profiles
                 .snapshot()
                 .get(message.workflowOwnerId ?? message.authorId),

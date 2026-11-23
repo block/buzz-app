@@ -70,10 +70,11 @@ const live = {
   subscribe: () => () => {},
   snapshot: () => ({ status: liveStatus, roster: { state: "verified" } }),
 };
+let members = [viewer];
 const channels = {
   list: () => ({
     status: "ready",
-    channels: [{ id: "c", name: "general", channelType: "stream" }],
+    channels: [{ id: "c", name: "general", channelType: "stream", members }],
   }),
 };
 
@@ -125,6 +126,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   at(100);
   liveStatus = "connected";
+  members = [viewer];
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -342,6 +344,35 @@ it("opens a reminder's notification on its page when its channel refuses the mes
     );
     await flush();
     expect(submit).toHaveBeenCalledTimes(2);
+  } finally {
+    dispose();
+  }
+});
+
+it("opens a reminder's notification on its page in a public channel the viewer is not in, even when access would admit the message", async () => {
+  const origin = "https://a.example";
+  // Access admits mention notifications from outside channels.
+  members = ["someone else"];
+  const { submit, connect, dispose } = mount();
+  stored.set(`buzz-reminders-checked.v1:${origin}:${viewer}`, "40");
+  try {
+    connect(
+      `${origin}:${viewer}`,
+      session(Promise.resolve([wire("outside", 50)])).capability,
+    );
+    await flush();
+    expect(submit).toHaveBeenCalledExactlyOnceWith({
+      sourceKey: "outside:50",
+      title: "Reminder due · #general",
+      body: "hi",
+      target: {
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.reminders",
+        pageId: "reminders",
+        scope: { viewer, communityOrigin: origin },
+      },
+    });
   } finally {
     dispose();
   }

@@ -133,15 +133,18 @@ export const apply: PluginModule["apply"] = (ctx) => {
           const message = navigableTarget(reminder);
           const channel =
             message && channels.find((item) => item.id === message.channelId);
-          const target: OpenTarget = message
-            ? {
-                version: 1,
-                kind: "conversation",
-                scope,
-                channelId: message.channelId,
-                messageId: message.eventId,
-              }
-            : home;
+          // Access admits an outside channel's mentions, not its reminders, so
+          // a reminder in a channel the viewer isn't in opens Reminders.
+          const target: OpenTarget =
+            message && channel?.members?.includes(scope.viewer)
+              ? {
+                  version: 1,
+                  kind: "conversation",
+                  scope,
+                  channelId: message.channelId,
+                  messageId: message.eventId,
+                }
+              : home;
           const alert = (to: OpenTarget) =>
             notify.submit({
               sourceKey,
@@ -158,8 +161,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
                   plainText(reminder.note ?? ""),
                 ].find(Boolean) || "A reminder is waiting",
             });
-          // Access refuses the message when the viewer isn't in its channel, so
-          // that reminder opens Reminders instead of never alerting. The retry
+          // Access can still refuse the message, as for a huddle, so that
+          // reminder opens Reminders instead of never alerting. The retry
           // follows any refusal, so it relies on every other one refusing the
           // page too: a closed service, a missing or different viewer, a stale
           // category, the `seen` key (it ignores the target kind), the pending
@@ -168,7 +171,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           // alert appears only when access refused the message. A future gate
           // that allows pages but blocks conversations would be routed around.
           void alert(target)
-            .then((admitted) => admitted || !message || alert(home))
+            .then((admitted) => admitted || target === home || alert(home))
             .catch(() => {});
         }
       }

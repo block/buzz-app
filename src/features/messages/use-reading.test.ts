@@ -675,6 +675,21 @@ it("bottom dwell catches up through the newest row, including a tall clipped row
   for (const call of h.reading.mock.calls)
     expect(call).toEqual(["room", "thread", {}]);
 });
+it("a failed bottom catch-up save does not go on to observe", async () => {
+  const h = setup({ latestMessageId: "bottom" });
+  h.setRows([row("mention", 0, 100), row("bottom", 100, 200)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  for (const lease of h.leases)
+    lease.catchUp.mockRejectedValue(new Error("disk full"));
+  await vi.advanceTimersByTimeAsync(300);
+  expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+    "bottom",
+    undefined,
+  );
+  // A later save would clear the error while the catch-up stays unsaved.
+  expect(h.dwelled()?.observe).not.toHaveBeenCalled();
+});
 it("a broadcast reply as the bottom row earns dwell but catches up through the top-level post", async () => {
   const h = setup({ latestMessageId: "broadcast", catchUpMessageId: "top" });
   // The cut-off row is scrolled out of view; only the bottom row is shown.
@@ -682,9 +697,11 @@ it("a broadcast reply as the bottom row earns dwell but catches up through the t
   h.mutation();
   vi.advanceTimersToNextFrame();
   await vi.advanceTimersByTimeAsync(300);
+  // The bottom row also goes along: outside a joined channel, only it is read.
   expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
     "top",
     undefined,
+    "broadcast",
   );
 });
 it("without the broadcast bottom row fully shown, there is no catch-up through the top-level post", async () => {

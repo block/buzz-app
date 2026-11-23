@@ -339,8 +339,12 @@ export function useReading({
             handle = undefined;
           }
           const through = caughtUp ? catchUpId() : undefined;
+          const bottom = latestId();
           void (async () => {
-            if (through) await observed.catchUp(through, rootId);
+            if (through)
+              await (bottom && bottom !== through
+                ? observed.catchUp(through, rootId, bottom)
+                : observed.catchUp(through, rootId));
             await observed.observe(remained);
           })()
             .catch(() => {})

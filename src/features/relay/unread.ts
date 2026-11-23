@@ -1,7 +1,7 @@
 import type { ProfileQueries } from "./profile-directory";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience } from "./audience";
-import type { InboxItem, InboxSnapshot } from "./inbox";
+import { outsideChannel, type InboxItem, type InboxSnapshot } from "./inbox";
 import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { RelayEvent } from "./events";
 import {
@@ -171,8 +171,9 @@ export type ReadingHandle = Readonly<{
   /** Only message IDs actually visible to the active consumer; no caller timestamps. */
   observe(messageIds: readonly string[]): Promise<void>;
   /** Bottom dwell through verified evidence; channel catch-up reads the
-   * timeline's mentions and broadcasts by message, never other replies. */
-  catchUp(messageId: string, rootId?: string): Promise<void>;
+   * timeline's mentions and broadcasts by message, never other replies.
+   * `bottomId` is the bottom row when it is not `messageId`. */
+  catchUp(messageId: string, rootId?: string, bottomId?: string): Promise<void>;
   dispose(): void;
 }>;
 export interface UnreadCapability {
@@ -302,7 +303,8 @@ export interface UnreadCapability {
     channelId: string,
     rootId: string,
   ): () => Promise<ReadMutationResult>;
-  /** `markChannelRead` serialised over every accessible listed channel that still
+  /** `markChannelRead` serialised over every accessible listed channel, and
+   * each unjoined public channel holding retained mentions, that still
    * shows unread evidence or a local mark. Channels with nothing to clear are
    * skipped, so an already-read community costs no writes. One failing channel
    * does not stop the rest; the first failure is rethrown after the sweep.
@@ -640,13 +642,39 @@ export function createUnread({
     }
     return found;
   };
+  const outside = (id: string) => {
+    const channel = channels.get?.(id);
+    return !!channel && outsideChannel(channel, viewer);
+  };
   const allowed = (id: string) =>
     channels
       .list()
       .channels.some(
         (channel) =>
           channel.id === id && !channel.cached && member(channel.members),
-      );
+      ) || outside(id);
+  /** Outside a channel, only its mentions of the viewer are evidence, in the
+   * kinds Activity reads again (not diffs, 40008). */
+  const outsideMention = (event: RelayEvent) =>
+    event.kind !== 40008 && mentionsViewer(event);
+  /** A batch read newest first carries an edit or deletion before its target;
+   * `decided` keeps shared targets from being walked once per path. */
+  const outsideEvidence = (
+    event: RelayEvent,
+    incoming: ReadonlyMap<string, RelayEvent>,
+    decided: Map<string, boolean>,
+  ): boolean => {
+    if (contentKind(event)) return outsideMention(event);
+    const known = decided.get(event.id);
+    if (known !== undefined) return known;
+    const result = event.tags.every(([name, id = ""]) => {
+      if (name !== "e" || events.has(id)) return true;
+      const target = incoming.get(id);
+      return !!target && outsideEvidence(target, incoming, decided);
+    });
+    decided.set(event.id, result);
+    return result;
+  };
   const keyFor = (target: ReadTarget) =>
     `${target.channelId}:${targetKey(target)}`;
   /** Counted evidence, or a fetched parent/root kept only for structure. */
@@ -727,6 +755,9 @@ export function createUnread({
   };
   const lookups = new Map<string, Lookup>();
   const lookupEvents = new Map<string, RelayEvent>();
+  // An evicted root is read again once. What a re-read evicts stays lost, so a
+  // working set larger than the cache cannot cycle through it.
+  const recovered = new Set<string>();
   const queued = new Map<
     string,
     {
@@ -1679,6 +1710,20 @@ export function createUnread({
     snapshots.set(key, value);
     return value;
   }
+  /** The channel list, then channels missing from it that hold retained
+   * evidence, such as outside channels. */
+  function evidenceChannels() {
+    indexEvidence();
+    const listed = channels.list().channels;
+    const ids = new Set(listed.map((channel) => channel.id));
+    return [
+      ...listed,
+      ...[...byChannel.keys()].flatMap((id) => {
+        const channel = ids.has(id) ? undefined : channels.get?.(id);
+        return channel ? [channel] : [];
+      }),
+    ];
+  }
   function inbox(): InboxSnapshot {
     if (inboxSnapshot && !inboxDirty) return inboxSnapshot;
     inboxDirty = false;
@@ -1686,13 +1731,14 @@ export function createUnread({
     const state = reads.state();
     const items: InboxItem[] = [];
     if (!closed)
-      for (const channel of channels.list().channels) {
+      for (const channel of evidenceChannels()) {
         if (
           channel.huddle ||
           channel.metadataPending ||
           channel.cached ||
           channel.archived ||
-          !channel.members?.includes(viewer)
+          (!channel.members?.includes(viewer) &&
+            !outsideChannel(channel, viewer))
         )
           continue;
         const dm = channel.channelType === "dm";
@@ -2147,11 +2193,11 @@ export function createUnread({
     saved = undefined;
     followsChanged();
   });
-  function purge() {
+  function purge(repairs = true) {
     // A revoke/regrant must not revive a transaction accepted under the old access epoch.
     epoch++;
     pendingForcedMessages.clear();
-    forget();
+    if (repairs) forget();
     for (const channelId of channelReadGenerations.keys())
       if (!allowed(channelId)) channelReadGenerations.delete(channelId);
     for (const [key, lookup] of lookups)
@@ -2184,7 +2230,13 @@ export function createUnread({
     const owners = channelOwnership((targetId) => retained.get(targetId));
     for (const [id, event] of retained) {
       const channels = owners(event);
-      if (!channels || [...channels].some((channel) => !allowed(channel)))
+      if (
+        !channels ||
+        [...channels].some((channel) => !allowed(channel)) ||
+        (contentKind(event) &&
+          [...channels].some(outside) &&
+          !outsideMention(event))
+      )
         events.delete(id);
     }
     indexed = false;
@@ -2225,10 +2277,20 @@ export function createUnread({
       .map((channel) => channel.id)
       .sort()
       .join(",");
+  // Metadata alone decides whether an outside channel's mentions are Activity.
+  const outsideEligibility = (members: ReadonlyMap<string, string>) => {
+    indexEvidence();
+    return new Map(
+      [...byChannel.keys()].flatMap((id) =>
+        members.has(id) ? [] : [[id, outside(id)] as const],
+      ),
+    );
+  };
   const initialList = channels.list();
   let archivedKey = inboxArchiveKey(initialList);
   let cachedChannels = cachedIds(initialList);
   let channelTypes = types(initialList);
+  let outsideChannels = outsideEligibility(channelTypes);
   let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
     const list = channels.list();
@@ -2239,6 +2301,16 @@ export function createUnread({
         channelTypes.get(id) !== type ? [id] : [],
       ),
     );
+    const nextOutside = outsideEligibility(nextTypes);
+    // A hidden or unconfirmed outside channel's edits and deletions are not
+    // read, so ineligibility drops its mentions; a later read lists them afresh.
+    const delisted = [...nextOutside].some(([id, eligible]) => {
+      const channel = channels.get?.(id);
+      return !eligible && !!channel && !channel.members?.includes(viewer);
+    });
+    for (const [id, eligible] of nextOutside)
+      if (outsideChannels.get(id) !== eligible) changed.add(id);
+    outsideChannels = nextOutside;
     const confirmed = [...nextTypes.keys()].some((id) =>
       cachedChannels.has(id),
     );
@@ -2250,7 +2322,15 @@ export function createUnread({
     const archiveChanged = nextArchived !== archivedKey;
     archivedKey = nextArchived;
     if (next === accessKey) {
-      if (changed.size || archiveChanged) publish(changed);
+      if (delisted) {
+        // purge() abandons a running repair, so it must run again. Outside
+        // mentions never come from repair batches, so batch marks stand.
+        if (refresh) {
+          sampled = false;
+          repairAgain = true;
+        }
+        purge(false);
+      } else if (changed.size || archiveChanged) publish(changed);
     } else {
       accessKey = next;
       // An initial observation made against a display-only roster still owes
@@ -2282,10 +2362,12 @@ export function createUnread({
     // Activity groups unread thread replies by root, and a thread read mark
     // reads a broadcast only by its root, so fetch a root the sampled window
     // dropped for a followed thread or for an unread reply in it that lights
-    // activity or shows in the timeline.
+    // activity or shows in the timeline. An outside channel never retains the
+    // root, so its mentions always ask.
     const structuralRootId =
       !entry.rootId &&
       (chosen(entry) === true ||
+        (entry.mentioned && outside(channelId)) ||
         ((activityEvidence(entry) || entry.broadcast) &&
           isUnread(entry, reads.state(), dm)))
         ? threadRootId
@@ -2331,6 +2413,7 @@ export function createUnread({
   function resetLookups() {
     lookups.clear();
     lookupEvents.clear();
+    recovered.clear();
     queued.clear();
     retracted.clear();
     witnesses.clear();
@@ -2352,9 +2435,18 @@ export function createUnread({
   }
   function keep(event: RelayEvent) {
     lookupEvents.set(event.id, event);
-    for (const [oldest] of lookupEvents) {
+    for (const [oldest, lost] of lookupEvents) {
       if (lookupEvents.size <= 1024) break;
       lookupEvents.delete(oldest);
+      if (recovered.has(event.id) || recovered.has(oldest)) continue;
+      recovered.add(oldest);
+      for (const first of recovered) {
+        if (recovered.size <= 4096) break;
+        recovered.delete(first);
+      }
+      lookups.delete(
+        `${conversationKey(channelOf(lost) ?? "", oldest)}:structure`,
+      );
     }
   }
   const contentKinds = [9, 40002, 40008];
@@ -2431,10 +2523,17 @@ export function createUnread({
     resolving = true;
     try {
       while (!closed && queued.size) {
-        const channelId = queued.values().next().value?.channelId;
+        const first = queued.values().next().value;
+        const channelId = first?.channelId;
         if (!channelId) return;
+        // Structural-only roots ask for no viewer replies, so one read serves
+        // several channels; each root is still kept only in its own channel.
         const chunk = [...queued]
-          .filter(([, item]) => item.channelId === channelId)
+          .filter(([, item]) =>
+            first.structuralOnly
+              ? item.structuralOnly
+              : item.channelId === channelId,
+          )
           .slice(0, 50);
         for (const [key] of chunk) queued.delete(key);
         const parents = chunk.map(([, item]) => item);
@@ -2498,32 +2597,47 @@ export function createUnread({
           requeue();
           continue;
         }
-        if (!allowed(channelId)) continue;
+        const homes = new Set(
+          parents.flatMap((parent) =>
+            allowed(parent.channelId) ? [parent.channelId] : [],
+          ),
+        );
+        if (!homes.size) continue;
         const removed = new Set<string>();
         for (const event of [...fetched, ...replies])
           if (event.kind === 5 || event.kind === 9005)
             for (const [name, id] of event.tags)
               if (name === "e" && id) removed.add(`${event.pubkey}:${id}`);
-        const live = (event: RelayEvent) =>
+        const live = (event: RelayEvent, home = channelId) =>
           contentKind(event) &&
-          channelOf(event) === channelId &&
+          channelOf(event) === home &&
           !removed.has(`${event.pubkey}:${event.id}`) &&
           !(event.pubkey === viewer && retracted.has(event.id));
-        for (const event of fetched) if (live(event)) keep(event);
+        for (const event of fetched)
+          if (
+            parents.some(
+              (parent) =>
+                parent.ids.has(event.id) &&
+                homes.has(parent.channelId) &&
+                live(event, parent.channelId),
+            )
+          )
+            keep(event);
         const mine = replies.filter(
           (event) => event.pubkey === viewer && live(event),
         );
         for (const target of parents) {
           if (target.structuralOnly) {
-            remember(
-              `${conversationKey(channelId, target.parentId)}:structure`,
-              {
-                channelId,
-                done: true,
-                evidence: undefined,
-                more: false,
-              },
-            );
+            if (homes.has(target.channelId))
+              remember(
+                `${conversationKey(target.channelId, target.parentId)}:structure`,
+                {
+                  channelId: target.channelId,
+                  done: true,
+                  evidence: undefined,
+                  more: false,
+                },
+              );
             continue;
           }
           const found = mine.filter((event) => decides(event, target));
@@ -2552,7 +2666,7 @@ export function createUnread({
           if (chosen) witness(lookup, chosen);
         }
         indexed = false;
-        publish(new Set([channelId]));
+        publish(homes);
         // Live notifications wait on pending replies; let them re-check.
         for (const listener of [...membershipListeners]) listener();
       }
@@ -2841,6 +2955,7 @@ export function createUnread({
     const changed = new Set<string>();
     const incoming = new Map(batch.map((event) => [event.id, event]));
     const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
+    const decided = new Map<string, boolean>();
     let evicted = false;
     for (const event of batch) {
       if (
@@ -2849,7 +2964,12 @@ export function createUnread({
       )
         continue;
       const channels = owners(event);
-      if (!channels || [...channels].some((channel) => !allowed(channel)))
+      if (
+        !channels ||
+        [...channels].some((channel) => !allowed(channel)) ||
+        ([...channels].some(outside) &&
+          !outsideEvidence(event, incoming, decided))
+      )
         continue;
       const size = eventBytes(event);
       if (size > EVIDENCE_BYTES) {
@@ -3044,12 +3164,38 @@ export function createUnread({
     const undoableLocalKeys = new Set(
       [...keys].filter((key) => key !== messageForceKey(channelId)),
     );
+    // Outside a channel, read only its retained mentions: a channel read mark
+    // would also read posts the viewer never saw once they join.
+    const mentions = outside(channelId)
+      ? rows
+          .filter(({ event }) => event.pubkey !== viewer)
+          .map(({ event }) => ({
+            key: `msg:${event.id}`,
+            timestamp: event.created_at,
+            channelId,
+            ...(threadReference(event) && root(event)
+              ? { rootId: root(event) }
+              : {}),
+          }))
+      : undefined;
     return async () => {
       // The save's frontier advance can end overlays before it returns, and
       // Undo never restores them.
       const hadForced = Boolean(forcedMessages.get(channelId)?.size);
-      const result =
-        rows.length || reads.snapshot().capability === "frontier-sync"
+      const result = mentions
+        ? await reads.readMessages(
+            mentions,
+            undefined,
+            valid,
+            false,
+            fence,
+            [...keys],
+            {
+              explicit: true,
+              undo: { keys: undoableLocalKeys, valid: undoValid },
+            },
+          )
+        : rows.length || reads.snapshot().capability === "frontier-sync"
           ? await reads.read(channelId, cut, valid, true, [...keys], fence, {
               keys: undoableLocalKeys,
               valid: undoValid,
@@ -3275,15 +3421,26 @@ export function createUnread({
             if (!shown.has(id) && holders.delete(stay) && !holders.size)
               markedWhileShown.delete(id);
         },
-        async catchUp(id: string, rootId?: string) {
+        async catchUp(cutoff: string, rootId?: string, bottom = cutoff) {
           if (!valid()) return;
           const target = rootId
             ? { kind: "thread" as const, channelId, rootId }
             : { kind: "channel" as const, channelId };
-          const dm = readDm([{ target, id }]);
+          const dm = readDm([{ target, id: cutoff }]);
           if (dm) {
             await dm;
             return;
+          }
+          // Outside a channel, a dwell reads only what it shows: the bottom row
+          // it reached, exactly, and never a mark. Only a retained bottom row
+          // (a mention) in a verified thread places that thread's bottom, to
+          // clear its reply reminders.
+          const away = outside(channelId);
+          const id = away ? bottom : cutoff;
+          if (away) {
+            await this.observe([id]);
+            const shown = events.get(id);
+            if (!rootId || !shown || root(shown) !== rootId) return;
           }
           const event = requireMessage(target, id);
           // A broadcast reply is shown in the channel but never its cutoff.
@@ -3343,6 +3500,11 @@ export function createUnread({
             reminders.every(
               (local) => manual(local, journal) <= manualRevision,
             );
+          if (away) {
+            if (reminders.length)
+              await reads.clearLocalUnread(key, reminders, fresh);
+            return;
+          }
           if ((effectiveFrontier(state, key, channelId) ?? -1) >= cut) {
             if (endManual)
               await reads.clearLocalUnread(
@@ -3380,7 +3542,12 @@ export function createUnread({
               channelId,
               messageId: id,
             };
-            const event = requireMessage(target, id);
+            let event: RelayEvent;
+            try {
+              event = requireMessage(target, id);
+            } catch {
+              continue; // Outside a channel, only its mentions are evidence.
+            }
             indexEvidence();
             const entry = byId.get(id);
             const state = reads.state();
@@ -3911,9 +4078,8 @@ export function createUnread({
       // Decide the sweep from the list at invocation; channels granted later wait
       // for the next explicit action, like arrivals after a per-channel cut.
       const clickedAt = Math.floor(Date.now() / 1000);
-      const selected = channels
-        .list()
-        .channels.filter((channel) => allowed(channel.id))
+      const selected = evidenceChannels()
+        .filter((channel) => allowed(channel.id))
         .filter((channel) => {
           const current = compute({ kind: "channel", channelId: channel.id });
           // The sidebar can be quiet while unopened replies still have receipts.
@@ -4084,8 +4250,21 @@ export function createUnread({
           : [];
       });
     },
+    /** Outside channels get no repair read, so the feed rechecks these for
+     * deletions the next addressed read may leave out. */
+    outsideMentionIds() {
+      if (closed) return [];
+      return [...events.values()].flatMap((event) =>
+        contentKind(event) &&
+        mentionsViewer(event) &&
+        !deleted(event) &&
+        outside(channelOf(event) ?? "")
+          ? [event.id]
+          : [],
+      );
+    },
     accept,
-    purge,
+    purge: () => purge(),
     /** `covered`: the membership route's replay was continuous, so read state
      * resumes from it instead of reading its snapshot again. */
     /** A repair is still owed: evidence (see `owing`) or read-state markers. */

@@ -64,9 +64,17 @@ export function MarkAllReadShortcut({
       when: () =>
         !inTerminal() &&
         session.unread.sync().capability === "frontier-sync" &&
-        session.channels
+        (session.channels
           .list()
-          .channels.some(({ id }) => channelHasUnread(session.unread, id)),
+          .channels.some(({ id }) => channelHasUnread(session.unread, id)) ||
+          // Activity also holds mentions from public channels not joined,
+          // and threads marked unread by hand whose messages are read.
+          session.unread
+            .inbox()
+            .items.some(
+              ({ channelId, manual }) =>
+                manual || channelHasUnread(session.unread, channelId),
+            )),
       run: () => setAsking({ unread: session.unread, name }),
     });
   }, [shortcuts, session, name]);

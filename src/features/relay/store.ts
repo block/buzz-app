@@ -561,6 +561,7 @@ export function createChannelStore(
         old.huddle === channel.huddle &&
         old.updatedAt === channel.updatedAt &&
         old.archived === channel.archived &&
+        old.unlisted === channel.unlisted &&
         old.ttlSeconds === channel.ttlSeconds &&
         old.readOnly === channel.readOnly &&
         old.cached === channel.cached &&

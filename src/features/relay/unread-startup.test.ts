@@ -1434,6 +1434,36 @@ it("a repair after a complete observation reads only near the newest event it re
   expect(second?.["#h"]).toEqual(first?.["#h"]);
 });
 
+it("a reconnect that drops a mention from a channel the viewer has not joined keeps the repair marks", async () => {
+  const h = setup();
+  const newest = nowSeconds() - 1000;
+  serve(h, () => [message(h.peer, "other", "recent", newest)]);
+  // Discovery lists the public lobby too, so it is never denied as omitted.
+  const lobby = metadata(h.relay, "lobby", "lobby", 10, [
+    ["t", "stream"],
+    ["public"],
+  ]);
+  const served = h.query.getMockImplementation();
+  h.query.mockImplementation(async (filters, signal) => {
+    const events = (await served?.(filters, signal)) ?? [];
+    return filters[0]?.kinds?.includes(39000) ? [...events, lobby] : events;
+  });
+  await discovered(h);
+  await h.session.unread.ensure();
+  h.receive([roster(h.relay, "lobby", [h.peer.pubkey], 10), lobby]);
+  const mention = message(h.peer, "lobby", "mention", newest, [
+    ["p", h.viewer.pubkey],
+  ]);
+  h.receive([mention]);
+  expect(h.session.unread.attention("lobby", mention.id).unread).toBe(true);
+  // The disconnect leaves the lobby's metadata unconfirmed, which drops the
+  // mention; it never came from a repair batch, so the batch mark stands.
+  h.reconnect();
+  await vi.waitFor(() => expect(evidenceReads(h)).toHaveLength(2));
+  expect(h.session.unread.attention("lobby", mention.id).unread).toBe(false);
+  expect(evidenceReads(h)[1]).toMatchObject({ since: newest - 960 });
+});
+
 it("a batch that returned nothing is read unbounded again", async () => {
   const h = setup();
   serve(h, () => []);

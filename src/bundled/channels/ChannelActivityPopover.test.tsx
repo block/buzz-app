@@ -456,6 +456,7 @@ test("a mention whose edits or deletions are unchecked shows the Inbox placehold
     },
     retainedEvent: (id) => (id === event.id ? event : undefined),
     retainedEditIds: () => [],
+    retainedOutsideIds: () => [],
   });
   const profiles = new Map([["sam", { name: "Sam" }]]);
   const session = {

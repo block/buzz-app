@@ -72,7 +72,7 @@ async function viewerSession(key = keypair(), relay = relayUrl) {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
-  return { key, session: owner.session };
+  return { key, session: owner.session, transport };
 }
 
 it.skipIf(!relayUrl)(
@@ -388,5 +388,89 @@ it.skipIf(!relayUrl)(
       { timeout: 10_000 },
     );
     console.info("[e2e] running session dropped after", Date.now() - removed);
+  },
+);
+
+it.skipIf(!relayUrl)(
+  "a mention of someone outside a public stream reaches their Activity history without joining; others never do",
+  { timeout: 90_000 },
+  async () => {
+    const alice = await runningSession();
+    const bob = { key: keypair() };
+    const stamp = Date.now().toString(36);
+    const lobby = await alice.session.channelCreation.create({
+      name: `lobby ${stamp}`,
+      visibility: "open",
+    });
+    const vault = await alice.session.channelCreation.create({
+      name: `vault ${stamp}`,
+      visibility: "private",
+    });
+    const publish = async (
+      channelId: string,
+      content: string,
+      tags: string[][],
+    ) => {
+      const signal = new AbortController().signal;
+      const writer = alice.transport.writer;
+      assert.exists(writer);
+      const event = await writer.sign(
+        {
+          kind: 9,
+          content,
+          tags: [["h", channelId], ...tags],
+          created_at: Math.floor(Date.now() / 1000),
+        },
+        signal,
+      );
+      await writer.publish(event, signal);
+      return event;
+    };
+    const told = await publish(lobby, "let them know", [["p", bob.key.pubkey]]);
+    // The relay stores the real p tag and does not make bob a member.
+    const [stored] = await alice.transport.query([
+      { ids: [told.id], limit: 1 },
+    ]);
+    expect(stored?.tags).toContainEqual(["p", bob.key.pubkey]);
+    const [members] = await alice.transport.query([
+      { kinds: [39002], "#d": [lobby], limit: 1 },
+    ]);
+    expect(members?.tags).not.toContainEqual(["p", bob.key.pubkey]);
+
+    // "Do nothing" keeps only a mention tag; a private channel's p never reaches bob.
+    const quiet = await publish(lobby, "do nothing", [
+      ["mention", bob.key.pubkey],
+    ]);
+    const secret = await publish(vault, "crafted", [["p", bob.key.pubkey]]);
+    const after = await publish(lobby, "second notice", [
+      ["p", bob.key.pubkey],
+    ]);
+    // Bob was offline; a fresh session finds the mentions in Activity history.
+    const again = await runningSession(bob.key);
+    await again.session.inboxFeed.ensure();
+    expect(again.session.inboxFeed.snapshot().status).toBe("ready");
+    const history = again.session.unread
+      .inbox()
+      .items.map((item) => item.messageId);
+    expect(history).toEqual(expect.arrayContaining([told.id, after.id]));
+    expect(history).not.toContain(quiet.id);
+    expect(history).not.toContain(secret.id);
+    expect(
+      again.session.channels.list().channels.map((c) => c.id),
+    ).not.toContain(lobby);
+    // Opening it from Activity reads the channel without joining.
+    again.session.channels.ensure(lobby);
+    await vi.waitFor(
+      () =>
+        expect(
+          again.session.channels.window(lobby).rows.map((row) => row.content),
+        ).toContain("let them know"),
+      { timeout: 10_000 },
+    );
+    const [roster] = await alice.transport.query([
+      { kinds: [39002], "#d": [lobby], limit: 1 },
+    ]);
+    expect(roster?.tags).not.toContainEqual(["p", bob.key.pubkey]);
+    console.info("[e2e] outside mentions", { lobby, vault, history });
   },
 );

@@ -40,10 +40,6 @@ export const LinkThreadTabContext = createContext<
  * so. */
 export type LinkPreview = Readonly<{
   label: string;
-  /** A short supplemental action, rather than an object summary. */
-  compact?: boolean;
-  /** An explicit action can be available as soon as the pointer enters. */
-  immediate?: boolean;
   render(open: (target: string) => boolean): ReactNode;
 }>;
 

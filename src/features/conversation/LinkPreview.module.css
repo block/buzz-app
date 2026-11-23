@@ -17,14 +17,6 @@
   align-items: center;
   gap: var(--space-2);
 }
-.actionPopup {
-  --floating-inset: 0px;
-  width: max-content;
-  padding: 0;
-}
-.actionPopup > div {
-  display: grid;
-}
 .metadata {
   flex: 1;
   min-width: 0;

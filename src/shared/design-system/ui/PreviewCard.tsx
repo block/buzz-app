@@ -26,8 +26,6 @@ export type PreviewCardProps = {
   anchor?: BasePreviewCard.Positioner.Props["anchor"];
   /** A preview in the same group is already open: move to this one at once. */
   warm?: boolean;
-  /** A supplemental action that opens immediately rather than waiting for preview intent. */
-  immediate?: boolean;
   className?: string;
   id?: string;
   "aria-label"?: string;
@@ -73,7 +71,6 @@ export function PreviewCard({
   align = "start",
   anchor,
   warm = false,
-  immediate = false,
   className,
   id,
   link,
@@ -260,7 +257,7 @@ export function PreviewCard({
       <BasePreviewCard.Trigger
         render={trigger}
         {...hoverOpenTiming.preview}
-        {...((warm || immediate) && { delay: 0 })}
+        {...(warm && { delay: 0 })}
         ref={rememberTrigger}
         // Base UI marks every open popup's trigger data-popup-open; this tells
         // a preview's trigger apart.

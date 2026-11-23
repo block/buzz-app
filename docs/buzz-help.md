@@ -111,10 +111,11 @@ if that desktop app is up and running.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.
-- **Link a PR to a chat.** With the GitHub plugin on, hover or focus a PR
-  link in a writable Solo chat you own and choose **Link to chat**. Its status
-  replaces the sidebar chat icon; **Unlink from chat** removes it. This works
-  even with **Open GitHub links in Buzz** off. A chat links one PR; choosing
+- **Link a PR to a chat.** With the GitHub plugin on, open a PR message's
+  **More message actions (⋯)** in a writable Solo chat you own and choose
+  **Link PR to chat**. Its status replaces the sidebar chat icon; reopen the
+  menu to unlink it. A message with several PRs lists each separately. This
+  works with **Open GitHub links in Buzz** off. A chat links one PR; choosing
   another replaces it.
 - **Channels** are open (anyone can find and join them) or private (invite
   only). The member avatars in the header manage members, access and roles.

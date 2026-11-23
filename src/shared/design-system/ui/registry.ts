@@ -524,7 +524,6 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "plain: unfilled text disclosure without an underline",
       "glass (proposed): frosted action over profile artwork",
       "size: text (small label text, no insets) | caption (32px, caption text) | inline | row (8px insets, stretched label) | xs | sm | md (default) | lg",
-      "inset: symmetric (xs): equal 8px horizontal padding, including with a leading icon",
       "medium leading icon + label: 12px leading / 16px trailing inset (proposed)",
       "shape: capsule (default) | control (12px) | icon (square, 10px)",
       "SurfaceButton: artwork layout with shared activation and focus (proposed)",

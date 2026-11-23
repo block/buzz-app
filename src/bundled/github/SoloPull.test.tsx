@@ -1,9 +1,23 @@
 import { MenuRoot, MenuPopup } from "../../shared/design-system/ui/Menu";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import type { EventData } from "../../features/relay/events";
+import type { ChannelMessage } from "../../features/relay/contracts";
+import {
+  ChatPullMessageAction,
+  hasChatPullAction,
+} from "./ChatPullMessageAction";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { AddedTool } from "../../buzz-mcp/session-tools";
@@ -96,7 +110,11 @@ function relayWith(channels: { id: string; channelType: string }[]) {
     pubkey: viewer,
     sig: "",
   }));
-  const publish = vi.fn(async () => "");
+  let head: EventData | undefined;
+  const publish = vi.fn(async (event: EventData) => {
+    head = event;
+    return "";
+  });
   const list = {
     status: "ready" as const,
     channels: channels.map((channel) => ({
@@ -107,7 +125,7 @@ function relayWith(channels: { id: string; channelType: string }[]) {
   };
   const session = {
     viewer,
-    snapshotRead: vi.fn(async () => []),
+    snapshotRead: vi.fn(async () => (head ? [head] : [])),
     configArtifactWriter: { sign, publish },
     channels: {
       ensureList: () => () => {},
@@ -178,6 +196,7 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     conversation: {
       registerChatIcon: () => {},
       registerChatMenu: () => {},
+      registerMessageAction: () => {},
       registerLink: () => {},
     },
     relay,
@@ -396,4 +415,188 @@ it("only mounts the PR shortcut for a Solo in the current community", () => {
   expect(
     screen.getByRole("button", { name: "Open linked pull request" }),
   ).toBeVisible();
+});
+
+function pullMessage(content = pull): ChannelMessage {
+  return { id: "message", channelId: chat, content } as ChannelMessage;
+}
+
+function messagePullMenu(
+  value: ReturnType<typeof relayWith>,
+  pulls: SoloPulls,
+  message = pullMessage(),
+) {
+  return (
+    <ToastProvider>
+      <MenuRoot open>
+        <MenuPopup>
+          <ChatPullMessageAction
+            {...value}
+            message={message}
+            pulls={pulls}
+            close={() => {}}
+          />
+        </MenuPopup>
+      </MenuRoot>
+    </ToastProvider>
+  );
+}
+
+it("lists each distinct PR in a message and replaces or unlinks the chat's association with browser opening selected", async () => {
+  setOpenGitHubLinksInBuzz(false);
+  const value = relayWith([{ id: chat, channelType: "solo" }]);
+  const pulls = fakePulls();
+  const other = "https://github.com/block/buzz-app/pull/8";
+  render(
+    messagePullMenu(
+      value,
+      pulls,
+      pullMessage(`${pull}\n${other}\n[review](${pull}#discussion_r1)`),
+    ),
+  );
+  expect(screen.getAllByRole("menuitem")).toHaveLength(2);
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Link buzz-app#7 to chat" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Unlink buzz-app#7 from chat",
+    }),
+  ).toBeEnabled();
+  expect(value.publish).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      content: JSON.stringify({ version: 1, url: pull }),
+    }),
+    expect.anything(),
+  );
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Link buzz-app#8 to chat" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", {
+      name: "Unlink buzz-app#8 from chat",
+    }),
+  ).toBeEnabled();
+  expect(
+    screen.getByRole("menuitem", { name: "Link buzz-app#7 to chat" }),
+  ).toBeEnabled();
+  expect(pulls.get(chat)?.url).toBe(other);
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Unlink buzz-app#8 from chat" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Link buzz-app#8 to chat" }),
+  ).toBeEnabled();
+  expect(pulls.get(chat)).toBeUndefined();
+  expect(value.publish).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      content: JSON.stringify({ version: 1, url: null }),
+    }),
+    expect.anything(),
+  );
+});
+
+it("keeps a failed message-menu save retryable without changing the linked PR", async () => {
+  const value = relayWith([{ id: chat, channelType: "solo" }]);
+  const pulls = fakePulls();
+  value.publish.mockRejectedValueOnce(new Error("Save refused"));
+  render(messagePullMenu(value, pulls));
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Link PR to chat" }),
+  );
+  expect(await screen.findByText("Save refused")).toBeVisible();
+  expect(pulls.get(chat)).toBeUndefined();
+  await userEvent.click(
+    screen.getByRole("menuitem", { name: "Link PR to chat" }),
+  );
+  expect(
+    await screen.findByRole("menuitem", { name: "Unlink PR from chat" }),
+  ).toBeEnabled();
+  expect(pulls.get(chat)?.url).toBe(pull);
+});
+
+it("prevents a second message-menu save while publication is pending", async () => {
+  const value = relayWith([{ id: chat, channelType: "solo" }]);
+  const pulls = fakePulls();
+  let complete!: () => void;
+  const gate = new Promise<string>((resolve) => {
+    complete = () => resolve("");
+  });
+  value.publish.mockImplementationOnce(() => gate);
+  render(messagePullMenu(value, pulls));
+  const action = screen.getByRole("menuitem", { name: "Link PR to chat" });
+  try {
+    fireEvent.click(action);
+    await waitFor(() =>
+      expect(action).toHaveAttribute("aria-disabled", "true"),
+    );
+    fireEvent.click(action);
+    expect(value.publish).toHaveBeenCalledOnce();
+    expect(pulls.get(chat)).toBeUndefined();
+    await act(async () => {
+      complete();
+      await gate;
+    });
+    expect(
+      await screen.findByRole("menuitem", { name: "Unlink PR from chat" }),
+    ).toBeEnabled();
+  } finally {
+    complete();
+  }
+});
+
+it("rejects stale, disconnected and cached message-menu clicks before signing", () => {
+  const value = relayWith([{ id: chat, channelType: "solo" }]);
+  const pulls = fakePulls();
+  render(messagePullMenu(value, pulls));
+  const action = screen.getByRole("menuitem", { name: "Link PR to chat" });
+  const snapshot = value.relay.snapshot();
+  const initial = { ...snapshot };
+  for (const change of [
+    { cached: true },
+    { status: "disconnected" },
+    { session: { ...value.session } },
+  ]) {
+    Object.assign(snapshot, initial, { cached: undefined }, change);
+    fireEvent.click(action);
+  }
+  expect(value.sign).not.toHaveBeenCalled();
+  expect(value.publish).not.toHaveBeenCalled();
+});
+
+it("offers message-menu PR actions only for owned writable Solo chats with link storage", () => {
+  for (const change of [
+    { channelType: "stream" },
+    { channelType: "forum" },
+    { channelType: "dm" },
+    { creator: "another-viewer" },
+    { archived: true },
+    { readOnly: true },
+  ]) {
+    const value = relayWith([{ id: chat, channelType: "solo" }]);
+    const channel = value.session.channels.list().channels[0];
+    if (!channel) throw new Error("Missing test chat");
+    Object.assign(channel, change);
+    expect(hasChatPullAction(pullMessage(), value.session)).toBe(false);
+    const view = render(messagePullMenu(value, fakePulls()));
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
+    view.unmount();
+  }
+  const { session } = relayWith([{ id: chat, channelType: "solo" }]);
+  expect(hasChatPullAction(pullMessage(), session)).toBe(true);
+  expect(
+    hasChatPullAction(
+      pullMessage("https://github.com/block/buzz-app/issues/7"),
+      session,
+    ),
+  ).toBe(false);
+  expect(
+    hasChatPullAction(pullMessage(), {
+      ...session,
+      configArtifactWriter: undefined,
+    }),
+  ).toBe(false);
+  expect(
+    hasChatPullAction(pullMessage(), { ...session, snapshotRead: undefined }),
+  ).toBe(false);
 });

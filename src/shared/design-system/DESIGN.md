@@ -96,10 +96,6 @@ focus opens it at once. Each hover surface belongs to one bucket in
 control). Components accept a bucket, never a delay; to change a timing, change
 the bucket.
 
-The compact **Link to chat / Unlink from chat** action on a PR link opens at
-once with `PreviewCard immediate`. Other link previews keep their preview
-timing. It uses `Button size="xs" inset="symmetric"` for equal horizontal padding.
-
 ## Focus appearance
 
 Keyboard focus is always visible. Shared components draw the ring, shown when

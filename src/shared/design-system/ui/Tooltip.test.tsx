@@ -266,24 +266,6 @@ describe("hover intent", () => {
     expect(screen.getByText("Preview body")).toBeInTheDocument();
   });
 
-  it("opens an explicitly immediate action preview without a hover wait", async () => {
-    render(
-      <PreviewCard
-        immediate
-        trigger={<a href="#pull">Pull request</a>}
-        aria-label="PR actions"
-      >
-        Link to chat
-      </PreviewCard>,
-    );
-    const trigger = screen.getByRole("link", { name: "Pull request" });
-    fireEvent.mouseEnter(trigger);
-    fireEvent.mouseMove(trigger, { movementX: 4 });
-    await rest(0);
-    expect(trigger).toHaveAttribute("data-popup-open");
-    expect(screen.getByText("Link to chat")).toBeInTheDocument();
-  });
-
   it("makes an action preview wait for a rest, but opens it at once on focus", async () => {
     function ActionPreview() {
       const action = useRef<HTMLButtonElement>(null);

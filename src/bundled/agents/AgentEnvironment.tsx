@@ -1,20 +1,27 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PlusIcon, TrashIcon } from "../../shared/design-system/icons";
+import { DotsThreeIcon, PlusIcon } from "../../shared/design-system/icons";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Field } from "../../shared/design-system/ui/Field";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
-import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
+import {
+  MenuItem,
+  MenuPopup,
+  MenuRoot,
+  MenuTrigger,
+} from "../../shared/design-system/ui/Menu";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 
-/** A row being edited. A saved row's value stays native: an empty `value`
- * keeps it, anything typed replaces it. */
-type Row = { key: number; name: string; value: string; saved: boolean };
 type Status = { names: string[] };
+/** The one row open for editing: a saved name to replace, or a new one. */
+type Draft = { replacing?: string; name: string; value: string };
+
+const ROW =
+  "grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-3 px-3 py-2";
 
 /** Variables one local agent starts with, held natively in the OS credential
  * store. Values are never read back. */
@@ -26,41 +33,31 @@ export function AgentEnvironment({
   /** Stops the agent's processes, so its next turn starts with the list. */
   restartAgent: () => Promise<void>;
 }) {
-  const [rows, setRows] = useState<Row[] | undefined>();
+  const [names, setNames] = useState<string[] | undefined>();
+  const [draft, setDraft] = useState<Draft | undefined>();
   const [restarting, setRestarting] = useState(false);
-  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, setPending] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const restart = useRef<HTMLButtonElement>(null);
-  const next = useRef(0);
-  // Leaving the agent with unsaved edits asks first; during a save or a
+  const notify = useToastNotification();
+  // Leaving the agent with a row open asks first; during a save or a
   // restart it waits, so a failed restart's error is never lost.
-  useAgentSaveState(dirty, pending || restarting);
-  const load = useCallback((status: Status) => {
-    setRows(
-      status.names.map((name) => ({
-        key: next.current++,
-        name,
-        value: "",
-        saved: true,
-      })),
-    );
-    setDirty(false);
-  }, []);
+  useAgentSaveState(!!draft, pending || restarting);
   const fetch = useCallback(() => {
     setError(undefined);
     // Hosts without the native list (test fixtures) answer nothing.
     invoke<Status | null>("agent_env_status", { agent }).then(
-      (status) => status && load(status),
+      (status) => status && setNames(status.names),
       (reason: unknown) => setError(String(reason)),
     );
-  }, [agent, load]);
+  }, [agent]);
   useEffect(() => {
     if (isTauri()) fetch();
   }, [fetch]);
   // An unreadable list is never shown as an empty one.
-  if (!rows)
+  if (!names)
     return error ? (
       <div className="mt-section-gap">
         <InlineHeader title="Environment variables" />
@@ -75,131 +72,198 @@ export function AgentEnvironment({
   // Nothing changes the list while a save or a restart runs: a save during
   // a restart could miss the process the restart starts.
   const locked = pending || restarting;
-  const edit = (key: number, change: Partial<Row>) => {
-    setRows(rows.map((row) => (row.key === key ? { ...row, ...change } : row)));
-    setDirty(true);
-  };
-  const save = async () => {
+  /** Writes the whole list; a `null` value keeps that row's saved value. */
+  const write = async (
+    rows: { name: string; value: string | null }[],
+    done: string,
+  ) => {
     setPending(true);
     setError(undefined);
     try {
-      await invoke("agent_env_set", {
-        agent,
-        rows: rows.map((row) => ({
-          name: row.name.trim(),
-          value: row.saved && !row.value ? null : row.value,
-        })),
-      });
-      load(await invoke<Status>("agent_env_status", { agent }));
+      await invoke("agent_env_set", { agent, rows });
+      setNames((await invoke<Status>("agent_env_status", { agent })).names);
+      setDraft(undefined);
+      setSaved(true);
+      notify(done, "success");
     } catch (reason) {
       setError(String(reason));
     } finally {
       setPending(false);
     }
   };
+  const save = (open: Draft) => {
+    const name = open.replacing ?? open.name.trim();
+    const rows = names.map((other) => ({
+      name: other,
+      value: other === open.replacing ? open.value : null,
+    }));
+    void write(
+      open.replacing ? rows : [...rows, { name, value: open.value }],
+      "Saved",
+    );
+  };
+  const remove = (name: string) =>
+    void write(
+      names
+        .filter((other) => other !== name)
+        .map((other) => ({ name: other, value: null })),
+      "Removed",
+    );
+  const editor = (open: Draft) => (
+    <form
+      key={open.replacing ?? "new"}
+      className={ROW}
+      onSubmit={(event) => {
+        event.preventDefault();
+        save(open);
+      }}
+    >
+      {open.replacing ? (
+        <span className="truncate font-mono text-body-sm">
+          {open.replacing}
+        </span>
+      ) : (
+        <Input
+          aria-label="Variable name"
+          placeholder="NAME"
+          value={open.name}
+          disabled={locked}
+          autoFocus
+          autoCapitalize="off"
+          spellCheck={false}
+          onValueChange={(name) => setDraft({ ...open, name })}
+        />
+      )}
+      <Input
+        aria-label={`Value of ${open.replacing ?? (open.name.trim() || "new variable")}`}
+        type="password"
+        placeholder={open.replacing ? "New value" : "Value"}
+        value={open.value}
+        disabled={locked}
+        autoFocus={!!open.replacing}
+        autoComplete="off"
+        onValueChange={(value) => setDraft({ ...open, value })}
+      />
+      <span className="flex items-center gap-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          onClick={() => {
+            setDraft(undefined);
+            setError(undefined);
+          }}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          size="sm"
+          variant="prominent"
+          disabled={open.replacing ? !open.value : !open.name.trim()}
+          loading={pending}
+        >
+          Save
+        </Button>
+      </span>
+    </form>
+  );
   return (
     <div className="mt-section-gap">
-      <InlineHeader title="Environment variables" />
-      <p className="m-0 mb-2 text-body-sm text-subtle">
-        Variables this agent starts with.
-      </p>
-      <SettingsGroup layout="form">
-        {rows.map((row) => (
-          <div key={row.key} className="flex items-end gap-2">
-            <Field label="Variable name">
-              <Input
-                placeholder="NAME"
-                value={row.name}
-                disabled={row.saved || locked}
-                autoCapitalize="off"
-                spellCheck={false}
-                onValueChange={(name) => edit(row.key, { name })}
-              />
-            </Field>
-            <Field
-              label={
-                <>
-                  Value
-                  <span className="sr-only">
-                    {" "}
-                    of {row.name || "new variable"}
-                  </span>
-                </>
-              }
-            >
-              <Input
-                type="password"
-                placeholder={row.saved ? "Saved — type to replace" : "Value"}
-                value={row.value}
-                disabled={locked}
-                onValueChange={(value) => edit(row.key, { value })}
-              />
-            </Field>
-            <IconButton
-              aria-label={`Remove ${row.name || "variable"}`}
-              icon={<TrashIcon size={17} />}
-              disabled={locked}
-              onClick={() => {
-                setRows(rows.filter((other) => other.key !== row.key));
-                setDirty(true);
-              }}
-            />
-          </div>
-        ))}
-        <div className="flex flex-wrap items-center justify-end gap-2">
+      <InlineHeader
+        title="Environment variables"
+        subtitle="Variables this agent starts with."
+        actions={
           <Button
             size="sm"
-            disabled={locked}
-            onClick={() => {
-              setRows([
-                ...rows,
-                { key: next.current++, name: "", value: "", saved: false },
-              ]);
-              setDirty(true);
-            }}
+            disabled={locked || !!draft}
+            onClick={() => setDraft({ name: "", value: "" })}
           >
             <PlusIcon size={17} aria-hidden="true" />
             Add variable
           </Button>
-          <Button
-            size="sm"
-            variant="prominent"
-            // Focusable while saving and after, so focus stays on Save.
-            disabled={!dirty}
-            loading={pending}
-            focusableWhenDisabled
-            onClick={() => void save()}
-          >
-            Save
-          </Button>
-        </div>
-        {error && (
-          <p role="alert" className="m-0 text-body-sm">
-            {error}
+        }
+      />
+      <SettingsGroup>
+        {names.length === 0 && !draft ? (
+          <p className="m-0 px-3 py-4 text-center text-body-sm text-subtle">
+            No variables yet
           </p>
+        ) : (
+          <div className={`${ROW} text-body-sm text-subtle`} aria-hidden="true">
+            <span>Variable</span>
+            <span>Value</span>
+          </div>
         )}
-        <PreferenceRow
-          title="Restart agent"
-          subtitle={
-            dirty
-              ? "Save your changes first."
-              : "Processes already running keep the variables they started with."
-          }
-          trailing={
-            <Button
-              ref={restart}
-              size="sm"
-              // A restart would race a save, or drop unsaved edits.
-              disabled={pending || restarting || dirty}
-              loading={restarting}
-              focusableWhenDisabled
-              onClick={() => setConfirm(true)}
-            >
-              Restart agent
-            </Button>
-          }
-        />
+        {names.map((name) =>
+          draft?.replacing === name ? (
+            editor(draft)
+          ) : (
+            <div key={name} className={ROW}>
+              <span className="truncate font-mono text-body-sm">{name}</span>
+              <span className="text-body-sm text-subtle">
+                <span aria-hidden="true">•••••• </span>Saved
+              </span>
+              <span className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Replace ${name}`}
+                  disabled={locked || !!draft}
+                  onClick={() => setDraft({ replacing: name, name, value: "" })}
+                >
+                  Replace
+                </Button>
+                <MenuRoot>
+                  <MenuTrigger
+                    render={
+                      <IconButton
+                        aria-label={`${name} actions`}
+                        title={`${name} actions`}
+                        icon={<DotsThreeIcon size={16} aria-hidden="true" />}
+                        disabled={locked || !!draft}
+                      />
+                    }
+                  />
+                  <MenuPopup align="end" size="compact">
+                    <MenuItem tone="danger" onClick={() => remove(name)}>
+                      Remove
+                    </MenuItem>
+                  </MenuPopup>
+                </MenuRoot>
+              </span>
+            </div>
+          ),
+        )}
+        {draft && !draft.replacing && editor(draft)}
       </SettingsGroup>
+      {error && (
+        <p role="alert" className="m-0 mt-2 text-body-sm">
+          {error}
+        </p>
+      )}
+      {saved && (
+        <div className="mt-2">
+          <SettingsGroup>
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <p role="status" className="m-0 text-body-sm">
+                Changes saved. Restart the agent to apply them.
+              </p>
+              <Button
+                ref={restart}
+                size="sm"
+                // A restart would race a save, or drop an open row.
+                disabled={locked || !!draft}
+                loading={restarting}
+                focusableWhenDisabled
+                onClick={() => setConfirm(true)}
+              >
+                Restart agent
+              </Button>
+            </div>
+          </SettingsGroup>
+        </div>
+      )}
       {confirm && (
         <AlertDialog
           title="Restart this agent?"
@@ -216,6 +280,7 @@ export function AgentEnvironment({
                   setRestarting(true);
                   setError(undefined);
                   restartAgent()
+                    .then(() => setSaved(false))
                     .catch((reason: unknown) =>
                       setError(
                         reason instanceof Error

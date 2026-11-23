@@ -40,18 +40,24 @@ afterEach(cleanup);
 
 const calls = (command: string) =>
   native.invoke.mock.calls.filter(([name]) => name === command);
-const newName = () =>
-  screen
-    .getAllByRole("textbox", { name: "Variable name" })
-    .at(-1) as HTMLElement;
+const button = (name: string) => screen.getByRole("button", { name });
 
-it("adding a row keeps the hidden saved values", async () => {
+async function saveOnce(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole("button", { name: "Replace SAVED_KEY" }),
+  );
+  await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
+  await user.click(button("Save"));
+  return screen.findByRole("button", { name: "Restart agent" });
+}
+
+it("adding a variable keeps the hidden saved values", async () => {
   const user = userEvent.setup();
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   await user.click(await screen.findByRole("button", { name: "Add variable" }));
-  await user.type(newName(), "FOO");
+  await user.type(screen.getByLabelText("Variable name"), "FOO");
   await user.type(screen.getByLabelText("Value of FOO"), "bar");
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(button("Save"));
   expect(calls("agent_env_status")[0]?.[1]).toEqual({ agent: AGENT });
   expect(calls("agent_env_set")[0]?.[1]).toEqual({
     agent: AGENT,
@@ -60,70 +66,102 @@ it("adding a row keeps the hidden saved values", async () => {
       { name: "FOO", value: "bar" },
     ],
   });
-  await waitFor(() => expect(calls("agent_env_status")).toHaveLength(2));
+  expect(await screen.findByText("FOO")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Value of FOO")).toBeNull();
+  expect(screen.getAllByText("Saved")).toHaveLength(2);
 });
 
-it("a rejected save shows why", async () => {
+it("replacing a value sends only that row's value", async () => {
+  names = ["SAVED_KEY", "OTHER"];
   const user = userEvent.setup();
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  await user.click(await screen.findByRole("button", { name: "Add variable" }));
-  await user.type(newName(), "GOOSE_MODEL");
-  await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("GOOSE_MODEL");
+  await saveOnce(user);
+  expect(calls("agent_env_set")[0]?.[1]).toEqual({
+    agent: AGENT,
+    rows: [
+      { name: "SAVED_KEY", value: "new" },
+      { name: "OTHER", value: null },
+    ],
+  });
 });
 
-it("restarting the agent asks first, then stops only its processes", async () => {
+it("removing a variable deletes only it", async () => {
+  names = ["SAVED_KEY", "OTHER"];
   const user = userEvent.setup();
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
   await user.click(
-    await screen.findByRole("button", { name: "Restart agent" }),
+    await screen.findByRole("button", { name: "SAVED_KEY actions" }),
   );
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(restartAgent).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Restart agent" }));
-  await user.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(restartAgent).toHaveBeenCalledOnce());
-  expect(calls("update_restart")).toHaveLength(0);
+  await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+  await waitFor(() =>
+    expect(calls("agent_env_set")[0]?.[1]).toEqual({
+      agent: AGENT,
+      rows: [{ name: "OTHER", value: null }],
+    }),
+  );
+  await waitFor(() => expect(screen.queryByText("SAVED_KEY")).toBeNull());
 });
 
-it("shows why a restart was refused", async () => {
+it("cancel closes the row without saving", async () => {
+  const user = userEvent.setup();
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  await user.click(await screen.findByRole("button", { name: "Add variable" }));
+  await user.type(screen.getByLabelText("Variable name"), "FOO");
+  await user.click(button("Cancel"));
+  expect(screen.queryByLabelText("Variable name")).toBeNull();
+  expect(calls("agent_env_set")).toHaveLength(0);
+});
+
+it("shows the empty state with no variables", async () => {
+  names = [];
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  expect(await screen.findByText("No variables yet")).toBeInTheDocument();
+  expect(button("Add variable")).toBeEnabled();
+});
+
+it("a rejected save shows why and keeps the row open", async () => {
+  const user = userEvent.setup();
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  await user.click(await screen.findByRole("button", { name: "Add variable" }));
+  await user.type(screen.getByLabelText("Variable name"), "GOOSE_MODEL");
+  await user.click(button("Save"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("GOOSE_MODEL");
+  expect(screen.getByLabelText("Variable name")).toHaveValue("GOOSE_MODEL");
+  expect(screen.queryByRole("button", { name: "Restart agent" })).toBeNull();
+});
+
+it("offers a restart only after a save, asks first, then stops only its processes", async () => {
+  const user = userEvent.setup();
+  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  await screen.findByText("SAVED_KEY");
+  expect(screen.queryByRole("button", { name: "Restart agent" })).toBeNull();
+  const restart = await saveOnce(user);
+  expect(
+    screen.getByText("Changes saved. Restart the agent to apply them."),
+  ).toBeInTheDocument();
+  await user.click(restart);
+  await user.click(button("Cancel"));
+  expect(restartAgent).not.toHaveBeenCalled();
+  await user.click(button("Restart agent"));
+  await user.click(button("Restart"));
+  await waitFor(() => expect(restartAgent).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Restart agent" })).toBeNull(),
+  );
+});
+
+it("shows why a restart was refused, and keeps the banner", async () => {
   restartAgent.mockRejectedValueOnce(
     new Error("Echo is answering; restart it when it finishes"),
   );
   const user = userEvent.setup();
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Restart agent" }),
-  );
-  await user.click(screen.getByRole("button", { name: "Restart" }));
+  await user.click(await saveOnce(user));
+  await user.click(button("Restart"));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Echo is answering; restart it when it finishes",
   );
-});
-
-it("offers no restart while a save is still being written", async () => {
-  const user = userEvent.setup();
-  let finish = () => {};
-  native.invoke.mockImplementation(async (command) => {
-    if (command === "agent_env_status") return { names };
-    if (command === "agent_env_set")
-      await new Promise<void>((resolve) => {
-        finish = resolve;
-      });
-    return undefined;
-  });
-  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  await user.type(await screen.findByLabelText("Value of SAVED_KEY"), "new");
-  await user.click(screen.getByRole("button", { name: "Save" }));
-  await user.click(screen.getByRole("button", { name: "Restart agent" }));
-  expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
-  finish();
-  await waitFor(() =>
-    expect(screen.getByLabelText("Value of SAVED_KEY")).toBeEnabled(),
-  );
-  await user.click(screen.getByRole("button", { name: "Restart agent" }));
-  await user.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(restartAgent).toHaveBeenCalledOnce());
+  expect(button("Restart agent")).toBeInTheDocument();
 });
 
 it("locks the list until a restart finishes", async () => {
@@ -136,43 +174,19 @@ it("locks the list until a restart finishes", async () => {
       }),
   );
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Restart agent" }),
-  );
-  await user.click(screen.getByRole("button", { name: "Restart" }));
-  const value = screen.getByLabelText("Value of SAVED_KEY");
+  await user.click(await saveOnce(user));
+  await user.click(button("Restart"));
   try {
-    expect(value).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add variable" })).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Remove SAVED_KEY" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    await user.type(value, "new");
-    expect(value).toHaveValue("");
+    expect(button("Add variable")).toBeDisabled();
+    expect(button("Replace SAVED_KEY")).toBeDisabled();
+    expect(button("SAVED_KEY actions")).toBeDisabled();
   } finally {
     finish();
   }
-  await waitFor(() => expect(value).toBeEnabled());
-  await user.type(value, "new");
-  await user.click(screen.getByRole("button", { name: "Save" }));
-  await waitFor(() => expect(calls("agent_env_set")).toHaveLength(1));
+  await waitFor(() => expect(button("Replace SAVED_KEY")).toBeEnabled());
 });
 
-it("removing a saved row deletes it on save", async () => {
-  const user = userEvent.setup();
-  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  await user.click(
-    await screen.findByRole("button", { name: "Remove SAVED_KEY" }),
-  );
-  await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(calls("agent_env_set")[0]?.[1]).toEqual({ agent: AGENT, rows: [] });
-});
-
-it("locks the list while a save runs, so no edit is lost when it finishes", async () => {
+it("locks the list while a save runs", async () => {
   const user = userEvent.setup();
   let finish = () => {};
   native.invoke.mockImplementation(async (command) => {
@@ -184,22 +198,19 @@ it("locks the list while a save runs, so no edit is lost when it finishes", asyn
     return undefined;
   });
   render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  await user.type(await screen.findByLabelText("Value of SAVED_KEY"), "new");
-  await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(screen.getByLabelText("Value of SAVED_KEY")).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Add variable" })).toBeDisabled();
-  expect(
-    screen.getByRole("button", { name: "Remove SAVED_KEY" }),
-  ).toBeDisabled();
-  const saveButton = screen.getByRole("button", { name: "Save" });
-  expect(saveButton).toHaveAttribute("aria-disabled", "true");
-  expect(saveButton).toHaveFocus();
-  finish();
-  await waitFor(() =>
-    expect(screen.getByLabelText("Value of SAVED_KEY")).toBeEnabled(),
+  await user.click(
+    await screen.findByRole("button", { name: "Replace SAVED_KEY" }),
   );
-  expect(screen.getByRole("button", { name: "Add variable" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Save" })).toHaveFocus();
+  await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
+  await user.click(button("Save"));
+  expect(screen.getByLabelText("Value of SAVED_KEY")).toBeDisabled();
+  expect(button("Add variable")).toBeDisabled();
+  expect(button("Cancel")).toBeDisabled();
+  finish();
+  expect(
+    await screen.findByRole("button", { name: "Restart agent" }),
+  ).toBeEnabled();
+  expect(button("Add variable")).toBeEnabled();
 });
 
 it("offers Retry for a list it cannot read, never an empty one", async () => {
@@ -215,14 +226,14 @@ it("offers Retry for a list it cannot read, never an empty one", async () => {
     "The credential store is locked",
   );
   expect(screen.queryByRole("button", { name: "Add variable" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  expect(screen.queryByText("No variables yet")).toBeNull();
   readable = true;
-  await user.click(screen.getByRole("button", { name: "Retry" }));
-  expect(await screen.findByLabelText("Value of SAVED_KEY")).toBeEnabled();
+  await user.click(button("Retry"));
+  expect(await screen.findByText("SAVED_KEY")).toBeInTheDocument();
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("tells the agent's page about unsaved edits, through the save and its reload", async () => {
+it("tells the agent's page about an open row, through the save and its reload", async () => {
   const user = userEvent.setup();
   const reports: { dirty: boolean; saving: boolean }[] = [];
   let finishSave = () => {};
@@ -248,9 +259,12 @@ it("tells the agent's page about unsaved edits, through the save and its reload"
     </AgentSaveState>,
   );
   const last = () => reports.at(-1);
-  await user.type(await screen.findByLabelText("Value of SAVED_KEY"), "new");
+  await user.click(
+    await screen.findByRole("button", { name: "Replace SAVED_KEY" }),
+  );
   expect(last()).toEqual({ dirty: true, saving: false });
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
+  await user.click(button("Save"));
   expect(last()).toEqual({ dirty: true, saving: true });
   finishSave();
   await waitFor(() => expect(reloads).toBe(2));
@@ -319,18 +333,11 @@ it("blocks leaving Settings while the environment variables have unsaved edits",
   const user = userEvent.setup();
   renderInTabs();
   await user.click(await screen.findByRole("button", { name: "Add variable" }));
-  await user.type(
-    screen
-      .getAllByRole("textbox", { name: "Variable name" })
-      .at(-1) as HTMLElement,
-    "FOO",
-  );
+  await user.type(screen.getByLabelText("Variable name"), "FOO");
   await user.click(screen.getByRole("tab", { name: "Memory" }));
   expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Keep editing" }));
-  expect(
-    screen.getAllByRole("textbox", { name: "Variable name" }).at(-1),
-  ).toHaveValue("FOO");
+  expect(screen.getByLabelText("Variable name")).toHaveValue("FOO");
   expect(native.invoke).not.toHaveBeenCalledWith(
     "agent_env_set",
     expect.anything(),
@@ -347,9 +354,7 @@ it("keeps the agent's tabs until a restart settles, so its error stays", async (
   );
   const user = userEvent.setup();
   renderInTabs();
-  await user.click(
-    await screen.findByRole("button", { name: "Restart agent" }),
-  );
+  await user.click(await saveOnce(user));
   await user.click(screen.getByRole("button", { name: "Restart" }));
   try {
     const memory = screen.getByRole("tab", { name: "Memory" });
@@ -369,16 +374,4 @@ it("keeps the agent's tabs until a restart settles, so its error stays", async (
   await waitFor(() =>
     expect(restart).not.toHaveAttribute("aria-disabled", "true"),
   );
-});
-
-it("offers no restart while the list has unsaved edits", async () => {
-  const user = userEvent.setup();
-  render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
-  const restart = await screen.findByRole("button", { name: "Restart agent" });
-  expect(restart).not.toHaveAttribute("aria-disabled", "true");
-  await user.type(screen.getByLabelText("Value of SAVED_KEY"), "new");
-  expect(restart).toHaveAttribute("aria-disabled", "true");
-  expect(screen.getByText("Save your changes first.")).toBeInTheDocument();
-  await user.click(restart);
-  expect(screen.queryByRole("button", { name: "Restart" })).toBeNull();
 });

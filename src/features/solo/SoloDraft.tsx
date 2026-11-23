@@ -411,8 +411,12 @@ export function SoloDraft({
       typeof chosenName === "string"
         ? canonicalDetailsName(chosenName) || startingChatTitle(draft)
         : chosenName;
-    const ttlSeconds = draftLifetime(scope, draftSettings);
     const project = selectedProject;
+    const ttlSeconds = draftLifetime(
+      scope,
+      draftSettings,
+      project || undefined,
+    );
     const canvas = draftCanvas;
     const draftModelPicksKey = soloModelPicksKey(`${draftKey}:new-draft`);
     const chatModelPicksKey = soloModelPicksKey(channelId);
@@ -996,7 +1000,9 @@ export function SoloDraft({
           icon={<GearIcon size="1rem" aria-hidden="true" />}
           disabled={busy}
           onClick={() => {
-            setSettingsLifetime(draftLifetime(scope, draftSettings));
+            setSettingsLifetime(
+              draftLifetime(scope, draftSettings, selectedProject || undefined),
+            );
             setSettingsOpen(true);
           }}
         />

@@ -54,6 +54,14 @@ import {
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
+
+export type AccountSettings = Readonly<{
+  /** Default lifetime for new conversations: seconds without activity before
+   * one archives, or null for ongoing. */
+  lifetime: number | null;
+  /** Workspaces that override it; one left out follows the default. */
+  workspaces: Readonly<Record<string, number | null>>;
+}>;
 import {
   admittedApiRequest,
   ApiPaused,
@@ -235,6 +243,22 @@ export interface ReadTransport {
     expected: string,
     signal: AbortSignal,
   ): Promise<string | undefined>;
+  /** Host-only private account settings record; undefined when there is
+   * none. */
+  readAccountSettings?(
+    signal: AbortSignal,
+  ): Promise<AccountSettings | undefined>;
+  /** Null saves ongoing. */
+  writeAccountLifetime?(
+    lifetime: number | null,
+    signal: AbortSignal,
+  ): Promise<void>;
+  /** Undefined makes the workspace follow the account default again. */
+  writeWorkspaceLifetime?(
+    workspace: string,
+    lifetime: number | null | undefined,
+    signal: AbortSignal,
+  ): Promise<void>;
   readonly profiling?: RelayProfiler;
   /** Verifies events read back from device storage as a relay read does, with
    * the host's native batch check; only present with one. Rejects on any bad record or host failure. */

@@ -92,6 +92,7 @@ function decode(events: ReturnType<typeof finalizeEvent>[]) {
         "channel-workspace-sort",
         "channel-workspace-filter",
         "main-agent",
+        "account-settings",
       ].includes(coordinate)
     )
       throw new Error("Invalid sidebar record");
@@ -1230,4 +1231,26 @@ it("creates an empty Team section and confirms retry without touching placements
   );
   expect(records.get("channel-workspaces")).toBe(head);
   expect(records.has("channel-stars")).toBe(false);
+});
+
+it("saves the account's default lifetime and workspace overrides together", async () => {
+  const transport = await connectNativeTransport(community);
+  expect(await transport.readAccountSettings?.(signal)).toBeUndefined();
+  await transport.writeAccountLifetime?.(604800, signal);
+  await transport.writeWorkspaceLifetime?.("w1", null, signal);
+  await transport.writeWorkspaceLifetime?.("w2", 86400, signal);
+  expect(await transport.readAccountSettings?.(signal)).toEqual({
+    lifetime: 604800,
+    workspaces: { w1: null, w2: 86400 },
+  });
+  // Following the default again drops only that workspace's override.
+  await transport.writeWorkspaceLifetime?.("w1", undefined, signal);
+  await transport.writeAccountLifetime?.(null, signal);
+  expect(await transport.readAccountSettings?.(signal)).toEqual({
+    lifetime: null,
+    workspaces: { w2: 86400 },
+  });
+  await expect(
+    transport.writeAccountLifetime?.(1, signal) ?? Promise.resolve(),
+  ).rejects.toThrow("Invalid lifetime intent");
 });

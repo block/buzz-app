@@ -43,6 +43,7 @@ import {
 } from "../../features/relay/channel-details-protocol";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
+import { effectiveLifetime } from "../../features/solo/default-lifetime";
 import styles from "./CreateChannelDialog.module.css";
 
 export type CreateChannelInput = ChannelCreationInput;
@@ -108,6 +109,15 @@ function OpenCreateChannelDialog({
   const [temporaryTtl, setTemporaryTtl] = useState(
     DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS,
   );
+  // Until a lifetime is chosen here, it follows the destination workspace's.
+  const [lifetimeChosen, setLifetimeChosen] = useState(false);
+  const [seededLifetime, setSeededLifetime] = useState<number>();
+  const seedLifetime = (group: string) => {
+    const ttlSeconds = effectiveLifetime(session.scope, group || undefined);
+    setSeededLifetime(ttlSeconds);
+    setLifetime(ttlSeconds === undefined ? "ongoing" : "temporary");
+    setTemporaryTtl(ttlSeconds ?? DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS);
+  };
   const [privateChannel, setPrivateChannel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -252,14 +262,15 @@ function OpenCreateChannelDialog({
       session.channelCreation.forget();
     };
   }, [session]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only an opening resets the draft.
   useEffect(() => {
     const opening = open && !previousOpen.current;
     previousOpen.current = open;
     if (!opening) return;
     setName("");
     setDescription("");
-    setLifetime("ongoing");
-    setTemporaryTtl(DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS);
+    seedLifetime(initialGroup);
+    setLifetimeChosen(false);
     setPrivateChannel(false);
     setPrivacyChoice(undefined);
     setConfirmDiscard(false);
@@ -269,6 +280,10 @@ function OpenCreateChannelDialog({
     setTemplateId(undefined);
     setShareWorkspaceInstructions(true);
   }, [open, initialGroup, initialStarred]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Only a new destination reseeds.
+  useEffect(() => {
+    if (!lifetimeChosen) seedLifetime(groupId);
+  }, [groupId]);
 
   const normalizedName = canonicalDetailsName(name);
   const errors = detailsDraftErrors({
@@ -285,7 +300,7 @@ function OpenCreateChannelDialog({
     name !== "" ||
     description !== "" ||
     privateChannel ||
-    lifetime !== "ongoing" ||
+    (lifetime === "temporary" ? temporaryTtl : undefined) !== seededLifetime ||
     groupId !== initialGroup ||
     !shareWorkspaceInstructions ||
     (chosenTemplate !== undefined &&
@@ -625,6 +640,7 @@ function OpenCreateChannelDialog({
             ttlSeconds={temporaryTtl}
             onChange={(ttlSeconds) => {
               if (!editing.current) return;
+              setLifetimeChosen(true);
               setLifetime(ttlSeconds === undefined ? "ongoing" : "temporary");
               if (ttlSeconds !== undefined) setTemporaryTtl(ttlSeconds);
               setError("");

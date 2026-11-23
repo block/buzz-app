@@ -23,6 +23,12 @@ import {
   appliedTemplate,
 } from "./workspace";
 import { useLifetime } from "./Lifetime";
+import { LifetimeSelect } from "./LifetimeSelect";
+import {
+  readWorkspaceLifetime,
+  saveWorkspaceLifetime,
+  useDefaultLifetime,
+} from "./default-lifetime";
 import {
   ChatInstructions,
   ChatSettingsDialog,
@@ -86,6 +92,17 @@ export function WorkspaceSettings({
   const [icon, setIcon] = useState(initialIcon);
   const confirmedIcon = useRef(initialIcon);
   const keptIcon = useRef(initialIcon);
+  // A workspace's own lifetime for new conversations; undefined follows the
+  // account default.
+  const defaultLifetime = useDefaultLifetime(scope);
+  const [ownLifetime, setOwnLifetime] = useState(() =>
+    target.kind === "project"
+      ? readWorkspaceLifetime(scope, target.id)
+      : undefined,
+  );
+  const keptLifetime = useRef(ownLifetime);
+  const lifetimeChanged =
+    target.kind === "project" && ownLifetime !== keptLifetime.current;
   const nextName = projectName.trim();
   const nameChanged =
     target.kind === "project" && nextName !== confirmedName.current;
@@ -445,6 +462,17 @@ export function WorkspaceSettings({
             ? "Workspace defaults are confirmed, but the saved draft couldn’t be cleared on this device."
             : "Changes are confirmed, but the saved draft couldn’t be cleared on this device. Retry to finish without resending confirmed changes.",
         );
+      if (target.kind === "project" && lifetimeChanged) {
+        const failed = await saveWorkspaceLifetime(
+          session,
+          scope,
+          target.id,
+          ownLifetime,
+        );
+        if (!active()) return;
+        if (failed) throw new Error(failed);
+        keptLifetime.current = ownLifetime;
+      }
       if (target.kind === "project" && selectedTemplate !== undefined)
         appliedTemplate.write(session.scope, target.id, selectedTemplate);
       close();
@@ -470,7 +498,9 @@ export function WorkspaceSettings({
         // An uncertain details save stays with its owner and reopens to be checked.
         (lifetime.changed && !lifetime.checkOnly) ||
         (target.kind === "project" &&
-          (projectName !== keptName.current || icon !== keptIcon.current)) ||
+          (projectName !== keptName.current ||
+            icon !== keptIcon.current ||
+            lifetimeChanged)) ||
         (loaded && snapshot(draftCanvas, lineup) !== kept.current)
       }
       busy={busy || lifetime.busy}
@@ -564,6 +594,16 @@ export function WorkspaceSettings({
             />
           )}
           <TemplateAgentsStatus setup={templateSetup} />
+          {target.kind === "project" && (
+            <LifetimeSelect
+              variant="field"
+              label="Lifetime for new conversations"
+              value={ownLifetime}
+              inherited={{ ttlSeconds: defaultLifetime }}
+              disabled={busy}
+              onChange={setOwnLifetime}
+            />
+          )}
           <ChatInstructions
             workspace={workspace}
             onWorkspaceChange={setWorkspace}

@@ -775,6 +775,37 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 return Err(invalid());
             }
         }
+        // Account-wide settings. `lifetime` is the default for new
+        // conversations: null for ongoing, or seconds until a quiet
+        // conversation archives. `workspaces` holds the workspaces that
+        // override it; one left out follows the account default.
+        "account-settings" => {
+            let lifetime_ok = |v: &serde_json::Value| {
+                v.is_null()
+                    || v.as_u64()
+                        .is_some_and(|seconds| (60..=31_536_000).contains(&seconds))
+            };
+            let lifetime = data.get("lifetime").ok_or_else(invalid)?;
+            let workspaces = match data.get("workspaces") {
+                None => true,
+                Some(value) => value.as_object().is_some_and(|map| {
+                    map.len() <= 200
+                        && map.iter().all(|(id, value)| {
+                            !id.trim().is_empty()
+                                && id.encode_utf16().count() <= 256
+                                && lifetime_ok(value)
+                        })
+                }),
+            };
+            if !lifetime_ok(lifetime)
+                || !workspaces
+                || data
+                    .keys()
+                    .any(|key| !matches!(key.as_str(), "version" | "lifetime" | "workspaces"))
+            {
+                return Err(invalid());
+            }
+        }
         _ => return Err(invalid()),
     }
     if let Some(meta) = data.get("meta") {
@@ -970,6 +1001,7 @@ pub(crate) fn sidebar_coordinate(value: &str) -> bool {
             | "channel-workspace-sort"
             | "channel-workspace-filter"
             | "main-agent"
+            | "account-settings"
     )
 }
 

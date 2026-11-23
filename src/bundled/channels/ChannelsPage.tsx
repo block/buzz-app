@@ -1,4 +1,5 @@
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
+import { useAccountLifetimes } from "../../features/solo/default-lifetime";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
 import { NameConversation, canNameConversation } from "./NameConversation";
@@ -418,6 +419,7 @@ function ChannelWorkspace({
   read?: ReadShortcut | undefined;
   seen?: Seen | undefined;
 }) {
+  useAccountLifetimes(queries, scope);
   const messageDraft =
     navigation?.target.kind === "page"
       ? newMessage(navigation.target.route?.params)

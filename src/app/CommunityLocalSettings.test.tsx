@@ -208,11 +208,11 @@ it("shows the space this community's saved data uses and measures again after cl
   expect(await screen.findByText(/Uses 0 MB on this device\./)).toBeVisible();
 });
 
-it("saves the lifetime new Solo chats start with for this community and account only", async () => {
+it("saves the lifetime new conversations start with for this community and account only", async () => {
   const { user } = await setup();
   const scope = `${origin}:${viewer}`;
   const lifetime = () =>
-    screen.getByRole("combobox", { name: "New Solo chats" });
+    screen.getByRole("combobox", { name: "New conversations" });
   const choose = async (name: RegExp) => {
     await user.click(lifetime());
     await user.click(await screen.findByRole("option", { name }));
@@ -236,7 +236,7 @@ it("says so when this device can't save the lifetime, and keeps the saved one", 
     .mockImplementation(() => {
       throw new Error("quota");
     });
-  await user.click(screen.getByRole("combobox", { name: "New Solo chats" }));
+  await user.click(screen.getByRole("combobox", { name: "New conversations" }));
   await user.click(
     await screen.findByRole("option", { name: /^Temporary, 1 day/ }),
   );
@@ -245,10 +245,10 @@ it("says so when this device can't save the lifetime, and keeps the saved one", 
   );
   expect(readDefaultLifetime(scope)).toBeUndefined();
   expect(
-    screen.getByRole("combobox", { name: "New Solo chats" }),
+    screen.getByRole("combobox", { name: "New conversations" }),
   ).toHaveTextContent("Ongoing");
   setItem.mockRestore();
-  await user.click(screen.getByRole("combobox", { name: "New Solo chats" }));
+  await user.click(screen.getByRole("combobox", { name: "New conversations" }));
   await user.click(
     await screen.findByRole("option", { name: /^Temporary, 1 day/ }),
   );

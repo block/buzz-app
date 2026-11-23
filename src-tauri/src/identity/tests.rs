@@ -928,6 +928,47 @@ async fn main_agent_signer_admits_one_agent_or_a_cleared_choice() {
     }
 }
 
+#[tokio::test]
+async fn account_settings_signer_admits_lifetimes_and_workspace_overrides() {
+    use serde_json::json;
+    let host = super::IdentityHost::fixture();
+    for (payload, at) in [
+        (json!({"version": 1, "lifetime": 604800}), 100),
+        (json!({"version": 1, "lifetime": null}), 101),
+        (
+            json!({"version": 1, "lifetime": 86400, "workspaces": {"w1": null, "w2": 1209600}}),
+            102,
+        ),
+    ] {
+        let event = host
+            .sign_sidebar("account-settings".into(), payload.clone(), at)
+            .await
+            .unwrap();
+        host.admit_sidebar(event.clone()).await.unwrap();
+        assert_eq!(
+            host.decode_sidebar(vec![event]).await.unwrap()["account-settings"],
+            payload
+        );
+    }
+    for invalid in [
+        json!({"version": 1}),
+        json!({"version": 2, "lifetime": 604800}),
+        json!({"version": 1, "lifetime": 0}),
+        json!({"version": 1, "lifetime": -1}),
+        json!({"version": 1, "lifetime": 1.5}),
+        json!({"version": 1, "lifetime": "604800"}),
+        json!({"version": 1, "lifetime": 604800, "extra": true}),
+        json!({"version": 1, "lifetime": null, "workspaces": []}),
+        json!({"version": 1, "lifetime": null, "workspaces": {"w1": 0}}),
+        json!({"version": 1, "lifetime": null, "workspaces": {" ": null}}),
+    ] {
+        assert!(host
+            .sign_sidebar("account-settings".into(), invalid, 100)
+            .await
+            .is_err());
+    }
+}
+
 #[test]
 fn sidebar_plugin_sort_registers_are_bounded_and_namespaced() {
     use serde_json::json;

@@ -2105,6 +2105,34 @@ export function createRelaySession(
         })
       : undefined;
   })();
+  const accountSettings = (() => {
+    const read = transport?.readAccountSettings;
+    const write = transport?.writeAccountLifetime;
+    const writeWorkspace = transport?.writeWorkspaceLifetime;
+    const bounded = (ms: number) =>
+      AbortSignal.any([lifetime.signal, AbortSignal.timeout(ms)]);
+    // One change at a time, so the last choice is the one confirmed.
+    let writes = Promise.resolve();
+    const queue = (change: () => Promise<void>) => {
+      const next = writes.then(change);
+      writes = next.then(
+        () => {},
+        () => {},
+      );
+      return next;
+    };
+    return read && write && writeWorkspace
+      ? Object.freeze({
+          read: () => read(bounded(10_000)),
+          writeLifetime: (seconds: number | null) =>
+            queue(() => write(seconds, bounded(20_000))),
+          writeWorkspaceLifetime: (
+            workspace: string,
+            seconds: number | null | undefined,
+          ) => queue(() => writeWorkspace(workspace, seconds, bounded(20_000))),
+        })
+      : undefined;
+  })();
   let legacyWorkspaceEpoch = new AbortController();
   let legacyWorkspaceCache: SidebarGroups | undefined;
   // Workspaces the old Solo sidebar listed; they keep its Show more cap.
@@ -3068,6 +3096,7 @@ export function createRelaySession(
     sidebarPreferences: sidebarPreferences.queries,
     /** The account's saved main agent, shared by every install. */
     mainAgent,
+    accountSettings,
     reminders: reminders?.capability,
     live,
     /** Wake, network and focus hint that the live socket, which may still look

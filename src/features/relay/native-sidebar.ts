@@ -37,7 +37,7 @@ import {
   type SidebarSortMode,
   type SidebarFilterMode,
 } from "./sidebar-preferences";
-import type { ReadTransport } from "./transport";
+import type { AccountSettings, ReadTransport } from "./transport";
 
 const coordinates = [
   "channel-sections",
@@ -49,17 +49,20 @@ const coordinates = [
   WORKSPACE_SORT_COORDINATE,
   WORKSPACE_FILTER_COORDINATE,
   "main-agent",
+  "account-settings",
 ] as const;
 type Coordinate = (typeof coordinates)[number];
 type Head = { payload: Record<string, unknown>; createdAt: number };
 const empty = (coordinate: Coordinate): Record<string, unknown> =>
   coordinate === "main-agent"
     ? { version: 1, agent: null }
-    : coordinate === "channel-sections"
-      ? { version: 1, sections: [], assignments: {} }
-      : coordinate.endsWith("-sort") || coordinate.endsWith("-filter")
-        ? { version: 1, groups: {} }
-        : { version: 1, channels: {} };
+    : coordinate === "account-settings"
+      ? { version: 1, lifetime: null }
+      : coordinate === "channel-sections"
+        ? { version: 1, sections: [], assignments: {} }
+        : coordinate.endsWith("-sort") || coordinate.endsWith("-filter")
+          ? { version: 1, groups: {} }
+          : { version: 1, channels: {} };
 const agentKey = /^[0-9a-f]{64}$/;
 /** The main agent the viewer chose. A null one, written by development
  * builds that cleared it, is read as none. */
@@ -72,6 +75,36 @@ function mainAgent(value: Record<string, unknown>) {
   )
     throw new Error("Invalid main agent record");
   return agent ?? undefined;
+}
+const validLifetime = (value: unknown): value is number | null =>
+  value === null ||
+  (typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 60 &&
+    value <= 31_536_000);
+const validWorkspaceId = (id: string) =>
+  !!id.trim() && id.length <= 256 && id !== "__proto__";
+function accountSettings(value: Record<string, unknown>): AccountSettings {
+  const { version, lifetime, workspaces = {}, ...rest } = value;
+  const overrides =
+    workspaces && typeof workspaces === "object" && !Array.isArray(workspaces)
+      ? Object.entries(workspaces)
+      : undefined;
+  if (
+    version !== 1 ||
+    Object.keys(rest).length ||
+    !validLifetime(lifetime) ||
+    !overrides ||
+    overrides.length > 200 ||
+    overrides.some(
+      ([id, value]) => !validWorkspaceId(id) || !validLifetime(value),
+    )
+  )
+    throw new Error("Invalid account settings record");
+  return {
+    lifetime,
+    workspaces: Object.fromEntries(overrides) as Record<string, number | null>,
+  };
 }
 const cancelled = (signal: AbortSignal) => signal.throwIfAborted();
 const same = (a: unknown, b: unknown) =>
@@ -151,6 +184,7 @@ export function nativeSidebar(transport: ReadTransport) {
     // The Rust decoder checks signature, author, coordinate and plaintext budget.
     const value = payload as Record<string, unknown>;
     if (coordinate === "main-agent") mainAgent(value);
+    else if (coordinate === "account-settings") accountSettings(value);
     else project(coordinate, value);
     return {
       payload:
@@ -231,6 +265,7 @@ export function nativeSidebar(transport: ReadTransport) {
     if (unchanged) return draft.result;
     // Reject unsupported/over-budget writes at the existing projection boundary.
     if (coordinate === "main-agent") mainAgent(draft.next);
+    else if (coordinate === "account-settings") accountSettings(draft.next);
     else project(coordinate, draft.next);
     const next =
       coordinate === WORKSPACE_COORDINATE
@@ -294,6 +329,57 @@ export function nativeSidebar(transport: ReadTransport) {
         },
         (value) => mainAgent(value) !== expected,
         "The main agent changed on another device; reload and try again",
+      );
+    },
+    async readAccountSettings(signal: AbortSignal) {
+      const current = await head("account-settings", signal);
+      return current.createdAt ? accountSettings(current.payload) : undefined;
+    },
+    async writeAccountLifetime(lifetime: number | null, signal: AbortSignal) {
+      if (!validLifetime(lifetime)) throw new Error("Invalid lifetime intent");
+      await mutate(
+        "account-settings",
+        signal,
+        (current) => ({
+          next: { ...current, version: 1, lifetime },
+          result: undefined,
+          record: true,
+        }),
+        (value) => value.lifetime === lifetime,
+        "Your default lifetime changed on another device; reload and try again",
+      );
+    },
+    /** Undefined makes the workspace follow the account default again. */
+    async writeWorkspaceLifetime(
+      workspace: string,
+      lifetime: number | null | undefined,
+      signal: AbortSignal,
+    ) {
+      if (
+        !validWorkspaceId(workspace) ||
+        (lifetime !== undefined && !validLifetime(lifetime))
+      )
+        throw new Error("Invalid lifetime intent");
+      const saved = (value: Record<string, unknown>) =>
+        accountSettings(value).workspaces[workspace];
+      await mutate(
+        "account-settings",
+        signal,
+        (current) => {
+          const { [workspace]: _previous, ...others } =
+            accountSettings(current).workspaces;
+          const workspaces =
+            lifetime === undefined
+              ? others
+              : { ...others, [workspace]: lifetime };
+          return {
+            next: { ...current, version: 1, workspaces },
+            result: undefined,
+            record: true,
+          };
+        },
+        (value) => saved(value) === lifetime,
+        "Workspace lifetimes changed on another device; reload and try again",
       );
     },
     async removeSidebarSection(

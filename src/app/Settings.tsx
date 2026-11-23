@@ -81,6 +81,7 @@ import { IdentitySettings } from "./IdentitySettings";
 import { SecuritySettings } from "./SecuritySettings";
 import type { FederatedIdentity } from "../features/federated-identity/service";
 import { CommunityLocalSettings } from "./CommunityLocalSettings";
+import { communityDestination } from "../features/communities/destination";
 
 import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
@@ -1596,6 +1597,14 @@ export function Settings({
               communities={communities}
               community={selectedCommunity}
               viewer={client.viewer}
+              session={
+                relay.viewer === client.viewer &&
+                (relay.status === "ready" || relay.cached) &&
+                communities.relay.selected?.() ===
+                  communityDestination(selectedCommunity.id).url
+                  ? relay.session
+                  : undefined
+              }
             />
           </div>
         )}

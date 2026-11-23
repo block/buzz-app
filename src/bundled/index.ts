@@ -75,6 +75,9 @@ import * as pluginDevelopment from "./plugin-development";
 import performanceDiagnosticsManifest from "./performance-diagnostics/manifest.json";
 import * as performanceDiagnostics from "./performance-diagnostics";
 
+import docsManifest from "./docs/manifest.json";
+import * as docs from "./docs";
+
 import relayNotesManifest from "./relay-notes/manifest.json";
 import * as relayNotes from "./relay-notes";
 
@@ -176,6 +179,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...channelsManifest, apiVersion: 1 },
     module: channels,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...docsManifest, apiVersion: 1 },
+    module: docs,
+    enabledByDefault: false,
   },
   {
     manifest: { ...githubManifest, apiVersion: 1 },

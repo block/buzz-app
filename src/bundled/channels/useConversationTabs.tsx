@@ -21,6 +21,9 @@ import {
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelMediaCard } from "./PanelMediaCard";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
+import { ThreadLoading } from "../../features/messages/ThreadLoading";
+import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
+import { rosterRecovering } from "../../features/relay/live-recovery";
 import {
   BrowserIcon,
   ThreadIcon,
@@ -57,6 +60,87 @@ export const historyPanel = (entry: PanelOpening) =>
   (entry.panel.addressable === true ||
     profileContentPanel(entry) ||
     entry.panel.key === "buzz.github/object");
+
+const DID_NOT_LOAD = "This conversation didn’t load.";
+
+/** The body of a tab that has no usable channel: the thread placeholder while
+ * the roster read is still expected to settle the channel, else the most
+ * specific reason known. It reads the list and the roster read itself, so
+ * the states of a missing channel stay current under a host that follows
+ * neither. The host still resolves `target`, and decides when the thread
+ * replaces this body, so a listed channel is only as current as its host.
+ *
+ * A channel the relay has confirmed states why a conversation tab cannot show
+ * it; a thread tab shows such a channel with its notice and never gets here.
+ * Otherwise the channel is missing, or listed from saved membership:
+ *
+ * - The relay's own answer for the channel settles it at once: a denied read
+ *   of it, or a roster that dropped the viewer, takes it off the list before
+ *   any roster read completes.
+ * - Without a connection nothing is read, so absence proves nothing.
+ * - Only a complete roster read proves a missing channel gone. A `ready` list
+ *   may be restored from saved events or hold one page of a longer read.
+ * - `rosterAsOf` is set once this session has completed such a read, and
+ *   kept through later refreshes, whose pages, failures and retries revoke
+ *   nothing by omission. A missing channel stays gone throughout.
+ * - A failed or interrupted read keeps the placeholder while recovery retries
+ *   it, the recovery notice being the one report, as in the sidebar.
+ * - A read that settled without deciding the channel (its cap was hit) is
+ *   stated, so the placeholder ends once the read does. */
+function UnavailableChannel({
+  session,
+  channelId,
+  target,
+  label,
+}: {
+  session: Pick<RelaySession, "recovery" | "live" | "channels">;
+  channelId: string;
+  target: ChannelSummary | undefined;
+  label: string | undefined;
+}) {
+  const list = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  );
+  const readRoster = () => session.live.snapshot().roster.state;
+  const roster = useSyncExternalStore(
+    session.live.subscribe,
+    readRoster,
+    readRoster,
+  );
+  const retrying = useRecoveryOwns(session, (live) =>
+    rosterRecovering(live.roster),
+  );
+  const reason = () => {
+    if (target && !target.cached) {
+      if (target.archived) return "This conversation is archived.";
+      if (target.readOnly)
+        return "You have read-only access to this conversation.";
+      return "This conversation is no longer available.";
+    }
+    if (!target && session.channels.revoked?.(channelId))
+      return "This conversation is no longer available.";
+    if (session.channels.cachedOnly)
+      return target
+        ? "This conversation will appear once Buzz reconnects."
+        : "This conversation may appear once Buzz reconnects.";
+    if (list.status === "unavailable") return DID_NOT_LOAD;
+    if (!target && list.rosterAsOf !== undefined)
+      return "This conversation is no longer available.";
+    if (list.status === "error" || roster === "error" || roster === "deferred")
+      return retrying ? undefined : DID_NOT_LOAD;
+    return roster === "verified" ? DID_NOT_LOAD : undefined;
+  };
+  const text = reason();
+  return text ? (
+    <p role="status" className={styles.empty}>
+      {text}
+    </p>
+  ) : (
+    <ThreadLoading {...(label && { label })} />
+  );
+}
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
@@ -100,6 +184,8 @@ export function useConversationTabs({
   panels: Panels;
   current: ChannelSummary | undefined;
   scope: string;
+  /** Every joined channel, labelled. A tab resolves its conversation here, so
+   * the rows a sidebar leaves out (archived, hidden) belong too. */
   channels: readonly ChannelSummary[];
   /** The channels' labelled participants, for DM captions. */
   profiles: ReadonlyMap<string, Profile>;
@@ -740,11 +826,33 @@ export function useConversationTabs({
   }
   // The currently resolved channel can be a verified public/archived preview
   // absent from the joined sidebar list. Reading its thread is not write access.
+  // Another listed channel's thread is read the same way: the thread panel
+  // replaces the composer of an archived or guest channel with its notice.
+  // Only a conversation tab, whose body always mounts a composer, needs a
+  // channel the viewer can post in. A thread tab relies on the joined list
+  // holding only channels whose roster names the viewer (DiscoveryState
+  // .readable), so a confirmed listing is one the viewer may read.
   function tabChannel(tab: Pick<Tab, "kind" | "channelId">) {
     if (tab.kind === "thread" && current?.id === tab.channelId)
       return current.cached ? undefined : current;
     const target = channels.find((item) => item.id === tab.channelId);
-    return target && usableChannel(target) ? target : undefined;
+    if (!target || target.cached) return undefined;
+    return tab.kind === "thread" || usableChannel(target) ? target : undefined;
+  }
+  // What a tab without a usable channel shows.
+  function unavailable(tab: Pick<Tab, "kind" | "channelId">) {
+    return (
+      <UnavailableChannel
+        session={queries}
+        channelId={tab.channelId}
+        target={
+          tab.kind === "thread" && current?.id === tab.channelId
+            ? current
+            : channels.find((item) => item.id === tab.channelId)
+        }
+        label={tab.kind === "thread" ? undefined : "Loading conversation…"}
+      />
+    );
   }
   // Message rows are memoized: links read one stable opener that consults the
   // live workspace when chosen. Only current-channel threads use the main pane.
@@ -812,7 +920,8 @@ export function useConversationTabs({
       : undefined;
   }
   // A thread names its conversation as Inbox rows do, bounding a group DM's
-  // names where its tab lists them all; the name opens it there.
+  // names where its tab lists them all; the name opens it there. A one-to-one
+  // DM keeps its name here, where no sender beside it already says it.
   const resolveName = useIdentityNames(queries.names);
   function parentOf(tab: Tab, target: ChannelSummary) {
     const open = openInChannel(tab, target);
@@ -857,9 +966,7 @@ export function useConversationTabs({
       }),
       content:
         !usable || !target ? (
-          <p role="status" className={styles.empty}>
-            This conversation is no longer available.
-          </p>
+          unavailable(tab)
         ) : tab.kind === "thread" && nodes.get(tab.id) ? (
           <TabSlot node={nodes.get(tab.id) as HTMLDivElement} />
         ) : (
@@ -1013,6 +1120,11 @@ export function useConversationTabs({
     /** Whether a tab for this conversation could show it. */
     canOpenConversation: (channelId: string) =>
       !!tabChannel({ kind: "conversation", channelId }),
+    /** Whether a tab for a thread of this conversation could show it. A
+     * thread needs only a channel the viewer may read, so this also holds
+     * for an archived channel and for a Guest. */
+    canOpenThread: (channelId: string) =>
+      !!tabChannel({ kind: "thread", channelId }),
     announcement,
     drag,
     mainItems: [...mainTabs.map(tabItem), ...mainPanelTabs.map(panelItem)],

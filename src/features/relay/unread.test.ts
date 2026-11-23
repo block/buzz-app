@@ -310,8 +310,11 @@ it("unread repair observes history without seeding the channel window or consumi
   expect(h.session.channels.window("room").rows.map(({ id }) => id)).toEqual(
     rows.slice(20).map(({ id }) => id),
   );
+  // The page's aux closure follows its rows by the same cursor.
   const cursorReads = h.query.mock.calls.flatMap(([filters]) =>
-    filters.filter((filter) => filter.until !== undefined),
+    filters.filter(
+      (filter) => filter.until !== undefined && !filter.include_aux,
+    ),
   );
   expect(cursorReads).toHaveLength(1);
   expect(cursorReads[0]).toMatchObject({

@@ -375,6 +375,13 @@ export interface ChannelQueries {
   }>;
   /** Current reference state from local evidence; never reads. */
   describe?(channelId: string): ChannelReference;
+  /** Whether the relay ended the viewer's access to this channel itself: it
+   * denied a read of the channel, or the channel's roster dropped the viewer.
+   * The channel has left `list()` by then, and unlike other missing channels
+   * it needs no complete roster read to be known gone. False for a channel a
+   * roster read only omitted, and after a refusal of the whole roster read.
+   * Local evidence; never reads. List subscribers hear the change. */
+  revoked?(channelId: string): boolean;
   /** Demand a background lookup for a reference that isn't `found`, or is
    * found but not `readable`, until the returned release. The store coalesces requests into bounded reads, keeps
    * a `withheld` answer for a few minutes, backs off after failures,
@@ -419,7 +426,13 @@ export interface ChannelQueries {
   subscribeWindow(channelId: string, listener: () => void): () => void;
   ensureList(): void;
   ensure(channelId: string): void;
-  loadOlder(channelId: string): void;
+  /** Read the next older page of `rows` top-level rows (default 20, at most
+   * 200). A page past the history budget slides the window down to it,
+   * detached from the head. A read `ahead` of the reader never slides: past
+   * the budget it is dropped, and read-ahead stops until the reader pages. */
+  loadOlder(channelId: string, rows?: number, ahead?: boolean): void;
+  /** Cancel the window's older read in flight. */
+  cancelOlder?(channelId: string): void;
   /** Detach the window to history at `from` (unix seconds; 0 is the channel
    * start). Resolves the first message at or after `from`, else the newest. */
   seek?(

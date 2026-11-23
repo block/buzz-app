@@ -493,7 +493,7 @@ function ChannelWorkspace({
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const { channels, profiles } = useChannelLabels(
+  const { channels, joined, profiles } = useChannelLabels(
     list.channels.filter(
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
@@ -1402,7 +1402,9 @@ function ChannelWorkspace({
     panels,
     current,
     scope,
-    channels,
+    // Sidebar visibility is not access: a tab shows an archived or hidden
+    // channel the viewer has joined.
+    channels: joined,
     profiles,
     conversationIcon,
     // A Solo chat beside another conversation keeps its own header actions.
@@ -1961,7 +1963,15 @@ function ChannelWorkspace({
         tabState.select(id);
         return true;
       }
-      if (isBuzzLink(url) && navigator && viewer) {
+      // A plugin may expose the same document as a page and an addressable
+      // panel. Only its own panel can keep its link beside this conversation.
+      const linkedPanel =
+        parsed?.format === "plugin" ? panels.resolve(url) : undefined;
+      const pluginPanel =
+        parsed?.format === "plugin" &&
+        linkedPanel?.pluginId === parsed.pluginId &&
+        linkedPanel.addressable;
+      if (isBuzzLink(url) && navigator && viewer && !pluginPanel) {
         const target = buzzLinkTarget(url, {
           viewer,
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
@@ -2188,6 +2198,7 @@ function ChannelWorkspace({
               outbox={queries.outbox}
               profiling={queries.profiling}
               memberAdditions={queries.memberAdditions}
+              pins={queries}
             />
           ) : (
             <RelayTimings profiling={queries.profiling} />
@@ -2458,6 +2469,8 @@ function ChannelWorkspace({
           <ConversationComposer
             key={`composer:${current.id}`}
             onFocusedRemoval={focusArchivedHistory}
+            // Another main tab covers it while it stays mounted.
+            shown={secondary.selectedMain === "conversation"}
             autoFocus={
               // Remote unarchive restores controls within the reader's current visit.
               !(continuingVisit && committedVisit.current?.archived) &&

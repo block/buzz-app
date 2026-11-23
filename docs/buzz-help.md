@@ -96,8 +96,24 @@ if that desktop app is up and running.
 - **Messages.** Hover or right-click a message to react, **Reply**, copy a link,
   forward it, or start a chat about it. On an agent's reply, **View activity**
   shows what it did.
+- **Pins.** **Pin to channel** (**Pin to DM** in a DM) in a message's More
+  menu adds it to the pin list, up to 250; the pin button in the header lists
+  them. Solo chats have no pins.
+  Anyone who can post can pin or unpin any message. Forum posts can't be
+  pinned. A community that doesn't take pins refuses them, and Buzz says so.
+  Agents pin with the `pin` tool.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
   folder and **/** a skill. Attach files by pasting or dragging them in.
+- **Drafts.** Every message box open on a conversation shares its draft. A box
+  you aren't working in follows a draft edited, sent or cleared elsewhere. If
+  that could lose your work, **This draft changed elsewhere** offers **Keep my
+  draft** or **Load saved draft**.
+- **File downloads.** In the desktop app, a file card
+  that downloads when chosen saves to Downloads once and then opens that copy;
+  right-click it to **Show in Finder** (or **Show in folder**) or **Download
+  again**. If the saved file is moved, deleted or edited, the card offers
+  **Download** again. A card that opens in the optional File viewer instead
+  has its own download button, which saves another copy each time.
 - **Chats** are **Ongoing** or **Temporary**, which archive after a while
   without messages. The model picker beside Send changes the model for that
   chat. Sharing a chat with a channel shares its whole history.
@@ -127,6 +143,21 @@ if that desktop app is up and running.
   **Settings → Agent setup → Harness defaults**.
 - **An agent's page** has its identity and instructions, settings, **Memory**,
   **Activity** (its past sessions) and plugin tabs such as **Attention**.
+  Local Claude and Codex transcripts can open on recent activity. Choose
+  **Load earlier activity** to see more history.
+- **Settings → Agent details → Environment variables** sets variables one
+  local Claude Code, Codex, Goose or Pi agent starts with, such as API keys.
+  They're kept in the OS credential store on this computer, never synced, and
+  values aren't shown again after saving. Protected agents don't get them, and
+  a harness's own variables win, except that a saved `ANTHROPIC_API_KEY` wins
+  over the shared Claude key. Names that choose a model, provider or
+  endpoint, `PATH`, and `BUZZ_*`/`NOSTR_*` are refused. A save applies to agent
+  processes started afterward; running ones keep the old list until
+  **Restart agent**, which stops only that agent's processes in every
+  community so its next message starts them with the saved list. It asks
+  first, and it's refused while the agent is answering or in a call. A Codex or Pi agent
+  with its own list runs in its own process. Removing the agent from its last
+  community on this computer deletes its list.
 - **Instructions** change how an agent behaves. They don't give it new tools,
   accounts or permissions.
 - **Sessions.** By default an agent starts a fresh conversation for each
@@ -164,6 +195,10 @@ them. Don't assume an
 optional plugin is on. Agents can ask to install or enable one, which you
 approve or decline.
 
+For a Git-installed plugin, an agent's update request or a pinned install link
+can switch the tracked branch even when the code is unchanged. Review and
+confirm the update to save the new source; no reinstall is needed.
+
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
 one only if you trust its author with your account and your computer.
 
@@ -184,6 +219,46 @@ current account and community on this device.
 Disable the plugin to notify all selected agents on each send. If Buzz reports
 multiple active routers, leave one enabled in **Manage plugins** and retry the
 saved draft.
+
+## Docs
+
+Docs is a bundled plugin for live Markdown documents shared with people and
+agents. It’s off by default. Enable **Docs** in **Settings → Plugins → Manage
+plugins**, then open it from the dock. Auto-save waits until you pause typing.
+You can keep editing while a save is in progress. If a save fails, use Retry save.
+Unsaved drafts survive browsing within the connected session and are cleared
+when you restart the app.
+
+The collection shows the docs you can read. Search by title or content. Each
+doc row shows its last editor’s avatar beside the relative save time. Hover for
+their name.
+Loaded collections follow saved revisions and access changes. Revoked docs are
+removed. Use **Filter docs → Show Trash** to browse or search only
+trashed docs. Select the **Trash** chip in the search bar to return to the main list.
+The list and open docs check for edits automatically. If **Refresh docs** or
+**Refresh doc** appears, use it to check again.
+
+New docs are private. After the first save, open **Share doc** to grant access
+or choose **Copy link**. View only allows community members to read. Readers see
+a disabled **Viewing** control with a hint explaining their access. A link
+grants no access. Sharing includes retained revisions, and the relay operator
+can read content. Doc actions offers revision history with each revision’s
+author and avatar. Use **Move to Trash** to hide a doc from the main list. A doc in Trash shows its
+title with “(in Trash)”. Readers can view earlier versions under **Doc actions →
+Revision history**. Editors can choose **Restore** or restore a specific version
+from the revision preview.
+Revision times are relative; hover to see the exact date and time.
+Restore saves a new revision.
+Conflicting edits preserve the draft until you reconcile the newer revision.
+
+Doc references open beside the conversation, with normal Back/Forward and tab
+close behavior. Choose **Open in Docs** from the tab’s context menu or Doc
+actions to see the same doc in the main Docs view. Tables display as grids in
+Viewing and formatted Editing. Use Markdown source to change table cells.
+Agents can call `doc_help`, create and verify a Doc,
+post its returned reference, then update the same document on follow-ups. The execution
+host must have Docs enabled. Saving requires relay support for NIP-AR doc
+records. Docs does not migrate Canvas or the separate Shared notes format.
 
 ## Attention
 
@@ -244,6 +319,18 @@ Buzz keeps your key, your agents' keys and saved API keys in the Keychain.
 Choose **Always Allow**. Prompts come back after the app is replaced by a
 differently signed build. On Linux, unlock a secret service such as GNOME
 Keyring.
+
+### Notifications aren't appearing (macOS)
+
+Buzz shows the system permission prompt the first time you are in the app with
+a community and the Buzz window is in front. It asks this way only once on a
+Mac. Alerts that arrive while the prompt is up appear if you allow within a
+minute. If that prompt is declined, or left unanswered for a minute, those
+alerts are dropped, macOS reports notifications as off and Buzz cannot ask
+again: turn them on in macOS **System Settings → Notifications → Buzz**. In
+Buzz, **Settings → Notifications → Allow notifications** works only while
+macOS has never been asked. Windows and Linux have no permission prompt, and a
+browser asks only from Settings.
 
 ### Huddle voice isn't working
 

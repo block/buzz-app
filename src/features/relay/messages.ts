@@ -27,6 +27,7 @@ import type { Outbox, OutboxRecovery } from "./outbox";
 import { agentCandidateTags } from "./agent-candidates";
 import { signedMessageTokenTags } from "../messages/message-tokens";
 import type { AgentInvocationIntent } from "../agents/session-admission";
+import { PIN_KIND, UNPIN_KIND } from "./pins";
 import type { RelaySession } from "./session";
 
 /** The agent service binds its active matcher to each live relay session. */
@@ -759,6 +760,21 @@ export function createMessages(
           ...(emoji && value.toLowerCase() === `:${emoji.shortcode}:`
             ? [["emoji", emoji.shortcode, emoji.url]]
             : emojiTags(value)),
+        ],
+      });
+    },
+    /** Pin or unpin a message in its channel. The relay applies the command
+     * and publishes the channel's new pin list. */
+    pin(channelId: string, messageId: string, pinned: boolean) {
+      if (!/^[0-9a-f]{64}$/.test(messageId))
+        throw new Error("Choose a valid message");
+      const kind = pinned ? PIN_KIND : UNPIN_KIND;
+      return writer(kind, channelId).send({
+        kind,
+        content: "",
+        tags: [
+          ["h", channelId],
+          ["e", messageId],
         ],
       });
     },

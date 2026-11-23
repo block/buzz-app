@@ -91,15 +91,13 @@
 :where(html[data-message-density="compact"]) .timelineEnd {
   height: calc(var(--space-6) + var(--channel-preview-inset, 0px));
 }
-.feed ol {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-/* Center the list itself so coordination and membership rows share the measure. */
+/* Center the list itself so coordination and membership rows share the measure.
+   The reset stays on this list alone so numbered lists in messages keep numbers. */
 .feed > ol {
+  list-style: none;
   width: min(100%, var(--timeline-measure));
-  margin-inline: auto;
+  margin: 0 auto;
+  padding: 0;
 }
 .edge {
   width: min(100%, var(--timeline-measure));
@@ -1114,7 +1112,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistoryPageStatus p {
   margin: 0;
 }
-.threadHistory ol {
+/* Reset only the thread's own reply lists, never lists inside message text. */
+.threadList {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -3195,10 +3194,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --message-metadata: initial;
 }
 
-.messageBubble[data-own] .text blockquote {
-  color: inherit;
-  border-color: currentColor;
-}
 .messageBubble[data-own] .text :is(code, pre, .codeBlock) {
   color: var(--text-standard);
 }
@@ -4403,4 +4398,13 @@ html[data-keyboard-navigation]
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+
+.pinnedMarker {
+  composes: sentFromThread;
+}
+.pinnedMarker > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }

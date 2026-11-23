@@ -93,6 +93,11 @@ export function apply(ctx: Context) {
     void createElement(ui.Switch, { label: "Alerts", onCheckedChange: (checked: boolean) => void checked });
     // @ts-expect-error Internal and legacy variants are not part of the plugin contract.
     void createElement(ui.Button, { variant: "glass", children: "Glass" });
+    // @ts-expect-error Menu is missing on hosts from before it was added and must be checked.
+    void createElement(ui.Menu, { "aria-label": "More", items: [] });
+    if (ui.Menu)
+      void createElement(ui.Menu, { "aria-label": "More", align: "end",
+        items: [{ label: "Dismiss", tone: "destructive", onSelect: () => {} }] });
   }
   const unread: UnreadCapability = ctx.relay.snapshot().session.unread;
   const conversations: ReturnType<UnreadCapability["inbox"]> = unread.inbox();
@@ -315,7 +320,7 @@ import type { createServices } from "@buzz/author";
       join(dir, "document-consumer.ts"),
       `
 import type { ComponentProps } from "react";
-import type { Agents, Context, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
+import type { Agents, Context, ImageViewerProps, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
 export const inject = ["react", "agents", "conversation", "panels"];
 export function apply(ctx: Context) {
   const React = ctx.react;
@@ -382,7 +387,11 @@ export function apply(ctx: Context) {
   const badScale: MarkdownProps = { content: "", scale: "custom" };
   // @ts-expect-error Tab content is required.
   const missing: PanelWorkspaceItem = { id: "page", label: "Page" };
-  void [bad, missing];
+  const picture: ImageViewerProps = { src: "https://example.test/a.png", name: "A", onClose: () => {} };
+  React.createElement(ctx.conversation.ui.ImageViewer, picture);
+  // @ts-expect-error The caller owns closing.
+  const unclosable: ImageViewerProps = { src: "https://example.test/a.png" };
+  void [bad, missing, unclosable];
 }
 `,
     );

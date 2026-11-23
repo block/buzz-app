@@ -2796,6 +2796,7 @@ export function createRelaySession(
     return messages === session.messages;
   }
   const session = Object.freeze({
+    lifetimeSignal: lifetime.signal,
     artifactIncremental: transport?.artifactIncremental,
     supportsMigrationWrites: true as const,
     memberAdditions,
@@ -2806,11 +2807,12 @@ export function createRelaySession(
      * with live or local outgoing events or fed to any projection, and a
      * kind-45010 writer when the host has one. Each read starts fresh. */
     snapshotRead: transport
-      ? (((filters, { signal }) =>
-          relayRead(
-            filters,
-            signal ? { signal, fresh: true } : { fresh: true },
-          )) satisfies SnapshotRead)
+      ? (((filters, { signal, priority }) =>
+          relayRead(filters, {
+            ...(signal ? { signal } : {}),
+            ...(priority ? { priority } : {}),
+            fresh: true,
+          })) satisfies SnapshotRead)
       : undefined,
     configArtifactWriter: transport?.configArtifacts,
     workflowAuthority: transport?.archiveAuthority,

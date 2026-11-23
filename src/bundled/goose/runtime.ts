@@ -1351,9 +1351,11 @@ export class GooseRuntime {
             // Its Buzz tools' server counts in the pool sessions share.
             serve: entry.sessions.pooled((handler) => this.serve(handler)),
             onProcess,
-            // Acts as the agent, as its ordinary goose does.
+            // Acts as the agent, with its variables, as its ordinary goose
+            // does.
             ...(entry.handle && {
               agent: { pubkey: entry.handle.pubkey, relay: entry.handle.relay },
+              secrets: ["agent-env"],
             }),
           }),
         launch: async () => {

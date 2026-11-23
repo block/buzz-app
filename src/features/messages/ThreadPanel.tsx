@@ -62,6 +62,7 @@ import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
+import { ThreadLoading } from "./ThreadLoading";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
@@ -117,6 +118,9 @@ export type ThreadPanelProps = {
   /** The hosting preview may track delivery of this exact outgoing message. */
   onSend?: ((id: string) => void) | undefined;
   active?: boolean | undefined;
+  /** Whether a retained tab shows this thread, apart from `active`, its read
+   * policy: a preview is shown without reading. Its composer follows this. */
+  shown?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
@@ -460,6 +464,7 @@ function OwnedThreadPanel({
   focusRequest,
   autoFocus,
   active = true,
+  shown,
   revealSelected,
   revealFocus,
   revealRequest,
@@ -544,6 +549,7 @@ function OwnedThreadPanel({
       focusRequest={focusRequest}
       autoFocus={autoFocus}
       active={active}
+      shown={shown}
       revealSelected={revealSelected}
       revealFocus={revealFocus}
       revealRequest={subthreadId ? revealRequest : undefined}
@@ -580,6 +586,7 @@ function ThreadMessages({
   focusRequest,
   autoFocus,
   active,
+  shown: composerShown,
   revealSelected,
   revealFocus,
   revealRequest,
@@ -616,6 +623,7 @@ function ThreadMessages({
   focusRequest?: number | undefined;
   autoFocus?: ThreadPanelProps["autoFocus"];
   active?: boolean | undefined;
+  shown?: ThreadPanelProps["shown"];
   revealSelected?: boolean | undefined;
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
@@ -2131,7 +2139,9 @@ function ThreadMessages({
             }}
           >
             {expanded.has(row.id) && (
-              <ol>{renderReplies(row.id, depth + 1)}</ol>
+              <ol className={styles.threadList}>
+                {renderReplies(row.id, depth + 1)}
+              </ol>
             )}
           </ReplyBranch>
         </li>
@@ -2404,7 +2414,7 @@ function ThreadMessages({
                 <p className={styles.empty}>Original message unavailable.</p>
               )
             ) : null}
-            <ol>
+            <ol className={styles.threadList}>
               {showOlderPageStatus && snapshot.error && (
                 <li className={styles.threadHistoryPageStatus}>
                   <p role="alert">{snapshot.error}</p>
@@ -2525,6 +2535,7 @@ function ThreadMessages({
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
           sourceRootId={sourceRootId}
+          shown={composerShown}
           threadSeed={threadSeed}
           replyParentId={
             replyParent ?? (sourceRootId ? composerRoot.id : undefined)
@@ -2625,19 +2636,4 @@ function shownAnchor(anchor: { element: HTMLElement; top: number }) {
   return !height || anchor.top + height > 0
     ? anchor
     : { element: anchor.element, top: 0 };
-}
-
-function ThreadLoading() {
-  return (
-    <div className={styles.threadLoading} role="status">
-      <picture>
-        <source
-          media="(prefers-reduced-motion: reduce)"
-          srcSet="/buzz-mark.svg"
-        />
-        <img src="/buzz-loading-mark.svg" alt="" width="498" height="341" />
-      </picture>
-      <span className="sr-only">Loading thread…</span>
-    </div>
-  );
 }

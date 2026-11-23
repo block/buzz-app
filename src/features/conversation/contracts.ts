@@ -112,12 +112,10 @@ export type ReactionToolProps = Readonly<{
   session: RelaySession;
   scope: string;
   disabled: boolean;
-  /**
-   * Host-owned reaction intent; revoked when the tool or target is removed.
-   * True means the choice added a reaction and counts as a use; false means it
-   * was rejected or removed an existing reaction.
-   */
+  /** Host-owned reaction intent; revoked when the tool or target is removed. */
   select(emoji: string): boolean;
+  /** Whether the viewer already reacted with this emoji, so selecting it removes that reaction. */
+  reacted?: ((emoji: string) => boolean) | undefined;
 }>;
 export type ComposerTool = Readonly<{
   id: string;
@@ -448,7 +446,7 @@ export type CompletionSuggestion = Readonly<{
   disabled?: string | undefined;
   /** Final synchronous evidence check; false never falls through to sending. */
   canSelect?: ((key: string) => boolean) | undefined;
-  /** Called once after the host inserts this choice; never for highlighting. */
+  /** Bundled providers only: called once after the host inserts this choice. */
   onSelect?: (() => void) | undefined;
 }>;
 export type CompletionResult = Readonly<{

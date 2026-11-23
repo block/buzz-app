@@ -289,11 +289,17 @@ it("ignores the agent flag from providers outside the bundled people providers",
 });
 
 const folder = { kind: "folder", id: "/notes", label: "@notes" };
-it.each([true, false, "typed"] as const)(
-  "tells the provider once about an applied choice, never a rejected or typed-only one (accepted: %s)",
-  async (accepted) => {
+it.each([
+  [true, true],
+  [false, true],
+  ["typed", true],
+  [true, false],
+] as const)(
+  "tells a bundled provider once about an applied choice, never a rejected or typed-only one (accepted: %s, bundled: %s)",
+  async (accepted, bundled) => {
     const onSelect = vi.fn();
     mountPeople("test.plugin", {
+      bundled,
       replace: () => accepted,
       items: [
         { id: "first", label: "First", edit: { text: "1" }, onSelect },
@@ -304,7 +310,9 @@ it.each([true, false, "typed"] as const)(
     fireEvent.pointerMove(option);
     expect(onSelect).not.toHaveBeenCalled();
     fireEvent.click(option);
-    expect(onSelect).toHaveBeenCalledTimes(accepted === true ? 1 : 0);
+    expect(onSelect).toHaveBeenCalledTimes(
+      accepted === true && bundled ? 1 : 0,
+    );
   },
 );
 it.each([true, false])(

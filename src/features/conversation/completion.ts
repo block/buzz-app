@@ -183,7 +183,9 @@ export function completionResult(
         ...(typeof item.canSelect === "function"
           ? { canSelect: item.canSelect }
           : {}),
-        ...(typeof item.onSelect === "function"
+        ...(typeof item.onSelect === "function" &&
+        provider &&
+        isBundledContribution(provider)
           ? { onSelect: item.onSelect }
           : {}),
         edit: host

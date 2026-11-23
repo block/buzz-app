@@ -81,6 +81,7 @@ import { useEditWithUpArrowPreference } from "./edit-key-preference";
 import { matches } from "../shortcuts/bindings";
 import { isApplePlatform } from "../shortcuts/format";
 import { useChosenAgent } from "../solo/default-agent";
+import { soloAudience } from "../solo/recipients";
 import { agentUnavailable } from "../agents/choices";
 import { useAgentChoices } from "../agents/use-choices";
 import {
@@ -1103,14 +1104,14 @@ function Composer({
         }
       });
   };
-  // Solo, alone with agents: the toolbar holds who hears the message when its
-  // text mentions no one, and always keeps at least one agent.
+  // Solo, alone with agents: the toolbar holds who hears the message unless
+  // its text opens with a tag, and keeps at least one agent unless a tag
+  // addresses the draft.
   const [routed, setRouted] = useState<readonly MentionRecipient[]>([]);
-  // A typed mention replaces the toolbar's remembered agents for this draft:
-  // they are discarded, and the main agent stands in if the mentions go away.
+  // Removing the toolbar's last agent while tags address the draft sets the
+  // remembered agents aside for it: the main agent stands in if the tags go.
   const [replacedKey, setReplacedKey] = useState<string>();
   const replaced = replacedKey === draftKey;
-  const mentionCount = useRef(0);
   const resolvedPicks = useRef<
     | {
         source: typeof picksSnapshot;
@@ -1154,12 +1155,12 @@ function Composer({
           ]),
         ]
       : pubkeys;
-  // Read at send time: inline mentions win, else the toolbar's agents. A
-  // reference addresses nobody, so it goes along with the toolbar's agents.
+  // Read at send time, as `addressed` is rendered. A reference addresses
+  // nobody, so it goes along with whoever the message is for.
   const sendRecipients = () => {
-    const typed = valueRef.current.recipients;
-    return routing && typed.every((person) => referenced(person.pubkey))
-      ? [...routed, ...typed]
+    const { text, recipients: typed } = valueRef.current;
+    return routing
+      ? soloAudience(text, typed, routed, (key) => !referenced(key)).recipients
       : typed;
   };
   const compactingNow = (
@@ -1494,14 +1495,24 @@ function Composer({
       outsideMentionReferences(chat, agents, pubkey)
     );
   }
-  // Whether the text's tags name anyone is settled once agents are known.
-  const tagsSettled = !solo || !!pickedAgents(session.agentChoices);
   const named = routing
     ? recipients.filter((person) => !referenced(person.pubkey))
     : recipients;
-  /** Who hears this message: inline mentions win; without any, the toolbar's
-   * agents stand in. */
-  const addressed = routing && !named.length ? routed : named;
+  /** Who hears this message: a draft that opens with a tag is for whoever it
+   * tags; otherwise its tags join the toolbar's agents. */
+  const routedAudience = routing
+    ? soloAudience(
+        draft,
+        value.recipients.filter((person) => !referenced(person.pubkey)),
+        routed,
+        () => true,
+      )
+    : undefined;
+  // True while the text's tags alone decide, so menu picks edit those tags.
+  const tagsDecide = !routing || !!routedAudience?.opensWithTag;
+  const addressed = routedAudience
+    ? routedAudience.recipients.map(({ pubkey, name }) => ({ pubkey, name }))
+    : named;
   // The agents a send addresses: model, effort and session controls are
   // offered for each, so a one-to-one DM with an agent always has them.
   const addressedKeys = sessionTargets(addressed.map((item) => item.pubkey));
@@ -1520,45 +1531,131 @@ function Composer({
     setRouted(people);
     keepPick(people);
   };
+  // The viewer emptied the toolbar while other tags address the draft. Saved
+  // as an empty pick, so the draft reopens without those agents.
+  const setAside = () => {
+    seededRoute.current = undefined;
+    setRouted([]);
+    writeView(scope, pillKey, []);
+    setReplacedKey(draftKey);
+  };
   const audience = routing
     ? {
         recipients: addressed,
-        named: named.length > 0,
+        named: tagsDecide,
         only(people: readonly MentionRecipient[]) {
           if (!people.length) return;
           const team = people.map(({ pubkey, name }) => ({ pubkey, name }));
           // While tags in the text decide, a team replaces those tags, as a
-          // pick edits them.
-          if (!named.length) choose(team);
-          else if (
-            !replaceRecipients([
-              ...team,
-              ...recipients.filter((person) => referenced(person.pubkey)),
-            ])
-          )
-            return;
+          // pick edits them. Otherwise it replaces the toolbar's agents, and
+          // tags further in the text still join them.
+          if (!tagsDecide) choose(team);
+          else {
+            if (
+              !replaceRecipients([
+                ...team,
+                ...recipients.filter((person) => referenced(person.pubkey)),
+              ])
+            )
+              return;
+            // Once the team's tags no longer open the text, they would join
+            // the toolbar's agents; the team becomes those agents, so the
+            // pick still reaches the team alone.
+            const now = valueRef.current;
+            if (
+              !soloAudience<MentionRecipient>(
+                now.text,
+                now.recipients.filter((person) => !referenced(person.pubkey)),
+                [],
+                () => true,
+              ).opensWithTag
+            )
+              choose(team);
+          }
           // Typing resumes in the draft, at its caret.
           input.current?.focus();
         },
         toggle({ pubkey, name }: MentionRecipient) {
           // The menu offers agents only: a reference never joins the route.
           if (referenced(pubkey)) return;
+          // A tag in the text is removed from the text, wherever it is, and
+          // from the toolbar's agents if it is there too.
+          if (!tagsDecide && named.some((person) => person.pubkey === pubkey)) {
+            // The toolbar keeps at least one agent: with no other tag to
+            // address the draft, its only agent stays, and so does its tag.
+            if (
+              routed.length === 1 &&
+              routed[0]?.pubkey === pubkey &&
+              !named.some((person) => person.pubkey !== pubkey)
+            )
+              return;
+            if (
+              !input.current?.replaceRecipients(
+                recipients.filter((person) => person.pubkey !== pubkey),
+              )
+            )
+              return;
+            completion.invalidate();
+            if (routed.some((person) => person.pubkey === pubkey)) {
+              if (routed.length > 1)
+                choose(routed.filter((person) => person.pubkey !== pubkey));
+              else if (named.some((person) => person.pubkey !== pubkey))
+                setAside();
+            }
+            return;
+          }
           // While tags in the text decide, a pick edits those tags, so it
           // always changes who gets the message. Focus and the caret stay
           // put, and only an added agent must be admissible.
-          if (named.length) {
-            if (!recipients.some((person) => person.pubkey === pubkey))
+          if (tagsDecide) {
+            if (!recipients.some((person) => person.pubkey === pubkey)) {
               keepProseCaret(
                 (at) =>
                   insert(`@${name} `, { pubkey, name }, at, undefined, false),
                 false,
               );
-            else if (
-              input.current?.replaceRecipients(
+              return;
+            }
+            const others = named.filter((person) => person.pubkey !== pubkey);
+            // Without another tag the toolbar's agents address the draft
+            // again, so its only agent stays, and so does its tag.
+            if (
+              !others.length &&
+              routed.length === 1 &&
+              routed[0]?.pubkey === pubkey
+            )
+              return;
+            if (
+              !input.current?.replaceRecipients(
                 recipients.filter((person) => person.pubkey !== pubkey),
               )
             )
-              completion.invalidate();
+              return;
+            completion.invalidate();
+            // Once no tag opens the text, the tags left would join the
+            // toolbar's agents; set those aside, so the message still goes
+            // to whoever was shown, less the removed agent.
+            const now = valueRef.current;
+            const stillNamed = now.recipients.filter(
+              (person) => !referenced(person.pubkey),
+            );
+            if (
+              stillNamed.length &&
+              !soloAudience<MentionRecipient>(
+                now.text,
+                stillNamed,
+                [],
+                () => true,
+              ).opensWithTag
+            )
+              setAside();
+            else if (routed.some((person) => person.pubkey === pubkey)) {
+              // The tags left still open the text, but the pill must lose
+              // the agent too, or a word typed before them brings it back.
+              if (routed.length > 1)
+                choose(routed.filter((person) => person.pubkey !== pubkey));
+              else if (stillNamed.length) setAside();
+            }
             return;
           }
           if (!routed.some((person) => person.pubkey === pubkey)) {
@@ -1571,28 +1668,11 @@ function Composer({
             if (reachable.length < 32) choose([...reachable, { pubkey, name }]);
           } else if (routed.length > 1)
             choose(routed.filter((person) => person.pubkey !== pubkey));
+          // Tags still address the draft, so its last agent can go.
+          else if (named.length) setAside();
         },
       }
     : undefined;
-  // The moment a mention is typed into a draft without any, the remembered
-  // agents are set aside for good; a draft that already has mentions when the
-  // pill takes over (restored, or before its agents were known) starts so.
-  useEffect(() => {
-    if (!tagsSettled) return;
-    const before = mentionCount.current;
-    mentionCount.current = routing ? named.length : 0;
-    if (!routing || !named.length || before) return;
-    // The composer's own prefill is withdrawn as the pill takes over, not
-    // the viewer's choice.
-    if (
-      automaticTag.current !== undefined &&
-      automaticTag.current === JSON.stringify(valueRef.current)
-    )
-      return;
-    setReplacedKey(draftKey);
-    setRouted([]);
-    writeView(scope, pillKey, null);
-  }, [tagsSettled, routing, named.length, draftKey, scope, pillKey]);
   const editLocked = useListedChannel(
     listed,
     channelId,
@@ -2166,7 +2246,11 @@ function Composer({
     !!input.current?.isConnected &&
     !input.current.disabled &&
     !input.current.readOnly;
-  function insert(
+  /** Like `insertTerminated`, counting a typed terminator alone as inserted. */
+  function insert(...args: Parameters<typeof insertTerminated>) {
+    return !!insertTerminated(...args);
+  }
+  function insertTerminated(
     text: string,
     recipient?: MentionRecipient,
     range?: CompletionQuery,
@@ -2195,13 +2279,14 @@ function Composer({
     }
     completion.invalidate();
     const selected = recipient && editorMention(recipient);
-    if (!field.insertText(text, selected, range, terminator, focus)) {
+    const inserted = field.insertText(text, selected, range, terminator, focus);
+    if (!inserted) {
       setError("Message is too long to insert text");
       return false;
     }
     if (recipient) rememberMention(session, channelId, recipient.pubkey);
     setError(undefined);
-    return true;
+    return inserted;
   }
   /** Completed and picked emoji are followed by a space, so typing continues
    * as a new word. A space or tab already at `at` is reused: the caret moves
@@ -2219,22 +2304,27 @@ function Composer({
       /\d/.test(valueRef.current.text[start - 1] ?? "")
         ? ` ${text}`
         : text;
-    if (!insert(separated ? value : `${value} `, undefined, range, terminator))
-      return false;
+    const inserted = insertTerminated(
+      separated ? value : `${value} `,
+      undefined,
+      range,
+      terminator,
+    );
+    if (!inserted) return false;
     const field = input.current;
     const end = field?.selectionEnd ?? 0;
     // A typed colon can land without conversion at the length limit; the
     // caret then stays after the literal colon.
     if (separated && field?.value.slice(end - text.length, end) === text)
       field.setSelectionRange(end + 1, end + 1);
-    return true;
+    return inserted;
   }
   function insertToolText(text: string) {
     const end = input.current?.selectionEnd;
     return (
       attachGif(text) ??
       (end !== undefined && isEmojiOnly(text, emojiCatalog.entries)
-        ? insertEmoji(text, end)
+        ? !!insertEmoji(text, end)
         : insert(text))
     );
   }
@@ -2679,7 +2769,7 @@ function Composer({
     const terminator = key === ":" ? key : undefined;
     return isEmojiOnly(edit.text, emojiCatalog.entries)
       ? insertEmoji(edit.text, query.end, query, terminator)
-      : insert(`${edit.text} `, undefined, query, terminator);
+      : insertTerminated(`${edit.text} `, undefined, query, terminator);
   }
   const currentAdmission = () =>
     live.current &&
@@ -2721,8 +2811,8 @@ function Composer({
       (history?.status === "idle" || history?.status === "loading")
     )
       return undefined;
-    // Once typed mentions replaced the remembered agents, the history is
-    // skipped. A reference is never a remembered agent.
+    // Once the viewer set the remembered agents aside for tags, the history
+    // is skipped. A reference is never a remembered agent.
     const admitted = mentionAdmission(
       session,
       channelId,
@@ -2798,10 +2888,20 @@ function Composer({
     // Alone with agents, the agent joins the toolbar, never the text. An empty
     // pill is always refilled, even after a send, so removed mentions fall back.
     if (routing) {
-      if (routed.length || named.length) return;
+      if (routed.length || (named.length && replaced)) return;
       // A saved pick is restored whole, however discovery stands; the send
       // checks each agent and asks the viewer about any it can't reach.
       const chosen = readView<unknown>(scope, pillKey, null);
+      // An empty pick: the viewer set the agents aside for the draft's tags.
+      // Reopened, it stays aside while they remain; once they are gone, the
+      // main agent stands in.
+      if (Array.isArray(chosen) && !chosen.length) {
+        if (!replaced) {
+          setReplacedKey(draftKey);
+          return;
+        }
+        writeView(scope, pillKey, null);
+      }
       const kept = Array.isArray(chosen)
         ? chosen
             .filter(wellFormedRecipient)
@@ -2990,6 +3090,10 @@ function Composer({
         throw new Error("Could not load your agents. Retry.");
     }
     const recipients = explicit.filter((key) => !references.includes(key));
+    // Membership may have changed since the render's check: a reference that
+    // joined in the meantime notifies too, so check the cap again here,
+    // before anyone is added or the message queues.
+    if (recipients.length > 32) throw new Error("Choose at most 32 recipients");
     if (!recipients.length) {
       // An untagged send relies on a person being present; confirm it against
       // the fresh roster and agent inventory, not the rendered snapshot.
@@ -3147,6 +3251,15 @@ function Composer({
       setError(recipientHint);
       return;
     }
+    // Tags further in the text join the toolbar's agents; together they
+    // still notify at most 32, checked before anyone joins or it queues.
+    if (
+      routing &&
+      recipientsNow.filter((person) => !referenced(person.pubkey)).length > 32
+    ) {
+      setError("Choose at most 32 recipients");
+      return;
+    }
     // Named conversations require text unless their owner explicitly permits files alone.
     if (
       !draft.trim() &&
@@ -3236,10 +3349,13 @@ function Composer({
       captured.text.trim().startsWith("/")
         ? captured.text.trim()
         : undefined;
-    // The toolbar's agents stand in when the text tags only references.
+    // The toolbar's agents go along unless the text opens with a tag.
     const fromPill =
       routing &&
-      captured.recipients.every((person) => referenced(person.pubkey));
+      capturedRecipients.some(
+        (person) =>
+          !captured.recipients.some((item) => item.pubkey === person.pubkey),
+      );
     const queueable =
       !!host &&
       ownSoloConversation &&
@@ -3939,7 +4055,7 @@ function Composer({
           <RecipientAvatars
             session={session}
             recipients={addressed}
-            mentions={!!named.length}
+            mentions={named.map((person) => person.pubkey)}
             disabled={editingDisabled}
             remove={(pubkey) => {
               const person = addressed.find((item) => item.pubkey === pubkey);
@@ -4814,8 +4930,9 @@ function RecipientAvatars({
 }: {
   session: ComposerSession | RelaySession;
   recipients: readonly MentionRecipient[];
-  /** Whether these come from mentions in the text, or the agents menu. */
-  mentions: boolean;
+  /** Which come from mentions in the text rather than the agents menu: all
+   * of them, or these keys. */
+  mentions: boolean | readonly string[];
   disabled: boolean;
   remove(pubkey: string): void;
 }) {
@@ -4846,13 +4963,20 @@ function RecipientAvatars({
   const unique = [
     ...new Map(recipients.map((item) => [item.pubkey, item])).values(),
   ];
+  const mentioned = (pubkey: string) =>
+    typeof mentions === "boolean" ? mentions : mentions.includes(pubkey);
   return (
     <section
       className={styles.mentionRecipients}
-      aria-label={mentions ? "Explicit mentions" : "Sending to"}
+      aria-label={
+        unique.every((item) => mentioned(item.pubkey))
+          ? "Explicit mentions"
+          : "Sending to"
+      }
     >
       {unique.map((recipient) => {
         const profile = profiles.get(recipient.pubkey);
+        const mention = mentioned(recipient.pubkey);
         return (
           <IconButton
             key={recipient.pubkey}
@@ -4863,8 +4987,8 @@ function RecipientAvatars({
             data-avatar-shape={
               agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
             }
-            title={`Remove ${mentions ? "explicit mention of " : ""}${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
-            aria-label={`Remove ${mentions ? "mention" : "agent"} ${recipient.name} ${recipient.pubkey}`}
+            title={`Remove ${mention ? "explicit mention of " : ""}${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
+            aria-label={`Remove ${mention ? "mention" : "agent"} ${recipient.name} ${recipient.pubkey}`}
             disabled={disabled}
             onClick={() => remove(recipient.pubkey)}
             icon={

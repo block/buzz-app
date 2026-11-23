@@ -43,7 +43,8 @@ import {
   type StartedSections,
 } from "../../features/agent-harness/sections/compose";
 import { type Facts, LAYOUT } from "../../features/agent-harness/sections";
-import type { AgentKey } from "../../features/agents/membership";
+import { pubkeyOf, type AgentKey } from "../../features/agents/membership";
+import { hasOwnEnv } from "../agents/agent-env";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import {
   EACH_TURN,
@@ -432,6 +433,9 @@ function laneFor(entry: Entry, key: string, community: boolean) {
 type Loaded = Awaited<ReturnType<CodexRuntime["loadThread"]>>;
 type Server = {
   protection?: AgentProtection;
+  /** On the shared server: the agents it was chosen for, each once, when it
+   * started their work. An agent stays on it until it retires or it exits. */
+  routed?: Set<AgentKey>;
   rpc: AppServer;
   opening: Promise<AppServer>;
   /** Threads this process has loaded, and the agent, by key, each belongs to. */
@@ -554,7 +558,15 @@ export class CodexRuntime {
   >();
   private server: Server | undefined;
   private closingSharedServer: Server | undefined;
-  private protectedServers = new Map<AgentKey, Server>();
+  /** An agent's own server: a protected one, or an unprotected one for an
+   * agent with environment variables of its own, which the shared one can't
+   * carry for one agent alone. */
+  private ownServers = new Map<AgentKey, Server>();
+  /** Whether an unprotected agent had its own environment variables when last
+   * read, until the next start decides its server with it. */
+  private ownEnv = new Map<AgentKey, boolean>();
+  /** Each agent's presence read in flight; retiring or disposing drops it. */
+  private envReads = new Map<AgentKey, Promise<void>>();
   private stopping = new Map<AgentKey, Promise<void>>();
   private stopped = new Map<AgentKey, Entry>();
   private disposals = new Map<
@@ -985,6 +997,8 @@ export class CodexRuntime {
         control?.kind === "blocked"
           ? unattributedNotice(control.route.reason)
           : undefined;
+      const routing = this.route(this.handle(agent.key));
+      if (routing) await routing;
       const server = this.open(this.handle(agent.key));
       const rpc = await server.opening;
       const configured = this.resolveConfig(agent.config);
@@ -1103,6 +1117,12 @@ export class CodexRuntime {
             ? [{ id: remote.model, label: remote.model, efforts: [] }]
             : [],
         };
+      }
+      const routing = this.route(handle);
+      if (routing) {
+        await routing;
+        if (this.previews.get(agent.key) !== entry)
+          throw new Error("Codex model preview is retired");
       }
       const server = this.open(handle);
       const rpc = server.rpc;
@@ -1235,9 +1255,13 @@ export class CodexRuntime {
     );
     const entry = this.entries.get(agent) ?? this.stopped.get(agent);
     const protectedServer =
-      this.protectedServers.get(agent) ?? this.unretired.get(agent);
+      this.ownServers.get(agent) ?? this.unretired.get(agent);
     const sharedServer = this.server;
     const closingSharedServer = this.closingSharedServer;
+    // Its next start chooses its server again.
+    sharedServer?.routed?.delete(agent);
+    this.ownEnv.delete(agent);
+    this.envReads.delete(agent);
     const actions = [...(this.actions.get(agent) ?? [])];
     for (const action of actions) action.abort.abort();
     entry?.abort.abort();
@@ -1323,14 +1347,13 @@ export class CodexRuntime {
     await server.opening.catch(() => undefined);
     await server.rpc.close();
     if (this.unretired.get(agent) === server) this.unretired.delete(agent);
-    if (this.protectedServers.get(agent) === server)
-      this.protectedServers.delete(agent);
+    if (this.ownServers.get(agent) === server) this.ownServers.delete(agent);
   }
   sync(agents: readonly Agent[]) {
     const present = new Set(agents.map((agent) => agent.key));
     const held = new Set([
       ...this.entries.keys(),
-      ...this.protectedServers.keys(),
+      ...this.ownServers.keys(),
       ...this.unretired.keys(),
       ...this.stopped.keys(),
       ...this.disposals.keys(),
@@ -1368,10 +1391,7 @@ export class CodexRuntime {
       if (!server) return;
       for (const [threadId, owner] of server.threads)
         if (owner === agent) {
-          if (
-            this.server !== server &&
-            this.protectedServers.get(agent) !== server
-          )
+          if (this.server !== server && this.ownServers.get(agent) !== server)
             return;
           await server.rpc
             .request("thread/backgroundTerminals/clean", { threadId })
@@ -1396,6 +1416,7 @@ export class CodexRuntime {
       void remote.execution.dispose();
     }
     this.remote.clear();
+    this.envReads.clear();
     this.previews.clear();
     this.inventories.clear();
     this.inventoryReads.clear();
@@ -1411,9 +1432,8 @@ export class CodexRuntime {
     this.open();
   }
   private close() {
-    for (const server of this.protectedServers.values())
-      void server.rpc.close();
-    this.protectedServers.clear();
+    for (const server of this.ownServers.values()) void server.rpc.close();
+    this.ownServers.clear();
     for (const server of this.unretired.values()) void server.rpc.close();
     this.unretired.clear();
     void this.server?.rpc.close();
@@ -1433,7 +1453,7 @@ export class CodexRuntime {
       protection.assertAvailable();
       // A prior worker with another key belongs to a replaced provider, which
       // is already stopping it; the replacement starts once it has exited.
-      const prior = this.protectedServers.get(agent.key);
+      const prior = this.ownServers.get(agent.key);
       if (prior?.protection?.key === protection.key) return prior;
       const host = this.protectionHost;
       if (!host?.serveMcp)
@@ -1453,8 +1473,8 @@ export class CodexRuntime {
         rpc.onMessage((wire) => {
           if (wire.method !== "connection/closed") return;
           void bridge.close();
-          if (this.protectedServers.get(agent.key) !== server) return;
-          this.protectedServers.delete(agent.key);
+          if (this.ownServers.get(agent.key) !== server) return;
+          this.ownServers.delete(agent.key);
           // A failed connection can leave its process running; unless a
           // retirement already owns its close, it is tracked until it exits.
           if (!rpc.exited && !this.unretired.has(agent.key))
@@ -1501,33 +1521,129 @@ export class CodexRuntime {
           throw error;
         }
       })();
-      this.protectedServers.set(agent.key, server);
+      this.ownServers.set(agent.key, server);
       void server.opening.catch(() => {
-        if (this.protectedServers.get(agent.key) === server)
-          this.protectedServers.delete(agent.key);
+        if (this.ownServers.get(agent.key) === server)
+          this.ownServers.delete(agent.key);
       });
       return server;
     }
+    const own = agent && this.ownServers.get(agent.key);
+    if (own) return own;
+    if (agent && !this.server?.routed?.has(agent.key)) {
+      const hasOwn = this.ownEnv.get(agent.key);
+      this.ownEnv.delete(agent.key);
+      if (hasOwn) return this.openOwn(agent.key);
+    }
+    const shared = this.shared();
+    if (agent) shared.routed?.add(agent.key);
+    return shared;
+  }
+  /** Reads, before `open` chooses its server, whether an unprotected agent
+   * has its own environment variables. Unreadable is none, read again at its
+   * next start. */
+  private route(
+    agent: Pick<AgentHandle, "key" | "pubkey" | "protection"> | undefined,
+  ): Promise<void> | undefined {
+    if (
+      !agent ||
+      agent.protection ||
+      this.target ||
+      this.ownServers.has(agent.key) ||
+      this.server?.routed?.has(agent.key)
+    )
+      return undefined;
+    const key = agent.key;
+    const pending = this.envReads.get(key);
+    if (pending) return pending;
+    const read: Promise<void> = hasOwnEnv(key).then((own) => {
+      // An answer that outlived its agent's retirement or the runtime is
+      // dropped, and so is the start that waited for it.
+      if (this.disposed || this.envReads.get(key) !== read)
+        throw new Error("Codex was stopped");
+      this.envReads.delete(key);
+      this.ownEnv.set(key, own === true);
+    });
+    this.envReads.set(key, read);
+    return read;
+  }
+  /** Waits for `route` unless `signal` fires first, so a cancelled start
+   * ends while its read is still out; callers check `signal` after it.
+   * Synchronous when there is nothing to read, so a start keeps its order. */
+  private routed(
+    agent: Pick<AgentHandle, "key" | "pubkey" | "protection">,
+    signal: AbortSignal,
+  ): Promise<void> | undefined {
+    const routing = this.route(agent);
+    return (
+      routing &&
+      abortable(routing, signal).catch((error) => {
+        if (!signal.aborted) throw error;
+      })
+    );
+  }
+  /** Whether `rpc` is an unprotected server's, shared or an agent's own. */
+  private ordinary(rpc: AppServer) {
+    if (this.server?.rpc === rpc) return true;
+    for (const server of this.ownServers.values())
+      if (server.rpc === rpc) return !server.protection;
+    return false;
+  }
+  private spawnOrdinary(envAgent?: AgentKey): Spawn {
+    return (id, options) =>
+      this.spawn(id, {
+        ...options,
+        secrets: [...(options?.secrets ?? []), "agent-env"],
+        ...(envAgent && { envAgent: pubkeyOf(envAgent) }),
+        args: [
+          ...(options?.args ?? []),
+          ...(this.hooks && !this.target ? callbackHookArgs : []),
+        ],
+      });
+  }
+  /** An agent's own unprotected server, closed and tracked like a protected
+   * one: its exit, not a disconnect alone, lets the agent start again. */
+  private openOwn(agent: AgentKey) {
+    this.assertRetired(agent, true);
+    const rpc = new AppServer((call) => this.tool(call));
+    const open = () => rpc.open(this.spawnOrdinary(agent), defaults.workspace);
+    // Like a shared replacement, it starts once a disconnected shared
+    // process, which may still run this agent's work, has exited.
+    const previous = this.closingSharedServer;
+    const server: Server = {
+      rpc,
+      threads: new Map(),
+      opening: previous ? this.waitForSharedExit(previous).then(open) : open(),
+    };
+    rpc.onMessage((wire) => {
+      if (wire.method !== "connection/closed") return;
+      if (this.ownServers.get(agent) !== server) return;
+      this.ownServers.delete(agent);
+      if (!rpc.exited && !this.unretired.has(agent))
+        void this.shutdown(agent, server).catch(() => undefined);
+    });
+    this.ownServers.set(agent, server);
+    // A failed start can leave its process running; unless a retirement or
+    // its disconnect already owns its close, it is tracked until it exits.
+    void server.opening.catch(() => {
+      if (this.ownServers.get(agent) !== server) return;
+      this.ownServers.delete(agent);
+      if (!this.unretired.has(agent))
+        void this.shutdown(agent, server).catch(() => undefined);
+    });
+    return server;
+  }
+  private shared() {
     if (this.server) return this.server;
     const rpc = new AppServer((call) => this.tool(call));
     // Threads set their own cwd; the process just needs a directory that exists.
-    const open = () =>
-      rpc.open(
-        (id, options) =>
-          this.spawn(id, {
-            ...options,
-            args: [
-              ...(options?.args ?? []),
-              ...(this.hooks && !this.target ? callbackHookArgs : []),
-            ],
-          }),
-        defaults.workspace,
-      );
+    const open = () => rpc.open(this.spawnOrdinary(), defaults.workspace);
     const previous = this.closingSharedServer;
     const server: Server = {
       rpc,
       opening: previous ? this.waitForSharedExit(previous).then(open) : open(),
       threads: new Map(),
+      routed: new Set(),
     };
     rpc.onMessage((wire) => {
       if (wire.method !== "connection/closed" || this.server !== server) return;
@@ -1897,6 +2013,8 @@ export class CodexRuntime {
       if (!connection) throw new Error("Voice startup was interrupted");
       return connection;
     }
+    const routing = this.route(agent);
+    if (routing) await routing;
     await rememberCommunitySource(
       this.storage,
       agent.key,
@@ -2889,8 +3007,14 @@ export class CodexRuntime {
     await entry.after;
     if (entry.abort.signal.aborted)
       return { ok: false, error: "Codex was stopped" };
-    const server = this.open(agent);
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
+    const routing = this.routed(agent, signal);
+    if (routing) await routing;
+    if (entry.abort.signal.aborted)
+      return { ok: false, error: "Codex was stopped" };
+    if (turnSignal.aborted)
+      return { ok: false, error: message(turnSignal.reason) };
+    const server = this.open(agent);
     /** Why this turn ran without the Buzz context, for its Activity status. */
     let notice = delivery.gatewayFallback?.notice;
     let release!: () => void;
@@ -3407,7 +3531,7 @@ export class CodexRuntime {
         protectionContext: async () => {
           const rpc =
             active?.rpc ??
-            this.protectedServers.get(agent.key)?.rpc ??
+            this.ownServers.get(agent.key)?.rpc ??
             this.server?.rpc;
           if (!rpc)
             throw new Error("The protected Codex session is unavailable");
@@ -3636,7 +3760,7 @@ export class CodexRuntime {
             ),
             "features.plugins": false,
             "features.apps": false,
-            ...(this.server?.rpc === rpc && this.hooks
+            ...(this.ordinary(rpc) && this.hooks
               ? { "hooks.state": await nativeHookState(rpc, cwd, false) }
               : {}),
           },
@@ -3733,11 +3857,11 @@ export class CodexRuntime {
     const features = normalized.config.features;
     const disabled = (features?.hooks ?? features?.codex_hooks) === false;
     const hooks =
-      !disabled && this.server?.rpc === rpc && this.hooks
+      !disabled && this.ordinary(rpc) && this.hooks
         ? await nativeHookState(rpc, workspace)
         : undefined;
     const hookAdapter =
-      !disabled && this.server?.rpc === rpc ? this.hooks : undefined;
+      !disabled && this.ordinary(rpc) ? this.hooks : undefined;
     const bridge = hookAdapter
       ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
           hookAdapter.run(agent.key, session, event, input),
@@ -4080,7 +4204,6 @@ export class CodexRuntime {
     let notReady!: (error: unknown) => void;
     let release!: () => void;
     const turnAbort = new AbortController();
-    const server = this.open(request.agent);
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([
       entry.abort.signal,
@@ -4088,6 +4211,19 @@ export class CodexRuntime {
       ...(request.unaddressed ? [request.unaddressed.signal] : []),
       ...(adopted && lane.voice ? [lane.voice.signal] : []),
     ]);
+    const routing = this.routed(request.agent, signal);
+    if (routing) await routing;
+    if (signal.aborted) {
+      // As a turn cancelled once started ends, without publishing.
+      if (entry.abort.signal.aborted) request.failActivity("Codex was stopped");
+      else {
+        request.failActivity(message(signal.reason));
+        if (request.unaddressed?.signal.aborted)
+          this.status(request.agent.key, key, "Stopped");
+      }
+      return;
+    }
+    const server = this.open(request.agent);
     const active: Active = {
       rpc: server.rpc,
       ...(adopted && lane.voice
@@ -4522,7 +4658,7 @@ export class CodexRuntime {
               if (
                 !turnFailed &&
                 (this.server === server ||
-                  this.protectedServers.get(agent.key) === server)
+                  this.ownServers.get(agent.key) === server)
               )
                 this.status(agent.key, key, "Needs attention", message(error));
               if (error instanceof RequestTimeout)

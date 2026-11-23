@@ -10,11 +10,14 @@ import type { RelayData } from "../../features/relay/service";
 export function openFromNavigation(navigation: Navigation, relay: RelayData) {
   let opened: Readonly<{ session: unknown; channelId: string }> | undefined;
   const open = () => {
-    const { target } = navigation.snapshot().attempt.entry;
+    const { attempt, status } = navigation.snapshot();
+    const { target } = attempt.entry;
     const { session, scope } = relay.snapshot();
-    // Leaving for a page that is not a conversation ends the visit: coming
-    // back opens the channel again, with a new screen and line.
-    if (target.kind !== "conversation") opened = undefined;
+    // A page that is not a conversation, once open, ends the visit: coming
+    // back opens the channel again, with a new screen and line. One that
+    // only passes through on its way back to the channel does not.
+    if (target.kind !== "conversation" && status === "opened")
+      opened = undefined;
     if (
       target.kind !== "conversation" ||
       !scope ||

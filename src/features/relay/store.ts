@@ -1456,6 +1456,12 @@ export function createChannelStore(
           setWindow(state, { freshness: head.cached ? "cached" : "verified" });
           return;
         }
+        // The head replaces the window: the paged floor and live rows below
+        // the head go with the rows they belonged to.
+        const below = head.cursor?.createdAt ?? -Infinity;
+        state.floor = undefined;
+        for (const [id, event] of state.traffic)
+          if (event.created_at < below) state.traffic.delete(id);
         adoptHead(state, head);
         return;
       }

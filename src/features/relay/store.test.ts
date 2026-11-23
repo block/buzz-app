@@ -836,10 +836,10 @@ describe("channel store", () => {
     ).session.channels;
     live.receive([roster(relay, "c", [viewer.pubkey])]);
     queries.ensure("c");
-    const [older, head, tail, latest] = [5, 10, 30, 40].map((at) =>
+    const [older, head, stray, tail, latest] = [5, 10, 20, 30, 40].map((at) =>
       message(alice, "c", `at ${at}`, at),
     );
-    assert(older && head && tail && latest);
+    assert(older && head && stray && tail && latest);
     const take = () => {
       const read = scripted.pending.find(
         (entry) =>
@@ -867,7 +867,7 @@ describe("channel store", () => {
     ]);
     await flush();
     // The stream delivers a row; what it missed before it is unknown.
-    live.receive([tail]);
+    live.receive([stray, tail]);
     queries.ensure("d");
     await flush();
     scripted.pending.length = 0;

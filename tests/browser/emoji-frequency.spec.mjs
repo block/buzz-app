@@ -1,3 +1,4 @@
+import { hoverMessage } from "./message-actions.mjs";
 import { test, expect } from "./source-fixture.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
 
@@ -216,5 +217,40 @@ test("emoji a full composer cannot insert teach nothing", async ({ page }) => {
   await pickRocket();
   await expect(input).toHaveJSProperty("value", "🚀 ");
   await expect.poll(counts).toEqual({ rocket: 1 });
+  expect(errors.unexplained()).toEqual([]);
+});
+
+test("choosing an existing reaction removes it and teaches nothing", async ({
+  page,
+}) => {
+  const errors = watchPageErrors(page);
+  await page.goto("/tests/fixtures/emoji.html?reactions");
+  const row = page.locator("[data-message-id]").first();
+  const search = page.getByRole("searchbox", { name: "Search emoji" });
+  const pill = row.locator('button[data-reaction="🚀"]');
+  const counts = () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
+    );
+  const reactRocket = async () => {
+    await hoverMessage(row);
+    await row
+      .getByRole("group", { name: "Message actions", includeHidden: true })
+      .getByRole("button", { name: "Add reaction", exact: true })
+      .click();
+    await search.fill("rocket");
+    await page
+      .locator('em-emoji-picker .category button[aria-label="🚀"]')
+      .first()
+      .click();
+    await expect(search).toHaveCount(0);
+  };
+  await reactRocket();
+  await expect(pill).toHaveAttribute("aria-pressed", "true");
+  await expect(pill).toHaveAttribute("aria-disabled", "false");
+  await expect.poll(counts).toEqual({ rocket: 1 });
+  await reactRocket();
+  await expect(pill).toHaveCount(0);
+  expect(await counts()).toEqual({ rocket: 1 });
   expect(errors.unexplained()).toEqual([]);
 });

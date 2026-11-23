@@ -67,7 +67,10 @@ function useReactionAction({ row, session, disabled }: Props) {
     ["sending", "failed", "unknown"].includes(item.delivery) &&
     session.messages.reactionTarget(item.event) === row.id;
   const busy = operations.some(blocksToggle);
-  const toggle = (content: string, emoji?: CustomEmoji) => {
+  const toggle = (
+    content: string,
+    emoji?: CustomEmoji,
+  ): "added" | "removed" | false => {
     if (!active.current || session.outbox?.snapshot().some(blocksToggle))
       return false;
     try {
@@ -83,7 +86,7 @@ function useReactionAction({ row, session, disabled }: Props) {
         session.messages.react(row.id, content, emoji);
       }
       setError(undefined);
-      return true;
+      return mine.length ? "removed" : "added";
     } catch (reason) {
       setError(
         reason instanceof Error
@@ -105,8 +108,9 @@ export function MessageReactionControls(props: Props) {
     session.emoji.snapshot,
   );
   const action = useReactionAction(props);
+  // Only an addition is a use; choosing an existing reaction removes it.
   const select = (content: string) =>
-    action.toggle(content, catalogEmoji(catalog.entries, content));
+    action.toggle(content, catalogEmoji(catalog.entries, content)) === "added";
   return (
     <>
       <ReactionTool
@@ -321,7 +325,7 @@ function ReactionEmoji({
   profiles?: ReadonlyMap<string, Profile> | undefined;
   disabled: boolean;
   busy: boolean;
-  toggle(content: string, emoji?: CustomEmoji): boolean;
+  toggle(content: string, emoji?: CustomEmoji): "added" | "removed" | false;
   onFocusedRemoval?: (() => void) | undefined;
   previewWarm: boolean;
   previewSlide: "left" | "right" | undefined;
@@ -479,7 +483,9 @@ export function MessageReactions(
   if (!active && preview) setPreview(undefined);
   if (!active && pointerInRow) setPointerInRow(false);
   const select = (content: string) => {
-    return action.toggle(content, catalogEmoji(catalog.entries, content));
+    return (
+      action.toggle(content, catalogEmoji(catalog.entries, content)) === "added"
+    );
   };
   // Count people, not duplicate events. Each emoji shares one control and preview.
   const reactions = useMemo(

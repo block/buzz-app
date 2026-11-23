@@ -1843,3 +1843,50 @@ it("confirms deleting an Interest whose only watch was skipped", () => {
   expect(screen.getByRole("alertdialog")).toBeTruthy();
   expect(save).not.toHaveBeenCalled();
 });
+it("names the community that keeps an agent's attention as the owner sees it, else by its host", () => {
+  const snapshot = {
+    status: "ready",
+    running: [
+      {
+        key: "membership-a",
+        pubkey: "a",
+        owner: viewer,
+        relay: "wss://example.com",
+        name: "Ada",
+        attentionEnabled: true,
+        attentionStorage: "relay",
+        timers: {},
+        attention: {},
+      },
+    ],
+  };
+  const disconnected = { status: "disconnected", ...community };
+  // A store's snapshot keeps its identity until it changes.
+  let communities = {
+    memberships: [{ id: origin, name: "Example", localName: "Team space" }],
+  };
+  const ctx = {
+    react: React,
+    agents: {
+      presentWatch: () => undefined,
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      save: vi.fn(),
+    },
+    relay: { snapshot: () => disconnected, subscribe: () => () => {} },
+    communityReader: {
+      snapshot: () => communities,
+      subscribe: () => () => {},
+    },
+  } as unknown as Context;
+  const { unmount } = render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  expect(screen.getByText(/Kept privately in Team space\./)).toBeTruthy();
+  unmount();
+  communities = { memberships: [] };
+  render(
+    React.createElement(createTab(ctx), { agent: { key: "membership-a" } }),
+  );
+  expect(screen.getByText(/Kept privately in example\.com\./)).toBeTruthy();
+});

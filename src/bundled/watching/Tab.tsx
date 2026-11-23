@@ -1,6 +1,11 @@
 import * as React from "react";
 import { attentionOf, type WatchObject } from "../../features/agents/attention";
-import { relayOrigin } from "../../features/communities/destination";
+import {
+  communityDestination,
+  relayOrigin,
+} from "../../features/communities/destination";
+import { communityName } from "../../features/communities/names";
+import type { CommunityReader } from "../../features/communities/service";
 import { relayPartition } from "../../features/relay/partition";
 import {
   LightningIcon,
@@ -24,12 +29,29 @@ import { createWatchComponents } from "./WatchRow";
 export { heading, describe } from "./presentation";
 import "./AttentionPage.css";
 
-const communityOf = (relay: string) => {
+const hostOf = (relay: string) => {
   try {
     return new URL(relay).host;
   } catch {
     return relay;
   }
+};
+
+/** The community at `relay` as the owner names it here, else its host. */
+const communityOf = (
+  relay: string,
+  communities: CommunityReader | undefined,
+) => {
+  try {
+    const url = communityDestination(relayOrigin(relay)).url;
+    const membership = communities
+      ?.snapshot()
+      .memberships.find((item) => communityDestination(item.id).url === url);
+    if (membership) return communityName(membership);
+  } catch {
+    // Not a community address: its host is all there is.
+  }
+  return hostOf(relay);
 };
 
 const button = { variant: "ghost" as const, size: "sm" as const };
@@ -45,12 +67,15 @@ export function createAttentionComponents({
   agents,
   relay,
   navigation,
-}: Pick<Context, "agents" | "relay" | "navigation">) {
+  communityReader,
+}: Pick<Context, "agents" | "relay" | "navigation"> &
+  Partial<Pick<Context, "communityReader">>) {
   const { Subscription, Destination, Message, Entry } = createWatchComponents({
     agents,
     navigation,
   });
   const none = () => () => {};
+  const noCommunities = () => undefined;
   const noChannels: { channels: readonly Channel[] } = { channels: [] };
   const emptyChannels = () => noChannels;
   function Switch({
@@ -337,6 +362,12 @@ export function createAttentionComponents({
     returnFocus: React.RefObject<HTMLElement | null>;
   }) {
     const action = useAction();
+    // Read for the community's name, which the owner can change here.
+    const communities = communityReader;
+    React.useSyncExternalStore(
+      communities?.subscribe ?? none,
+      communities?.snapshot ?? noCommunities,
+    );
     const find = (id: string) => channels.find((channel) => channel.id === id);
     const name = (id: string) => find(id)?.name ?? `Channel ${id.slice(0, 8)}`;
     const { interests, watches, orphans } = attentionOf(agent.attention);
@@ -360,7 +391,7 @@ export function createAttentionComponents({
               title="Attention"
               subtitle={`Let ${agent.name} watch for updates and check in on a schedule. Runs while Buzz is open on this device. ${
                 agent.attentionStorage === "relay"
-                  ? `Kept privately in ${communityOf(agent.relay)}.`
+                  ? `Kept privately in ${communityOf(agent.relay, communities)}.`
                   : "Kept on this device."
               }`}
             />
@@ -546,7 +577,8 @@ export function createAttentionComponents({
 }
 
 export function createTab(
-  context: Pick<Context, "agents" | "relay" | "navigation">,
+  context: Pick<Context, "agents" | "relay" | "navigation"> &
+    Partial<Pick<Context, "communityReader">>,
 ) {
   return createAttentionComponents(context).WatchingTab;
 }

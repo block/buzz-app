@@ -1294,6 +1294,51 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
   expect(screen.getByRole("button", { name: "Retry move" })).toBeVisible();
 });
 
+// Sidebar visibility is not access: an archived channel leaves the sidebar
+// but stays joined, so the tabs opened for it still resolve it.
+it("keeps another channel's tabs resolved after that channel is archived", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const beta = (at: number, extra: string[][] = []) =>
+    metadata(authority, "beta", "Beta", at, [["t", "stream"], ...extra]);
+  const events = [
+    roster(authority, "alpha", [viewer.pubkey]),
+    metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+    roster(authority, "beta", [viewer.pubkey]),
+    beta(1_700_000_000),
+  ];
+  const { owner } = workspace(events, viewer, authority);
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  const tabs = renderHook(() => useChannelTabState(owner.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() => {
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+    ]);
+    tabs.result.current.openThreadTab("beta", root, root, undefined, "side");
+  });
+  await screen.findByRole("tab", { name: "Thread · Beta" });
+  await screen.findByRole("tab", { name: "Beta" });
+
+  events.push(beta(1_700_000_100, [["archived", "true"]]));
+  act(() => owner.session.channels.refreshList?.());
+  // Its composer cannot post there now, and the tab says why.
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole("tab", { name: "Unavailable conversation" }),
+    );
+  expect(
+    await screen.findByText("This conversation is archived."),
+  ).toBeVisible();
+  // The thread is still read, under its channel's name.
+  expect(screen.getByRole("tab", { name: "Thread · Beta" })).toBeVisible();
+  expect(
+    screen.queryByText("This conversation is no longer available."),
+  ).not.toBeInTheDocument();
+});
+
 it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {
   const open = vi.fn(async () => ({ status: "opened" as const }));
   const h = await page("stream", {

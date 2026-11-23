@@ -493,7 +493,7 @@ function ChannelWorkspace({
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const { channels, profiles } = useChannelLabels(
+  const { channels, joined, profiles } = useChannelLabels(
     list.channels.filter(
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
@@ -1402,7 +1402,9 @@ function ChannelWorkspace({
     panels,
     current,
     scope,
-    channels,
+    // Sidebar visibility is not access: a tab shows an archived or hidden
+    // channel the viewer has joined.
+    channels: joined,
     profiles,
     conversationIcon,
     // A Solo chat beside another conversation keeps its own header actions.

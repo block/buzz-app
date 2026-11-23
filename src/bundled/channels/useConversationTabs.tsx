@@ -74,6 +74,9 @@ const DID_NOT_LOAD = "This conversation didn’t load.";
  * it; a thread tab shows such a channel with its notice and never gets here.
  * Otherwise the channel is missing, or listed from saved membership:
  *
+ * - The relay's own answer for the channel settles it at once: a denied read
+ *   of it, or a roster that dropped the viewer, takes it off the list before
+ *   any roster read completes.
  * - Without a connection nothing is read, so absence proves nothing.
  * - Only a complete roster read proves a missing channel gone. A `ready` list
  *   may be restored from saved events or hold one page of a longer read.
@@ -86,10 +89,12 @@ const DID_NOT_LOAD = "This conversation didn’t load.";
  *   stated, so the placeholder ends once the read does. */
 function UnavailableChannel({
   session,
+  channelId,
   target,
   label,
 }: {
   session: Pick<RelaySession, "recovery" | "live" | "channels">;
+  channelId: string;
   target: ChannelSummary | undefined;
   label: string | undefined;
 }) {
@@ -114,6 +119,8 @@ function UnavailableChannel({
         return "You have read-only access to this conversation.";
       return "This conversation is no longer available.";
     }
+    if (!target && session.channels.revoked?.(channelId))
+      return "This conversation is no longer available.";
     if (session.channels.cachedOnly)
       return target
         ? "This conversation will appear once Buzz reconnects."
@@ -177,6 +184,8 @@ export function useConversationTabs({
   panels: Panels;
   current: ChannelSummary | undefined;
   scope: string;
+  /** Every joined channel, labelled. A tab resolves its conversation here, so
+   * the rows a sidebar leaves out (archived, hidden) belong too. */
   channels: readonly ChannelSummary[];
   /** The channels' labelled participants, for DM captions. */
   profiles: ReadonlyMap<string, Profile>;
@@ -835,6 +844,7 @@ export function useConversationTabs({
     return (
       <UnavailableChannel
         session={queries}
+        channelId={tab.channelId}
         target={
           tab.kind === "thread" && current?.id === tab.channelId
             ? current
@@ -1109,6 +1119,11 @@ export function useConversationTabs({
     /** Whether a tab for this conversation could show it. */
     canOpenConversation: (channelId: string) =>
       !!tabChannel({ kind: "conversation", channelId }),
+    /** Whether a tab for a thread of this conversation could show it. A
+     * thread needs only a channel the viewer may read, so this also holds
+     * for an archived channel and for a Guest. */
+    canOpenThread: (channelId: string) =>
+      !!tabChannel({ kind: "thread", channelId }),
     announcement,
     drag,
     mainItems: [...mainTabs.map(tabItem), ...mainPanelTabs.map(panelItem)],

@@ -2427,6 +2427,21 @@ it.each([
     roster: rosterRead("deferred", true),
     loading: "Loading thread…",
   },
+  // The relay's answer for the channel itself needs no complete roster read.
+  {
+    name: "a channel the relay denied on one page of a roster still being read",
+    kind: "thread",
+    coverage: "partial",
+    revoked: true,
+    text: "This conversation is no longer available.",
+  },
+  {
+    name: "a channel the relay denied while recovery retries the roster",
+    kind: "thread",
+    roster: rosterRead("deferred", true),
+    revoked: true,
+    text: "This conversation is no longer available.",
+  },
   {
     name: "a channel missing from a restored list whose roster read failed",
     kind: "thread",
@@ -2549,6 +2564,7 @@ it.each([
   rosterAsOf?: number;
   roster?: ReturnType<typeof rosterRead>;
   cachedOnly?: true;
+  revoked?: true;
   loading?: string;
   text?: string;
 }[])(
@@ -2562,6 +2578,7 @@ it.each([
     rosterAsOf,
     roster = rosterRead("pending"),
     cachedOnly,
+    revoked,
     loading,
     text,
   }) => {
@@ -2581,6 +2598,7 @@ it.each([
         subscribeList: () => () => {},
         window: () => ({ rows: [] }),
         ...(cachedOnly && { cachedOnly }),
+        ...(revoked && { revoked: () => true }),
       },
     } as unknown as RelaySession;
     const emptyPanels: RegisteredPanel[] = [];

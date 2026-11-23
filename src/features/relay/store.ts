@@ -1093,7 +1093,7 @@ export function createChannelStore(
       return;
     }
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
-    discovery?.deny(channelId);
+    discovery?.revoke(channelId);
     allowed?.delete(channelId);
     transport?.revokeAccess(() => {
       heads.delete(channelId);
@@ -3893,6 +3893,7 @@ export function createChannelStore(
     subscribeDirectory: (listener: Listener) =>
       subscribe(directoryListeners, listener),
     describe: describeReference,
+    revoked: (channelId: string) => discovery?.revoked(channelId) ?? false,
     // A cached-only store reads nothing: it says so, and offers no lookup.
     ...(options.cachedOnly
       ? { cachedOnly: true as const }

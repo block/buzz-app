@@ -80,7 +80,7 @@ async function setup(singletons = false) {
       ["archived", "true"],
     ],
   });
-  // Messages lists before Favorites, so the unstarred row comes first.
+  // Chats lists before Favorites, so the unstarred row comes first.
   const rows = () =>
     sidebarSections(owner.session.channels.list().channels, {
       starred: ["a"],

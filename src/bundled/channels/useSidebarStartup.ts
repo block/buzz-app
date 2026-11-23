@@ -23,6 +23,9 @@ export function useSidebarStartup(
   // Cards default to Recent, so the first reveal waits for activity unless
   // every card has chosen otherwise.
   needsActivity = true,
+  // Chats and Shared with you wait on the viewer's own posts, so rows do not
+  // jump between them right after the first reveal.
+  placementReady = true,
 ) {
   // The primary sidebar is keyed by scope and connection generation; the hook is
   // remounted for a replacement session, while same-session remounts reuse latches.
@@ -82,7 +85,8 @@ export function useSidebarStartup(
   const ready =
     revealed ||
     restored ||
-    (rosterAvailable && (expired || (settled && sortModesReady)));
+    (rosterAvailable &&
+      (expired || (settled && sortModesReady && placementReady)));
   useEffect(() => {
     if (!ready || revealed) return;
     retained.revealed = true;

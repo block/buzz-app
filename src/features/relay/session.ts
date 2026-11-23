@@ -23,6 +23,7 @@ import {
 } from "../channel-templates/model";
 import { projectTemplateId, templateEntry } from "../solo/workspace";
 import { createChannelKit } from "../channel-templates/capability";
+import { createOwnPosts } from "./own-posts";
 import {
   createChannelSetup,
   setupWork,
@@ -1034,6 +1035,7 @@ export function createRelaySession(
         emoji.accept(visible);
         if (epoch !== accessEpoch) return;
         statuses.accept(visible);
+        ownPosts.accept(visible);
         if (epoch !== accessEpoch) return;
         if (channelTraffic) channels.accept(visible);
         for (const listener of observations) {
@@ -1048,8 +1050,10 @@ export function createRelaySession(
   /** The relay's ACK or read-back verifies an own send before any live echo. */
   function acceptOwnActivity(event: RelayEvent) {
     const channelId = event.tags.find(([name]) => name === "h")?.[1];
-    if (!cacheClearing && channelId && canReadRemote(channelId))
+    if (!cacheClearing && channelId && canReadRemote(channelId)) {
       channelActivity.accept([event]);
+      ownPosts.accept([event]);
+    }
   }
   function confirm(event: RelayEvent, attempt = 0) {
     if (closed || (attempt === 0 && pendingConfirmation.has(event.id))) return;
@@ -1210,6 +1214,21 @@ export function createRelaySession(
       : undefined,
     notify,
   );
+  /** The conversations the viewer has posted in, for the sidebar's Chats and
+   * Shared with you split. One background read of their own recent messages,
+   * on demand; verified events from every source add to it. */
+  const ownPosts = createOwnPosts({
+    viewer: transport?.viewer ?? "",
+    reader:
+      transport && !options.cachedOnly
+        ? {
+            // One retry across an access change, like directory reads.
+            read: (filters, settings) =>
+              directoryRead(settings, () => relayRead(filters, settings ?? {})),
+          }
+        : undefined,
+    notify,
+  });
   /** When the last full channel-list read completed, whatever started it. */
   let rosterReadAt = 0;
   const channels = createChannelStore(
@@ -3093,6 +3112,11 @@ export function createRelaySession(
       details.capability,
     ),
     unread: unread.capability,
+    ownPosts: Object.freeze({
+      snapshot: ownPosts.snapshot,
+      subscribe: ownPosts.subscribe,
+      ensure: ownPosts.ensure,
+    }),
     sidebarPreferences: sidebarPreferences.queries,
     /** The account's saved main agent, shared by every install. */
     mainAgent,
@@ -4532,6 +4556,7 @@ export function createRelaySession(
         memories.clear();
         presence.clear();
         channelActivity.clear();
+        ownPosts.clear();
         activityRosterKey = undefined;
         typing.clear();
         sidebarHeads.clear();
@@ -4581,6 +4606,7 @@ export function createRelaySession(
       memories.dispose();
       presence.dispose();
       channelActivity.dispose();
+      ownPosts.dispose();
       stopActivityRoster();
       stopActivityPreferences();
       sidebarHeads.clear();

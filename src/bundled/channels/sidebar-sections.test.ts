@@ -4,8 +4,11 @@ import { SIDEBAR_PAGES_SECTION } from "../../features/relay/sidebar-preferences"
 import {
   orderContributedSidebarSections,
   isChannelSectionKey,
+  isEngaged,
   sidebarDropRowKinds,
+  sidebarHome,
   sidebarSections,
+  type Engagement,
 } from "./sidebar-sections";
 
 it("keeps contributed order stable and lets saved preferences lead", () => {
@@ -32,13 +35,13 @@ it("identifies custom and general channel sections", () => {
   expect(isChannelSectionKey("forums")).toBe(false);
   expect(isChannelSectionKey("dms")).toBe(false);
 });
-it("allows every kind in Starred, workspaces and Messages, and none in the retired sections", () => {
+it("allows every kind in Favorites and workspaces, named kinds in Chats, DMs in DMs and nothing in Shared with you", () => {
   for (const [key, kinds] of [
     ["starred", ["solo", "channel", "forum", "dm"]],
     ["group:work", ["solo", "channel", "forum", "dm"]],
-    ["solo", ["solo", "channel", "forum", "dm"]],
+    ["solo", ["solo", "channel", "forum"]],
+    ["dms", ["dm"]],
     ["channels", []],
-    ["dms", []],
     ["forums", []],
   ] as const)
     expect(sidebarDropRowKinds(key)).toEqual(kinds);
@@ -126,10 +129,11 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
   const expectedProjection = [
     {
       key: "solo",
-      ids: ["home-dm", "loose-forum", "other"],
+      ids: ["loose-forum", "other"],
     },
     { key: "starred", ids: ["forum", "solo", "star", "starred-dm"] },
     { key: "group:channels", ids: ["grouped-dm", "grouped-forum", "work"] },
+    { key: "dms", ids: ["home-dm"] },
   ];
   expect(project(roster, new Set(["hidden-dm"]))).toEqual(expectedProjection);
   assertExactlyOnce(project(roster, new Set(["hidden-dm"])), [
@@ -156,27 +160,29 @@ it("intersects groups/stars with active authorized streams and movable DMs", () 
       new Set(["hidden-dm"]),
     ).find(({ key }) => key === "starred")?.ids,
   ).toEqual(["forum", "solo", "star"]);
-  // Forums shows only once there is a forum to list.
+  // Shared with you shows only while it has something to triage.
   expect(sidebarSections([])).toEqual([
-    { key: "solo", title: "Messages", icon: undefined, rows: [] },
+    { key: "solo", title: "Chats", icon: undefined, rows: [] },
     { key: "starred", title: "Favorites", icon: undefined, rows: [] },
+    { key: "dms", title: "DMs", icon: undefined, rows: [] },
   ]);
   expect(
     sidebarSections(roster, undefined, new Set(["hidden-dm"])).flatMap(
       (section) => section.rows.map((channel) => channel.id),
     ),
   ).toEqual([
-    // Messages holds every unfiled conversation, DMs and forums included.
+    // Chats holds every unfiled named conversation, forums included; DMs
+    // follow in their own section.
     "forum",
-    "grouped-dm",
     "grouped-forum",
-    "home-dm",
     "loose-forum",
     "other",
     "solo",
     "star",
-    "starred-dm",
     "work",
+    "grouped-dm",
+    "home-dm",
+    "starred-dm",
   ]);
 });
 
@@ -220,6 +226,7 @@ it("sorts every section independently with deterministic inactive and tie fallba
     ["solo", ["forum-new", "forum-old"]],
     ["starred", []],
     ["group:work", ["new", "a-id", "z-id", "quiet-a", "quiet-b"]],
+    ["dms", []],
   ]);
   // Unsaved, a workspace or Favorites reads as A–Z.
   expect(
@@ -231,7 +238,7 @@ it("sorts every section independently with deterministic inactive and tie fallba
       .find(({ key }) => key === "starred")
       ?.rows.map((channel) => channel.id),
   ).toEqual(["quiet-a", "quiet-b", "new"]);
-  // Messages defaults to Recent, and A–Z only when chosen.
+  // Chats defaults to Recent, and A–Z only when chosen.
   const messages = (sort: Record<string, "recent" | "alpha">) =>
     sidebarSections(roster, { ...preferences, assignments: {}, sort })
       .find(({ key }) => key === "solo")
@@ -303,11 +310,13 @@ it("Star projection is exclusive and retains empty saved groups", () => {
     ["solo", []],
     ["starred", ["alpha", "beta"]],
     ["group:work", []],
+    ["dms", []],
   ]);
   expect(placements(["alpha"])).toEqual([
     ["solo", []],
     ["starred", ["alpha"]],
     ["group:work", ["beta"]],
+    ["dms", []],
   ]);
   expect(saved.assignments).toEqual({ beta: "work" });
 });
@@ -315,7 +324,7 @@ it("Star projection is exclusive and retains empty saved groups", () => {
 it.each(["starred", "section:work", "solo"])(
   "%s sort affects only its own section",
   (key) => {
-    // Messages defaults to Recent; Favorites and workspaces default to A–Z.
+    // Chats defaults to Recent; Favorites and workspaces default to A–Z.
     const keys = ["starred", "section:work", "solo"];
     const flipped = key === "solo" ? "alpha" : "recent";
     const channels = keys.flatMap((_section, i) => [
@@ -333,13 +342,14 @@ it.each(["starred", "section:work", "solo"])(
     const byRecent = ["Zulu", "Alpha"];
     expect(
       sections.map((section) => section.rows.map((row) => row.name)),
-    ).toEqual(
-      ["solo", "starred", "group:work"].map((sectionKey) => {
+    ).toEqual([
+      ...["solo", "starred", "group:work"].map((sectionKey) => {
         const own = sectionKey === "group:work" ? "section:work" : sectionKey;
         const base = own === "solo" ? byRecent : byName;
         return own === key ? [...base].reverse() : base;
       }),
-    );
+      [],
+    ]);
   },
 );
 
@@ -355,4 +365,105 @@ it("keeps the Plugins section when only Solo chats show", () => {
       true,
     ).map((section) => section.key),
   ).toEqual([SIDEBAR_PAGES_SECTION, "solo"]);
+});
+
+const me = "viewer";
+const engagement = (extra: Partial<Engagement> = {}): Engagement => ({
+  mine: new Set([me]),
+  posted: new Set(),
+  kept: new Set(),
+  ...extra,
+});
+const shared = (id: string, extra: Partial<ChannelSummary> = {}) =>
+  row(id, { channelType: "stream", creator: "someone", ...extra });
+
+it.each([
+  ["created by the viewer", row("c", { creator: me }), engagement(), true],
+  [
+    "created by one of the viewer's agents",
+    row("c", { creator: "agent" }),
+    engagement({ mine: new Set([me, "agent"]) }),
+    true,
+  ],
+  ["with a creator not known yet", row("c"), engagement(), true],
+  ["posted in", shared("c"), engagement({ posted: new Set(["c"]) }), true],
+  ["kept", shared("c"), engagement({ kept: new Set(["c"]) }), true],
+  ["added by someone else and untouched", shared("c"), engagement(), false],
+  [
+    "added by someone else while the posted read is pending",
+    shared("c"),
+    engagement({ posted: undefined }),
+    true,
+  ],
+  ["without engagement data", shared("c"), undefined, true],
+])("a conversation %s is engaged: %s", (_name, channel, state, engaged) => {
+  expect(isEngaged(channel, state)).toBe(engaged);
+});
+
+it("homes named conversations by engagement and DMs in DMs", () => {
+  expect(sidebarHome(shared("a"), engagement())).toBe("channels");
+  expect(sidebarHome(shared("a", { channelType: "solo" }), engagement())).toBe(
+    "channels",
+  );
+  expect(sidebarHome(shared("a", { channelType: "forum" }), engagement())).toBe(
+    "channels",
+  );
+  expect(sidebarHome(shared("a"), engagement({ kept: new Set(["a"]) }))).toBe(
+    "solo",
+  );
+  // A DM someone else started is still a DM.
+  expect(sidebarHome(shared("a", { channelType: "dm" }), engagement())).toBe(
+    "dms",
+  );
+});
+
+it("lists Chats, DMs and Shared with you apart, and hides Shared with you when empty", () => {
+  const roster = [
+    shared("mine", { creator: me, lastActivityAt: 10 }),
+    shared("replied", { lastActivityAt: 30 }),
+    shared("kept", { lastActivityAt: 20 }),
+    shared("new-to-me", { lastActivityAt: 40 }),
+    shared("starred-untouched"),
+    shared("filed-untouched"),
+    shared("dm", { channelType: "dm" }),
+  ];
+  const preferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { "filed-untouched": "work" },
+    starred: ["starred-untouched"],
+    muted: [],
+  };
+  const lists = (state: Engagement) =>
+    Object.fromEntries(
+      sidebarSections(
+        roster,
+        preferences,
+        new Set(),
+        false,
+        new Set(),
+        new Set(),
+        false,
+        state,
+      ).map(({ key, title, rows }) => [key, [title, rows.map(({ id }) => id)]]),
+    );
+  expect(
+    lists(
+      engagement({ posted: new Set(["replied"]), kept: new Set(["kept"]) }),
+    ),
+  ).toEqual({
+    solo: ["Chats", ["replied", "kept", "mine"]],
+    starred: ["Favorites", ["starred-untouched"]],
+    "group:work": ["Work", ["filed-untouched"]],
+    channels: ["Shared with you", ["new-to-me"]],
+    dms: ["DMs", ["dm"]],
+  });
+  // Engaging empties the pile, which then leaves the sidebar.
+  expect(
+    lists(
+      engagement({
+        posted: new Set(["replied", "new-to-me"]),
+        kept: new Set(["kept"]),
+      }),
+    ),
+  ).not.toHaveProperty("channels");
 });

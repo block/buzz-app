@@ -8,7 +8,7 @@ export type ChannelActivityReader = (
   signal: AbortSignal,
 ) => Promise<readonly RelayEvent[]>;
 
-const channelOf = (event: RelayEvent) => {
+export const channelOf = (event: RelayEvent) => {
   const channels = event.tags.filter(([name]) => name === "h");
   return channels.length === 1 ? channels[0]?.[1] : undefined;
 };

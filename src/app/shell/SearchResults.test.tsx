@@ -104,7 +104,8 @@ async function expectHint(target: HTMLElement, hint: string) {
 
 it("keeps a joined private Guest channel in recents without calling it public or unjoined", async () => {
   const relay = keypair(),
-    viewer = keypair();
+    viewer = keypair(),
+    peer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const discovery = [
     metadata(relay, "guest", "Private updates", 1700000000, [["private"]]),
@@ -114,6 +115,7 @@ it("keeps a joined private Guest channel in recents without calling it public or
       tags: [
         ["d", "guest"],
         ["p", viewer.pubkey, "", "guest"],
+        ["p", peer.pubkey, "", "member"],
       ],
     }),
   ];
@@ -225,11 +227,7 @@ it("leads an empty search with other unmuted unread channels and DMs, selecting 
   const discovery = ["alpha", "dm", "muted", "other", "quiet", "read"].flatMap(
     (id) => [
       metadata(relay, id, id, undefined, id === "dm" ? [["t", "dm"]] : []),
-      roster(
-        relay,
-        id,
-        id === "dm" ? [viewer.pubkey, friend.pubkey] : [viewer.pubkey],
-      ),
+      roster(relay, id, [viewer.pubkey, friend.pubkey]),
     ],
   );
   const owner = createRelaySession(
@@ -905,6 +903,7 @@ it("counts a reply that mentions you, even muted, tiers Thread only for threads 
 it("ranks typed channel names and selects the best one for Enter", async () => {
   const relay = keypair();
   const viewer = keypair();
+  const peer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   // Weak matches come first in list order and exceed the lead group's
   // five-row limit.
@@ -916,7 +915,7 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
   ];
   const discovery = names.flatMap((name, index) => [
     metadata(relay, name, name, 1700000000 + index),
-    roster(relay, name, [viewer.pubkey]),
+    roster(relay, name, [viewer.pubkey, peer.pubkey]),
   ]);
   const owner = createRelaySession({
     ...wire.transport,
@@ -980,6 +979,7 @@ it("ranks typed channel names and selects the best one for Enter", async () => {
 it("matches channel names by substring, then word-start letter runs, not scattered letters", async () => {
   const relay = keypair();
   const viewer = keypair();
+  const peer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const names = [
     "big-grape",
@@ -990,7 +990,7 @@ it("matches channel names by substring, then word-start letter runs, not scatter
   ];
   const discovery = names.flatMap((name, index) => [
     metadata(relay, name, name, 1700000000 + index),
-    roster(relay, name, [viewer.pubkey]),
+    roster(relay, name, [viewer.pubkey, peer.pubkey]),
   ]);
   const owner = createRelaySession({
     ...wire.transport,
@@ -1046,10 +1046,11 @@ it("matches channel names by substring, then word-start letter runs, not scatter
 it("leads with the group holding the best match and ranks archived channels after live ties", async () => {
   const relay = keypair();
   const viewer = keypair();
+  const peer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const discovery = [
     metadata(relay, "space", "team-workspace", 1700000000),
-    roster(relay, "space", [viewer.pubkey]),
+    roster(relay, "space", [viewer.pubkey, peer.pubkey]),
     signed(relay, {
       kind: 39000,
       created_at: 1700000001,
@@ -1061,9 +1062,9 @@ it("leads with the group holding the best match and ranks archived channels afte
         ["archived", "true"],
       ],
     }),
-    roster(relay, "old", [viewer.pubkey]),
+    roster(relay, "old", [viewer.pubkey, peer.pubkey]),
     metadata(relay, "log", "work-log", 1700000002),
-    roster(relay, "log", [viewer.pubkey]),
+    roster(relay, "log", [viewer.pubkey, peer.pubkey]),
   ];
   const owner = createRelaySession({
     ...wire.transport,
@@ -2345,7 +2346,8 @@ it.each(
   "finds joined archived $channelType channels by name in a $source session without putting them in Recent activity",
   async ({ channelType, source }) => {
     const relay = keypair(),
-      viewer = keypair();
+      viewer = keypair(),
+      peer = keypair();
     const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
     const discovery = [
       signed(relay, {
@@ -2360,7 +2362,12 @@ it.each(
           ["archived", "true"],
         ],
       }),
-      roster(relay, "archive", [viewer.pubkey]),
+      // A channel has someone besides the viewer; a solo chat does not.
+      roster(
+        relay,
+        "archive",
+        channelType === "solo" ? [viewer.pubkey] : [viewer.pubkey, peer.pubkey],
+      ),
       metadata(relay, "active", "Current project"),
       roster(relay, "active", [viewer.pubkey]),
     ];
@@ -2431,7 +2438,7 @@ it.each(
         within(screen.getByRole("option", { name: /Past project/ })).getByText(
           channelType === "solo"
             ? "Archived chat"
-            : "Archived channel · 1 member",
+            : "Archived channel · 2 members",
         ),
       ).toBeTruthy();
       expect(open).toHaveBeenCalledExactlyOnceWith("archive");
@@ -2576,7 +2583,7 @@ it("finds active public channels the viewer has not joined without adding them t
   ];
   const discovery = [
     metadata(relay, "joined", "crew-chat", 1700000000, open),
-    roster(relay, "joined", [viewer.pubkey]),
+    roster(relay, "joined", [viewer.pubkey, other.pubkey]),
     metadata(relay, "lobby", "crew-lobby", 1700000000, open),
     roster(relay, "lobby", [other.pubkey]),
     metadata(relay, "secret", "crew-secret", 1700000000, [
@@ -3683,7 +3690,7 @@ function usageSession(
   const discovery = [
     ...names.flatMap((name, index) => [
       metadata(relay, name, name, 1700000000 + index),
-      roster(relay, name, [viewer.pubkey]),
+      roster(relay, name, [viewer.pubkey, other.pubkey]),
     ]),
     ...publicNames.flatMap((name) => [
       metadata(relay, name, name, 1700000000, open),
@@ -9226,7 +9233,8 @@ it.each([true, false])(
       viewer = keypair(),
       mine = keypair(),
       fresh = keypair(),
-      theirs = keypair();
+      theirs = keypair(),
+      peer = keypair();
     const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
     const dm = (id: string, member: string) => [
       metadata(relay, id, "opaque", 1700000000, [
@@ -9253,7 +9261,7 @@ it.each([true, false])(
       ...chat("other-chat", "Unrelated", 1700000003, theirs.pubkey),
       // A channel that matches as well as the agent does.
       metadata(relay, "scout-ops", "scout-ops"),
-      roster(relay, "scout-ops", [viewer.pubkey]),
+      roster(relay, "scout-ops", [viewer.pubkey, peer.pubkey]),
       profile(mine, { name: "Scout", is_agent: true }),
       profile(theirs, { name: "Scooter", is_agent: true }),
       profile(fresh, { name: "Scotia", is_agent: true }),
@@ -9304,9 +9312,7 @@ it.each([true, false])(
           {...(solo ? { openAgentSession } : {})}
         />,
       );
-      const direct = within(
-        await screen.findByRole("group", { name: "Direct messages" }),
-      );
+      const direct = within(await screen.findByRole("group", { name: "DMs" }));
       expect(
         await direct.findByRole("option", { name: /Scooter/ }),
       ).toBeVisible();
@@ -9330,7 +9336,9 @@ it.each([true, false])(
       const choice = agents.getByRole("option", { name: /Scout/ });
       expect(choice).toHaveTextContent("New message");
       // The chats with Scout follow, newest first; the DM comes later.
-      const chats = within(await screen.findByRole("group", { name: "Chats" }));
+      const chats = within(
+        await screen.findByRole("group", { name: "Solo chats" }),
+      );
       await waitFor(() =>
         expect(
           chats.getAllByRole("option").map((row) => row.textContent),
@@ -9378,7 +9386,7 @@ it.each([true, false])(
       );
       expect(
         await within(
-          await screen.findByRole("group", { name: "Direct messages" }),
+          await screen.findByRole("group", { name: "DMs" }),
         ).findByRole("option", { name: /Scout/ }),
       ).toBeVisible();
       expect(screen.queryByRole("group", { name: "Agents" })).toBeNull();
@@ -9606,16 +9614,14 @@ it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", a
         expect.stringMatching(/Scotia.*New message/),
       ]),
     );
-    await screen.findByRole("group", { name: "Chats" });
+    await screen.findByRole("group", { name: "Solo chats" });
     const options = screen.getAllByRole("option");
     const bestieDm = agents.getAllByRole("option")[1];
     assert(bestieDm);
     // The DM follows its new chat at once, before any chat.
     expect(options.indexOf(bestieDm)).toBe(1);
     // Other agents keep their chats-then-DM order, and the Bestie DM shows once.
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
-    );
+    const direct = within(await screen.findByRole("group", { name: "DMs" }));
     expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible();
     expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
     fireEvent.click(bestieDm);
@@ -9710,9 +9716,7 @@ it("promotes no Bestie DM that the sidebar hides", async () => {
   const { dispose } = renderBestieSearch({ query: "sco", hideBestieDm: true });
   try {
     const agents = within(await screen.findByRole("group", { name: "Agents" }));
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
-    );
+    const direct = within(await screen.findByRole("group", { name: "DMs" }));
     await waitFor(() =>
       expect(direct.getByRole("option", { name: /Scotia/ })).toBeVisible(),
     );
@@ -9740,7 +9744,7 @@ it.each([
     // only part of it, as "Scoo" and the "scoo" chat do.
     picked: "channel:scout-ops",
     exactName: "Scoo",
-    groups: ["Agents", "Chats"],
+    groups: ["Agents", "Solo chats"],
     chats: ["Plan the week", "scoo"],
     first: /Scout.*New message/,
   },
@@ -9750,7 +9754,7 @@ it.each([
     exactName: "Sco",
     // Chats leads with its exact name; Channels and Direct messages have
     // exact names too, so they come before the partly matching agent.
-    groups: ["Chats", "Channels", "Direct messages", "Agents"],
+    groups: ["Solo chats", "Channels", "DMs", "Agents"],
     chats: ["sco", "Plan the week"],
     first: /^sco/,
   },
@@ -9760,7 +9764,8 @@ it.each([
   const relay = keypair(),
     viewer = keypair(),
     mine = keypair(),
-    human = keypair();
+    human = keypair(),
+    peer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const lower = exactName.toLowerCase();
   const dm = (id: string, member: string) => [
@@ -9786,9 +9791,9 @@ it.each([
     // A chat found by its name, not its agent.
     ...chat("named-chat", lower, 1700000003, []),
     metadata(relay, "scout-ops", "scout-ops"),
-    roster(relay, "scout-ops", [viewer.pubkey]),
+    roster(relay, "scout-ops", [viewer.pubkey, peer.pubkey]),
     metadata(relay, "named-channel", lower),
-    roster(relay, "named-channel", [viewer.pubkey]),
+    roster(relay, "named-channel", [viewer.pubkey, peer.pubkey]),
     profile(mine, { name: "Scout", is_agent: true }),
     profile(human, { name: exactName }),
   ];
@@ -9831,16 +9836,16 @@ it.each([
         openAgentSession={vi.fn()}
       />,
     );
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
-    );
+    const direct = within(await screen.findByRole("group", { name: "DMs" }));
     await direct.findByRole("option", {
       name: new RegExp(`^${exactName}(?!ut)`),
     });
     await direct.findByRole("option", { name: /Scout/ });
     await screen.findByRole("group", { name: "Channels" });
     await screen.findByRole("group", { name: "Agents" });
-    const chats = within(await screen.findByRole("group", { name: "Chats" }));
+    const chats = within(
+      await screen.findByRole("group", { name: "Solo chats" }),
+    );
     await waitFor(() =>
       expect(
         chats.getAllByRole("option").map((row) => row.textContent),
@@ -9861,19 +9866,20 @@ it.each([
   {
     name: "keeps an exactly named chat ahead of an exact agent's many chats",
     named: "chat" as const,
-    groups: ["Agents", "Chats"],
+    groups: ["Agents", "Solo chats"],
   },
   {
     name: "does not let an exact agent's chats claim an exact name",
     named: "channel" as const,
     // Channels has the exact name; the agent's chats only inherit it.
-    groups: ["Agents", "Channels", "Chats"],
+    groups: ["Agents", "Channels", "Solo chats"],
   },
 ])("$name", async ({ named, groups }) => {
   localStorage.clear();
   const relay = keypair(),
     viewer = keypair(),
-    mine = keypair();
+    mine = keypair(),
+    peer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const chat = (id: string, name: string, at: number, members: string[]) => [
     metadata(relay, id, name, at, [
@@ -9894,7 +9900,7 @@ it.each([
       ? chat("named-chat", "scout", 1700000001, [])
       : [
           metadata(relay, "named-channel", "scout"),
-          roster(relay, "named-channel", [viewer.pubkey]),
+          roster(relay, "named-channel", [viewer.pubkey, peer.pubkey]),
         ]),
     profile(mine, { name: "Scout", is_agent: true }),
   ];
@@ -9924,6 +9930,9 @@ it.each([
     },
   } as typeof owner.session;
   try {
+    // Search lists a chat as solo once its members' profiles show no other
+    // person; the sidebar has loaded the agent's by then.
+    await act(async () => owner.session.profiles.ensure([mine.pubkey]));
     render(
       <SearchResults
         session={session}
@@ -9940,7 +9949,9 @@ it.each([
     await screen.findByRole("group", { name: "Agents" });
     if (named === "channel")
       await screen.findByRole("group", { name: "Channels" });
-    const chats = within(await screen.findByRole("group", { name: "Chats" }));
+    const chats = within(
+      await screen.findByRole("group", { name: "Solo chats" }),
+    );
     // Past the first group, Top results shows three rows of a group.
     await waitFor(() => expect(chats.getAllByRole("option")).toHaveLength(3));
     if (named === "chat")
@@ -10042,7 +10053,7 @@ it.each([
       group === "Channels"
         ? [
             metadata(relay, name, name, 1700000000),
-            roster(relay, name, [viewer.pubkey]),
+            roster(relay, name, [viewer.pubkey, person.pubkey]),
           ]
         : [profile(person, { display_name: name })];
     const owner = createRelaySession({
@@ -10462,9 +10473,7 @@ it("leaves sidebar-hidden DMs out of the rows but keeps their message hits", asy
         sidebarScope={scope}
       />,
     );
-    const direct = within(
-      await screen.findByRole("group", { name: "Direct messages" }),
-    );
+    const direct = within(await screen.findByRole("group", { name: "DMs" }));
     expect(
       await direct.findByRole("option", { name: /^Scott(?!y)/ }),
     ).toBeVisible();

@@ -1028,7 +1028,8 @@ it("finds and opens saved conversations while the community is unreachable or st
   const bindings = createShortcutBindings(window);
   const shortcuts = new ShortcutsService(root, window, bindings);
   const viewer = keypair(),
-    relay = keypair();
+    relay = keypair(),
+    peer = keypair();
   // Every relay read fails, as it does for a saved session.
   const query = vi.fn(async () => {
     throw new Error("Reconnect to update saved conversations.");
@@ -1049,9 +1050,9 @@ it("finds and opens saved conversations while the community is unreachable or st
             savedAt: Date.now(),
             relayAuthor: relay.pubkey,
             events: [
-              roster(relay, "alpha", [viewer.pubkey]),
+              roster(relay, "alpha", [viewer.pubkey, peer.pubkey]),
               metadata(relay, "alpha", "Alpha", 1_700_000_000),
-              roster(relay, "beta", [viewer.pubkey]),
+              roster(relay, "beta", [viewer.pubkey, peer.pubkey]),
               metadata(relay, "beta", "Beta", 1_700_000_100),
             ],
           },
@@ -1140,7 +1141,10 @@ it("finds and opens saved conversations while the community is unreachable or st
         .getAllByRole("option")
         .map((option) => option.textContent)
         .sort(),
-    ).toEqual(["AlphaConversation · 1 member", "BetaConversation · 1 member"]);
+    ).toEqual([
+      "AlphaConversation · 2 members",
+      "BetaConversation · 2 members",
+    ]);
     // A saved session has no message scope or open-channel view to offer.
     expect(within(dialog).queryByText(/^Search in Alpha/)).toBeNull();
     expect(
@@ -1453,7 +1457,8 @@ function memorySearch() {
   const bindings = createShortcutBindings(window);
   const shortcuts = new ShortcutsService(root, window, bindings);
   const viewer = keypair(),
-    relay = keypair();
+    relay = keypair(),
+    peer = keypair();
   const channels = [
     ["design", "design"],
     ["crit", "design-crit"],
@@ -1468,7 +1473,9 @@ function memorySearch() {
               metadata(relay, id, name, 1_700_000_000, [["t", "stream"]]),
             )
           : filter.kinds?.includes(39002)
-            ? channels.map(([id]) => roster(relay, id, [viewer.pubkey]))
+            ? channels.map(([id]) =>
+                roster(relay, id, [viewer.pubkey, peer.pubkey]),
+              )
             : [],
       ),
   });

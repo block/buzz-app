@@ -38,6 +38,38 @@ export function identityMembers(
   return people.length ? people : others;
 }
 
+/** Past this many others, every member counts as a person; telling its
+ * agents apart isn't worth loading every member's profile. */
+const identityProfileLimit = 32;
+
+/** The people in a conversation besides you: agents never count, and a
+ * member whose profile hasn't loaded counts as a person. */
+export function conversationPeople(
+  others: readonly string[],
+  profiles: ReadonlyMap<string, Profile>,
+): readonly string[] {
+  return others.length <= identityProfileLimit
+    ? others.filter((key) => !profiles.get(key)?.isAgent)
+    : others;
+}
+
+/** A named conversation with no people besides you. Without its roster, a
+ * Solo chat you started counts. */
+export function isSoloConversation(
+  channel: ChannelSummary,
+  viewer: string | undefined,
+  profiles: ReadonlyMap<string, Profile>,
+) {
+  if (channel.channelType === "dm") return false;
+  if (!channel.members?.length)
+    return channel.channelType === "solo" && channel.creator === viewer;
+  return (
+    !!viewer &&
+    channel.members.includes(viewer) &&
+    !conversationPeople(conversationOthers(channel, viewer), profiles).length
+  );
+}
+
 /** What a named conversation's icon says: whether anyone besides you (not
  * counting agents) is in it, and whether anyone in the community can read it.
  * Visibility the relay hasn't confirmed reads as private. */
@@ -113,10 +145,6 @@ export function ViewOnlyMark({
   );
 }
 
-/** Past this many others, a conversation's icon is a count; telling its
- * agents apart isn't worth loading every member's profile. */
-const identityProfileLimit = 32;
-
 /**
  * The members a conversation's icon shows, and their profiles. A DM's page
  * supplies its people's profiles, so a DM row never acquires them itself.
@@ -165,10 +193,7 @@ export function useConversationIdentity(
   // The people besides you: agents never count. Past the profile limit every
   // member counts, since a conversation that size has people in it.
   const people = useMemo(
-    () =>
-      others.length <= identityProfileLimit
-        ? others.filter((key) => !profiles.get(key)?.isAgent)
-        : others,
+    () => conversationPeople(others, profiles),
     [others, profiles],
   );
   return { members, profiles, mark: conversationMark(channel, people) };

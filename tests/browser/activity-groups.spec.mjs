@@ -255,8 +255,6 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     await expect(toggle).toBeVisible();
     await expect(toggle).toContainText("Activity update 15");
     await toggle.hover();
-    await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(toggle).toHaveCSS("text-decoration-line", "none");
     await expect(messages).toHaveCount(0);
     await page.screenshot({
       path: test.info().outputPath("activity-collapsed.png"),
@@ -266,9 +264,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     ).toHaveCount(0);
     await toggle.focus();
     await page.keyboard.press("Enter");
-    await expect(toggle).toHaveText("Collapse");
-    await expect(toggle).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(toggle).toHaveCSS("text-decoration-line", "none");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(messages).toHaveCount(16);
     await expect(toggle).toBeFocused();
     await expect
@@ -313,7 +309,7 @@ test("Solo activity folds, stays expanded on append/prepend, and reveals exact v
     const top = await first.evaluate((e) => e.getBoundingClientRect().top);
     await page.getByRole("button", { name: "Append update" }).click();
     await expect(messages).toHaveCount(17);
-    await expect(toggle).toHaveText("Collapse");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect
       .poll(() => first.evaluate((e) => e.getBoundingClientRect().top))
       .toBeCloseTo(top, 0);

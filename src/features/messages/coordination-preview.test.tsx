@@ -135,13 +135,16 @@ it.each(["timeline", "thread"] as const)(
         />
       </StrictMode>,
     );
-    const toggle = screen.getByRole("button", {
+    let toggle = screen.getByRole("button", {
       name: "Show activity history: Agent coordination · 1 message",
     });
     expect(toggle).toHaveTextContent("Agent coordination · 1 message");
     expect(screen.queryByText("Builder", { selector: "strong" })).toBeNull();
     toggle.focus();
     await user.keyboard("{Enter}");
+    toggle = screen.getByRole("button", {
+      name: /^Collapse activity history:/,
+    });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(toggle).toHaveFocus();
     expect(
@@ -152,6 +155,7 @@ it.each(["timeline", "thread"] as const)(
       "https://example.org/source",
     );
     await user.keyboard(" ");
+    toggle = screen.getByRole("button", { name: /^Show activity history:/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(toggle).toHaveFocus();
   },
@@ -174,12 +178,13 @@ it("counts the whole group and keeps authors and sources available on expansion"
       ]}
     />,
   );
-  const toggle = screen.getByRole("button", {
+  let toggle = screen.getByRole("button", {
     name: "Show activity history: Agent coordination · 2 messages",
   });
   expect(screen.getByRole("img", { name: "Builder, Reviewer" })).toBeVisible();
   expect(screen.queryByText("Builder", { selector: "strong" })).toBeNull();
   await user.click(toggle);
+  toggle = screen.getByRole("button", { name: /^Collapse activity history:/ });
   expect(toggle).toHaveFocus();
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   const details = document.querySelector("[data-activity-details]");
@@ -195,6 +200,7 @@ it("counts the whole group and keeps authors and sources available on expansion"
     }),
   ).toBeVisible();
   await user.click(toggle);
+  toggle = screen.getByRole("button", { name: /^Show activity history:/ });
   expect(toggle).toHaveAttribute("aria-expanded", "false");
 });
 

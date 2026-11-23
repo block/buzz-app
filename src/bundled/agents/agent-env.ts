@@ -25,3 +25,7 @@ export async function hasOwnEnv(agent: AgentKey): Promise<boolean | undefined> {
   const names = await ownEnvNames(pubkeyOf(agent));
   return names && names.length > 0;
 }
+
+/** Agents whose saved list changed since their processes last restarted.
+ * Lives as long as the window: a reload stops every agent's processes. */
+export const awaitingRestart = new Set<string>();

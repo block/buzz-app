@@ -9,6 +9,7 @@ import type {
   Agents,
   RegisteredAgentType,
 } from "../../features/agents/service";
+import { awaitingRestart } from "./agent-env";
 import { AgentEnvironment } from "./AgentEnvironment";
 import { AgentTabs } from "./AgentTabs";
 
@@ -23,6 +24,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 let names: string[];
 const restartAgent = vi.fn(async () => {});
 beforeEach(() => {
+  awaitingRestart.clear();
   names = ["SAVED_KEY"];
   restartAgent.mockReset().mockResolvedValue(undefined);
   native.invoke.mockReset().mockImplementation(async (command, args) => {
@@ -374,4 +376,36 @@ it("keeps the agent's tabs until a restart settles, so its error stays", async (
   await waitFor(() =>
     expect(restart).not.toHaveAttribute("aria-disabled", "true"),
   );
+});
+
+it("keeps the restart offer across leaving and coming back until a restart succeeds", async () => {
+  restartAgent.mockRejectedValueOnce(new Error("Echo is answering"));
+  const user = userEvent.setup();
+  const view = () =>
+    render(<AgentEnvironment agent={AGENT} restartAgent={restartAgent} />);
+  const first = view();
+  await saveOnce(user);
+  first.unmount();
+  const second = view();
+  await user.click(
+    await screen.findByRole("button", { name: "Restart agent" }),
+  );
+  await user.click(button("Restart"));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Echo is answering",
+  );
+  second.unmount();
+  const third = view();
+  await user.click(
+    await screen.findByRole("button", { name: "Restart agent" }),
+  );
+  await user.click(button("Restart"));
+  await waitFor(() => expect(restartAgent).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Restart agent" })).toBeNull(),
+  );
+  third.unmount();
+  view();
+  await screen.findByText("SAVED_KEY");
+  expect(screen.queryByRole("button", { name: "Restart agent" })).toBeNull();
 });

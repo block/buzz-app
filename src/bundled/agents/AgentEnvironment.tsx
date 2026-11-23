@@ -17,13 +17,14 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { useAgentSaveState } from "../../features/agents/AgentSaveButton";
 import styles from "./AgentEnvironment.module.css";
+import { awaitingRestart } from "./agent-env";
 
 type Status = { names: string[] };
 /** The one row open for editing: a saved name to replace, or a new one. */
 type Draft = { replacing?: string; name: string; value: string };
 
 const ROW =
-  "grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-3 px-3 py-2";
+  "grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_10rem] items-center gap-3 px-3 py-2";
 
 /** Variables one local agent starts with, held natively in the OS credential
  * store. Values are never read back. */
@@ -40,7 +41,8 @@ export function AgentEnvironment({
   const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [pending, setPending] = useState(false);
-  const [saved, setSaved] = useState(false);
+  // Outlives this editor, so leaving and coming back keeps the restart offer.
+  const [saved, setSaved] = useState(() => awaitingRestart.has(agent));
   const [confirm, setConfirm] = useState(false);
   const restart = useRef<HTMLButtonElement>(null);
   const notify = useToastNotification();
@@ -83,9 +85,11 @@ export function AgentEnvironment({
     setError(undefined);
     try {
       await invoke("agent_env_set", { agent, rows });
+      // Stored now, even if the reload below fails.
+      awaitingRestart.add(agent);
+      setSaved(true);
       setNames((await invoke<Status>("agent_env_status", { agent })).names);
       setDraft(undefined);
-      setSaved(true);
       notify(done, "success");
     } catch (reason) {
       setError(String(reason));
@@ -148,7 +152,7 @@ export function AgentEnvironment({
         autoComplete="off"
         onValueChange={(value) => setDraft({ ...open, value })}
       />
-      <span className="flex items-center gap-1">
+      <span className="flex items-center justify-end gap-1">
         <Button
           size="sm"
           variant="ghost"
@@ -200,6 +204,7 @@ export function AgentEnvironment({
           >
             <span>Variable</span>
             <span>Value</span>
+            <span />
           </div>
         )}
         {names.map((name) =>
@@ -213,7 +218,7 @@ export function AgentEnvironment({
                   <span aria-hidden="true">•••••• </span>Saved
                 </Badge>
               </span>
-              <span className="flex items-center gap-1">
+              <span className="flex items-center justify-end gap-1">
                 <Button
                   size="xs"
                   variant="link"
@@ -289,7 +294,10 @@ export function AgentEnvironment({
                   setRestarting(true);
                   setError(undefined);
                   restartAgent()
-                    .then(() => setSaved(false))
+                    .then(() => {
+                      awaitingRestart.delete(agent);
+                      setSaved(false);
+                    })
                     .catch((reason: unknown) =>
                       setError(
                         reason instanceof Error

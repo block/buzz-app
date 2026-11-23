@@ -615,17 +615,17 @@ it("matches a plugin's description and a setting's keywords by contiguous text o
   // Word starts across a sentence: "[pl]ugins Show live [a]nd".
   expect(listed(palette, "pla", "Plugins")).toEqual([]);
   expect(listed(palette, "audio", "Plugins")).toEqual([
-    "Communication — Huddles",
+    "Huddles — Communication",
   ]);
   expect(listed(palette, "plugins", "Plugins")).toEqual([
-    "Agent tools — Agent Activity",
-    "Communication — Huddles",
+    "Agent Activity — Agent tools",
+    "Huddles — Communication",
   ]);
   // "direct mess[a]ges co[n]versatio[n] [a]lerts"
   expect(listed(palette, "anna", "Settings")).toEqual([]);
   expect(listed(palette, "alerts", "Settings")).toEqual([
-    "Notifications — Sound",
-    "Notifications — Notify while viewing",
+    "Sound — Notifications",
+    "Notify while viewing — Notifications",
   ]);
 });
 
@@ -641,7 +641,7 @@ it("matches a plugin's category by word runs but not by letters merely in order"
   // "People & co[m]m[u]ni[t]i[e]s"
   expect(listed(palette, "mute", "Plugins")).toEqual([]);
   expect(listed(palette, "pc", "Plugins")).toEqual([
-    "People & communities — Profiles",
+    "Profiles — People & communities",
   ]);
 });
 
@@ -656,11 +656,11 @@ it("matches a row's name contiguously but not by scattered letters", () => {
   const palette = sections({ plugins, notifications });
   expect(listed(palette, "remnders", "Plugins")).toEqual([]);
   expect(listed(palette, "remind", "Plugins")).toEqual([
-    "Productivity — Reminders",
+    "Reminders — Productivity",
   ]);
   expect(listed(palette, "sund", "Settings")).toEqual([]);
   expect(listed(palette, "sound", "Settings")).toEqual([
-    "Notifications — Sound",
+    "Sound — Notifications",
   ]);
 });
 
@@ -703,38 +703,38 @@ it("matches each typed word in any of a row's fields, in any order", () => {
   const palette = sections({ plugins, notifications, appearance });
   // Two words apart in a description.
   expect(listed(palette, "plugins audio", "Plugins")).toEqual([
-    "Communication — Huddles",
+    "Huddles — Communication",
   ]);
   expect(listed(palette, "audio channels", "Plugins")).toEqual([
-    "Communication — Huddles",
+    "Huddles — Communication",
   ]);
   // A name and a description, in either order.
   expect(listed(palette, "voice play", "Plugins")).toEqual([
-    "Communication — Voice Notes",
+    "Voice Notes — Communication",
   ]);
   expect(listed(palette, "code diagrams", "Plugins")).toEqual([
-    "Communication — Mermaid diagrams",
+    "Mermaid diagrams — Communication",
   ]);
   expect(listed(palette, "huddles audio", "Plugins")).toEqual([
-    "Communication — Huddles",
+    "Huddles — Communication",
   ]);
   expect(listed(palette, "audio huddles", "Plugins")).toEqual([
-    "Communication — Huddles",
+    "Huddles — Communication",
   ]);
   // A category and a description.
   expect(listed(palette, "agent tools live", "Plugins")).toEqual([
-    "Agent tools — Agent Activity",
+    "Agent Activity — Agent tools",
   ]);
   // Two words apart in a setting's keywords, the added "settings" included.
   expect(listed(palette, "dark settings", "Settings")).toEqual([
-    "Appearance — Color mode",
+    "Color mode — Appearance",
   ]);
   expect(listed(palette, "audio settings", "Settings")).toEqual([
-    "Notifications — Sound",
+    "Sound — Notifications",
   ]);
   // A control's name and its section.
   expect(listed(palette, "notifications sound", "Settings")).toEqual([
-    "Notifications — Sound",
+    "Sound — Notifications",
   ]);
   // Every word must match the row.
   expect(listed(palette, "audio diagrams", "Plugins")).toEqual([]);
@@ -746,10 +746,10 @@ it("matches each typed word in any of a row's fields, in any order", () => {
   // One word lists what it did before words were matched apart.
   expect(listed(palette, "alice", "Plugins")).toEqual([]);
   expect(listed(palette, "audio", "Plugins")).toEqual([
-    "Communication — Huddles",
+    "Huddles — Communication",
   ]);
   expect(listed(palette, "dark", "Settings")).toEqual([
-    "Appearance — Color mode",
+    "Color mode — Appearance",
   ]);
 });
 
@@ -778,9 +778,9 @@ it("lists a row found only word by word after rows that hold the whole text", ()
   });
   // The exact name, then the phrase in a description, then the words apart.
   expect(listed(palette, "voice notes", "Plugins")).toEqual([
-    "Communication — Voice Notes",
-    "Communication — Dictation",
-    "Communication — Notes reader",
+    "Voice Notes — Communication",
+    "Dictation — Communication",
+    "Notes reader — Communication",
   ]);
 });
 

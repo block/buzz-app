@@ -50,6 +50,34 @@ export async function purgeOutboxStorage(scope: string) {
   }
 }
 
+// Each window holds one writer lock per scope until it unloads and stamps the
+// rows it creates, so a row whose writer lock is free was abandoned by a
+// closed window. A relay session restarted in this window keeps the same lock.
+const writers = new Map<string, Promise<string | undefined>>();
+
+function windowWriter(scope: string) {
+  let writer = writers.get(scope);
+  if (!writer) {
+    writer = navigator.locks
+      ? new Promise<string>((resolve, reject) => {
+          const name = `buzz-outbox-writer:${scope}:${crypto.randomUUID()}`;
+          void navigator.locks
+            .request(name, () => {
+              resolve(name);
+              return new Promise<void>(() => {});
+            })
+            .catch(reject);
+        }).catch(() => {
+          // Saving continues unstamped, and a later save asks again.
+          writers.delete(scope);
+          return undefined;
+        })
+      : Promise.resolve(undefined);
+    writers.set(scope, writer);
+  }
+  return writer;
+}
+
 /** Incremental asynchronous journal, atomically partitioned by relay and viewer. */
 export function browserOutboxStorage(scope: string): OutboxStorage {
   let database: Promise<IDBDatabase> | undefined;
@@ -58,25 +86,8 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
   let ownershipRevision = 0;
   const forgotten = new Map<string, number>();
   const open = () => (database ??= openDatabase());
-  // Each window holds its writer lock for life and stamps the rows it creates,
-  // so a row whose writer lock is free was abandoned by a closed window.
   const prefix = `buzz-outbox-writer:${scope}:`;
-  let writer: Promise<string | undefined> | undefined;
-  let release = () => {};
-  const own = () =>
-    (writer ??= navigator.locks
-      ? new Promise<string>((resolve, reject) => {
-          const name = prefix + crypto.randomUUID();
-          void navigator.locks
-            .request(name, () => {
-              resolve(name);
-              return new Promise<void>((done) => {
-                release = done;
-              });
-            })
-            .catch(reject);
-        })
-      : Promise.resolve(undefined));
+  const own = () => windowWriter(scope);
   return {
     async lock(id, run) {
       if (!navigator.locks) throw new Error("Window ownership is unavailable.");
@@ -236,7 +247,6 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
       });
     },
     close() {
-      release();
       void database?.then(
         (db) => db.close(),
         () => {},

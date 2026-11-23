@@ -552,7 +552,7 @@ it("disables the Name field and shows the people while sending a Direct message"
   await pick(t, one.name);
   const name = screen.getByRole("textbox", { name: "Name" });
   expect(name).toBeEnabled();
-  expect(name).toHaveAttribute("placeholder", "Untitled");
+  expect(name).toHaveAttribute("placeholder", "New message");
   await t.user.click(directRow());
   expect(name).toBeDisabled();
   expect(name).toHaveAttribute("placeholder", "Person 1");

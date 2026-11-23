@@ -681,36 +681,35 @@ export function NewMessage({
   const openNamed = (channelId: string) => {
     if (!locked) onOpenChat?.(channelId);
   };
-  const titleField = (
-    <div className={styles.title}>
+  // Two fields: an optional name, then To.
+  const header = (
+    <div className={styles.header}>
       <Field label="Name" labelVisibility="hidden">
         <Input
-          appearance="heading"
           value={direct ? "" : title}
           maxLength={120}
           autoComplete="off"
-          placeholder={direct ? peopleNames : "Untitled"}
+          placeholder={direct ? peopleNames : "New message"}
           disabled={locked || direct}
           onChange={(event) => changeTitle(event.target.value)}
         />
       </Field>
+      <RecipientPicker
+        session={session}
+        scope={scope}
+        appearance="field"
+        selected={recipients}
+        labels={named}
+        disabled={locked}
+        onChange={change}
+        initiallyOpen={!addressing}
+        // After a pick, the group's conversations show; typing brings the
+        // people list back for the next name.
+        searchOnly={recipients.length > 0}
+        onComplete={focusComposer}
+        onTyped={setTyped}
+      />
     </div>
-  );
-  const picker = (
-    <RecipientPicker
-      session={session}
-      scope={scope}
-      selected={recipients}
-      labels={named}
-      disabled={locked}
-      onChange={change}
-      initiallyOpen={!addressing}
-      // After a pick, the group's conversations show; typing brings the
-      // people list back for the next name.
-      searchOnly={recipients.length > 0}
-      onComplete={focusComposer}
-      onTyped={setTyped}
-    />
   );
   // With no person picked, this is a new Solo chat with its agent.
   if (solo && !people.length && !pending)
@@ -720,8 +719,7 @@ export function NewMessage({
         aria-label="New message"
         data-attachment-drop-zone
       >
-        {titleField}
-        {picker}
+        {header}
         {solo({
           ...(recipients[0] ? { agent: recipients[0].pubkey } : {}),
           name: title,
@@ -737,8 +735,7 @@ export function NewMessage({
       aria-label="New message"
       data-attachment-drop-zone
     >
-      {titleField}
-      {picker}
+      {header}
       <div className={styles.blank} data-new-message-body="">
         {people.length > 0 && (
           <div className={styles.introduction}>

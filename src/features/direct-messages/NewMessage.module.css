@@ -325,7 +325,10 @@
 .people > :first-child {
   align-self: center;
 }
-/* An optional name, set as the page's heading. */
-.title {
-  padding: var(--space-4) var(--space-6) 0;
+/* The optional name and To, as two fields. */
+.header {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-standard);
 }

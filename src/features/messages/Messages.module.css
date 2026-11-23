@@ -4023,10 +4023,10 @@ html[data-keyboard-navigation] .activityExpansion {
   flex-direction: column;
   gap: var(--space-3);
 }
-/* History already sits inside a padded activity bubble. Keep a branch inset,
-   but do not spend a second pair of chat gutters on each contained reply. */
+/* History already sits inside a padded activity bubble. Keep the whole spine
+   hit area outside its replies without spending a second pair of chat gutters. */
 :where(.containedActivityHistory) .replyBranch {
-  --reply-indent: var(--space-4);
+  --reply-indent: calc(var(--reply-spine-offset) + var(--space-2));
 }
 .containedActivityHistory .message:has(> .messageGutter) > .messageBody {
   max-width: calc(100% - var(--message-side-space));

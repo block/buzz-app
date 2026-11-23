@@ -1,7 +1,11 @@
 import { test, expect } from "./playwright-test.mjs";
 import { createServer } from "./vite-server.mjs";
 import { activate } from "./navigation.mjs";
-import { clickRow, virtuaIdle } from "./timeline.mjs";
+import { clickRow, virtuaIdle, open } from "./timeline.mjs";
+import { test as appTest } from "./fixture.mjs";
+import { finalizeEvent, getPublicKey } from "nostr-tools";
+
+test.use({ video: "on" });
 
 test("a long relayed message fits the chat before and after opening", async ({
   page,
@@ -575,4 +579,100 @@ test("activity details keep readable text through both handoffs and survive new 
   } finally {
     await server.close();
   }
+});
+
+appTest.describe("contained reply branches", () => {
+  appTest.use({
+    productionBroker: true,
+    readState: true,
+    historyCounts: { alpha: 1, beta: 0 },
+  });
+
+  appTest(
+    "nested replies collapse with the pointer and restore keyboard focus",
+    async ({ page, app }) => {
+      const key = Uint8Array.from({ length: 32 }, (_, i) =>
+        i === 31 ? 10 : 0,
+      );
+      const agent = getPublicKey(key);
+      app.serveProfile(key, { name: "Builder", is_agent: true });
+      const root = app.sign({
+        kind: 9,
+        created_at: 1700000100,
+        content: "A result with contained activity replies",
+        tags: [["h", "alpha"]],
+      });
+      const step = (content, created_at) =>
+        finalizeEvent(
+          {
+            kind: 9,
+            created_at,
+            content,
+            tags: [
+              ["h", "alpha"],
+              ["e", root.id, "", "reply"],
+              ["audience", "agents"],
+              ["p", app.viewer],
+            ],
+          },
+          key,
+        );
+      const first = step("Inspect the original source", 1700000101);
+      const nested = app.sign({
+        kind: 9,
+        created_at: 1700000102,
+        content: "Original branch replies remain available.",
+        tags: [
+          ["h", "alpha"],
+          ["e", root.id, "", "root"],
+          ["e", first.id, "", "reply"],
+        ],
+      });
+      const history = app.histories.get("primary/alpha");
+      history.splice(
+        0,
+        history.length,
+        root,
+        first,
+        nested,
+        step("Findings are ready", 1700000103),
+      );
+      await page.setViewportSize({ width: 860, height: 950 });
+      await open(page, app);
+      app.threadSummary(root.id, [agent, app.viewer], 3);
+      await page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ })
+        .click();
+      const thread = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      await thread
+        .getByRole("button", { name: /^Show activity history:/ })
+        .click();
+      const summary = thread.getByRole("button", {
+        name: "View 1 reply",
+        exact: true,
+      });
+      const reply = thread.getByText(nested.content, { exact: true });
+      for (const width of [860, 1440]) {
+        await page.setViewportSize({ width, height: 950 });
+        await summary.click();
+        await expect(reply).toBeVisible();
+        await thread
+          .getByRole("button", { name: "Collapse 1 reply", exact: true })
+          .click();
+        await expect(reply).toBeHidden();
+        await expect(summary).toBeFocused();
+      }
+      await thread
+        .getByRole("button", { name: /^Collapse activity history:/ })
+        .click();
+      await expect(
+        thread.getByRole("button", { name: /^Show activity history:/ }),
+      ).toBeFocused();
+      await expect(summary).toBeHidden();
+    },
+  );
 });

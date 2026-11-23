@@ -430,12 +430,7 @@ function messagePullMenu(
     <ToastProvider>
       <MenuRoot open>
         <MenuPopup>
-          <ChatPullMessageAction
-            {...value}
-            message={message}
-            pulls={pulls}
-            close={() => {}}
-          />
+          <ChatPullMessageAction {...value} message={message} pulls={pulls} />
         </MenuPopup>
       </MenuRoot>
     </ToastProvider>

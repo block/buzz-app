@@ -154,13 +154,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Link PR to chat",
     placement: "menu",
     matches: hasChatPullAction,
-    component: ({ message, session, close }) => (
+    component: ({ message, session }) => (
       <ChatPullMessageAction
         message={message}
         session={session}
         relay={ctx.relay}
         pulls={pullsFor(session)}
-        close={close}
       />
     ),
   });

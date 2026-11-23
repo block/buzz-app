@@ -46,13 +46,11 @@ export function ChatPullMessageAction({
   session,
   relay,
   pulls,
-  close,
 }: {
   message: ChannelMessage;
   session: RelaySession;
   relay: RelayData;
   pulls: SoloPulls;
-  close(): void;
 }) {
   const connection = useSyncExternalStore(relay.subscribe, relay.snapshot);
   useChannelList(session.channels);
@@ -80,7 +78,6 @@ export function ChatPullMessageAction({
       <MenuItem
         key={url}
         title={url}
-        closeOnClick={false}
         disabled={saving || unavailable}
         onClick={() => {
           const current = relay.snapshot();
@@ -99,7 +96,6 @@ export function ChatPullMessageAction({
               const next = remove ? null : url;
               await writeLink(session, message.channelId, next);
               pulls.linked(message.channelId, next);
-              close();
             } catch (error) {
               notify(
                 error instanceof Error ? error.message : String(error),

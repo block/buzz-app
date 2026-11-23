@@ -25,6 +25,10 @@ import {
   useMessageSelectionCopy,
 } from "./selection-copy";
 
+vi.mock("./native-download", () => ({
+  downloadNativeMedia: () => Promise.reject(new Error("offline")),
+}));
+
 const person = "a".repeat(64);
 const target = `nostr:${npubEncode(person)}`;
 const message = `buzz://message?channel=general&id=${"b".repeat(64)}`;
@@ -857,36 +861,126 @@ describe("serializeNode", () => {
     });
   });
 
-  it("copies an external file card as its file name, without its size", () => {
-    const source = "https://example.org/media/report.pdf";
-    const view = render(
-      <div data-message-id="m1">
-        <p>Notes from the review</p>
-        <FileAttachment
-          attachment={{
-            url: source,
-            kind: "file",
-            name: "report.pdf",
-            size: 2516582,
-          }}
-          source={source}
-          onOpenLink={() => false}
-        />
-      </div>,
+  describe("a file card under a caption", () => {
+    const caption = "Notes from the review";
+    const hosted = `https://relay.test/media/${"a".repeat(64)}.pdf`;
+    const external = "https://example.org/media/report.pdf";
+    const link = `/api/relay/primary/media?url=${encodeURIComponent(hosted)}`;
+    const button = `buzz-media://localhost/${encodeURIComponent(hosted)}`;
+    const name = {
+      text: `${caption}\nreport.pdf`,
+      markdown: `${caption}\nreport.pdf`,
+      html: `<p>${caption}</p><p>report.pdf</p>`,
+    };
+
+    // The card in a message row's markup, and what the selections a drag
+    // leaves there copy as.
+    function card(source?: string, size?: number, onPreview?: () => void) {
+      const view = render(
+        <div data-message-id="m1">
+          <p>{caption}</p>
+          <div data-message-attachments>
+            <FileAttachment
+              attachment={{
+                url: hosted,
+                kind: "file",
+                name: "report.pdf",
+                ...(size === undefined ? {} : { size }),
+              }}
+              source={source}
+              onOpenLink={() => false}
+              onPreview={onPreview}
+            />
+          </div>
+          <p>Next</p>
+        </div>,
+      );
+      const copy = (start: Node, from: number, end: Node, to: number) => {
+        const { selection } = select(start, from, end, to);
+        return Object.fromEntries(
+          formats.map((format) => [
+            format,
+            serializeSelection(selection, format),
+          ]),
+        );
+      };
+      const start = query("p", view.container).firstChild as Node;
+      return {
+        view,
+        // From the caption's start to past the card, where a drag released
+        // on the card's arrow ends.
+        past: () => copy(start, 0, query("p:last-child", view.container), 0),
+        // From the caption's start into the second line: to its end, where a
+        // drag released right of the card ends, or to an offset.
+        to(line: string, offset?: number) {
+          const second = lastText(view.getByText(line));
+          return copy(start, 0, second, offset ?? second.data.length);
+        },
+        // From an offset in the second line to its end.
+        within(line: string, offset: number) {
+          const second = lastText(view.getByText(line));
+          return copy(second, offset, second, second.data.length);
+        },
+      };
+    }
+
+    it.each([
+      ["download link", link, 2516582, "2 MB"],
+      ["sizeless download link", link, undefined, "Download file"],
+      ["download button", button, 2516582, "2 MB"],
+      ["unavailable", undefined, undefined, "File unavailable"],
+    ])(
+      "copies the %s card as its file name alone",
+      (_card, source, size, line) => {
+        const { past, to } = card(source, size);
+        expect(past()).toEqual(name);
+        expect(to(line)).toEqual(name);
+        expect(to(line, 1)).toEqual(name);
+      },
     );
-    const messageRow = query("[data-message-id]", view.container);
-    const size = view.getByText("2 MB").firstChild as Text;
-    // A drag from the caption's start to just past the size.
-    const { range } = select(
-      query("p", messageRow).firstChild as Node,
-      0,
-      size,
-      size.data.length,
+
+    it.each([
+      ["2 MB", 2516582],
+      ["Open file", undefined],
+    ])(
+      "links a whole external card by its file name, over “%s”",
+      (line, size) => {
+        const { past, to } = card(external, size);
+        const linked = {
+          text: `${caption}\nreport.pdf (${external})`,
+          markdown: `${caption}\n[report.pdf](${external})`,
+          html: `<p>${caption}</p><p><a href="${external}">report.pdf</a></p>`,
+        };
+        expect(past()).toEqual(linked);
+        expect(to(line)).toEqual(linked);
+        // Cut short on the second line, the card is its name, not a link.
+        expect(to(line, 1)).toEqual(name);
+      },
     );
-    expect(each(messageRow, range)).toEqual({
-      text: `Notes from the review\nreport.pdf (${source})`,
-      markdown: `Notes from the review\n[report.pdf](${source})`,
-      html: `<p>Notes from the review</p><a href="${source}">report.pdf</a>`,
+
+    it("copies a selection inside the second line as its text", () => {
+      expect(card(link, 2516582).within("2 MB", 2)).toEqual({
+        text: "MB",
+        markdown: "MB",
+        html: "MB",
+      });
+    });
+
+    // jsdom applies no style sheet, as the macOS app's engine reports no
+    // `user-select` for the card's unselectable row.
+    it("copies nothing for a preview card whose style is not computed", () => {
+      expect(card(link, 2516582, () => {}).past()).toEqual({
+        text: caption,
+        markdown: caption,
+        html: `<p>${caption}</p>`,
+      });
+    });
+
+    it("leaves out a failed download's announcement", async () => {
+      const { view, past } = card(button, 2516582);
+      fireEvent.click(view.getByRole("button"));
+      await view.findByText("Couldn’t download report.pdf. Try again.");
+      expect(past()).toEqual(name);
     });
   });
 

@@ -125,6 +125,14 @@ function serialize(
       : text(copyText, format);
   }
   if (!selectable) return "";
+  // Chrome the DOM marks rather than styles, such as a file card's second
+  // line: left out of a selection that runs through it, kept for one that
+  // lies inside it.
+  if (
+    node.hasAttribute("data-copy-skip") &&
+    !(range && node.contains(range.commonAncestorContainer))
+  )
+    return "";
   // This module's own delimiter markup; the spoiler branch writes it afresh.
   if (node.hasAttribute("data-spoiler-delimiter")) return "";
   // SVG tag names keep their case.

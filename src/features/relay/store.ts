@@ -1142,6 +1142,7 @@ export function createChannelStore(
           }
         }
         state.events = merged;
+        dropStrayTraffic(state);
         setWindow(state, { rows });
       }
     } catch (error) {
@@ -1531,7 +1532,10 @@ export function createChannelStore(
         return;
       }
       state.events = retained;
-      if (ceiling !== undefined) state.ceiling = ceiling;
+      if (ceiling !== undefined) {
+        state.ceiling = ceiling;
+        dropStrayTraffic(state);
+      }
       state.atHead = !cursor;
       if (!cursor) attached(state);
       moveCursor(state, page.cursor);
@@ -1713,6 +1717,13 @@ export function createChannelStore(
     while (low && rows[low - 1]?.created_at === above?.created_at) low--;
     if (!low || !above) return undefined;
     return { events: take(low), ceiling: above.created_at };
+  }
+  /** Forget live rows a slide dropped from the window: kept, they would
+   * outlive both budgets and show again once it returns to the head. */
+  function dropStrayTraffic(state: WindowState) {
+    const ids = new Set(state.events.map((event) => event.id));
+    for (const id of state.traffic.keys())
+      if (!ids.has(id)) state.traffic.delete(id);
   }
   /** Keep a window within the history budget by dropping its oldest rows,
    * besides the uncounted `own` ones: the next older page continues from the

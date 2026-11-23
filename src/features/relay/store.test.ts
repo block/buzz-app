@@ -984,7 +984,8 @@ describe("channel store", () => {
       }),
     ]);
     await flush();
-    live.receive([message(alice, "c", "three", 3)]);
+    const three = message(alice, "c", "three", 3);
+    live.receive([three]);
     expect(queries.window("c")).toMatchObject({ hasMore: true });
     expect(queries.window("c").rows.map((row) => row.content)).toEqual([
       "two",
@@ -1011,6 +1012,25 @@ describe("channel store", () => {
     expect(queries.window("c").rows.map((row) => row.content)).toEqual([
       "one",
       "two",
+    ]);
+    // The slide forgets the live row it dropped: a head without it (deleted
+    // meanwhile) shows only its own rows.
+    queries.attach?.("c");
+    const head = scripted.pending.find(
+      (read) => read.filters[0]?.top_level && !read.filters[0]?.until,
+    );
+    head?.respond([
+      three,
+      two,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 2, id: two.id },
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c").rows.map((row) => row.content)).toEqual([
+      "two",
+      "three",
     ]);
   });
   it("pages a window by the relay cursor, prepends older rows, and fetches missing profiles once", async () => {

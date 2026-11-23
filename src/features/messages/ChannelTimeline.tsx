@@ -2093,6 +2093,7 @@ function Timeline({
           latest.intent === scheduledIntent
         ) {
           scheduledIntent = ++intent.current;
+          restSheet();
           endIndex = rows.length - 1;
           restore = null;
           pendingRestore.current = undefined;
@@ -2494,6 +2495,30 @@ function Timeline({
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
             .messageId,
         );
+        // The scroll padding keeps keyboard focus in the history above the
+        // card's visible top. When the history can't scroll it clear of a grown
+        // card, the card returns to Rest. This runs after the focus's own scroll
+        // into view; a click never needs it, since the card takes the pointer.
+        const focused = event.target;
+        if (
+          !sheet.current?.scrollTop ||
+          focused === event.currentTarget ||
+          !(focused instanceof HTMLElement) ||
+          !focused.matches(":focus-visible")
+        )
+          return;
+        queueMicrotask(() => {
+          const cardTop =
+            sheet.current?.firstElementChild?.getBoundingClientRect().bottom;
+          if (
+            cardTop === undefined ||
+            focused.getBoundingClientRect().bottom <= cardTop + 1
+          )
+            return;
+          restSheet();
+          placeJumpToLatest();
+          focused.scrollIntoView({ block: "nearest" });
+        });
       }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
@@ -2824,6 +2849,9 @@ function Timeline({
   );
   return (
     <>
+      <MessageContextMenus>{feed}</MessageContextMenus>
+      {/* After the history, so keyboard order follows the card's place
+          between the history and the composer. */}
       {trailing && (
         <div
           ref={sheet}
@@ -2872,7 +2900,6 @@ function Timeline({
           </div>
         </div>
       )}
-      <MessageContextMenus>{feed}</MessageContextMenus>
     </>
   );
 }

@@ -353,11 +353,11 @@ function setup({
       });
     }
     key = scoped.key;
-    // The feed renders inside the list's message context menu host, after
+    // The feed renders inside the list's message context menu host, before
     // the trailing sheet.
-    const [, menus] = (
+    const [menus] = (
       scoped.type as (props: typeof scoped.props) => ReactElement<{
-        children: [unknown, ReactElement<{ children: Section }>];
+        children: [ReactElement<{ children: Section }>, unknown];
       }>
     )(scoped.props).props.children;
     section = menus.props.children;

@@ -560,6 +560,90 @@ test.describe("trailing card", () => {
     await expect(toggle(page)).toHaveAttribute("aria-expanded", "false");
   });
 
+  test("keyboard selection stays above the card, and a grown card rests to show it", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const region = history(page);
+    const focusedBottom = () =>
+      page.evaluate(
+        () => document.activeElement.getBoundingClientRect().bottom,
+      );
+    const focusedRow = () =>
+      page.evaluate(
+        () =>
+          document.activeElement.closest("[data-message-id]")?.dataset
+            .messageId,
+      );
+    await select(page, { channelId: "alpha", trailing: "long" });
+    await expect(toggle(page)).toHaveText("Full brief");
+    await expectRest(page, region);
+
+    // The history can't scroll the newest message above a grown card.
+    await toggle(page).press("Enter");
+    await expect(toggle(page)).toHaveText("Hide brief");
+    await settle(page, sheet(page));
+    const input = page.getByRole("textbox", { name: "Message #Alpha" });
+    await input.focus();
+    await input.press("ArrowUp");
+    await expect.poll(focusedRow).toBeTruthy();
+    const rested = await expectRest(page, region);
+    expect(await focusedBottom()).toBeLessThanOrEqual(rested.cardScreenTop + 1);
+
+    // At Rest above the end, Arrow Down onto a row behind the card scrolls it
+    // above the card.
+    await readEarlier(page, region);
+    await settle(page, region);
+    const { cardScreenTop } = await place(page);
+    const above = await region.evaluate((element, top) => {
+      const rows = [...element.querySelectorAll("[data-message-id]")];
+      const index = rows.findIndex(
+        (row) => row.getBoundingClientRect().bottom > top + 1,
+      );
+      const row = rows[index - 1];
+      const target = row.querySelector(":scope > [data-layout]") ?? row;
+      target.tabIndex = -1;
+      target.focus();
+      return row.dataset.messageId;
+    }, cardScreenTop);
+    expect(await focusedRow()).toBe(above);
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(focusedRow).not.toBe(above);
+    await settle(page, region);
+    expect(await focusedBottom()).toBeLessThanOrEqual(cardScreenTop + 1);
+    expect((await place(page)).sheetTop).toBe(0);
+  });
+
+  test("the card's controls follow the history in keyboard order", async ({
+    page,
+    app,
+    browserName,
+  }) => {
+    // macOS WebKit follows the host preference: Option-Tab includes every control.
+    const back =
+      browserName === "webkit" && process.platform === "darwin"
+        ? "Shift+Alt+Tab"
+        : "Shift+Tab";
+    await open(page, app);
+    const region = history(page);
+    await select(page, { channelId: "alpha", trailing: "short" });
+    await expect(toggle(page)).toHaveText("Full brief");
+    await page.getByRole("textbox", { name: "Message #Alpha" }).focus();
+    await page.keyboard.press(back);
+    await expect(
+      card(page).getByRole("button", { name: "Approve" }),
+    ).toBeFocused();
+    await page.keyboard.press(back);
+    await expect(toggle(page)).toBeFocused();
+    await page.keyboard.press(back);
+    expect(
+      await region.evaluate((element) =>
+        element.contains(document.activeElement),
+      ),
+    ).toBe(true);
+  });
+
   test.describe(() => {
     // Without thread fixtures, the latest row is a top-level message.
     test.use({ threadUnread: false });
@@ -587,6 +671,24 @@ test.describe("trailing card", () => {
       await expect(
         region.locator(`[data-message-id="${messageId}"]`),
       ).toBeInViewport();
+      await expectRest(page, region);
+    });
+
+    test("a retained transcript's jump returns a grown card to Rest below the latest message", async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      const region = history(page);
+      await select(page, { channelId: "alpha", trailing: "long" });
+      await expect(toggle(page)).toHaveText("Full brief");
+      await expectRest(page, region);
+      await readEarlier(page, region);
+      await overCard(page);
+      await wheel(page, 150, sheet(page));
+      await expect(toggle(page)).toHaveText("Hide brief");
+
+      await jump(page).click();
       await expectRest(page, region);
     });
   });

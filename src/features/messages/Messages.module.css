@@ -93,9 +93,11 @@
 }
 /* A workspace's trailing card covers the end of the history, and a box of its
    rest height ends the scroll range so the latest message stays above it.
-   The history inset would only add a gap between the two. */
+   The history inset would only add a gap between the two. Focus scrolls into
+   view above the card's visible top. */
 .feed[data-trailing] {
   --history-bottom-inset: 0px;
+  scroll-padding-bottom: var(--timeline-trailing-rest, 0px);
 }
 /* ChannelTimeline places the sheet over the history's scrollport with the
    history's inline padding and measure. Only the card takes pointer input, so

@@ -30,15 +30,10 @@ export function withoutStartingAgents(
     : rows;
 }
 
-/** Only explicit additions, removals and pins belong in the conversation. */
+/** Only explicit additions and removals belong in the conversation. */
 const visibleMembership = (change: MembershipChange) =>
   change.type === "member_removed" ||
-  change.type === "message_pinned" ||
   (change.type === "member_joined" && change.actor !== change.target);
-
-/** Membership changes that group; a pin notice always stands alone. */
-const grouped = (row: ChannelMessage | undefined) =>
-  !!row?.membership && row.membership.type !== "message_pinned";
 
 /** Newest-anchored groups keep loaded keys stable when history is prepended.
  * Every uninterrupted membership run is one row, regardless of elapsed time.
@@ -54,7 +49,8 @@ export function membershipRows(
     const newest = rows[end];
     if (!newest) break;
     let start = end;
-    while (grouped(newest) && start > 0 && grouped(rows[start - 1])) start--;
+    while (newest.membership && start > 0 && rows[start - 1]?.membership)
+      start--;
     result.push(
       start === end
         ? newest
@@ -130,12 +126,6 @@ export function membershipDescription(
           id.slice(0, 10)),
   });
   const plain = (text: string): MembershipPart => ({ text });
-  // A pin notice never groups (see `membershipRows`), so it is the only row.
-  if (first.type === "message_pinned") {
-    const parts = [name(first.actor, true), plain(" pinned a message")];
-    const text = parts.map((part) => part.text).join("");
-    return { targets, parts, text, title: text };
-  }
   const list = (items: readonly MembershipPart[]) => {
     let next = 0;
     return new Intl.ListFormat(undefined, { type: "conjunction" })

@@ -48,6 +48,8 @@ import bestieManifest from "./bestie/manifest.json";
 import * as bestie from "./bestie";
 import usageManifest from "./usage/manifest.json";
 import * as usage from "./usage";
+import catchUpManifest from "./catch-up/manifest.json";
+import * as catchUp from "./catch-up";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
@@ -90,6 +92,11 @@ const claudeHarness: BundledPlugin = {
 };
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  {
+    manifest: { ...catchUpManifest, apiVersion: 1 },
+    module: catchUp,
+    enabledByDefault: false,
+  },
   {
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,

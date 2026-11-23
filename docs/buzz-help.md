@@ -119,6 +119,10 @@ if that desktop app is up and running.
 - **Sidebar actions.** Hover over a workspace or channel heading, or press Tab
   to reach its actions. On touch, tap **⋯**. In workspaces and Solo channels
   that support tasks, **⋯ → New task** works even when the pencil is hidden.
+- **Catch up** reviews unread conversations one at a time. Enable it in
+  **Settings → Plugins → Manage plugins**, then open **Catch up** in the left nav.
+  Swipe right to mark the conversation as read or left to keep it unread.
+  You can also use the buttons or open the conversation.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,

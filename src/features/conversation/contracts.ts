@@ -112,7 +112,11 @@ export type ReactionToolProps = Readonly<{
   session: RelaySession;
   scope: string;
   disabled: boolean;
-  /** Host-owned reaction intent; revoked when the tool or target is removed. */
+  /**
+   * Host-owned reaction intent; revoked when the tool or target is removed.
+   * True means the choice added a reaction and counts as a use; false means it
+   * was rejected or removed an existing reaction.
+   */
   select(emoji: string): boolean;
 }>;
 export type ComposerTool = Readonly<{

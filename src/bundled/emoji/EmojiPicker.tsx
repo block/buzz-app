@@ -79,7 +79,10 @@ export function EmojiPicker({
   addEmoji?: Pick<AddEmoji, "snapshot" | "subscribe"> | undefined;
   scope: string;
   disabled: boolean;
-  /** Return false when the insertion is rejected. */
+  /**
+   * Return false when the choice is rejected or removes a reaction; any other
+   * result counts it as a use.
+   */
   insert(value: string): unknown;
   reaction?: boolean;
   gifRequests?: GifRequests | undefined;

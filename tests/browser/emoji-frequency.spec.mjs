@@ -196,12 +196,16 @@ test("choosing an existing reaction removes it and teaches nothing", async ({
     page.evaluate(() =>
       JSON.parse(localStorage.getItem("emoji-mart.frequently") ?? "{}"),
     );
-  const reactRocket = async () => {
+  const actions = row
+    .getByRole("group", { name: "Message actions", includeHidden: true })
+    .getByRole("button", { name: "Add reaction", exact: true });
+  // The second pick uses the plus beside the reactions, a separate picker.
+  const inline = row
+    .getByTestId("inline-add-reaction")
+    .getByRole("button", { name: "Add reaction", exact: true });
+  const reactRocket = async (plus) => {
     await hoverMessage(row);
-    await row
-      .getByRole("group", { name: "Message actions", includeHidden: true })
-      .getByRole("button", { name: "Add reaction", exact: true })
-      .click();
+    await plus.click();
     await search.fill("rocket");
     await page
       .locator('em-emoji-picker .category button[aria-label="🚀"]')
@@ -209,11 +213,11 @@ test("choosing an existing reaction removes it and teaches nothing", async ({
       .click();
     await expect(search).toHaveCount(0);
   };
-  await reactRocket();
+  await reactRocket(actions);
   await expect(pill).toHaveAttribute("aria-pressed", "true");
   await expect(pill).toHaveAttribute("aria-disabled", "false");
   await expect.poll(counts).toEqual({ rocket: 1 });
-  await reactRocket();
+  await reactRocket(inline);
   await expect(pill).toHaveCount(0);
   expect(await counts()).toEqual({ rocket: 1 });
   expect(errors.unexplained()).toEqual([]);

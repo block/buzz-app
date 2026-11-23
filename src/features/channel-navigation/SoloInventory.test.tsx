@@ -672,7 +672,7 @@ it.each([
 );
 
 it.each(["new", "linked", "agent", "region"])(
-  "selects ordinary drafts without marking a region draft as New chat (%s)",
+  "selects ordinary drafts without marking a region draft as New message (%s)",
   async (route) => {
     const f = fixture();
     writeView(scope, "solo:collapsed-projects", [""]);
@@ -688,10 +688,10 @@ it.each(["new", "linked", "agent", "region"])(
     );
     act(() => f.navigate(target));
     if (route === "region") {
-      expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "New message" })).toBeNull();
       return;
     }
-    const draft = await screen.findByRole("button", { name: "New chat" });
+    const draft = await screen.findByRole("button", { name: "New message" });
     expect(draft).toHaveAttribute("aria-current", "page");
     expect(draft).toHaveAttribute("data-selected", "true");
     expect(screen.getByRole("button", { name: /^Other/ })).not.toHaveAttribute(
@@ -700,7 +700,7 @@ it.each(["new", "linked", "agent", "region"])(
     await userEvent.click(draft);
     expect(f.open).toHaveBeenLastCalledWith(target);
     act(() => f.navigate(conversationTarget(scope, id)));
-    expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "New message" })).toBeNull();
     expect(screen.getByRole("button", { name: /^Planning/ })).toHaveAttribute(
       "aria-current",
       "page",
@@ -730,22 +730,27 @@ it("resumes workspace drafts and retains unsent text/files across sidebar remoun
     writeView(scope, "solo:project:work:settings", settings);
     f.navigate(target);
   });
-  expect(screen.getAllByRole("button", { name: "New chat" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "New message" })).toHaveLength(
+    2,
+  );
   await user.click(
     screen.getByRole("button", {
-      name: "New chat or workspace",
+      name: "New message or workspace",
     }),
   );
-  await user.click(await screen.findByRole("menuitem", { name: "New chat" }));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "New message" }),
+  );
   expect(f.open).toHaveBeenLastCalledWith(target);
   expect(readView(scope, "solo:project:work:settings", null)).toEqual(settings);
   await user.click(screen.getByRole("button", { name: /^Planning/ }));
   const choices = screen.getAllByRole("button", {
-    name: "New chat in Work",
+    name: "New message in Work",
   });
   const create =
-    choices.find((choice) => choice.textContent === "New chat") ?? choices[0];
-  if (!create) throw new Error("Missing workspace New chat action");
+    choices.find((choice) => choice.textContent === "New message") ??
+    choices[0];
+  if (!create) throw new Error("Missing workspace New message action");
   await user.click(create);
   expect(f.open).toHaveBeenLastCalledWith(
     soloDraftTarget(scope, { project: "work" }),
@@ -760,12 +765,12 @@ it("resumes workspace drafts and retains unsent text/files across sidebar remoun
     f.navigate(unfiled);
   });
   await user.click(screen.getByRole("button", { name: /^Planning/ }));
-  const row = screen.getByRole("button", { name: "New chat" });
+  const row = screen.getByRole("button", { name: "New message" });
   expect(row).toHaveAccessibleDescription("Unsent draft");
   expect(row).not.toHaveAttribute("aria-current");
   act(() => f.sidebar(false));
   act(() => f.sidebar(true));
-  await user.click(screen.getByRole("button", { name: "New chat" }));
+  await user.click(screen.getByRole("button", { name: "New message" }));
   expect(f.open).toHaveBeenLastCalledWith(unfiled);
   await user.click(screen.getByRole("button", { name: /^Planning/ }));
   const files = attachmentDraft(f.session, `${scope}:solo:new-draft`, "", true);
@@ -775,9 +780,11 @@ it("resumes workspace drafts and retains unsent text/files across sidebar remoun
     ]);
     writeView(scope, "solo:new-draft", "");
   });
-  expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "New message" }),
+  ).toBeInTheDocument();
   act(() => files.clear());
-  expect(screen.queryByRole("button", { name: "New chat" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "New message" })).toBeNull();
 });
 
 it("keeps the open, unread and working chats listed past a workspace's cap", () => {

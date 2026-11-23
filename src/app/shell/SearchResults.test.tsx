@@ -4005,7 +4005,7 @@ it.each([
       />,
     );
     expect(
-      await screen.findByRole("group", { name: /^New chat with/ }),
+      await screen.findByRole("group", { name: /^New message to/ }),
     ).toBeInTheDocument();
     for (const picker of ["Channels", "People", "Dates"])
       expect(screen.queryByRole("group", { name: picker })).toBeNull();
@@ -7190,7 +7190,7 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
   try {
     const view = render(<SearchResults {...props} query="deploy in:#bu" />);
     const channels = within(
-      await screen.findByRole("group", { name: "Channels" }),
+      await screen.findByRole("group", { name: "Conversations" }),
     );
     await waitFor(() =>
       expect(
@@ -7202,7 +7202,7 @@ it("picks an in: channel from the joined channels and an in:@ person like from:@
     view.rerender(<SearchResults {...props} query="in:#" />);
     expect(
       await within(
-        await screen.findByRole("group", { name: "Channels" }),
+        await screen.findByRole("group", { name: "Conversations" }),
       ).findAllByRole("option"),
     ).toHaveLength(3);
     view.rerender(<SearchResults {...props} query="deploy in:@bax" />);
@@ -7241,7 +7241,7 @@ it("keeps a picked channel's identity past an open live namesake", async () => {
   try {
     const view = render(<SearchResults {...props} query="deploy in:#cr" />);
     const channels = within(
-      await screen.findByRole("group", { name: "Channels" }),
+      await screen.findByRole("group", { name: "Conversations" }),
     );
     fireEvent.click(await channels.findByRole("option", { name: /crew/ }));
     expect(change).toHaveBeenLastCalledWith(`in:${joined} deploy `);
@@ -7336,7 +7336,7 @@ it.each([
 );
 
 it.each([
-  ["deploy in:#cr", "Channels", /crew/, "in:crew deploy "],
+  ["deploy in:#cr", "Conversations", /crew/, "in:crew deploy "],
   ["deploy from:@ali", "People", /Alice/, "from:<alice> deploy "],
   ["deploy after:", "Dates", /Today/, "after:2026-10-07 deploy "],
 ])(
@@ -7489,7 +7489,7 @@ it("turns date and channel picks into chips that Backspace edits", async () => {
     render(<Search />);
     fireEvent.click(
       await within(
-        await screen.findByRole("group", { name: "Channels" }),
+        await screen.findByRole("group", { name: "Conversations" }),
       ).findByRole("option", { name: /crew/ }),
     );
     const input = screen.getByRole("combobox", { name: "Search Buzz" });
@@ -7520,7 +7520,7 @@ it("turns date and channel picks into chips that Backspace edits", async () => {
     expect(input).toHaveValue("deploy in:#crew");
     fireEvent.click(
       await within(
-        await screen.findByRole("group", { name: "Channels" }),
+        await screen.findByRole("group", { name: "Conversations" }),
       ).findByRole("option", { name: /crew/ }),
     );
     expect(changes.at(-1)).toBe("in:crew deploy ");
@@ -7570,7 +7570,7 @@ it("lets a picked person or channel replace a typed filter of its kind", async (
     );
     fireEvent.click(
       await within(
-        await screen.findByRole("group", { name: "Channels" }),
+        await screen.findByRole("group", { name: "Conversations" }),
       ).findByRole("option", { name: /crew/ }),
     );
     const channel = `in:${crew} deploy `;
@@ -8591,7 +8591,7 @@ it("finds a person by username and opens a draft to them", async () => {
       await screen.findByRole("group", { name: "People" }),
     ).findByRole("option");
     expect(row).toHaveTextContent("Alice Chen");
-    expect(row).toHaveTextContent("@achen · Start a direct message");
+    expect(row).toHaveTextContent("@achen · New message");
     expect(row).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(screen.getByRole("combobox", { name: "Search Buzz" }), {
       key: "Enter",
@@ -8787,7 +8787,7 @@ it("opens an existing DM from a person row, and a draft to someone without one",
         within(group)
           .getAllByRole("option")
           .map((row) => row.querySelector(".text-subtle")?.textContent),
-      ).toEqual(["@ally · Direct message", "Start a direct message"]),
+      ).toEqual(["@ally · Direct message", "New message"]),
     );
     fireEvent.click(within(group).getByRole("option", { name: /Alice Chen/ }));
     expect(openConversation).toHaveBeenCalledExactlyOnceWith("dm");
@@ -9211,7 +9211,7 @@ it("uses readable owners before key suffixes for agent namesakes", async () => {
     ).toBeVisible();
     expect(
       within(group).getByRole("option", {
-        name: /^NamesakeStart a direct message$/,
+        name: /^NamesakeNew message$/,
       }),
     ).toBeVisible();
   } finally {
@@ -9320,7 +9320,7 @@ it.each([true, false])(
         );
         expect(
           agents.getByRole("option", { name: /Scotia/ }),
-        ).toHaveTextContent("Start a direct message");
+        ).toHaveTextContent("New message");
         expect(agents.queryByRole("option", { name: /Scout/ })).toBeNull();
         return;
       }
@@ -9328,7 +9328,7 @@ it.each([true, false])(
         await screen.findByRole("group", { name: "Agents" }),
       );
       const choice = agents.getByRole("option", { name: /Scout/ });
-      expect(choice).toHaveTextContent("New chat");
+      expect(choice).toHaveTextContent("New message");
       // The chats with Scout follow, newest first; the DM comes later.
       const chats = within(await screen.findByRole("group", { name: "Chats" }));
       await waitFor(() =>
@@ -9356,13 +9356,13 @@ it.each([true, false])(
       );
       // An agent with no DM yet starts a chat too, not a DM.
       expect(agents.getByRole("option", { name: /Scotia/ })).toHaveTextContent(
-        "New chat",
+        "New message",
       );
       expect(agents.queryByRole("option", { name: /Scooter/ })).toBeNull();
       fireEvent.click(choice);
       expect(openAgentSession).toHaveBeenCalledExactlyOnceWith(mine.pubkey);
       expect(openConversation).not.toHaveBeenCalled();
-      // The DM gives way only to a New chat row that shows. "cout" finds
+      // The DM gives way only to a New message row that shows. "cout" finds
       // the DM by substring but not the agent, so the DM stays.
       mounted.rerender(
         <SearchResults
@@ -9524,8 +9524,8 @@ function renderBestieSearch({
   };
 }
 
-it("keeps the Bestie DM in Top results when the cut hides its New chat too", async () => {
-  // Five better-matching agents put Bestie's New chat sixth, past the five
+it("keeps the Bestie DM in Top results when the cut hides its New message too", async () => {
+  // Five better-matching agents put Bestie's New message sixth, past the five
   // rows Top results shows of its lead group. Its DM is not listed under
   // Direct messages, so Top results must still show it.
   localStorage.clear();
@@ -9540,7 +9540,7 @@ it("keeps the Bestie DM in Top results when the cut hides its New chat too", asy
       const rows = agents.getAllByRole("option").map((row) => row.textContent);
       expect(rows).toEqual([
         ...Array.from({ length: 5 }, () =>
-          expect.stringMatching(/Scout [A-E].*New chat/),
+          expect.stringMatching(/Scout [A-E].*New message/),
         ),
         expect.stringMatching(/Z Scout.*Direct message/),
       ]);
@@ -9558,7 +9558,7 @@ it("keeps the Bestie DM in Top results when the cut hides its New chat too", asy
   }
 });
 
-it("puts the Bestie DM back under its New chat when Agents is shown whole", async () => {
+it("puts the Bestie DM back under its New message when Agents is shown whole", async () => {
   localStorage.clear();
   const { dispose } = renderBestieSearch({
     query: "scout",
@@ -9578,7 +9578,7 @@ it("puts the Bestie DM back under its New chat when Agents is shown whole", asyn
           .slice(5, 7)
           .map((row) => row.textContent),
       ).toEqual([
-        expect.stringMatching(/Z Scout.*New chat/),
+        expect.stringMatching(/Z Scout.*New message/),
         expect.stringMatching(/Z Scout.*Direct message/),
       ]),
     );
@@ -9601,9 +9601,9 @@ it("puts the viewer's Bestie DM right under its new chat, ahead of its chats", a
       expect(
         agents.getAllByRole("option").map((row) => row.textContent),
       ).toEqual([
-        expect.stringMatching(/Scout.*New chat/),
+        expect.stringMatching(/Scout.*New message/),
         expect.stringMatching(/Scout.*Direct message/),
-        expect.stringMatching(/Scotia.*New chat/),
+        expect.stringMatching(/Scotia.*New message/),
       ]),
     );
     await screen.findByRole("group", { name: "Chats" });
@@ -9636,7 +9636,7 @@ it.each([
     label: "Scout",
   },
   {
-    // Here Scotia's New chat row shows as well.
+    // Here Scotia's New message row shows as well.
     name: "the @ query @sco",
     query: "@sco",
     bestieProfile: "Scout",
@@ -9673,7 +9673,7 @@ it.each([
       const agents = within(
         await screen.findByRole("group", { name: "Agents" }),
       );
-      const newChat = new RegExp(`${label}.*New chat`);
+      const newChat = new RegExp(`${label}.*New message`);
       const direct = new RegExp(`${label}.*Direct message`);
       await waitFor(() => {
         const rows = agents
@@ -9718,8 +9718,8 @@ it("promotes no Bestie DM that the sidebar hides", async () => {
     );
     expect(agents.getAllByRole("option").map((row) => row.textContent)).toEqual(
       [
-        expect.stringMatching(/Scout.*New chat/),
-        expect.stringMatching(/Scotia.*New chat/),
+        expect.stringMatching(/Scout.*New message/),
+        expect.stringMatching(/Scotia.*New message/),
       ],
     );
     expect(direct.queryByRole("option", { name: /Scout/ })).toBeNull();
@@ -9742,7 +9742,7 @@ it.each([
     exactName: "Scoo",
     groups: ["Agents", "Chats"],
     chats: ["Plan the week", "scoo"],
-    first: /Scout.*New chat/,
+    first: /Scout.*New message/,
   },
   {
     name: "puts exact names ahead of an agent's new chat",
@@ -10183,7 +10183,7 @@ it("holds an early Enter for a person still being found over a section holding t
       key: "buzz.channels/templates",
       id: "templates",
       pluginId: "buzz.channels",
-      title: "Channel templates",
+      title: "Conversation templates",
       group: "App",
       revision: "one",
       component: () => null,
@@ -10200,7 +10200,7 @@ it("holds an early Enter for a person still being found over a section holding t
   // "wes" finds Software updates the same way, but in the shipped palette
   // plugin rows still take its early Enter: plugin descriptions hold most
   // names' letters in order. Of the bundled plugins, controls and a member's
-  // sections, "champ" matched only Channel templates, so this Enter turns on
+  // sections, "champ" matched only Conversation templates, so this Enter turns on
   // section matching alone.
   function Palette() {
     const inlineSettings = useSearchSettings({
@@ -10582,13 +10582,13 @@ it("loads verified names for a settled search page in the background and shows t
     await waitFor(() => expect(reads).toHaveLength(1));
     // The page shows its profile names while the verified read is held.
     expect(within(people).getByRole("option")).toHaveTextContent(
-      "FakeStart a direct message",
+      "FakeNew message",
     );
     expect(within(people).getByRole("option")).not.toHaveTextContent("Name");
     await act(async () => reads[0]?.release());
     await waitFor(() =>
       expect(within(people).getByRole("option")).toHaveTextContent(
-        /fnameFake Name · Start a direct message$/,
+        /fnameFake Name · New message$/,
       ),
     );
     // Refining the query keeps the row by its verified full name and does not
@@ -10692,8 +10692,8 @@ it("reuses shared verified names and reads only the rest of a search page", asyn
           .map((row) => row.textContent),
       ).toEqual([
         // The exact profile name ranks first; the failed read keeps it.
-        expect.stringMatching(/FakeStart a direct message$/),
-        expect.stringMatching(/fotherFake Other · Start a direct message$/),
+        expect.stringMatching(/FakeNew message$/),
+        expect.stringMatching(/fotherFake Other · New message$/),
       ]),
     );
   } finally {
@@ -10773,18 +10773,18 @@ it("keeps a row found by its profile name once a verified name replaces it, drop
     );
     await settle(SEARCH_DEBOUNCE_MS);
     await settle(0);
-    expect(row()).toHaveTextContent(/fnameStart a direct message$/);
+    expect(row()).toHaveTextContent(/fnameNew message$/);
     discovery = null;
     await settle(5 * 60_000);
     await settle(1_000);
-    expect(row()).toHaveTextContent(/FakeStart a direct message$/);
+    expect(row()).toHaveTextContent(/FakeNew message$/);
     // The same key, re-enabled, checks the page again instead of restoring
     // what the withdrawn authority checked.
     discovery = advertised;
     display = "knew";
     await settle(5 * 60_000);
     await settle(1_000);
-    expect(row()).toHaveTextContent(/knewStart a direct message$/);
+    expect(row()).toHaveTextContent(/knewNew message$/);
     expect(reads).toBe(2);
   } finally {
     cleanup();
@@ -10867,7 +10867,7 @@ it("labels a row by its verified name over a cached profile name without a namin
     const people = await screen.findByRole("group", { name: "People" });
     await waitFor(() =>
       expect(within(people).getByRole("option")).toHaveTextContent(
-        /fnameStart a direct message$/,
+        /fnameNew message$/,
       ),
     );
     expect(owner.session.profiles.snapshot().get(fake.pubkey)?.verified).toBe(
@@ -11455,7 +11455,7 @@ it("keeps chosen filters when ask: is added, and asks with them, across reopenin
     render(<Host />);
     fireEvent.click(
       await within(
-        await screen.findByRole("group", { name: "Channels" }),
+        await screen.findByRole("group", { name: "Conversations" }),
       ).findByRole("option", { name: /buzz-bugs/ }),
     );
     const chip = screen.getByRole("button", {

@@ -725,8 +725,8 @@ export function SoloWorkspaces({
                         (!compose || !project.id) && (
                           <IconButton
                             size="compact"
-                            aria-label={`New chat in ${project.name}`}
-                            title="New chat"
+                            aria-label={`New message in ${project.name}`}
+                            title="New message"
                             icon={<PlusIcon size={15} strokeWidth={2.5} />}
                             onClick={() => onNew(project.id || undefined)}
                           />
@@ -766,7 +766,7 @@ export function SoloWorkspaces({
             <ChatActionsMenu
               key={draft.id}
               id={`new-chat-draft:${draft.id}`}
-              title="New chat"
+              title="New message"
               className={styles.organizedRow}
               content={null}
               enabled={false}
@@ -860,9 +860,9 @@ export function SoloWorkspaces({
           (onNew ? (
             <NavigationItem
               variant="row"
-              label="New chat"
-              aria-label={`New chat in ${project.name}`}
-              title={`New chat in ${project.name}`}
+              label="New message"
+              aria-label={`New message in ${project.name}`}
+              title={`New message in ${project.name}`}
               icon={
                 <span className={styles.conversationIcon}>
                   <PlusIcon size={16} strokeWidth={2.5} />

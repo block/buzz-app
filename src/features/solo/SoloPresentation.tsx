@@ -27,9 +27,9 @@ export function SoloDraftView({
     <section
       className={styles.work}
       data-attachment-drop-zone=""
-      aria-label="New chat"
+      aria-label="New message"
     >
-      <SoloTitle channel={{ name: "New chat" }}>{actions}</SoloTitle>
+      <SoloTitle channel={{ name: "New message" }}>{actions}</SoloTitle>
       <div className={styles.start}>
         <div className={styles.startContent}>{children}</div>
       </div>

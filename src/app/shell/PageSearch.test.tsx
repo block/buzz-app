@@ -1258,7 +1258,7 @@ it("finds and opens saved conversations while the community is unreachable or st
   }
 });
 
-/** Cmd+K on `ask: …` with an agent New chat would tag, and a New chat draft. */
+/** Cmd+K on `ask: …` with an agent New message would tag, and a New message draft. */
 async function askSearch(existingDraft?: {
   text: string;
   recipients: readonly never[];
@@ -1357,7 +1357,7 @@ async function askSearch(existingDraft?: {
   };
 }
 
-it("asks in New chat by writing the question draft and opening it for the agent", async () => {
+it("asks in New message by writing the question draft and opening it for the agent", async () => {
   const f = await askSearch();
   try {
     expect(f.draft()).toBeNull();
@@ -1378,7 +1378,7 @@ it("asks in New chat by writing the question draft and opening it for the agent"
   }
 });
 
-it("keeps an unsent New chat draft when asking, and opens New chat with the question only on Replace", async () => {
+it("keeps an unsent New message draft when asking, and opens New message to the question only on Replace", async () => {
   const unsent = { text: "my half-written note", recipients: [] };
   const f = await askSearch(unsent);
   const question = {
@@ -1392,7 +1392,7 @@ it("keeps an unsent New chat draft when asking, and opens New chat with the ques
       },
     ],
   };
-  // New chat's composer reads its draft as it opens, so it must open only
+  // New message's composer reads its draft as it opens, so it must open only
   // once the question is written.
   const opened: unknown[] = [];
   f.open.mockImplementation(async () => {
@@ -1401,7 +1401,7 @@ it("keeps an unsent New chat draft when asking, and opens New chat with the ques
   try {
     await f.user.keyboard("{Enter}");
     const notice = await screen.findByRole("dialog", {
-      name: "New chat already has an unsent draft",
+      name: "New message already has an unsent draft",
     });
     expect(f.draft()).toEqual(unsent);
     expect(f.open).not.toHaveBeenCalled();
@@ -1424,14 +1424,14 @@ it("does nothing on Replace once the person has switched community", async () =>
   try {
     await f.user.keyboard("{Enter}");
     const notice = await screen.findByRole("dialog", {
-      name: "New chat already has an unsent draft",
+      name: "New message already has an unsent draft",
     });
     f.switchCommunity();
     fireEvent.click(within(notice).getByRole("button", { name: "Replace it" }));
     await vi.waitFor(() =>
       expect(
         screen.queryByRole("dialog", {
-          name: "New chat already has an unsent draft",
+          name: "New message already has an unsent draft",
         }),
       ).toBeNull(),
     );

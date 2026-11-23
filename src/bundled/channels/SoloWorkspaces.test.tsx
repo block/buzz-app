@@ -396,7 +396,7 @@ it("starts an unfiled chat from the Chats heading plus without collapsing it", a
   render(h.view(owner.queries));
   const user = userEvent.setup();
   await user.click(
-    await screen.findByRole("button", { name: "New chat in Chats" }),
+    await screen.findByRole("button", { name: "New message in Chats" }),
   );
   expect(h.onNew).toHaveBeenCalledExactlyOnceWith(undefined);
   expect(screen.getByRole("button", { name: "Chats" })).toHaveAttribute(
@@ -466,7 +466,7 @@ it("starts a chat in a project from its heading plus", async () => {
     const header = heading.closest<HTMLElement>(PROJECT_HEADER);
     if (!header) throw new Error("Missing project header");
     await user.click(
-      within(header).getByRole("button", { name: "New chat in Work" }),
+      within(header).getByRole("button", { name: "New message in Work" }),
     );
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith("work");
   } finally {
@@ -474,7 +474,7 @@ it("starts a chat in a project from its heading plus", async () => {
   }
 });
 
-it("opens the exact project from an empty project's New chat row", async () => {
+it("opens the exact project from an empty project's New message row", async () => {
   const projectName =
     "A very long project name that should not become the new chat label";
   const h = fixture(projectName);
@@ -483,9 +483,9 @@ it("opens the exact project from an empty project's New chat row", async () => {
   render(h.view(store.queries, "empty-project"));
   try {
     const choices = await screen.findAllByRole("button", {
-      name: `New chat in ${projectName}`,
+      name: `New message in ${projectName}`,
     });
-    const row = choices.find((choice) => choice.textContent === "New chat");
+    const row = choices.find((choice) => choice.textContent === "New message");
     expect(row).toBeDefined();
     if (!row) throw new Error("Missing empty project action");
     row.focus();
@@ -579,12 +579,14 @@ it("shares a workspace frame while keeping selection, disclosure and chat creati
     expect(onTask).toHaveBeenCalledTimes(2);
     expect(onSelect).toHaveBeenCalledOnce();
     expect(
-      screen.queryByRole("button", { name: "New chat in Work" }),
+      screen.queryByRole("button", { name: "New message in Work" }),
     ).toBeNull();
-    const create = screen.getAllByRole("button", { name: /New chat/ });
+    const create = screen.getAllByRole("button", { name: /New message/ });
     expect(create).toHaveLength(1);
-    expect(create[0]).toHaveAccessibleName("New chat in Chats");
-    await user.click(screen.getByRole("button", { name: "New chat in Chats" }));
+    expect(create[0]).toHaveAccessibleName("New message in Chats");
+    await user.click(
+      screen.getByRole("button", { name: "New message in Chats" }),
+    );
     expect(h.onNew).toHaveBeenCalledExactlyOnceWith(undefined);
   } finally {
     store.dispose();

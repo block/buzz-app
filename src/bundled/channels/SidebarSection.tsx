@@ -386,11 +386,11 @@ export function SidebarSection({
               {createChannel && (
                 <IconButton
                   size="compact"
-                  aria-label="Create channel"
+                  aria-label="New message"
                   title={
                     createChannel.available
-                      ? "Create channel"
-                      : "Channel creation unavailable"
+                      ? "New message"
+                      : "New message unavailable"
                   }
                   disabled={!createChannel.available}
                   onClick={(event) => createChannel.open(event.currentTarget)}

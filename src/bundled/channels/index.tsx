@@ -93,7 +93,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const navigator = ctx.navigation;
   ctx.conversation.registerMessageAction({
     id: "start-solo-chat",
-    title: "Start Solo chat",
+    title: "New message about this",
     placement: "menu",
     icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
     matches: canStartLinkedChatFrom,
@@ -188,7 +188,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const membership = ctx.adminAccess.membership;
   ctx.settingsCards.register({
     id: "templates",
-    title: "Channel templates",
+    title: "Conversation templates",
     group: "App",
     icon: CopyIcon,
     component: ({ active }) => (

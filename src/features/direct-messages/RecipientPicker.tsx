@@ -605,7 +605,7 @@ export function RecipientPicker({
                   ? `${maxRecipients} ${maxRecipients === 1 ? "person" : "people"} selected`
                   : "Add another person…"
                 : channelOptions.length
-                  ? "Find a person or channel…"
+                  ? "Find a person or conversation…"
                   : "Find a person…"
             }
             value={query}

@@ -90,7 +90,7 @@ export function StartLinkedChat({
       <MenuIcon>
         <ChatCircleIcon size={16} aria-hidden="true" />
       </MenuIcon>
-      Start Solo chat
+      New message about this
     </MenuItem>
   );
 }

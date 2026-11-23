@@ -791,7 +791,7 @@ export function ChannelInventory({
         <SpringLoadedNavigationItem
           key={draft?.linked ?? draft?.project ?? "new-chat"}
           onSpring={() => void navigator.open(destination)}
-          label="New chat"
+          label="New message"
           aria-description="Unsent draft"
           selected={selected}
           aria-current={selected ? "page" : undefined}

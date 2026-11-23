@@ -425,7 +425,7 @@ it.each([
       ).toBeVisible(),
   },
 ])(
-  "a refused start reports why and never overwrites $begun begun in New chat since",
+  "a refused start reports why and never overwrites $begun begun in New message since",
   async ({ begin, kept }) => {
     const test = await projectSetup(),
       onStarted = vi.fn(),
@@ -457,7 +457,7 @@ it.each([
       expect(onFailed).toHaveBeenCalledWith(
         id,
         expect.stringMatching(
-          /^Couldn't start ".+": Channel creation rejected\. New chat has a newer draft, so your message was not restored\.$/,
+          /^Couldn't start ".+": Channel creation rejected\. New message has a newer draft, so your message was not restored\.$/,
         ),
       ),
     );
@@ -466,7 +466,7 @@ it.each([
     expect(readView("test", `draft:${id}`, null)).toBeNull();
   },
 );
-it("a refused start gives its prompt, files and settings back to a blank New chat", async () => {
+it("a refused start gives its prompt, files and settings back to a blank New message", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     onFailed = vi.fn(),
@@ -494,14 +494,14 @@ it("a refused start gives its prompt, files and settings back to a blank New cha
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   const id = test.channelWrites.create.mock.calls[0]?.[0];
   first.unmount();
-  // New chat is open and still blank when the relay refuses the first.
+  // New message is open and still blank when the relay refuses the first.
   render(view());
   expect(screen.getByRole("textbox")).not.toHaveTextContent("Audit");
   await refuse();
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(
       id,
-      `Couldn't start "Onboarding audit": Channel creation rejected. Your message is back in New chat.`,
+      `Couldn't start "Onboarding audit": Channel creation rejected. Your message is back in New message.`,
     ),
   );
   expect(screen.getByRole("textbox")).toHaveTextContent(
@@ -565,7 +565,7 @@ function failingViewWrites(
   });
 }
 it.each([true, false])(
-  "a prompt given back to an open New chat keeps the caret only where it was (in the editor=%s)",
+  "a prompt given back to an open New message keeps the caret only where it was (in the editor=%s)",
   async (inEditor) => {
     const test = setup(),
       onStarted = vi.fn(),
@@ -606,7 +606,7 @@ it.each([true, false])(
     }
   },
 );
-it("a prompt that can't be saved back leaves an open New chat as it is", async () => {
+it("a prompt that can't be saved back leaves an open New message as it is", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     onFailed = vi.fn(),
@@ -647,7 +647,7 @@ it("a prompt that can't be saved back leaves an open New chat as it is", async (
     );
     expect(onFailed.mock.calls[0]?.[1]).not.toContain("Window ownership");
     // Nothing else is given back either: the settings would be those of a
-    // prompt New chat does not hold.
+    // prompt New message does not hold.
     expect(screen.getByRole("textbox")).not.toHaveTextContent("Audit");
     expect(readView("test", "solo:settings", null)).toBeNull();
     expect(
@@ -665,12 +665,12 @@ it("a prompt that can't be saved back leaves an open New chat as it is", async (
     picks,
   );
   expect(onFailed.mock.calls[1]?.[1]).toContain(
-    "Your message is back in New chat",
+    "Your message is back in New message",
   );
   expect(onFailed.mock.calls[1]?.[2]).toBeUndefined();
   expect(test.messages.send).toHaveBeenCalledOnce();
 });
-it("a newer draft the composer couldn't save still keeps a refused prompt out of New chat", async () => {
+it("a newer draft the composer couldn't save still keeps a refused prompt out of New message", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     onFailed = vi.fn(),
@@ -728,7 +728,7 @@ it("a newer draft the composer couldn't save still keeps a refused prompt out of
       expect(onFailed).toHaveBeenCalledWith(
         expect.any(String),
         expect.stringMatching(
-          /\. New chat has a newer draft, so your message was not restored\.$/,
+          /\. New message has a newer draft, so your message was not restored\.$/,
         ),
       ),
     );
@@ -766,7 +766,7 @@ it("a prompt given back whose settings can't be saved says so instead of retryin
     await waitFor(() =>
       expect(onFailed).toHaveBeenCalledWith(
         expect.any(String),
-        `Couldn't start "Audit": Channel creation rejected. Your message is back in New chat, but its settings and workspace could not be saved on this device.`,
+        `Couldn't start "Audit": Channel creation rejected. Your message is back in New message, but its settings and workspace could not be saved on this device.`,
       ),
     );
     expect(screen.getByRole("textbox")).toHaveTextContent("Audit the flow");
@@ -775,7 +775,7 @@ it("a prompt given back whose settings can't be saved says so instead of retryin
     storage.mockRestore();
   }
 });
-it("a refused start leaves New chat alone while its settings are being edited", async () => {
+it("a refused start leaves New message alone while its settings are being edited", async () => {
   const test = await projectSetup(),
     onStarted = vi.fn(),
     onFailed = vi.fn(),
@@ -804,7 +804,7 @@ it("a refused start leaves New chat alone while its settings are being edited", 
     expect(onFailed).toHaveBeenCalledWith(
       expect.any(String),
       expect.stringMatching(
-        /\. New chat has a newer draft, so your message was not restored\.$/,
+        /\. New message has a newer draft, so your message was not restored\.$/,
       ),
     ),
   );
@@ -818,7 +818,7 @@ it("a refused start leaves New chat alone while its settings are being edited", 
   );
   expect(screen.getByRole("textbox")).not.toHaveTextContent("Audit the flow");
 });
-it("a second refused start finds the first's prompt in New chat and says so", async () => {
+it("a second refused start finds the first's prompt in New message and says so", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     onFailed = vi.fn(),
@@ -848,7 +848,7 @@ it("a second refused start finds the first's prompt in New chat and says so", as
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(
       a,
-      expect.stringMatching(/\. Your message is back in New chat\.$/),
+      expect.stringMatching(/\. Your message is back in New message\.$/),
     ),
   );
   await refuseSecond();
@@ -856,7 +856,7 @@ it("a second refused start finds the first's prompt in New chat and says so", as
     expect(onFailed).toHaveBeenCalledWith(
       b,
       expect.stringMatching(
-        /\. New chat holds an earlier message that couldn't be sent, so this one was not restored\.$/,
+        /\. New message holds an earlier message that couldn't be sent, so this one was not restored\.$/,
       ),
     ),
   );
@@ -898,14 +898,14 @@ it("keeps the chosen agent through draft remount, first send, refused-start reco
   ]);
   expect(readView("test", "solo:new-draft:agents", null)).toBeNull();
   resumed.unmount();
-  // New chat opens again from the default agent, as always.
+  // New message opens again from the default agent, as always.
   render(view());
   await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
   await refuse();
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(
       id,
-      expect.stringMatching(/\. Your message is back in New chat\.$/),
+      expect.stringMatching(/\. Your message is back in New message\.$/),
     ),
   );
   expect(screen.getByRole("textbox")).toHaveTextContent("Hello");
@@ -928,7 +928,7 @@ it("keeps the chosen agent through draft remount, first send, refused-start reco
   expect(test.messages.send).toHaveBeenLastCalledWith(retry, "Hello", [
     "b".repeat(64),
   ]);
-  // The pick was for that prompt: the next New chat starts from the default.
+  // The pick was for that prompt: the next New message starts from the default.
   expect(readView("test", "solo:new-draft:agents", null)).toBeNull();
 });
 it("a refused start whose text names only a reference gives the pill's chosen agent back", async () => {
@@ -976,7 +976,7 @@ it("a refused start whose text names only a reference gives the pill's chosen ag
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(
       id,
-      expect.stringMatching(/\. Your message is back in New chat\.$/),
+      expect.stringMatching(/\. Your message is back in New message\.$/),
     ),
   );
   // The reference addresses nobody, so the pill's pick comes back with it.
@@ -1146,7 +1146,7 @@ it("a pick after a refused start's agent comes back replaces it across remounts"
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(
       expect.any(String),
-      expect.stringMatching(/\. Your message is back in New chat\.$/),
+      expect.stringMatching(/\. Your message is back in New message\.$/),
     ),
   );
   const restored = render(view());
@@ -1156,12 +1156,12 @@ it("a pick after a refused start's agent comes back replaces it across remounts"
   );
   expect(sendingTo("Member agent")).toBeInTheDocument();
   restored.unmount();
-  // Shown again, New chat keeps the viewer's replacement of the refused pick.
+  // Shown again, New message keeps the viewer's replacement of the refused pick.
   render(view());
   expect(screen.getByRole("textbox")).toHaveTextContent("Hello");
   await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
 });
-it("a refused linked start gives its source and workspace back to the New chat opened after it", async () => {
+it("a refused linked start gives its source and workspace back to the New message opened after it", async () => {
   const test = await projectSetup(),
     onStarted = vi.fn(),
     onFailed = vi.fn(),
@@ -1200,7 +1200,7 @@ it("a refused linked start gives its source and workspace back to the New chat o
   await waitFor(() =>
     expect(onFailed).toHaveBeenCalledWith(
       test.channelWrites.create.mock.calls[0]?.[0],
-      expect.stringMatching(/\. Your message is back in New chat\.$/),
+      expect.stringMatching(/\. Your message is back in New message\.$/),
     ),
   );
   expect(readView("test", linkedDraftKey(linkedId), null)).toEqual(source);
@@ -1209,7 +1209,7 @@ it("a refused linked start gives its source and workspace back to the New chat o
     `${source.link} Investigate`,
     ["a".repeat(64)],
   );
-  // New chat, opened as the refusal is reported, holds it all again.
+  // New message, opened as the refusal is reported, holds it all again.
   render(view());
   await waitFor(() => expect(sendingTo("Member agent")).toBeInTheDocument());
   const input = screen.getByRole("textbox") as HTMLTextAreaElement;
@@ -1840,7 +1840,7 @@ async function projectSetup(agents: string[] = []) {
   return { ...f, saveCanvas, assign, entries };
 }
 
-it("a workspace's defaults changed while New chat is open start the chat", async () => {
+it("a workspace's defaults changed while New message is open start the chat", async () => {
   const f = await projectSetup();
   const refresh = vi.fn(async () => {});
   Object.assign(f.session.channelKit, { refresh });
@@ -1954,7 +1954,7 @@ it("keeps a locally chosen project when its persistence fails and other draft wr
   }
 });
 
-it("`#` chooses New chat's workspace without leaving text, and Send files the chat there", async () => {
+it("`#` chooses New message's workspace without leaving text, and Send files the chat there", async () => {
   const f = await projectSetup();
   const user = userEvent.setup();
   const started = vi.fn();
@@ -2567,7 +2567,7 @@ it("a file dropped anywhere on the new chat page attaches to its composer", asyn
     attachments: { upload: vi.fn(), uploadForNewChat },
   });
   render(<SoloDraft session={test.session} scope="test" onStarted={vi.fn()} />);
-  const page = screen.getByRole("region", { name: "New chat" });
+  const page = screen.getByRole("region", { name: "New message" });
   const dataTransfer = {
     types: ["Files"],
     files: [new File(["notes"], "notes.txt", { type: "text/plain" })],
@@ -2866,7 +2866,7 @@ it("restores model and effort after a refused first Solo start", async () => {
 });
 
 it.each(["select", "reset"])(
-  "consumes the saved New chat baseline after an unsaved %s and storage recovery",
+  "consumes the saved New message baseline after an unsaved %s and storage recovery",
   async (action) => {
     const test = setup(),
       onStarted = vi.fn(),
@@ -3022,7 +3022,7 @@ it.each(["before Send", "after notification", "during upload"])(
   },
 );
 
-it("keeps a newer New chat draft while the first start awaits model ownership", async () => {
+it("keeps a newer New message draft while the first start awaits model ownership", async () => {
   const test = setup(),
     onStarted = vi.fn(),
     user = userEvent.setup();
@@ -3079,7 +3079,7 @@ it.each([
   { outcome: "refused", storage: "pending" },
   { outcome: "refused", storage: "reset" },
 ])(
-  "keeps a later New chat's $storage choices separate while the first start is $outcome",
+  "keeps a later New message's $storage choices separate while the first start is $outcome",
   async ({ outcome, storage }) => {
     const test = setup(),
       onStarted = vi.fn(),
@@ -3205,7 +3205,7 @@ it.each([
     if (outcome === "refused")
       expect(onFailed).toHaveBeenCalledWith(
         expect.any(String),
-        expect.stringContaining("New chat has a newer draft"),
+        expect.stringContaining("New message has a newer draft"),
       );
   },
 );
@@ -3343,7 +3343,9 @@ it.each(
     );
     expect(readView("test", `solo:model-picks:${id}`, null)).toBeNull();
     expect(onFailed.mock.calls[2]?.[1]).toContain(
-      newer ? "New chat has a newer draft" : "Your message is back in New chat",
+      newer
+        ? "New message has a newer draft"
+        : "Your message is back in New message",
     );
     // A stale callback is harmless after a completed restore.
     writeView("test", `solo:model-picks:${id}`, picks);
@@ -3515,7 +3517,7 @@ it.each(["chat", "draft", "missing", "rejected"])(
           name:
             failure === "chat"
               ? "Could not save model and effort for this chat. Choose them again before your next message."
-              : "Could not clear model and effort from New chat. Reset them before starting another chat.",
+              : "Could not clear model and effort from New message. Reset them before starting another conversation.",
         }),
       ).toBeVisible();
     } finally {
@@ -4187,7 +4189,7 @@ it.each(["source", "binding"])(
   },
 );
 
-it("a region's New chat starts a labeled chat its source can find, without filing it", async () => {
+it("a region's New message starts a labeled chat its source can find, without filing it", async () => {
   const test = await projectSetup(),
     onStarted = vi.fn(),
     user = userEvent.setup();
@@ -4206,7 +4208,7 @@ it("a region's New chat starts a labeled chat its source can find, without filin
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   const id = test.channelWrites.create.mock.calls[0]?.[0] ?? "";
-  // Unguarded, so the Outbox replays it after a restart like any New chat.
+  // Unguarded, so the Outbox replays it after a restart like any New message.
   expect(startOptions(test)).toEqual({
     admins: ["a".repeat(64)],
     visibility: "private",
@@ -4223,7 +4225,7 @@ it("a region's New chat starts a labeled chat its source can find, without filin
     ["a".repeat(64)],
   );
   expect(readView("test", `${key}:new-draft`, null)).toBe("");
-  // An ordinary New chat keeps its own draft and its unlabeled start.
+  // An ordinary New message keeps its own draft and its unlabeled start.
   expect(readView("test", "solo:project:work:new-draft", null)).toBeNull();
 });
 it("keeps keyed region drafts separate across remount, workspace edits and a refused start", async () => {
@@ -4539,7 +4541,7 @@ it("retains an old region route unchanged through Send and a workspace change", 
     draft: { context: { saved } },
   });
 });
-it("starts a New chat from a saved folder chip and signs the chip into its first message", async () => {
+it("starts a New message from a saved folder chip and signs the chip into its first message", async () => {
   const f = setup(),
     started = vi.fn();
   const chip = { kind: "folder", id: "/repo", label: "@repo" };

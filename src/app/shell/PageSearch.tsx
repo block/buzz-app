@@ -675,7 +675,7 @@ function CommunitySearch({
           close();
           if (!kept) ask();
           else
-            notify("New chat already has an unsent draft", "info", {
+            notify("New message already has an unsent draft", "info", {
               label: "Replace it",
               // The notice outlives search: after a community or session
               // switch it does nothing rather than overwrite the old draft.

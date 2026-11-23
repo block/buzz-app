@@ -67,7 +67,7 @@ it.each([true, false])(
         <button type="button">General</button>
       </SidebarSection>,
     );
-    const trigger = screen.getByRole("button", { name: "Create channel" });
+    const trigger = screen.getByRole("button", { name: "New message" });
     if (available) {
       trigger.focus();
       await user.keyboard("{Enter}");

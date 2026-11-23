@@ -723,7 +723,7 @@ export function SoloDraft({
       if (mounted.current) onStarted(channelId);
       if (clearedPicks === "failed")
         notify(
-          "Could not clear model and effort from New chat. Reset them before starting another chat.",
+          "Could not clear model and effort from New message. Reset them before starting another conversation.",
           "error",
         );
       if (!savedChatPicks)
@@ -862,15 +862,15 @@ export function SoloDraft({
               const earlier = restoredPrompts.get(returnedTo);
               const outcome = returned
                 ? missing.length
-                  ? `Your message is back in New chat, but its ${new Intl.ListFormat(
+                  ? `Your message is back in New message, but its ${new Intl.ListFormat(
                       undefined,
                       { type: "conjunction" },
                     ).format(missing)} could not be saved on this device.`
-                  : "Your message is back in New chat."
+                  : "Your message is back in New message."
                 : earlier !== undefined &&
                     viewRevision(scope, `${draftKey}:new-draft`) === earlier
-                  ? "New chat holds an earlier message that couldn't be sent, so this one was not restored."
-                  : "New chat has a newer draft, so your message was not restored.";
+                  ? "New message holds an earlier message that couldn't be sent, so this one was not restored."
+                  : "New message has a newer draft, so your message was not restored.";
               restored = true;
               onFailed?.(
                 channelId,

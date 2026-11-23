@@ -1722,10 +1722,10 @@ it.each([
     const user = userEvent.setup();
     if (!composing) {
       await user.click(
-        screen.getByRole("button", { name: "New chat or workspace" }),
+        screen.getByRole("button", { name: "New message or workspace" }),
       );
       expect(
-        await screen.findByRole("menuitem", { name: "New chat" }),
+        await screen.findByRole("menuitem", { name: "New message" }),
       ).toBeInTheDocument();
       await user.keyboard("{Escape}");
     }

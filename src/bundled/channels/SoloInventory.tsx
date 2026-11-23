@@ -324,7 +324,7 @@ export function SoloInventory({
   };
   const creationItems = (
     <>
-      {!composing && <MenuItem onClick={() => newChat()}>New chat</MenuItem>}
+      {!composing && <MenuItem onClick={() => newChat()}>New message</MenuItem>}
       <MenuItem
         disabled={!session.sidebarPreferences.sectionCreationWritable}
         onClick={() => {
@@ -350,9 +350,11 @@ export function SoloInventory({
               ref={trigger}
               size="compact"
               aria-label={
-                composing ? "Workspace actions" : "New chat or workspace"
+                composing ? "Workspace actions" : "New message or workspace"
               }
-              title={composing ? "Workspace actions" : "New chat or workspace"}
+              title={
+                composing ? "Workspace actions" : "New message or workspace"
+              }
               icon={
                 composing ? (
                   <DotsThreeIcon size={15} strokeWidth={2.5} />
@@ -396,7 +398,7 @@ export function SoloInventory({
       {!compose && empty && (
         <NavigationItem
           variant="row"
-          label="New chat"
+          label="New message"
           icon={<PlusIcon size={16} />}
           onClick={() => newChat()}
         />
@@ -439,7 +441,7 @@ export function SoloInventory({
               projectId: route?.project,
               content: (
                 <SpringLoadedNavigationItem
-                  label="New chat"
+                  label="New message"
                   aria-description="Unsent draft"
                   selected={selected}
                   onSpring={() => void navigator.open(destination)}

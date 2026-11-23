@@ -19,7 +19,6 @@ import { createRelaySession } from "../relay/session";
 import { keypair } from "../relay/testing";
 import type { ChannelMessage } from "../relay/contracts";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
-import { ActivityGroupActions } from "./ActivityGroupActions";
 import {
   activityPresentation,
   useActivityPresentation,
@@ -109,11 +108,12 @@ it("keeps a signed failure and its history in one disclosure through completion 
     });
     work.started();
     const view = render(<Preview />);
-    const toggle = screen.getByRole("button", {
+    let toggle = screen.getByRole("button", {
       name: /Show activity history/,
     });
     fireEvent.click(toggle);
     act(() => work.finish({ ok: false, error: "Provider failed" }));
+    toggle = screen.getByRole("button", { name: /Collapse activity history/ });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(toggle).toHaveFocus();
     expect(screen.getAllByText(failure.content)).toHaveLength(1);
@@ -124,6 +124,7 @@ it("keeps a signed failure and its history in one disclosure through completion 
     view.rerender(<Preview reloaded />);
     expect(screen.getByText("Couldn’t finish")).toBeVisible();
     expect(screen.queryByText(failure.content)).toBeNull();
+    toggle = screen.getByRole("button", { name: /Show activity history/ });
     fireEvent.click(toggle);
     expect(screen.getByText(failure.content)).toHaveAttribute(
       "data-message-id",
@@ -517,7 +518,7 @@ it("keeps a dispatch readable after its sender finishes, while the helper works 
     });
     work.started();
     const view = render(<Preview />);
-    const toggle = screen.getByRole("button", {
+    let toggle = screen.getByRole("button", {
       name: /Show activity history/,
     });
     expect(toggle).toBeVisible();
@@ -535,6 +536,7 @@ it("keeps a dispatch readable after its sender finishes, while the helper works 
     });
     expect(toggle).toBeVisible();
     fireEvent.click(toggle, { detail: 0 });
+    toggle = screen.getByRole("button", { name: /Collapse activity history/ });
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(dispatch.content, { selector: "p" })).toBeVisible();
     fireEvent.click(toggle, { detail: 0 });
@@ -647,13 +649,15 @@ it("opens contained history and keeps focus on the collapse control", () => {
     );
   }
   render(<Preview />);
-  const toggle = screen.getByRole("button", { name: /Show activity history/ });
+  let toggle = screen.getByRole("button", { name: /Show activity history/ });
   fireEvent.click(toggle, { detail: 0 });
+  toggle = screen.getByRole("button", { name: /Collapse activity history/ });
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   expect(toggle).toHaveFocus();
   expect(screen.getByText("Checking the layout")).toBeVisible();
   expect(screen.getByText("Checking the helper layout")).toBeVisible();
   fireEvent.click(toggle, { detail: 0 });
+  toggle = screen.getByRole("button", { name: /Show activity history/ });
   expect(toggle).toHaveAttribute("aria-expanded", "false");
   expect(toggle).toHaveFocus();
   expect(screen.queryByText("Checking the layout")).toBeNull();
@@ -774,43 +778,73 @@ it("uses channel-qualified names for the excerpt and participant avatars", () =>
   }
 });
 
-it("follows live work for collapsed request controls only once they are shown", () => {
-  const owner = createRelaySession({
-    viewer: keypair().pubkey,
-    relayAuthor: keypair().pubkey,
-    media: () => undefined,
-    query: async () => [],
+it("keeps Stop pending across collapse and reopen until the request stops", async () => {
+  const f = fixture();
+  const owner = createRelaySession(null);
+  const session = { ...owner.session, agentActivity: f.activity };
+  let finishStop = () => {};
+  const pendingStop = new Promise<void>((resolve) => {
+    finishStop = resolve;
   });
-  try {
-    const subscribe = vi.fn(owner.session.agentActivity.subscribe);
-    const session = {
-      ...owner.session,
-      agentActivity: { ...owner.session.agentActivity, subscribe },
-    };
-    const group = activityPresentation([step], undefined, new Set(["agent"]))
-      .groups[0];
+  const interrupt = vi.fn(() => pendingStop);
+  const work = f.local.begin({
+    scope: "test",
+    agent: "agent",
+    channelId: "channel",
+    messageId: "request",
+    threadRootId: "request",
+  });
+  work.started();
+  work.interruptible(interrupt);
+  function Preview() {
+    const [expanded, setExpanded] = useState(false);
+    const presentation = useActivityPresentation(
+      [step],
+      f.activity,
+      new Set(["agent"]),
+      "request",
+    );
+    const group = presentation.groups[0];
     if (!group) throw new Error("Missing activity group");
-    const view = render(
-      <ActivityGroupActions
+    return (
+      <ActivityGroupPreview
         session={session}
         group={group}
         profiles={new Map()}
-        returnFocus={{ current: null }}
-        active={false}
-      />,
+        media={() => undefined}
+        expanded={expanded}
+        onToggle={() => setExpanded((value) => !value)}
+      />
     );
-    expect(subscribe).not.toHaveBeenCalled();
-    view.rerender(
-      <ActivityGroupActions
-        session={session}
-        group={group}
-        profiles={new Map()}
-        returnFocus={{ current: null }}
-        active
-      />,
+  }
+  try {
+    render(<Preview />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /Show activity history/ }),
     );
-    expect(subscribe).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stop agent" }));
+    expect(screen.getByRole("button", { name: "Stop agent" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Collapse activity history/ }),
+    );
+    expect(screen.queryByRole("button", { name: "Stop agent" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Show activity history/ }),
+    );
+    const stop = screen.getByRole("button", { name: "Stop agent" });
+    expect(stop).toHaveAttribute("aria-busy", "true");
+    expect(stop).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(stop);
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    await act(async () => finishStop());
+    expect(screen.queryByRole("button", { name: "Stop agent" })).toBeNull();
   } finally {
+    await act(async () => finishStop());
+    cleanup();
     owner.dispose();
+    f.dispose();
   }
 });

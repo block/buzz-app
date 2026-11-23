@@ -3695,6 +3695,16 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
   border-radius: calc(var(--radius-chip) - var(--space-1));
 }
 
+/* Only eligible, collapsed coordination recedes; expanded prose and lifecycle
+   previews retain the message type role. */
+.message[data-preview-variant="coordination"]
+:is(.messageBubble, .audienceEntry) {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--text-caption--font-weight);
+}
+
 .messageHighlight > .messageBody > .messageContent .messageBubble {
   isolation: isolate;
 }
@@ -3867,22 +3877,6 @@ html[data-keyboard-navigation] .activityExpansion {
   transition: none;
 }
 
-.audienceLine[data-collapse] {
-  color: var(--text-subtle);
-}
-
-/* Extend the native button hit target, keeping its painted surface content-sized. */
-.audienceRow[data-collapse] > .audienceEntry,
-.audienceLine[data-collapse] {
-  position: static;
-}
-.audienceLine[data-collapse]::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  cursor: pointer;
-}
-
 /* Standalone activity uses the normal incoming identity and bubble geometry. */
 .standaloneActivity .audienceRow {
   container-type: normal;
@@ -4022,21 +4016,12 @@ html[data-keyboard-navigation] .activityExpansion {
   }
 }
 
-.activityDisclosureIcon {
-  flex: none;
-  width: var(--space-4);
-  height: var(--space-4);
-  color: var(--text-subtle);
-}
-.standaloneActivity[data-contained-history]
-  .audienceLine[data-collapse]::after {
-  display: none;
-}
 .containedActivityHistory {
   display: flex;
+  flex: 1;
+  min-width: 0;
   flex-direction: column;
   gap: var(--space-3);
-  padding-block-start: var(--space-3);
 }
 .containedActivityHistory .audienceRow .audiencePreviewText {
   white-space: normal;
@@ -4099,7 +4084,7 @@ html[data-keyboard-navigation] .activityExpansion {
   .messageBubble:has(
     > .standaloneActivity > .activityGroupHeader:not([data-expanded]),
     > .standaloneActivity
-      > [data-message-notice]
+      > [data-message-id]
       > .standaloneActivity
       > .activityGroupHeader:not([data-expanded])
   ) {
@@ -4138,27 +4123,18 @@ html[data-keyboard-navigation] .activityExpansion {
 
 .activityGroupHeader[data-expanded] {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: var(--space-2);
 }
 .messageBubble:has(
   > .standaloneActivity > .activityGroupHeader[data-expanded],
   > .standaloneActivity
-    > [data-message-notice]
+    > [data-message-id]
     > .standaloneActivity
     > .activityGroupHeader[data-expanded]
 ) {
   padding: var(--space-4);
-}
-.standaloneActivity .activityGroupHeader[data-expanded] .audienceLine {
-  min-height: var(--size-control-sm);
-}
-.activityGroupHeader[data-expanded] > .audienceRow {
-  flex: 1;
-  min-width: 0;
-}
-.activityGroupHeader[data-expanded] > div:last-child {
-  flex-shrink: 0;
 }
 .agentNote {
   margin: var(--space-1h) 0 0;

@@ -104,6 +104,7 @@ pub(crate) fn menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         }
     }
     install_tab_keys(app);
+    crate::clipboard::observe_paste_actions();
     Ok(menu)
 }
 

@@ -298,5 +298,7 @@ profile, then quit and reopen Buzz.
 
 - DMs hold up to nine people; agents don't count.
 - 10 attachments per message. Paste long text as a file.
+  On the macOS desktop app, you can also paste HEIC or TIFF screenshots as
+  image attachments.
 - A canvas holds up to 256 KiB.
 - Agents only see conversations they're in.

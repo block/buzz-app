@@ -174,6 +174,7 @@ fn main() {
             "media_lift_subject",
             "media_lift_subject_supported",
             "clipboard_write_text",
+            "clipboard_read_pasted_image",
             "draft_diagnostics_save",
             "web_inspector",
             "get_build_identity",

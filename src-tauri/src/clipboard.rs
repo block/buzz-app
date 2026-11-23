@@ -70,6 +70,191 @@ pub(crate) async fn write_image<R: tauri::Runtime>(
     .await
 }
 
+/// The main composer's trusted Paste event can report Files without exposing
+/// an image to WKWebView. Read only native image representations in that case.
+#[tauri::command]
+pub(crate) async fn clipboard_read_pasted_image<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
+) -> Result<tauri::ipc::Response, String> {
+    let image = if window.label() == "main" {
+        read_pasted_image(&window).await?
+    } else {
+        Vec::new()
+    };
+    Ok(tauri::ipc::Response::new(image))
+}
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    static PASTE_ACTION: std::cell::Cell<Option<(isize, std::time::Instant)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// AppKit sends this for Edit → Paste and its keyboard equivalent before
+/// WebKit dispatches the paste event. The webview cannot arm the clipboard read.
+#[cfg(target_os = "macos")]
+pub(crate) fn observe_paste_actions() {
+    use objc2::{sel, MainThreadMarker};
+    use objc2_app_kit::{NSMenuItem, NSMenuWillSendActionNotification, NSPasteboard};
+    use objc2_foundation::{NSNotification, NSNotificationCenter, NSString};
+
+    let handler = block2::RcBlock::new(move |note: std::ptr::NonNull<NSNotification>| {
+        if MainThreadMarker::new().is_none() {
+            return;
+        }
+        // SAFETY: AppKit supplies the live notification for this callback.
+        let note = unsafe { note.as_ref() };
+        let action = note
+            .userInfo()
+            .and_then(|info| info.objectForKey(&NSString::from_str("MenuItem")))
+            .and_then(|item| item.downcast::<NSMenuItem>().ok())
+            .and_then(|item| item.action());
+        if action == Some(sel!(paste:)) {
+            PASTE_ACTION.set(crate::browser::focused_session().is_none().then(|| {
+                (
+                    NSPasteboard::generalPasteboard().changeCount(),
+                    std::time::Instant::now(),
+                )
+            }));
+        }
+    });
+    // SAFETY: AppKit posts menu actions on the main thread, and the observer
+    // uses the posting thread without a queue.
+    let token = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSMenuWillSendActionNotification),
+            None,
+            None,
+            &handler,
+        )
+    };
+    // The app menu and its observer live for the process.
+    std::mem::forget(token);
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn read_pasted_image<R: tauri::Runtime>(
+    _window: &tauri::WebviewWindow<R>,
+) -> Result<Vec<u8>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(target_os = "macos")]
+async fn read_pasted_image<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<Vec<u8>, String> {
+    use objc2_app_kit::NSPasteboard;
+    use objc2_foundation::NSString;
+
+    const MAX_ENCODED_BYTES: usize = 50 * 1024 * 1024;
+    let (send, receive) = tokio::sync::oneshot::channel();
+    let focused_window = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let read = || {
+                if !focused_window.is_focused().unwrap_or(false) {
+                    return Ok(None);
+                }
+                let board = NSPasteboard::generalPasteboard();
+                let count = board.changeCount();
+                if !PASTE_ACTION.take().is_some_and(|(expected, time)| {
+                    expected == count && time.elapsed() < std::time::Duration::from_secs(2)
+                }) {
+                    return Ok(None);
+                }
+                if board.types().is_some_and(|types| {
+                    types
+                        .iter()
+                        .any(|kind| kind.to_string() == "public.file-url")
+                }) {
+                    return Ok(None);
+                }
+                let image = ["public.heic", "public.tiff"]
+                    .into_iter()
+                    .find_map(|kind| board.dataForType(&NSString::from_str(kind)));
+                if board.changeCount() != count {
+                    return Ok(None);
+                }
+                match image {
+                    Some(image) if image.len() > MAX_ENCODED_BYTES => {
+                        Err("The clipboard image is too large to paste")
+                    }
+                    Some(image) => Ok(Some(image.to_vec())),
+                    None => Ok(None),
+                }
+            };
+            let _ = send.send(read());
+        })
+        .map_err(|_| "Could not read the clipboard")?;
+    let Some(image) = receive
+        .await
+        .map_err(|_| "Could not read the clipboard")??
+    else {
+        return Ok(Vec::new());
+    };
+    tauri::async_runtime::spawn_blocking(move || encode_pasted_image(image, MAX_ENCODED_BYTES))
+        .await
+        .map_err(|_| "Could not decode the clipboard image".to_owned())?
+}
+
+#[cfg(target_os = "macos")]
+fn encode_pasted_image(bytes: Vec<u8>, max_encoded_bytes: usize) -> Result<Vec<u8>, String> {
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImageCompressionFactor};
+    use objc2_core_image::CIImage;
+    use objc2_foundation::{NSData, NSDictionary, NSNumber};
+
+    const MAX_PIXELS: isize = 25_000_000;
+    objc2::rc::autoreleasepool(|_| {
+        let data = NSData::from_vec(bytes);
+        // SAFETY: The immutable NSData lives through both calls. Core Image
+        // describes the image bounds without rendering the bitmap.
+        let bounds = unsafe { CIImage::imageWithData(&data).map(|image| image.extent()) }
+            .ok_or("Could not decode the clipboard image")?;
+        let pixels = bounds.size.width * bounds.size.height;
+        if !(1.0..=MAX_PIXELS as f64).contains(&pixels) {
+            return Err("The clipboard image is too large to paste".into());
+        }
+        let bitmap = NSBitmapImageRep::imageRepWithData(&data)
+            .ok_or("Could not decode the clipboard image")?;
+        let pixels = bitmap.pixelsWide().checked_mul(bitmap.pixelsHigh());
+        if !pixels.is_some_and(|count| (1..=MAX_PIXELS).contains(&count)) {
+            return Err("The clipboard image is too large to paste".into());
+        }
+        // SAFETY: PNG encoding accepts an empty options dictionary.
+        let png = unsafe {
+            bitmap.representationUsingType_properties(
+                NSBitmapImageFileType::PNG,
+                &NSDictionary::new(),
+            )
+        }
+        .ok_or("Could not convert the clipboard image")?;
+        if png.len() <= max_encoded_bytes {
+            return Ok(png.to_vec());
+        }
+        // A large opaque HDR capture can exceed the relay image limit as PNG.
+        // Use JPEG only in that case, so transparent images keep their alpha.
+        drop(png);
+        if !bitmap.hasAlpha() {
+            let quality = NSNumber::new_f64(0.9);
+            // SAFETY: The options dictionary contains JPEG's numeric quality key.
+            let jpeg = unsafe {
+                bitmap.representationUsingType_properties(
+                    NSBitmapImageFileType::JPEG,
+                    &NSDictionary::<_, AnyObject>::from_slices(
+                        &[NSImageCompressionFactor],
+                        &[&quality],
+                    ),
+                )
+            };
+            if let Some(jpeg) = jpeg.filter(|image| image.len() <= max_encoded_bytes) {
+                return Ok(jpeg.to_vec());
+            }
+        }
+        Err("The clipboard image is too large to paste".into())
+    })
+}
+
 /// WebKit rejects `navigator.clipboard` writes without transient user
 /// activation, and each host script evaluation (how Tauri delivers events and
 /// channel messages) clears it. A click that races host traffic then fails to
@@ -254,6 +439,30 @@ fn clear_if_latest(board: &mut impl Board, secrets: &Secrets, generation: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn encodes_an_opaque_clipboard_image_as_jpeg_only_if_png_is_too_large() {
+        let mut seed = 7u32;
+        let image = image::RgbImage::from_fn(256, 256, |_, _| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let [r, g, b, _] = seed.to_be_bytes();
+            image::Rgb([r, g, b])
+        });
+        let mut source = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut source, image::ImageFormat::Png)
+            .unwrap();
+        let source = source.into_inner();
+        let png = encode_pasted_image(source.clone(), 512 * 1024).unwrap();
+        let jpeg = encode_pasted_image(source, 128 * 1024).unwrap();
+        assert_eq!(image::guess_format(&png).unwrap(), image::ImageFormat::Png);
+        assert_eq!(
+            image::guess_format(&jpeg).unwrap(),
+            image::ImageFormat::Jpeg
+        );
+        assert!(jpeg.len() <= 128 * 1024);
+    }
 
     #[derive(Default)]
     struct Fake {

@@ -665,6 +665,27 @@ export function agentConfigs(
       }
       return results;
     },
+    /** Publishes confirmed settings that aren't bound here as `agent`'s new
+     * type's, on the head the change opened. A type with no schema here (its
+     * plugin is off) leaves them unbound, so nothing but a change of type
+     * may revise them: never an ordinary save or a History revert, and never
+     * as a first revision. */
+    async saveType(agent: ConfigAgent, config: object, opened: string) {
+      const binding = bindings.get(agent.pubkey);
+      const channel = sidesOf.get(agent.pubkey)?.get("instructions");
+      if (!agent.schema || !binding?.instructions || binding.settings)
+        return undefined;
+      if (!channel) return undefined;
+      const sides = await sidesIn(agent, channel.expected.channel);
+      const local = sides.get("settings");
+      const head = local && store.state(local.subject).head;
+      if (!local || head?.id !== opened) return undefined;
+      return writer.save(
+        local,
+        fields("settings", agent, config, head),
+        opened,
+      );
+    },
     /** Another device's agent's synced instructions, read without creating
      * or binding anything; undefined when there are none to read. */
     async readInstructions(pubkey: string) {

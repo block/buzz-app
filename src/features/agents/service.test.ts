@@ -6500,7 +6500,7 @@ describe("an agent in several communities", () => {
       const made = new Map<
         string,
         Record<
-          "attach" | "remove" | "dispose" | "exclusive" | "save",
+          "attach" | "remove" | "dispose" | "exclusive" | "save" | "saveType",
           ReturnType<typeof vi.fn>
         >
       >();
@@ -6543,6 +6543,7 @@ describe("an agent in several communities", () => {
             });
             return { settings: { status: "saved", head } };
           }),
+          saveType: vi.fn(async () => undefined),
           history: () => [],
           dispose: vi.fn(),
         };
@@ -6744,6 +6745,35 @@ describe("an agent in several communities", () => {
       expect(f.native.setType).toHaveBeenCalledTimes(1);
       expect(warn).not.toHaveBeenCalled();
       warn.mockRestore();
+    });
+
+    it("saves settings its unavailable type left unbound as the new type's", async () => {
+      const c = channels("home synced", "example/echo");
+      const f = await joined();
+      await vi.waitFor(() => expect(c.get(home)?.attach).toHaveBeenCalled());
+      relayType(f);
+      const store = internals(f.service).configStore;
+      const opened = store.state(settings(home)).head?.id;
+      // No live settings side: an ordinary save sends none.
+      const config = c.get(home);
+      config?.save.mockResolvedValue({});
+      // Nothing confirmed was saved: the type stays.
+      await expect(f.service.retype(bot, "other/relay")).rejects.toThrow(
+        "This agent's config isn't synced here yet; try again",
+      );
+      expect(f.native.setType).not.toHaveBeenCalled();
+      expect(f.service.find(bot)?.type).toBe("example/echo");
+      config?.saveType.mockResolvedValue({
+        status: "saved",
+        head: settingsFor("other/relay"),
+      });
+      await f.service.retype(bot, "other/relay");
+      expect(config?.saveType).toHaveBeenLastCalledWith(
+        expect.objectContaining({ pubkey: bot, type: "other/relay" }),
+        expect.anything(),
+        opened,
+      );
+      expect(f.service.find(bot)?.type).toBe("other/relay");
     });
 
     it("uses the reviewed revision if the agent's settings change during retirement", async () => {

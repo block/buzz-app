@@ -38,7 +38,7 @@ export async function relayCacheUsage(origin: string, viewer: string) {
       typeof indexedDB === "undefined" ? 0 : (heads.usage?.() ?? 0),
       nativeMediaUsage(origin),
     ]);
-    return saved + (images?.community ?? 0);
+    return saved + (images ?? 0);
   } finally {
     heads.close();
   }

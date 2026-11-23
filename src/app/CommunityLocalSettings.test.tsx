@@ -11,10 +11,9 @@ import { localCommunityNameKey } from "../features/communities/names";
 import { flush } from "../features/relay/testing";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { readDefaultLifetime } from "../features/solo/default-lifetime";
-import type { NativeMediaUsage } from "../features/relay/native";
 
 const mediaUsage = vi.hoisted(() =>
-  vi.fn(async (): Promise<NativeMediaUsage | undefined> => undefined),
+  vi.fn(async (): Promise<number | undefined> => undefined),
 );
 vi.mock("../features/relay/native", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../features/relay/native")>()),
@@ -199,20 +198,12 @@ it("clears this community's cached data, reports a failure inline, and allows re
 
 it("shows the space this community's saved data uses and measures again after clearing", async () => {
   const MB = 1024 * 1024;
-  mediaUsage.mockResolvedValueOnce({
-    community: 14 * MB,
-    total: 14 * MB,
-    budget: 256 * MB,
-  });
+  mediaUsage.mockResolvedValueOnce(14 * MB);
   const { user, communities } = await setup();
   expect(await screen.findByText(/Uses 14 MB on this device\./)).toBeVisible();
   expect(mediaUsage).toHaveBeenCalledWith(origin);
   vi.spyOn(communities.relay, "clearCache").mockResolvedValueOnce();
-  mediaUsage.mockResolvedValueOnce({
-    community: 0,
-    total: 3 * MB,
-    budget: 256 * MB,
-  });
+  mediaUsage.mockResolvedValueOnce(0);
   await user.click(screen.getByRole("button", { name: "Clear cache" }));
   expect(await screen.findByText(/Uses 0 MB on this device\./)).toBeVisible();
 });

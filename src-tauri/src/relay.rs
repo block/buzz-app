@@ -1966,31 +1966,17 @@ pub(crate) async fn media_cache_clear(
         .map_err(|error| format!("Couldn't clear saved media: {error}"))
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MediaCacheUsage {
-    community: u64,
-    total: u64,
-    budget: u64,
-}
-
-/// How much this device saved for one community, in all, and the limit.
+/// Bytes of images this device saved for one community.
 #[tauri::command]
 pub(crate) async fn media_cache_usage(
     cache: tauri::State<'_, MediaCache>,
     community: String,
-) -> Result<MediaCacheUsage> {
+) -> Result<u64> {
     let origin = Url::parse(&community).map_err(|_| "Invalid community URL")?;
     let cache = cache.inner().clone();
-    let (community, total, budget) =
-        tauri::async_runtime::spawn_blocking(move || cache.usage(&origin))
-            .await
-            .map_err(|error| error.to_string())?;
-    Ok(MediaCacheUsage {
-        community,
-        total,
-        budget,
-    })
+    tauri::async_runtime::spawn_blocking(move || cache.usage(&origin))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// The serialized origin of a window's page (`tauri://localhost`,

@@ -74,6 +74,8 @@ export type PinSource = Readonly<{
   workflowAuthority?: string | undefined;
   profiles?: Readonly<{
     owner?: ((pubkey: string) => string | undefined) | undefined;
+    /** Hears profile changes, an agent's owner among them. */
+    subscribe?: ((listener: () => void) => () => void) | undefined;
   }>;
   read(
     filters: readonly ReadFilter[],
@@ -114,6 +116,9 @@ type Entry = {
   snapshot: PinSnapshot;
   listeners: Set<() => void>;
   reading?: Promise<void> | undefined;
+  /** Asked for during `reading`, which may predate the request: read once
+   * more after it. */
+  again?: boolean;
 };
 
 const READ_CHUNK = 100;
@@ -127,7 +132,8 @@ const stores = new WeakMap<PinSource, ReturnType<typeof createPinLists>>();
 /** One list per channel the UI asked about: read once, then kept current by
  * the channel's live subscription and its replay. When channels catch up
  * after their routes re-establish, their watched lists are read again in one
- * read, since a cut replay may not carry a change. A failed read stays failed
+ * read, since a cut replay may not carry a change. A read asked for while one
+ * runs follows it, so it reflects state after the request. A failed read stays failed
  * until `retry` or the next catch-up. */
 function createPinLists(source: PinSource) {
   const entries = new Map<string, Entry>();
@@ -156,6 +162,7 @@ function createPinLists(source: PinSource) {
     const relayAuthor = source.workflowAuthority;
     const wanted = channelIds.flatMap((id) => {
       const entry = entries.get(id);
+      if (entry?.reading) entry.again = true;
       return entry && !entry.reading ? [[id, entry] as const] : [];
     });
     if (!wanted.length) return;
@@ -195,8 +202,14 @@ function createPinLists(source: PinSource) {
         },
       )
       .finally(() => {
-        for (const [, entry] of wanted)
-          if (entry.reading === reading) entry.reading = undefined;
+        const again: string[] = [];
+        for (const [id, entry] of wanted) {
+          if (entry.reading !== reading) continue;
+          entry.reading = undefined;
+          if (entry.again) again.push(id);
+          entry.again = false;
+        }
+        if (again.length) read(again);
       });
     for (const [, entry] of wanted) entry.reading = reading;
     for (const [, entry] of wanted)
@@ -223,7 +236,7 @@ function createPinLists(source: PinSource) {
       const stale: string[] = [];
       for (const id of now) {
         const entry = entries.get(id);
-        if (pending.has(id) || !entry || entry.reading) continue;
+        if (pending.has(id) || !entry) continue;
         // An unwatched list is read again when next asked for.
         if (entry.listeners.size) stale.push(id);
         else entries.delete(id);

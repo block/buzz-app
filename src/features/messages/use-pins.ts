@@ -43,7 +43,8 @@ const DELETION_KINDS = [5, 9005];
 /** Loads the rows behind `ids`. A list change reads only ids not loaded yet;
  * a live edit reloads the pin it names, and a deletion the pins whose edit it
  * withdraws (a deleted pin leaves the list itself). `attempt`, catch-up and the period
- * reload every row. One read runs at a time; triggers meanwhile wait for it.
+ * reload every row; an agent's owner learned after its pin loaded reloads
+ * that pin. One read runs at a time; triggers meanwhile wait for it.
  * Earlier rows the list still names stay shown while a read runs or after it
  * fails. */
 export function usePinnedRows(
@@ -81,6 +82,18 @@ function rowLoader(
   const controller = new AbortController();
   /** Read rows by id; null when the relay no longer returns it. */
   const rows = new Map<string, ChannelMessage | null>();
+  /** The owner each agent's message was folded with, by agent: an owner
+   * learned later may apply an edit the fold dropped. */
+  const owners = new Map<string, string | undefined>();
+  const owner = (pubkey: string) => {
+    const value = source.profiles?.owner?.(pubkey);
+    owners.set(pubkey, value);
+    return value;
+  };
+  const folding: PinSource = {
+    ...source,
+    profiles: { ...source.profiles, owner },
+  };
   /** Edits read, by id, to the pins they name. */
   const edits = new Map<string, readonly string[]>();
   const dirty = new Set<string>();
@@ -114,7 +127,7 @@ function rowLoader(
     show();
     try {
       const found = await readPinnedMessages(
-        source,
+        folding,
         channelId,
         batch,
         controller.signal,
@@ -161,6 +174,19 @@ function rowLoader(
     if (now && !pending) reload();
     pending = now;
   });
+  const stopProfiles = source.profiles?.subscribe?.(() => {
+    const before = dirty.size;
+    for (const id of named) {
+      const author = rows.get(id)?.authorId;
+      if (
+        author &&
+        owners.has(author) &&
+        owners.get(author) !== source.profiles?.owner?.(author)
+      )
+        dirty.add(id);
+    }
+    if (dirty.size > before) schedule(SETTLE_MS);
+  });
   const interval = setInterval(
     () => reload(),
     REFRESH_MS + Math.random() * 60_000,
@@ -186,6 +212,7 @@ function rowLoader(
       clearInterval(interval);
       stopLive();
       stopCatchUp();
+      stopProfiles?.();
     },
   };
 }

@@ -27,9 +27,18 @@ function source(
   const listeners = new Set<LiveListener>();
   const live = new Set<() => void>();
   let heads: { channelId: string; state: string }[] = [];
+  const owners = new Map<string, string>();
+  const profiles = new Set<() => void>();
   const value: PinSource = {
     relayAuthor: relay,
     workflowAuthority: relay,
+    profiles: {
+      owner: (pubkey) => owners.get(pubkey),
+      subscribe(listener) {
+        profiles.add(listener);
+        return () => profiles.delete(listener);
+      },
+    },
     read: vi.fn(read),
     async readPage(filters, settings) {
       const events = await value.read(filters, settings);
@@ -57,7 +66,11 @@ function source(
       for (const listener of live) listener();
     }
   };
-  return { value, deliver, catchUp };
+  const learnOwner = (agent: string, owner: string) => {
+    owners.set(agent, owner);
+    for (const listener of profiles) listener();
+  };
+  return { value, deliver, catchUp, learnOwner };
 }
 
 it("reads a failed list once however often its readers render", async () => {
@@ -182,6 +195,40 @@ it("reloads every row when its channel catches up", async () => {
   act(() => s.catchUp("c"));
   await waitFor(() => expect(idsRead(s)).toHaveLength(2));
   expect(idsRead(s)[1]).toEqual([one, two]);
+});
+
+it("reloads a pin when its agent's owner becomes known", async () => {
+  const owner = "d".repeat(64);
+  const s = source(async ([filter]) =>
+    filter?.ids
+      ? filter.ids.map((id) => message(id))
+      : [
+          {
+            ...message("e".repeat(64), "fixed by owner"),
+            pubkey: owner,
+            kind: 40003,
+            created_at: 101,
+            tags: [
+              ["h", "c"],
+              ["e", one],
+            ],
+          },
+        ],
+  );
+  const { result } = renderHook(() => usePinnedRows(s.value, "c", [one, two]));
+  await waitFor(() => expect(result.current.status).toBe("ready"));
+  // Not yet known as the agent's owner, the edit does not apply.
+  expect(result.current.rows[0]?.content).toBe("1");
+  act(() => s.learnOwner("x".repeat(64), owner));
+  act(() => s.learnOwner(author, owner));
+  await waitFor(() =>
+    expect(result.current.rows[0]?.content).toBe("fixed by owner"),
+  );
+  // Another agent's owner reads nothing; this one's reads its pins again.
+  expect(idsRead(s)).toEqual([
+    [one, two],
+    [one, two],
+  ]);
 });
 
 it("holds triggers that arrive during a read for one read after it", async () => {

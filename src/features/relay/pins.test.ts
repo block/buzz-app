@@ -221,6 +221,33 @@ it("reads watched lists again in one read when their channels catch up", async (
   expect(store.snapshot("e")).toBe(LOADING_PINS);
 });
 
+it("reads a list once more when asked during a read already running", async () => {
+  const gates: (() => void)[] = [];
+  let reply = [list([one])];
+  const s = source(async () => {
+    const answer = reply;
+    await new Promise<void>((resolve) => gates.push(resolve));
+    return answer;
+  });
+  const store = pinLists(s.value);
+  store.subscribe("c", () => {});
+  await flush();
+  expect(gates).toHaveLength(1);
+  // The list changed during the gap; catch-up and a refusal's reread both
+  // ask while the first read, sent before the change, still runs.
+  reply = [list([two], 200)];
+  s.catchUp(["c"]);
+  store.retry("c");
+  expect(gates).toHaveLength(1);
+  gates.shift()?.();
+  await flush();
+  expect(gates).toHaveLength(1);
+  gates.shift()?.();
+  await flush();
+  expect(s.value.read).toHaveBeenCalledTimes(2);
+  expect(store.snapshot("c").ids).toEqual([two]);
+});
+
 it("keeps a shown list through a failed catch-up read and repairs it on the next", async () => {
   let reply: () => readonly EventData[] = () => [list([one])];
   const s = source(async () => reply());

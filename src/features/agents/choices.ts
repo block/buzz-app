@@ -101,9 +101,18 @@ export type AgentChoicesSnapshot = Omit<AgentLibrarySnapshot, "identities"> & {
   archives: IdentityArchiveSnapshot;
   /** Templates mirror Agents, including source readiness and errors. */
   templates: TemplateChoices;
-  /** Usable candidates do not imply complete evidence for automatic recipients. */
+  /** Every source has a whole list to choose from: the latest read, or the
+   * last whole one kept while a reread loads or after it failed. Enough to
+   * default, admit and send; a failed source retries on its own. */
   complete: boolean;
+  /** `complete` from the latest read of every source, with no reread loading
+   * or failed. Decisions that rest on an agent being absent (none to offer,
+   * one gone, a lone automatic recipient) wait for this. */
+  current: boolean;
   pending: boolean;
+  /** A source failed and will read again on its own; absent when nothing
+   * failed, or when only an explicit retry can help. */
+  retrying?: true;
 };
 
 /** One read-only projection of existing sources. No directory scan, timer, runner
@@ -145,6 +154,7 @@ export function createAgentChoices({
     definitions: [],
     identities: [],
     complete: false,
+    current: false,
     pending: false,
   };
   let cached:
@@ -166,11 +176,14 @@ export function createAgentChoices({
       cached.archive === archive
     )
       return cached.value;
+    // A source's kept rows still name its agents while it rereads.
+    const legacyRows = legacy.status === "ready" || !!legacy.stale;
+    const localRows = local?.status === "ready" || !!local?.stale;
     const choices = new Map<string, Choice>();
-    if (legacy.status === "ready")
+    if (legacyRows)
       for (const row of legacy.identities)
         choices.set(row.pubkey, { ...row, managed: false });
-    if (local?.status === "ready")
+    if (local && localRows)
       for (const row of sameCommunityAgents(local.hosted ?? [], scope)) {
         choices.set(row.pubkey, {
           pubkey: row.pubkey,
@@ -183,7 +196,7 @@ export function createAgentChoices({
           ...(row.runtime ? { runtime: row.runtime } : {}),
         });
       }
-    if (local?.status === "ready")
+    if (local && localRows)
       for (const row of sameCommunityAgents(local.agents, scope)) {
         // Keep existing source names in serialized mentions; the shared name
         // resolver supplies native display labels independently.
@@ -199,13 +212,16 @@ export function createAgentChoices({
         });
       }
     // After every source, so none of them offers one whose Delete started.
-    if (local?.status === "ready")
+    if (local && localRows)
       for (const row of sameCommunityAgents(local.agents, scope)) {
         const choice = choices.get(row.pubkey);
         if (row.deleting && choice)
           choices.set(row.pubkey, { ...choice, deleting: true });
       }
     const ready = legacy.status === "ready" || local?.status === "ready";
+    const legacyCurrent = legacy.status === "ready" && !legacy.error;
+    const localCurrent =
+      !local || local.status === "ready" || local.status === "unavailable";
     const errors = [
       legacy.error,
       local?.status === "error" ? local.error : undefined,
@@ -240,10 +256,9 @@ export function createAgentChoices({
         legacy.status === "loading" ||
         local?.status === "loading",
       complete:
-        legacy.status === "ready" &&
-        !legacy.error &&
-        (!local || local.status === "ready" || local.status === "unavailable"),
-      definitions: legacy.status === "ready" ? legacy.definitions : [],
+        (legacyCurrent || !!legacy.stale) && (localCurrent || localRows),
+      current: legacyCurrent && localCurrent,
+      definitions: legacyRows ? legacy.definitions : [],
       identities: [...choices.values()],
       selectable: [...choices.values()].filter(
         (agent) =>
@@ -251,6 +266,10 @@ export function createAgentChoices({
       ),
       archives: archive,
       ...(errors.length ? { error: errors.join(" ") } : {}),
+      // The native list retries on its own tick; the library says.
+      ...(errors.length && (!legacy.error || legacy.retrying)
+        ? { retrying: true as const }
+        : {}),
     };
     cached = { legacy, local, archive, value };
     return value;

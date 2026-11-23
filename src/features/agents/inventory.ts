@@ -1,6 +1,6 @@
 import type { AgentLibrary, AgentLibraryReader } from "./library";
 import { definitionSlug } from "./relay-library";
-import { retryRead } from "../relay/read-retry";
+import { isRetryableRead, retryRead } from "../relay/read-retry";
 
 /** Preserve local names/artwork; add relay-only keys. Names never join identities. */
 export function combineInventory(
@@ -58,13 +58,15 @@ export function combineInventory(
   };
 }
 
-/** A failed source must not erase the other source's usable inventory. */
+/** A failed source must not erase the other source's usable inventory: it
+ * shows its last answer until it answers again. */
 export function inventoryReader(
   local: AgentLibraryReader | undefined,
   relay: AgentLibraryReader,
 ): AgentLibraryReader {
-  return async (signal) => {
-    const empty = { definitions: [], identities: [] };
+  const empty = { definitions: [], identities: [] };
+  let last: { saved?: AgentLibrary; remote?: AgentLibrary } = {};
+  const read: AgentLibraryReader = async (signal) => {
     const [saved, remote] = await Promise.allSettled([
       local ? local(signal) : Promise.resolve(empty),
       // Only the relay source is a finite network read; it owns its retries.
@@ -77,8 +79,18 @@ export function inventoryReader(
     ] as const)
       if (result.status === "rejected")
         console.warn(`${source} read failed`, result.reason);
+    if (saved.status === "fulfilled") last = { ...last, saved: saved.value };
+    if (remote.status === "fulfilled") last = { ...last, remote: remote.value };
+    // A relay refusal or over-budget inventory fails the same way again.
+    const retry =
+      remote.status === "rejected" && !isRetryableRead(remote.reason)
+        ? ({ retry: false } as const)
+        : {};
     if (remote.status === "rejected" && (!local || saved.status === "rejected"))
-      throw new Error("Agent inventory sources unavailable");
+      throw Object.assign(
+        new Error("Agent inventory sources unavailable"),
+        retry,
+      );
     const error =
       saved.status === "rejected"
         ? "Local library unavailable; showing relay inventory. Refresh agents to include local identities."
@@ -87,10 +99,16 @@ export function inventoryReader(
           : undefined;
     return {
       ...combineInventory(
-        saved.status === "fulfilled" ? saved.value : empty,
-        remote.status === "fulfilled" ? remote.value : empty,
+        saved.status === "fulfilled" ? saved.value : (last.saved ?? empty),
+        remote.status === "fulfilled" ? remote.value : (last.remote ?? empty),
       ),
       ...(error ? { error } : {}),
+      ...retry,
     };
   };
+  return Object.assign(read, {
+    forget() {
+      last = {};
+    },
+  });
 }

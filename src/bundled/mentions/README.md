@@ -394,11 +394,14 @@ A Solo chat MUST NOT ask either, in any Solo chat composer. A composer that
 invites agents adds the viewer's available agents that the draft names. Every
 other outside key is a reference, as in a DM, and the chooser row says so
 before the user picks the person. Classifying an unknown key as a reference
-needs complete agent inventory evidence: until the agent read is complete, the
+needs current agent inventory evidence, because a kept list may lack a newly
+created agent: until the latest read of every agent source has succeeded, the
 composer offers and accepts no outside key, so a row never calls the viewer's
-own agent a reference, and the send refuses a reference if its read is
-incomplete. A partial read still adds the agents it lists. A reference
-addresses nobody, so it does not replace the toolbar's agents.
+own agent a reference, and the send refuses a reference if its read is not
+current. The last complete read still counts for the agents it lists while a
+reread loads or after it fails, and a failed read retries on its own. A partial
+read still adds the agents it lists. A reference addresses nobody, so it does
+not replace the toolbar's agents.
 
 An agent from the viewer's other communities (section 1, item 3) is not a
 member here and cannot be added until it joins this community. Before the

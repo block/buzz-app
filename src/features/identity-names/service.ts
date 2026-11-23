@@ -24,7 +24,7 @@ export type NameSource = {
   relayUrl?: string | undefined;
   profiles: ProfileQueries;
   agentLibrary: {
-    snapshot(): AgentLibrary & { status: string };
+    snapshot(): AgentLibrary & { status: string; stale?: true };
     subscribe(listener: () => void): () => void;
     refresh(): Promise<void>;
     retain(): () => void;

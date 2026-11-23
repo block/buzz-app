@@ -61,7 +61,7 @@ export function PinnedBestie({
   const channel =
     saved &&
     !choices.archives.archived.includes(saved) &&
-    (agent || choices.status !== "ready" || !choices.complete)
+    (agent || choices.status !== "ready" || !choices.current)
       ? bestieChat(channels.channels, viewer, saved)
       : undefined;
   const identity = agent ?? known;
@@ -130,7 +130,7 @@ export function PinnedBestie({
             description="Reading the agents available in this community."
           />
         </LoadingRegion>
-      ) : choices.error || !choices.complete ? (
+      ) : choices.error || !choices.current ? (
         <Notice
           title="Your agents are unavailable"
           description={

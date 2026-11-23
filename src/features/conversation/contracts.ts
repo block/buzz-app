@@ -43,6 +43,9 @@ export type ComposerToolProps = Readonly<{
         recipients: readonly Readonly<{ pubkey: string; name: string }>[];
         /** True while inline mentions alone decide, as when the draft opens with one, so picks edit them. */
         named: boolean;
+        /** True while the default stand-ins are still being worked out, as
+         * before the first agent list arrives. */
+        loading?: boolean;
         only(
           recipients: readonly Readonly<{ pubkey: string; name: string }>[],
         ): void;

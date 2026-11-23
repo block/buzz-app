@@ -81,7 +81,11 @@ function fixture({
     definitions: [],
     identities: teamAgents,
   }));
-  if (failure) read.mockRejectedValueOnce(new Error("temporary read failure"));
+  // A failure only Retry can fix, so the menu offers the button.
+  if (failure)
+    read.mockRejectedValueOnce(
+      Object.assign(new Error("read refused"), { retry: false }),
+    );
   const library = createAgentLibrary(read);
   const choices = createAgentChoices({
     scope: "test",

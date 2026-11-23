@@ -147,10 +147,12 @@ async function ownedAgentChannel(
   const state = {
     choices: {
       complete: choicesReady,
+      current: choicesReady,
       identities: [],
       archives: { status: "ready", archived: [] },
     } as {
       complete: boolean;
+      current: boolean;
       archives: { status: "ready"; archived: string[] };
       identities: { pubkey: string; managed: boolean; messageable: boolean }[];
     },
@@ -344,6 +346,7 @@ it.each(["dm", "stream", "forum"] as const)(
     act(() => {
       state.choices = {
         complete: true,
+        current: true,
         archives: { status: "ready", archived: [] },
         identities: [
           { pubkey: candidate.pubkey, managed: false, messageable: true },
@@ -355,6 +358,7 @@ it.each(["dm", "stream", "forum"] as const)(
     act(() => {
       state.choices = {
         complete: true,
+        current: true,
         identities: [],
         archives: { status: "ready", archived: [candidate.pubkey] },
       };

@@ -76,7 +76,7 @@ function SessionResolve({
   }, []);
   const recipient = agents.some((agent) => agent.pubkey === selected)
     ? selected
-    : choices.complete && agents.length === 1
+    : choices.current && agents.length === 1
       ? agents[0]?.pubkey
       : undefined;
   useEffect(() => {
@@ -101,7 +101,7 @@ function SessionResolve({
     channel.readOnly ||
     !["open", "draft"].includes(pull.state) ||
     !applicable ||
-    (choices.complete && agents.length === 0)
+    (choices.current && agents.length === 0)
   )
     return null;
   async function send() {
@@ -120,7 +120,7 @@ function SessionResolve({
         fresh.archived ||
         fresh.readOnly ||
         !available.some((agent) => agent.pubkey === recipient) ||
-        (!selected && (!current.complete || available.length !== 1))
+        (!selected && (!current.current || available.length !== 1))
       )
         throw new Error(
           "The chat’s agents changed. Choose an agent and try again.",
@@ -169,7 +169,7 @@ function SessionResolve({
           </Button>
         </span>
       )}
-      {(agents.length > 1 || (!choices.complete && agents.length > 0)) && (
+      {(agents.length > 1 || (!choices.current && agents.length > 0)) && (
         <Select
           label="Agent"
           variant="inline"

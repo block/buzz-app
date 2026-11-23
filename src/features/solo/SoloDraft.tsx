@@ -447,7 +447,7 @@ export function SoloDraft({
           canvas,
         });
       // Only your agents join; anyone else tagged is a reference, which
-      // notifies nobody. Only a complete agent read can tell a name is not
+      // notifies nobody. Only a current agent read can tell a name is not
       // yours.
       const outside = () =>
         tagged.filter((key) =>
@@ -462,7 +462,7 @@ export function SoloDraft({
         await session.agentChoices.refresh();
         if (!mounted.current) return;
         references = outside();
-        if (references.length && !session.agentChoices.snapshot().complete)
+        if (references.length && !session.agentChoices.snapshot().current)
           throw new Error("Could not load your agents. Retry.");
       }
       const recipients = tagged.filter((key) => !references.includes(key));

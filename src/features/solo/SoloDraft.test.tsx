@@ -188,6 +188,7 @@ function setup(available = true) {
   const agents = {
     status: "ready",
     complete: true,
+    current: true,
     identities: rows,
     selectable: rows,
     archives: { status: "unavailable" as const, archived: [] },
@@ -936,7 +937,10 @@ it("a refused start whose text names only a reference gives the pill's chosen ag
     onStarted = vi.fn(),
     onFailed = vi.fn(),
     user = userEvent.setup();
-  Object.assign(test.session.agentChoices.snapshot(), { complete: true });
+  Object.assign(test.session.agentChoices.snapshot(), {
+    complete: true,
+    current: true,
+  });
   const refuse = refusedStart(test);
   const person = "e".repeat(64);
   writeView("test", "solo:new-draft", {
@@ -1258,13 +1262,17 @@ it("cannot send on an unsupported community", async () => {
   expect(test.channelWrites.create).not.toHaveBeenCalled();
 });
 
-it.each([true, false])(
-  "a first message references a person outside the chat, as later ones do (complete inventory=%s)",
-  async (complete) => {
+it.each([
+  ["current", true, true],
+  ["kept but not current", true, false],
+  ["partial", false, false],
+] as const)(
+  "a first message references a person outside the chat, as later ones do (%s inventory)",
+  async (_, complete, current) => {
     const test = setup(),
       onStarted = vi.fn(),
       user = userEvent.setup();
-    Object.assign(test.session.agentChoices.snapshot(), { complete });
+    Object.assign(test.session.agentChoices.snapshot(), { complete, current });
     const person = "e".repeat(64);
     writeView("test", "solo:new-draft", {
       text: "@Member agent ask @Pat",
@@ -1278,8 +1286,9 @@ it.each([true, false])(
     );
     await user.click(screen.getByRole("textbox"));
     await user.keyboard("{Enter}");
-    if (!complete) {
-      // A partial agent read cannot tell that key from one of your agents.
+    if (!current) {
+      // A partial or kept agent read cannot tell that key from one of your
+      // agents: a kept list can lack one made since.
       expect(await screen.findByRole("alert")).toHaveTextContent(
         "Could not load your agents. Retry.",
       );
@@ -1621,6 +1630,7 @@ it("a new Solo chat needs a tagged agent to send", async () => {
   const none = {
     status: "ready",
     complete: true,
+    current: true,
     identities: [],
     selectable: [],
     archives: { status: "unavailable" as const, archived: [] },

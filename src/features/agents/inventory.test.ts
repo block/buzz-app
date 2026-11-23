@@ -102,6 +102,61 @@ it("keeps either available source visible and makes partial failure explicit", a
   warn.mockRestore();
 });
 
+it("shows a failed source's last answer and replaces the source that answered", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const signal = new AbortController().signal;
+    const mine = { pubkey: "a".repeat(64), name: "Local" };
+    const gone = { pubkey: "b".repeat(64), name: "Removed on the relay" };
+    const kept = { pubkey: "c".repeat(64), name: "Relay" };
+    const local = vi.fn().mockResolvedValue({
+      definitions: [],
+      identities: [mine],
+    });
+    const relay = vi
+      .fn()
+      .mockResolvedValueOnce({ definitions: [], identities: [gone, kept] })
+      .mockRejectedValueOnce(new TypeError("offline"));
+    const read = inventoryReader(local, (s) => relay(s));
+    await read(signal);
+    // The relay fails: its last rows stand in for it.
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    relay.mockRejectedValue(new TypeError("offline"));
+    const offline = read(signal);
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+    expect(await offline).toMatchObject({
+      identities: [gone, kept, mine],
+      error: expect.stringContaining("Relay inventory unavailable"),
+    });
+    expect(await offline).not.toHaveProperty("retry");
+    // The relay answers without an agent while the local read fails: the
+    // relay's rows replace its old ones, the local source keeps its last.
+    relay
+      .mockReset()
+      .mockResolvedValue({ definitions: [], identities: [kept] });
+    local.mockRejectedValueOnce(new Error("local busy"));
+    expect((await read(signal)).identities).toEqual([kept, mine]);
+    // A relay failure that reading again cannot fix says so; forgetting
+    // drops the kept sources.
+    relay
+      .mockReset()
+      .mockRejectedValue(new Error("Agent inventory exceeds read budget"));
+    read.forget?.();
+    expect(await read(signal)).toMatchObject({
+      identities: [mine],
+      retry: false,
+    });
+    local.mockRejectedValueOnce(new Error("local busy"));
+    await expect(read(signal)).rejects.toMatchObject({ retry: false });
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    warn.mockRestore();
+  }
+});
+
 it("quietly retries a transient relay inventory failure before merging", async () => {
   vi.useFakeTimers();
   vi.spyOn(Math, "random").mockReturnValue(0.5);
@@ -269,7 +324,12 @@ it("recovers retained demand after establishment and stops recovery when demand 
     const release = owner.session.agentLibrary.retain();
     await owner.session.agentLibrary.refresh();
     callbacks.state({ status: "connecting", routes: [] });
-    expect(owner.session.agentLibrary.snapshot().identities).toEqual([]);
+    // A dropped connection keeps the last whole read until the reread.
+    expect(owner.session.agentLibrary.snapshot()).toMatchObject({
+      status: "idle",
+      stale: true,
+    });
+    expect(owner.session.agentLibrary.snapshot().identities).toHaveLength(1);
     callbacks.state({ status: "connected", routes: [] });
     callbacks.established();
     await vi.waitFor(() =>

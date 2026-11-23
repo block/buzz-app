@@ -4242,7 +4242,7 @@ export function createRelaySession(
         dropHintConfirmations();
         requests.invalidate();
         repositories.clearHomes();
-        agentLibrary.clear();
+        agentLibrary.stale();
         archives.stale();
         workflows.interrupt();
         streamDropped = true;

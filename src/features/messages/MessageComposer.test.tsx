@@ -633,10 +633,24 @@ function mount(
       identities: AgentLibrarySnapshot["identities"],
       status: AgentLibrarySnapshot["status"] = "ready",
       error?: string,
+      stale?: boolean,
+      retrying?: boolean,
     ) {
       act(() => {
-        const { error: _previous, ...rest } = library;
-        library = { ...rest, identities, status, ...(error ? { error } : {}) };
+        const {
+          error: _previous,
+          stale: _stale,
+          retrying: _retrying,
+          ...rest
+        } = library;
+        library = {
+          ...rest,
+          identities,
+          status,
+          ...(error ? { error } : {}),
+          ...(stale ? { stale: true as const } : {}),
+          ...(retrying ? { retrying: true as const } : {}),
+        };
         for (const listener of libraryListeners) listener();
       });
     },
@@ -14648,6 +14662,60 @@ it("waits for complete agent choices before seeding the pill with the agent last
   ]);
 });
 
+it("keeps a saved Solo chat's pill seeded from the kept agent list when a reread fails, and shows loading before any list", () => {
+  const viewer = "e".repeat(64);
+  const h = mount({}, undefined, viewer);
+  h.setHistory("ready");
+  // No agent list has arrived yet.
+  h.setLibrary([], "loading");
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      channels: { ...h.session.channels, list: () => soloList },
+    } as unknown as RelaySession,
+  });
+  h.setRows([
+    editableMessage({
+      id: "1".repeat(64),
+      authorId: viewer,
+      mentions: [second.pubkey],
+    }),
+  ]);
+  const sendingTo = (names: string) =>
+    screen.getByRole("status", { name: `Sending to ${names}. Change agents` });
+  // With nothing to choose from, the pill loads instead of asking.
+  expect(sendingTo("")).toBeInTheDocument();
+  expect(h.commands().audience?.loading).toBe(true);
+  h.setLibrary([first, second]);
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.commands().audience?.loading).toBeUndefined();
+  // A background reread fails. The last whole list is kept, so switching away
+  // and back seeds the same agent, with no Retry needed.
+  h.setLibrary([first, second], "error", "Could not read", true);
+  h.retarget({ shown: false });
+  h.retarget({ shown: true });
+  expect(sendingTo("Bea")).toBeInTheDocument();
+  expect(h.commands().audience?.loading).toBeUndefined();
+  // A failure with nothing kept keeps loading while it retries on its own,
+  // and offers the choice only when nothing will retry.
+  h.setLibrary([], "error", "Could not read", false, true);
+  h.retarget({ shown: false });
+  h.retarget({ shown: true });
+  expect(h.commands().audience?.loading).toBe(true);
+  h.setLibrary([], "error", "Could not read");
+  expect(sendingTo("")).toBeInTheDocument();
+  expect(h.commands().audience?.loading).toBeUndefined();
+  h.unmount();
+});
+
 it("keeps remembered agents while typing during upload without taking focus when publication finishes", async () => {
   const key = keypair();
   const agent = { pubkey: key.pubkey, name: "Honey" };
@@ -16615,6 +16683,59 @@ it("adds a known agent while one agent source failed, but refuses a name it cann
     await screen.findByText("Could not load your agents. Retry."),
   ).toBeVisible();
   expect(h.messages.send).toHaveBeenCalledOnce();
+});
+
+it("sends to a kept agent list's agents, but refuses a key it lacks until the list is current", async () => {
+  const h = mount();
+  const stranger = { pubkey: "e".repeat(64), name: "Stranger" };
+  const channel = {
+    id: "channel",
+    name: "Work",
+    channelType: "solo" as const,
+    members: ["viewer"],
+  };
+  const list = { status: "ready" as const, channels: [channel] };
+  const addAgents = vi.fn();
+  h.retarget({
+    soloConversation: true,
+    ownSoloConversation: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { list: () => list, subscribeList: () => () => {} },
+      channelWrites: { refreshMembership: async () => channel, addAgents },
+    } as unknown as RelaySession,
+  });
+  // A whole read, then a reread fails: the kept list is complete, not current.
+  h.setLibrary([first]);
+  await choicesLoaded();
+  act(() => {
+    h.commands().insertMention(stranger);
+    h.commands().insertMention(first);
+    h.commands().insertText("ask her");
+  });
+  h.setLibrary([first], "error", "Could not read agent inventory", true);
+  h.submit();
+  // The stranger may be an agent made since the kept read, so it is not
+  // sent as a reference that notifies nobody.
+  expect(
+    await screen.findByText("Could not load your agents. Retry."),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  // A key the kept list lacks is not offered as a reference either.
+  h.fill("");
+  act(() => h.commands().insertMention(stranger));
+  expect(h.commands().recipients.map((p) => p.pubkey)).not.toContain(
+    stranger.pubkey,
+  );
+  // The agents it lists still send.
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("hi");
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
 });
 
 it.each([false, true])(

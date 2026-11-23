@@ -251,8 +251,14 @@ it("recovers provider-owned names in the same live session and releases demand w
     );
     act(() => live.state({ status: "connected", routes: [] }));
     act(() => live.state({ status: "retrying", routes: [] }));
-    expect(screen.getByRole("heading", { name: "Public Carl" })).toBeTruthy();
-    expect(owner.session.agentLibrary.snapshot().status).toBe("idle");
+    // A dropped connection keeps the last agent list's name until a reread.
+    expect(
+      screen.getByRole("heading", { name: "Configured Carl" }),
+    ).toBeTruthy();
+    expect(owner.session.agentLibrary.snapshot()).toMatchObject({
+      status: "idle",
+      stale: true,
+    });
     expect(read).toHaveBeenCalledTimes(1);
     act(() => {
       live.state({ status: "connected", routes: [] });

@@ -272,7 +272,7 @@ function Candidate({
     dismissed ||
     !candidate ||
     (phase === "idle" &&
-      (!choices.complete ||
+      (!choices.current ||
         existing ||
         choices.archives.archived.includes(peer) ||
         owned.status !== "ready" ||

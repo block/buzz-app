@@ -650,7 +650,7 @@ it("rejects a known-archived library agent before adding it to a session", async
   }
 });
 
-it("rejects a stale cached identity after the current library refresh fails", async () => {
+it("admits an agent from the last whole library read after a refresh fails", async () => {
   const test = setup();
   try {
     await test.ready();
@@ -658,13 +658,17 @@ it("rejects a stale cached identity after the current library refresh fails", as
     await test.owner.session.agentLibrary.refresh();
     const library = test.owner.session.agentLibrary.snapshot();
     expect(library.status).toBe("error");
+    expect(library.stale).toBe(true);
     expect(library.identities.map((identity) => identity.pubkey)).toContain(
       test.agent,
     );
-    await expect(
-      test.owner.session.channelWrites.addAgents(test.parent, [test.agent]),
-    ).rejects.toThrow(/agent library/);
-    expect(test.publish).not.toHaveBeenCalled();
+    // A failed reread must not block an agent the last whole read listed;
+    // the library retries on its own.
+    await test.owner.session.channelWrites.addAgents(test.parent, [test.agent]);
+    expect(test.publish.mock.calls[0]?.[0].tags).toContainEqual([
+      "p",
+      test.agent,
+    ]);
   } finally {
     test.owner.dispose();
   }

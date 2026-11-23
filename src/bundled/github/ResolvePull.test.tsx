@@ -17,6 +17,7 @@ function harness({
   action = "failures",
   members = [agent],
   complete = true,
+  current = complete,
   rootId,
   type = "solo",
 }: {
@@ -26,6 +27,7 @@ function harness({
   action?: "failures" | "conflicts";
   members?: string[];
   complete?: boolean;
+  current?: boolean;
   rootId?: string;
   type?: string;
 } = {}) {
@@ -43,6 +45,7 @@ function harness({
       name: `Agent ${i + 1}`,
     })),
     complete,
+    current,
     pending: false,
     error: undefined as string | undefined,
     archives: { status: "ready" },
@@ -187,6 +190,19 @@ it("does not infer a recipient from incomplete inventory", () => {
     screen.getByRole("button", { name: "Resolve failures" }),
   ).toBeDisabled();
 });
+it("does not infer a recipient or hide the action from a kept, not current, inventory", () => {
+  // A kept list can lack an agent made since: neither a lone agent nor none
+  // is proof.
+  harness({ current: false });
+  expect(
+    screen.getByRole("button", { name: "Resolve failures" }),
+  ).toBeDisabled();
+  cleanup();
+  harness({ members: [], current: false });
+  expect(
+    screen.getByRole("button", { name: "Resolve failures" }),
+  ).toBeDisabled();
+});
 it("does not send after membership changes during preparation", async () => {
   const h = harness();
   h.refreshMembership.mockResolvedValue({ ...h.channel, members: [] });
@@ -273,6 +289,7 @@ it("recovers Team agent discovery after refresh loses the only candidate", async
     h.updateChoices({
       selectable: [],
       complete: false,
+      current: false,
       error: "Inventory unavailable",
     });
   });
@@ -287,6 +304,7 @@ it("recovers Team agent discovery after refresh loses the only candidate", async
     h.updateChoices({
       selectable: h.choices.selectable,
       complete: true,
+      current: true,
       error: undefined,
     });
   });
@@ -341,7 +359,12 @@ it.each([false, true])(
     const h = harness({ type: "stream" });
     let finish!: () => void;
     h.refreshAgents.mockImplementationOnce(async () => {
-      h.updateChoices({ complete: false, pending: true, selectable: [] });
+      h.updateChoices({
+        complete: false,
+        current: false,
+        pending: true,
+        selectable: [],
+      });
       await new Promise<void>((resolve) => {
         finish = resolve;
       });

@@ -124,6 +124,12 @@ if that desktop app is up and running.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.
+- **Drafts & sent** is an optional plugin, enabled in **Settings → Plugins**.
+  Select a draft to edit and send in a conversation preview. After confirmed
+  delivery, its row leaves the list and the preview stays open on the
+  conversation; failed sends keep **Retry**. Sent previews let you reply in
+  place. A thread preview’s **In #channel** link opens it beside its original
+  message in that conversation.
 - **Charts.** With the Charts plugin on, a `buzz-chart` code block of JSON
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.

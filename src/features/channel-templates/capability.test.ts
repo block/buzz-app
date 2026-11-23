@@ -313,6 +313,47 @@ it("keeps drafts safe from stale Canvas, unresolved writes and access loss", asy
     content: "New",
   });
 });
+it.each(["Canvas", "recipe"] as const)(
+  "refuses a %s save in another window that loaded before this save began",
+  async (target) => {
+    const first = fixture();
+    const second = fixture();
+    const save = (f: ReturnType<typeof fixture>) =>
+      target === "Canvas"
+        ? f.canvas.save(channel, "Draft", undefined)
+        : f.capability.save(record.value, undefined);
+    let published!: () => void;
+    const publishing = new Promise<void>((resolve) => {
+      published = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = vi.mocked(first.reader.read);
+    const answer = read.getMockImplementation();
+    read.mockImplementation(async (filters, options) => {
+      if (filters.some((filter) => filter.ids)) {
+        published();
+        await gate;
+      }
+      return (await answer?.(filters, options)) ?? [];
+    });
+    const saving = save(first);
+    try {
+      await publishing;
+      await expect(save(second)).rejects.toThrow(
+        "An earlier save is still sending. Try again in a moment.",
+      );
+      expect(second.outbox.send).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+    await saving;
+    await save(second);
+    expect(second.outbox.send).toHaveBeenCalledOnce();
+  },
+);
 it.each(["failed", "unknown"] as const)(
   "replaces a %s earlier save instead of blocking new saves",
   async (delivery) => {

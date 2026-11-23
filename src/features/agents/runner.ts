@@ -667,10 +667,13 @@ export type RunnerHost = {
   record(key: AgentKey): AgentRecord;
   /** Changes its record after the changes sent before it, from the newest
    * saved record; settles with the saved record once it is saved, and
-   * rejects when `apply` throws or the save fails. */
+   * rejects when `apply` throws or the save fails. A `checked` write is the
+   * agent's own, checked against a fresh read of its attention even when it
+   * changes nothing. */
   change(
     key: AgentKey,
     apply: (record: AgentRecord) => AgentRecord | Promise<AgentRecord>,
+    checked?: boolean,
   ): Promise<AgentRecord>;
   /** Whether a change other than timer progress is waiting or saving. Its
    * timers wait for it, since it may rearm, restart or remove one. */
@@ -851,6 +854,9 @@ export class AgentRunners {
   private readonly reportedWakes = new Set<string>();
   /** A terminal producer retains its registration until every queued turn settles. */
   async completeSource(key: AgentKey, object: AttentionObject) {
+    let remove = false;
+    // Its completion is saved here first, as run state: a removal that its
+    // attention's store then refuses never runs the producer again.
     await this.host.change(key, (record) => {
       if (record.attention[object.slug] !== object) return record;
       const pending =
@@ -860,16 +866,21 @@ export class AgentRunners {
         this.runners
           .get(key)
           ?.queues.watch.some((job) => job.matched?.object === object);
-      return pending || this.failedSources.has(object)
-        ? {
-            ...record,
-            sourceRuns: {
-              ...record.sourceRuns,
-              [object.slug]: sourceSignature(object),
-            },
-          }
-        : setAttention(record, object.slug, null);
+      remove = !pending && !this.failedSources.has(object);
+      return {
+        ...record,
+        sourceRuns: {
+          ...record.sourceRuns,
+          [object.slug]: sourceSignature(object),
+        },
+      };
     });
+    if (remove)
+      await this.host.change(key, (record) =>
+        record.attention[object.slug] === object
+          ? setAttention(record, object.slug, null)
+          : record,
+      );
   }
 
   private readonly runners = new Map<string, Runner>();
@@ -1621,7 +1632,10 @@ export class AgentRunners {
           }
           const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
           if (this.hasSeen(runner, event.id, channel)) continue;
-          // Left unseen, so a later replay or catch-up can still deliver it.
+          // Left unseen, so a later replay or catch-up can still deliver it:
+          // while its relay set is read, the watches it would match are not
+          // known yet, and catch-up reads it once they are.
+          if (agent.attentionPending) continue;
           if (runner.backlog.length >= BACKLOG_LIMIT) {
             overflow++;
             continue;
@@ -1815,15 +1829,18 @@ export class AgentRunners {
   ) {
     const channel = event.tags.find((tag) => tag[0] === "h")?.[1];
     if (this.hasSeen(runner, event.id, channel)) return;
+    if (this.isOwn(agent, event)) {
+      this.markSeen(runner, event.id, channel);
+      return;
+    }
+    const addressable = this.host.unattended(agent, event, true);
+    const heard = this.heard(runner, agent, event, addressable);
+    // While its relay set is read, its watches may differ from the ones
+    // here: an event none of them takes stays unseen and out of its
+    // checkpoints, so catch-up gives it to the watches the set brings.
+    if (agent.attentionPending && !heard.triggers.length && !heard.held) return;
     this.markSeen(runner, event.id, channel);
-    if (this.isOwn(agent, event)) return;
-    this.deliver(
-      runner,
-      agent,
-      event,
-      channelId,
-      this.host.unattended(agent, event, true),
-    );
+    this.deliver(runner, agent, event, channelId, addressable, heard);
   }
   /** Saves `event` as heard by each of the agent's streams it is in and has
    * not passed yet, so catch-up after a restart does not give it again. */
@@ -4756,70 +4773,75 @@ export class AgentRunners {
         ) => {
           // The token is checked against the newest saved record, in turn
           // with the other changes to it, so no change lands between.
-          const after = await this.host.change(key, async (before) => {
-            lifetime.throwIfAborted();
-            check?.();
-            const next = await checkedWrite(
-              before,
-              slug,
-              value,
-              options,
-              seconds(),
-            );
-            lifetime.throwIfAborted();
-            check?.();
-            if (value && value.type !== "interest" && value.enabled) {
-              const agent = this.host.agent(key);
-              if (!agent) throw new Error("This agent is no longer running");
-              const previous = before.attention[slug]?.value;
-              const prior =
-                previous?.type === "interest" ? undefined : previous;
-              const enabling = !prior?.enabled;
-              const channels =
-                value.type === "event" && value.channels !== "all"
-                  ? value.channels.filter(
-                      (channel) =>
-                        enabling ||
-                        prior?.type !== "event" ||
-                        prior.channels === "all" ||
-                        !prior.channels.includes(channel),
+          const after = await this.host.change(
+            key,
+            async (before) => {
+              lifetime.throwIfAborted();
+              check?.();
+              const next = await checkedWrite(
+                before,
+                slug,
+                value,
+                options,
+                seconds(),
+              );
+              lifetime.throwIfAborted();
+              check?.();
+              if (value && value.type !== "interest" && value.enabled) {
+                const agent = this.host.agent(key);
+                if (!agent) throw new Error("This agent is no longer running");
+                const previous = before.attention[slug]?.value;
+                const prior =
+                  previous?.type === "interest" ? undefined : previous;
+                const enabling = !prior?.enabled;
+                const channels =
+                  value.type === "event" && value.channels !== "all"
+                    ? value.channels.filter(
+                        (channel) =>
+                          enabling ||
+                          prior?.type !== "event" ||
+                          prior.channels === "all" ||
+                          !prior.channels.includes(channel),
+                      )
+                    : [];
+                if (channels.length) {
+                  await this.host.resolveChannels?.(agent, channels, lifetime);
+                  lifetime.throwIfAborted();
+                  check?.();
+                  for (const channel of channels)
+                    if (
+                      this.host.reads(agent, { tags: [["h", channel]] }) !==
+                      true
                     )
-                  : [];
-              if (channels.length) {
-                await this.host.resolveChannels?.(agent, channels, lifetime);
-                lifetime.throwIfAborted();
-                check?.();
-                for (const channel of channels)
-                  if (
-                    this.host.reads(agent, { tags: [["h", channel]] }) !== true
-                  )
+                      throw new AttentionError(
+                        "invalid-operation",
+                        `Cannot receive events from channel ${channel}. Check channel access and retry this write after metadata is confirmed.`,
+                      );
+                }
+                // An enabled source write replaces its producer, even if the
+                // destination is unchanged and the previous run failed.
+                if (
+                  value.channel &&
+                  (enabling ||
+                    value.type === "source" ||
+                    prior?.channel !== value.channel)
+                ) {
+                  const member = this.host.member(agent, {
+                    tags: [["h", value.channel]],
+                  });
+                  if (member !== true)
                     throw new AttentionError(
                       "invalid-operation",
-                      `Cannot receive events from channel ${channel}. Check channel access and retry this write after metadata is confirmed.`,
+                      member === undefined
+                        ? `Membership of delivery channel ${value.channel} is unconfirmed. Retry this write after the relay confirms membership.`
+                        : `Agent is not a member of the delivery channel ${value.channel}. Choose a joined channel or join it before retrying this write.`,
                     );
+                }
               }
-              // An enabled source write replaces its producer, even if the
-              // destination is unchanged and the previous run failed.
-              if (
-                value.channel &&
-                (enabling ||
-                  value.type === "source" ||
-                  prior?.channel !== value.channel)
-              ) {
-                const member = this.host.member(agent, {
-                  tags: [["h", value.channel]],
-                });
-                if (member !== true)
-                  throw new AttentionError(
-                    "invalid-operation",
-                    member === undefined
-                      ? `Membership of delivery channel ${value.channel} is unconfirmed. Retry this write after the relay confirms membership.`
-                      : `Agent is not a member of the delivery channel ${value.channel}. Choose a joined channel or join it before retrying this write.`,
-                  );
-              }
-            }
-            return next;
-          });
+              return next;
+            },
+            true,
+          );
           return show(after, slug, seconds());
         },
       },

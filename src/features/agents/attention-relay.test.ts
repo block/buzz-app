@@ -4,7 +4,6 @@ import type { RelayEvent } from "../relay/events";
 import { OBJECT_LIMIT, type AttentionValue } from "./attention";
 import { AttentionError } from "./attention-objects";
 import {
-  ATTENTION_LABEL,
   ATTENTION_TYPE,
   addWritten,
   agentDelivery,
@@ -12,7 +11,6 @@ import {
   attentionD,
   attentionSet,
   emptySet,
-  ensureChannel,
   HEAD_LIMIT,
   mirrored,
   ownerSender,
@@ -644,153 +642,6 @@ describe("one writer revision", () => {
   });
 });
 
-describe("the attention channel", () => {
-  const agent = "a".repeat(64);
-  const owner = "b".repeat(64);
-  const relayKey = generateSecretKey();
-  const relayAuthor = getPublicKey(relayKey);
-  const metadata = (id: string, created: number, extra: string[][] = []) =>
-    finalizeEvent(
-      {
-        kind: 39000,
-        created_at: created,
-        content: "",
-        tags: [
-          ["d", id],
-          ["t", "system"],
-          ["t", ATTENTION_LABEL],
-          ["P", agent],
-          ["created_at", String(created)],
-          ...extra,
-        ],
-      },
-      relayKey,
-    ) as RelayEvent;
-  const roster = (id: string, members: string[][]) => [
-    metadata(id, 1),
-    finalizeEvent(
-      {
-        kind: 39001,
-        created_at: 1,
-        content: "",
-        tags: [
-          ["d", id],
-          ...members
-            .filter((m) => m[3] === "owner")
-            .map(([p, k, , role]) => [
-              p as string,
-              k as string,
-              role as string,
-            ]),
-        ],
-      },
-      relayKey,
-    ) as RelayEvent,
-    finalizeEvent(
-      {
-        kind: 39002,
-        created_at: 1,
-        content: "",
-        tags: [["d", id], ...members],
-      },
-      relayKey,
-    ) as RelayEvent,
-  ];
-  function io(found: RelayEvent[], members: string[][]) {
-    const published: { kind: number; tags: string[][] }[] = [];
-    return {
-      published,
-      io: {
-        agent,
-        owner,
-        relayAuthor,
-        query: async (filters: readonly object[]) =>
-          (filters[0] as { kinds: number[] }).kinds.length === 1
-            ? found
-            : roster(
-                (filters[0] as { "#d": string[] })["#d"][0] as string,
-                members,
-              ),
-        publish: async (event: { kind: number; tags: string[][] }) => {
-          published.push(event);
-        },
-      },
-    };
-  }
-
-  it("creates it as the agent and adds the owner as an owner", async () => {
-    const f = io([], [["p", agent, "", "owner"]]);
-    const id = await ensureChannel(f.io);
-    expect(f.published.map((event) => event.kind)).toEqual([9007, 9000]);
-    expect(f.published[0]?.tags).toEqual(
-      expect.arrayContaining([
-        ["h", id],
-        ["visibility", "private"],
-        ["channel_type", "system"],
-        ["t", ATTENTION_LABEL],
-      ]),
-    );
-    expect(f.published[1]?.tags).toEqual([
-      ["h", id],
-      ["p", owner],
-      ["role", "owner"],
-    ]);
-  });
-
-  it("uses the oldest when another process created one at the same time", async () => {
-    const older = "11111111-1111-4111-8111-111111111111";
-    let created: string | undefined;
-    const f = io([], [["p", agent, "", "owner"]]);
-    const query = f.io.query;
-    f.io.query = async (filters) => {
-      const kinds = (filters[0] as { kinds: number[] }).kinds;
-      // The other process's channel shows once this one has created its own.
-      if (kinds.length === 1 && created)
-        return [metadata(older, 1), metadata(created, 9)];
-      return query(filters);
-    };
-    const publish = f.io.publish;
-    f.io.publish = async (event) => {
-      if (event.kind === 9007) created = event.tags[0]?.[1];
-      return publish(event);
-    };
-    expect(await ensureChannel(f.io)).toBe(older);
-    expect(f.published.map((event) => event.kind)).toEqual([9007, 9000, 9008]);
-    expect(f.published[2]?.tags).toEqual([["h", created]]);
-  });
-
-  it("uses the oldest, deletes newer ones and leaves a changed roster alone", async () => {
-    const older = "11111111-1111-4111-8111-111111111111";
-    const newer = "22222222-2222-4222-8222-222222222222";
-    const forged = finalizeEvent(
-      {
-        kind: 39000,
-        created_at: 0,
-        content: "",
-        tags: [
-          ["d", "33333333-3333-4333-8333-333333333333"],
-          ["t", "system"],
-          ["t", ATTENTION_LABEL],
-          ["P", agent],
-          ["created_at", "0"],
-        ],
-      },
-      key,
-    ) as RelayEvent;
-    const f = io(
-      [metadata(newer, 5), metadata(older, 2), forged],
-      [
-        ["p", agent, "", "owner"],
-        ["p", "c".repeat(64), "", "member"],
-      ],
-    );
-    expect(await ensureChannel(f.io)).toBe(older);
-    expect(f.published).toEqual([
-      { kind: 9008, content: "", tags: [["h", newer]] },
-    ]);
-  });
-});
-
 describe("one complete read", () => {
   function view(snapshots: ArtifactSyncSnapshot[]) {
     let listener = () => {};
@@ -842,94 +693,226 @@ describe("one complete read", () => {
 });
 
 describe("the kept-current set", () => {
-  it("creates no channel where the relay has no artifact sync", async () => {
-    let calls = 0;
-    const kept = relayAttention({
-      channel: {
-        agent: author,
-        relayAuthor: author,
-        query: async () => {
-          calls++;
-          return [];
-        },
-        publish: async () => {
-          calls++;
-          return {};
-        },
+  const id = "11111111-1111-4111-8111-111111111111";
+  const agent = "a".repeat(64);
+  const found = (members = [agent]) => ({ id, archived: false, members });
+
+  /** A relay attention over one channel whose find, sync and follow the
+   * test drives. */
+  function kept(
+    options: {
+      find?: () => Promise<ReturnType<typeof found> | undefined>;
+      snapshot?: ArtifactSyncSnapshot;
+    } = {},
+  ) {
+    let snapshot: ArtifactSyncSnapshot = options.snapshot ?? {
+      status: "live",
+      events: [],
+    };
+    const listeners = new Set<() => void>();
+    const followers = new Set<(events: readonly RelayEvent[]) => void>();
+    const sets: AttentionSet[] = [];
+    const views: { disposed: boolean }[] = [];
+    let finds = 0;
+    let reports = 0;
+    const find = options.find ?? (async () => found());
+    const controller = new AbortController();
+    const attention = relayAttention({
+      agent,
+      find: async () => {
+        finds++;
+        return find();
       },
+      artifactSync: true,
+      sync: () => {
+        const state = { disposed: false };
+        views.push(state);
+        return {
+          snapshot: () => snapshot,
+          subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          dispose() {
+            state.disposed = true;
+          },
+        };
+      },
+      follow(_channel, changed) {
+        followers.add(changed);
+        return () => followers.delete(changed);
+      },
+      changed: (set) => sets.push(set),
+      reported: () => reports++,
+      signal: controller.signal,
+      retryMs: 10,
+    });
+    return {
+      attention,
+      sets,
+      views,
+      finds: () => finds,
+      reports: () => reports,
+      set(next: ArtifactSyncSnapshot) {
+        snapshot = next;
+        for (const listener of [...listeners]) listener();
+      },
+      roster(event: Partial<RelayEvent>) {
+        for (const follower of [...followers])
+          follower([
+            { kind: 39002, tags: [["d", id]], ...event } as RelayEvent,
+          ]);
+      },
+      stop: () => controller.abort(),
+    };
+  }
+
+  it("never finds or creates a channel where the relay has no artifact sync", async () => {
+    const find = vi.fn();
+    const attention = relayAttention({
+      agent,
+      find,
       artifactSync: false,
       sync: () => {
         throw new Error("no sync");
       },
+      follow: () => () => {},
       changed: () => {},
       reported: () => {},
       signal: new AbortController().signal,
     });
-    expect(kept.problem()).toBe("This community can't store attention");
-    await expect(kept.read()).rejects.toThrow("can't store attention");
-    expect(calls).toBe(0);
-    kept.dispose();
+    expect(attention.problem()).toBe("This community can't store attention");
+    await expect(attention.read()).rejects.toThrow("can't store attention");
+    expect(find).not.toHaveBeenCalled();
+    attention.dispose();
   });
 
-  it("finds the channel again on resync, keeping the last good set", async () => {
-    const id = "11111111-1111-4111-8111-111111111111";
-    let finds = 0;
-    let snapshot: ArtifactSyncSnapshot = { status: "live", events: [] };
-    const listeners = new Set<() => void>();
-    const relayKey = generateSecretKey();
-    const agent = "a".repeat(64);
-    const channelEvent = finalizeEvent(
+  it("drops the set on resync until Find and a new set verify it", async () => {
+    const f = kept();
+    await vi.waitFor(() => expect(f.sets).toHaveLength(1));
+    expect(f.finds()).toBe(1);
+    f.set({
+      status: "stale",
+      events: [],
+      error: "resync: channel access changed",
+    });
+    // Nothing runs from the old set meanwhile.
+    expect(f.attention.current()).toBeUndefined();
+    expect(f.attention.lost()).toBe(false);
+    expect(f.attention.problem()).toMatch(/out of date/);
+    f.set({ status: "live", events: [] });
+    await vi.waitFor(() => expect(f.sets).toHaveLength(2));
+    expect(f.finds()).toBe(2);
+    expect(f.attention.current()).toBe(f.sets[1]);
+    expect(f.attention.problem()).toBeUndefined();
+    f.stop();
+  });
+
+  it("keeps the last set through a disconnect", async () => {
+    const f = kept();
+    await vi.waitFor(() => expect(f.sets).toHaveLength(1));
+    f.set({ status: "stale", events: [], error: "disconnected" });
+    expect(f.attention.current()).toBe(f.sets[0]);
+    expect(f.attention.problem()).toMatch(/reconnecting/);
+    f.stop();
+  });
+
+  it("runs nothing without a channel, and never creates one", async () => {
+    let channel: ReturnType<typeof found> | undefined;
+    const f = kept({ find: async () => channel });
+    await vi.waitFor(() => expect(f.attention.lost()).toBe(true));
+    expect(f.attention.current()).toBeUndefined();
+    expect(f.attention.problem()).toBe(
+      "This agent has no attention channel on its community",
+    );
+    expect(f.views).toHaveLength(0);
+    await expect(f.attention.read()).rejects.toThrow("no attention channel");
+    // Its owner creates one: a later Find uses it.
+    channel = found();
+    await vi.waitFor(() => expect(f.sets).toHaveLength(1));
+    expect(f.attention.lost()).toBe(false);
+    f.stop();
+  });
+
+  it("runs nothing when the agent is not a member", async () => {
+    const f = kept({ find: async () => found(["b".repeat(64)]) });
+    await vi.waitFor(() => expect(f.attention.lost()).toBe(true));
+    expect(f.attention.problem()).toBe(
+      "This agent is not a member of its attention channel",
+    );
+    expect(f.views).toHaveLength(0);
+    f.stop();
+  });
+
+  it("stops when a roster change removes the agent", async () => {
+    let members = [agent];
+    const f = kept({ find: async () => found(members) });
+    await vi.waitFor(() => expect(f.sets).toHaveLength(1));
+    // A change that keeps the agent goes on with the same sync.
+    f.roster({});
+    await vi.waitFor(() => expect(f.finds()).toBe(2));
+    expect(f.attention.current()).toBe(f.sets[0]);
+    expect(f.views).toHaveLength(1);
+    members = ["b".repeat(64)];
+    f.roster({});
+    await vi.waitFor(() => expect(f.attention.lost()).toBe(true));
+    expect(f.attention.current()).toBeUndefined();
+    expect(f.views[0]?.disposed).toBe(true);
+    f.stop();
+  });
+
+  it("stops when the channel can no longer be read", async () => {
+    const f = kept();
+    await vi.waitFor(() => expect(f.sets).toHaveLength(1));
+    const reports = f.reports();
+    f.set({ status: "restricted", events: [], error: "restricted: gone" });
+    expect(f.attention.lost()).toBe(true);
+    expect(f.attention.current()).toBeUndefined();
+    expect(f.reports()).toBeGreaterThan(reports);
+    f.stop();
+  });
+
+  it("applies a valid set after one with a malformed record", async () => {
+    const f = kept();
+    await vi.waitFor(() => expect(f.sets).toHaveLength(1));
+    const d = await attentionD(id, "interest/x");
+    const malformed = finalizeEvent(
       {
-        kind: 39000,
-        created_at: 1,
-        content: "",
+        kind: 45010,
+        created_at: 500,
+        content: JSON.stringify({
+          schema: { toString: 1 },
+          slug: "interest/x",
+          value: interest,
+        }),
         tags: [
-          ["d", id],
-          ["t", "system"],
-          ["t", ATTENTION_LABEL],
-          ["P", agent],
-          ["created_at", "1"],
+          ["ar", "1"],
+          ["d", d],
+          ["h", id],
+          ["type", ATTENTION_TYPE],
+          ["op", "create"],
         ],
       },
-      relayKey,
+      key,
     ) as RelayEvent;
-    const sets: AttentionSet[] = [];
-    const reported: (string | undefined)[] = [];
-    const controller = new AbortController();
-    const kept = relayAttention({
-      channel: {
-        agent,
-        relayAuthor: getPublicKey(relayKey),
-        query: async () => {
-          finds++;
-          return [channelEvent];
-        },
-        publish: async () => ({}),
-      },
-      artifactSync: true,
-      sync: () => ({
-        snapshot: () => snapshot,
-        subscribe(listener) {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-        dispose() {},
+    f.set({ status: "live", events: [malformed] });
+    await vi.waitFor(() => expect(f.sets).toHaveLength(2));
+    expect(f.sets[1]?.skipped["interest/x"]?.problem).toBe(
+      "Record schema is not a string",
+    );
+    const valid = sign(
+      revision({
+        channel: id,
+        d,
+        slug: "interest/x",
+        op: "create",
+        value: interest,
       }),
-      changed: (set) => sets.push(set),
-      reported: () => reported.push(kept.problem()),
-      signal: controller.signal,
-      retryMs: 10,
-    });
-    await vi.waitFor(() => expect(sets).toHaveLength(1));
-    expect(finds).toBe(1);
-    snapshot = { status: "stale", events: [], error: "resync: lost" };
-    for (const listener of [...listeners]) listener();
-    expect(kept.current()).toBe(sets[0]);
-    expect(reported.at(-1)).toMatch(/out of date/);
-    snapshot = { status: "live", events: [] };
-    await vi.waitFor(() => expect(sets).toHaveLength(2));
-    expect(finds).toBe(2);
-    expect(kept.problem()).toBeUndefined();
-    controller.abort();
+      600,
+    );
+    f.set({ status: "live", events: [valid] });
+    await vi.waitFor(() => expect(f.sets).toHaveLength(3));
+    expect(Object.keys(f.sets[2]?.attention ?? {})).toEqual(["interest/x"]);
+    f.stop();
   });
 });

@@ -74,7 +74,11 @@ import {
   SIDES,
 } from "./community-config";
 import { headFields, type Saved } from "./config-writes";
-import { importedTeamId as syncedTeamId } from "./config-channels";
+import {
+  agentSubject,
+  createConfigChannels,
+  importedTeamId as syncedTeamId,
+} from "./config-channels";
 import {
   SyncedTeams,
   teamArtifact,
@@ -3232,7 +3236,7 @@ export class AgentsService extends Service implements Agents {
         if (!member) throw new Error("No such agent on this device");
         return this.recordOf(member);
       },
-      change: async (key, apply) => {
+      change: async (key, apply, checked) => {
         const record = await this.change(
           key,
           () => {
@@ -3243,6 +3247,7 @@ export class AgentsService extends Service implements Agents {
           },
           undefined,
           "agent",
+          checked,
         );
         if (!record) throw new Error("No such agent on this device");
         return record;
@@ -6649,6 +6654,7 @@ export class AgentsService extends Service implements Agents {
         (saved) => changed(saved ?? this.recordOf(identity), own),
         undefined,
         own.attention || own.watchEnabled ? "owner" : undefined,
+        true,
       );
     const picture =
       change.picture === undefined ? undefined : change.picture || null;
@@ -7829,6 +7835,7 @@ export class AgentsService extends Service implements Agents {
           pubkey,
           signal,
         );
+        await this.leaveAttention(binding, pubkey, signal);
         if (deleting && member.key === pubkey) {
           // Home can reconnect while another community's departure awaits,
           // before its new coordinator is up.
@@ -7859,6 +7866,29 @@ export class AgentsService extends Service implements Agents {
     // So the community's agent choices no longer offer it.
     await binding.session.agentChoices.refresh(true, { fresh: true });
     return "done";
+  }
+
+  /** Takes the agent out of its attention channel in this community, if
+   * its owner here made one. The channel and its records stay its owner's;
+   * the agent added again runs nothing from them until it is let back in. */
+  private async leaveAttention(
+    binding: Binding,
+    pubkey: string,
+    signal: AbortSignal,
+  ) {
+    const channels = attentionChannels(binding);
+    if (!channels || !binding.session.channels.findLabeled) return;
+    const found = await channels.find(
+      "agent-attention",
+      agentSubject(pubkey),
+      signal,
+    );
+    if (!found?.members?.includes(pubkey)) return;
+    const left = await channels.removeMember(found.id, pubkey);
+    if (left.status === "failed")
+      throw new Error(
+        `It is still in its attention channel: ${left.error ?? "the change failed"}`,
+      );
   }
 
   memberships(pubkey: string) {
@@ -8016,6 +8046,7 @@ export class AgentsService extends Service implements Agents {
           skipped: _,
           timers: __,
           attentionEnabled: ___,
+          attentionStorage: ____,
           ...rest
         } = saved;
         return { ...rest, attention: {} };
@@ -8812,7 +8843,10 @@ export class AgentsService extends Service implements Agents {
    * keep the saved record, so a form keeps its unsaved changes. `saved`
    * runs as the change is shown, before anyone is told. `writer` signs an
    * attention change of an agent whose attention is on the relay: the change
-   * applies to a fresh read of it, and is saved there before here. */
+   * applies to a fresh read of it, and is saved there before here. A
+   * `checked` change, an explicit write, reads fresh even when it changes no
+   * object, so its checks never pass against an old mirror; run state alone
+   * saves here, even offline. */
   private change(
     key: AgentKey,
     apply: (
@@ -8820,6 +8854,7 @@ export class AgentsService extends Service implements Agents {
     ) => AgentRecord | null | Promise<AgentRecord | null>,
     saved?: (record: AgentRecord | null) => void,
     writer?: "agent" | "owner",
+    checked?: boolean,
   ): Promise<AgentRecord | null> {
     this.changing.set(key, (this.changing.get(key) ?? 0) + 1);
     return this.queued(key, async () => {
@@ -8832,7 +8867,7 @@ export class AgentsService extends Service implements Agents {
           writer &&
           base?.attentionStorage === "relay" &&
           next &&
-          attentionChanges(base, next).length
+          (checked || attentionChanges(base, next).length)
         ) {
           const relay = this.relayWriter(key, writer);
           const set = await relay.attention.read();
@@ -8998,7 +9033,9 @@ export class AgentsService extends Service implements Agents {
     return (
       this.attentionShown() &&
       record.attentionStorage === "relay" &&
-      !this.attentionLive.has(key)
+      !this.attentionLive.has(key) &&
+      // Without a channel it can use, nothing waits: nothing runs.
+      !this.relayAttention.get(key)?.relay.lost()
     );
   }
   /** Why its attention on the relay is not current here, if it is not
@@ -9038,18 +9075,21 @@ export class AgentsService extends Service implements Agents {
       }
     const native = this.native;
     for (const [key, { identity, binding }] of wanted) {
-      const relayAuthor = binding.session.relayAuthor;
-      if (this.relayAttention.has(key) || !native || !relayAuthor) continue;
+      const { session } = binding;
+      const channels = attentionChannels(binding);
+      if (this.relayAttention.has(key) || !native || !channels) continue;
       const relay = relayAttention({
-        channel: {
-          agent: identity.pubkey,
-          owner: binding.viewer,
-          relayAuthor,
-          query: (filters) => native.query(identity, filters),
-          publish: (event) => native.publish(identity, event),
-        },
-        artifactSync: binding.session.artifactSync,
-        sync: (filter) => binding.session.artifacts.sync(filter),
+        agent: identity.pubkey,
+        find: (signal) =>
+          channels.find(
+            "agent-attention",
+            agentSubject(identity.pubkey),
+            signal,
+          ),
+        artifactSync: session.artifactSync,
+        sync: (filter) => session.artifacts.sync(filter),
+        follow: (channel, changed, revoked) =>
+          session.artifacts.follow([channel], changed, () => revoked()),
         changed: (set) =>
           void this.change(key, (saved) => {
             // A record that moved off the relay, or is gone, stays as it is.
@@ -9080,7 +9120,12 @@ export class AgentsService extends Service implements Agents {
             (error) =>
               console.warn(`Agent ${key} attention not applied`, error),
           ),
-        reported: () => this.update(),
+        reported: () => {
+          // A dropped set runs nothing until a new one is applied.
+          if (this.relayAttention.get(key)?.relay === relay && !relay.current())
+            this.attentionLive.delete(key);
+          this.update();
+        },
         signal: binding.controller.signal,
       });
       this.relayAttention.set(key, { relay, binding });
@@ -10329,4 +10374,17 @@ function sameTeam(copy: Team, local: Team) {
     copy.members.length === local.members.length &&
     local.members.every((pubkey) => copy.members.includes(pubkey))
   );
+}
+
+/** The NIP-AP channels this session's viewer made: an agent's attention
+ * channel is found from its owner, the one who made it (Find). */
+function attentionChannels(binding: Binding) {
+  const { session } = binding;
+  if (!session.relayAuthor) return undefined;
+  return createConfigChannels(session, binding.viewer, {
+    read:
+      session.snapshotRead ??
+      (() => Promise.reject(new Error("Relay reads are unavailable"))),
+    relayAuthor: session.relayAuthor,
+  });
 }

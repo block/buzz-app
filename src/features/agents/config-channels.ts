@@ -20,6 +20,9 @@ import {
 import { attestedOwner } from "./owner-attestation";
 
 export type ConfigFamily = "agent-config" | "team-config";
+/** Every NIP-AP channel family: the config ones, and the agent's attention
+ * channel, whose artifacts NIP-AT defines. */
+export type ChannelFamily = ConfigFamily | "agent-attention";
 
 /** What the relay's NIP-11 document lets config use, or why it can't. */
 export type ConfigSupport =
@@ -95,14 +98,16 @@ export type ConfigChannel = Readonly<{
   members?: readonly string[] | undefined;
 }>;
 
-/** A verified config channel of `family` for `subject`, made by `owner`. */
+/** A verified config channel of `family` for `subject`, made by `owner`.
+ * Only a private one: an open channel would show its records to anyone. */
 const isConfig = (
   channel: ChannelSummary,
   owner: string,
-  family: ConfigFamily,
+  family: ChannelFamily,
   subject: string,
 ) =>
   channel.channelType === "system" &&
+  channel.visibility === "private" &&
   channel.creator === owner &&
   !!channel.labels?.includes(family) &&
   !!channel.labels.includes(subject);
@@ -118,7 +123,7 @@ export function createConfigChannels(
    * complete strong lookup found none. Throws when it can't tell. The family
    * label never joins the subject's `#t` filter (values in one filter OR). */
   async function find(
-    family: ConfigFamily,
+    family: ChannelFamily,
     subject: string,
     signal?: AbortSignal,
   ): Promise<ConfigChannel | undefined> {
@@ -164,7 +169,7 @@ export function createConfigChannels(
   /** Find, and create only when a complete lookup found none. Concurrent
    * creators each make one; every client then selects the oldest. */
   async function ensure(
-    family: ConfigFamily,
+    family: ChannelFamily,
     subject: string,
     name: string,
     signal?: AbortSignal,

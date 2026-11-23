@@ -1,10 +1,10 @@
 // Agent attention on the relay ("Agent Attention configuration on the relay"):
 // each Interest, watch or timer is one NIP-AR artifact of type
-// `buzz.agent-attention` in the agent's attention channel, a private system
-// channel the agent creates and shares with its owner. This module holds the
-// record codec and checks, the channel's find and create steps, one writer
-// revision, and the kept-current set. The agents service decides which agents
-// use it and keeps the device record as their mirror.
+// `buzz.agent-attention` in the agent's attention channel, the NIP-AP config
+// channel its owner creates for it. This module holds the record codec and
+// checks, one writer revision, and the kept-current set. The agents service
+// finds the channel, decides which agents use it and keeps the device record
+// as their mirror.
 import {
   OBJECT_LIMIT,
   validateObject,
@@ -22,12 +22,7 @@ import {
 import { unconfirmedAgentEvent } from "./native";
 import { AttentionError, canonical } from "./attention-objects";
 import { setAttention, type AgentRecord, type SkippedObject } from "./store";
-import { memberAuthority } from "../channel-members/administration-protocol";
-import {
-  channelIdentity,
-  channelLabelTags,
-  compareChannelAge,
-} from "../relay/channel-labels";
+import type { ConfigChannel } from "./config-channels";
 import type { RelayEvent } from "../relay/events";
 import type { RelayWriter } from "../relay/transport";
 import type {
@@ -36,7 +31,6 @@ import type {
 } from "../relay/artifact-sync";
 
 export const ATTENTION_TYPE = "buzz.agent-attention";
-export const ATTENTION_LABEL = "agent-attention";
 export const ATTENTION_SCHEMA = "agent-attention/v1";
 /** The largest record content (`validateObject`'s storage bound). */
 const CONTENT_BYTES = 65_535;
@@ -112,6 +106,16 @@ export const emptySet = (channel: string): AttentionSet => ({
   count: 0,
 });
 
+/** A record's problem, or undefined; a check that throws is one too, so
+ * one record never stops the others. */
+const checked = (check: () => string | undefined) => {
+  try {
+    return check();
+  } catch (error) {
+    return `Record could not be read: ${String(error instanceof Error ? error.message : error)}`;
+  }
+};
+
 const group = (value: AttentionValue) =>
   value.type === "interest" ? "Interests" : "watches";
 
@@ -152,7 +156,7 @@ export async function attentionSet(
     // another slug is kept under its own `d`, so it can't hide that slug.
     const slug =
       named && (await attentionD(channel, named)) === d ? named : undefined;
-    const problem =
+    const problem = checked(() =>
       tag(event, "ar") !== "1"
         ? "Unsupported artifact envelope"
         : !fields
@@ -160,12 +164,16 @@ export async function attentionSet(
           : !slug
             ? "Record identity does not match its slug"
             : fields.schema !== ATTENTION_SCHEMA
-              ? `Unknown schema ${String(fields.schema)}`
+              ? // Untrusted JSON: never coerced, as an object can throw.
+                typeof fields.schema === "string"
+                ? `Unknown schema ${fields.schema}`
+                : "Record schema is not a string"
               : Object.keys(fields).sort().join() !== "schema,slug,value"
                 ? "Record content has other fields than schema, slug and value"
                 : encoder.encode(event.content).length > CONTENT_BYTES
                   ? "Record content is too large"
-                  : validateObject(slug, fields.value);
+                  : validateObject(slug, fields.value),
+    );
     const key = slug ?? `invalid/${d}`;
     if (key in heads) continue;
     heads[key] = headOf(event, d);
@@ -556,105 +564,6 @@ export async function publishChange(
   throw new AttentionError("conflict", `${slug} already exists; show it again`);
 }
 
-/** The agent's reads and writes as itself, which its attention channel's
- * find and create steps use. */
-export type AgentChannelIO = Readonly<{
-  agent: string;
-  /** The agent's owner, who joins the channel it creates; absent for none. */
-  owner?: string | undefined;
-  relayAuthor: string;
-  query(filters: readonly object[]): Promise<readonly RelayEvent[]>;
-  publish(
-    event: Readonly<{ kind: number; content: string; tags: string[][] }>,
-  ): Promise<unknown>;
-}>;
-
-/** The agent's attention channels, oldest first (Find): system channels it
- * created with the label, as the relay describes them. */
-export async function findChannels(io: AgentChannelIO) {
-  const events = await io.query([
-    { kinds: [39000], "#P": [io.agent], "#t": [ATTENTION_LABEL] },
-  ]);
-  const found = new Map<
-    string,
-    { id: string; createdAt?: number | undefined }
-  >();
-  for (const event of events) {
-    const id = tag(event, "d");
-    const identity = channelIdentity(event);
-    if (
-      event.kind === 39000 &&
-      event.pubkey === io.relayAuthor &&
-      id &&
-      identity.type === "system" &&
-      identity.creator === io.agent &&
-      identity.labels.includes(ATTENTION_LABEL) &&
-      !found.has(id)
-    )
-      found.set(id, { id, createdAt: identity.createdAt });
-  }
-  return [...found.values()].sort(compareChannelAge).map(({ id }) => id);
-}
-
-/** The agent's attention channel, created when there is none (Create): the
- * agent creates it and adds its owner with the `owner` role. A channel with
- * only the agent in it is one whose create did not finish, so its owner is
- * added then too; otherwise the roster is the channel owners' to change.
- * Newer duplicates from a race are deleted. */
-export async function ensureChannel(io: AgentChannelIO): Promise<string> {
-  const owner = io.owner && io.owner !== io.agent ? io.owner : undefined;
-  const addOwner = (channel: string) =>
-    owner &&
-    io.publish({
-      kind: 9000,
-      content: "",
-      tags: [
-        ["h", channel],
-        ["p", owner],
-        ["role", "owner"],
-      ],
-    });
-  /** The oldest channel found, after deleting the others. */
-  const oldest = async () => {
-    const [found, ...extra] = await findChannels(io);
-    for (const id of extra)
-      await io
-        .publish({ kind: 9008, content: "", tags: [["h", id]] })
-        .catch((error) =>
-          console.warn("Extra attention channel was not deleted", error),
-        );
-    return found;
-  };
-  const found = await oldest();
-  if (!found) {
-    const channel = crypto.randomUUID();
-    await io.publish({
-      kind: 9007,
-      content: "",
-      tags: [
-        ["h", channel],
-        ["name", "Attention"],
-        ["visibility", "private"],
-        ["channel_type", "system"],
-        ...channelLabelTags([ATTENTION_LABEL]),
-      ],
-    });
-    await addOwner(channel);
-    // Another process of the agent may have created one too: all use the
-    // oldest, and this one deletes the newer.
-    return (await oldest()) ?? channel;
-  }
-  if (owner) {
-    const events = await io.query([
-      { kinds: [39000, 39001, 39002], "#d": [found] },
-    ]);
-    const { roles } = memberAuthority(events, found, io.agent, io.relayAuthor);
-    if (!(owner in roles) && Object.keys(roles).join() === io.agent)
-      await addOwner(found);
-  }
-  return found;
-}
-
 /** The sync filter for one attention channel (Reader step 2). */
 export const syncFilter = (channel: string) => ({
   artifact: "current" as const,
@@ -695,43 +604,67 @@ export function readOnce(
 }
 
 /** One agent's attention on the relay while its community is live: its
- * channel, ensured as the agent, and the set its owner's session keeps
+ * channel, found from its owner, and the set its owner's session keeps
  * current (Reader steps 1, 2, 5 and 6). */
 export type RelayAttention = Readonly<{
-  /** The last complete set; undefined before the first. */
+  /** The last complete set; undefined before the first, and while access
+   * to the channel is checked again. */
   current(): AttentionSet | undefined;
   /** Why there is no set, or why the last one may be old. */
   problem(): string | undefined;
-  /** A fresh complete set, for a writer. */
+  /** Whether the agent has no attention channel it can use: none was found,
+   * it is not a member, or the channel can't be read. Nothing runs then. */
+  lost(): boolean;
+  /** A fresh complete set from a fresh find, for a writer. */
   read(): Promise<AttentionSet>;
   dispose(): void;
 }>;
 
+/** No usable attention channel, as a complete lookup showed. */
+class LostChannel extends Error {}
+
+/** The longest wait before Find runs again for a lost channel. */
+const LOST_RETRY_MAX_MS = 10 * 60_000;
+
 export function relayAttention(input: {
-  channel: AgentChannelIO;
-  /** The relay advertises NIP-AR sync; without it no channel is created. */
+  agent: string;
+  /** NIP-AP Discovery of the agent's attention channel, from its owner:
+   * undefined when a complete lookup found none. */
+  find(signal: AbortSignal): Promise<ConfigChannel | undefined>;
+  /** The relay advertises NIP-AR sync. */
   artifactSync: boolean;
   /** NIP-AR sync on the owner's session. */
   sync(filter: unknown): ArtifactSyncView;
+  /** The channel's relay-signed metadata and roster as they change, and
+   * that the session lost access to it. Returns the stop. */
+  follow(
+    channel: string,
+    changed: (events: readonly RelayEvent[]) => void,
+    revoked: () => void,
+  ): () => void;
   /** Each new complete set, and each set a live change makes. */
   changed(set: AttentionSet): void;
-  /** Reports a problem, or that it cleared. */
+  /** Reports a problem, that it cleared, or that the set was dropped. */
   reported(): void;
   signal: AbortSignal;
   retryMs?: number;
 }): RelayAttention {
   const { signal, retryMs = 30_000 } = input;
-  let channel: Promise<string> | undefined;
   let set: AttentionSet | undefined;
-  // Relay support: a channel is created only where its set can be read.
   const unsupported = input.artifactSync
     ? undefined
     : "This community can't store attention";
   let problem = unsupported;
+  let lost = false;
+  let channel: string | undefined;
   let view: ArtifactSyncView | undefined;
   let stopView = () => {};
+  let stopFollow = () => {};
   let retry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
+  let checks = 0;
+  let resyncs = 0;
+  let misses = 0;
   const report = (next: string | undefined) => {
     if (next === problem) return;
     problem = next;
@@ -740,39 +673,76 @@ export function relayAttention(input: {
   const close = () => {
     stopView();
     stopView = () => {};
+    stopFollow();
+    stopFollow = () => {};
     view?.dispose();
     view = undefined;
+    channel = undefined;
   };
-  const ensured = () => {
-    if (unsupported) return Promise.reject(new Error(unsupported));
-    channel ??= ensureChannel(input.channel).catch((error) => {
-      channel = undefined;
-      throw error;
-    });
-    return channel;
+  const message = (error: unknown) =>
+    String(error instanceof Error ? error.message : error);
+  /** The channel to read, from a fresh find (Find): only a private one its
+   * owner made, with the agent in it. The agent never creates one. */
+  const locate = async () => {
+    if (unsupported) throw new Error(unsupported);
+    const found = await input.find(signal);
+    if (!found)
+      throw new LostChannel(
+        "This agent has no attention channel on its community",
+      );
+    if (!found.members?.includes(input.agent))
+      throw new LostChannel(
+        "This agent is not a member of its attention channel",
+      );
+    return found.id;
   };
-  let resyncs = 0;
-  /** From Find again, after `delay`. */
-  const later = (reason: string, refind: boolean, delay = retryMs) => {
+  /** From Find again after `delay`. With `suspend`, nothing runs from the
+   * last set until Find and a new set verify it. */
+  const later = (reason: string, delay: number, suspend = false) => {
+    generation++;
     close();
-    report(reason);
-    if (refind) channel = undefined;
+    const dropped = suspend && set !== undefined;
+    if (suspend) set = undefined;
+    if (reason !== problem) report(reason);
+    else if (dropped) input.reported();
     clearTimeout(retry);
     // Equal jitter: never sooner than half the delay.
     if (!signal.aborted)
       retry = setTimeout(start, delay * (0.5 + Math.random() / 2));
   };
+  /** Lost access: nothing runs until a later Find finds a channel again,
+   * backing off while it stays lost. */
+  const loseAccess = (reason: string) => {
+    lost = true;
+    later(reason, Math.min(LOST_RETRY_MAX_MS, retryMs * 2 ** misses++), true);
+  };
+  const failed = (run: number, error: unknown) => {
+    if (run !== generation || signal.aborted) return;
+    if (error instanceof LostChannel) loseAccess(error.message);
+    else later(`Attention channel unavailable: ${message(error)}`, retryMs);
+  };
+  /** Find again after the channel's metadata or roster changed: the same
+   * channel goes on, another one starts over, and none stops it. */
+  const recheck = () => {
+    const run = generation;
+    const check = ++checks;
+    locate().then(
+      (id) => {
+        if (run !== generation || check !== checks || signal.aborted) return;
+        if (id !== channel) void start();
+      },
+      (error) => {
+        if (check === checks) failed(run, error);
+      },
+    );
+  };
   async function start() {
     const run = ++generation;
     let id: string;
     try {
-      id = await ensured();
+      id = await locate();
     } catch (error) {
-      if (run === generation)
-        later(
-          `Attention channel unavailable: ${String(error instanceof Error ? error.message : error)}`,
-          true,
-        );
+      failed(run, error);
       return;
     }
     if (run !== generation || signal.aborted) return;
@@ -781,65 +751,81 @@ export function relayAttention(input: {
     try {
       opened = input.sync(syncFilter(id));
     } catch (error) {
-      later(
-        `Attention can't sync: ${String(error instanceof Error ? error.message : error)}`,
-        false,
-      );
+      later(`Attention can't sync: ${message(error)}`, retryMs);
       return;
     }
     view = opened;
+    channel = id;
+    try {
+      stopFollow = input.follow(
+        id,
+        (events) => {
+          if (
+            run === generation &&
+            events.some((event) => event.kind === 39000 || event.kind === 39002)
+          )
+            recheck();
+        },
+        () => {
+          if (run === generation) recheck();
+        },
+      );
+    } catch (error) {
+      later(`Attention can't follow its channel: ${message(error)}`, retryMs);
+      return;
+    }
     let applied = Promise.resolve();
     const seen = () => {
       const snapshot = opened.snapshot();
       if (snapshot.status === "live") {
         const events = snapshot.events;
-        applied = applied.then(async () => {
-          const next = await attentionSet(id, events);
-          if (run !== generation || view !== opened) return;
-          set = next;
-          resyncs = 0;
-          report(undefined);
-          input.changed(next);
-        });
+        applied = applied
+          .then(async () => {
+            const next = await attentionSet(id, events);
+            if (run !== generation || view !== opened) return;
+            set = next;
+            lost = false;
+            resyncs = 0;
+            misses = 0;
+            report(undefined);
+            input.changed(next);
+          })
+          // One bad set never stops the sets after it.
+          .catch((error) => console.warn("Attention set not applied", error));
       } else if (snapshot.error?.startsWith("resync:"))
-        // A lost change: from Find again (Reader step 6), soon, backing off
-        // when it repeats. The last good set stays meanwhile.
+        // Access may have changed (NIP-AR Resync): nothing runs from the
+        // last set until Find and a new set verify it (Reader step 6). Soon,
+        // backing off when it repeats.
         later(
           "Attention may be out of date; reading it again",
-          true,
           Math.min(retryMs, 1000 * 2 ** resyncs++),
+          true,
         );
       else if (snapshot.status === "stale")
         report("Attention may be out of date; reconnecting");
       else if (snapshot.status === "restricted")
-        later("The attention channel can't be read; finding it again", true);
+        loseAccess("The attention channel can't be read");
       else if (snapshot.status === "unsupported" || snapshot.status === "error")
         later(
           `Attention can't sync: ${snapshot.error ?? snapshot.status}`,
-          false,
+          retryMs,
         );
     };
     stopView = opened.subscribe(seen);
     seen();
   }
-  signal.addEventListener(
-    "abort",
-    () => {
-      generation++;
-      clearTimeout(retry);
-      close();
-    },
-    { once: true },
-  );
+  const stop = () => {
+    generation++;
+    clearTimeout(retry);
+    close();
+  };
+  signal.addEventListener("abort", stop, { once: true });
   if (!unsupported) void start();
   return {
     current: () => set,
     problem: () => problem,
-    read: async () => readOnce(input.sync, await ensured()),
-    dispose() {
-      generation++;
-      clearTimeout(retry);
-      close();
-    },
+    lost: () => lost,
+    read: async () => readOnce(input.sync, await locate()),
+    dispose: stop,
   };
 }

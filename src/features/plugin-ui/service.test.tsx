@@ -211,21 +211,24 @@ it("lets a plugin offer actions in a host menu that leads to a dialog", async ()
   render(h(Card));
   const trigger = screen.getByRole("button", { name: "More" });
 
-  // Keyboard: open, move past the disabled item, and choose by typeahead.
+  // Keyboard: open, move with the arrows, and choose by typeahead.
   trigger.focus();
   await user.keyboard("{Enter}");
   const menu = await screen.findByRole("menu", { name: "More" });
   // Rendered outside the card, so the card's overflow cannot clip it.
   expect(screen.getByTestId("card")).not.toContainElement(menu);
-  expect(screen.getByRole("menuitem", { name: "Archive" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+  const item = (name: string) => screen.getByRole("menuitem", { name });
+  await vi.waitFor(() => expect(item("Snooze")).toHaveFocus());
   await user.keyboard("{ArrowDown}");
+  await vi.waitFor(() => expect(item("Snooze")).not.toHaveFocus());
   await user.keyboard("s");
-  await vi.waitFor(() =>
-    expect(screen.getByRole("menuitem", { name: "Snooze" })).toHaveFocus(),
-  );
+  await vi.waitFor(() => expect(item("Snooze")).toHaveFocus());
+  // A disabled item does nothing and keeps the menu open.
+  await user.click(item("Archive"));
+  expect(snoozed).not.toHaveBeenCalled();
+  expect(menu).toBeInTheDocument();
+  await user.keyboard("s");
+  await vi.waitFor(() => expect(item("Snooze")).toHaveFocus());
   await user.keyboard("{Enter}");
   expect(snoozed).toHaveBeenCalledExactlyOnceWith();
   await vi.waitFor(() => expect(screen.queryByRole("menu")).toBeNull());

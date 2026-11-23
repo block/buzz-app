@@ -73,6 +73,7 @@ it("offers no retry for a pin command refused as too old and reads its list agai
   const read = vi.fn(async () => []);
   const pins = {
     relayAuthor: "a".repeat(64),
+    workflowAuthority: "a".repeat(64),
     read,
     readPage: async () => ({ events: [], relayCount: 0 }),
     subscribeLive: () => () => {},

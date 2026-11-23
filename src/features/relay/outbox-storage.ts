@@ -131,7 +131,9 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
       if (retired.length && !navigator.locks)
         throw new Error("Window ownership is unavailable.");
       const releases: (() => void)[] = [];
-      const release = () => releases.forEach((done) => done());
+      const release = () => {
+        for (const done of releases) done();
+      };
       try {
         for (const id of retired) releases.push(await reserve(id));
       } catch (error) {

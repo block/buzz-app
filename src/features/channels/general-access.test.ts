@@ -8,9 +8,11 @@ const person = "d".repeat(64);
 const othersAgent = "e".repeat(64);
 const claimedAgent = "f".repeat(64);
 const unloaded = "1".repeat(64);
+const listedOthersAgent = "2".repeat(64);
 const verified = new Map([
   [ownAgent, viewer],
   [othersAgent, person],
+  [listedOthersAgent, person],
 ]);
 const session = {
   viewer,
@@ -27,7 +29,7 @@ const session = {
   },
   agentChoices: {
     snapshot: () => ({
-      identities: [{ pubkey: inventoryAgent }],
+      identities: [{ pubkey: inventoryAgent }, { pubkey: listedOthersAgent }],
       complete: true,
     }),
   },
@@ -38,6 +40,11 @@ it.each([
   ["the viewer and their agents", [viewer, ownAgent, inventoryAgent], false],
   ["another person", [viewer, person], true],
   ["someone else's verified agent", [viewer, othersAgent], true],
+  [
+    "someone else's verified agent in the viewer's inventory",
+    [viewer, listedOthersAgent],
+    true,
+  ],
   ["an agent with unverified ownership", [viewer, claimedAgent], false],
   ["a member whose profile has not loaded", [viewer, unloaded], false],
   ["an unknown roster", undefined, false],

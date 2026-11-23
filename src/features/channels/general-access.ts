@@ -52,8 +52,9 @@ export const OPENING_BLOCKED_REASON =
  * who is neither the viewer nor one of the viewer's own agents (NIP-OA). The
  * relay decides; this only predicts it, so missing or unverified ownership
  * never blocks. A member blocks only with evidence: a verified owner who is
- * someone else, or a loaded profile that claims no agent at all, read as a
- * person once the viewer's agent inventory is complete. That reading is a
+ * someone else (even if the viewer's inventory lists it), or a loaded profile
+ * that claims no agent at all, read as a person once the viewer's agent
+ * inventory is complete. That reading is a
  * guess: an untagged agent of the viewer's missing from the inventory also
  * blocks here, though the relay would allow it. */
 export function openingBlocked(
@@ -82,9 +83,9 @@ export function openingBlocked(
   const choices = session.agentChoices.snapshot();
   const inventory = new Set(choices.identities.map((agent) => agent.pubkey));
   return others.some((pubkey) => {
-    if (inventory.has(pubkey)) return false;
     const owner = session.profiles.owner?.(pubkey);
     if (owner) return owner !== viewer;
+    if (inventory.has(pubkey)) return false;
     const profile = profiles.get(pubkey);
     return (
       choices.complete && !!profile && !profile.isAgent && !profile.ownerPubkey

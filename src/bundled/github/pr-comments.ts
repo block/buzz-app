@@ -4,6 +4,10 @@ import {
   type ReactionGroup,
   type PrReactions,
 } from "./pr-reactions";
+import {
+  createPrCommentActions,
+  type PrCommentActions,
+} from "./pr-comment-actions";
 import { commentLines } from "../diffs/comment-lines";
 import type { Host } from "../../features/host/service";
 import {
@@ -41,6 +45,8 @@ export type Comment = Readonly<{
   author: string;
   avatarUrl?: string | undefined;
   reactions?: readonly ReactionGroup[] | undefined;
+  viewerCanUpdate?: boolean;
+  viewerCanDelete?: boolean;
   url: string;
 }>;
 export type Thread = Readonly<{
@@ -90,6 +96,7 @@ export class PrCommentError extends Error {
 }
 export interface PrComments {
   reactions?: PrReactions | undefined;
+  actions?: PrCommentActions;
   loadSnapshot(pull: PullRef, signal?: AbortSignal): Promise<Snapshot>;
   loadThreads(
     pull: PullRef,
@@ -167,7 +174,7 @@ type RestComment = {
   original_line: number | null;
   in_reply_to_id?: number;
 };
-const commentFields = `id databaseId body author { login avatarUrl } url ${reactionFields}`;
+const commentFields = `id databaseId body viewerCanUpdate viewerCanDelete author { login avatarUrl } url ${reactionFields}`;
 type GraphComment = Omit<Comment, "author" | "reactions"> & {
   reactionGroups?: readonly ReactionGroup[];
   author: { login: string; avatarUrl?: string } | null;
@@ -410,8 +417,10 @@ export function createPrComments(
     return result;
   }
   const reactions = createPrReactions(gh);
+  const actions = createPrCommentActions(gh);
   return {
     reactions,
+    actions,
     async loadSnapshot(pull, signal) {
       try {
         const before = await meta(pull, signal);
@@ -481,6 +490,7 @@ export function createPrComments(
     },
     async loadThreads(pull, cursor, signal) {
       const started = reactions.revision();
+      const actionsStarted = actions.revision();
       try {
         type Row = Omit<
           Thread,
@@ -502,13 +512,14 @@ export function createPrComments(
           viewer: { login: string };
           repository: {
             pullRequest: {
+              id: string;
               headRefOid: string;
               baseRefOid: string;
               reviewThreads: Connection<Row>;
             };
           };
         }>(
-          `query($owner:String!,$name:String!,$number:Int!,$cursor:String){viewer{login} repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid baseRefOid reviewThreads(first:100,after:$cursor){nodes{id path diffSide line originalLine isOutdated isResolved comments(first:100){nodes{${commentFields}} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}}}}}`,
+          `query($owner:String!,$name:String!,$number:Int!,$cursor:String){viewer{login} repository(owner:$owner,name:$name){pullRequest(number:$number){id headRefOid baseRefOid reviewThreads(first:100,after:$cursor){nodes{id path diffSide line originalLine isOutdated isResolved comments(first:100){nodes{${commentFields}} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}}}}}`,
           { owner, name, number: pull.number, cursor: cursor ?? null },
           signal,
         );
@@ -526,6 +537,12 @@ export function createPrComments(
             resolved: row.isResolved,
             rootCommentId: row.comments.nodes[0]?.databaseId ?? 0,
             comments: row.comments.nodes.map((comment) => {
+              actions.accept(
+                comment,
+                data.viewer.login,
+                data.repository.pullRequest.id,
+                actionsStarted,
+              );
               reactions.accept(
                 comment.id,
                 data.viewer?.login,
@@ -547,6 +564,7 @@ export function createPrComments(
     },
     async loadComments(threadId, cursor, signal) {
       const started = reactions.revision();
+      const actionsStarted = actions.revision();
       try {
         const data = await gh<{
           viewer: { login: string };
@@ -585,6 +603,12 @@ export function createPrComments(
             rootCommentId: data.node.root.nodes[0]?.databaseId ?? 0,
           },
           items: page.items.map((comment) => {
+            actions.accept(
+              comment,
+              data.viewer.login,
+              data.node.pullRequest.id,
+              actionsStarted,
+            );
             reactions.accept(
               comment.id,
               data.viewer?.login,

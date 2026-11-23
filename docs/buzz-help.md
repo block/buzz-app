@@ -1841,7 +1841,11 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   GitHub checks whether the submission is allowed. Raw or unmapped patches cannot
   accept new line comments.
   Comments render Markdown with author avatars and separated replies. Use
-  **React** to choose an emoji; click an existing count to add or remove
+  **Edit** or **Delete** on comments GitHub allows you to change. Save edits with
+  **Save changes**; deletion requires confirmation. If the result is unknown,
+  use **Check comment** before trying again. These locks last for the plugin session.
+  After deleting a thread’s first comment, refresh changes before loading more replies or replying.
+  Use **React** to choose an emoji; click an existing count to add or remove
   yours. Your change appears immediately while the controls are disabled, then
   reconciles with GitHub. If a reaction’s delivery
   is unknown, use **Check reactions** before trying again.

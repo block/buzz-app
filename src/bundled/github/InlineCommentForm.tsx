@@ -6,6 +6,7 @@ import styles from "./InlineComments.module.css";
 
 export function InlineCommentForm({
   operation,
+  submitLabel = "Post to GitHub",
   draft,
   focusRequest = 0,
   busy,
@@ -15,6 +16,7 @@ export function InlineCommentForm({
   onCancel,
 }: {
   operation?: string;
+  submitLabel?: string;
   draft: { body: string; lastFocusRequest?: number };
   focusRequest?: number;
   busy: boolean;
@@ -74,7 +76,7 @@ export function InlineCommentForm({
           loading={busy}
           disabled={blocked || !body.trim()}
         >
-          Post to GitHub
+          {submitLabel}
         </Button>
       </div>
     </form>

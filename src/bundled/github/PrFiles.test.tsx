@@ -598,3 +598,47 @@ it("discards composers on tab leave while retaining its verified snapshot", asyn
   await open();
   expect(screen.getByRole("textbox")).toHaveProperty("value", "");
 });
+
+it("edits a paginated reply without dropping loaded comments or refetching threads", async () => {
+  const fixture = githubCommentHost();
+  const api = createPrComments(fixture.host);
+  if (!api) throw new Error("Missing adapter");
+  const snapshot = await api.loadSnapshot(fixturePull);
+  await api.create(
+    snapshot,
+    { ...snapshot, path: "src/example.ts", side: "RIGHT", line: 5001 },
+    "Root",
+    "seed",
+  );
+  await api.reply(snapshot, 1, "Later reply", "reply");
+  fixture.state.pageSize = 1;
+  const reads = vi.spyOn(api, "loadThreads");
+  render(
+    <PrFiles
+      api={api}
+      pull={fixturePull}
+      head={snapshot.head}
+      base={snapshot.base}
+      delivery={createInlineDelivery()}
+    />,
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Load more replies" }),
+  );
+  const reply = (await screen.findByText("Later reply")).closest("article");
+  if (!reply) throw new Error("Missing reply");
+  fireEvent.click(within(reply).getByRole("button", { name: "Edit" }));
+  fireEvent.change(within(reply).getByRole("textbox", { name: "Comment" }), {
+    target: { value: "Edited reply" },
+  });
+  fireEvent.click(within(reply).getByRole("button", { name: "Save changes" }));
+  await screen.findByText("Edited reply");
+  await waitFor(() =>
+    expect(screen.queryByRole("textbox", { name: "Comment" })).toBeNull(),
+  );
+  expect(screen.getByText("Root")).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Load more replies" }),
+  ).toBeNull();
+  expect(reads).toHaveBeenCalledTimes(1);
+});

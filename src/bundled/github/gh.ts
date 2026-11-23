@@ -9,6 +9,8 @@ import type { Host } from "../../features/host/service";
 
 /** `gh` cannot be used here: no desktop, not installed, or not signed in. */
 export class GhUnavailable extends Error {}
+/** No process started, so no GitHub request was dispatched. */
+export class GhStartFailed extends GhUnavailable {}
 /** GitHub refused or failed the request; `type` is GitHub's, such as NOT_FOUND.
  * `data` is what GitHub still answered, as for the aliases it could read. */
 export class GitHubError extends Error {
@@ -66,7 +68,7 @@ async function runGh(
       },
     });
   } catch (error) {
-    throw new GhUnavailable(
+    throw new GhStartFailed(
       error instanceof Error ? error.message : String(error),
     );
   }

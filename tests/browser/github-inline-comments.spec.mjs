@@ -953,3 +953,99 @@ test("keyboard line selection stays visible without moving file focus", async ({
   });
   await expect(file).toBeFocused();
 });
+
+// Verifies editor/confirmation focus and draft survival through Pierre annotation remounts.
+test("edits and deletes a review comment through the real annotation controls", async ({
+  page,
+}, testInfo) => {
+  const errors = watchPageErrors(page);
+  await open(page);
+  await line(page, "New line 5001");
+  const field = page.getByRole("textbox", { name: "Comment", exact: true });
+  await field.fill("Original comment");
+  await page.getByRole("button", { name: "Post to GitHub" }).click();
+  await expect(
+    page.getByText("Original comment", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue("Original comment");
+  await field.fill("Retained edit");
+  await page.screenshot({
+    path: testInfo.outputPath("comment-edit-light.png"),
+  });
+  await select(page, "Diff layout", "Split");
+  await expect(field).toHaveValue("Retained edit");
+  await field.press("Escape");
+  await expect(field).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Edit", exact: true }),
+  ).toBeFocused();
+  await page.getByRole("button", { name: "Edit", exact: true }).press("Enter");
+  await expect(field).toBeFocused();
+  await expect(field).toHaveValue("Original comment");
+  await select(page, "Diff layout", "Unified");
+  await page.setViewportSize({ width: 480, height: 900 });
+  await page.evaluate(() => {
+    document.documentElement.classList.add("dark");
+    document.documentElement.dataset.colorMode = "dark";
+    document.documentElement.style.fontSize = "150%";
+  });
+  await field.fill("Updated comment");
+  await page
+    .getByRole("button", { name: "Save changes" })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath("comment-edit-dark-narrow.png"),
+  });
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(field).toHaveCount(0);
+  await expect(
+    page.getByText("Updated comment", { exact: true }),
+  ).toBeVisible();
+  const remove = page.getByRole("button", { name: "Delete", exact: true });
+  await remove.click();
+  const confirmation = page.getByRole("alertdialog", {
+    name: "Delete comment?",
+  });
+  await expect(confirmation).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("comment-delete-dark-narrow.png"),
+  });
+  await confirmation
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(confirmation).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await expect(
+    page.getByText("Updated comment", { exact: true }),
+  ).toBeVisible();
+  await remove.click();
+  await confirmation
+    .getByRole("button", { name: "Delete comment", exact: true })
+    .click();
+  await expect(page.getByText("Updated comment", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.inlineFixture.state.comments.length))
+    .toBe(0);
+  expect(await posts(page)).toBe(1);
+  expect(
+    await page.evaluate(() =>
+      window.inlineFixture.state.calls
+        .filter(
+          (call) =>
+            call.id === "graphql" && call.input.query.startsWith("mutation"),
+        )
+        .map((call) => call.input.query.match(/\{(\w+)\(/)?.[1]),
+    ),
+  ).toEqual([
+    "updatePullRequestReviewComment",
+    "deletePullRequestReviewComment",
+  ]);
+  await expect(
+    page.getByRole("button", { name: "Refresh changes" }),
+  ).toBeFocused();
+  expect(errors.unexplained()).toEqual([]);
+});

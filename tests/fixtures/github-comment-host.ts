@@ -64,6 +64,8 @@ export function githubCommentHost() {
     id: row.node_id,
     databaseId: row.id,
     body: row.body,
+    viewerCanUpdate: row.user.login === state.viewer,
+    viewerCanDelete: row.user.login === state.viewer,
     author: { ...row.user, avatarUrl: "./design-system/assets/avatar.png" },
     reactionGroups: state.reactions[row.node_id] ?? [],
     url: row.html_url,
@@ -101,6 +103,8 @@ export function githubCommentHost() {
           id?: string;
           cursor?: string;
           content?: ReactionContent;
+          body?: string;
+          receipt?: string;
         };
         const answer = (data: unknown, status = 200) => {
           options.onStdout?.(
@@ -127,7 +131,29 @@ export function githubCommentHost() {
               (row) => row.node_id === variables.id,
             );
             if (!row) {
-              answer({ node: null, viewer: { login: state.viewer } });
+              answer({
+                node: null,
+                viewer: { login: state.viewer },
+                pull: { id: "pull-fixture" },
+              });
+              return;
+            }
+            if (query.includes("updatePullRequestReviewComment")) {
+              row.body = variables.body ?? "";
+              answer({
+                updatePullRequestReviewComment: {
+                  pullRequestReviewComment: { id: row.node_id, body: row.body },
+                },
+              });
+              return;
+            }
+            if (query.includes("deletePullRequestReviewComment")) {
+              state.comments.splice(state.comments.indexOf(row), 1);
+              answer({
+                deletePullRequestReviewComment: {
+                  clientMutationId: variables.receipt,
+                },
+              });
               return;
             }
             let groups = state.reactions[row.node_id] ?? [];
@@ -157,8 +183,9 @@ export function githubCommentHost() {
             } else
               answer({
                 viewer: { login: state.viewer },
+                pull: { id: "pull-fixture" },
                 node: {
-                  id: row.node_id,
+                  ...graphComment(row),
                   pullRequest: { id: "pull-fixture" },
                   reactionGroups: groups,
                 },
@@ -266,6 +293,7 @@ export function githubCommentHost() {
               viewer: { login: state.viewer },
               repository: {
                 pullRequest: {
+                  id: "pull-fixture",
                   headRefOid: state.head,
                   baseRefOid: state.base,
                   reviewThreads: page(threads, variables.cursor),

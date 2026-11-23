@@ -20,6 +20,7 @@ import {
 import { parsePatch } from "../diffs/parse";
 import { GitHubReactions } from "./GitHubReactions";
 import { GitHubComment } from "./GitHubComment";
+import { EditableGitHubComment, type EditDraft } from "./EditableGitHubComment";
 import { InlineCommentForm } from "./InlineCommentForm";
 import type { InlineDeliveryStore } from "./inline-delivery";
 import {
@@ -68,6 +69,7 @@ export function PrFiles({
   activeRef.current = active;
   const status = useSyncExternalStore(delivery.subscribe, delivery.get);
   const [composers, setComposers] = useState<Composer[]>([]);
+  const editDrafts = useRef(new Map<string, EditDraft>());
   const root = useRef<HTMLDivElement>(null);
   const scrollRestore = useRef<(() => void) | undefined>(undefined);
   useLayoutEffect(() => {
@@ -146,6 +148,7 @@ export function PrFiles({
     setSnapshot(undefined);
     setAvailable(new Set());
     setComposers([]);
+    editDrafts.current.clear();
     setLoading(true);
     setCommentsLoading(true);
     setError(undefined);
@@ -485,20 +488,82 @@ export function PrFiles({
               {thread.resolved ? " · Resolved" : ""}
             </p>
           )}
-          {thread.comments.map((comment) => (
-            <GitHubComment key={comment.id} comment={comment}>
-              {api.reactions && snapshot && (
-                <GitHubReactions
-                  api={api.reactions}
-                  snapshot={snapshot}
-                  comment={comment}
-                />
-              )}
-            </GitHubComment>
-          ))}
+          {thread.comments.map((comment) => {
+            const reactions = api.reactions && snapshot && (
+              <GitHubReactions
+                api={api.reactions}
+                snapshot={snapshot}
+                comment={comment}
+              />
+            );
+            if (!api.actions || !snapshot)
+              return (
+                <GitHubComment key={comment.id} comment={comment}>
+                  {reactions}
+                </GitHubComment>
+              );
+            const key = JSON.stringify([
+              snapshot.viewer,
+              snapshot.pullId,
+              comment.id,
+            ]);
+            let draft = editDrafts.current.get(key);
+            if (!draft) {
+              draft = { body: comment.body, editing: false };
+              editDrafts.current.set(key, draft);
+            }
+            return (
+              <EditableGitHubComment
+                key={comment.id}
+                api={api.actions}
+                snapshot={snapshot}
+                comment={comment}
+                draft={draft}
+                focusFallback={() =>
+                  snapshotRef.current === snapshot && activeRef.current
+                    ? refreshButton.current
+                    : null
+                }
+                onChanged={(change) => {
+                  if (snapshotRef.current !== snapshot) return;
+                  setThreads((previous) =>
+                    previous
+                      .map((row) => ({
+                        ...row,
+                        rootCommentId:
+                          "delete" in change &&
+                          row.rootCommentId === comment.databaseId
+                            ? 0
+                            : row.rootCommentId,
+                        comments: row.comments.flatMap((entry) =>
+                          entry.id !== comment.id
+                            ? [entry]
+                            : "delete" in change
+                              ? []
+                              : [{ ...entry, body: change.body }],
+                        ),
+                      }))
+                      .filter(
+                        (row) =>
+                          row.comments.length > 0 || !row.commentsComplete,
+                      ),
+                  );
+                }}
+              >
+                {reactions}
+              </EditableGitHubComment>
+            );
+          })}
+          {!thread.rootCommentId && (
+            <p role="status">Refresh changes to reload this thread.</p>
+          )}
           <div className={styles.actions}>
             {!thread.commentsComplete && (
-              <Button size="sm" onClick={() => void more(thread)}>
+              <Button
+                size="sm"
+                disabled={!thread.rootCommentId}
+                onClick={() => void more(thread)}
+              >
                 Load more replies
               </Button>
             )}

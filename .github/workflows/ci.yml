@@ -429,6 +429,11 @@ jobs:
       # measurements here; the matrix covers both engines on separate runners.
       - name: Functional journeys
         env:
+          # Keep two workers on the standard runners used by main, bots and forks.
+          BUZZ_BROWSER_WORKERS: >-
+            ${{ github.repository == 'block/buzz-app' &&
+                github.event_name == 'pull_request' &&
+                github.event.pull_request.user.type == 'User' && '3' || '2' }}
           PLAYWRIGHT_JSON_OUTPUT_FILE: test-results/browser/ci-report.json
         run: ./bin/node scripts/ci-test-report.mjs kind=playwright report=test-results/browser/ci-report.json evidence=test-results/browser/ci-timing.json title="Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/${{ matrix.shards }})" -- ./bin/pnpm test:browser:ci --project ${{ matrix.engine }} --no-deps --shard=${{ matrix.shard }}/${{ matrix.shards }} --reporter=list,json
       - name: Browser evidence

@@ -487,6 +487,45 @@ describe("channel store", () => {
       expect(queries.window("c").hasNewer).toBeFalsy();
       expect(queries.window("c").rows.map((row) => row.id)).toEqual([newer.id]);
     });
+    it("a read-ahead closure trim forgets the live rows it drops", async () => {
+      const target = row(10);
+      const edit = on(40003, target, "edited");
+      // A late send in the oldest second, sorting below the row paged to.
+      let late = message(alice, "c", "late", 10);
+      for (let n = 0; late.id < target.id; n++)
+        late = message(alice, "c", `late ${n}`, 10);
+      const { queries, take, live, scripted } = await opened({
+        maxHistoryBytes: listByteSize([newer, late, target, edit]) - 1,
+      });
+      queries.loadOlder("c", 20, true);
+      take(false).respond([target, below(newer, target)]);
+      await flush();
+      live.receive([late]);
+      await flush();
+      expect(queries.window("c").rows.map((row) => row.id)).toContain(late.id);
+      take(true).respond([target, edit, below(newer)]);
+      await flush();
+      expect(queries.window("c").rows.map((row) => row.id)).not.toContain(
+        late.id,
+      );
+      // Nor does a head that meets the rows held.
+      queries.refresh?.("c");
+      for (const read of scripted.pending.filter(
+        (entry) => entry.filters[0]?.top_level && !entry.filters[0]?.until,
+      ))
+        read.respond([
+          newer,
+          target,
+          bounds(relay, "c", "head", {
+            has_more: true,
+            next_cursor: { created_at: 10, id: target.id },
+          }),
+        ]);
+      await flush();
+      expect(queries.window("c").rows.map((row) => row.id)).not.toContain(
+        late.id,
+      );
+    });
     it("keeps a live row from the head read when aux merges", async () => {
       const late = message(alice, "c", "late", 25);
       const { queries, take, page } = await opened({}, late);

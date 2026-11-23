@@ -1153,10 +1153,15 @@ export function createChannelStore(
         // A read-ahead page's closure keeps the window at the head: past the
         // budget it drops the oldest rows instead.
         if (page.ahead && state.ceiling === undefined) {
-          const trimmed = trimOldest(state, merged);
+          // As the live trim: the viewer's own sends are not counted.
+          const own = new Set(
+            (local?.snapshot() ?? []).map((item) => item.event.id),
+          );
+          const trimmed = trimOldest(state, merged, own);
           if (trimmed !== merged) {
             merged = trimmed;
             rows = fold(merged);
+            slide = true;
           }
         }
         // Past the byte budget the closure slides the window down to the

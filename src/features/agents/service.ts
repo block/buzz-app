@@ -9273,12 +9273,18 @@ export class AgentsService extends Service implements Agents {
       if (!read || !artifacts || !channels || !session.artifactSync)
         throw new Error("This community can't store attention");
       // A full set must fit in one sync (NIP-AP "Attention relay support").
-      if (!((session.artifactSyncMaxEvents ?? 0) >= HEAD_LIMIT))
+      const max = session.artifactSyncMaxEvents;
+      if (max === undefined)
+        throw new Error(
+          "This community can't store attention: its relay doesn't say how many records one sync returns",
+        );
+      if (max < HEAD_LIMIT)
         throw new Error(
           `This community can't store attention: its sync limit is under ${HEAD_LIMIT} records`,
         );
-      // The community's set replaces this device's, unreadable records too.
-      const skipped = options.adopt ? [] : Object.keys(saved.skipped ?? {});
+      // Every choice replaces this device's unreadable records, which the
+      // owner has not seen, so they are fixed or removed first.
+      const skipped = Object.keys(saved.skipped ?? {});
       if (skipped.length)
         throw new Error(
           `Fix or remove its unreadable attention first: ${skipped.join(", ")}`,
@@ -9290,6 +9296,10 @@ export class AgentsService extends Service implements Agents {
           : undefined;
       const shown = options.adopt ?? options.prune;
       const seen = this.attentionRefusals.get(key);
+      // An agent with no recorded owner has no attention channel: check
+      // before the channel is made or written to.
+      if (!(await channels.owns(identity.pubkey, controller.signal)))
+        throw new Error("Not an agent you own");
       const channel = await this.ensureAttention(
         channels,
         identity.pubkey,
@@ -9307,19 +9317,41 @@ export class AgentsService extends Service implements Agents {
         throw new Error(
           `The agent could not leave its attention channel for the move: ${left.error ?? "its result is unknown"}`,
         );
-      const outcome = await moveAttention(
-        { read, send: ownerSender(artifacts, controller.signal) },
-        () => readOnce((filter) => session.artifacts.sync(filter), channel),
-        saved.attention,
-        // A choice applies only to the refusal it was made on: the one whose
-        // heads it names. Otherwise it is asked again.
-        use && seen && shown && sameRecord(shown, seen.heads)
-          ? { use, snapshot: seen }
-          : undefined,
-      );
+      // A move that stops puts back an agent it took out, so a runtime that
+      // reads the channel keeps reading it.
+      const rejoin = async () => {
+        if (!left.removed) return;
+        const back = await channels.addMember(
+          channel,
+          identity.pubkey,
+          controller.signal,
+        );
+        if (back.status !== "confirmed")
+          console.warn(
+            `Agent ${key} could not rejoin its attention channel`,
+            back.error,
+          );
+      };
+      let outcome: Awaited<ReturnType<typeof moveAttention>>;
+      try {
+        outcome = await moveAttention(
+          { read, send: ownerSender(artifacts, controller.signal) },
+          () => readOnce((filter) => session.artifacts.sync(filter), channel),
+          saved.attention,
+          // A choice applies only to the refusal it was made on: the one
+          // whose heads it names. Otherwise it is asked again.
+          use && seen && shown && sameRecord(shown, seen.heads)
+            ? { use, snapshot: seen }
+            : undefined,
+        );
+      } catch (error) {
+        await rejoin();
+        throw error;
+      }
       result = { ...outcome.found, migrated: outcome.moved };
       if (!outcome.moved) {
         this.attentionRefusals.set(key, outcome.snapshot);
+        await rejoin();
         return saved;
       }
       this.attentionRefusals.delete(key);
@@ -9378,9 +9410,17 @@ export class AgentsService extends Service implements Agents {
       // `attention` mirrors the community's set while this session's read of
       // it is live. A live set that arrived just now may not be mirrored
       // yet, so read the set once more and keep that as the device's.
-      const problem = this.attentionProblem(key, saved);
       const relay = this.relayAttention.get(key)?.relay;
-      if (problem || !relay) throw new Error(problem);
+      if (!relay)
+        throw new Error(
+          "This agent's attention is on its community; connect to read it",
+        );
+      const problem = relay.problem();
+      if (problem) throw new Error(problem);
+      if (!this.attentionLive.has(key))
+        throw new Error(
+          "Its attention is still loading from its community; try again once it has loaded",
+        );
       const fresh = mirrored(saved, await relay.read());
       const skipped = Object.keys(fresh.skipped ?? {});
       if (skipped.length)

@@ -303,9 +303,9 @@ pause or delete each item there. Every wake-up costs model tokens.
 **Settings → Plugins → Attention** turns it off for all your local agents;
 mentions still work.
 The tab also says where the agent's Attention is kept: on this device, or
-privately in its community after you move it there. While it loads from the
-community, its watches and timers wait. Moving it back leaves the community's
-copy in place.
+privately in its community when a plugin that offers it has moved it there.
+While it loads from the community, its watches and timers wait. Moving it back
+leaves the community's copy in place.
 
 ## Connecting other tools
 

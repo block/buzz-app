@@ -18780,7 +18780,7 @@ it("moves an agent's attention to its community only when the set comes back the
 it("refuses to move attention back until its copy here is current and readable", async () => {
   const f = await relayAttentionSetup({ synced: false });
   await expect(f.service.revertAttention(bot)).rejects.toThrow(
-    "Loading from its community…",
+    "Its attention is still loading from its community",
   );
   expect(f.service.find(bot)?.attentionStorage).toBe("relay");
   await f.seed("interest/bad", { type: "interest", instructions: "" });
@@ -18904,12 +18904,6 @@ it("adopts the community's attention when the owner chooses it, copying there on
         slug: "interest/new",
         value: { type: "interest", instructions: "New here." },
         modifiedAt: 2,
-      },
-      // Unreadable here: the community's set replaces it too.
-      "interest/bad": {
-        slug: "interest/bad",
-        value: { type: "interest", instructions: "" },
-        modifiedAt: 1,
       },
     },
   });
@@ -19105,10 +19099,34 @@ it("refuses to move attention with unreadable objects", async () => {
       },
     },
   });
+  // Either choice would replace them unseen, so it is refused too, even
+  // with no refusal shown (the community has nothing yet).
+  for (const options of [{}, { adopt: {} }, { prune: {} }])
+    await expect(f.service.migrateAttention(bot, options)).rejects.toThrow(
+      "Fix or remove its unreadable attention first: interest/default",
+    );
+  expect(f.ownerWrites).toHaveLength(0);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  expect(f.service.find(bot)?.skipped).toHaveProperty("interest/default");
+});
+
+it("moves nothing for an agent whose profile proves another owner", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  attested.set(bot, getPublicKey(generateSecretKey()));
   await expect(f.service.migrateAttention(bot)).rejects.toThrow(
-    "Fix or remove its unreadable attention first: interest/default",
+    "Not an agent you own",
   );
   expect(f.ownerWrites).toHaveLength(0);
+  expect(f.changes()).toEqual([]);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
 });
 
 it("moves the attention of an agent this device has no record of yet", async () => {
@@ -19284,6 +19302,21 @@ it("takes a writing agent out of its channel while the set moves, and keeps a gu
     { pubkey: bot, role: "remove" },
     { pubkey: bot, role: "member" },
   ]);
+  // A move that stops puts it back: a runtime reading the channel keeps it.
+  const r = await relayAttentionSetup({ device });
+  r.role(bot, "member");
+  await r.seed("interest/default", {
+    type: "interest",
+    instructions: "There.",
+  });
+  await expect(r.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: false,
+  });
+  expect(r.roster()).toEqual([viewer, bot]);
+  expect(r.changes()).toEqual([
+    { pubkey: bot, role: "remove" },
+    { pubkey: bot, role: "member" },
+  ]);
   // A guest can't write, so it stays in, and stays a guest.
   const g = await relayAttentionSetup({ device });
   g.role(bot, "guest");
@@ -19387,6 +19420,151 @@ it("runs the set it read back at the switch, with no wait for the agent's first 
   await vi.waitFor(() =>
     expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
   );
+});
+
+const deviceHere = () => ({
+  "interest/default": {
+    slug: "interest/default",
+    value: { type: "interest", instructions: "Here." },
+    modifiedAt: 1,
+  },
+});
+/** After this device's first write lands, `after` runs as another writer. */
+const afterFirstWrite = (
+  f: Awaited<ReturnType<typeof relayAttentionSetup>>,
+  after: () => Promise<void>,
+) => {
+  const writer = f.session.configArtifactWriter as unknown as {
+    publish(event: RelayEvent): Promise<void>;
+  };
+  const publish = writer.publish.bind(writer);
+  let done = false;
+  writer.publish = async (event) => {
+    await publish(event);
+    if (!done) {
+      done = true;
+      await after();
+    }
+  };
+};
+
+it("keeps attention here when another writer changes a copied object before the read-back", async () => {
+  const f = await relayAttentionSetup({ device: deviceHere() });
+  afterFirstWrite(f, () =>
+    f.seed("interest/default", { type: "interest", instructions: "Theirs." }),
+  );
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: false,
+    different: ["interest/default"],
+  });
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  expect(f.roster()).toEqual([viewer]);
+});
+
+it("keeps attention here when the read-back holds an object this device lacks", async () => {
+  const f = await relayAttentionSetup({ device: deviceHere() });
+  afterFirstWrite(f, () =>
+    f.seed("interest/added", { type: "interest", instructions: "Added." }),
+  );
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: false,
+    extra: ["interest/added"],
+  });
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  expect(f.roster()).toEqual([viewer]);
+});
+
+it("keeps attention here when the read-back holds a record it can't read", async () => {
+  const f = await relayAttentionSetup({ device: deviceHere() });
+  afterFirstWrite(f, () =>
+    f.seed("interest/bad", {
+      type: "interest",
+      instructions: "",
+    } as AttentionValue),
+  );
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: false,
+    skipped: ["interest/bad"],
+  });
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+});
+
+it("adopting keeps attention here when the read-back holds a record it can't read", async () => {
+  const f = await relayAttentionSetup({ device: deviceHere() });
+  await f.seed("interest/there", { type: "interest", instructions: "There." });
+  const shown = await f.service.migrateAttention(bot);
+  afterFirstWrite(f, () =>
+    f.seed("interest/bad", {
+      type: "interest",
+      instructions: "",
+    } as AttentionValue),
+  );
+  await expect(
+    f.service.migrateAttention(bot, { adopt: shown.heads }),
+  ).resolves.toMatchObject({ migrated: false, skipped: ["interest/bad"] });
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+});
+
+it("switches only once Find shows the agent in the channel", async () => {
+  const f = await relayAttentionSetup({ device: deviceHere() });
+  // The add is confirmed, but the roster Find reads does not show the agent.
+  const find = f.session.channels.findLabeled as ReturnType<typeof vi.fn>;
+  const real = find.getMockImplementation() as (
+    ...args: unknown[]
+  ) => Promise<{ members: readonly string[] }[]>;
+  find.mockImplementation(async (...args: unknown[]) =>
+    (await real(...args)).map((channel) => ({
+      ...channel,
+      members: channel.members.filter((key) => key !== bot),
+    })),
+  );
+  await expect(f.service.migrateAttention(bot)).rejects.toThrow(
+    "The agent is not in its attention channel yet; Buzz tries again",
+  );
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+});
+
+it("a repeated move of an agent already moved leaves its channel's roster alone", async () => {
+  const f = await relayAttentionSetup({ device: deviceHere() });
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: true,
+  });
+  const changes = f.changes();
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: true,
+  });
+  expect(f.changes()).toEqual(changes);
+  expect(f.roster()).toContain(bot);
+});
+
+it("a first move creates the attention channel as its owner, without the agent", async () => {
+  const f = await relayAttentionSetup({ device: deviceHere() });
+  // No attention channel until this move creates one.
+  const find = f.session.channels.findLabeled as ReturnType<typeof vi.fn>;
+  const real = find.getMockImplementation() as (
+    ...args: unknown[]
+  ) => Promise<unknown[]>;
+  let created: unknown;
+  find.mockImplementation(async (...args: unknown[]) =>
+    created ? real(...args) : [],
+  );
+  Object.assign(f.session, {
+    channelCreation: {
+      create: vi.fn(async (input: unknown) => {
+        created = input;
+      }),
+    },
+  });
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: true,
+  });
+  expect(created).toEqual({
+    name: "Attention",
+    visibility: "private",
+    labels: ["agent-attention", bot],
+    system: true,
+  });
+  expect(f.service.find(bot)?.attentionStorage).toBe("relay");
 });
 
 it("moves no attention to a community whose sync limit can't hold a full set", async () => {

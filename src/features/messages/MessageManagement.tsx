@@ -597,6 +597,12 @@ function ManagedMessageItems({
     row.channelId,
     (channel) => !!channel && !channel.readOnly && !channel.cached,
   );
+  // A Solo chat has one person, so it offers no pins.
+  const solo = useListedChannel(
+    session.channels,
+    row.channelId,
+    (channel) => channel?.channelType === "solo",
+  );
   const threadRootId = row.threadRootId ?? row.id;
   const following = useSyncExternalStore(session.unread.subscribeSync, () =>
     session.unread.following(row.channelId, threadRootId),
@@ -611,6 +617,7 @@ function ManagedMessageItems({
     !!management &&
     writable &&
     !archived &&
+    !solo &&
     !!session.outbox?.supports(PIN_KIND);
   const pins = usePinnedMessages(session, canPin ? row.channelId : undefined);
   if (!management) return null;
@@ -666,7 +673,7 @@ function ManagedMessageItems({
           <MenuIcon>
             {pins.set.has(row.id) ? <PinOffIcon /> : <PinIcon />}
           </MenuIcon>
-          {pins.set.has(row.id) ? "Unpin from channel" : "Pin to channel"}
+          {`${pins.set.has(row.id) ? "Unpin from" : "Pin to"} ${dm ? "DM" : "channel"}`}
         </MenuItem>
       )}
       {canEdit && (

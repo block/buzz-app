@@ -87,8 +87,11 @@ async function fixture(
     outboxStorage = { load: () => [], save() {} },
     viewer = keypair(),
     pins,
+    channelTags = [],
   }: {
     outboxStorage?: OutboxStorage;
+    /** Extra `t` tags on the room's metadata, as for a DM or Solo chat. */
+    channelTags?: string[][];
     viewer?: Key;
     /** With a relay that supports pins, the ids its list names. */
     pins?: (original: RelayEvent) => string[];
@@ -208,7 +211,7 @@ async function fixture(
         if (shareRead && filter.ids?.includes(original.id)) return shareRead;
         if (filter.kinds?.includes(39000) || filter.kinds?.includes(39002))
           return [
-            metadata(relay, "room", "Room"),
+            metadata(relay, "room", "Room", undefined, channelTags),
             signed(relay, {
               ...roster(relay, "room", [viewer.pubkey, peer.pubkey]),
               created_at: rosterTime,
@@ -840,6 +843,49 @@ const savedFollows = () =>
   Object.keys(localStorage)
     .filter((key) => key.startsWith("buzz.thread-follows.v1:"))
     .map((key) => localStorage.getItem(key));
+
+it.each([
+  ["a DM", [["t", "dm"]], "Pin to DM"],
+  [
+    "a Solo chat",
+    [
+      ["t", "stream"],
+      ["t", "buzz.solo"],
+    ],
+    undefined,
+  ],
+] satisfies [string, string[][], string | undefined][])(
+  "names the pin for %s",
+  async (_, channelTags, label) => {
+    const h = await fixture(
+      false,
+      false,
+      false,
+      false,
+      false,
+      undefined,
+      false,
+      undefined,
+      "member",
+      { pins: () => [], channelTags },
+    );
+    // The menu decides once the room is listed with its type.
+    await waitFor(() =>
+      expect(
+        h.owner.session.channels
+          .list()
+          .channels.find((channel) => channel.id === "room")?.channelType,
+      ).toBe(channelTags[0]?.[1] === "dm" ? "dm" : "solo"),
+    );
+    if (label) await screen.findByRole("menuitem", { name: label });
+    const items = screen
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent ?? "");
+    expect(items.filter((text) => text.startsWith("Pin to"))).toEqual(
+      label ? [label] : [],
+    );
+  },
+);
 
 it("pins from the message menu, and offers unpin for a pinned message", async () => {
   const h = await fixture(

@@ -32,6 +32,11 @@ function Launcher({
 }: ChannelLauncherProps & { relay: RelayData }) {
   const connection = useRelayConnection(relay);
   const current = connection.scope === context.scope;
+  const solo = useListedChannel(
+    connection.session.channels,
+    context.channelId,
+    (channel) => channel?.channelType === "solo",
+  );
   const pins = usePinnedMessages(
     connection.session,
     current && connection.session.workflowAuthority
@@ -39,8 +44,10 @@ function Launcher({
       : undefined,
   );
   // Where this host sends pin commands, or still lists some pins.
+  // A Solo chat offers no pins.
   if (
     !current ||
+    solo ||
     (!connection.session.outbox?.supports(PIN_KIND) && !pins.ids.length)
   )
     return null;
@@ -83,6 +90,11 @@ function PinnedList({
     channelId,
     (channel) =>
       !!channel && !channel.readOnly && !channel.cached && !channel.archived,
+  );
+  const dm = useListedChannel(
+    session.channels,
+    channelId,
+    (channel) => channel?.channelType === "dm",
   );
   const [error, setError] = useState<string>();
   const retry = () =>
@@ -150,7 +162,7 @@ function PinnedList({
                 <IconButton
                   size="sm"
                   aria-label={`Unpin message from ${name}`}
-                  title="Unpin from channel"
+                  title={dm ? "Unpin from DM" : "Unpin from channel"}
                   icon={<PinOffIcon size={14} aria-hidden="true" />}
                   onClick={() => {
                     setError(undefined);

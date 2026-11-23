@@ -1567,21 +1567,19 @@ export class CodexRuntime {
     this.envReads.set(key, read);
     return read;
   }
-  /** Waits for `route` unless `stopped` fires first, so a retired agent's
-   * start ends quietly while its read is still out. False when stopped;
-   * synchronous when there is nothing to read, so a start keeps its order. */
+  /** Waits for `route` unless `signal` fires first, so a cancelled start
+   * ends while its read is still out; callers check `signal` after it.
+   * Synchronous when there is nothing to read, so a start keeps its order. */
   private routed(
     agent: Pick<AgentHandle, "key" | "pubkey" | "protection">,
-    stopped: AbortSignal,
-  ): boolean | Promise<boolean> {
+    signal: AbortSignal,
+  ): Promise<void> | undefined {
     const routing = this.route(agent);
-    if (!routing) return !stopped.aborted;
-    return abortable(routing, stopped).then(
-      () => true,
-      (error) => {
-        if (!stopped.aborted) throw error;
-        return false;
-      },
+    return (
+      routing &&
+      abortable(routing, signal).catch((error) => {
+        if (!signal.aborted) throw error;
+      })
     );
   }
   /** Whether `rpc` is an unprotected server's, shared or an agent's own. */
@@ -3009,11 +3007,14 @@ export class CodexRuntime {
     await entry.after;
     if (entry.abort.signal.aborted)
       return { ok: false, error: "Codex was stopped" };
-    const routed = this.routed(agent, entry.abort.signal);
-    if (routed !== true && !(await routed))
-      return { ok: false, error: "Codex was stopped" };
-    const server = this.open(agent);
     const signal = AbortSignal.any([entry.abort.signal, turnSignal]);
+    const routing = this.routed(agent, signal);
+    if (routing) await routing;
+    if (entry.abort.signal.aborted)
+      return { ok: false, error: "Codex was stopped" };
+    if (turnSignal.aborted)
+      return { ok: false, error: message(turnSignal.reason) };
+    const server = this.open(agent);
     /** Why this turn ran without the Buzz context, for its Activity status. */
     let notice = delivery.gatewayFallback?.notice;
     let release!: () => void;
@@ -4203,12 +4204,6 @@ export class CodexRuntime {
     let notReady!: (error: unknown) => void;
     let release!: () => void;
     const turnAbort = new AbortController();
-    const routed = this.routed(request.agent, entry.abort.signal);
-    if (routed !== true && !(await routed)) {
-      request.failActivity("Codex was stopped");
-      return;
-    }
-    const server = this.open(request.agent);
     // No deadline of our own: a turn runs until Codex ends it.
     const signal = AbortSignal.any([
       entry.abort.signal,
@@ -4216,6 +4211,19 @@ export class CodexRuntime {
       ...(request.unaddressed ? [request.unaddressed.signal] : []),
       ...(adopted && lane.voice ? [lane.voice.signal] : []),
     ]);
+    const routing = this.routed(request.agent, signal);
+    if (routing) await routing;
+    if (signal.aborted) {
+      // As a turn cancelled once started ends, without publishing.
+      if (entry.abort.signal.aborted) request.failActivity("Codex was stopped");
+      else {
+        request.failActivity(message(signal.reason));
+        if (request.unaddressed?.signal.aborted)
+          this.status(request.agent.key, key, "Stopped");
+      }
+      return;
+    }
+    const server = this.open(request.agent);
     const active: Active = {
       rpc: server.rpc,
       ...(adopted && lane.voice

@@ -1752,10 +1752,12 @@ it("ends a removed agent's turn quietly while its environment read is out", asyn
     await f.runtime.retire(pubkey);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(f.starts()).toHaveLength(0);
+    expect(f.spawn).not.toHaveBeenCalled();
     expect(f.publish).not.toHaveBeenCalled();
     answer.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(f.starts()).toHaveLength(0);
+    expect(f.spawn).not.toHaveBeenCalled();
     expect(f.publish).not.toHaveBeenCalled();
   } finally {
     env.gate = undefined;
@@ -1785,10 +1787,64 @@ it("ends a removed agent's run-once quietly while its environment read is out", 
     answer.resolve();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(f.starts()).toHaveLength(0);
+    expect(f.spawn).not.toHaveBeenCalled();
     expect(f.publish).not.toHaveBeenCalled();
   } finally {
     env.gate = undefined;
     env.asked = 0;
+    f.runtime.dispose();
+  }
+});
+it("ends a run-once at its deadline while its environment read is out", async () => {
+  const f = fixture();
+  const answer = deferred<void>();
+  env.gate = answer.promise;
+  env.asked = 0;
+  const deadline = new AbortController();
+  try {
+    const running = f.runtime.runOnce({
+      delivery: f.delivery("check"),
+      key: "source/check",
+      signal: deadline.signal,
+      prompt: async () => "check",
+    });
+    await vi.waitFor(() => expect(env.asked).toBe(1));
+    deadline.abort(new Error("Deadline passed"));
+    await expect(running).resolves.toEqual({
+      ok: false,
+      error: "Deadline passed",
+    });
+    answer.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.spawn).not.toHaveBeenCalled();
+  } finally {
+    env.gate = undefined;
+    env.asked = 0;
+    f.runtime.dispose();
+  }
+});
+it("opens no server when the agent is removed just as its route is read", async () => {
+  const f = fixture();
+  const runtime = f.runtime as unknown as { route: () => Promise<void> };
+  const route = vi.spyOn(runtime, "route").mockImplementation(() => {
+    const read = Promise.resolve();
+    // Runs after the read is taken, before the start continues.
+    void read.then(() => {}).then(() => void f.runtime.retire(pubkey));
+    return read;
+  });
+  try {
+    await expect(
+      f.runtime.runOnce({
+        delivery: f.delivery("check"),
+        key: "source/check",
+        signal: new AbortController().signal,
+        prompt: async () => "check",
+      }),
+    ).resolves.toEqual({ ok: false, error: "Codex was stopped" });
+    expect(f.spawn).not.toHaveBeenCalled();
+    expect(f.starts()).toHaveLength(0);
+  } finally {
+    route.mockRestore();
     f.runtime.dispose();
   }
 });

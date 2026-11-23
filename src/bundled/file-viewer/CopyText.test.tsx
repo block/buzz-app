@@ -75,6 +75,38 @@ it.each([
   expect(button()).toBeEnabled();
 });
 
+it("says which pages it left out, and when none could be read", async () => {
+  render(
+    <CopyText
+      read={() => ({ text: "part", missing: "2 pages couldn't be read." })}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await userEvent.click(button());
+  expect(
+    await screen.findByText(
+      "Copied text to clipboard. 2 pages couldn't be read.",
+    ),
+  ).toBeVisible();
+  expect(writeText).toHaveBeenCalledWith("part");
+  cleanup();
+  writeText.mockClear();
+  render(
+    <CopyText
+      read={() => ({
+        text: "",
+        unreadable: "This PDF's text couldn't be read.",
+      })}
+    />,
+    { wrapper: ToastProvider },
+  );
+  await userEvent.click(button());
+  expect(
+    await screen.findByText("This PDF's text couldn't be read."),
+  ).toBeVisible();
+  expect(writeText).not.toHaveBeenCalled();
+});
+
 it("says so when the clipboard refuses the text", async () => {
   writeText.mockRejectedValue(new Error("denied"));
   render(<CopyText read={() => "text"} />, { wrapper: ToastProvider });

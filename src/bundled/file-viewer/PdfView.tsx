@@ -17,15 +17,17 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import { CopyText } from "./CopyText";
+import { type CopiedText, CopyText } from "./CopyText";
 import { useNear, useSize } from "./layout";
 import {
+  MAX_PDF_PAGES,
   MAX_PDF_TEXT_CHARS,
   openPdf,
   PdfError,
   type PageSize,
   type PageText,
   type PdfDocument,
+  type PdfText,
 } from "./pdf";
 import styles from "./FileViewer.module.css";
 
@@ -45,6 +47,30 @@ export function nextZoom(current: number, direction: 1 | -1) {
       direction > 0 ? zoom > current + 0.001 : zoom < current - 0.001,
     ) ?? current
   );
+}
+
+const pagesLabel = (count: number) =>
+  count === 1 ? "1 page" : `${count.toLocaleString()} pages`;
+
+export function copiedPdfText({
+  text,
+  failedPages,
+  omittedPages,
+}: PdfText): CopiedText {
+  const missing = [
+    failedPages > 0 && `${pagesLabel(failedPages)} couldn't be read`,
+    omittedPages > 0 &&
+      `${pagesLabel(omittedPages)} past page ${MAX_PDF_PAGES.toLocaleString()} ${omittedPages === 1 ? "was" : "were"} left out`,
+  ].filter(Boolean);
+  return {
+    text,
+    ...(missing.length > 0 && {
+      missing: `${missing.join(", and ")}.`,
+    }),
+    ...(failedPages > 0 && {
+      unreadable: "This PDF's text couldn't be read.",
+    }),
+  };
 }
 
 type Opened =
@@ -338,7 +364,7 @@ function Pages({ pdf, name }: { pdf: PdfDocument; name: string }) {
           </Button>
         </span>
         <CopyText
-          read={(signal) => pdf.text(signal)}
+          read={(signal) => pdf.text(signal).then(copiedPdfText)}
           limit={MAX_PDF_TEXT_CHARS}
         />
       </div>

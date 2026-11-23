@@ -54,11 +54,17 @@ export type PdfDocument = Readonly<{
   pages: number;
   /** The pages laid out, up to `MAX_PDF_PAGES`. */
   sizes: readonly PageSize[];
-  text(signal: AbortSignal): Promise<string>;
+  text(signal: AbortSignal): Promise<PdfText>;
   /** One page's text, up to `MAX_PAGE_TEXT_CHARS`, for assistive technology. */
   pageText(page: number, signal: AbortSignal): Promise<PageText>;
   render(page: number, canvas: HTMLCanvasElement, scale: number): PdfRendering;
   destroy(): Promise<void>;
+}>;
+/** A PDF's text, with the pages it could not read or did not reach. */
+export type PdfText = Readonly<{
+  text: string;
+  failedPages: number;
+  omittedPages: number;
 }>;
 export type PageText = Readonly<{ text: string; truncated: boolean }>;
 export type PdfOpenError = "password" | "not-pdf";
@@ -155,6 +161,7 @@ export async function openPdf(
           let remaining = MAX_PDF_TEXT_CHARS,
             pages = 0,
             hasText = false,
+            failedPages = 0,
             endsLine = false;
           const append = (value: string) => {
             const part = value.slice(0, remaining);
@@ -202,6 +209,7 @@ export async function openPdf(
               // failure semantics, including its separator and budget usage.
               chunks.length = saved.chunks;
               ({ remaining, pages, hasText, endsLine } = saved);
+              failedPages++;
             } finally {
               stopReader();
             }
@@ -215,7 +223,11 @@ export async function openPdf(
             }
           }
           check();
-          return hasText ? chunks.join("") : "";
+          return {
+            text: hasText ? chunks.join("") : "",
+            failedPages,
+            omittedPages: document.numPages - count,
+          };
         } finally {
           stopReader();
           clearTimeout(timer);

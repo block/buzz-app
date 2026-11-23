@@ -22,8 +22,12 @@ export function parseTable(text: string, delimiter: "," | "\t"): Table {
   let row: string[] = [];
   let columns = 0;
   let omittedRows = 0;
-  let shortenedCells = 0;
   let widest = 0;
+  // Rows are kept only while they fit the cell budget, which tightens as wider
+  // rows arrive, so no more than about MAX_CELLS cells are ever held.
+  let limit = MAX_ROWS;
+  const shortenedByRow: number[] = [];
+  let rowShortened = 0;
   // Text is taken in slices, never a character at a time, and only for cells
   // that are shown, so memory and time follow what is displayed.
   let keep = true;
@@ -41,23 +45,35 @@ export function parseTable(text: string, delimiter: "," | "\t"): Table {
   };
   const endField = () => {
     if (keep) {
-      if (shortened) shortenedCells++;
+      if (shortened) rowShortened++;
       row.push(shortened ? `${field}…` : field);
     }
     columns++;
     field = "";
     room = MAX_CELL_CHARS;
     shortened = false;
-    keep = rows.length < MAX_ROWS && columns < MAX_COLUMNS;
+    keep = rows.length < limit && columns < MAX_COLUMNS;
   };
   const endRow = () => {
     endField();
     widest = Math.max(widest, columns);
-    if (rows.length < MAX_ROWS) rows.push(row);
-    else omittedRows++;
+    limit = Math.min(
+      MAX_ROWS,
+      Math.max(1, Math.floor(MAX_CELLS / Math.min(widest, MAX_COLUMNS))),
+    );
+    if (rows.length < limit) {
+      rows.push(row);
+      shortenedByRow.push(rowShortened);
+    } else omittedRows++;
+    if (rows.length > limit) {
+      omittedRows += rows.length - limit;
+      rows.length = limit;
+      shortenedByRow.length = limit;
+    }
     row = [];
     columns = 0;
-    keep = rows.length < MAX_ROWS;
+    rowShortened = 0;
+    keep = rows.length < limit;
   };
   let index = 0;
   let open = false;
@@ -103,18 +119,10 @@ export function parseTable(text: string, delimiter: "," | "\t"): Table {
     }
   }
   if (open || columns > 0) endRow();
-  const fit = Math.max(
-    1,
-    Math.floor(MAX_CELLS / Math.max(1, Math.min(widest, MAX_COLUMNS))),
-  );
-  if (rows.length > fit) {
-    omittedRows += rows.length - fit;
-    rows.length = fit;
-  }
   return {
     rows,
     omittedRows,
     omittedColumns: Math.max(0, widest - MAX_COLUMNS),
-    shortenedCells,
+    shortenedCells: shortenedByRow.reduce((sum, count) => sum + count, 0),
   };
 }

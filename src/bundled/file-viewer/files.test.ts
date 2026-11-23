@@ -130,6 +130,22 @@ it("cuts a long cell short without building all of it", () => {
   ).toBe(0);
 });
 
+it("keeps rows only while they fit the cell budget, and counts cut cells it keeps", () => {
+  const shown = MAX_CELLS / MAX_COLUMNS;
+  const wide = (cell = "x") =>
+    `${[cell, ...Array(MAX_COLUMNS - 1).fill("x")].join(",")}\n`;
+  const long = "y".repeat(MAX_CELL_CHARS + 1);
+  const late = parseTable(
+    `${"narrow\n".repeat(MAX_ROWS - 10)}${wide()}${wide(long).repeat(10)}`,
+    ",",
+  );
+  expect(late.rows).toHaveLength(shown);
+  expect(late.omittedRows).toBe(MAX_ROWS + 1 - shown);
+  expect(late.shortenedCells).toBe(0);
+  const kept = parseTable(`${wide(long)}${wide()}`, ",");
+  expect(kept.shortenedCells).toBe(1);
+});
+
 const respond = (body: BodyInit, headers: HeadersInit = {}, status = 200) =>
   (async () => new Response(body, { status, headers })) as typeof fetch;
 

@@ -8,12 +8,13 @@ const texts = vi.hoisted(() => ({
   pages: [] as (() => Promise<PageText>)[],
 }));
 vi.mock("./pdf", () => ({
+  MAX_PDF_PAGES: 1000,
   MAX_PDF_TEXT_CHARS: 5_000_000,
   PdfError: class extends Error {},
   openPdf: async (): Promise<PdfDocument> => ({
     pages: texts.pages.length,
     sizes: texts.pages.map(() => ({ width: 100, height: 100 })),
-    text: async () => "",
+    text: async () => ({ text: "", failedPages: 0, omittedPages: 0 }),
     pageText: (page) => {
       const read = texts.pages[page - 1];
       if (!read) throw new Error(`No page ${page}`);
@@ -77,4 +78,19 @@ it("tells screen readers whether a page's text is whole, cut short, empty or unr
   await expectText(3, "This page has no text.");
   const failed = await expectText(4, "This page's text couldn't be read.");
   expect(failed).not.toHaveTextContent("no text");
+});
+
+it("says which pages Copy text left out", async () => {
+  const { copiedPdfText } = await import("./PdfView");
+  expect(copiedPdfText({ text: "a", failedPages: 0, omittedPages: 0 })).toEqual(
+    { text: "a" },
+  );
+  expect(copiedPdfText({ text: "a", failedPages: 2, omittedPages: 1 })).toEqual(
+    {
+      text: "a",
+      missing:
+        "2 pages couldn't be read, and 1 page past page 1,000 was left out.",
+      unreadable: "This PDF's text couldn't be read.",
+    },
+  );
 });

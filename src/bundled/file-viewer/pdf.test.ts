@@ -67,7 +67,11 @@ it.each([false, true])(
     try {
       for (const p of pages) expect(p.streamTextContent).not.toHaveBeenCalled();
       const read = pdf.text;
-      await expect(read(signal())).resolves.toBe("First line\n\nSecond\n");
+      await expect(read(signal())).resolves.toEqual({
+        text: "First line\n\nSecond\n",
+        failedPages: 0,
+        omittedPages: 0,
+      });
       expect(h.task.destroy).not.toHaveBeenCalled();
     } finally {
       await pdf.destroy();
@@ -79,7 +83,7 @@ it("returns empty for pages with no extractable text", async () => {
   loading([page(), page([{ str: "", hasEOL: true }])]);
   const pdf = await openPdf(new Uint8Array(), signal());
   try {
-    await expect(pdf.text(signal())).resolves.toBe("");
+    await expect(pdf.text(signal())).resolves.toMatchObject({ text: "" });
   } finally {
     await pdf.destroy();
   }
@@ -122,7 +126,7 @@ it.each(["string", "line ending", "page separator"] as const)(
     loading([first, second]);
     const pdf = await openPdf(new Uint8Array(), signal());
     try {
-      const copied = await pdf.text(signal());
+      const { text: copied } = await pdf.text(signal());
       expect(MAX_PDF_TEXT_CHARS).toBe(5_000_000);
       expect(copied).toHaveLength(5_000_000);
       expect(copied.endsWith(ending === "string" ? "xx" : "x\n")).toBe(true);
@@ -170,9 +174,11 @@ it.each([false, true])(
     loading(pages);
     const pdf = await openPdf(new Uint8Array(), signal());
     try {
-      await expect(pdf.text(signal())).resolves.toBe(
-        blank ? "" : `First\n\n${"Last".repeat(100)}`,
-      );
+      await expect(pdf.text(signal())).resolves.toEqual({
+        text: blank ? "" : `First\n\n${"Last".repeat(100)}`,
+        failedPages: 2,
+        omittedPages: 0,
+      });
     } finally {
       await pdf.destroy();
     }
@@ -269,7 +275,7 @@ it("keeps another caller and rendering usable after cancelling one text reader",
     caller.abort();
     await cancelled;
     finishSecond();
-    await expect(surviving).resolves.toBe("Still readable");
+    await expect(surviving).resolves.toMatchObject({ text: "Still readable" });
     expect(firstCancel).toHaveBeenCalledOnce();
     expect(secondCancel).not.toHaveBeenCalled();
     expect(h.task.destroy).not.toHaveBeenCalled();

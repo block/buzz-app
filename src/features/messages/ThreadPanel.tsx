@@ -2138,7 +2138,9 @@ function ThreadMessages({
             }}
           >
             {expanded.has(row.id) && (
-              <ol>{renderReplies(row.id, depth + 1)}</ol>
+              <ol className={styles.threadList}>
+                {renderReplies(row.id, depth + 1)}
+              </ol>
             )}
           </ReplyBranch>
         </li>
@@ -2411,7 +2413,7 @@ function ThreadMessages({
                 <p className={styles.empty}>Original message unavailable.</p>
               )
             ) : null}
-            <ol>
+            <ol className={styles.threadList}>
               {showOlderPageStatus && snapshot.error && (
                 <li className={styles.threadHistoryPageStatus}>
                   <p role="alert">{snapshot.error}</p>

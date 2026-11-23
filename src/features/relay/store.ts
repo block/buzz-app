@@ -4286,6 +4286,7 @@ export function createChannelStore(
           ? { ttlSeconds: channel.ttlSeconds }
           : {}),
         ...(channel.visibility ? { visibility: channel.visibility } : {}),
+        ...(channel.joinRole ? { joinRole: channel.joinRole } : {}),
       });
       setList({ ...list, channels: discovery.channels() }, true);
     },

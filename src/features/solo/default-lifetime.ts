@@ -170,7 +170,9 @@ export function writeDefaultLifetime(
 }
 
 const visibility = (value: unknown): ConversationVisibility | undefined =>
-  value === "private" || value === "public" ? value : undefined;
+  value === "private" || value === "view-only" || value === "public"
+    ? value
+    : undefined;
 
 /** Who can read new conversations by default. Private unless chosen. */
 export function readDefaultVisibility(scope: string): ConversationVisibility {

@@ -3,7 +3,7 @@ import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox, OutboxRecovery } from "./outbox";
-import type { RelayWriter } from "./transport";
+import type { ConversationVisibility, RelayWriter } from "./transport";
 import {
   promoteSoloAdmins,
   soloAdminKey,
@@ -778,7 +778,7 @@ export function createChannelWrites(
       recovery?: OutboxRecovery,
       /** False for a conversation with people: no Solo labels. */
       solo = true,
-      visibility: "private" | "public" = "private",
+      visibility: ConversationVisibility = "private",
     ) {
       writer();
       identifier(id);
@@ -800,7 +800,8 @@ export function createChannelWrites(
           tags: [
             ["h", id],
             ["name", title],
-            ["visibility", visibility === "public" ? "open" : "private"],
+            // View only opens it too; who may post follows the create.
+            ["visibility", visibility === "private" ? "private" : "open"],
             ["channel_type", "stream"],
             ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
             ...channelLabelTags(
@@ -836,7 +837,7 @@ export function createChannelWrites(
         /** False starts a conversation with people rather than a Solo chat. */
         solo?: boolean;
         /** Who can read it; private unless chosen. */
-        visibility?: "private" | "public";
+        visibility?: ConversationVisibility;
       },
     ) {
       const solo = options?.solo ?? true;
@@ -868,7 +869,17 @@ export function createChannelWrites(
           : [...(options?.labels ?? [])],
         ttlSeconds,
         ...(solo ? {} : { channelType: "stream" as const }),
-        ...(options?.visibility ? { visibility: options.visibility } : {}),
+        ...(options?.visibility
+          ? {
+              visibility:
+                options.visibility === "private"
+                  ? ("private" as const)
+                  : ("public" as const),
+            }
+          : {}),
+        ...(options?.visibility === "view-only"
+          ? { joinRole: "guest" as const }
+          : {}),
       });
       // The relay adds the members in the create, so the chat takes events
       // once the create is OK.
@@ -882,6 +893,31 @@ export function createChannelWrites(
             }),
           )
         : ready;
+      // A create cannot say who posts, so View only follows it: people who
+      // join can read but not post. If it fails, anyone who joins can post;
+      // the conversation's details show its actual access.
+      if (options?.visibility === "view-only")
+        void ready
+          .then(() =>
+            delivered(
+              writer().send(
+                {
+                  kind: 9002,
+                  content: "",
+                  tags: [
+                    ["h", id],
+                    ["join_role", "guest"],
+                  ],
+                },
+                undefined,
+                options.active,
+              ),
+            ),
+          )
+          .then(() => refresh(id))
+          .catch((reason) => {
+            console.warn("View only setup did not finish", reason);
+          });
       void ready.then(
         // Confirming the chat only ends its pending listing.
         () => refresh(id).catch(() => {}),

@@ -940,7 +940,7 @@ async fn account_settings_signer_admits_lifetimes_and_workspace_overrides() {
             102,
         ),
         (
-            json!({"version": 1, "lifetime": null, "visibility": "public", "workspaceVisibility": {"w1": "private", "w2": "public"}}),
+            json!({"version": 1, "lifetime": null, "visibility": "public", "workspaceVisibility": {"w1": "private", "w2": "public", "w3": "view-only"}}),
             103,
         ),
     ] {

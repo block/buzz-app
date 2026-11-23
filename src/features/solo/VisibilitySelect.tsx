@@ -4,6 +4,7 @@ import type { ConversationVisibility } from "../relay/transport";
 const FOLLOW = "default";
 const labels: Record<ConversationVisibility, string> = {
   private: "Private",
+  "view-only": "View only",
   public: "Public",
 };
 
@@ -60,6 +61,12 @@ export function VisibilitySelect({
               description: "Only members can find and read them.",
             },
             {
+              value: "view-only",
+              label: labels["view-only"],
+              description:
+                "Anyone in the community can read them. Only members can post.",
+            },
+            {
               value: "public",
               label: labels.public,
               description: "Anyone in the community can find and read them.",
@@ -68,7 +75,11 @@ export function VisibilitySelect({
         },
       ]}
       onValueChange={(next) =>
-        onChange(next === "private" || next === "public" ? next : undefined)
+        onChange(
+          next === "private" || next === "view-only" || next === "public"
+            ? next
+            : undefined,
+        )
       }
     />
   );

@@ -71,7 +71,7 @@ it("saves to the account and adopts the account's choices once", async () => {
     read: async () => ({
       lifetime: 604800,
       workspaces: { w: null },
-      visibility: "public",
+      visibility: "view-only",
       workspaceVisibility: { w: "private" },
     }),
     writeLifetime: async (value: number | null) => void saved.push(value),
@@ -84,7 +84,7 @@ it("saves to the account and adopts the account's choices once", async () => {
   const { unmount } = renderHook(() => useAccountLifetimes(session, "s"));
   await waitFor(() => expect(readDefaultLifetime("s")).toBe(604800));
   expect(readWorkspaceLifetime("s", "w")).toBeNull();
-  expect(readDefaultVisibility("s")).toBe("public");
+  expect(readDefaultVisibility("s")).toBe("view-only");
   expect(readWorkspaceVisibility("s", "w")).toBe("private");
   unmount();
   expect(await saveDefaultLifetime(session, "s", 86400)).toBeUndefined();

@@ -800,8 +800,9 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
             // `visibility` is the default for who can read new conversations;
             // left out, they start private. `workspaceVisibility` holds the
             // workspaces that override it.
-            let visibility_ok =
-                |v: &serde_json::Value| matches!(v.as_str(), Some("private" | "public"));
+            let visibility_ok = |v: &serde_json::Value| {
+                matches!(v.as_str(), Some("private" | "view-only" | "public"))
+            };
             let visibility = data.get("visibility").is_none_or(visibility_ok);
             let workspace_visibility = match data.get("workspaceVisibility") {
                 None => true,

@@ -67,7 +67,9 @@ export type AccountSettings = Readonly<{
   workspaceVisibility: Readonly<Record<string, ConversationVisibility>>;
 }>;
 
-export type ConversationVisibility = "private" | "public";
+/** Who can read new conversations. View only: anyone in the community can
+ * read; only members post. */
+export type ConversationVisibility = "private" | "view-only" | "public";
 import {
   admittedApiRequest,
   ApiPaused,

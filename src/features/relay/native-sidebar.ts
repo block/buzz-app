@@ -89,7 +89,7 @@ const validLifetime = (value: unknown): value is number | null =>
 const validWorkspaceId = (id: string) =>
   !!id.trim() && id.length <= 256 && id !== "__proto__";
 const validVisibility = (value: unknown): value is ConversationVisibility =>
-  value === "private" || value === "public";
+  value === "private" || value === "view-only" || value === "public";
 /** A record's workspace overrides, or undefined when any is malformed. */
 function overridesOf<T>(
   value: unknown,

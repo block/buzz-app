@@ -76,6 +76,7 @@ import {
 import { headFields, type Saved } from "./config-writes";
 import {
   agentSubject,
+  type ConfigChannels,
   createConfigChannels,
   importedTeamId as syncedTeamId,
 } from "./config-channels";
@@ -321,15 +322,16 @@ import {
   agentSender,
   attentionChanges,
   type AttentionMigration,
-  compared,
+  type AttentionSet,
+  HEAD_LIMIT,
   mirrored,
   ownerSender,
   pendingSet,
-  publishAll,
+  moveAttention,
+  type MoveSnapshot,
   publishChanges,
   readOnce,
   relayAttention,
-  type AttentionSet,
   type RelayAttention,
   type Written,
 } from "./attention-relay";
@@ -2927,6 +2929,12 @@ export class AgentsService extends Service implements Agents {
   >();
   /** Agents whose relay attention has shown a complete set in this session. */
   private readonly attentionLive = new Set<AgentKey>();
+  /** By agent: what its owner saw when its last move was refused, which a
+   * choice is checked against. */
+  private readonly attentionRefusals = new Map<AgentKey, MoveSnapshot>();
+  /** By agent: the set its move wrote and read back, which its relay
+   * attention runs until its own first sync. */
+  private readonly attentionVerified = new Map<AgentKey, AttentionSet>();
   /** What this device's last relay write of each agent's attention replaced,
    * and when, until a set shows it or a minute passes: a removed record's
    * removal looks the same in a set as a set made before it was created. */
@@ -9163,7 +9171,11 @@ export class AgentsService extends Service implements Agents {
       const { session } = binding;
       const channels = attentionChannels(binding);
       if (this.relayAttention.has(key) || !native || !channels) continue;
+      // The set its move just read back runs until its first sync here.
+      const initial = this.attentionVerified.get(key);
+      this.attentionVerified.delete(key);
       const relay = relayAttention({
+        ...(initial ? { initial } : {}),
         agent: identity.pubkey,
         find: (signal) =>
           channels.find(
@@ -9195,6 +9207,7 @@ export class AgentsService extends Service implements Agents {
         signal: binding.controller.signal,
       });
       this.relayAttention.set(key, { relay, binding });
+      if (initial) this.attentionLive.add(key);
     }
   }
   /** Mirrors `set` into the agent's record, still showing this device's
@@ -9220,12 +9233,18 @@ export class AgentsService extends Service implements Agents {
   async migrateAttention(
     key: AgentKey,
     options: Readonly<{
+      /** "Use this device's", confirmed on the last refusal. */
       prune?: Readonly<Record<string, string>>;
+      /** "Use the community's", confirmed on the last refusal. */
       adopt?: boolean;
     }> = {},
   ): Promise<AttentionMigration> {
     let result: AttentionMigration | undefined;
-    await this.change(key, async (saved) => {
+    await this.change(key, async (stored) => {
+      // Read once its turn comes: the community may have rebound meanwhile.
+      const identity = this.liveMember(key);
+      // A membership with no saved record yet has its default one.
+      const saved = stored ?? (identity && this.recordOf(identity));
       if (!saved) throw new Error("No such agent on this device");
       // Already moved, for example by an earlier call this one queued behind.
       if (saved.attentionStorage === "relay") {
@@ -9239,85 +9258,88 @@ export class AgentsService extends Service implements Agents {
         };
         return saved;
       }
-      // Read once its turn comes: the community may have rebound meanwhile.
-      const identity = this.liveMember(key);
       const native = this.native;
       const binding = identity && this.bindingOf(identity);
       const { session, controller } = binding ?? {};
-      const relayAuthor = session?.relayAuthor;
       const read = session?.snapshotRead;
       const artifacts = session?.configArtifactWriter;
+      const channels = binding && attentionChannels(binding);
       if (!identity || !native || !binding || !session || !controller)
         throw new Error("Connect this agent's community to move its attention");
-      if (!relayAuthor || !read || !artifacts || !session.artifactSync)
+      if (!read || !artifacts || !channels || !session.artifactSync)
         throw new Error("This community can't store attention");
+      // A full set must fit in one sync (NIP-AT Relay support).
+      if (!((session.artifactSyncMaxEvents ?? 0) >= HEAD_LIMIT))
+        throw new Error(
+          `This community can't store attention: its sync limit is under ${HEAD_LIMIT} records`,
+        );
       // The community's set replaces this device's, unreadable records too.
       const skipped = options.adopt ? [] : Object.keys(saved.skipped ?? {});
       if (skipped.length)
         throw new Error(
           `Fix or remove its unreadable attention first: ${skipped.join(", ")}`,
         );
+      const use = options.adopt
+        ? "community"
+        : options.prune
+          ? "device"
+          : undefined;
+      const seen = this.attentionRefusals.get(key);
       const channel = await this.ensureAttention(
-        binding,
+        channels,
         identity.pubkey,
         controller.signal,
       );
-      if (options.adopt) {
-        // The community's versions win; what only this device holds, for
-        // example made since the owner saw the refusal, is copied there
-        // first, so the switch drops nothing of it.
-        const { set } = await publishAll(
-          { read, send: ownerSender(artifacts, controller.signal) },
-          () => readOnce((filter) => session.artifacts.sync(filter), channel),
-          saved.attention,
-          { missingOnly: true },
-        );
-        const found = compared(saved.attention, set);
-        // Objects it can't read would not run, and nothing would say so.
-        result = { ...found, migrated: !found.skipped.length };
-        if (!result.migrated) return saved;
-        return { ...mirrored(saved, set), attentionStorage: "relay" };
-      }
-      const { set, found } = await publishAll(
+      const outcome = await moveAttention(
         { read, send: ownerSender(artifacts, controller.signal) },
         () => readOnce((filter) => session.artifacts.sync(filter), channel),
         saved.attention,
-        options,
+        // Without the refusal it was made on, a choice is asked again.
+        use && seen ? { use, snapshot: seen } : undefined,
       );
-      const same =
-        !found.different.length && !found.extra.length && !found.skipped.length;
-      result = { ...found, migrated: same };
-      if (!same) return saved;
-      return { ...mirrored(saved, set), attentionStorage: "relay" };
+      result = { ...outcome.found, migrated: outcome.moved };
+      if (!outcome.moved) {
+        this.attentionRefusals.set(key, outcome.snapshot);
+        return saved;
+      }
+      this.attentionRefusals.delete(key);
+      // Only now, with the set written and read back, may the agent read it
+      // (Turning relay storage on, step 4).
+      const added = await channels.addMember(
+        channel,
+        identity.pubkey,
+        controller.signal,
+      );
+      if (added.status === "failed")
+        throw new Error(
+          `The agent could not join its attention channel: ${added.error ?? "the change failed"}`,
+        );
+      // Its runtime keeps running the set it read back until its own first
+      // sync, so nothing is held or dropped across the switch.
+      this.attentionVerified.set(key, outcome.set);
+      return { ...mirrored(saved, outcome.set), attentionStorage: "relay" };
     });
     return result as AttentionMigration;
   }
   /** The agent's attention channel in this community, which its owner
-   * creates when there is none (Create), with the agent as a member: only
-   * an agent whose profile proves this owner joins. */
+   * creates without the agent when there is none (Turning relay storage on,
+   * step 1). */
   private async ensureAttention(
-    binding: Binding,
+    channels: ConfigChannels,
     agent: string,
     signal: AbortSignal,
   ) {
-    const channels = attentionChannels(binding);
-    if (!channels) throw new Error("This community can't store attention");
     const found = await channels.ensure(
       "agent-attention",
       agentSubject(agent),
       "Attention",
       signal,
     );
-    if (!found.members?.includes(agent)) {
-      const added = await channels.addMember(found.id, agent, signal);
-      if (added.status === "failed")
-        throw new Error(
-          `The agent could not join its attention channel: ${added.error ?? "the change failed"}`,
-        );
-    }
     return found.id;
   }
   async revertAttention(key: AgentKey) {
+    this.attentionRefusals.delete(key);
+    this.attentionVerified.delete(key);
     await this.change(key, async (saved) => {
       if (!saved) throw new Error("No such agent on this device");
       if (saved.attentionStorage !== "relay") return saved;

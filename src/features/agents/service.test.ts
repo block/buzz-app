@@ -251,6 +251,17 @@ vi.mock("./relay-removal", async (actual) => ({
   removeRelayAgent: records.removeAgent,
 }));
 vi.mock("./agent-share", () => ({ unshare: records.unshare }));
+// Agents whose profile proves this owner (NIP-OA), by pubkey, for tests
+// whose owner key signs nothing.
+const attested = vi.hoisted(() => new Map<string, string>());
+vi.mock("./owner-attestation", async (original) => {
+  const actual = await original<typeof import("./owner-attestation")>();
+  return {
+    ...actual,
+    attestedOwner: async (event: Parameters<typeof actual.attestedOwner>[0]) =>
+      attested.get(event.pubkey) ?? actual.attestedOwner(event),
+  };
+});
 
 const UNFINISHED =
   "Echo isn't deleted yet and may still be in some channels. It stays stopped; Delete it again to finish.";
@@ -563,6 +574,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
+  attested.clear();
 });
 
 it("creates an agent in the community shown, with its type's defaults, and publishes its profile", async () => {
@@ -17753,6 +17765,11 @@ async function relayAttentionSetup(
     device?: Record<string, unknown>;
     /** The relay does not advertise NIP-AR sync. */
     noSync?: boolean;
+    /** The relay's NIP-AR sync limit; 4,096 by default. */
+    maxEvents?: number;
+    /** This device has no record of the agent yet, as for a membership
+     * another device made. */
+    unsaved?: boolean;
   } = {},
 ) {
   const relayKey = generateSecretKey();
@@ -17782,26 +17799,30 @@ async function relayAttentionSetup(
       key,
     ) as RelayEvent;
   const asAgent = signedBy(writerKey);
-  // Its owner's attention channel (NIP-AP), with the agent a member.
-  let members = [viewer, bot];
+  // Its owner's attention channel (NIP-AP). The agent is a member once its
+  // attention is there; before that, its owner adds it only after a move.
+  let members = options.device ? [viewer] : [viewer, bot];
+  let added: object | undefined;
+  attested.set(bot, viewer);
   const followers = new Set<(events: readonly RelayEvent[]) => void>();
   const ownerWrites: RelayEvent[] = [];
   const storage = options.storage ?? (memoryStorage() as AgentStore);
   const saved = await storage.get(`buzz.agent.v1:${bot}`);
-  await storage.set(
-    `buzz.agent.v1:${bot}`,
-    JSON.stringify({
-      ...(saved
-        ? JSON.parse(saved)
-        : {
-            pubkey: bot,
-            attention: options.device ?? {},
-            config: { reply: "ok" },
-          }),
-      ...(!options.device && { attentionStorage: "relay" }),
-      ...(options.enabled && { attentionEnabled: true }),
-    }),
-  );
+  if (!options.unsaved)
+    await storage.set(
+      `buzz.agent.v1:${bot}`,
+      JSON.stringify({
+        ...(saved
+          ? JSON.parse(saved)
+          : {
+              pubkey: bot,
+              attention: options.device ?? {},
+              config: { reply: "ok" },
+            }),
+        ...(!options.device && { attentionStorage: "relay" }),
+        ...(options.enabled && { attentionEnabled: true }),
+      }),
+    );
   const f = await setup({
     storage,
     ...(options.history && { history: options.history }),
@@ -17819,8 +17840,36 @@ async function relayAttentionSetup(
       Object.assign(session, {
         relayAuthor: getPublicKey(relayKey),
         snapshotRead: async ([filter]: readonly ReadFilter[]) => {
+          // The agent's profile, which carries its owner's NIP-OA proof.
+          if (filter?.kinds?.includes(0))
+            return [
+              {
+                ...event("profile", { pubkey: bot }),
+                kind: 0,
+                tags: [["auth", viewer, "", "f".repeat(128)]],
+              },
+            ];
           const head = heads.get(filter?.["#d"]?.[0] ?? "");
           return head ? [head] : [];
+        },
+        memberAdministration: {
+          refresh: async () => {},
+          snapshot: () => ({
+            status: "ready",
+            authority: {
+              roles: Object.fromEntries(
+                members.map((key) => [
+                  key,
+                  key === viewer ? "owner" : "member",
+                ]),
+              ),
+            },
+            ...(added && { operation: { change: added, status: "confirmed" } }),
+          }),
+          run: async (_channel: string, change: { pubkey: string }) => {
+            added = change;
+            members = [...members, change.pubkey];
+          },
         },
         configArtifactWriter: {
           kinds: [45010],
@@ -17840,6 +17889,7 @@ async function relayAttentionSetup(
           },
         },
         artifactSync: !options.noSync,
+        artifactSyncMaxEvents: options.maxEvents ?? 4096,
         artifacts: {
           follow(
             _channels: readonly string[],
@@ -17930,6 +17980,8 @@ async function relayAttentionSetup(
       for (const follower of [...followers])
         follower([{ kind: 39002, tags: [["d", home]] } as RelayEvent]);
     },
+    /** Who the attention channel's roster has now. */
+    roster: () => members,
     finds: () =>
       (f.session.channels.findLabeled as ReturnType<typeof vi.fn>).mock.calls
         .length,
@@ -18634,21 +18686,26 @@ it("moves an agent's attention to its community only when the set comes back the
   const refused = await f.service.migrateAttention(bot);
   expect(refused).toEqual({
     migrated: false,
-    different: [],
+    // Nothing was written, so the community still lacks this device's.
+    different: ["interest/default"],
     extra: ["interest/there"],
     skipped: [],
     heads: { "interest/there": expect.any(String) },
     // By the name the owner knows it by, for the refusal shown.
-    names: { "interest/there": "Q3 launch" },
+    names: { "interest/default": "default", "interest/there": "Q3 launch" },
   });
   expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
-  // Published anyway, as the owner; a second try publishes nothing new.
-  expect(f.ownerWrites).toHaveLength(1);
+  // A refusal writes nothing, so the owner chooses with both sides intact,
+  // and the agent is not let in.
+  expect(f.ownerWrites).toHaveLength(0);
+  expect(f.roster()).toEqual([viewer]);
   await f.seed("interest/there", null);
   const moved = await f.service.migrateAttention(bot);
   expect(moved.migrated).toBe(true);
   expect(f.ownerWrites).toHaveLength(1);
   expect(f.service.find(bot)?.attentionStorage).toBe("relay");
+  // Only with the set written and read back is the agent added.
+  expect(f.roster()).toEqual([viewer, bot]);
   await vi.waitFor(() =>
     expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
   );
@@ -18674,12 +18731,17 @@ it("moves an agent's attention to its community only when the set comes back the
   expect(
     f.service.find(bot)?.attention["interest/default"]?.value,
   ).toMatchObject({ instructions: "Newer." });
-  // A later relay change no longer shows here, and moving again publishes
-  // the record's objects over the relay's.
+  // A later relay change no longer shows here. Moving again is refused
+  // until the owner chooses this device's, which is written over it.
   await f.seed("interest/default", { type: "interest", instructions: "Late." });
-  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
-    migrated: true,
+  const again = await f.service.migrateAttention(bot);
+  expect(again).toMatchObject({
+    migrated: false,
+    different: ["interest/default"],
   });
+  await expect(
+    f.service.migrateAttention(bot, { prune: again.heads }),
+  ).resolves.toMatchObject({ migrated: true });
   expect(
     f.service.find(bot)?.attention["interest/default"]?.value,
   ).toMatchObject({ instructions: "Newer." });
@@ -18739,18 +18801,19 @@ it("deletes what only the community holds when a move prunes, watches before the
     extra: [],
     skipped: [],
   });
-  // The first try created the device's Interest; the prune deletes the
-  // watch first, then the Interests.
+  // The refusal wrote nothing. The prune deletes the watch first, then
+  // adds this device's Interest, then deletes the community's Interests.
   const tag = (event: RelayEvent | undefined, name: string) =>
     event?.tags.find((t) => t[0] === name)?.[1];
   expect(f.ownerWrites.map((event) => tag(event, "op"))).toEqual([
+    "delete",
     "create",
     "delete",
     "delete",
-    "delete",
   ]);
-  expect(f.ownerWrites.slice(1).map((event) => tag(event, "d"))).toEqual([
+  expect(f.ownerWrites.map((event) => tag(event, "d"))).toEqual([
     await attentionD(f.home, "watch/there"),
+    await attentionD(f.home, "interest/default"),
     await attentionD(f.home, "interest/bad"),
     await attentionD(f.home, "interest/there"),
   ]);
@@ -18781,10 +18844,11 @@ it("prunes only the objects named, at the heads the owner saw, so one added or c
     f.service.migrateAttention(bot, { prune: shown.heads }),
   ).resolves.toMatchObject({
     migrated: false,
-    different: [],
+    different: ["interest/default"],
     extra: ["interest/new", "interest/old"],
     skipped: [],
   });
+  expect(f.ownerWrites).toHaveLength(0);
   expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
   const live = [...f.heads.values()].filter(
     (event) => event.tags.find((t) => t[0] === "op")?.[1] !== "delete",
@@ -18805,7 +18869,7 @@ it("adopts the community's attention when the owner chooses it, copying there on
         value: { type: "interest", instructions: "Here." },
         modifiedAt: 1,
       },
-      // Made here since the owner saw the refusal: copied, not dropped.
+      // Only here: copied, not dropped.
       "interest/new": {
         slug: "interest/new",
         value: { type: "interest", instructions: "New here." },
@@ -18824,6 +18888,15 @@ it("adopts the community's attention when the owner chooses it, copying there on
     instructions: "Theirs.",
   });
   await f.seed("interest/there", { type: "interest", instructions: "There." });
+  // A choice is made on a refusal the owner saw; without one it is asked.
+  await expect(
+    f.service.migrateAttention(bot, { adopt: true }),
+  ).resolves.toMatchObject({
+    migrated: false,
+    different: ["interest/default", "interest/new"],
+    extra: ["interest/there"],
+  });
+  expect(f.ownerWrites).toHaveLength(0);
   await expect(
     f.service.migrateAttention(bot, { adopt: true }),
   ).resolves.toMatchObject({
@@ -18864,11 +18937,12 @@ it("refuses to adopt the community's attention while it holds objects it can't r
     type: "interest",
     instructions: "",
   } as AttentionValue);
-  await expect(
-    f.service.migrateAttention(bot, { adopt: true }),
-  ).resolves.toMatchObject({ migrated: false, skipped: ["interest/bad"] });
-  // As a refused move does, it leaves this device's copied there.
-  expect(f.ownerWrites).toHaveLength(1);
+  for (let i = 0; i < 2; i++)
+    await expect(
+      f.service.migrateAttention(bot, { adopt: true }),
+    ).resolves.toMatchObject({ migrated: false, skipped: ["interest/bad"] });
+  // Refused before and after the owner chose: nothing is written.
+  expect(f.ownerWrites).toHaveLength(0);
   expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
   expect(Object.keys(f.service.find(bot)?.attention ?? {})).toEqual([
     "interest/default",
@@ -18899,17 +18973,25 @@ it("never writes a move over a community record it can't read", async () => {
   expect(f.ownerWrites).toHaveLength(0);
   expect([...f.heads.values()].map((event) => event.id)).toEqual(before);
   expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
-  // A confirmed prune at a head that changed since is refused.
-  await expect(
-    f.service.migrateAttention(bot, {
-      prune: { "interest/default": "f".repeat(64) },
-    }),
-  ).resolves.toMatchObject({ migrated: false, skipped: ["interest/default"] });
+  // A choice made on a head that changed since is refused, with nothing
+  // written, and asked again.
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "",
+  } as AttentionValue);
+  const again = await f.service.migrateAttention(bot, { prune: shown.heads });
+  expect(again).toMatchObject({
+    migrated: false,
+    skipped: ["interest/default"],
+  });
+  expect(again.heads["interest/default"]).not.toBe(
+    shown.heads["interest/default"],
+  );
   expect(f.ownerWrites).toHaveLength(0);
   // At the head the owner saw, it deletes that record and restores this
   // device's value over it.
   await expect(
-    f.service.migrateAttention(bot, { prune: shown.heads }),
+    f.service.migrateAttention(bot, { prune: again.heads }),
   ).resolves.toMatchObject({ migrated: true, skipped: [] });
   const tag = (event: RelayEvent | undefined, name: string) =>
     event?.tags.find((t) => t[0] === name)?.[1];
@@ -18921,7 +19003,7 @@ it("never writes a move over a community record it can't read", async () => {
     "restore",
   ]);
   expect(f.ownerWrites[0] && tag(f.ownerWrites[0], "prev")).toBe(
-    shown.heads["interest/default"],
+    again.heads["interest/default"],
   );
   expect(f.service.find(bot)?.attentionStorage).toBe("relay");
 });
@@ -18997,6 +19079,164 @@ it("refuses to move attention with unreadable objects", async () => {
     "Fix or remove its unreadable attention first: interest/default",
   );
   expect(f.ownerWrites).toHaveLength(0);
+});
+
+it("moves the attention of an agent this device has no record of yet", async () => {
+  const f = await relayAttentionSetup({ device: {}, unsaved: true });
+  await f.seed("interest/there", { type: "interest", instructions: "There." });
+  const shown = await f.service.migrateAttention(bot);
+  expect(shown).toMatchObject({ migrated: false, extra: ["interest/there"] });
+  await expect(
+    f.service.migrateAttention(bot, { adopt: true }),
+  ).resolves.toMatchObject({ migrated: true });
+  expect(f.service.find(bot)?.attentionStorage).toBe("relay");
+  // Its default record's objects, and the community's.
+  expect(Object.keys(f.service.find(bot)?.attention ?? {})).toContain(
+    "interest/there",
+  );
+  expect(f.ownerWrites.length).toBeGreaterThan(0);
+});
+
+it("asks again when this device's attention changes after the owner saw a refusal", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "There.",
+  });
+  const shown = await f.service.migrateAttention(bot);
+  expect(shown.different).toEqual(["interest/default"]);
+  await f.service.save(bot, {
+    attention: {
+      "interest/default": { type: "interest", instructions: "Edited here." },
+    },
+  });
+  // The choice does not apply to a value the owner did not see.
+  await expect(
+    f.service.migrateAttention(bot, { adopt: true }),
+  ).resolves.toMatchObject({ migrated: false });
+  expect(f.ownerWrites).toHaveLength(0);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  // On the refusal that showed the edit, a choice applies.
+  await expect(
+    f.service.migrateAttention(bot, { prune: shown.heads }),
+  ).resolves.toMatchObject({ migrated: true });
+  expect(
+    f.service.find(bot)?.attention["interest/default"]?.value,
+  ).toMatchObject({ instructions: "Edited here." });
+});
+
+it("keeps attention here when an object it copied is gone from the community's set", async () => {
+  const f = await relayAttentionSetup({
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+      "interest/mine": {
+        slug: "interest/mine",
+        value: { type: "interest", instructions: "Mine." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await f.seed("interest/default", {
+    type: "interest",
+    instructions: "There.",
+  });
+  await f.service.migrateAttention(bot, { adopt: true });
+  // Another writer removes the copy before the set is read back.
+  const writer = f.session.configArtifactWriter as unknown as {
+    publish(event: RelayEvent): Promise<void>;
+  };
+  const publish = writer.publish.bind(writer);
+  writer.publish = async (event) => {
+    await publish(event);
+    await f.seed("interest/mine", null);
+  };
+  await expect(
+    f.service.migrateAttention(bot, { adopt: true }),
+  ).resolves.toMatchObject({ migrated: false });
+  expect(f.ownerWrites).toHaveLength(1);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
+  expect(f.roster()).toEqual([viewer]);
+  expect(Object.keys(f.service.find(bot)?.attention ?? {}).sort()).toEqual([
+    "interest/default",
+    "interest/mine",
+  ]);
+});
+
+it("runs the set it read back at the switch, with no wait for the agent's first sync", async () => {
+  const f = await relayAttentionSetup({
+    enabled: true,
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+      "watch/chat": {
+        slug: "watch/chat",
+        value: chat["watch/chat"] as AttentionValue,
+        modifiedAt: 1,
+      },
+    },
+  });
+  // The move's two reads complete; the runtime's own sync after the switch
+  // is still loading.
+  const artifacts = f.session.artifacts as { sync(filter: unknown): unknown };
+  const sync = artifacts.sync.bind(artifacts);
+  let reads = 0;
+  artifacts.sync = (filter) => {
+    if (++reads === 3) f.unsync();
+    return sync(filter);
+  };
+  await expect(f.service.migrateAttention(bot)).resolves.toMatchObject({
+    migrated: true,
+  });
+  await vi.waitFor(() => expect(reads).toBe(3));
+  const agent = f.service.find(bot);
+  expect(agent?.attentionStorage).toBe("relay");
+  expect(agent?.attentionProblem).toBeUndefined();
+  expect(agent?.attentionPending).not.toBe(true);
+  // A watched event at the switch runs at once, not after that sync.
+  const switched = message(author, channel, "at the switch", nowSeconds());
+  f.history.push(eventDto(switched));
+  f.emit({ events: [switched], channelId: channel });
+  await vi.waitFor(() => expect(heard(f.run)).toEqual(["at the switch"]));
+  f.sync();
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attentionProblem).toBeUndefined(),
+  );
+});
+
+it("moves no attention to a community whose sync limit can't hold a full set", async () => {
+  const f = await relayAttentionSetup({
+    maxEvents: 499,
+    device: {
+      "interest/default": {
+        slug: "interest/default",
+        value: { type: "interest", instructions: "Here." },
+        modifiedAt: 1,
+      },
+    },
+  });
+  await expect(f.service.migrateAttention(bot)).rejects.toThrow(
+    "This community can't store attention: its sync limit is under 500 records",
+  );
+  expect(f.ownerWrites).toHaveLength(0);
+  expect(
+    f.native?.publish.mock.calls.some(([, event]) => event.kind === 9007),
+  ).toBe(false);
+  expect(f.service.find(bot)?.attentionStorage).toBeUndefined();
 });
 
 it("shows why a relay agent's attention is not current", async () => {

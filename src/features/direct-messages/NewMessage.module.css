@@ -13,7 +13,6 @@
   position: relative;
   z-index: 3;
   padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--border-standard);
 }
 .toField {
   display: flex;
@@ -330,5 +329,4 @@
   display: grid;
   gap: var(--space-2);
   padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--border-standard);
 }

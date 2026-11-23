@@ -14,13 +14,12 @@ export function SoloDraftView({
 }: {
   actions?: ReactNode;
   children: ReactNode;
-  /** Inside New message, which owns the page and its heading. */
+  /** Inside New message, which owns the page; it shows no actions. */
   embedded?: boolean;
 }) {
   if (embedded)
     return (
       <div className={styles.start}>
-        <div className={styles.embeddedActions}>{actions}</div>
         <div className={styles.startContent}>{children}</div>
       </div>
     );

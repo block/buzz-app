@@ -1,7 +1,7 @@
 /** Owner-only display projection of observer telemetry into turns and items.
  * Raw session retention is unchanged; this reads allowlisted ACP fields only. */
 import { isMessageTool } from "../../buzz-mcp/message-tools";
-import { toolTitle } from "../../buzz-mcp/tool-titles";
+import { namedToolTitle } from "../../buzz-mcp/tool-titles";
 import { readEventBody } from "../agent-harness/turn-records";
 import { terminalOutcome } from "./observer";
 import { freshTurnTriggers, turnTriggerIds } from "./turn-triggers";
@@ -103,18 +103,12 @@ const postsMessage = (title: string) => {
   const name = /^(?:mcp__)?buzz__(\w+)$/.exec(title.trim())?.[1];
   return !!name && isMessageTool(name);
 };
-/** The Buzz server's tool name in a title, as each harness writes it:
- * `mcp__buzz__read` (Claude Code), `buzz__read` or `buzz: read` (goose),
- * `buzz.read` (Codex and the local transcripts), or the bare `read`. Another
- * server's prefix never matches. */
-const BUZZ_TOOL = /^(?:(?:mcp__)?buzz__|buzz\.|buzz: )?([a-z_]+)$/;
 /** The title of the Buzz tool a call's title names, for a call whose `kind`
  * is not one of ACP's own. Only an exact Buzz tool name has one: any other
  * tool keeps the title its adapter sent, and is never given a readable one. */
 export const buzzToolTitle = (tool: Pick<ToolItem, "title" | "kind">) => {
   if (tool.kind && tool.kind !== "other") return undefined;
-  const name = BUZZ_TOOL.exec(tool.title.trim())?.[1];
-  return name ? toolTitle(name) : undefined;
+  return namedToolTitle(tool.title);
 };
 const number = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;

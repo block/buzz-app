@@ -21,6 +21,7 @@ import {
 import { pubkeyOf } from "../../features/agents/membership";
 import { createSessionAdmissions } from "../../features/agents/session-admission";
 import { memoryStorage } from "../../features/agents/test-fakes";
+import { stepText } from "../../features/agents/local-activity";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { ReadError } from "../../features/relay/errors";
 import {
@@ -6621,6 +6622,15 @@ describe("codexStep", () => {
     expect(codexStep({ type: "mcpToolCall", tool: "send_message" })).toEqual({
       tool: "send_message",
     });
+    // A Buzz tool is a dynamic tool, reported by its bare name, which the
+    // step text titles.
+    const buzz = codexStep({
+      type: "dynamicToolCall",
+      namespace: "buzz",
+      tool: "channel_list",
+    });
+    expect(buzz).toEqual({ tool: "channel_list" });
+    expect(buzz && stepText(buzz)).toBe("List channels");
     expect(codexStep({ type: "reasoning" })).toEqual({ tool: "Thinking" });
     expect(codexStep({ type: "userMessage" })).toBeUndefined();
     expect(codexStep(undefined)).toBeUndefined();

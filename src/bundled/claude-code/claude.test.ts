@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { appClient } from "../../buzz-mcp/app-client";
 import { callSessionTool, type AddedTool } from "../../buzz-mcp/session-tools";
+import { stepText } from "../../features/agents/local-activity";
 import type { AgentHandle } from "../../features/agents/service";
 import { ClaudeProcess, stepLabel } from "./claude";
 import {
@@ -1192,6 +1193,12 @@ describe("stepLabel", () => {
     expect(
       stepLabel(msg([{ type: "tool_use", name: "mcp__buzz__send_message" }])),
     ).toEqual({ tool: "send_message" });
+    // A Buzz tool is reported by its bare name, which the step text titles.
+    const buzz = stepLabel(
+      msg([{ type: "tool_use", name: "mcp__buzz__channel_list" }]),
+    );
+    expect(buzz).toEqual({ tool: "channel_list" });
+    expect(buzz && stepText(buzz)).toBe("List channels");
     expect(stepLabel(msg([{ type: "thinking" }]))).toEqual({
       tool: "Thinking",
     });

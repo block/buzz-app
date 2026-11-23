@@ -87,3 +87,16 @@ export const toolTitle = (name: string): string | undefined =>
   Object.hasOwn(TOOL_TITLES, name)
     ? TOOL_TITLES[name as BuzzToolName]
     : undefined;
+
+/** The Buzz server's tool name in a title, as each harness writes it:
+ * `mcp__buzz__read` (Claude Code), `buzz__read` or `buzz: read` (goose),
+ * `buzz.read` (Codex and the local transcripts), or the bare `read`. Another
+ * server's prefix never matches. */
+const BUZZ_TOOL = /^(?:(?:mcp__)?buzz__|buzz\.|buzz: )?([a-z_]+)$/;
+
+/** The title of the Buzz tool a harness's tool title names; nothing for any
+ * title that is not an exact Buzz tool name. */
+export const namedToolTitle = (title: string): string | undefined => {
+  const name = BUZZ_TOOL.exec(title.trim())?.[1];
+  return name ? toolTitle(name) : undefined;
+};

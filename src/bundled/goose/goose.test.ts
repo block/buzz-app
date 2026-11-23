@@ -8,7 +8,10 @@ import {
   type ToolServer,
 } from "./goose";
 import { fakeSpawn, flush } from "./goose-testing";
-import { createLocalAgentActivity } from "../../features/agents/local-activity";
+import {
+  createLocalAgentActivity,
+  stepText,
+} from "../../features/agents/local-activity";
 
 const ok: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -1668,6 +1671,12 @@ describe("stepLabel", () => {
         rawInput: { text: "hi", path: "/a/b/notes.md" },
       }),
     ).toEqual({ tool: "send", target: "notes.md" });
+    // A Buzz tool is reported by its bare name, which the step text titles.
+    for (const title of ["buzz: channel_list", "buzz__channel_list"]) {
+      const buzz = stepLabel({ sessionUpdate: "tool_call", title });
+      expect(buzz, title).toEqual({ tool: "channel_list" });
+      expect(buzz && stepText(buzz), title).toBe("List channels");
+    }
   });
 });
 

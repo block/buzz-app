@@ -822,17 +822,23 @@ appTest.describe("Solo header accessories", () => {
         )
         .toBe(true);
       await resize.press("ArrowRight");
-      await page.evaluate(() => {
-        document.documentElement.style.fontSize = "32px";
-      });
       for (const { group, title, accessory, activity } of headers) {
+        const pencil = group.getByRole("button", {
+          name: `New task in ${title}`,
+        });
+        await page.evaluate(() => {
+          document.documentElement.style.fontSize = "16px";
+        });
+        await pencil.focus();
+        await page.evaluate(() => {
+          document.documentElement.style.fontSize = "32px";
+        });
+        await expect(pencil).toBeFocused();
+        await resize.focus();
+        await expect(pencil).toBeHidden();
         const label = group.getByText(title, { exact: true });
-        await label.hover();
-        await expect
-          .poll(() =>
-            label.evaluate((item) => item.clientWidth >= item.scrollWidth),
-          )
-          .toBe(true);
+        const titleBox = await label.boundingBox();
+        expect(titleBox.width, title).toBeGreaterThan(0);
         const signal = await group
           .getByRole("button", { name: accessory })
           .boundingBox();
@@ -842,16 +848,10 @@ appTest.describe("Solo header accessories", () => {
         expect(
           Math.abs(signal.y + signal.height / 2 - time.y - time.height / 2),
         ).toBeLessThan(1);
-        const pencil = group.getByRole("button", {
-          name: `New task in ${title}`,
-        });
-        await pencil.focus();
         await page.evaluate(() =>
           window.fixtureSoloRegion.showHeaderMetadata(false),
         );
         await expect(group.getByText(activity, { exact: true })).toHaveCount(0);
-        await expect(pencil).toBeFocused();
-        await resize.focus();
         await expect(pencil).toBeHidden();
         await page.evaluate(() =>
           window.fixtureSoloRegion.showHeaderMetadata(true),
@@ -909,13 +909,21 @@ appTest.describe("Solo header accessories", () => {
       if (hasTouch) {
         // A real tap detects an always-visible action stealing the accessory's hit target.
         appTest(
-          "keeps accessories and Actions tappable beside header activity",
+          "keeps narrow touch headings on one line with New task in Actions",
           async ({ page, app }) => {
             await admitNewTask(page);
             await page.goto(
               `${app.origin}/?solo-region-fixture&compose-workspaces&workspace-hit-targets&header-accessories`,
             );
             await openPage(page, "Messages");
+            const resize = page.getByRole("separator", {
+              name: "Resize sidebar",
+            });
+            await resize.dblclick();
+            await expect(resize).toHaveAttribute("aria-valuenow", "260");
+            await page.evaluate(() => {
+              document.documentElement.style.fontSize = "20px";
+            });
             for (const [selector, title, accessory] of [
               ['[data-solo-workspace="work"]', "Work", "Mark Work workspace"],
               [
@@ -926,9 +934,6 @@ appTest.describe("Solo header accessories", () => {
             ]) {
               const group = page.locator(selector);
               const mark = group.getByRole("button", { name: accessory });
-              await expect(
-                group.getByRole("button", { name: `New task in ${title}` }),
-              ).toBeVisible();
               await mark.scrollIntoViewIfNeeded();
               const box = await mark.boundingBox();
               await page.touchscreen.tap(
@@ -940,11 +945,25 @@ appTest.describe("Solo header accessories", () => {
                 name: `Actions for ${title}`,
               });
               const actionsBox = await actions.boundingBox();
+              const titleBox = await group
+                .getByRole("button", { name: title, exact: true })
+                .boundingBox();
+              const actionCenter = actionsBox.y + actionsBox.height / 2;
+              expect(actionCenter, title).toBeGreaterThan(titleBox.y);
+              expect(actionCenter, title).toBeLessThan(
+                titleBox.y + titleBox.height,
+              );
+              await expect(
+                group.getByRole("button", { name: `New task in ${title}` }),
+              ).toBeHidden();
               await page.touchscreen.tap(
                 actionsBox.x + actionsBox.width / 2,
-                actionsBox.y + actionsBox.height / 2,
+                actionCenter,
               );
               await expect(actions).toHaveAttribute("aria-expanded", "true");
+              await expect(
+                page.getByRole("menuitem", { name: "New task" }),
+              ).toBeVisible();
               await page.keyboard.press("Escape");
             }
           },
@@ -997,7 +1016,8 @@ appTest.describe("Solo header accessories", () => {
             await expect(time).toBeHidden();
             await expect(actions.locator("..")).toHaveCSS("opacity", "1");
             expect(await label.boundingBox()).toEqual(rest);
-            await expect(pencil).toBeVisible();
+            if (hasTouch) await expect(pencil).toBeHidden();
+            else await expect(pencil).toBeVisible();
             const intersectsTitle = await label.evaluate((element) => {
               const label = element.getBoundingClientRect();
               const row = element.closest(".navigation-section-heading");

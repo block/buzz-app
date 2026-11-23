@@ -349,7 +349,11 @@ export function RegionChannelGroup(props: SoloChannelGroupProps) {
           trailing={{
             metadata: props.headerMetadata,
             accessory: accessory != null && (
-              <div className="flex shrink-0 items-center">{accessory}</div>
+              <div
+                className={`${styles.headerAccessory} flex shrink-0 items-center`}
+              >
+                {accessory}
+              </div>
             ),
           }}
           actions={

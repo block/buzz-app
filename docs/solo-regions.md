@@ -256,9 +256,10 @@ Hosts that predate this prop ignore it.
 Both headers also accept optional `headerMetadata: ReactNode` for compact,
 non-interactive content such as a relative activity time. The host displays
 it at the trailing edge. Heading hover or focus on the actions replaces the
-metadata with Actions and New task when available. The title and accessory
-keep their space. Touch shows the controls directly. New task also remains
-available in the menu.
+metadata with Actions and, when there is room, New task. The title and
+accessory keep their space during that swap. On touch, Actions stays visible
+beside the title. New task stays available in the menu on touch and in narrow
+headings. An accessory can use its natural content width in narrow headings.
 
 Both headers accept optional `headerLeading` with a non-interactive `icon`, an
 action `label`, and an `onActivate` callback. This moves the caret before the

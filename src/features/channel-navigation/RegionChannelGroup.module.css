@@ -4,7 +4,7 @@
 }
 
 @container solo-channel-group (max-width: 9rem) {
-  :is(.group, .teamRow)
+  .teamRow
     [data-solo-channel-new-task]:not(
       [data-has-metadata] *,
       [data-reserve-space] *:focus
@@ -13,14 +13,20 @@
   }
 }
 
-.group [class~="navigation-section-heading"]:has(> [data-reserve-space]) {
-  flex-wrap: wrap;
+@container solo-channel-group (max-width: 12rem) {
+  .group [data-solo-channel-new-task]:not(:focus) {
+    display: none;
+  }
+
+  .headerAccessory > * {
+    min-inline-size: 0;
+  }
 }
 
-.group
-  [class~="navigation-section-heading"]:has(> [data-reserve-space])
-  > [class~="navigation-section-heading-label"] {
-  flex-basis: var(--navigation-heading-title-min);
+@media (hover: none) {
+  .group [data-solo-channel-new-task] {
+    display: none;
+  }
 }
 
 .heading {

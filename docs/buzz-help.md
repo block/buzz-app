@@ -773,7 +773,8 @@ Quitting Buzz also turns it off.
   read from the list; just looking marks nothing read.
 - Hover a channel row or workspace heading in the sidebar to show its **⋯**
   button. For a Solo chat, move to its trailing action area. Press Tab to
-  reach the button with the keyboard. On touch, the button is visible.
+  reach the button with the keyboard. On touch, the button is visible. Open
+  **⋯ → New task** from a workspace or Solo channel heading that supports tasks.
 - **Mute** is available from a channel or DM's sidebar context menu. Once
   confirmed, a crossed-out bell appears immediately after its name. New messages
   do not make muted channel or DM names bold.

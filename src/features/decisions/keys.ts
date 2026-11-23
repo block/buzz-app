@@ -16,5 +16,12 @@ export function onCommunityTypeSafeKeyCleared(
 export async function clearCommunityTypeSafeKey(community: string) {
   if (!isTauri()) return;
   await invoke("jev_classifier_clear_key", { community });
-  for (const listener of [...cleared]) listener(community);
+  // The key is already removed: a listener's failure must not report it as
+  // still saved.
+  for (const listener of [...cleared])
+    try {
+      listener(community);
+    } catch (error) {
+      console.warn("A TypeSafe key listener failed", error);
+    }
 }

@@ -255,6 +255,17 @@ export function createTabs({
     return resolved;
   }
 
+  function useModelRefresh(provider: string, reload: () => void) {
+    // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` follows `provider`.
+    useEffect(() => {
+      if (provider)
+        void setup.refreshModels(provider).then(
+          (refreshed) => refreshed && reload(),
+          () => undefined,
+        );
+    }, [provider]);
+  }
+
   function DefaultControl({ onConfigure }: { onConfigure(): void }) {
     const state = useSyncExternalStore(setup.subscribe, setup.snapshot);
     const [listing, reload] = useRead(
@@ -269,6 +280,7 @@ export function createTabs({
       `${id}:${state.readiness}:${!!state.blocking}`,
       id,
     );
+    useModelRefresh(id, reloadModels);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     return (
@@ -432,7 +444,7 @@ export function createTabs({
     const fallback = providers?.defaults.provider;
     const id = value.provider || (deviceDefaults ? "" : fallback) || "";
     const provider = providers?.providers.find((item) => item.id === id);
-    const [models] = useRead(
+    const [models, reloadModels] = useRead(
       () =>
         provider?.configured
           ? setup.models(id)
@@ -440,6 +452,7 @@ export function createTabs({
       `${id}:${provider?.configured ?? false}:${saves}:${revision}`,
       id,
     );
+    useModelRefresh(!hideModel && provider?.configured ? id : "", reloadModels);
     const named = (key: string | undefined) =>
       providers?.providers.find((item) => item.id === key)?.name ?? key;
     const modelDefault = value.provider
@@ -1214,6 +1227,7 @@ export function createTabs({
       () => (provider ? setup.models(provider) : Promise.resolve([])),
       provider,
     );
+    useModelRefresh(provider, reloadModels);
     const refresh = () => {
       reload();
       reloadModels();

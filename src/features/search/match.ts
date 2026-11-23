@@ -2,6 +2,10 @@
 const isWordChar = (char: string | undefined) =>
   /[\p{L}\p{M}\p{N}]/u.test(char ?? "");
 
+/** One letter, with any marks on it ("q", or "की" with its vowel sign). */
+const oneLetter = (word: string) =>
+  [...word.replace(/\p{M}/gu, "")].length === 1;
+
 /** How well a label matches typed text, best first. Ranks are whole numbers,
  * so callers can order them and add fractional tie-breaks. */
 export const MatchRank = {
@@ -97,7 +101,7 @@ export function matchName(
   for (const word of words) {
     // A one-letter word ("q" in "q&a", or "की" with its vowel sign) matches
     // only a one-letter word, so it cannot land inside a longer one.
-    const single = [...word.replace(/\p{M}/gu, "")].length === 1;
+    const single = oneLetter(word);
     const whole = (at: number) =>
       !isWordChar(text[at - 1]) &&
       (!single || !isWordChar(text[at + word.length]));
@@ -181,9 +185,10 @@ type Place = {
  * A place in the row for each typed word, no two in the same fragment, or
  * undefined. A fragment is a run of letters, marks and digits in one field:
  * "team-ops" has two, "quality" one. A word holds every fragment its match
- * touches, so initials hold each word they start. The result is the
- * assignment whose weakest word ranks best, from `from` up, and among those
- * the one that keeps each word in the earliest field that can hold it.
+ * touches, so initials hold each word they start. A word of one letter takes
+ * only a place that starts a fragment. The result is the assignment whose
+ * weakest word ranks best, from `from` up, and among those the one that keeps
+ * each word in the earliest field that can hold it.
  */
 function placeTerms(
   terms: readonly string[],
@@ -221,6 +226,13 @@ function placeTerms(
         term,
       );
       if (!found) continue;
+      // One typed letter must start its fragment. A rule's best match is
+      // inside a word only when no word of the field starts with the letter.
+      if (
+        oneLetter(term) &&
+        isWordChar(text.chars[(found.positions[0] ?? 0) - 1])
+      )
+        continue;
       if (found.rank > limit) next = Math.min(next, found.rank);
       else
         return {

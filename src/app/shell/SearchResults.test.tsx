@@ -8827,6 +8827,10 @@ it("finds channels, direct messages and people by typed words in any order", asy
       ["t", "stream"],
     ]),
     roster(relay, "open", [carol.pubkey]),
+    metadata(relay, "team-ops", "team-ops", 1700000004),
+    roster(relay, "team-ops", [viewer.pubkey]),
+    metadata(relay, "team-support", "team-support", 1700000005),
+    roster(relay, "team-support", [viewer.pubkey]),
     profile(alice, { display_name: "Alice Fixture" }),
     profile(carol, { display_name: "Alice Q. Fixture" }),
   ];
@@ -8908,6 +8912,17 @@ it("finds channels, direct messages and people by typed words in any order", asy
     view.rerender(<SearchResults {...props} query="buzz b" />);
     await waitFor(() =>
       expect(t.people).toHaveBeenLastCalledWith("buzz b", 1, expect.anything()),
+    );
+    expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
+    // One typed letter must start a word of the name: "t" starts "team", and
+    // "p" is only inside "ops" and "support".
+    view.rerender(<SearchResults {...props} query="ops t" />);
+    await waitFor(async () =>
+      expect(await rows("Channels")).toEqual([["team-ops", ["t", "ops"]]]),
+    );
+    view.rerender(<SearchResults {...props} query="team p" />);
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith("team p", 1, expect.anything()),
     );
     expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
     // One word lists what it always has, in the same order.

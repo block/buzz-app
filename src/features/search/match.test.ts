@@ -153,6 +153,15 @@ it("holds words typed apart to different fragments of the row", () => {
   expect(nameRank("buzz-community", "buzz bu")).toBe(MatchRank.words);
 });
 
+it("asks one letter typed apart to start a fragment of the row", () => {
+  // The letter sits inside another word of the name.
+  expect(nameRank("team-ops", "team p")).toBeUndefined();
+  expect(nameRank("my-buzz-text", "buzz x")).toBeUndefined();
+  expect(nameRank("Robin Samuels", "sam o")).toBeUndefined();
+  // The letter starts another word of the name.
+  expect(nameRank("team-ops", "ops t")).toBe(TERMS_APART + MatchRank.wordStart);
+});
+
 it("ranks a row found only word by word after every whole-text match", () => {
   const loosest = MatchRank.words + 2; // the loosest rank plus a penalty
   expect(nameRank("team-launch-planning-notes", "notes tlp")).toBeGreaterThan(

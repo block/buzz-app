@@ -18445,6 +18445,46 @@ it("removes a relay agent's spent timer as the agent, with prev, after its last 
   );
 });
 
+it("keeps a relay agent's timer that its owner saved again during its last task", async () => {
+  vi.useFakeTimers({ now: 1_000_000_000 });
+  const f = await relayAttentionSetup({ enabled: true });
+  const timer = {
+    type: "timer",
+    interest_id: "default",
+    prompt: "tick",
+    enabled: true,
+    interval_secs: 60,
+    armed_at: 1_000_000,
+    max_occurrences: 1,
+    expires_at: null,
+  } as const;
+  await f.seed("interest/default", { type: "interest", instructions: "Hi." });
+  await f.seed("watch/once", timer);
+  await vi.waitFor(() =>
+    expect(f.service.find(bot)?.attention["watch/once"]).toBeDefined(),
+  );
+  const d = await attentionD(f.home, "watch/once");
+  // The same value as a new revision, the owner's new registration, which
+  // the live view has not shown (as across a reconnect) when the task runs.
+  await f.behind("watch/once", timer);
+  const added = f.heads.get(d);
+  await vi.advanceTimersByTimeAsync(60_000);
+  await vi.waitFor(() => expect(f.run).toHaveBeenCalled());
+  await vi.advanceTimersByTimeAsync(1_000);
+  // The finished task removes nothing it did not run from.
+  expect(f.heads.get(d)?.id).toBe(added?.id);
+  expect(
+    f
+      .agentWrites()
+      .some((template) =>
+        template.tags?.some(
+          ([key, value]) => key === "op" && value === "delete",
+        ),
+      ),
+  ).toBe(false);
+  expect(f.service.find(bot)?.attention["watch/once"]).toBeDefined();
+});
+
 it("shows why a relay agent's attention is not current", async () => {
   const f = await relayAttentionSetup({ synced: false });
   await vi.waitFor(() =>

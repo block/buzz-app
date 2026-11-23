@@ -186,7 +186,9 @@ it("records natural completion once and does not restart a completed registratio
   h.manager.reconcile("example/command", h.provider, agents);
   await Promise.resolve();
   h.endings[0]?.();
-  await vi.waitFor(() => expect(h.finish).toHaveBeenCalledWith("a", watch));
+  await vi.waitFor(() =>
+    expect(h.finish).toHaveBeenCalledWith("a", watch, undefined),
+  );
   h.manager.reconcile("example/command", h.provider, agents);
   expect(h.provider.run).toHaveBeenCalledTimes(1);
   h.manager.stop();

@@ -306,8 +306,13 @@ type Job = {
   /** For a watch or timer: the object and attention epoch it was matched or
    * found due under. It runs only while both are still current, so a watch or
    * timer edited, disabled, rearmed, replaced or turned off and on again since
-   * then does not run it. */
-  matched?: { object: AttentionObject; epoch: number };
+   * then does not run it. `revision` is the relay head it was found under,
+   * when its attention is on the relay: a runtime removal applies only to it. */
+  matched?: {
+    object: AttentionObject;
+    epoch: number;
+    revision?: string | undefined;
+  };
   sourceCurrent?: () => boolean;
   guardedWake?: {
     current(): boolean;
@@ -568,6 +573,9 @@ export type RunnerMember = Readonly<{
 
 /** What the runner needs of its host. Each agent it names is a membership,
  * by its key. */
+/** A runtime removal's precondition: `slug`'s relay head is still `head`. */
+export type Revision = Readonly<{ slug: string; head: string | undefined }>;
+
 export type RunnerHost = {
   /** Session controls refresh when this copy gains or loses native custody. */
   ownershipChanged?(): void;
@@ -674,7 +682,11 @@ export type RunnerHost = {
     key: AgentKey,
     apply: (record: AgentRecord) => AgentRecord | Promise<AgentRecord>,
     checked?: boolean,
+    revision?: Revision,
   ): Promise<AgentRecord>;
+  /** The relay head of `slug` in its attention set, when its attention is on
+   * the relay. */
+  revision?(key: AgentKey, slug: string): string | undefined;
   /** Whether a change other than timer progress is waiting or saving. Its
    * timers wait for it, since it may rearm, restart or remove one. */
   changing(key: AgentKey): boolean;
@@ -853,7 +865,11 @@ export class AgentRunners {
    * starts again, so a failing repeat reports once. */
   private readonly reportedWakes = new Set<string>();
   /** A terminal producer retains its registration until every queued turn settles. */
-  async completeSource(key: AgentKey, object: AttentionObject) {
+  async completeSource(
+    key: AgentKey,
+    object: AttentionObject,
+    revision: string | undefined,
+  ) {
     let remove = false;
     // Its completion is saved here first, as run state: a removal that its
     // attention's store then refuses never runs the producer again.
@@ -876,10 +892,14 @@ export class AgentRunners {
       };
     });
     if (remove)
-      await this.host.change(key, (record) =>
-        record.attention[object.slug] === object
-          ? setAttention(record, object.slug, null)
-          : record,
+      await this.host.change(
+        key,
+        (record) =>
+          record.attention[object.slug] === object
+            ? setAttention(record, object.slug, null)
+            : record,
+        false,
+        { slug: object.slug, head: revision },
       );
   }
 
@@ -1252,7 +1272,11 @@ export class AgentRunners {
       throw new Error("This copy of Buzz does not run that agent");
     const job = {
       trigger,
-      matched: { object, epoch: runner.epoch },
+      matched: {
+        object,
+        epoch: runner.epoch,
+        revision: this.host.revision?.(key, object.slug),
+      },
       sourceCurrent,
     };
     const agent = this.host.ready(key) as Agent;
@@ -2978,7 +3002,11 @@ export class AgentRunners {
             object &&
             sourceCompleted(this.host.record(agent.key).sourceRuns, object)
           )
-            await this.completeSource(agent.key, object).catch((error) =>
+            await this.completeSource(
+              agent.key,
+              object,
+              job.matched?.revision,
+            ).catch((error) =>
               console.warn("Attention source completion was not saved", error),
             );
         }
@@ -3265,7 +3293,11 @@ export class AgentRunners {
         ...(interest?.type === "interest" ? { interest } : {}),
         spent: timerSpent(timer, ran, ran.nextDue),
       },
-      matched: { object, epoch: runner.epoch },
+      matched: {
+        object,
+        epoch: runner.epoch,
+        revision: this.host.revision?.(agent.key, object.slug),
+      },
     };
   }
 
@@ -4000,21 +4032,25 @@ export class AgentRunners {
           trigger.type === "source" &&
           sourceCompleted(this.host.record(agent.key).sourceRuns, object)
         )
-          await this.completeSource(agent.key, object);
+          await this.completeSource(agent.key, object, job.matched?.revision);
         if (trigger.type === "timer")
-          await this.host.change(agent.key, (record) =>
-            record.attention[object.slug] === object &&
-            timerSpent(
-              trigger.timer,
-              timerState(
+          await this.host.change(
+            agent.key,
+            (record) =>
+              record.attention[object.slug] === object &&
+              timerSpent(
                 trigger.timer,
-                record.timers?.[object.slug],
+                timerState(
+                  trigger.timer,
+                  record.timers?.[object.slug],
+                  Math.floor(Date.now() / 1000),
+                ),
                 Math.floor(Date.now() / 1000),
-              ),
-              Math.floor(Date.now() / 1000),
-            )
-              ? setAttention(record, object.slug, null)
-              : record,
+              )
+                ? setAttention(record, object.slug, null)
+                : record,
+            false,
+            { slug: object.slug, head: job.matched?.revision },
           );
       })
       .catch((error) =>

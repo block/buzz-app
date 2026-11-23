@@ -122,7 +122,12 @@ import {
   settingsProposalProblem,
 } from "./settings-proposal";
 import { nativeRelayInfo } from "../relay/native";
-import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
+import {
+  AgentRunners,
+  type Connection,
+  type Revision,
+  TIMEOUT_LIMIT_MS,
+} from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import {
   createAgentHooks,
@@ -3236,7 +3241,7 @@ export class AgentsService extends Service implements Agents {
         if (!member) throw new Error("No such agent on this device");
         return this.recordOf(member);
       },
-      change: async (key, apply, checked) => {
+      change: async (key, apply, checked, revision) => {
         const record = await this.change(
           key,
           () => {
@@ -3248,11 +3253,13 @@ export class AgentsService extends Service implements Agents {
           undefined,
           "agent",
           checked,
+          revision,
         );
         if (!record) throw new Error("No such agent on this device");
         return record;
       },
       changing: (key) => this.changing.has(key),
+      revision: (key, slug) => this.attentionRevision(key, slug),
       timers: (key) => this.timersOf(key),
       progress: (key, ran) => this.progress(key, ran),
       start: async (agent) => {
@@ -5061,7 +5068,9 @@ export class AgentsService extends Service implements Agents {
       {
         completed: (key, object) =>
           sourceCompleted(this.records[key]?.sourceRuns, object),
-        finish: (key, object) => this.runners.completeSource(key, object),
+        finish: (key, object, revision) =>
+          this.runners.completeSource(key, object, revision),
+        revision: (key, slug) => this.attentionRevision(key, slug),
         emit: (key, object, text, current) => {
           const agent = this.state.running.find((agent) => agent.key === key);
           if (
@@ -8855,6 +8864,7 @@ export class AgentsService extends Service implements Agents {
     saved?: (record: AgentRecord | null) => void,
     writer?: "agent" | "owner",
     checked?: boolean,
+    revision?: Revision,
   ): Promise<AgentRecord | null> {
     this.changing.set(key, (this.changing.get(key) ?? 0) + 1);
     return this.queued(key, async () => {
@@ -8878,6 +8888,17 @@ export class AgentsService extends Service implements Agents {
             this.update();
             base = fresh;
             next = await apply(base);
+          }
+          // A runtime removal applies only to the revision its run started
+          // from. Another head is a new registration, even with the same
+          // value: it keeps none of the old one's run state.
+          const head = revision && set.heads[revision.slug]?.id;
+          if (revision && head !== revision.head) {
+            const object = base.attention[revision.slug];
+            next =
+              object && head && revision.head
+                ? setAttention(base, revision.slug, object.value)
+                : base;
           }
           const changes = next ? attentionChanges(base, next) : [];
           const replaced = await publishChanges(relay.io, set, changes);
@@ -9130,6 +9151,12 @@ export class AgentsService extends Service implements Agents {
       });
       this.relayAttention.set(key, { relay, binding });
     }
+  }
+  /** The relay head of `slug` in the agent's current attention set, when
+   * its attention is on the relay. */
+  private attentionRevision(key: AgentKey, slug: string) {
+    if (this.records[key]?.attentionStorage !== "relay") return undefined;
+    return this.relayAttention.get(key)?.relay.current()?.heads[slug]?.id;
   }
   /** The relay attention an attention change of `key` saves to, and how
    * `writer` signs it there; throws when it can't be saved now. */

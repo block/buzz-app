@@ -262,12 +262,15 @@ it("refuses to share a private chat that has other members", async () => {
   const [chat] = f.channels;
   if (!chat) throw new Error("missing chat");
   chat.members = [viewer, ownAgent];
-  expect(await shareSoloChatAccess(f.session, id, f)).toMatchObject({
-    visibility: "private",
-  });
+  const consented = await shareSoloChatAccess(f.session, id, f);
+  expect(consented).toMatchObject({ visibility: "private" });
   chat.members = [viewer, ownAgent, person];
   await expect(shareSoloChatAccess(f.session, id, f)).rejects.toThrow(
     "This chat has other members, so it can’t be shared. Create a new channel instead.",
   );
+  // A person who joined after consent still stops the save.
+  await expect(
+    shareSoloChatAccess(f.session, id, { ...f, confirmed: consented }),
+  ).rejects.toThrow("This chat has other members");
   expect(f.save).not.toHaveBeenCalled();
 });

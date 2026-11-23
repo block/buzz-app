@@ -46,7 +46,7 @@ export function generalAccessPolicy(
 }
 
 export const OPENING_BLOCKED_REASON =
-  "Has other members. Create a new public channel instead.";
+  "Has other members. Create a new channel instead.";
 
 /** Whether the relay will refuse to open this private channel: it has a member
  * who is neither the viewer nor one of the viewer's own agents (NIP-OA). The
@@ -54,9 +54,9 @@ export const OPENING_BLOCKED_REASON =
  * never blocks. A member blocks only with evidence: a verified owner who is
  * someone else (even if the viewer's inventory lists it), or a loaded profile
  * that claims no agent at all, read as a person once the viewer's agent
- * inventory is complete. That reading is a
- * guess: an untagged agent of the viewer's missing from the inventory also
- * blocks here, though the relay would allow it. */
+ * inventory is complete. That reading is a guess: an untagged agent of the
+ * viewer's missing from the inventory also blocks here, though the relay
+ * would allow it. */
 export function openingBlocked(
   session: {
     viewer?: string | undefined;

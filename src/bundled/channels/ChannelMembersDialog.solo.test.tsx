@@ -1619,7 +1619,7 @@ it("closes opening once Manage members loads a person member's profile", async (
   expect(
     await screen.findByRole("option", { name: "View only" }),
   ).toHaveAccessibleDescription(
-    "Has other members. Create a new public channel instead.",
+    "Has other members. Create a new channel instead.",
   );
   expect(t.published).toEqual([]);
 });

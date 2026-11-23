@@ -921,7 +921,7 @@ it.each([true, false])(
       if (blocked) {
         expect(option).toHaveAttribute("aria-disabled", "true");
         expect(option).toHaveAccessibleDescription(
-          "Has other members. Create a new public channel instead.",
+          "Has other members. Create a new channel instead.",
         );
       } else expect(option).not.toHaveAttribute("aria-disabled", "true");
     }
@@ -953,9 +953,7 @@ it("refuses a staged opening the opening check closes after consent opened", asy
   );
   expect(confirm).toBeDisabled();
   expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-    expect.stringContaining(
-      "Has other members. Create a new public channel instead.",
-    ),
+    expect.stringContaining("Has other members. Create a new channel instead."),
   );
   await user.click(confirm);
   expect(h.save).not.toHaveBeenCalled();

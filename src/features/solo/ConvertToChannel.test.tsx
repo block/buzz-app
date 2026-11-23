@@ -755,7 +755,7 @@ it.each([
       if (blocked) {
         expect(option).toHaveAttribute("aria-disabled", "true");
         expect(option).toHaveAccessibleDescription(
-          "Has other members. Create a new public channel instead.",
+          "Has other members. Create a new channel instead.",
         );
       } else expect(option).not.toHaveAttribute("aria-disabled", "true");
     }
@@ -821,7 +821,7 @@ it("refuses a View only pick the opening check closes after it was made", async 
   expect(confirm()).toBeDisabled();
   expect(
     screen.getAllByRole("status").map((status) => status.textContent),
-  ).toContain("Has other members. Create a new public channel instead.");
+  ).toContain("Has other members. Create a new channel instead.");
   fireEvent.click(confirm());
   await selectAccess("Private");
   await ready();

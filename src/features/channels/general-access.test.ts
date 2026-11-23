@@ -9,6 +9,7 @@ const othersAgent = "e".repeat(64);
 const claimedAgent = "f".repeat(64);
 const unloaded = "1".repeat(64);
 const listedOthersAgent = "2".repeat(64);
+const flaggedAgent = "3".repeat(64);
 const verified = new Map([
   [ownAgent, viewer],
   [othersAgent, person],
@@ -24,6 +25,10 @@ const session = {
         // An agent whose attestation is missing or does not verify.
         [claimedAgent, { isAgent: true, ownerPubkey: viewer }],
         [person, {}],
+        // Listed in the viewer's inventory; its profile claims no agent.
+        [inventoryAgent, {}],
+        // An agent only by its profile content: no auth tag, no inventory entry.
+        [flaggedAgent, { isAgent: true }],
       ]),
     owner: (pubkey: string) => verified.get(pubkey),
   },
@@ -46,6 +51,7 @@ it.each([
     true,
   ],
   ["an agent with unverified ownership", [viewer, claimedAgent], false],
+  ["an agent flagged only in its profile", [viewer, flaggedAgent], false],
   ["a member whose profile has not loaded", [viewer, unloaded], false],
   ["an unknown roster", undefined, false],
 ] as const)("%s", (_, members, blocked) => {

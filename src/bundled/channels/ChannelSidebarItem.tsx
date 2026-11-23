@@ -219,7 +219,7 @@ function ChannelSidebarItemCore({
   muted: boolean;
 }) {
   const present = useIsPresent();
-  const { members, profiles } = useConversationIdentity(
+  const { members, profiles, mark } = useConversationIdentity(
     session,
     channel,
     dmProfiles,
@@ -236,7 +236,10 @@ function ChannelSidebarItemCore({
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
   const tiled = useContext(SidebarCardDisplayContext) === "icons";
-  const identityShowsMembers = members.length > 0 || !!channel.picture;
+  // Named conversations show what they are; DMs show who's in them.
+  const named = channel.channelType !== "dm";
+  const identityShowsMembers =
+    !!channel.picture || (!named && members.length > 0);
   const identity = (
     <ConversationRowIdentity
       members={members}
@@ -245,6 +248,7 @@ function ChannelSidebarItemCore({
       picture={channel.picture}
       session={session}
       presence={presence === "unknown" ? undefined : presence}
+      mark={named ? mark : undefined}
     />
   );
   const solo = channel.channelType === "solo";
@@ -260,6 +264,7 @@ function ChannelSidebarItemCore({
             picture={channel.picture}
             presence={presence === "unknown" ? undefined : presence}
             session={session}
+            mark={named ? mark : undefined}
           />
         )
       }

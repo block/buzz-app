@@ -167,6 +167,17 @@ import TablerMessage2Icon from "@tabler/icons-react/dist/esm/icons/IconMessage2.
 export const ThreadIcon = defineIcon("tabler", TablerMessage2Icon);
 import TablerChatsCircleIcon from "@tabler/icons-react/dist/esm/icons/IconMessages.mjs";
 export const ChatsCircleIcon = defineIcon("tabler", TablerChatsCircleIcon);
+import { ChatGlobeArtwork } from "./ChatGlobe";
+export const ChatGlobeIcon = defineIcon("custom", ChatGlobeArtwork, {
+  meaning: "A conversation with only you in it that anyone can read",
+  category: "Conversation identity",
+  provenance:
+    "Designer-sketched adaptation combining the MIT-licensed Tabler MessageCircle outline with the latitude and longitude lines of Tabler World.",
+  intendedSizes: [
+    { width: 16, height: 16 },
+    { width: 20, height: 20 },
+  ],
+});
 import { ChatUnreadArtwork } from "./ChatUnread";
 export const ChatUnreadIcon = defineIcon("custom", ChatUnreadArtwork, {
   meaning: "Conversations with unread messages",

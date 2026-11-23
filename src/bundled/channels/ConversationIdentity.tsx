@@ -3,7 +3,12 @@ import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { avatarMedia } from "../../shared/avatar-source";
-import { ChatCircleIcon } from "../../shared/design-system/icons";
+import {
+  ChatCircleIcon,
+  ChatGlobeIcon,
+  GlobeIcon,
+  LockIcon,
+} from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import styles from "./Channels.module.css";
@@ -30,6 +35,45 @@ export function identityMembers(
 ): readonly string[] {
   const people = others.filter((key) => !profiles.get(key)?.isAgent);
   return people.length ? people : others;
+}
+
+/** What a named conversation's icon says: whether anyone besides you (not
+ * counting agents) is in it, and whether anyone in the community can read it.
+ * Visibility the relay hasn't confirmed reads as private. */
+export type ConversationMark =
+  | "solo-private"
+  | "solo-public"
+  | "group-private"
+  | "group-public";
+export function conversationMark(
+  channel: Pick<ChannelSummary, "visibility">,
+  people: readonly string[],
+): ConversationMark {
+  const open = channel.visibility === "public";
+  return people.length
+    ? open
+      ? "group-public"
+      : "group-private"
+    : open
+      ? "solo-public"
+      : "solo-private";
+}
+const markIcons = {
+  "solo-private": ChatCircleIcon,
+  "solo-public": ChatGlobeIcon,
+  "group-private": LockIcon,
+  "group-public": GlobeIcon,
+} as const;
+/** A named conversation's mark, for a row or a tile. */
+export function ConversationMarkIcon({
+  mark,
+  size,
+}: {
+  mark: ConversationMark;
+  size: number;
+}) {
+  const Icon = markIcons[mark];
+  return <Icon size={size} data-conversation-mark={mark} />;
 }
 
 /** Past this many others, a conversation's icon is a count; telling its
@@ -81,11 +125,21 @@ export function useConversationIdentity(
         : others,
     [others, profiles],
   );
-  return { members, profiles };
+  // The people besides you: agents never count. Past the profile limit every
+  // member counts, since a conversation that size has people in it.
+  const people = useMemo(
+    () =>
+      others.length <= identityProfileLimit
+        ? others.filter((key) => !profiles.get(key)?.isAgent)
+        : others,
+    [others, profiles],
+  );
+  return { members, profiles, mark: conversationMark(channel, people) };
 }
 
-/** A conversation's icon in a sidebar row: the one member's face, the
- * number of members, or the chat bubble when it's with no one else yet. */
+/** A conversation's icon in a sidebar row. A named conversation shows its
+ * own picture, else its mark. A DM shows the one member's face, the number of
+ * members, or the chat bubble when it's with no one else yet. */
 export function ConversationRowIdentity({
   members,
   profiles,
@@ -93,7 +147,10 @@ export function ConversationRowIdentity({
   picture,
   session,
   presence,
+  mark,
 }: {
+  /** A named conversation's mark; DMs have none. */
+  mark?: ConversationMark | undefined;
   members: readonly string[];
   profiles: ReadonlyMap<string, Profile>;
   /** The conversation's name, for a face whose profile hasn't loaded. */
@@ -114,6 +171,7 @@ export function ConversationRowIdentity({
         />
       </span>
     );
+  if (mark) return <ConversationMarkIcon mark={mark} size={16} />;
   const one = members.length === 1 ? profiles.get(members[0] ?? "") : undefined;
   if (members.length === 1)
     return (
@@ -143,8 +201,8 @@ export function ConversationRowIdentity({
   return <ChatCircleIcon size={16} />;
 }
 
-/** The same identity as a large tile: its picture, a face, a cluster of up
- * to three faces, or the chat bubble. */
+/** The same identity as a large tile: its picture, its mark, a face, a
+ * cluster of up to three faces, or the chat bubble. */
 export function ConversationTileIdentity({
   members,
   profiles,
@@ -152,7 +210,9 @@ export function ConversationTileIdentity({
   picture,
   session,
   presence,
+  mark,
 }: {
+  mark?: ConversationMark | undefined;
   members: readonly string[];
   profiles: ReadonlyMap<string, Profile>;
   fallback: string;
@@ -166,6 +226,16 @@ export function ConversationTileIdentity({
         src={avatarMedia(picture, session.media)}
         alt=""
         fallback={fallback}
+        size="fill"
+      />
+    );
+  if (mark)
+    return (
+      <Avatar
+        alt=""
+        fallback={fallback}
+        fallbackContent={<ConversationMarkIcon mark={mark} size={20} />}
+        fallbackSurface="accent"
         size="fill"
       />
     );

@@ -863,24 +863,60 @@ describe("conversation identity", () => {
     return { session, ensure };
   }
 
-  it("shows the one other member's face in a chat with one agent", () => {
-    const { session } = viewer(
-      new Map([[agent, { name: "Scout", isAgent: true }]]),
-    );
-    render(
-      <ChannelSidebarItem
-        {...itemProps(session, false, {
-          id: "alpha",
-          name: "Q1 roadmap",
-          channelType: "solo",
-          members: [me, agent],
-        })}
-      />,
-    );
-    const identity = document.querySelector("[data-dm-identity]");
-    expect(identity?.querySelector(".buzz-avatar")).not.toBeNull();
-    expect(identity?.hasAttribute("data-dm-participant-count")).toBe(false);
-  });
+  it.each([
+    {
+      case: "only you and agents, private",
+      members: [me, agent],
+      visibility: "private" as const,
+      mark: "solo-private",
+    },
+    {
+      case: "only you, anyone can read",
+      members: [me, agent],
+      visibility: "public" as const,
+      mark: "solo-public",
+    },
+    {
+      case: "others, private",
+      members: [me, tom, agent],
+      visibility: "private" as const,
+      mark: "group-private",
+    },
+    {
+      case: "others, anyone can join",
+      members: [me, tom, molly],
+      visibility: "public" as const,
+      mark: "group-public",
+    },
+    {
+      case: "unconfirmed visibility reads as private",
+      members: [me, tom],
+      visibility: undefined,
+      mark: "group-private",
+    },
+  ])(
+    "marks a named conversation by who's in it and who can read it: $case",
+    ({ members, visibility, mark }) => {
+      const { session } = viewer(
+        new Map([[agent, { name: "Scout", isAgent: true }]]),
+      );
+      render(
+        <ChannelSidebarItem
+          {...itemProps(session, false, {
+            id: "alpha",
+            name: "Q1 roadmap",
+            channelType: "stream",
+            members,
+            ...(visibility ? { visibility } : {}),
+          })}
+        />,
+      );
+      expect(
+        document.querySelector("[data-conversation-mark]"),
+      ).toHaveAttribute("data-conversation-mark", mark);
+      expect(document.querySelector("[data-dm-identity]")).toBeNull();
+    },
+  );
 
   it("loads the one other member's profile when it's unknown", () => {
     const { session, ensure } = viewer();
@@ -897,7 +933,7 @@ describe("conversation identity", () => {
     expect(ensure).toHaveBeenCalledWith([agent]);
   });
 
-  it("shows the number of others in a named conversation, like a group DM", () => {
+  it("shows a named conversation's own picture instead of its mark", () => {
     const { session } = viewer();
     render(
       <ChannelSidebarItem
@@ -905,13 +941,15 @@ describe("conversation identity", () => {
           id: "alpha",
           name: "Site refresh",
           channelType: "stream",
-          members: [me, tom, molly, agent],
+          members: [me, tom, molly],
+          picture: "https://example.com/site.png",
         })}
       />,
     );
+    expect(document.querySelector("[data-conversation-mark]")).toBeNull();
     expect(
-      document.querySelector("[data-dm-participant-count]"),
-    ).toHaveTextContent("3");
+      document.querySelector("[data-dm-identity] .buzz-avatar"),
+    ).not.toBeNull();
   });
 
   it("shows the chat bubble when no one else is in it", () => {
@@ -956,18 +994,13 @@ describe("conversation identity", () => {
         [tom, { name: "Tom" }],
         [molly, { name: "Molly" }],
       ]);
+      // Only DMs show who's in them; named conversations show their mark.
       for (const channel of [
         {
           id: "alpha",
           name: "Chat",
           channelType: "dm" as const,
           participants: others,
-        },
-        {
-          id: "alpha",
-          name: "Chat",
-          channelType: "stream" as const,
-          members: [me, ...others],
         },
       ]) {
         const { session } = viewer(profiles);
@@ -990,7 +1023,24 @@ describe("conversation identity", () => {
     },
   );
 
-  it("clusters up to three faces in tile view", () => {
+  it("clusters up to three faces in a DM's tile", () => {
+    const { session } = viewer();
+    render(
+      <SidebarCardDisplayContext.Provider value="icons">
+        <ChannelSidebarItem
+          {...itemProps(session, false, {
+            id: "alpha",
+            name: "Site refresh",
+            channelType: "dm",
+            participants: [tom, molly, agent, "d".repeat(64)],
+          })}
+        />
+      </SidebarCardDisplayContext.Provider>,
+    );
+    expect(document.querySelectorAll(".buzz-avatar")).toHaveLength(3);
+  });
+
+  it("shows a named conversation's mark in its tile", () => {
     const { session } = viewer();
     render(
       <SidebarCardDisplayContext.Provider value="icons">
@@ -999,11 +1049,15 @@ describe("conversation identity", () => {
             id: "alpha",
             name: "Site refresh",
             channelType: "stream",
-            members: [me, tom, molly, agent, "d".repeat(64)],
+            visibility: "public",
+            members: [me, tom, molly],
           })}
         />
       </SidebarCardDisplayContext.Provider>,
     );
-    expect(document.querySelectorAll(".buzz-avatar")).toHaveLength(3);
+    expect(document.querySelector("[data-conversation-mark]")).toHaveAttribute(
+      "data-conversation-mark",
+      "group-public",
+    );
   });
 });

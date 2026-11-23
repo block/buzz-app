@@ -41,8 +41,9 @@ export function inlineDismissal(
   };
 }
 
-/** A link to a reply names the reply until the thread reads its `root`; the
- * visits then name the root, so the thread is the same one its row opens. */
+/** A link's thread hint names the inline thread until the reader verifies
+ * its `root` from the linked message; the visits then name that root, so the
+ * thread is the same one its row opens. */
 export function canonicalInline(
   current: OpenTarget | undefined,
   from: string,
@@ -87,19 +88,23 @@ export function inlineToTab(
 }
 
 /** The thread with `rootId` inline over `current`'s conversation, the visit a
- * routed thread (a link, the sidebar, Activity) resolves to: the message it
- * named, and its reveal, are left behind. */
+ * routed thread (a link, the sidebar, Activity) resolves to. A reply it named
+ * stays named, so the thread opens at it as its tab would. */
 export function routedInline(
   current: ConversationTarget,
   rootId: string,
 ): ConversationTarget {
   const {
-    messageId: _message,
+    messageId,
     threadRootId: _root,
     context: _context,
     ...rest
   } = current;
-  return { ...rest, inline: rootId };
+  return {
+    ...rest,
+    inline: rootId,
+    ...(messageId && messageId !== rootId ? { inlineMessage: messageId } : {}),
+  };
 }
 
 /** The visit with `layer` open over the view it was opened in. Over a thread

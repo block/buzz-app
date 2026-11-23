@@ -50,6 +50,11 @@ describe("inline address", () => {
     const dismissal = canonicalInline(named, reply, root);
     expect(dismissal?.fallback).toEqual(inline);
     expect(dismissal?.visits(named)).toBe(true);
+    // The linked reply stays named under its verified root.
+    expect(
+      canonicalInline({ ...named, inlineMessage: reply }, reply, root)
+        ?.fallback,
+    ).toEqual({ ...inline, inlineMessage: reply });
     expect(canonicalInline(inline, root, root)).toBeUndefined();
   });
 
@@ -62,7 +67,7 @@ describe("inline address", () => {
     expect(inlineToTab(conversation, root)).toBeUndefined();
   });
 
-  it("resolves a routed thread to its conversation with the thread inline", () => {
+  it("resolves a routed thread to its conversation with the thread inline at the linked reply", () => {
     expect(
       routedInline(
         {
@@ -71,6 +76,12 @@ describe("inline address", () => {
           threadRootId: root,
           context: "channel",
         },
+        root,
+      ),
+    ).toEqual({ ...inline, inlineMessage: reply });
+    expect(
+      routedInline(
+        { ...conversation, messageId: root, threadRootId: root },
         root,
       ),
     ).toEqual(inline);

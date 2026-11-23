@@ -104,6 +104,8 @@ export type OpenTarget = Readonly<{ join?: JoinPresentation }> &
         /** The thread read inline over this conversation's composer: its
          * root. Presentation only; at most one per conversation. */
         inline?: string;
+        /** With inline: the reply a link named, which the thread opens at. */
+        inlineMessage?: string;
         /** The one dialog on top of a view: a details message
          * (`messageId`) or a panel such as a profile or a pull request
          * (`target`, opened from a message in `threadId`'s thread). It reads
@@ -480,6 +482,7 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           "forward",
           "detail",
           "inline",
+          "inlineMessage",
           "layer",
         ]);
         if (value.threadRootId !== undefined && value.messageId === undefined)
@@ -488,6 +491,8 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           value.context !== undefined &&
           (value.context !== "channel" || value.threadRootId === undefined)
         )
+          throw invalid();
+        if (value.inlineMessage !== undefined && value.inline === undefined)
           throw invalid();
         if (
           value.panel !== undefined &&
@@ -561,6 +566,9 @@ export function parseOpenTarget(input: unknown): OpenTarget {
           ...(detail ? { detail } : {}),
           ...(value.inline !== undefined
             ? { inline: text(value.inline, hex).toLowerCase() }
+            : {}),
+          ...(value.inlineMessage !== undefined
+            ? { inlineMessage: text(value.inlineMessage, hex).toLowerCase() }
             : {}),
           ...(layer ? { layer } : {}),
         };

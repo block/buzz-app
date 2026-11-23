@@ -2324,36 +2324,6 @@ function ChannelWorkspace({
         if (target) {
           const opensAnotherChannel =
             target.kind === "conversation" && target.channelId !== current?.id;
-          // A link to a thread here, from a message in a view, opens as the
-          // thread itself does.
-          if (
-            view &&
-            !opensAnotherChannel &&
-            target.kind === "conversation" &&
-            target.threadRootId &&
-            current &&
-            placeIn(
-              { kind: "thread" },
-              inlineHost.current,
-              { channelId: target.channelId },
-              linkTabs.current.some(
-                (tab) =>
-                  tab.kind === "thread" &&
-                  tab.channelId === current.id &&
-                  rootOfTab(tab) === target.threadRootId,
-              ),
-            ) === "inline"
-          ) {
-            open(undefined);
-            void navigator.open({
-              version: 1,
-              kind: "conversation",
-              scope: target.scope,
-              channelId: target.channelId,
-              inline: target.threadRootId,
-            });
-            return true;
-          }
           if (target.kind === "conversation" && target.messageId) {
             if (!opensAnotherChannel) tabState.leaveVisit();
             threadTrigger.current =
@@ -2902,6 +2872,7 @@ function ChannelWorkspace({
           key={inlineThread}
           channelId={current.id}
           rootId={inlineThread}
+          messageId={addressed?.inlineMessage}
           // A panel over the thread takes the full height; so does the thread.
           tall={
             !!layerTarget?.target &&

@@ -133,6 +133,35 @@ test.describe("Inline", () => {
     await expect(side(page).getByRole("tab")).toHaveCount(0);
   });
 
+  test("a link here to a reply opens its thread inline at that reply", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    const [linked] = Array.from({ length: 30 }, () =>
+      app.reply(root.id, false, false),
+    );
+    const message = app.append(
+      "primary",
+      "alpha",
+      `See <buzz://message?channel=alpha&id=${linked.id}&thread=${root.id}>`,
+    );
+    await activate(
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${message.id}"]`)
+        .getByRole("link", { name: /Alpha$/ }),
+    );
+    await expect
+      .poll(() => address(page))
+      .toMatchObject({ inline: root.id, inlineMessage: linked.id });
+    const row = thread(page).locator(`[data-message-id="${linked.id}"]`);
+    await expect(row).toBeInViewport();
+    await expect(side(page).getByRole("tab")).toHaveCount(0);
+    await page.reload();
+    await expect(row).toBeInViewport();
+  });
+
   test.describe("Membership", () => {
     test.use({
       membershipActivity: true,

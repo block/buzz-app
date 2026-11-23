@@ -23,6 +23,7 @@ import type { Seen } from "../../features/seen/service";
 export function InlineThreadSheet({
   channelId,
   rootId,
+  messageId,
   tall,
   seen,
   close,
@@ -31,6 +32,8 @@ export function InlineThreadSheet({
 }: {
   channelId: string;
   rootId: string;
+  /** The reply a link named, which the thread opens at. */
+  messageId?: string | undefined;
   /** A panel sits over it: it takes the full height until that closes. */
   tall: boolean;
   /** Records that the viewer has been shown the intro. */
@@ -73,7 +76,8 @@ export function InlineThreadSheet({
         {/* The thread's own view, for the details and panels its rows open. */}
         <ComposerScopeProvider rootId={rootId}>
           <ConversationThread
-            messageId={rootId}
+            messageId={messageId ?? rootId}
+            revealSelected={messageId !== undefined}
             focusRequest={1}
             onResolvedRoot={onResolvedRoot}
           />

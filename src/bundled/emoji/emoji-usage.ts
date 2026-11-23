@@ -48,12 +48,13 @@ function readCounts(): Record<string, unknown> {
   }
   try {
     if (localStorage.getItem(SEED_REMOVED) === null) {
+      // Marker first: a failed write can leave the seed, never subtract twice.
+      localStorage.setItem(SEED_REMOVED, "1");
       if (removeMartSeed(counts))
         localStorage.setItem(STORE, JSON.stringify(counts));
-      localStorage.setItem(SEED_REMOVED, "1");
     }
   } catch {
-    /* Retried on the next read. */
+    /* Without the marker, the seed stays counted until a later read. */
   }
   return counts;
 }

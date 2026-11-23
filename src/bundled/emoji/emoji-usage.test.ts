@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import data from "@emoji-mart/data";
 import { Data, FrequentlyUsed, init } from "emoji-mart";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import "./emoji-mart";
 import {
   addEmojiUsage,
@@ -70,6 +70,31 @@ it("removes the defaults Mart stored as picks once, keeping real picks", () => {
   localStorage.setItem("emoji-mart.frequently", JSON.stringify({ "+1": 1 }));
   expect(emojiUsage("s")("unicode/+1")).toBe(1);
 });
+
+it.each(["buzz.emoji-usage.seed-removed", "emoji-mart.frequently"])(
+  "never subtracts the seed twice when storage refuses %s",
+  (refused) => {
+    const values = new Map([
+      ["emoji-mart.frequently", JSON.stringify({ "+1": 5, rocket: 3 })],
+    ]);
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        if (key === refused)
+          throw new DOMException("full", "QuotaExceededError");
+        values.set(key, value);
+      },
+    });
+    try {
+      // The seed stays counted rather than costing real picks on each read.
+      for (let read = 0; read < 3; read++) emojiUsage("s");
+      expect(emojiUsage("s")("unicode/+1")).toBe(5);
+      expect(emojiUsage("s")("unicode/rocket")).toBe(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("counts each choice against the latest history, keeping other windows' choices", () => {
   recordEmojiUsage("wss://relay.test/a", "unicode/smirk");

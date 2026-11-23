@@ -30,7 +30,7 @@ import { conversationFocusTarget } from "../focus-navigation";
 import { orderPages, shellPresentation } from "./presentation";
 import {
   matchedPositions,
-  matchRank,
+  nameField,
   rankTerms,
 } from "../../features/search/match";
 import {
@@ -291,13 +291,9 @@ export function PageSearch({
       if (!needle) return [{ page, rank: 0 }];
       const { label, detail } = page;
       // Each typed word may match the label or the detail.
-      const rank = rankTerms(needle, (text) =>
-        Math.min(
-          matchRank(label, text) ?? Infinity,
-          (detail ? matchRank(detail, text) : undefined) ?? Infinity,
-        ),
-      );
-      const matches = matchedPositions(label, needle);
+      const fields = [nameField(label), nameField(detail)];
+      const rank = rankTerms(needle, fields);
+      const matches = matchedPositions(needle, fields);
       return rank === undefined
         ? []
         : [{ page: { ...page, ...(matches ? { matches } : {}) }, rank }];

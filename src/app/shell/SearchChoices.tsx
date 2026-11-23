@@ -1,4 +1,4 @@
-import { matchRank, rankTerms } from "../../features/search/match";
+import { matchRank, nameField, rankTerms } from "../../features/search/match";
 import {
   createContext,
   useContext,
@@ -353,12 +353,7 @@ export function SearchChoices({
         (row) =>
           row.rank ??
           // As the row was found: the whole text, or each of its words.
-          rankTerms(needle, (text) =>
-            Math.min(
-              matchRank(row.label, text) ?? Infinity,
-              matchRank(row.detail ?? "", text) ?? Infinity,
-            ),
-          ) ??
+          rankTerms(needle, [nameField(row.label), nameField(row.detail)]) ??
           Infinity,
       ),
     );

@@ -8903,6 +8903,13 @@ it("finds channels, direct messages and people by typed words in any order", asy
       ),
     );
     expect(screen.queryByRole("group", { name: "People" })).toBeNull();
+    // A typed space says the words are different words of the name: "b" has
+    // only the "buzz" already typed, in the joined and the open channel.
+    view.rerender(<SearchResults {...props} query="buzz b" />);
+    await waitFor(() =>
+      expect(t.people).toHaveBeenLastCalledWith("buzz b", 1, expect.anything()),
+    );
+    expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
     // One word lists what it always has, in the same order.
     view.rerender(<SearchResults {...props} query="community" />);
     await waitFor(async () =>

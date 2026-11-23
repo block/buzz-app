@@ -12007,6 +12007,13 @@ describe("repository resource picker", () => {
           .querySelectorAll("mark"),
       ].map((mark) => mark.textContent),
     ).toEqual(["Relogin"]);
+    // A typed space says the words are different words of the row: "pa" is
+    // only in the "page" already typed.
+    await p.h.user.clear(search);
+    await p.h.user.type(search, "page pa");
+    expect(
+      screen.queryAllByRole("button", { name: /, Issue in Game repo$/ }),
+    ).toEqual([]);
     // One word lists what it did: contiguous text only.
     await p.h.user.clear(search);
     await p.h.user.type(search, "lgn");

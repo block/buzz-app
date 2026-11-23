@@ -168,6 +168,12 @@ it("finds a person by several words apart only where the caller asks", () => {
   expect(terms("afix alice")).toEqual([["Alice Fixture", 101]]);
   // Each word keeps the people rule: no match inside a word.
   expect(terms("ixture alice")).toEqual([]);
+  // An initial finds the other word of a name.
+  expect(terms("chen a")).toEqual([["Alice Chen", 102]]);
+  // A typed space says the words are different words of the names. Alice
+  // Fixture has "afix" for the "a". Alice Chen and the agent's "alice-helper"
+  // have only the "alice" already typed.
+  expect(terms("alice a")).toEqual([["Alice Fixture", 101]]);
   // A hidden name still ranks after shown names, word by word too.
   expect(terms("helper scout")).toEqual([["Scout", 106]]);
   // The whole text and single words rank as they do without the option.

@@ -6,8 +6,7 @@ import type { SearchDestination, SearchGroup } from "./SearchChoices";
 import {
   MatchRank,
   matchedPositions,
-  matchName,
-  matchRank,
+  nameField,
   rankTerms,
 } from "../../features/search/match";
 import { settingsSections } from "../settings-sections";
@@ -44,18 +43,10 @@ const noSnapshot = () => null;
 /** A section opens Settings on Enter, so letters merely in order do not match
  * it: "wes" would find Software updates before a person Wes is found. Word
  * runs still do, as in channel completion. */
-function matchSection(label: string, needle: string) {
-  const found = matchName(label, needle);
-  return found && found.rank <= MatchRank.wordRuns ? found : undefined;
-}
-
-/** The rank of a match no looser than `cap`, else Infinity. Text that is not
- * the row's own name is capped: a sentence holds most short words, and many
- * names, as letters merely in order. */
-function rankWithin(label: string, needle: string, cap: MatchRank) {
-  const rank = matchRank(label, needle);
-  return rank !== undefined && rank <= cap ? rank : Infinity;
-}
+const sectionCap = MatchRank.wordRuns;
+/** Text that is not the row's own name is capped: a sentence holds most short
+ * words, and many names, as letters merely in order. */
+const textCap = MatchRank.substring;
 
 function controlDestination(
   key: string,
@@ -144,14 +135,13 @@ export function useSearchSettings({
           // A group label such as "Buzz" or "Community" names many sections,
           // so it ranks a step behind a section's own label, as a plugin's
           // category does. Each typed word may match either.
-          const rank = rankTerms(needle, (text) =>
-            Math.min(
-              matchSection(section.label, text)?.rank ?? Infinity,
-              (matchSection(group.label, text)?.rank ?? Infinity) + 1,
-            ),
-          );
+          const fields = [
+            nameField(section.label, { cap: sectionCap }),
+            nameField(group.label, { cap: sectionCap, penalty: 1 }),
+          ];
+          const rank = rankTerms(needle, fields);
           if (rank === undefined) return [];
-          const matches = matchedPositions(section.label, needle, matchSection);
+          const matches = matchedPositions(needle, fields);
           return [
             {
               key: "search-section-" + section.id,
@@ -168,13 +158,11 @@ export function useSearchSettings({
     : [];
   const controls = entries.flatMap((entry) => {
     if (!(entry.id === "mode" ? appearance : notifications)) return [];
-    const rank = rankTerms(needle, (text) =>
-      Math.min(
-        matchRank(entry.label, text) ?? Infinity,
-        matchRank(entry.section, text) ?? Infinity,
-        rankWithin(entry.keywords + " settings", text, MatchRank.substring) + 1,
-      ),
-    );
+    const rank = rankTerms(needle, [
+      nameField(entry.label),
+      nameField(entry.section),
+      nameField(entry.keywords + " settings", { cap: textCap, penalty: 1 }),
+    ]);
     if (rank === undefined) return [];
     const key = "search-setting-" + entry.id;
     return [
@@ -239,17 +227,14 @@ export function useSearchSettings({
               pluginCategoryDefinitions.find(
                 (item) => item.id === plugin.manifest.discovery?.category,
               )?.label ?? "Other";
-            const rank = rankTerms(needle, (text) =>
-              Math.min(
-                matchRank(plugin.manifest.name, text) ?? Infinity,
-                rankWithin(category, text, MatchRank.wordRuns) + 1,
-                rankWithin(
-                  "plugins " + plugin.manifest.description,
-                  text,
-                  MatchRank.substring,
-                ) + 2,
-              ),
-            );
+            const rank = rankTerms(needle, [
+              nameField(plugin.manifest.name),
+              nameField(category, { cap: MatchRank.wordRuns, penalty: 1 }),
+              nameField("plugins " + plugin.manifest.description, {
+                cap: textCap,
+                penalty: 2,
+              }),
+            ]);
             if (rank === undefined) return [];
             const restricted =
               plugin.source === "bundled" &&

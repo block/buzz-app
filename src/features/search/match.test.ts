@@ -4,11 +4,12 @@ import {
   matchedPositions,
   matchName,
   matchRank,
+  nameField,
   rankTerms,
   searchTerms,
   TERMS_APART,
 } from "./match";
-import { matchPerson } from "./person-match";
+import { personFields } from "./people-rank";
 
 /** The label with its matched code points in brackets. */
 const marked = (label: string, needle: string) => {
@@ -68,7 +69,10 @@ describe("matchName", () => {
 
 /** One name's rule, as channel and direct message rows use it. */
 const nameRank = (name: string, needle: string) =>
-  rankTerms(needle, (text) => matchRank(name, text));
+  rankTerms(needle, [nameField(name)]);
+/** The code points one name underlines. */
+const namePositions = (name: string, needle: string) =>
+  matchedPositions(needle, [nameField(name)]);
 
 it("splits typed text into its words", () => {
   expect(searchTerms("community buzz")).toEqual(["community", "buzz"]);
@@ -91,7 +95,7 @@ it("ranks one word exactly as the row's own rule ranks it", () => {
   for (const name of names)
     for (const word of words) {
       expect(nameRank(name, word)).toBe(matchRank(name, word));
-      expect(matchedPositions(name, word)).toEqual(
+      expect(namePositions(name, word)).toEqual(
         matchName(name, word)?.positions,
       );
     }
@@ -100,8 +104,8 @@ it("ranks one word exactly as the row's own rule ranks it", () => {
     matchRank("Alice Fixture", "fixture "),
   );
   // A word the rule misses is a miss, whichever way the rule says so.
-  expect(rankTerms("alice", () => undefined)).toBeUndefined();
-  expect(rankTerms("alice", () => Infinity)).toBeUndefined();
+  expect(rankTerms("alice", [], () => undefined)).toBeUndefined();
+  expect(rankTerms("alice", [], () => Infinity)).toBeUndefined();
 });
 
 it("keeps the whole text's rank when the whole text matches", () => {
@@ -128,6 +132,27 @@ it("matches several words apart, in any order, by the weakest word", () => {
   expect(nameRank("Alice Fixture", "fixture alice bob")).toBeUndefined();
 });
 
+it("holds words typed apart to different fragments of the row", () => {
+  // A typed space says the words are different words of the row: a name of
+  // one fragment cannot hold two, and "b" has only "buzz" to be in.
+  expect(nameRank("quality", "q a")).toBeUndefined();
+  expect(nameRank("quality", "q al")).toBeUndefined();
+  expect(nameRank("buzz-community", "buzz b")).toBeUndefined();
+  // Initials hold every word they start, so "team" has no word left.
+  expect(nameRank("team-launch-planning", "team tlp")).toBeUndefined();
+  // A word in another fragment still matches, also when its best place is
+  // the one the other word needs: "b" starts "buzz" and "bugs".
+  expect(nameRank("team-launch-planning-notes", "notes t")).toBe(
+    TERMS_APART + MatchRank.wordStart,
+  );
+  expect(nameRank("buzz-bugs", "b buzz")).toBe(
+    TERMS_APART + MatchRank.wordStart,
+  );
+  // The whole text is not held to this.
+  expect(nameRank("q&a", "q a")).toBe(MatchRank.wordRuns);
+  expect(nameRank("buzz-community", "buzz bu")).toBe(MatchRank.words);
+});
+
 it("ranks a row found only word by word after every whole-text match", () => {
   const loosest = MatchRank.words + 2; // the loosest rank plus a penalty
   expect(nameRank("team-launch-planning-notes", "notes tlp")).toBeGreaterThan(
@@ -146,23 +171,21 @@ it("ranks a row found only word by word after every whole-text match", () => {
 it("lets each word match a different field, with that field's cap and penalty", () => {
   // A plugin row: its name, then its description by contiguous text only,
   // two steps behind.
-  const row =
-    (name: string, description: string) =>
-    (text: string): number => {
-      const sentence = matchRank(`plugins ${description}`, text);
-      return Math.min(
-        matchRank(name, text) ?? Infinity,
-        sentence !== undefined && sentence <= MatchRank.substring
-          ? sentence + 2
-          : Infinity,
-      );
-    };
-  const huddles = row("Huddles", "Start audio conversations in your channels.");
+  const huddles = [
+    nameField("Huddles"),
+    nameField("plugins Start audio conversations in your channels.", {
+      cap: MatchRank.substring,
+      penalty: 2,
+    }),
+  ];
   // Name (1), and description word start (2) plus its penalty.
   expect(rankTerms("huddles audio", huddles)).toBe(TERMS_APART + 4);
   expect(rankTerms("audio huddles", huddles)).toBe(TERMS_APART + 4);
   // Both words in the description.
   expect(rankTerms("audio channels", huddles)).toBe(TERMS_APART + 4);
+  // Two words need two fragments, in whichever fields: "au" is only in
+  // "audio".
+  expect(rankTerms("audio au", huddles)).toBeUndefined();
   // The cap still holds for each word: "ado" is in the description only as
   // letters in order.
   expect(rankTerms("huddles ado", huddles)).toBeUndefined();
@@ -172,27 +195,35 @@ it("lets each word match a different field, with that field's cap and penalty", 
 
 it("underlines the whole text's match, or failing that each word's", () => {
   const marked = (label: string, needle: string) => {
-    const positions = new Set(matchedPositions(label, needle));
+    const positions = new Set(namePositions(label, needle));
     return [...label]
       .map((char, index) => (positions.has(index) ? char.toUpperCase() : "."))
       .join("");
   };
   // The whole text: as `matchName` underlines it, the space included.
   expect(marked("alice fixture", "alice fix")).toBe("ALICE FIX....");
-  expect(matchedPositions("buzz-community", "buzz community")).toEqual(
+  expect(namePositions("buzz-community", "buzz community")).toEqual(
     matchName("buzz-community", "buzz community")?.positions,
   );
   // Words apart: every word, in the label's order.
   expect(marked("alice fixture", "fixture alice")).toBe("ALICE.FIXTURE");
   expect(marked("buzz-community", "comm buzz")).toBe("BUZZ.COMM.....");
+  // The place the row matched through, not each word's best: "buzz" holds
+  // its fragment, so "b" is the one in "bugs".
+  expect(marked("buzz-bugs", "b buzz")).toBe("BUZZ.B...");
   // A word the row holds in another field underlines nothing here.
   expect(marked("huddles", "audio hud")).toBe("HUD....");
-  expect(matchedPositions("huddles", "audio channels")).toBeUndefined();
+  expect(namePositions("huddles", "audio channels")).toBeUndefined();
   // The label's own rule decides: a person's name matches at word starts.
-  expect(
-    matchedPositions("Alice Fixture", "fixture alice", matchPerson),
-  ).toEqual([0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12]);
-  expect(
-    matchedPositions("Alice Fixture", "ixture alice", matchPerson),
-  ).toEqual([0, 1, 2, 3, 4]);
+  const alice = personFields({
+    pubkey: "a".repeat(64),
+    label: "Alice Fixture",
+    agent: false,
+    relationship: 0,
+    usageKeys: [],
+  });
+  expect(matchedPositions("fixture alice", alice)).toEqual([
+    0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12,
+  ]);
+  expect(matchedPositions("ixture alice", alice)).toEqual([0, 1, 2, 3, 4]);
 });

@@ -91,7 +91,7 @@ import {
 import {
   MatchRank,
   matchedPositions,
-  matchRank,
+  nameField,
   rankTerms,
   TERMS_APART,
 } from "../../features/search/match";
@@ -121,6 +121,7 @@ import {
 } from "../../shared/search-debounce";
 import { matchPerson, normalizeName } from "../../features/search/person-match";
 import {
+  personFields,
   personKey,
   rankPeople,
   type PersonCandidate,
@@ -1283,10 +1284,7 @@ export function SearchResults({
   const ranks = new Map<string, number | undefined>();
   const rankName = (label: string) => {
     if (!ranks.has(label))
-      ranks.set(
-        label,
-        rankTerms(needle, (text) => matchRank(label, text)),
-      );
+      ranks.set(label, rankTerms(needle, [nameField(label)]));
     return ranks.get(label);
   };
   // What the viewer chose before for this typed text. Only candidates that
@@ -1320,14 +1318,10 @@ export function SearchResults({
     searchOrder(usage, picked, {
       key,
       rank:
-        rankTerms(
-          needle,
-          (text) =>
-            matchRank(label, text) ??
-            (detail && matchRank(detail, text) !== undefined
-              ? MatchRank.words + 1
-              : undefined),
-        ) ?? MatchRank.words + 1,
+        rankTerms(needle, [
+          nameField(label),
+          nameField(detail, { rank: MatchRank.words + 1 }),
+        ]) ?? MatchRank.words + 1,
     });
   /** Whether a search order is an exact name, live (-2) or archived (-1.5). */
   const exact = (rank: number) => rank < -1;
@@ -1491,7 +1485,9 @@ export function SearchResults({
     channel: ChannelSummary,
   ): SearchDestination => {
     const label = names.get(channel.id) ?? channel.name;
-    const matches = needle ? matchedPositions(label, needle) : undefined;
+    const matches = needle
+      ? matchedPositions(needle, [nameField(label)])
+      : undefined;
     const key = `channel:${channel.id}`;
     return {
       key,
@@ -1633,7 +1629,7 @@ export function SearchResults({
   }: (typeof rankedPeople)[number]): SearchDestination & {
     score: number;
   } => {
-    const matches = matchedPositions(person.label, peopleNeedle, matchPerson);
+    const matches = matchedPositions(peopleNeedle, personFields(person));
     const key = personKey(person.pubkey);
     const newSession = !!openAgentSession && sessionAgents.has(person.pubkey);
     const dm = !!directMessageWith(list.channels, person.pubkey);

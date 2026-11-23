@@ -13,8 +13,8 @@ import type { ComposerToolProps } from "../../features/conversation/contracts";
 import {
   MatchRank,
   matchedPositions,
-  matchName,
   matchRank,
+  nameField,
   rankTerms,
 } from "../../features/search/match";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
@@ -34,11 +34,6 @@ import styles from "./ResourcePicker.module.css";
 const kinds = { issue: "Issue", pr: "Pull request" } as const;
 /** Text found only in the repository name: after every title rank. */
 const REPOSITORY_ONLY = MatchRank.words + 1;
-/** A title's contiguous match, the only kind the picker underlines. */
-const titleMatch = (label: string, text: string) => {
-  const match = matchName(label, text);
-  return match && match.rank <= MatchRank.substring ? match : undefined;
-};
 type Item = {
   type: keyof typeof kinds;
   id: string;
@@ -193,7 +188,14 @@ export function ResourcePicker({
       ? items.items
           .flatMap((item) => {
             const text = `${item.label} ${item.repository.name}`.toLowerCase();
-            const rank = rankTerms(query, (part) =>
+            const fields = [
+              nameField(item.label),
+              nameField(item.repository.name, {
+                cap: MatchRank.substring,
+                rank: REPOSITORY_ONLY,
+              }),
+            ];
+            const rank = rankTerms(query, fields, (part) =>
               text.includes(part)
                 ? (matchRank(item.label, part) ?? REPOSITORY_ONLY)
                 : undefined,
@@ -203,7 +205,12 @@ export function ResourcePicker({
               : [
                   {
                     item,
-                    matches: matchedPositions(item.label, query, titleMatch),
+                    // Only a title's contiguous match is underlined.
+                    matches: matchedPositions(
+                      query,
+                      fields,
+                      MatchRank.substring,
+                    ),
                     rank,
                   },
                 ];

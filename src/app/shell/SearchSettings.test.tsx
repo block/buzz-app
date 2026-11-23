@@ -732,10 +732,16 @@ it("matches each typed word in any of a row's fields, in any order", () => {
   expect(listed(palette, "audio settings", "Settings")).toEqual([
     "Sound — Notifications",
   ]);
-  // A control's name and its section.
+  // A control's name and its section, and its keywords and its section.
   expect(listed(palette, "notifications sound", "Settings")).toEqual([
     "Sound — Notifications",
   ]);
+  expect(listed(palette, "dark appearance", "Settings")).toEqual([
+    "Color mode — Appearance",
+  ]);
+  // A typed space says the words are different words of the row: "au" is
+  // only in "audio".
+  expect(listed(palette, "audio au", "Plugins")).toEqual([]);
   // Every word must match the row.
   expect(listed(palette, "audio diagrams", "Plugins")).toEqual([]);
   expect(listed(palette, "dark audio", "Settings")).toEqual([]);
@@ -799,7 +805,19 @@ it("finds a section by words from its label and its group, underlining the label
   view.unmount();
   // The section cap holds for each word: "wes" is in Software updates only
   // as letters in order.
-  render(<Palette query="buzz wes" />);
+  const capped = render(<Palette query="buzz wes" />);
+  expect(screen.queryByRole("group", { name: "Settings" })).toBeNull();
+  capped.unmount();
+  // "buzz" lists the Buzz group's sections. A second word needs another word
+  // of the row, and "bu" has only that "Buzz".
+  const group = render(<Palette query="buzz" />);
+  expect(
+    within(screen.getByRole("group", { name: "Settings" })).getAllByRole(
+      "option",
+    ).length,
+  ).toBeGreaterThan(1);
+  group.unmount();
+  render(<Palette query="buzz bu" />);
   expect(screen.queryByRole("group", { name: "Settings" })).toBeNull();
 });
 

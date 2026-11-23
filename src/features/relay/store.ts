@@ -62,7 +62,7 @@ import { MessageClock } from "./message-order";
 import { yieldToHost } from "./yield";
 import { locate, SEEK_PAGE, type SeekRead } from "./history-seek";
 import type { WindowPage } from "./window";
-import { MatchRank, matchRank, rankTerms } from "../search/match";
+import { MatchRank, matchRank, nameField, rankTerms } from "../search/match";
 import { RESUME_READ_AGE } from "./live";
 
 type Listener = () => void;
@@ -268,7 +268,7 @@ const publicRank = (
       ? MatchRank.exact
       : undefined
     : rule?.terms
-      ? rankTerms(needle, (text) => matchRank(name, text))
+      ? rankTerms(needle, [nameField(name)])
       : matchRank(name, needle);
 /** How long a completed read answers a repeated trigger without asking again. */
 export const FRESH_FOR = 60_000;

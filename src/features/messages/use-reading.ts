@@ -1,4 +1,10 @@
-import { useEffect, useEffectEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useRef,
+  type RefObject,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import type { ReadingHandle } from "../relay/unread";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -47,6 +53,9 @@ type Reading = {
   /** False: this list marks nothing read; its owner decides what was read, or
    * when reading may start. Turning it on schedules dwell at once. */
   enabled?: boolean | undefined;
+  /** The top of content covering the rows' bottom: rows below it aren't
+   * shown. */
+  trailing?: (() => number | undefined) | undefined;
 };
 /** `useReading` for an owner that renders its own `MessageEditScope`. */
 export function Reading(props: Reading) {
@@ -68,12 +77,19 @@ export function useReading({
   settled,
   restoring,
   enabled = true,
+  trailing,
 }: Reading) {
   const composer = useMessageEditScope()?.input;
   // Read at measurement time: a new latest message mutates the list, which
   // already remeasures in the next frame, so it must not restart observation.
   const latestId = useEffectEvent(() => latestMessageId);
   const catchUpId = useEffectEvent(() => catchUpMessageId ?? latestMessageId);
+  // A ref, not an effect event: unread attention asks whether a row is shown
+  // while it renders.
+  const trailingEdge = useRef(trailing);
+  useLayoutEffect(() => {
+    trailingEdge.current = trailing;
+  });
   useEffect(() => {
     if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
@@ -179,9 +195,16 @@ export function useReading({
         bounds.height > 0 &&
         bounds.width > 0 &&
         bounds.top >= Math.max(viewport.top, 0) - 1 &&
-        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) + 1 &&
+        bounds.bottom <=
+          Math.min(shownBottom(viewport), window.innerHeight) + 1 &&
         bounds.left >= Math.max(viewport.left, 0) - 1 &&
         bounds.right <= Math.min(viewport.right, window.innerWidth) + 1
+      );
+    }
+    function shownBottom(viewport: DOMRect) {
+      return Math.min(
+        viewport.bottom,
+        trailingEdge.current?.() ?? viewport.bottom,
       );
     }
     function visibleIds() {
@@ -230,7 +253,7 @@ export function useReading({
         bounds.height > 0 &&
         bounds.width > 0 &&
         bounds.bottom > Math.max(viewport.top, 0) &&
-        bounds.bottom <= Math.min(viewport.bottom, window.innerHeight) &&
+        bounds.bottom <= Math.min(shownBottom(viewport), window.innerHeight) &&
         bounds.left >= Math.max(viewport.left, 0) &&
         bounds.right <= Math.min(viewport.right, window.innerWidth)
         ? latest

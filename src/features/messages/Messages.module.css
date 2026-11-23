@@ -91,6 +91,42 @@
 :where(html[data-message-density="compact"]) .timelineEnd {
   height: calc(var(--space-6) + var(--channel-preview-inset, 0px));
 }
+/* A workspace's trailing card covers the end of the history, and a box of its
+   rest height ends the scroll range so the latest message stays above it.
+   The history inset would only add a gap between the two. */
+.feed[data-trailing] {
+  --history-bottom-inset: 0px;
+}
+/* ChannelTimeline places the sheet over the history's scrollport with the
+   history's inline padding and measure. Only the card takes pointer input, so
+   the history scrolls under the sheet's empty top. Scrolling the card grows
+   it, then slides it up; it never scrolls the history. */
+.trailingSheet {
+  /* The history's measure, so the card lines up with its rows. */
+  --timeline-measure: var(--buzz-message-width, 52rem);
+  position: absolute;
+  z-index: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* The history's gutter, so the card lines up with its rows. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  pointer-events: none;
+}
+.trailingSpacer {
+  height: calc(100% - var(--trailing-rest));
+}
+/* Held by a pointer over the card, the sheet takes input across its empty top
+   too, so a gesture keeps scrolling it as the card slides away. */
+.trailingSheet[data-held] {
+  pointer-events: auto;
+}
+.trailingCard {
+  width: min(100%, var(--timeline-measure));
+  margin-inline: auto;
+  pointer-events: auto;
+}
 /* Center the list itself so coordination and membership rows share the measure.
    The reset stays on this list alone so numbered lists in messages keep numbers. */
 .feed > ol {
@@ -1113,6 +1149,9 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   --timeline-measure: 100%;
   --message-hover-start-inset: var(--space-3);
   padding-inline-start: var(--space-3);
+}
+:where(html[data-message-density="compact"]) .trailingSheet {
+  --timeline-measure: 100%;
 }
 /* Measure loaded rows without painting a scroll position we will replace,
    then fade them in once positioned. */
@@ -2995,11 +3034,17 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   pointer-events: none;
 }
 :is(.feed, .threadHistory) .jumpToLatest {
-  top: calc(
-    100% +
-    var(--history-bottom-inset) -
-    var(--space-3) -
-    var(--channel-preview-inset, 0px)
+  /* Above a trailing card's visible top, and at most in the gap Full brief
+     leaves above it. */
+  top: max(
+    calc(var(--space-3) + var(--space-6)),
+    calc(
+      100% +
+      var(--history-bottom-inset) -
+      var(--space-3) -
+      var(--channel-preview-inset, 0px) -
+      var(--timeline-trailing-rest, 0px)
+    )
   );
 }
 

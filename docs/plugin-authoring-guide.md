@@ -102,6 +102,16 @@ then. Use compact icon buttons with an `aria-label` and `title`, and set
 workspace with `registerWorkspace(component, { slots })` names the optional
 props its component renders.
 
+Check `ctx.conversation.workspaceSlots?.trailing === true` in the same way
+before passing `trailing` to `ui.Workspace`. The Channels workspace shows that
+content as a card over the
+bottom of the channel timeline, in its own scroll layer: scrolling over the
+card grows it, then slides it up. Render the whole card at rest too, since
+growing scrolls it into view: let `expanded` change labels, not what the card
+holds. Keep its controls in view with `position: sticky; bottom: 0` and an
+opaque background, and draw its outline with a box shadow rather than a bottom
+border.
+
 For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
 
 ## Migration writes

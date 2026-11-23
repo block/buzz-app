@@ -82,7 +82,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     (props) => (
       <ConversationWorkspace {...props} host={ctx} extensions={extensions} />
     ),
-    { slots: { headerActions: true } },
+    { slots: { headerActions: true, trailing: true } },
   );
   const relay = ctx.relay;
   const navigator = ctx.navigation;

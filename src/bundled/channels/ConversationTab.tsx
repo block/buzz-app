@@ -9,7 +9,10 @@ import {
 } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type {
+  ConversationExtensions,
+  ConversationWorkspaceProps,
+} from "../../features/conversation/contracts";
 import {
   ConversationChannel,
   ConversationComposer,
@@ -34,6 +37,8 @@ import styles from "./ChannelTabs.module.css";
 type ConversationTabProps = {
   tab: Tab;
   intro?: ReactNode;
+  /** Only the channel timeline shows it, not a thread. */
+  trailing?: ConversationWorkspaceProps["trailing"];
   subthreadId?: string | undefined;
   latestRequest?: AbortSignal | undefined;
   active: boolean;
@@ -62,6 +67,7 @@ type ConversationTabProps = {
 export function ConversationTab({
   tab,
   intro,
+  trailing,
   subthreadId,
   latestRequest,
   active,
@@ -225,6 +231,7 @@ export function ConversationTab({
               <SoloColumn enabled={soloConversation}>
                 <ChannelBody
                   intro={intro}
+                  trailing={trailing}
                   latestRequest={active ? latestRequest : undefined}
                   viewer={session.viewer}
                   cached={!!channel.cached}

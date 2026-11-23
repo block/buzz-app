@@ -153,7 +153,7 @@ export interface OutboxStorage {
     readOnly?: boolean;
   }): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
   /** Deletes `retired` rows, or rejects without writing if one is gone, has
-   * recovery attached, or belongs to another open window. */
+   * recovery attached, or is being published in another window. */
   save(
     operations: readonly OutgoingEvent[],
     options?: { force?: string; retired?: readonly string[] },
@@ -202,6 +202,9 @@ const SAVED_BYTES =
   MAX_CONFIRMED +
   PENDING_MESSAGE_BYTES +
   PENDING_CANVAS_BYTES;
+
+// Canvas and recipe saves, which a later save of the same document can retire.
+const RETIRABLE_KINDS = new Set([40100, 30078]);
 
 const EARLIER_SAVE_SENDING =
   "An earlier save is still sending. Try again in a moment.";
@@ -738,12 +741,22 @@ export function createOutbox(
       // transport publisher crosses that boundary, including for signed retries.
       if (closed || !find(id)) return;
       signal.throwIfAborted();
-      const receipt = await profiling.measureAsync("send.publish", id, () => {
-        check?.();
-        checkAdmission(id);
-        publishing = true;
-        return Promise.race([writer.publish(signed, signal), aborted]);
-      });
+      const publish = () =>
+        profiling.measureAsync("send.publish", id, () => {
+          check?.();
+          checkAdmission(id);
+          publishing = true;
+          return Promise.race([writer.publish(signed, signal), aborted]);
+        });
+      const receipt = await (storage.lock && RETIRABLE_KINDS.has(signed.kind)
+        ? storage.lock(id, async () => {
+            // Another window may have replaced this save before it took the lock.
+            await forgetRemoved(new Set([id]));
+            if (closed || !find(id)) throw abortError();
+            signal.throwIfAborted();
+            return publish();
+          })
+        : publish());
       if (closed || signal.aborted) return;
       if (awaitsReceipt(signed))
         onReceipt(signed, typeof receipt === "string" ? receipt : undefined);

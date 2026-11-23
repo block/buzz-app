@@ -1,6 +1,6 @@
 import type { OutboxStorage, OutgoingEvent } from "./outbox";
 
-type Row = { operation: OutgoingEvent; writer?: string };
+type Row = { operation: OutgoingEvent };
 
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -50,34 +50,6 @@ export async function purgeOutboxStorage(scope: string) {
   }
 }
 
-// Each window holds one writer lock per scope until it unloads and stamps the
-// rows it creates, so a row whose writer lock is free was abandoned by a
-// closed window. A relay session restarted in this window keeps the same lock.
-const writers = new Map<string, Promise<string | undefined>>();
-
-function windowWriter(scope: string) {
-  let writer = writers.get(scope);
-  if (!writer) {
-    writer = navigator.locks
-      ? new Promise<string>((resolve, reject) => {
-          const name = `buzz-outbox-writer:${scope}:${crypto.randomUUID()}`;
-          void navigator.locks
-            .request(name, () => {
-              resolve(name);
-              return new Promise<void>(() => {});
-            })
-            .catch(reject);
-        }).catch(() => {
-          // Saving continues unstamped, and a later save asks again.
-          writers.delete(scope);
-          return undefined;
-        })
-      : Promise.resolve(undefined);
-    writers.set(scope, writer);
-  }
-  return writer;
-}
-
 /** Incremental asynchronous journal, atomically partitioned by relay and viewer. */
 export function browserOutboxStorage(scope: string): OutboxStorage {
   let database: Promise<IDBDatabase> | undefined;
@@ -86,12 +58,23 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
   let ownershipRevision = 0;
   const forgotten = new Map<string, number>();
   const open = () => (database ??= openDatabase());
-  const prefix = `buzz-outbox-writer:${scope}:`;
-  const own = () => windowWriter(scope);
+  const name = (id: string) => `buzz-outbox:${scope}:${id}`;
+  // A window publishing a Canvas or recipe save holds that save's lock, so a
+  // held lock means the save is in progress. Resolves to its release.
+  const reserve = (id: string) =>
+    new Promise<() => void>((resolve, reject) => {
+      navigator.locks
+        .request(name(id), { ifAvailable: true }, (lock) => {
+          if (!lock)
+            throw new Error("This save is in progress in another window.");
+          return new Promise<void>((release) => resolve(release));
+        })
+        .catch(reject);
+    });
   return {
     async lock(id, run) {
       if (!navigator.locks) throw new Error("Window ownership is unavailable.");
-      return navigator.locks.request(`buzz-outbox:${scope}:${id}`, run);
+      return navigator.locks.request(name(id), run);
     },
     forget(id) {
       forgotten.set(id, ++ownershipRevision);
@@ -99,7 +82,6 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
       legacyIds.delete(id);
     },
     async load(options) {
-      if (!options?.readOnly) await own();
       const db = await open();
       let migrated = false;
       const records = await new Promise<readonly OutgoingEvent[]>(
@@ -144,26 +126,18 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
     },
     async save(operations, options) {
       const revision = ownershipRevision;
-      const self = await own();
       const db = await open();
       const retired = options?.retired ?? [];
-      // A closed window's lock is never held again, so a writer seen closed
-      // here is still closed when the transaction below runs.
-      const held = new Set(
-        retired.length
-          ? ((await navigator.locks?.query?.())?.held ?? []).map(
-              (lock) => lock.name,
-            )
-          : [],
-      );
-      // Rows from before writer stamps are abandoned only while no other
-      // window is open.
-      const abandoned = (row: Row) =>
-        row.writer
-          ? row.writer === self || !held.has(row.writer)
-          : ![...held].some(
-              (name) => name?.startsWith(prefix) && name !== self,
-            );
+      if (retired.length && !navigator.locks)
+        throw new Error("Window ownership is unavailable.");
+      const releases: (() => void)[] = [];
+      const release = () => releases.forEach((done) => done());
+      try {
+        for (const id of retired) releases.push(await reserve(id));
+      } catch (error) {
+        release();
+        throw error;
+      }
       const next = new Map(operations.map((item) => [item.event.id, item]));
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(["events", "partitions"], "readwrite", {
@@ -181,7 +155,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
             if (found === undefined) {
               if (legacyIds.has(id) && migration?.result !== true) return;
               refusal = "This save was replaced in another window. Try again.";
-            } else if (found.operation.recovery || !abandoned(found))
+            } else if (found.operation.recovery)
               refusal = "This save is in progress in another window.";
             else return void events.delete([scope, id]);
             tx.abort();
@@ -203,21 +177,14 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
           )
             continue;
           if (id === options?.force || (!old && !legacyIds.has(id))) {
-            events.put({ scope, id, operation, writer: self });
+            events.put({ scope, id, operation });
           } else {
             // Another window may have removed this row. Check in the same
             // transaction as the update, including while migrating legacy rows.
-            // An update keeps the row's writer.
             const row = events.get([scope, id]);
             row.onsuccess = () => {
-              const found: Row | undefined = row.result;
-              if (found || (!old && migration?.result !== true))
-                events.put({
-                  scope,
-                  id,
-                  operation,
-                  writer: found ? found.writer : self,
-                });
+              if (row.result || (!old && migration?.result !== true))
+                events.put({ scope, id, operation });
             };
           }
         }
@@ -244,7 +211,7 @@ export function browserOutboxStorage(scope: string): OutboxStorage {
         tx.onerror = () => {
           if (!refusal) reject(tx.error);
         };
-      });
+      }).finally(release);
     },
     close() {
       void database?.then(

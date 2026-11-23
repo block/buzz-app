@@ -1,18 +1,5 @@
 import { test, expect } from "./source-fixture.mjs";
 
-// Each window is a same-origin frame with its own copy of the storage module.
-// Removing the frame unloads it, which frees that window's writer lock.
-const installWindows = (page) =>
-  page.evaluate(() => {
-    globalThis.openWindow = async () => {
-      const frame = document.body.appendChild(document.createElement("iframe"));
-      const { browserOutboxStorage } = await new frame.contentWindow.Function(
-        'return import("/src/features/relay/outbox-storage.ts")',
-      )();
-      return { storage: browserOutboxStorage, close: () => frame.remove() };
-    };
-  });
-
 // Exercise the actual incremental IndexedDB journal: a full-array memory store
 // cannot reproduce a stale window deleting another window's renewed receipt.
 test("forgetting a stale receipt relinquishes its journal deletion ownership", async ({
@@ -401,7 +388,7 @@ test("a window cannot retire a row another window has since attached recovery to
   });
 });
 
-test("a window opened during another window's save leaves it alone until that window closes", async ({
+test("a failed save can be replaced while its window stays open, but not while it is publishing", async ({
   page,
   context,
   sourceOrigin,
@@ -410,106 +397,15 @@ test("a window opened during another window's save leaves it alone until that wi
     route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
   );
   await page.goto(`${sourceOrigin}/outbox-storage-test`);
-  await installWindows(page);
   const result = await page.evaluate(async () => {
-    const { purgeOutboxStorage } = await import(
+    const { browserOutboxStorage, purgeOutboxStorage } = await import(
       "/src/features/relay/outbox-storage.ts"
     );
-    const scope = `live-writer-${crypto.randomUUID()}`;
-    const writers = async () =>
-      (await navigator.locks.query()).held.filter((lock) =>
-        lock.name.startsWith(`buzz-outbox-writer:${scope}:`),
-      ).length;
-    const edit = { event: { id: "edit" }, delivery: "sending" };
-    const firstWindow = await openWindow();
-    const laterWindow = await openWindow();
-    const first = firstWindow.storage(scope);
-    const later = laterWindow.storage(scope);
-    try {
-      await first.load();
-      await first.save([edit]);
-      // Opens while the first window is still signing, so loads it as unknown.
-      // That update is kept, but the row still belongs to the first window.
-      await later.load();
-      await later.save([{ ...edit, delivery: "unknown" }]);
-      const refusal = await later
-        .save([{ event: { id: "retry" }, delivery: "sending" }], {
-          retired: ["edit"],
-        })
-        .then(
-          () => "",
-          (error) => error.message,
-        );
-      firstWindow.close();
-      while ((await writers()) > 1)
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      const kept = (await later.load({ readOnly: true })).map((item) => [
-        item.event.id,
-        item.delivery,
-      ]);
-      await later.save([{ event: { id: "retry" }, delivery: "sending" }], {
-        retired: ["edit"],
-      });
-      const replaced = (await later.load({ readOnly: true })).map(
-        (item) => item.event.id,
-      );
-      return { refusal, kept, replaced };
-    } finally {
-      firstWindow.close();
-      laterWindow.close();
-      await purgeOutboxStorage(scope);
-    }
-  });
-  expect(result).toEqual({
-    refusal: "This save is in progress in another window.",
-    kept: [["edit", "unknown"]],
-    replaced: ["retry"],
-  });
-});
-
-test("rows saved before writer stamps can be retired only while no other window is open", async ({
-  page,
-  context,
-  sourceOrigin,
-}) => {
-  await context.route(`${sourceOrigin}/outbox-storage-test`, (route) =>
-    route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
-  );
-  await page.goto(`${sourceOrigin}/outbox-storage-test`);
-  await installWindows(page);
-  const result = await page.evaluate(async () => {
-    const { purgeOutboxStorage } = await import(
-      "/src/features/relay/outbox-storage.ts"
-    );
-    const scope = `unstamped-${crypto.randomUUID()}`;
-    const writers = async () =>
-      (await navigator.locks.query()).held.filter((lock) =>
-        lock.name.startsWith(`buzz-outbox-writer:${scope}:`),
-      ).length;
-    const closed = async (...windows) => {
-      for (const window of windows) window.close();
-      while (await writers())
-        await new Promise((resolve) => setTimeout(resolve, 10));
-    };
-    const old = { event: { id: "old" }, delivery: "failed" };
-    const seedWindow = await openWindow();
-    const seed = seedWindow.storage(scope);
-    await seed.load();
-    await seed.save([old]);
-    await closed(seedWindow);
-    const db = await new Promise((resolve, reject) => {
-      const request = indexedDB.open("buzz-outbox-v2");
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    const unstamp = db.transaction("events", "readwrite");
-    unstamp.objectStore("events").put({ scope, id: "old", operation: old });
-    await new Promise((resolve) => {
-      unstamp.oncomplete = resolve;
-    });
-    db.close();
-    const retire = (storage) =>
-      storage
+    const scope = `publishing-${crypto.randomUUID()}`;
+    const first = browserOutboxStorage(scope);
+    const second = browserOutboxStorage(scope);
+    const retire = () =>
+      second
         .save([{ event: { id: "new" }, delivery: "sending" }], {
           retired: ["old"],
         })
@@ -517,92 +413,139 @@ test("rows saved before writer stamps can be retired only while no other window 
           () => "",
           (error) => error.message,
         );
-    const busyWindow = await openWindow();
-    const sharedWindow = await openWindow();
-    const aloneWindow = await openWindow();
     try {
-      await busyWindow.storage(scope).load();
-      const shared = sharedWindow.storage(scope);
-      await shared.load();
-      const sharedRefusal = await retire(shared);
-      await closed(busyWindow, sharedWindow);
-      const alone = aloneWindow.storage(scope);
-      await alone.load();
-      const aloneRefusal = await retire(alone);
-      const ids = (await alone.load({ readOnly: true })).map(
+      await first.load();
+      await first.save([{ event: { id: "old" }, delivery: "failed" }]);
+      await second.load();
+      let started;
+      const holding = new Promise((resolve) => {
+        started = resolve;
+      });
+      let release;
+      const publishing = first.lock(
+        "old",
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+            started();
+          }),
+      );
+      await holding;
+      const busy = await retire();
+      release();
+      await publishing;
+      const settled = await retire();
+      const ids = (await first.load({ readOnly: true })).map(
         (item) => item.event.id,
       );
-      return { sharedRefusal, aloneRefusal, ids };
+      return { busy, settled, ids };
     } finally {
-      busyWindow.close();
-      sharedWindow.close();
-      aloneWindow.close();
+      first.close();
+      second.close();
       await purgeOutboxStorage(scope);
     }
   });
   expect(result).toEqual({
-    sharedRefusal: "This save is in progress in another window.",
-    aloneRefusal: "",
+    busy: "This save is in progress in another window.",
+    settled: "",
     ids: ["new"],
   });
 });
 
-test("a session restarted in one window keeps its rows from other windows", async ({
-  page,
-  context,
-  sourceOrigin,
-}) => {
-  await context.route(`${sourceOrigin}/outbox-storage-test`, (route) =>
-    route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
-  );
-  await page.goto(`${sourceOrigin}/outbox-storage-test`);
-  await installWindows(page);
-  const result = await page.evaluate(async () => {
-    const { purgeOutboxStorage } = await import(
-      "/src/features/relay/outbox-storage.ts"
+for (const order of ["replaced-first", "publishing-first"])
+  test(`a retry and a replacement in another window never both go out (${order})`, async ({
+    page,
+    context,
+    sourceOrigin,
+  }) => {
+    await context.route(`${sourceOrigin}/outbox-storage-test`, (route) =>
+      route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),
     );
-    const scope = `restarted-${crypto.randomUUID()}`;
-    const writers = async () =>
-      (await navigator.locks.query()).held.filter((lock) =>
-        lock.name.startsWith(`buzz-outbox-writer:${scope}:`),
-      ).length;
-    const old = { event: { id: "old" }, delivery: "failed" };
-    const retire = (storage) =>
-      storage
-        .save([{ event: { id: "new" }, delivery: "sending" }], {
-          retired: ["old"],
-        })
-        .then(
-          () => "",
-          (error) => error.message,
+    await page.goto(`${sourceOrigin}/outbox-storage-test`);
+    const { finalizeEvent } = await import("nostr-tools");
+    const event = finalizeEvent(
+      {
+        kind: 40100,
+        created_at: 1,
+        content: "Old draft",
+        tags: [["h", "chat"]],
+      },
+      new Uint8Array(32).fill(7),
+    );
+    const result = await page.evaluate(
+      async ({ event, order }) => {
+        const { browserOutboxStorage, purgeOutboxStorage } = await import(
+          "/src/features/relay/outbox-storage.ts"
         );
-    const ownerWindow = await openWindow();
-    const peerWindow = await openWindow();
-    try {
-      const before = ownerWindow.storage(scope);
-      await before.load();
-      await before.save([old]);
-      before.close();
-      // The restarted session retries the row it loaded.
-      const after = ownerWindow.storage(scope);
-      await after.load();
-      await after.save([{ ...old, delivery: "sending" }]);
-      const peer = peerWindow.storage(scope);
-      await peer.load();
-      const openRefusal = await retire(peer);
-      ownerWindow.close();
-      while ((await writers()) > 1)
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      const closedRefusal = await retire(peer);
-      return { openRefusal, closedRefusal };
-    } finally {
-      ownerWindow.close();
-      peerWindow.close();
-      await purgeOutboxStorage(scope);
-    }
+        const { createOutbox } = await import("/src/features/relay/outbox.ts");
+        const scope = `retry-race-${crypto.randomUUID()}`;
+        const peer = browserOutboxStorage(scope);
+        await peer.load();
+        await peer.save([{ event, signed: event, delivery: "failed" }]);
+        let published = 0;
+        let started;
+        const publishing = new Promise((resolve) => {
+          started = resolve;
+        });
+        let finish;
+        const gate = new Promise((resolve) => {
+          finish = resolve;
+        });
+        const writer = {
+          sign: async () => {
+            throw new Error("Unexpected signing");
+          },
+          publish: async () => {
+            published++;
+            started();
+            await gate;
+          },
+        };
+        const a = createOutbox(
+          event.pubkey,
+          writer,
+          browserOutboxStorage(scope),
+        );
+        const replace = () =>
+          peer
+            .save([{ event: { id: "new" }, delivery: "sending" }], {
+              retired: [event.id],
+            })
+            .then(
+              () => "",
+              (error) => error.message,
+            );
+        try {
+          await a.ready;
+          let refusal;
+          if (order === "replaced-first") {
+            refusal = await replace();
+            a.outbox.retry(event.id);
+            while (
+              a.outbox.snapshot().some((item) => item.event.id === event.id)
+            )
+              await new Promise((resolve) => setTimeout(resolve, 10));
+          } else {
+            a.outbox.retry(event.id);
+            await publishing;
+            refusal = await replace();
+          }
+          finish();
+          return { refusal, published };
+        } finally {
+          a.dispose();
+          peer.close();
+          await purgeOutboxStorage(scope);
+        }
+      },
+      { event, order },
+    );
+    expect(result).toEqual(
+      order === "replaced-first"
+        ? { refusal: "", published: 0 }
+        : {
+            refusal: "This save is in progress in another window.",
+            published: 1,
+          },
+    );
   });
-  expect(result).toEqual({
-    openRefusal: "This save is in progress in another window.",
-    closedRefusal: "",
-  });
-});

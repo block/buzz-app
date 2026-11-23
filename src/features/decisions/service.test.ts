@@ -757,6 +757,10 @@ it("checks requests before any provider sees them", async () => {
     { ...request, questions: { ["x".repeat(65)]: request.questions.urgent } },
     { ...request, community: " " },
     { ...request, community: 1 },
+    // A plugin may send anything at all.
+    null,
+    undefined,
+    "urgent?",
   ] as unknown as DecisionRequest[])
     await expect(service.decide(bad)).resolves.toMatchObject({
       reason: "invalid_request",

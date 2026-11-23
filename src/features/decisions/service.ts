@@ -498,7 +498,12 @@ export class DecisionsService extends Service implements Decisions {
     return () => void this.listeners.delete(listener);
   };
   async decide(request: DecisionRequest): Promise<DecisionResult> {
-    const community = canonicalCommunity(request.community);
+    // Plugin input: a request that isn't an object fails below as invalid.
+    const community = canonicalCommunity(
+      record(request) && typeof request.community === "string"
+        ? request.community
+        : undefined,
+    );
     let provider = this.current(community);
     let backend = provider?.key;
     const failed = (reason: DecisionFailure): DecisionResult =>

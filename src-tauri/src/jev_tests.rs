@@ -188,6 +188,38 @@ async fn adopting_keeps_the_old_key_until_every_copy_is_saved() {
 }
 
 #[tokio::test]
+async fn a_key_removed_after_a_failed_adoption_stays_removed() {
+    let store = legacy("tk_old");
+    *store.refuse.lock().unwrap() = Some("typesafe:two.example".into());
+    let host = host(&store);
+    assert!(host.adopt(&[ONE.into(), TWO.into()]).await.is_err());
+    // One got its copy; Two's is still waiting, which is not a missing key.
+    assert!(host.configured(ONE).await.unwrap());
+    assert!(host.configured(TWO).await.is_err());
+    // Removing One's key can't finish the adoption yet, so nothing changes.
+    assert!(host.clear(ONE).await.is_err());
+    assert_eq!(
+        saved(&store, "typesafe:one.example").as_deref(),
+        Some("tk_old")
+    );
+    assert_eq!(saved(&store, KEY_ACCOUNT).as_deref(), Some("tk_old"));
+    // Once it can, Two gets the old key, which is then deleted with One's.
+    *store.refuse.lock().unwrap() = None;
+    host.clear(ONE).await.unwrap();
+    assert_eq!(saved(&store, "typesafe:one.example"), None);
+    assert_eq!(
+        saved(&store, "typesafe:two.example").as_deref(),
+        Some("tk_old")
+    );
+    assert_eq!(saved(&store, KEY_ACCOUNT), None);
+    assert!(!host.configured(ONE).await.unwrap());
+    assert!(host.configured(TWO).await.unwrap());
+    // A later adoption, as at the next launch, has nothing to bring back.
+    host.adopt(&[ONE.into(), TWO.into()]).await.unwrap();
+    assert_eq!(saved(&store, "typesafe:one.example"), None);
+}
+
+#[tokio::test]
 async fn adopting_with_no_community_keeps_the_old_key() {
     let store = legacy("tk_old");
     let host = host(&store);

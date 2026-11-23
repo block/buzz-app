@@ -422,7 +422,19 @@ class CommunitySession implements FederatedIdentity {
           if (id && payload.authority?.id === id) this.accept(payload);
         }).catch(() => () => {}),
       );
-    void this.operation("federated_identity_snapshot").catch(() => {});
+    // As for the build's own session: a first read that fails settles as
+    // unavailable rather than restoring forever, since a community's
+    // events can't reach it before it knows its server. Signing in or a
+    // recheck reads it again.
+    const epoch = this.epoch;
+    void this.operation("federated_identity_snapshot").catch(() => {
+      if (this.epoch === epoch)
+        this.accept({
+          ...this.state,
+          status: "unavailable",
+          failure: "native-unavailable",
+        });
+    });
   }
   communityRequiresSignIn = communityRequiresSignIn;
   askAgain = askAgain;

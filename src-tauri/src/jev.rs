@@ -50,6 +50,9 @@ pub(crate) struct JevHost {
     /// kept, and a key the service refuses is read again, so one removed
     /// outside the app is seen on the next call.
     keys: Mutex<HashMap<String, Option<Zeroizing<String>>>>,
+    /// The accounts of an `adopt` that failed, while the old key may still
+    /// be waiting to reach them. Empty once one succeeds.
+    adopting: Mutex<BTreeSet<String>>,
 }
 
 fn account_of(community: &str) -> Result<String, String> {
@@ -64,6 +67,7 @@ impl JevHost {
         Self {
             store: Arc::from(store),
             keys: Mutex::new(HashMap::new()),
+            adopting: Mutex::new(BTreeSet::new()),
         }
     }
     /// Runs `work` on the store off the async runtime. The store can block
@@ -78,7 +82,8 @@ impl JevHost {
             .map_err(|_| "The Keychain is unavailable".to_string())?
     }
     /// `community`'s saved key, or `None` when it has none. A Keychain that
-    /// cannot be read is an error, not a missing key.
+    /// cannot be read is an error, not a missing key, and so is a key the
+    /// old one has yet to reach after a failed `adopt`.
     pub(crate) async fn key(&self, community: &str) -> Result<Option<Zeroizing<String>>, String> {
         let account = account_of(community)?;
         let mut keys = self.keys.lock().await;
@@ -89,6 +94,9 @@ impl JevHost {
             let account = account.clone();
             self.run(move |store| store.read(&account)).await?
         };
+        if read.is_none() && self.adopting.lock().await.contains(&account) {
+            return Err("The saved TypeSafe key could not be given to this community".into());
+        }
         keys.insert(account, read.clone());
         Ok(read)
     }
@@ -119,13 +127,39 @@ impl JevHost {
         keys.insert(account, Some(saved));
         Ok(())
     }
+    /// Removes `community`'s key. After a failed `adopt`, it first gives the
+    /// old key to the other communities still waiting for it and deletes it,
+    /// so a later `adopt` cannot bring the removed key back; if that fails,
+    /// nothing is removed.
     pub(crate) async fn clear(&self, community: &str) -> Result<(), String> {
         let account = account_of(community)?;
         let mut keys = self.keys.lock().await;
-        {
+        let mut adopting = self.adopting.lock().await;
+        let others: BTreeSet<String> = adopting
+            .iter()
+            .filter(|other| **other != account)
+            .cloned()
+            .collect();
+        let finishing = !adopting.is_empty();
+        let cleared = {
             let account = account.clone();
-            self.run(move |store| store.clear(&account)).await?;
+            let others = others.clone();
+            self.run(move |store| {
+                if finishing {
+                    give_old_key(store, &others)?;
+                }
+                store.clear(&account)
+            })
+            .await
+        };
+        if finishing {
+            // Some copies may be saved even when a later step failed.
+            for other in &others {
+                keys.remove(other);
+            }
         }
+        cleared?;
+        adopting.clear();
         keys.insert(account, None);
         Ok(())
     }
@@ -140,28 +174,37 @@ impl JevHost {
             return Ok(());
         }
         let mut keys = self.keys.lock().await;
+        let mut adopting = self.adopting.lock().await;
         let copied = {
             let accounts = accounts.clone();
-            self.run(move |store| {
-                let Some(key) = store.read(KEY_ACCOUNT)? else {
-                    return Ok(());
-                };
-                for account in &accounts {
-                    if store.read(account)?.is_none() {
-                        store.replace(account, &key)?;
-                    }
-                }
-                store.clear(KEY_ACCOUNT)
-            })
-            .await
+            self.run(move |store| give_old_key(store, &accounts)).await
         };
         // Some copies may be saved even when a later step failed: read them
         // again.
         for account in &accounts {
             keys.remove(account);
         }
+        *adopting = if copied.is_ok() {
+            BTreeSet::new()
+        } else {
+            accounts
+        };
         copied
     }
+}
+
+/// Gives the old key to each of `accounts` without a key of its own, then
+/// deletes it. Without an old key it does nothing.
+fn give_old_key(store: &dyn KeyStore, accounts: &BTreeSet<String>) -> Result<(), String> {
+    let Some(key) = store.read(KEY_ACCOUNT)? else {
+        return Ok(());
+    };
+    for account in accounts {
+        if store.read(account)?.is_none() {
+            store.replace(account, &key)?;
+        }
+    }
+    store.clear(KEY_ACCOUNT)
 }
 
 /// The OS credential store: the login Keychain on macOS, the Secret Service on

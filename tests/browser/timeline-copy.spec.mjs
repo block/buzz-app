@@ -1,6 +1,6 @@
 import { npubEncode } from "nostr-tools/nip19";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 
 test.use({ productionBroker: true });
 
@@ -122,6 +122,7 @@ test("copying a drag through a file card leaves out its second line", async ({
     );
     const card = row.getByRole("link", { name: label, exact: true });
     await expect(card).toBeVisible();
+    await settle(page);
     const caption = await row.locator("p").first().boundingBox();
     const box = await card.boundingBox();
     const arrow = await card.locator("> svg").boundingBox();

@@ -921,6 +921,12 @@ describe("serializeNode", () => {
           const second = lastText(view.getByText(line));
           return copy(second, offset, second, second.data.length);
         },
+        // From the second line's start to the next block's start, where a
+        // triple-click on the line ends.
+        from(line: string) {
+          const second = lastText(view.getByText(line));
+          return copy(second, 0, query("p:last-child", view.container), 0);
+        },
       };
     }
 
@@ -963,6 +969,14 @@ describe("serializeNode", () => {
         text: "MB",
         markdown: "MB",
         html: "MB",
+      });
+    });
+
+    it("copies a triple-clicked second line as its text", () => {
+      expect(card().from("File unavailable")).toEqual({
+        text: "File unavailable",
+        markdown: "File unavailable",
+        html: "<p>File unavailable</p>",
       });
     });
 

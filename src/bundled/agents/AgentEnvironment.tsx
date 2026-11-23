@@ -23,8 +23,10 @@ type Status = { names: string[] };
 /** The one row open for editing: a saved name to replace, or a new one. */
 type Draft = { replacing?: string; name: string; value: string };
 
+// One set of tracks for every row, so the columns line up: the name takes
+// the room, Value fits the Saved pill and the actions fit Replace and ⋯.
 const ROW =
-  "grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_10rem] items-center gap-3 px-3 py-2";
+  "grid grid-cols-[minmax(0,1fr)_6.5rem_5.5rem] items-center gap-2 px-3 py-2";
 
 /** Variables one local agent starts with, held natively in the OS credential
  * store. Values are never read back. */
@@ -125,7 +127,10 @@ export function AgentEnvironment({
       }}
     >
       {open.replacing ? (
-        <span className="truncate font-mono text-body-sm">
+        <span
+          className="truncate font-mono text-body-sm"
+          title={open.replacing}
+        >
           {open.replacing}
         </span>
       ) : (
@@ -141,18 +146,21 @@ export function AgentEnvironment({
           onValueChange={(name) => setDraft({ ...open, name })}
         />
       )}
-      <Input
-        aria-label={`Value of ${open.replacing ?? (open.name.trim() || "new variable")}`}
-        controlSize="sm"
-        type="password"
-        placeholder={open.replacing ? "New value" : "Value"}
-        value={open.value}
-        disabled={locked}
-        autoFocus={!!open.replacing}
-        autoComplete="off"
-        onValueChange={(value) => setDraft({ ...open, value })}
-      />
-      <span className="flex items-center justify-end gap-1">
+      <span className="col-span-2">
+        <Input
+          aria-label={`Value of ${open.replacing ?? (open.name.trim() || "new variable")}`}
+          controlSize="sm"
+          type="password"
+          placeholder={open.replacing ? "New value" : "Value"}
+          value={open.value}
+          disabled={locked}
+          autoFocus={!!open.replacing}
+          autoComplete="off"
+          onValueChange={(value) => setDraft({ ...open, value })}
+        />
+      </span>
+      {/* Save and Cancel get their own line; the columns stay narrow. */}
+      <span className="col-span-3 flex items-center justify-end gap-1">
         <Button
           size="sm"
           variant="ghost"
@@ -212,7 +220,9 @@ export function AgentEnvironment({
             editor(draft)
           ) : (
             <div key={name} className={ROW}>
-              <span className="truncate font-mono text-body-sm">{name}</span>
+              <span className="truncate font-mono text-body-sm" title={name}>
+                {name}
+              </span>
               <span>
                 <Badge>
                   <span aria-hidden="true">•••••• </span>Saved

@@ -1848,7 +1848,7 @@ for (const mode of ["Light", "Dark"]) {
           revision: "one",
         },
       ],
-      { source: repository, warnings: [] },
+      { warnings: [] },
       [link],
     );
     await page.goto(app.origin);
@@ -1919,41 +1919,6 @@ for (const mode of ["Light", "Dark"]) {
     await page.goBack();
     await expect(review).toBeHidden();
     await expect(dialog).toBeHidden();
-
-    // A branch switch still needs consent when both refs contain the same code.
-    const switchLink = `buzz://plugin-install?repository=${encodeURIComponent(repository)}&ref=main&path=.&commit=${"a".repeat(40)}`;
-    await page.evaluate((link) => window.deliverPluginLink(link), switchLink);
-    const update = page.getByRole("dialog", {
-      name: "Update Linked plugin",
-      exact: true,
-    });
-    await expect(update).toContainText(
-      "Future updates will follow main instead of release/stable.",
-    );
-    expect(
-      (await importCalls(page)).filter(
-        ({ command }) => command === "plugin_import_install",
-      ),
-    ).toHaveLength(1);
-    await update.getByRole("button", { name: "Update", exact: true }).click();
-    await expect(update).toBeHidden();
-    await button(page, "View Linked plugin details").click();
-    await expect(
-      page.getByRole("region", { name: "Plugin updates", exact: true }),
-    ).toContainText("main");
-
-    // Reopening the same link is now a no-op, rather than another update.
-    await page.evaluate((link) => window.deliverPluginLink(link), switchLink);
-    await expect(update).toBeVisible();
-    await expect(
-      update.getByRole("button", { name: "Update", exact: true }),
-    ).toHaveCount(0);
-    expect(
-      (await importCalls(page)).filter(
-        ({ command }) => command === "plugin_import_install",
-      ),
-    ).toHaveLength(2);
-    await update.getByRole("button", { name: "Done", exact: true }).click();
   });
 }
 

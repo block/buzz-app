@@ -2068,7 +2068,7 @@ mod tests {
         assert_eq!(next.update_source, git_source);
         // Changing the tracked branch with identical code must persist without
         // replacing the real rollback target or changing the enabled state.
-        git.git_source.as_mut().unwrap().reference = "main".into();
+        git.git_source.as_mut().unwrap().reference = "release/two".into();
         let same = git.install(&manager, &git.preview.token, "dist").unwrap();
         let same = same
             .plugins

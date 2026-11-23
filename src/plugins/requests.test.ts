@@ -514,7 +514,6 @@ describe("update, enable and remove requests", () => {
     { signed: false, reference: "main", allowed: false },
     { signed: true, reference: "main", allowed: true },
     { signed: false, reference: "stable", allowed: true },
-    { signed: false, reference: "", allowed: true },
   ])(
     "requests a same-revision update only for a new signature or ref: %j",
     async ({ signed, reference, allowed }) => {

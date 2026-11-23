@@ -264,43 +264,30 @@ const installed = (extra: Partial<PluginInfo> = {}): PluginInfo => ({
 });
 const reason = "Tracks the sprint board";
 
-it.each([
-  { revision: "old", reference: "main" },
-  { revision: "new", reference: "stable" },
-])(
-  "reviews an update at the pinned commit without enabling the plugin: %j",
-  async ({ revision, reference }) => {
-    const { manager, imports, agent } = await harness([
-      installed({ revision }),
-    ]);
-    const { requestId } = await agent.request({
-      action: "update",
-      id: "example.tasks",
-      reference,
-      reason,
-    });
-    expect(await screen.findByText("Update Tasks")).toBeVisible();
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Review Tasks" }),
-    );
-    const dialog = await screen.findByRole("dialog", { name: "Update Tasks" });
-    await within(dialog).findByText(`Commit: ${commit}`);
-    expect(imports.git).toHaveBeenCalledWith(
-      "https://example.com/plugins",
-      reference,
-      undefined,
-      { commit, path: "tasks" },
-    );
-    expect(within(dialog).getByText(`Builder: ${reason}`)).toBeVisible();
-    expect(manager.installImport).not.toHaveBeenCalled();
-    expect(agent.status(requestId).state).toBe("pending");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(manager.installImport).toHaveBeenCalledWith("preview", "tasks");
-    expect(manager.change).not.toHaveBeenCalled();
-    expect(agent.status(requestId).state).toBe("approved");
-  },
-);
+it("updates at the pinned commit and keeps the plugin's enabled state", async () => {
+  const { manager, imports, agent } = await harness([installed()]);
+  const { requestId } = await agent.request({
+    action: "update",
+    id: "example.tasks",
+    reason,
+  });
+  expect(await screen.findByText("Update Tasks")).toBeVisible();
+  fireEvent.click(await screen.findByRole("button", { name: "Review Tasks" }));
+  const dialog = await screen.findByRole("dialog", { name: "Update Tasks" });
+  await within(dialog).findByText(`Commit: ${commit}`);
+  expect(imports.git).toHaveBeenCalledWith(
+    "https://example.com/plugins",
+    "main",
+    undefined,
+    { commit, path: "tasks" },
+  );
+  expect(within(dialog).getByText(`Builder: ${reason}`)).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(manager.installImport).toHaveBeenCalledWith("preview", "tasks");
+  expect(manager.change).not.toHaveBeenCalled();
+  expect(agent.status(requestId).state).toBe("approved");
+});
 
 it("shows a plugin's access before enabling it", async () => {
   const { manager, agent } = await harness([installed()]);

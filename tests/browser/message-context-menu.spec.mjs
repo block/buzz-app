@@ -223,11 +223,14 @@ test("right-clicking a message timestamp offers its ⋯ actions and copies its l
   );
   const box = await menu.boundingBox();
   expect(Math.abs(box.x - point.x)).toBeLessThan(16);
-  // At the pointer, or raised just enough to stay in the viewport.
+  // At the pointer, raised only as far as the window's bottom edge needs: the
+  // first screen's New messages line can put this last row near that edge.
   const { height } = page.viewportSize();
   expect(Math.abs(box.y - Math.min(point.y, height - box.height))).toBeLessThan(
     16,
   );
+  // Raised or not, the whole menu stays inside the window.
+  expect(box.y + box.height).toBeLessThanOrEqual(height);
   await menu.getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect(menu).toHaveCount(0);
   await expect

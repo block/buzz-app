@@ -2209,12 +2209,13 @@ export function relayBrokerPlugin({
                       !sameRoute(previous, route)
                     ) {
                       dirtyRoutes.set(route.id, route);
-                      if (
-                        (previous?.status === "live" &&
-                          route.status !== "live") ||
-                        route.id === "observer"
-                      )
-                        urgent.push(route);
+                      const ended =
+                        previous?.status === "live" && route.status !== "live";
+                      // A report still queued for a route that ended proves
+                      // nothing: the browser must not follow it from there.
+                      if (ended && route.channelId)
+                        pendingEstablished.delete(route.channelId);
+                      if (ended || route.id === "observer") urgent.push(route);
                     }
                   }
                   for (const id of knownRoutes.keys())

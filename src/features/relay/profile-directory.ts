@@ -1,4 +1,5 @@
 import { createVerifiedProfileDirectory } from "./verified-profile-directory";
+import { openTrace } from "../developer/open-trace";
 import {
   namePreference,
   subscribeNamePreference,
@@ -20,7 +21,15 @@ import {
   PROFILE_CACHE_BASE,
   PROFILE_CACHE_MAX,
   PROFILE_ENTRY_BYTES,
+  PROFILE_NAMES_HELD,
 } from "./budget";
+import {
+  restoredName,
+  savedName,
+  savedVerifiedName,
+  type SavedName,
+} from "./saved-names";
+import type { VerifiedProfile } from "./verified-profile";
 import type { Profile } from "./contracts";
 import type { ReadFilter, RelayEvent } from "./events";
 import { newer } from "./events";
@@ -117,7 +126,13 @@ export function createProfileDirectory(
       | undefined;
   },
 ) {
-  let limit = PROFILE_CACHE_BASE;
+  // Kind 0 events held: the names a session has seen, at least
+  // PROFILE_NAMES_HELD, more while open views reserve room. `opened` is the
+  // room views reserved, which sets what they may load.
+  let limit = PROFILE_NAMES_HELD;
+  // The room views reserved (held a while after release): one request's
+  // budget, and the verified heads kept.
+  let room = PROFILE_CACHE_BASE;
   // DM partners: eviction takes them last, so a large roster cannot turn a
   // DM label back into a key. Bounded to half the base entry count.
   let kept: ReadonlySet<string> = new Set();
@@ -175,6 +190,14 @@ export function createProfileDirectory(
   const absent = new Set<string>();
   // Keys with kind-0 metadata. A verified-only overlay must not satisfy ensure.
   let loaded: ReadonlySet<string> = new Set();
+  // Names an earlier session showed (`restoreNames`), shown until this
+  // session reads the person's kind 0, and a verified one until the verified
+  // directory answers for them. Display only: never `event()`, never `loaded`,
+  // so an ensure still reads the kind 0.
+  const savedNames = new Map<
+    string,
+    { profile: Profile; verified?: SavedName["v"] | undefined }
+  >();
   let controller = new AbortController();
   let closed = false;
   // Offline, a collision waits: a read started now could fail and stick.
@@ -258,7 +281,9 @@ export function createProfileDirectory(
    * `verifiedAuthority()`, `verifiedHeld()` and `verifiedRevision()`. */
   function publish(headChanged = false) {
     // After the snapshot is out: the read's synchronous `loading` may reenter.
+    const traced = openTrace.span("main", "names.publish");
     const collision = fold(headChanged);
+    traced();
     waiting = collision && !online;
     if (collision && online && archives?.snapshot().status === "idle")
       void archives.ensure();
@@ -301,9 +326,27 @@ export function createProfileDirectory(
         .map((item) => item.event) ?? []),
     ]);
     loaded = new Set(next.keys());
+    for (const [id, name] of savedNames)
+      if (!next.has(id)) next.set(id, name.profile);
     const verifiedProfiles = verified?.snapshot() ?? new Map();
-    if (verifiedProfiles.size) preference ??= namePreference();
-    for (const [id, value] of verifiedProfiles) {
+    // A saved verified name stands until the verified directory answers.
+    const authorityNow = verified?.authority();
+    const savedVerified = new Map<string, VerifiedProfile>();
+    for (const [id, name] of savedNames) {
+      const answered =
+        !authorityNow || verifiedProfiles.has(id) || verified?.answered(id);
+      const shown =
+        name.verified && authorityNow && !answered
+          ? savedVerifiedName(name.verified, authorityNow)
+          : undefined;
+      if (shown) savedVerified.set(id, shown);
+      // Replaced once both the kind 0 and the verified answer are in.
+      else if (loaded.has(id) && (answered || !name.verified))
+        savedNames.delete(id);
+    }
+    if (verifiedProfiles.size || savedVerified.size)
+      preference ??= namePreference();
+    for (const [id, value] of [...savedVerified, ...verifiedProfiles]) {
       const { nameIsFallback: _fallback, ...base } = next.get(id) ?? {};
       next.set(
         id,
@@ -444,7 +487,7 @@ export function createProfileDirectory(
   ) {
     if (closed) throw new DOMException("Session closed", "AbortError");
     const unique = [...new Set(ids)];
-    if (!refresh && unique.length > limit)
+    if (!refresh && unique.length > room)
       throw new Error("Profile request exceeds the directory budget");
     // A hit marks the profile recently used, so the budget evicts profiles
     // nobody has asked for rather than the oldest ones still on screen.
@@ -570,6 +613,7 @@ export function createProfileDirectory(
     pending.clear();
     absent.clear();
     events.clear();
+    savedNames.clear();
     verified?.clear();
     unnamed = new Set();
     generation++;
@@ -585,10 +629,14 @@ export function createProfileDirectory(
     const open = Math.min(PROFILE_CACHE_MAX, PROFILE_CACHE_BASE + reserved);
     const departed = open < opened;
     opened = open;
-    const next = Math.max(open, held);
-    if (next === limit && !departed) return;
+    const reservedRoom = Math.max(open, held);
+    const next = Math.max(reservedRoom, PROFILE_NAMES_HELD);
+    if (next === limit && reservedRoom === room && !departed) return;
+    room = reservedRoom;
     limit = next;
-    verified?.resize(limit);
+    // Verified heads follow the reserved room, not the names held: each 128
+    // wanted subjects keep a live sync open.
+    verified?.resize(room);
     let dropped = events.resize(limit, limit * PROFILE_ENTRY_BYTES) > 0;
     // A read asked for before the release would land as the newest entries
     // and push out names the next view just loaded. The next view's own reads,
@@ -729,6 +777,41 @@ export function createProfileDirectory(
           const event = events.peek(id);
           return event ? [event] : [];
         });
+    },
+    /** Up to `count` names as rows show them, least recently used first,
+     * for the device mirror: saved names not yet replaced, then the people
+     * whose kind 0 is held. */
+    names(count: number): SavedName[] {
+      const shown = verified?.snapshot();
+      const authority = verified?.authority();
+      const ids = [
+        ...[...savedNames.keys()].filter((id) => !events.peek(id)),
+        ...events.keys(),
+      ].slice(-count);
+      return ids.map((id) => {
+        const event = events.peek(id);
+        const saved = savedNames.get(id);
+        return savedName(
+          id,
+          event ? foldProfiles([event]).get(id) : saved?.profile,
+          shown?.get(id) ??
+            (saved?.verified && authority
+              ? savedVerifiedName(saved.verified, authority)
+              : undefined),
+        );
+      });
+    },
+    /** Names an earlier session saved (`names`), shown until this session
+     * reads them. Never replaces a kind 0 already held. */
+    restoreNames(records: readonly unknown[]) {
+      let added = false;
+      for (const record of records.slice(-PROFILE_NAMES_HELD)) {
+        const name = restoredName(record);
+        if (!name || events.peek(name.pubkey)) continue;
+        savedNames.set(name.pubkey, name);
+        added = true;
+      }
+      if (added) publish();
     },
     /** Up to `count` held verified heads, for the device mirror. */
     verifiedHeads: (count: number) => verified?.heads(count) ?? [],

@@ -67,7 +67,9 @@ it("a failed post-stream cold head leaves loading and exposes a retryable window
     h.live.state({ status: "connected", routes: [] });
     h.live.established("z");
     await flush();
-    expect(beforeStream.signal?.aborted).toBe(true);
+    // The catch-up reads after the pre-stream head; both fail.
+    expect(beforeStream.signal?.aborted).toBe(false);
+    beforeStream.fail(new ReadError("unavailable", "Relay read timed out"));
     h.wire.next().fail(new ReadError("unavailable", "Relay read timed out"));
     await flush();
     expect(h.owner.session.channels.window("z")).toMatchObject({
@@ -222,7 +224,8 @@ it("selecting an already queued background catch-up promotes it without releasin
     h.live.state({ status: "connected", routes: [] });
     h.live.established("z");
     await flush();
-    expect(initialZ.signal?.aborted).toBe(true);
+    // The catch-up leaves Z's pre-stream head running and reads after it.
+    expect(initialZ.signal?.aborted).toBe(false);
     expect(h.wire.pending).toHaveLength(0); // Z's inactive catch-up is queued behind profiles.
     h.owner.session.channels.ensure("z");
     h.owner.session.channels.ensure("z");
@@ -327,7 +330,7 @@ it("a catch-up does not page back for rows a cold window held before its first p
     h.live.state({ status: "connected", routes: [] });
     h.live.established("z");
     await flush();
-    expect(beforeStream.signal?.aborted).toBe(true);
+    expect(beforeStream.signal?.aborted).toBe(false);
     const row = message(h.viewer, "z", "newest", 1700000002);
     const head = headRead(h);
     assert.exists(head);

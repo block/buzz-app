@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { eventDto, type RelayEvent } from "./events";
 import { selectProfiles } from "./profile-selection";
 import { foldProfiles } from "./profiles";
-import { PROFILE_CACHE_BASE, PROFILE_ENTRY_BYTES } from "./budget";
+import { PROFILE_ENTRY_BYTES, PROFILE_NAMES_HELD } from "./budget";
 import { createProfileDirectory } from "./profile-directory";
 import {
   createRelayReader,
@@ -497,7 +497,7 @@ it("background enrichment does not reread a known absence until reconnect", asyn
     directory.accept([profile(other, { name: "Nu" })]);
     const filler = profile(user, { name: "Filler" });
     directory.accept(
-      Array.from({ length: 1024 }, (_, i) => ({
+      Array.from({ length: PROFILE_NAMES_HELD }, (_, i) => ({
         ...filler,
         pubkey: i.toString(16).padStart(64, "0"),
       })),
@@ -517,7 +517,7 @@ it("background enrichment does not reread a known absence until reconnect", asyn
 
 it("records no absence for a returned profile the cache evicted", async () => {
   // A short response can still outgrow the directory's byte budget.
-  const big = profile(user, { name: "Big", about: "x".repeat(5 * 1024) });
+  const big = profile(user, { name: "Big", about: "x".repeat(50 * 1024) });
   const ids = Array.from({ length: 450 }, (_, i) =>
     i.toString(16).padStart(64, "0"),
   );
@@ -537,7 +537,7 @@ it("records no absence for a returned profile the cache evicted", async () => {
 });
 
 it("a background skip never leaves an identity neither named nor unnamed", async () => {
-  const ids = Array.from({ length: 1024 }, (_, i) =>
+  const ids = Array.from({ length: PROFILE_NAMES_HELD }, (_, i) =>
     i.toString(16).padStart(64, "0"),
   );
   const first = "0".repeat(64);
@@ -545,7 +545,9 @@ it("a background skip never leaves an identity neither named nor unnamed", async
   const read = vi.fn(async () => []);
   const directory = createProfileDirectory({ read });
   try {
-    await directory.ensure(ids, "background");
+    // One request at a time fits the room a view may ask for.
+    for (let at = 0; at < ids.length; at += 1024)
+      await directory.ensure(ids.slice(at, at + 1024), "background");
     // Unnamed survives the reconnect; the absence does not.
     await directory.reconnect();
     await directory.ensure([first], "background");
@@ -614,15 +616,15 @@ it("evicts the least recently ensured profile, not the oldest stored one", async
   const read = vi.fn(async () => []);
   const directory = createProfileDirectory({ read });
   try {
-    const people = unsignedProfiles(1024);
+    const people = unsignedProfiles(PROFILE_NAMES_HELD);
     directory.accept(people);
-    expect(directory.queries.snapshot().size).toBe(1024);
+    expect(directory.queries.snapshot().size).toBe(PROFILE_NAMES_HELD);
     const [oldest, next] = people as [RelayEvent, RelayEvent];
     await directory.ensure([oldest.pubkey]);
     expect(read).not.toHaveBeenCalled();
     directory.accept([profile(keypair(), { name: "Newcomer" })]);
     const snapshot = directory.queries.snapshot();
-    expect(snapshot.size).toBe(1024);
+    expect(snapshot.size).toBe(PROFILE_NAMES_HELD);
     expect(snapshot.get(oldest.pubkey)?.name).toBe("P0");
     expect(snapshot.has(next.pubkey)).toBe(false);
   } finally {
@@ -633,13 +635,13 @@ it("evicts the least recently ensured profile, not the oldest stored one", async
 it("keeps protected DM partners through eviction and lists them last", () => {
   const directory = createProfileDirectory({ read: vi.fn(async () => []) });
   try {
-    const people = unsignedProfiles(1024);
+    const people = unsignedProfiles(PROFILE_NAMES_HELD);
     const [partner, next] = people as [RelayEvent, RelayEvent];
     directory.protect([partner.pubkey]);
     directory.accept(people);
     directory.accept([profile(keypair(), { name: "Newcomer" })]);
     const snapshot = directory.queries.snapshot();
-    expect(snapshot.size).toBe(1024);
+    expect(snapshot.size).toBe(PROFILE_NAMES_HELD);
     expect(snapshot.get(partner.pubkey)?.name).toBe("P0");
     expect(snapshot.has(next.pubkey)).toBe(false);
     expect(directory.recent(1).map((event) => event.pubkey)).toEqual([
@@ -653,8 +655,8 @@ it("keeps protected DM partners through eviction and lists them last", () => {
 it("still holds the byte limit when protected profiles exceed it", () => {
   const directory = createProfileDirectory({ read: vi.fn(async () => []) });
   try {
-    // 512 protected profiles of ~5 KiB each exceed the 2 MiB base budget.
-    const about = "x".repeat(5 * 1024);
+    // 512 protected profiles of ~50 KiB each exceed the 20 MiB budget.
+    const about = "x".repeat(50 * 1024);
     const people = unsignedProfiles(512).map((event, index) => ({
       ...event,
       content: JSON.stringify({ name: `P${index}`, about }),
@@ -662,7 +664,7 @@ it("still holds the byte limit when protected profiles exceed it", () => {
     directory.protect(people.map((event) => event.pubkey));
     directory.accept(people);
     expect(directory.stats().bytes).toBeLessThanOrEqual(
-      PROFILE_CACHE_BASE * PROFILE_ENTRY_BYTES,
+      PROFILE_NAMES_HELD * PROFILE_ENTRY_BYTES,
     );
     // The newest protected profiles stay.
     expect(directory.queries.snapshot().has(people[511]?.pubkey ?? "")).toBe(
@@ -673,7 +675,7 @@ it("still holds the byte limit when protected profiles exceed it", () => {
   }
 });
 
-it("holds an open channel's roster on top of the base and shrinks back when released", async () => {
+it("reserves an open channel's roster room, and its release keeps the names held", async () => {
   vi.useFakeTimers();
   const read = vi.fn(async () => []);
   const directory = createProfileDirectory({ read });
@@ -711,15 +713,10 @@ it("holds an open channel's roster on top of the base and shrinks back when rele
     expect(directory.queries.limit?.()).toBe(1524);
     await vi.runAllTimersAsync();
     expect(directory.queries.limit?.()).toBe(1024);
-    const snapshot = directory.queries.snapshot();
-    expect(snapshot.size).toBe(1024);
-    expect(changed).toHaveBeenCalledTimes(1);
-    expect(directory.queries.evictions?.()).toBe(500);
-    // The least recently used go first: P0 was just ensured, P1..P500 were not.
-    expect(snapshot.get(ids[0] as string)?.name).toBe("P0");
-    expect(snapshot.has(ids[1] as string)).toBe(false);
-    expect(snapshot.has(ids[500] as string)).toBe(false);
-    expect(snapshot.get(ids[501] as string)?.name).toBe("P501");
+    // The directory holds PROFILE_NAMES_HELD names whatever views reserve.
+    expect(directory.queries.snapshot().size).toBe(1524);
+    expect(changed).not.toHaveBeenCalled();
+    expect(directory.queries.evictions?.()).toBe(0);
     await expect(directory.ensure(ids.slice(0, 1100))).rejects.toThrow(
       "exceeds the directory budget",
     );
@@ -751,7 +748,8 @@ it("keeps a closed channel's roster room for a while, so switching back reads no
     expect(directory.queries.evictions?.()).toBe(0);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(directory.queries.limit?.()).toBe(1034);
-    expect(directory.queries.snapshot().size).toBe(1034);
+    // Below PROFILE_NAMES_HELD, the names stay after the hold too.
+    expect(directory.queries.snapshot().size).toBe(1524);
   } finally {
     directory.dispose();
     vi.useRealTimers();
@@ -782,7 +780,8 @@ it("cancels a departing view's background reads after the task while its room is
     directory.ensure(["next"], "background").catch(() => {});
     await vi.advanceTimersByTimeAsync(30_000);
     expect(directory.queries.limit?.()).toBe(1024);
-    expect(directory.queries.evictions?.()).toBe(501);
+    // Only the cancelled read: the names held stay.
+    expect(directory.queries.evictions?.()).toBe(1);
     expect(read).toHaveBeenCalledTimes(2);
     expect(read.mock.calls[1]?.[1]?.signal?.aborted).toBe(false);
     directory.dispose();
@@ -907,30 +906,6 @@ it("keeps background reads asked for after a release when the shrink runs", asyn
   }
 });
 
-it("returns known-unnamed identities past the base when it shrinks", async () => {
-  vi.useFakeTimers();
-  const read = vi.fn(async () => []);
-  const directory = createProfileDirectory({ read });
-  try {
-    const ids = unsignedProfiles(1500).map((event) => event.pubkey);
-    const release = directory.queries.reserve?.(500);
-    await directory.ensure(ids);
-    expect(directory.queries.unnamed?.().size).toBe(1500);
-    const changed = vi.fn();
-    const unsubscribe = directory.queries.subscribe(changed);
-    release?.();
-    await vi.runAllTimersAsync();
-    unsubscribe();
-    expect(directory.queries.unnamed?.().size).toBe(1024);
-    expect(directory.queries.unnamed?.().has(ids[1499] as string)).toBe(true);
-    expect(directory.queries.unnamed?.().has(ids[0] as string)).toBe(false);
-    expect(changed).toHaveBeenCalledTimes(1);
-  } finally {
-    directory.dispose();
-    vi.useRealTimers();
-  }
-});
-
 it("publishes a background read's pages once, also when the session accepts each page first", async () => {
   vi.useFakeTimers();
   const answers: {
@@ -1022,5 +997,35 @@ it("publishes a background read's pages once, also when the session accepts each
   } finally {
     directory.dispose();
     vi.useRealTimers();
+  }
+});
+
+it("starts from the names an earlier session saved, until it reads their kind 0", async () => {
+  const ada = keypair();
+  const read = vi.fn(async () => [profile(ada, { name: "Ada Lovelace" }, 2)]);
+  const earlier = createProfileDirectory({ read: vi.fn(async () => []) });
+  const directory = createProfileDirectory({ read });
+  try {
+    earlier.accept([
+      profile(ada, { name: "Ada", picture: "https://a.test/p.png" }, 1),
+    ]);
+    // Saved as plain JSON, as the device mirror stores it.
+    const saved = JSON.parse(JSON.stringify(earlier.names(PROFILE_NAMES_HELD)));
+    directory.restoreNames([...saved, { p: "not a key", n: "Bad" }]);
+    expect(directory.queries.snapshot().get(ada.pubkey)).toEqual({
+      name: "Ada",
+      picture: "https://a.test/p.png",
+    });
+    expect(directory.queries.snapshot().size).toBe(1);
+    // Display only: no event stands behind it, and an ensure still reads.
+    expect(directory.event(ada.pubkey)).toBeUndefined();
+    await directory.ensure([ada.pubkey]);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(directory.queries.snapshot().get(ada.pubkey)?.name).toBe(
+      "Ada Lovelace",
+    );
+  } finally {
+    earlier.dispose();
+    directory.dispose();
   }
 });

@@ -101,10 +101,11 @@ function harness({
   assert.exists(channels.attach);
   const window = () => channels.window("c");
   const times = () => window().rows.map((row) => row.createdAt);
-  const open = async () => {
+  /** `dm`: a DM, whose summary carries its latest message. */
+  const open = async (dm = false) => {
     live.receive([
       roster(relay, "c", [viewer.pubkey]),
-      metadata(relay, "c", "C"),
+      metadata(relay, "c", "C", undefined, dm ? [["t", "dm"]] : []),
     ]);
     channels.ensure("c");
     await vi.waitFor(() => expect(window().status).toBe("ready"));
@@ -316,7 +317,7 @@ it("catch-up cancels a detached window's newer page", async () => {
 
 it("a detached segment does not become the channel preview", async () => {
   const h = setup();
-  await h.open();
+  await h.open(true);
   const preview = () =>
     h.channels.list().channels.find((channel) => channel.id === "c")?.preview;
   await vi.waitFor(() => expect(preview()).toBe("m299"));
@@ -329,7 +330,7 @@ it("a detached segment does not become the channel preview", async () => {
 
 it("live messages move the channel preview while detached", async () => {
   const h = setup();
-  await h.open();
+  await h.open(true);
   const preview = () =>
     h.channels.list().channels.find((channel) => channel.id === "c")?.preview;
   await vi.waitFor(() => expect(preview()).toBe("m299"));

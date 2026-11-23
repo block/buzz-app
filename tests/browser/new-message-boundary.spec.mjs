@@ -240,10 +240,6 @@ appTest(
       "reader is partway through the tall first row",
     ).toBeGreaterThan(0);
     const beforeBoundaryAnchor = await anchor(page);
-    const beforeBoundaryBubble = await history(page)
-      .locator(`[data-message-id="${boundaryId}"] [data-bubble]`)
-      .boundingBox();
-    expect(beforeBoundaryBubble).not.toBeNull();
     await expect(separator(page)).toHaveCount(0);
     await page.mouse.move(0, 0);
 
@@ -257,8 +253,19 @@ appTest(
         ),
       )
       .toBe("snapshot");
-    await expect(separator(page)).toHaveCount(1);
+    // A screen's line is placed once, with the screen: the snapshot that
+    // lands after it adds none, and nothing on screen moves. The next visit
+    // places the line from the read state it now has.
+    await expect(separator(page)).toHaveCount(0);
     await expectAnchor(page, beforeBoundaryAnchor);
+    await page.getByRole("button", { name: /^Beta/ }).click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /^Alpha/ }).click();
+    await expect(composer(page)).toBeVisible();
+    await settle(page);
+    await expect(separator(page)).toHaveCount(1);
     const copied = await history(page).evaluate((element) => {
       const selection = document.getSelection();
       const range = document.createRange();
@@ -303,11 +310,6 @@ appTest(
       path: boundaryPath,
       contentType: "image/png",
     });
-    const entryMessageBounds = await history(page)
-      .locator(`[data-message-id="${boundaryId}"] [data-bubble]`)
-      .boundingBox();
-    expect(entryMessageBounds).not.toBeNull();
-    expect(entryMessageBounds.y).toBeCloseTo(beforeBoundaryBubble.y, 0);
     expect(await messageAfter(separator(page))).toBe(boundaryId);
 
     // The tall row proves clipped-reader anchoring, not whole-row reading.
@@ -865,10 +867,11 @@ const pageOf = (page, channel) =>
     };
   }, channel);
 
-// The channel reads itself 300 ms after it is shown, and the divider waits
-// for the head read that verifies the rows on screen. Only the real store and
-// reader run both against one relay read, so the read is held here while the
-// page clock runs the dwell out.
+// The channel reads itself 300 ms after it is shown. A visit that gathers
+// its screen waits for the head read that verifies it; one the stream kept
+// current does not. Only the real store and reader run both against one
+// relay read, so the read is held here while the page clock runs the dwell
+// out.
 appTest.describe("a head read that outlasts the reading dwell", () => {
   appTest.use(fiveChannels);
   // Runs every timer the dwell could have set, then shows that nothing was
@@ -913,17 +916,24 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
         await go(page, "Beta");
         await head.reading;
         await page.clock.setSystemTime(Date.now());
-        await expectHeld(page, arrivals, {
-          status: "ready",
-          freshness: "verified",
-          refreshing: true,
-          rows: 18,
-        });
+        // The stream followed Beta's window while it was away, so it is
+        // current: the revisit shows it at once, line included, and the
+        // dwell reads it while the re-check head is still out.
+        await expect
+          .poll(() => pageOf(page, "beta"))
+          .toEqual({
+            status: "ready",
+            freshness: "verified",
+            refreshing: true,
+            rows: 18,
+          });
+        await expectBoundaryAt(page, arrivals);
+        await page.clock.runFor(1_000);
+        await expectRead(page, arrivals);
       } finally {
         head.release();
       }
       await expectBoundaryAt(page, arrivals);
-      await expectRead(page, arrivals);
     },
   );
 

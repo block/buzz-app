@@ -9,6 +9,7 @@ import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
+import { openFromNavigation } from "./open-from-navigation";
 import { ConversationWorkspace, PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
 import { registerPins } from "./pins-panel";
@@ -86,6 +87,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   );
   const relay = ctx.relay;
   const navigator = ctx.navigation;
+  ctx.effect(() => openFromNavigation(navigator, relay));
   ctx.conversation.registerMessageAction({
     id: "start-solo-chat",
     title: "Start Solo chat",

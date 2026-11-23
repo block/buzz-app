@@ -2,6 +2,7 @@
 // Establish host CSS layer order before product modules import component layers.
 import "./shared/styles/globals.css";
 import { StrictMode } from "react";
+import { TraceProfiler } from "./features/developer/TraceProfiler";
 import { createRoot } from "react-dom/client";
 import { createServices } from "./app/services";
 import { loadAgentStorage } from "./features/agents/state";
@@ -41,7 +42,9 @@ void loadAgentStorage().finally(() => {
       useRejectUnclaimedDrops();
       return (
         <TooltipProvider>
-          <App services={services} />
+          <TraceProfiler id="app">
+            <App services={services} />
+          </TraceProfiler>
         </TooltipProvider>
       );
     }

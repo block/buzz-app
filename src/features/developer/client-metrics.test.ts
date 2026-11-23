@@ -105,6 +105,61 @@ it("splits each open into waiting for rows and rendering them", () => {
   expect(bySource.memory).toMatchObject({ waitP50: 0, renderP50: 25 });
 });
 
+it("ends an open whose first screen was laid out hidden when it is shown, and times each step", () => {
+  const h = setup();
+  h.metrics.channelIntent("alpha", click(0));
+  h.advance(5);
+  h.metrics.channelMounted("alpha");
+  h.metrics.channelEnsured("alpha", "network");
+  h.advance(95);
+  h.metrics.channelData("alpha", "network");
+  // The timeline commits hidden, waiting for its line and names.
+  h.metrics.channelScreen("alpha", { line: false, names: false, shown: false });
+  h.metrics.channelRendered("alpha");
+  h.advance(10);
+  h.paint();
+  expect(h.metrics.export().opens).toEqual([]);
+  h.advance(20);
+  h.metrics.channelScreen("alpha", { line: false, names: true, shown: false });
+  h.advance(30);
+  h.metrics.channelScreen("alpha", { line: true, names: true, shown: false });
+  h.advance(16);
+  h.metrics.channelScreen("alpha", { line: true, names: true, shown: true });
+  expect(h.metrics.export().opens).toEqual([]);
+  // The open ends at the paint that shows the screen.
+  h.advance(4);
+  h.paint();
+  // Shown on its first commit: rows already in memory.
+  h.metrics.channelIntent("beta", click(180));
+  h.metrics.channelScreen("beta", { line: true, names: true, shown: true });
+  h.metrics.channelMounted("beta");
+  h.metrics.channelEnsured("beta", "memory");
+  h.metrics.channelRendered("beta");
+  h.advance(12);
+  h.paint();
+  expect(h.metrics.export().opens).toEqual([
+    expect.objectContaining({
+      channel: "alpha",
+      ms: 180,
+      waitMs: 100,
+      steps: { pane: 5, rows: 110, line: 160, names: 130, shown: 176 },
+    }),
+    expect.objectContaining({
+      channel: "beta",
+      ms: 12,
+      waitMs: 0,
+      steps: { pane: 0, rows: 12, line: 0, names: 0, shown: 0 },
+    }),
+  ]);
+  expect(h.metrics.summary().opens.bySource.network.steps).toEqual({
+    pane: 5,
+    rows: 110,
+    line: 160,
+    names: 130,
+    shown: 176,
+  });
+});
+
 it("waits for the rows to be visible, ignores reselecting the shown channel and supersedes abandoned opens", () => {
   const h = setup();
   h.metrics.channelMounted("alpha");
@@ -190,7 +245,7 @@ it("starts a new open when the pane returns to a channel it left", async () => {
   ]);
 });
 
-it("records live setup and reads for the first relay session only", () => {
+it("records live setup for the first relay session and reads for every session", () => {
   const h = setup();
   const routes = (status: string) => [
     { id: "channel:0", channelId: "0", status },
@@ -211,7 +266,9 @@ it("records live setup and reads for the first relay session only", () => {
   const { phases } = h.metrics.summary();
   expect(phases).toHaveLength(1);
   expect(phases[0]).toMatchObject({ authMs: 20, coverageMs: 20, queries: 0 });
-  expect(h.metrics.export().queries).toEqual([]);
+  expect(h.metrics.export().queries).toEqual([
+    expect.objectContaining({ session: "b", ms: 5 }),
+  ]);
 });
 
 it("derives open and reconnect phases, live coverage and per-phase read cost", () => {

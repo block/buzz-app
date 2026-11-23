@@ -1,9 +1,19 @@
-import { memo, type ReactNode, useEffect, useId, useLayoutEffect } from "react";
+import {
+  memo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+} from "react";
 import {
   ConversationTimeline,
   useConversation,
 } from "../../features/conversation/Conversation";
-import type { ChannelTimelineProps } from "../../features/messages/ChannelTimeline";
+import type {
+  ChannelTimelineProps,
+  FirstScreen,
+} from "../../features/messages/ChannelTimeline";
 import type { PageNavigation } from "../../features/navigation/service";
 import { useChannelWindow } from "../../features/relay/react";
 import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
@@ -60,6 +70,14 @@ export const ChannelBody = memo(function ChannelBody({
     clientMetrics.channelMounted(channelId);
     return () => clientMetrics.channelUnmounted(channelId);
   }, [channelId]);
+  const onFirstScreen = useCallback(
+    (screen: FirstScreen) => {
+      // The timeline's layout effects run before this pane's.
+      clientMetrics.channelMounted(channelId);
+      clientMetrics.channelScreen(channelId, screen);
+    },
+    [channelId],
+  );
   const headRecovers = useRecoveryOwns(queries, (live) =>
     headRecovering(live, channelId),
   );
@@ -110,7 +128,11 @@ export const ChannelBody = memo(function ChannelBody({
         <p>{window.error}</p>
         <Button
           type="button"
-          onClick={() => queries.channels.ensure(channelId)}
+          onClick={() => {
+            // A failed open reads again as an open; other failures, here.
+            queries.channels.open?.(channelId);
+            queries.channels.ensure(channelId);
+          }}
         >
           Retry messages
         </Button>
@@ -133,6 +155,7 @@ export const ChannelBody = memo(function ChannelBody({
       latestRequest={latestRequest}
       viewer={viewer}
       window={window}
+      onFirstScreen={onFirstScreen}
       launchPending={
         !cached &&
         !window.error &&

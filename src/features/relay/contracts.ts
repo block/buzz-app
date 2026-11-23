@@ -257,6 +257,18 @@ export type ChannelWindow = Readonly<{
   /** Detached: the rows are a seek segment and newer history is not loaded. */
   hasNewer?: boolean | undefined;
   loadingNewer?: boolean | undefined;
+  /** This opening's first screen, which has one outcome. While
+   * `gathering`, nothing of it shows. Then it is `ready`: a fresh screen, or
+   * its error, which shows none of the rows the window held. Or it is
+   * `offline`: no connection came up in time, so the rows saved on this
+   * device show as the offline fallback, until a connection's fresh screen
+   * replaces them. A timeline
+   * shows it once, as it is given. Absent in a store that gathers none: rows
+   * show as they come. */
+  screen?: "gathering" | "ready" | "offline" | undefined;
+  /** With a ready or offline `screen`: the row its New messages line sits
+   * above, placed with the rest of the screen. None when undefined. */
+  screenLine?: string | undefined;
 }>;
 /** Post-write discovery opts into writer reads; browsing keeps the default.
  * `viewerLookup` marks a lookup the viewer's own action asks for (a name
@@ -427,6 +439,11 @@ export interface ChannelQueries {
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;
   ensureList(): void;
+  /** The reader is opening this channel now (a click, key or route, never a
+   * render): start or join the run that gathers its first screen, and reflect
+   * it in the window's `screen`. A screen the store holds complete is ready
+   * at once. */
+  open?(channelId: string): void;
   ensure(channelId: string): void;
   /** Read the next older page of `rows` top-level rows (default 20, at most
    * 200). A page past the history budget slides the window down to it,
@@ -448,8 +465,9 @@ export interface ChannelQueries {
   attach?(channelId: string): void;
   /** Explicit same-scope head revalidation; replaces the bounded head, not a realtime tail. */
   refresh?(channelId: string): void;
-  /** Intent warming is optional for fixture-only query implementations. */
-  prepare?(channelId: string): void;
+  /** Intent warming is optional for fixture-only query implementations.
+   * `press` is a pointer press on the channel: an open about to happen. */
+  prepare?(channelId: string, press?: boolean): void;
   /** Roster warming is optional for fixture-only query implementations. The
    * caller supplies preferred (e.g. starred) ids; the store orders the rest. */
   warm?(preferred: readonly string[]): void;

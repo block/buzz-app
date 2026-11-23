@@ -941,16 +941,16 @@ test("mention choices survive unrelated list updates but revoke removed membersh
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.refresh());
   await expect(first).toBeVisible();
-  await page.evaluate(() => window.mentionFixture.otherMessage());
+  await page.evaluate(() => window.mentionFixture.otherUpdate());
   await expect
     .poll(() =>
       page.evaluate(
         () =>
           window.mentionFixture.list().channels.find((c) => c.id === "other")
-            ?.preview,
+            ?.description,
       ),
     )
-    .toBe("Unrelated preview");
+    .toBe("Unrelated update");
   await expect(first).toBeVisible();
   await page.evaluate(() => window.mentionFixture.removeFirst());
   // The removed member is now outside the channel. Its row stays but is

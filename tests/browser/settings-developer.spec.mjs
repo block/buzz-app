@@ -101,6 +101,14 @@ test.describe("client performance", () => {
     expect(betaOpen.waitMs).toBeLessThan(betaOpen.ms);
     expect(alphaOpen.waitMs).toBeLessThan(betaOpen.waitMs);
     await expect(page.getByText(/^Server \d+$/)).toBeVisible();
+    // Both opens ended at the paint that showed their first screen.
+    for (const open of [betaOpen, alphaOpen])
+      expect(open.ms).toBeGreaterThanOrEqual(open.steps.shown);
+    await expect(
+      page
+        .getByRole("region", { name: "Open steps by source" })
+        .getByRole("row", { name: /^Server/ }),
+    ).toBeVisible();
     expect(exported.opens.slice(-2)).toEqual([
       expect.objectContaining({
         channel: "beta",
@@ -155,6 +163,12 @@ test.describe("client performance", () => {
         await checkLayout();
         await page.screenshot({
           path: info.outputPath(`developer-${mode}-${width}.png`),
+        });
+        await page
+          .getByRole("region", { name: "Open steps by source" })
+          .scrollIntoViewIfNeeded();
+        await page.screenshot({
+          path: info.outputPath(`developer-steps-${mode}-${width}.png`),
         });
       }
     }

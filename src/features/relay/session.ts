@@ -1,5 +1,6 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { openTrace } from "../developer/open-trace";
 import { mergeLegacyWorkspaces } from "./workspace-migration";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -192,6 +193,12 @@ export const UNREAD_BACKSTOP_INTERVAL = 15 * 60_000;
 /** A read of named authors' profiles, or the general statuses read with them.
  * The relay stores both per user, not per channel, so no channel access change,
  * including a denied channel list, can stale it. */
+/** A row no read state in hand can call read or unread. */
+const UNKNOWN_ATTENTION = Object.freeze({
+  status: "unknown",
+  unread: false,
+  forced: false,
+} as const);
 function isProfileFilter(filter: ReadFilter) {
   const status =
     filter.kinds?.[0] === USER_STATUS_KIND &&
@@ -331,6 +338,7 @@ export function createRelaySession(
     else listener();
   };
   let canAccess: (id: string) => boolean = () => true;
+  let canReadConfirmed: (id: string) => boolean = () => false;
   const typing = createTyping(
     transport?.viewer ?? "",
     (id) =>
@@ -550,6 +558,24 @@ export function createRelaySession(
     filters.every(
       (filter) => isArchiveFilter(filter) || isProfileFilter(filter),
     );
+  /** A filter of channels that are all readable after an access change, on
+   * current, confirmed evidence: its answer is theirs alone, so the change
+   * leaves its read standing (an opening's head read when the roster first
+   * completes, say). The one test, when the change invalidates reads and
+   * when one completes after it. A read that names an unknown, saved-only,
+   * starting or lost channel, or no channel, still retires. */
+  const ofReadableChannels = (filter: ReadFilter) =>
+    !!filter["#h"]?.length && filter["#h"].every((id) => canReadConfirmed(id));
+  function channelReadSurvives(
+    filters: readonly ReadFilter[],
+    cleared: number,
+  ) {
+    return (
+      cleared === cacheClearEpoch &&
+      filters.length > 0 &&
+      filters.every(ofReadableChannels)
+    );
+  }
   function revokeAccess(commit: () => void, ids?: readonly string[]) {
     revoking++;
     try {
@@ -561,9 +587,9 @@ export function createRelaySession(
       details.cancel();
       memberAdministration.clear();
       typing.clear();
-      // Saved owner inventory, read-state and profiles do not depend on channel access.
-      // Preserve only those narrow reads; broad, mixed, ID and channel reads
-      // must still retire.
+      // Saved owner inventory, read-state and profiles do not depend on channel access,
+      // and reads of channels still readable keep theirs. Preserve only those
+      // narrow reads; broad, mixed, ID and other channel reads must still retire.
       const retired = (filters: readonly ReadFilter[]) =>
         !filters.length ||
         filters.some(
@@ -571,7 +597,8 @@ export function createRelaySession(
             !isOwnerInventoryFilter(filter, transport?.viewer) &&
             !isOwnReadStateFilter(filter, transport?.viewer) &&
             !isProfileFilter(filter) &&
-            !isArchiveFilter(filter),
+            !isArchiveFilter(filter) &&
+            !ofReadableChannels(filter),
         );
       requests.invalidate(retired);
       retireBackoffs(retired);
@@ -793,10 +820,13 @@ export function createRelaySession(
         channels.denyChannel(id, error);
       throw error;
     }
-    // A profile read stays valid across an access change; see isProfileFilter.
+    // A profile read stays valid across an access change (see
+    // isProfileFilter), and so does a read of channels still readable.
     if (
       closed ||
-      (epoch !== accessEpoch && !profileReadSurvives(filters, cleared))
+      (epoch !== accessEpoch &&
+        !profileReadSurvives(filters, cleared) &&
+        !channelReadSurvives(filters, cleared))
     )
       throw new DOMException("Stale relay read", "AbortError");
     const relayCount = events.length;
@@ -1241,6 +1271,17 @@ export function createRelaySession(
           restored: (events) => unread.accept(events),
           verifyStored: transport.verifyStored?.bind(transport),
           demand: (channelId) => demandChannel(channelId),
+          // A first screen places its line from read state in hand: the
+          // snapshot, the copy this device saved, or what a drop
+          // interrupted. With none (nothing saved, and its read failed or
+          // has not answered), no row is known unread, so no line.
+          attention: (channelId, messageId) => {
+            const sync = unread.capability.sync();
+            return sync.completeness === "unknown" &&
+              (sync.status === "loading" || sync.status === "error")
+              ? UNKNOWN_ATTENTION
+              : unread.capability.attention(channelId, messageId);
+          },
           rosterChanged: (strong) => {
             if (channels.roster().state === "verified")
               rosterReadAt = Date.now();
@@ -1259,6 +1300,7 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
+  canReadConfirmed = channels.canReadConfirmed;
   retainedChannelEvent = channels.retainedEvent;
   retainedChannelEvents = channels.retainedEvents;
   const repositories = repoDestinations(async (filters, signal) => {
@@ -1624,10 +1666,16 @@ export function createRelaySession(
   });
   type Catchup = {
     generation: number;
+    /** `performance.now()` at the establishment that owes this catch-up. */
+    at: number;
     state: "pending" | "verified" | "deferred" | "error";
     error?: string | undefined;
     transient?: boolean;
     retryAt?: number;
+    /** The route that established it still delivers the channel: its
+     * catch-up leaves the store following it. False once the route ended,
+     * or when it had ended by the time its report arrived. */
+    follows: boolean;
   };
   const catchups = new Map<string, Catchup>();
   let liveGeneration = 0;
@@ -3427,7 +3475,8 @@ export function createRelaySession(
         closed ||
         (epoch !== accessEpoch &&
           !discoveryOnly &&
-          !profileReadSurvives(filters, cleared))
+          !profileReadSurvives(filters, cleared) &&
+          !channelReadSurvives(filters, cleared))
       )
         throw new DOMException("Stale relay read", "AbortError");
       const merged = new Map(result.map((event) => [event.id, event]));
@@ -3856,6 +3905,12 @@ export function createRelaySession(
     resolveAttended();
     const wanted = new Set(ids);
     for (const id of catchups.keys()) if (!wanted.has(id)) catchups.delete(id);
+    openTrace.mark("live", "interests", {
+      session: transport?.scope,
+      ids: ids.length,
+      joined: joined.length,
+      demanded: channels.demandedChannels(),
+    });
     try {
       traffic?.prioritize?.(channels.demandedChannels());
       traffic?.update(ids, joined);
@@ -4036,7 +4091,7 @@ export function createRelaySession(
     if (job.state !== "pending") {
       job.state = "pending";
       job.error = undefined;
-      channels.catchUpQueued(channelId);
+      channels.catchUpQueued(channelId, job.at, job.follows);
       catchupQueue.add(channelId);
       publishLive();
     }
@@ -4076,9 +4131,17 @@ export function createRelaySession(
       job.generation === liveGeneration &&
       catchups.get(channelId) === job;
     try {
-      // A pre-establishment finite read cannot satisfy the handoff obligation.
-      requests.invalidate((filters) => isChannelHead(filters, channelId));
-      const verified = await channels.catchUp(channelId);
+      // A finite read sent before this establishment cannot satisfy the
+      // handoff obligation: the relay may have answered it before the stream
+      // started. The catch-up takes or joins one sent since, or still queued,
+      // and otherwise reads its own; an opening's earlier read goes on to
+      // paint its screen (see the store's `catchUp`).
+      const done = openTrace.span("local", "catch-up", {}, channelId);
+      const verified = await openTrace.cause(
+        { purpose: "catch-up", channel: channelId },
+        () => channels.catchUp(channelId, job.at),
+      );
+      done({ verified });
       if (valid()) job.state = verified ? "verified" : "deferred";
     } catch (error) {
       if (!valid()) return;
@@ -4310,6 +4373,31 @@ export function createRelaySession(
         )
       )
         refreshRoster();
+      // A channel whose route stopped delivering while the connection stayed
+      // up is no longer followed: what the relay takes from now on reaches no
+      // stream (a drop above clears every channel at once).
+      if (snapshot.status === "connected") {
+        const now = new Map(
+          snapshot.routes.flatMap((route) =>
+            route.channelId ? [[route.channelId, route.status] as const] : [],
+          ),
+        );
+        const ended = new Set(
+          [...now].flatMap(([id, status]) => (status === "live" ? [] : [id])),
+        );
+        for (const route of liveSnapshot.routes)
+          if (
+            route.channelId &&
+            route.status === "live" &&
+            now.get(route.channelId) === undefined
+          )
+            ended.add(route.channelId);
+        for (const id of ended) {
+          const job = catchups.get(id);
+          if (job) job.follows = false;
+          channels.unfollow(id);
+        }
+      }
       liveSnapshot = snapshot;
       // Only live profiles traffic keeps unwatched authors' statuses current.
       statuses.live(
@@ -4347,6 +4435,15 @@ export function createRelaySession(
     },
     established(channelId, global, continuous) {
       if (closed) return;
+      for (const id of typeof channelId === "string"
+        ? [channelId]
+        : (channelId ?? []))
+        openTrace.mark(
+          "live",
+          "established",
+          { global: !!global, continuous: !!continuous?.includes(id) },
+          id,
+        );
       streamDropped = false;
       if (!channelId) {
         const first = refreshedGeneration !== liveGeneration;
@@ -4384,18 +4481,28 @@ export function createRelaySession(
         // The replay delivered every event in the channel since the dropped
         // connection last heard the relay: a view live at the drop is
         // contiguous again with no read. Any other view catches up.
-        const resumed = !!continuous?.includes(id);
+        // A report can trail its route's end (a host's queue under
+        // backpressure): an ended route proves nothing from now on, so its
+        // channel catches up but is not followed. A host that reports no
+        // routes leaves every report standing.
+        const route = liveSnapshot.routes.find(
+          (candidate) => candidate.channelId === id,
+        );
+        const follows = !route || route.status === "live";
+        const resumed = follows && !!continuous?.includes(id);
         for (const thread of threads)
           if (thread.channelId === id) void thread.established(resumed);
-        const job = {
+        const job: Catchup = {
           generation: liveGeneration,
-          state: "pending" as "pending" | "verified" | "deferred" | "error",
-          error: undefined as string | undefined,
+          at: performance.now(),
+          state: "pending",
+          error: undefined,
+          follows,
         };
         catchups.set(id, job);
-        if (resumed && channels.resume(id)) job.state = "verified";
+        if (resumed && channels.resume(id, job.at)) job.state = "verified";
         else {
-          channels.catchUpQueued(id);
+          channels.catchUpQueued(id, job.at, follows);
           if (channels.retainedChannels().includes(id)) catchupQueue.add(id);
           else job.state = "deferred";
         }

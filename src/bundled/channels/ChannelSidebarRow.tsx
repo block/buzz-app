@@ -67,7 +67,8 @@ export function ChannelSidebarRow({
   navigation?: Navigation | undefined;
   onRename?: ((id: string) => boolean) | undefined;
   pendingClick?: RefObject<ReturnType<typeof setTimeout> | undefined>;
-  onPrepare: (id: string) => void;
+  /** `press`: a primary-button press, an open about to happen. */
+  onPrepare: (id: string, press?: boolean) => void;
   onHideDm?: (id: string) => void;
 }) {
   const selectRef = useRef<HTMLButtonElement>(null);
@@ -136,6 +137,9 @@ export function ChannelSidebarRow({
       aria-current={selected === channel.id ? "page" : undefined}
       aria-describedby={presenceDescription ? presenceId : sharedDescription}
       onPointerEnter={() => onPrepare(channel.id)}
+      onPointerDown={(event) => {
+        if (event.button === 0) onPrepare(channel.id, true);
+      }}
       onFocus={() => onPrepare(channel.id)}
       {...(onRename ? soloActivation : { onClick: activate })}
       {...springLoaded}

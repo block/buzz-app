@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
+import { OFFLINE_AFTER_MS } from "./store";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { byteSize } from "./budget";
 import { DiscoveryState } from "./discovery";
@@ -1585,6 +1586,46 @@ describe("device-local startup", () => {
       expect(store.queries.snapshot().data?.sections).toEqual([]);
     } finally {
       store.dispose();
+    }
+  });
+
+  it("a resume session's open waits for the connection, and shows saved rows only when none came up", async () => {
+    let connected = true;
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        query: () =>
+          Promise.reject(new ReadError("unavailable", "Reconnect first.")),
+        media: () => undefined,
+      },
+      {
+        persistence: disk(),
+        prepared: true,
+        cachedOnly: true,
+        connected: () => connected,
+      },
+    );
+    owners.push(owner);
+    await owner.restore();
+    const { channels } = owner.session;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      channels.open?.("alpha");
+      channels.ensure("alpha");
+      expect(channels.window("alpha").screen).toBe("gathering");
+      // A connection is up: its session's fresh screen is the one to show,
+      // however long it takes.
+      vi.advanceTimersByTime(OFFLINE_AFTER_MS * 3);
+      expect(channels.window("alpha").screen).toBe("gathering");
+      // It went down again before its session took over.
+      connected = false;
+      vi.advanceTimersByTime(OFFLINE_AFTER_MS);
+      const offline = channels.window("alpha");
+      expect(offline.screen).toBe("offline");
+      expect(offline.rows.map((row) => row.content)).toEqual(["saved"]);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

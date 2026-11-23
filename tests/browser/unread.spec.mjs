@@ -301,6 +301,9 @@ test("focus cancellation and local manual-unread survive reload until explicit m
       exact: true,
     }),
   ).toBeVisible();
+  // While connected, the open waits for a fresh head and never shows saved
+  // rows first, so reading needs the relay's answer.
+  app.relay.releaseContent();
   await options(page);
   await page
     .getByRole("button", {

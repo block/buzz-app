@@ -33,6 +33,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 export async function buildApp(
   {
     developmentReact,
+    clientMetrics,
     builderlabLogin,
     federatedIdentity,
     pluginFixtures,
@@ -115,6 +116,10 @@ export async function buildApp(
           ? { "import.meta.env.VITE_BUZZ_FEDERATED_IDENTITY": '"1"' }
           : {}),
         ...(developmentReact ? { "import.meta.env.DEV": "true" } : {}),
+        // The development-only open timings, in a production build.
+        ...(clientMetrics
+          ? { "import.meta.env.VITE_BUZZ_CLIENT_METRICS": '"1"' }
+          : {}),
         "import.meta.env.VITE_BUZZ_LIVE": '"1"',
         "import.meta.env.VITE_BUZZ_TEST_DIAGNOSTICS": diagnostics
           ? '"1"'

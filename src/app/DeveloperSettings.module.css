@@ -60,6 +60,8 @@
 .history :is(th, td) {
   padding: var(--space-3) var(--space-2);
   text-align: end;
+  /* Narrow widths scroll the table rather than break values mid-word. */
+  white-space: nowrap;
 }
 .history :is(th, td):first-child {
   text-align: start;

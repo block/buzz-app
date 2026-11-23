@@ -6,6 +6,7 @@ import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { ReadTransport } from "./transport";
 import { byteSize } from "./budget";
+import { openTrace, type ReadHandle } from "../developer/open-trace";
 import { ReadError } from "./errors";
 import type { AgentLibrary } from "../agents/library";
 
@@ -18,6 +19,10 @@ export type ReadOptions = {
   priority?: Priority;
   /** A write preflight must start after its intent, never join an older in-flight read. */
   fresh?: boolean;
+  /** Join an equal read only if it is still queued or left for the relay at
+   * or after this moment (`performance.now()`); else start another. A live
+   * catch-up needs a read the relay answered after its stream came up. */
+  sentAfter?: number;
   /** Replaces the reader's deadline for new work; a joining read keeps the
    * deadline of the read it joins. */
   deadlineMs?: number;
@@ -25,6 +30,9 @@ export type ReadOptions = {
    * whatever their kinds, so a readable one the session does not know yet is
    * not dropped. It waits for discovery: before it, the read fails. */
   resolveChannels?: boolean;
+  /** Called with the moment (`performance.now()`) the read left for the
+   * relay: when it starts, or at once when it joins one already sent. */
+  sent?: (at: number) => void;
 };
 /** Finite, verified event reads. No retained event cache or claim of live freshness. */
 export type RelayReader = {
@@ -45,6 +53,7 @@ export type RelayReader = {
 };
 type ReadValue = readonly RelayEvent[] | AgentLibrary;
 type Consumer = {
+  sent?: ((at: number) => void) | undefined;
   resolve(value: ReadValue): void;
   reject(error: unknown): void;
 };
@@ -64,6 +73,9 @@ type Job = {
   /** Set for a name-only profile search; `filters` then hold the equivalent
    * NIP-50 filter, so invalidation treats both searches alike. */
   profiles?: { query: string; limit: number; page: number };
+  trace: ReadHandle;
+  /** `performance.now()` when the read left for the relay; unset while queued. */
+  sentAt?: number;
 };
 const cancelled = () => new DOMException("Relay read cancelled", "AbortError");
 
@@ -147,6 +159,14 @@ export function createRelayReader(
   function finish(job: Job, events?: ReadValue, error?: unknown) {
     if (jobs.get(job.key) !== job) return;
     job.queued(error ? "error" : "ok");
+    job.trace.finish(
+      !error
+        ? "ok"
+        : error instanceof DOMException && error.name === "AbortError"
+          ? "cancelled"
+          : "error",
+      Array.isArray(events) ? events.length : undefined,
+    );
     job.fetched?.(error ? "error" : "ok");
     jobs.delete(job.key);
     clearTimeout(job.timer);
@@ -170,7 +190,10 @@ export function createRelayReader(
         (!background ? queued[0] : undefined);
       if (!job) return;
       job.running = true;
+      job.sentAt = performance.now();
+      for (const consumer of job.consumers) consumer.sent?.(job.sentAt);
       job.queued();
+      job.trace.stage("slot");
       job.fetched = profiling.start("read.fetch", job.id);
       // Catch synchronous adapter failures as well as rejected promises.
       try {
@@ -188,7 +211,7 @@ export function createRelayReader(
           throw new Error("Read-state snapshots unavailable");
         if (job.profiles && !transport.searchProfiles)
           throw new Error("Profile name search unavailable");
-        const query =
+        const query = openTrace.sending(job.trace, () =>
           job.profiles && transport.searchProfiles
             ? transport.searchProfiles(
                 job.profiles.query,
@@ -208,7 +231,8 @@ export function createRelayReader(
                   job.controller.signal,
                   job.id,
                   job.priority,
-                );
+                ),
+        );
         void query
           .then(async (events) => {
             if (byteSize(events) > RELAY_READ_BYTES)
@@ -251,6 +275,8 @@ export function createRelayReader(
       priority = "foreground",
       fresh = false,
       deadlineMs = timeoutMs,
+      sent,
+      sentAfter,
     }: ReadOptions = {},
     snapshot = false,
     profiles?: Job["profiles"],
@@ -321,7 +347,20 @@ export function createRelayReader(
       key = `read-state-snapshot:${key}`;
     }
     if (profiles) key = `profile-names:${JSON.stringify(profiles)}`;
+    const earlier = jobs.get(key);
     if (fresh) key = `${key}:fresh:${++sequence}`;
+    else if (
+      earlier?.sentAt !== undefined &&
+      sentAfter !== undefined &&
+      earlier.sentAt < sentAfter
+    ) {
+      // The read that left too early goes on under its own key. This one
+      // takes the shared key, so a later read that needs the same moment
+      // (an open closing the gap its earlier head left) joins it.
+      jobs.delete(key);
+      earlier.key = `${key}:sent:${++sequence}`;
+      jobs.set(earlier.key, earlier);
+    }
     let job = jobs.get(key);
     if (!job) {
       if (jobs.size >= maxPending)
@@ -341,6 +380,17 @@ export function createRelayReader(
         snapshot,
         library,
         ...(profiles ? { profiles } : {}),
+        trace: openTrace.read({
+          filters: requestFilters,
+          priority,
+          ...(library
+            ? { hint: "agent-library" as const }
+            : snapshot
+              ? { hint: "read-state" as const }
+              : profiles
+                ? { hint: "profile-search" as const }
+                : {}),
+        }),
         timer: setTimeout(
           () =>
             finish(
@@ -352,12 +402,19 @@ export function createRelayReader(
         ),
       };
       jobs.set(key, job);
-    } else if (!job.running && priority === "foreground")
-      job.priority = priority;
+    } else {
+      job.trace.join();
+      if (!job.running && priority === "foreground") {
+        if (job.priority !== priority)
+          job.trace.set({ promoted: performance.now(), priority });
+        job.priority = priority;
+      }
+    }
     const owned = job;
     return new Promise<ReadValue>((resolve, reject) => {
       const release = () => signal?.removeEventListener("abort", abort);
       const consumer: Consumer = {
+        sent,
         resolve(events) {
           release();
           resolve(events);
@@ -373,6 +430,7 @@ export function createRelayReader(
         if (!owned.consumers.size) finish(owned, undefined, cancelled());
       };
       owned.consumers.add(consumer);
+      if (owned.sentAt !== undefined) consumer.sent?.(owned.sentAt);
       signal?.addEventListener("abort", abort, { once: true });
       pump();
     });
@@ -418,7 +476,14 @@ export function createRelayReader(
     /** Promote existing queued work without creating a consumer or a new deadline. */
     promote(matches: (filters: readonly ReadFilter[]) => boolean) {
       for (const job of jobs.values())
-        if (!job.running && matches(job.filters)) job.priority = "foreground";
+        if (!job.running && matches(job.filters)) {
+          if (job.priority !== "foreground")
+            job.trace.set({
+              promoted: performance.now(),
+              priority: "foreground",
+            });
+          job.priority = "foreground";
+        }
       pump();
     },
     invalidate(
@@ -428,8 +493,10 @@ export function createRelayReader(
       const previous = closed;
       closed = true;
       for (const job of [...jobs.values()])
-        if (!job.library && matches(job.filters))
+        if (!job.library && matches(job.filters)) {
+          job.trace.set({ cancelledBy: "invalidate" });
           finish(job, undefined, cancelled());
+        }
       closed = previous;
       pump();
     },

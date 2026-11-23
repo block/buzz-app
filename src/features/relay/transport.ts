@@ -66,6 +66,7 @@ import {
 } from "./http-admission";
 import { yieldToHost } from "./yield";
 import { clientMetrics } from "../developer/client-metrics";
+import { openTrace, type ReadHandle } from "../developer/open-trace";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import {
   subscribeRelayTraffic,
@@ -366,19 +367,25 @@ export async function parseEvents(
 async function measureQuery<T>(
   session: string,
   priority: "foreground" | "background",
-  read: (sized: (text: string) => string) => Promise<T>,
+  read: (sized: (text: string) => string, trace: ReadHandle) => Promise<T>,
 ): Promise<T> {
   const started = performance.now();
+  const trace = openTrace.currentRead();
+  trace.stage("sent");
+  trace.set({ session });
   let bytes = 0;
   let ok = false;
   try {
     const result = await read((text) => {
       bytes = text.length;
+      trace.stage("body");
+      trace.set({ bytes });
       return text;
-    });
+    }, trace);
     ok = true;
     return result;
   } finally {
+    trace.stage("parsed");
     clientMetrics.query(session, {
       ms: performance.now() - started,
       bytes,
@@ -396,6 +403,7 @@ function measuredLive(
     ...callbacks,
     state(snapshot) {
       clientMetrics.live(session, snapshot);
+      openTrace.live(session, snapshot);
       callbacks.state(snapshot);
     },
   };
@@ -1082,7 +1090,7 @@ export async function connectBrokerTransport(
             requestId: string,
             priority: "foreground" | "background",
           ) {
-            return measureQuery(endpoint, priority, async (sized) => {
+            return measureQuery(endpoint, priority, async (sized, trace) => {
               const response = await fetch(`${endpoint}/query`, {
                 method: "POST",
                 credentials: "same-origin",
@@ -1095,6 +1103,7 @@ export async function connectBrokerTransport(
                 ),
                 signal,
               });
+              trace.stage("headers");
               if (!response.ok)
                 throw new Error(
                   `Read-state snapshot failed (${response.status})`,
@@ -1456,7 +1465,7 @@ export async function connectBrokerTransport(
         size,
       ),
     query: (filters, signal, requestId = "read", priority = "foreground") =>
-      measureQuery(endpoint, priority, async (sized) => {
+      measureQuery(endpoint, priority, async (sized, trace) => {
         const result = await fetch(`${endpoint}/query`, {
           method: "POST",
           credentials: "same-origin",
@@ -1467,6 +1476,7 @@ export async function connectBrokerTransport(
           body: JSON.stringify(filters),
           signal: signal ?? null,
         });
+        trace.stage("headers");
         if (!result.ok) {
           const failure = await readApiFailure(result);
           throw new ReadError(
@@ -1716,13 +1726,19 @@ async function signedPost(
           migrationWrite,
         );
   signal?.throwIfAborted();
+  // The read this request serves, captured before any await loses it.
+  const trace = openTrace.currentRead();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
     return dispatch(() => {
       signal?.throwIfAborted();
-      return profiling.measureAsync("http.fetch", id, () =>
-        signer.request(url, body, signal),
-      );
+      trace.stage("admitted");
+      return profiling
+        .measureAsync("http.fetch", id, () => signer.request(url, body, signal))
+        .then((response) => {
+          trace.stage("headers");
+          return response;
+        });
     });
   }, priority);
 }

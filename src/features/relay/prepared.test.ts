@@ -795,29 +795,33 @@ it.each(["clear", "dispose", "revoke"])(
   },
 );
 
-it("bounds transient preparation to one request without delaying selected-channel dispatch", async () => {
+it("caps hovers gathering at once, cancelling the oldest, without delaying selected-channel dispatch", async () => {
   const { queries, next, pending, store } = setup();
   try {
     queries.ensureList();
-    next().respond(discovery(["a", "b", "c", "z"]));
+    next().respond(discovery(["a", "b", "c", "d", "z"]));
     await flush();
     queries.prepare?.("a");
-    const speculative = next();
+    const oldest = next();
     queries.prepare?.("b");
+    expect(oldest.signal?.aborted).toBe(false);
+    // A third hover: the pointer has moved on from the first.
     queries.prepare?.("c");
-    expect(pending).toHaveLength(0);
+    expect(oldest.signal?.aborted).toBe(true);
+    expect(pending.map((read) => read.filters[0]?.["#h"])).toEqual([
+      ["b"],
+      ["c"],
+    ]);
+    // Hovers leave a read slot free: the selected channel's head goes now.
     queries.ensure("z");
-    const selected = next();
-    expect(selected.filters[0]?.["#h"]).toEqual(["z"]);
-    selected.respond(empty("z"));
+    await flush();
+    const selected = pending.find(
+      (read) => read.filters[0]?.["#h"]?.[0] === "z",
+    );
+    expect(selected).toBeDefined();
+    selected?.respond(empty("z"));
     await flush();
     expect(queries.window("z").status).toBe("ready");
-    expect(speculative.signal?.aborted).toBe(false);
-    speculative.respond(empty("a"));
-    await flush();
-    expect(pending).toHaveLength(0); // Dropped pointer hints never become a backlog.
-    queries.prepare?.("b");
-    expect(next().filters[0]?.["#h"]).toEqual(["b"]);
   } finally {
     store.dispose();
   }

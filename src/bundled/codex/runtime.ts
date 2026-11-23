@@ -4518,6 +4518,13 @@ export class CodexRuntime {
             .catch((failure) =>
               console.error("Codex could not forget its thread", failure),
             );
+          // A seat would keep sending typed work to the refused thread.
+          if (lane.voice && lane.voice.loaded.threadId === active.threadId)
+            lane.voice.end(
+              new Error(
+                "Codex started a fresh session. Join the huddle again to use it.",
+              ),
+            );
         }
         const reason = `Codex could not finish: ${message(error)}.${
           reset ? " Your next mention starts a fresh Codex session." : ""

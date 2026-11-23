@@ -7820,6 +7820,37 @@ describe("voice seats", () => {
     f.complete(0, "DONE");
     await vi.waitFor(() => expect(f.publish).toHaveBeenCalled());
   });
+  it("ends the seat on a thread the provider refused, so the next mention starts fresh", async () => {
+    const f = await seated();
+    await f.runtime.run(f.delivery("typed work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.starts()[0]?.params).toMatchObject({ threadId: "thread-1" });
+    failTurn(f, AUDIO_REFUSED, "other");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+    expect(f.publish.mock.calls[0]?.[0]).toMatchObject({
+      content: `Codex could not finish: ${AUDIO_REFUSED}. ${FRESH_SESSION}`,
+    });
+    await vi.waitFor(() => expect(f.ended).toHaveBeenCalledOnce());
+    await f.runtime.run(f.delivery("follow-up"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(f.starts()[1]?.params).not.toMatchObject({ threadId: "thread-1" });
+    expect(
+      f.sent.filter((wire) => wire.method === "thread/start"),
+    ).toHaveLength(2);
+  });
+  it("leaves a seat on another Codex thread when the provider refuses a thread", async () => {
+    const f = await seated({ conversation: { channelId: "other" } }, (f) =>
+      f.huddleChannels.add("other"),
+    );
+    await f.runtime.run(f.delivery("typed work"));
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    expect(f.starts()[0]?.params).toMatchObject({ threadId: "thread-2" });
+    failTurn(f, AUDIO_REFUSED, "other");
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledOnce());
+    expect(f.ended).not.toHaveBeenCalled();
+    expect(f.abort.signal.aborted).toBe(false);
+    await f.connection.close();
+  });
   it("keeps a running typed turn alive when its seat aborts", async () => {
     vi.mocked(openVoice).mockImplementationOnce(async (rpc, threadId) => ({
       input() {},

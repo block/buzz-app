@@ -891,6 +891,41 @@ describe("channel store", () => {
       latest.id,
     ]);
   });
+  it("a live trim of late rows below the floor keeps the older cursor", async () => {
+    const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const head = message(alice, "c", "head", 30);
+    const [ten, five] = [
+      message(alice, "c", "ten", 10),
+      message(alice, "c", "five", 5),
+    ];
+    const queries = createRelaySession(
+      {
+        ...scripted.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { maxHistoryBytes: listByteSize([head, ten]) },
+    ).session.channels;
+    live.receive([roster(relay, "c", [viewer.pubkey])]);
+    queries.ensure("c");
+    scripted.next().respond([
+      head,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 30, id: head.id },
+      }),
+    ]);
+    await flush();
+    live.receive([ten, five]);
+    await flush();
+    queries.loadOlder("c");
+    expect(
+      scripted.pending.find((read) => read.filters[0]?.until)?.filters[0],
+    ).toMatchObject({ until: 30, before_id: head.id });
+  });
   it("a full window drops its oldest rows for live traffic, but not under an older read", async () => {
     const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
     let live!: LiveCallbacks;

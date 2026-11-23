@@ -1712,10 +1712,18 @@ export function createChannelStore(
       kept = kept.slice(0, -Math.max(1, Math.ceil(kept.length / 4)));
       retained = retain(kept);
     }
+    // Only dropping rows paging read moves the next older read; a kept live
+    // row below the floor (a late send) must not skip the rows under it.
+    const floor = state.cursor ? (state.floor ?? -Infinity) : -Infinity;
+    const keptIds = new Set(kept.map((event) => event.id));
     const oldest = kept.at(-1);
-    state.floor = undefined;
-    if (oldest)
+    if (
+      oldest &&
+      rows.some((event) => event.created_at >= floor && !keptIds.has(event.id))
+    ) {
+      state.floor = undefined;
       moveCursor(state, { createdAt: oldest.created_at, eventId: oldest.id });
+    }
     return retained;
   }
   async function hydrate() {

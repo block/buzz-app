@@ -334,7 +334,8 @@ it("starts every conversation in New message from the + above the sections", asy
   const f = fixture(true, true);
   expect(screen.queryByRole("tab")).toBeNull();
   const solo = document.querySelector('[data-sidebar-section="solo"]');
-  if (!(solo instanceof HTMLElement)) throw new Error("Missing Chats section");
+  if (!(solo instanceof HTMLElement))
+    throw new Error("Missing Messages section");
   // The old Solo-only + is gone; New message is the one way to start a chat.
   expect(
     within(solo).queryByRole("button", { name: "New Solo chat" }),
@@ -359,12 +360,11 @@ it("mounts one action menu for each home section", async () => {
     await act(() => vi.advanceTimersByTimeAsync(SIDEBAR_REVEAL_BUDGET_MS));
     const more = (title: string) =>
       document.querySelector(`button[aria-label="More actions for ${title}"]`);
-    expect(more("Chats")).not.toBeNull();
+    expect(more("Messages")).not.toBeNull();
     expect(more("DMs")).not.toBeNull();
-    // Shared with you only exists while something waits in it. The old Solo,
-    // Team and Messages headings are gone.
+    // The old Solo, Team, Chats and Shared with you headings are gone.
+    expect(more("Chats")).toBeNull();
     expect(more("Shared with you")).toBeNull();
-    expect(more("Messages")).toBeNull();
     expect(more("Solo")).toBeNull();
     expect(more("Team")).toBeNull();
     expect(more("Direct messages")).toBeNull();
@@ -374,7 +374,7 @@ it("mounts one action menu for each home section", async () => {
   }
 });
 
-it("expands Chats when navigation selects a team conversation", async () => {
+it("expands Messages when navigation selects a team conversation", async () => {
   vi.useFakeTimers();
   try {
     const f = fixture(true);
@@ -479,7 +479,7 @@ it("preserves a source opening only for itself, through a later render", async (
   expect(teamRow()).not.toHaveAttribute("aria-current");
 });
 
-/** The sidebar's own +, apart from the Chats section's. */
+/** The sidebar's own +, apart from the Messages section's. */
 function newMessageButton() {
   const button = screen
     .getAllByRole("button", { name: "New message" })

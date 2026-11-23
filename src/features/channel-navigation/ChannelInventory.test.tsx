@@ -33,7 +33,6 @@ import type {
   SidebarPreferences,
   SidebarSortMode,
 } from "../relay/sidebar-preferences";
-import type { OwnPostsState } from "../relay/own-posts";
 import type { LiveCallbacks } from "../relay/live";
 import type { RelayData, RelaySnapshot } from "../relay/service";
 import type { ChannelList, ChannelSummary } from "../relay/contracts";
@@ -809,29 +808,6 @@ it("keeps DMs visible when the initial archive read fails", async () => {
   expect(f.read).toHaveBeenCalledTimes(1);
 });
 
-/** The session's own-posts store, settled on these channels. The fixture's
- * offline session reports none as unavailable, which counts everything as
- * engaged; a test that cares about Shared with you installs this instead. */
-function ownPostsFixture(channels: readonly string[] = []) {
-  let state: OwnPostsState = { status: "ready", channels: new Set(channels) };
-  const listeners = new Set<() => void>();
-  return {
-    snapshot: () => state,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    ensure: vi.fn(async () => {}),
-    /** The viewer posts in a channel: the store publishes the addition. */
-    post(id: string) {
-      state = { ...state, channels: new Set([...state.channels, id]) };
-      act(() => {
-        for (const listener of listeners) listener();
-      });
-    },
-  };
-}
-
 function visibilityFixture() {
   const f = fixture();
   const read = vi
@@ -1569,7 +1545,7 @@ it("offers DMs a Move conversation menu and relocates them into a saved group", 
   }
 });
 
-it("lists forums under Chats and moves them into a saved group", async () => {
+it("lists forums under Messages and moves them into a saved group", async () => {
   const saved: SidebarPreferences = {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: {},
@@ -1698,9 +1674,7 @@ it.each(["ready", "error"] as const)(
   },
 );
 
-// Shared with you has no header actions: its conversations list in Chats once
-// engaged. Every
-// section starts conversations through New message.
+// Every section starts conversations through New message.
 it.each(["Favorites"])(
   "uses only the invoking section for placement (%s)",
   async (section) => {
@@ -2837,156 +2811,13 @@ it("a sidebar remount does not resubmit or redirect pending work", async () => {
   expect(h.navigator.open).not.toHaveBeenCalled();
 });
 
-const viewerKey = "a".repeat(64);
 const sectionOf = (name: string) =>
   screen
     .getByRole("button", { name })
     .closest("[data-sidebar-section]")
     ?.getAttribute("data-sidebar-section");
 
-// Named conversations the viewer started, posted in or kept list in Chats;
-// ones someone else added them to wait in Shared with you.
-it("lists untouched shared chats under Shared with you without removing access", async () => {
-  const h = fixture();
-  h.session.ownPosts = ownPostsFixture();
-  h.publish("beta", {
-    channelType: "solo",
-    private: true,
-    creator: viewerKey,
-  });
-  render(h.view("alpha", undefined, true));
-  await screen.findByRole("button", { name: "gamma" });
-  expect(screen.queryByLabelText("Team", { selector: "summary" })).toBeNull();
-  expect(screen.queryByLabelText("Solo", { selector: "summary" })).toBeNull();
-  // Started by the viewer, or by a creator not loaded yet: engaged.
-  expect(sectionOf("beta")).toBe("solo");
-  expect(sectionOf("gamma")).toBe("solo");
-  expect(
-    screen.queryByLabelText("Shared with you", { selector: "summary" }),
-  ).toBeNull();
-  h.publish("beta", { creator: "b".repeat(64) });
-  expect(sectionOf("beta")).toBe("channels");
-  expect(
-    screen
-      .getByLabelText("Shared with you", { selector: "summary" })
-      .closest("[data-sidebar-section]"),
-  ).toContainElement(screen.getByRole("button", { name: "beta" }));
-  expect(
-    h.session.channels.list().channels.find((channel) => channel.id === "beta"),
-  ).toMatchObject({ channelType: "solo", creator: "b".repeat(64) });
-  expect(h.navigator.open).not.toHaveBeenCalled();
-});
-
-it("moves a shared chat to Chats once the viewer posts in it, and hides the emptied pile", async () => {
-  const h = fixture();
-  const posts = ownPostsFixture(["gamma"]);
-  h.session.ownPosts = posts;
-  for (const id of ["alpha", "beta", "gamma"])
-    h.publish(id, { creator: "b".repeat(64) });
-  render(h.view("alpha"));
-  await screen.findByRole("button", { name: "gamma" });
-  expect(sectionOf("gamma")).toBe("solo");
-  expect(sectionOf("alpha")).toBe("channels");
-  expect(sectionOf("beta")).toBe("channels");
-  posts.post("alpha");
-  expect(sectionOf("alpha")).toBe("solo");
-  expect(sectionOf("beta")).toBe("channels");
-  posts.post("beta");
-  expect(sectionOf("beta")).toBe("solo");
-  expect(
-    screen.queryByLabelText("Shared with you", { selector: "summary" }),
-  ).toBeNull();
-});
-
-it("holds the sidebar back until the viewer's posts are known, so rows do not jump", async () => {
-  const h = fixture(undefined, "ready", undefined);
-  let state: OwnPostsState = { status: "loading", channels: new Set() };
-  const listeners = new Set<() => void>();
-  h.session.ownPosts = {
-    snapshot: () => state,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    ensure: vi.fn(async () => {}),
-  } as typeof h.session.ownPosts;
-  for (const id of ["alpha", "beta", "gamma"])
-    h.publish(id, { creator: "b".repeat(64) });
-  render(h.view("alpha"));
-  // The rest of startup settles; rows still wait for the pending read.
-  await waitFor(() => expect(h.session.ownPosts.ensure).toHaveBeenCalled());
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  });
-  expect(screen.queryByRole("button", { name: "gamma" })).toBeNull();
-  state = { status: "ready", channels: new Set(["gamma"]) };
-  act(() => {
-    for (const listener of listeners) listener();
-  });
-  await screen.findByRole("button", { name: "gamma" });
-  expect(sectionOf("gamma")).toBe("solo");
-  expect(sectionOf("beta")).toBe("channels");
-});
-
-it("keeps a shared chat in Chats from its Move menu, persists it, and leaves it there", async () => {
-  const data: SidebarPreferences = {
-    sections: [{ id: "work", name: "Work", order: 0 }],
-    assignments: {},
-    starred: [],
-    muted: [],
-  };
-  const write = vi.fn(async () => ({
-    sections: data.sections,
-    assignments: {},
-  }));
-  const preferences = createSidebarPreferencesStore({
-    read: async () => data,
-    available: true,
-    write,
-    writeStar: vi.fn(async () => []),
-  });
-  await preferences.queries.ensure();
-  const h = fixture(preferences.queries);
-  h.session.ownPosts = ownPostsFixture();
-  for (const id of ["alpha", "beta", "gamma"])
-    h.publish(id, { creator: "b".repeat(64) });
-  const user = userEvent.setup();
-  try {
-    const view = render(h.view("alpha"));
-    await screen.findByRole("button", { name: "beta" });
-    expect(sectionOf("beta")).toBe("channels");
-    fireEvent.keyDown(screen.getByRole("button", { name: "beta" }), {
-      key: "ContextMenu",
-    });
-    await user.hover(await screen.findByRole("menuitem", { name: "Move to…" }));
-    // Shared with you is where it waits, not a place to move to.
-    expect(
-      screen.queryByRole("menuitemradio", { name: "Shared with you" }),
-    ).toBeNull();
-    expect(
-      await screen.findByRole("menuitemradio", { name: "Chats" }),
-    ).not.toBeChecked();
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "Chats" }));
-    await waitFor(() => expect(sectionOf("beta")).toBe("solo"));
-    // Only beta was kept; the others still wait.
-    expect(sectionOf("gamma")).toBe("channels");
-    // A plain keep changes no workspace or favorite.
-    expect(write).not.toHaveBeenCalled();
-    expect(readView(h.snapshot.scope ?? "", "kept-chats", [])).toEqual([
-      "beta",
-    ]);
-    // It stays after the sidebar remounts, with nothing posted.
-    view.unmount();
-    render(h.view("alpha"));
-    await screen.findByRole("button", { name: "beta" });
-    expect(sectionOf("beta")).toBe("solo");
-    expect(sectionOf("gamma")).toBe("channels");
-  } finally {
-    preferences.dispose();
-  }
-});
-
-it("takes a filed shared chat out of its workspace when it moves to Chats", async () => {
+it("takes a filed chat out of its workspace when it moves to Messages", async () => {
   const data: SidebarPreferences = {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: { beta: "work" },
@@ -3005,7 +2836,6 @@ it("takes a filed shared chat out of its workspace when it moves to Chats", asyn
   });
   await preferences.queries.ensure();
   const h = fixture(preferences.queries);
-  h.session.ownPosts = ownPostsFixture();
   for (const id of ["alpha", "beta", "gamma"])
     h.publish(id, { creator: "b".repeat(64) });
   const user = userEvent.setup();
@@ -3018,7 +2848,7 @@ it("takes a filed shared chat out of its workspace when it moves to Chats", asyn
     });
     await user.hover(await screen.findByRole("menuitem", { name: "Move to…" }));
     fireEvent.click(
-      await screen.findByRole("menuitemradio", { name: "Chats" }),
+      await screen.findByRole("menuitemradio", { name: "Messages" }),
     );
     await waitFor(() =>
       expect(write).toHaveBeenCalledWith(
@@ -3026,14 +2856,14 @@ it("takes a filed shared chat out of its workspace when it moves to Chats", asyn
         expect.any(AbortSignal),
       ),
     );
-    // Unfiled, it is Chats and not back in the pile, because it was kept.
+    // Unfiled, it lists in Messages.
     await waitFor(() => expect(sectionOf("beta")).toBe("solo"));
   } finally {
     preferences.dispose();
   }
 });
 
-it("offers a DM its own home, DMs, and no Chats choice", async () => {
+it("offers a DM its own home, DMs, and no Messages choice", async () => {
   const data: SidebarPreferences = {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: {},
@@ -3051,7 +2881,6 @@ it("offers a DM its own home, DMs, and no Chats choice", async () => {
     { id: "alpha", name: "alpha", channelType: "stream" },
     { id: "dm", name: "Alice", channelType: "dm", creator: "b".repeat(64) },
   ]);
-  h.session.ownPosts = ownPostsFixture();
   const user = userEvent.setup();
   try {
     render(h.view("alpha"));
@@ -3064,7 +2893,9 @@ it("offers a DM its own home, DMs, and no Chats choice", async () => {
     expect(
       await screen.findByRole("menuitemradio", { name: "DMs" }),
     ).toBeChecked();
-    expect(screen.queryByRole("menuitemradio", { name: "Chats" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitemradio", { name: "Messages" }),
+    ).toBeNull();
   } finally {
     preferences.dispose();
   }
@@ -3163,7 +2994,7 @@ it("moves a saved group from its menu, rolls back a failed save, and retries it"
 });
 
 it.each(["star", "section", "unfiled"])(
-  "files an untouched shared chat under Favorites, its workspace or Shared with you, never Team (%s)",
+  "files a chat someone else added you to under Favorites, its workspace or Messages, never Team (%s)",
   async (placement) => {
     const data = {
       sections: [{ id: "work", name: "Work", order: 0 }],
@@ -3187,7 +3018,6 @@ it.each(["star", "section", "unfiled"])(
       },
       { id: "alpha", name: "Team channel", channelType: "stream" },
     ]);
-    h.session.ownPosts = ownPostsFixture();
     render(h.view("alpha"));
     await screen.findByRole("button", { name: "Team channel" });
     const rows = screen.getAllByRole("button", { name: "Shared work" });
@@ -3198,33 +3028,11 @@ it.each(["star", "section", "unfiled"])(
         ? "starred"
         : placement === "section"
           ? "group:work"
-          : "channels",
+          : "solo",
     );
   },
 );
 
-it("opening a shared chat lists it once, still under Shared with you until the viewer engages", async () => {
-  const h = fixture();
-  const posts = ownPostsFixture();
-  h.session.ownPosts = posts;
-  h.publish("beta", {
-    channelType: "solo",
-    private: true,
-    creator: "b".repeat(64),
-  });
-  const view = render(h.view("alpha"));
-  await screen.findByRole("button", { name: "gamma" });
-  view.rerender(h.view("beta"));
-  const rows = await screen.findAllByRole("button", { name: "beta" });
-  expect(rows).toHaveLength(1);
-  expect(rows[0]?.closest("[data-sidebar-section]")).toHaveAttribute(
-    "data-sidebar-section",
-    "channels",
-  );
-  posts.post("beta");
-  expect(screen.getAllByRole("button", { name: "beta" })).toHaveLength(1);
-  expect(sectionOf("beta")).toBe("solo");
-});
 it("promotes exactly the Bestie DM, restores prior local removal, and releases it on replacement, deletion and plugin disable", async () => {
   const viewer = "a".repeat(64),
     pollen = "b".repeat(64),
@@ -3738,7 +3546,7 @@ it("decorates live host rows and closes menus only when their row is hidden", as
   );
   await waitFor(() =>
     expect(
-      screen.getByLabelText("Chats", { selector: "summary" }),
+      screen.getByLabelText("Messages", { selector: "summary" }),
     ).toHaveFocus(),
   );
 
@@ -3781,7 +3589,7 @@ it.each([
   {
     focused: "beta",
     hidden: ["alpha", "beta", "gamma"],
-    destination: "Chats",
+    destination: "Messages",
   },
   {
     focused: "beta",
@@ -3816,8 +3624,8 @@ it.each([
 
     expect(screen.queryByRole("button", { name: focused })).toBeNull();
     const target =
-      destination === "Chats"
-        ? screen.getByLabelText("Chats", { selector: "summary" })
+      destination === "Messages"
+        ? screen.getByLabelText("Messages", { selector: "summary" })
         : screen.getByRole("button", { name: destination });
     expect(target).toHaveFocus();
   },
@@ -4037,7 +3845,7 @@ it("composes two plugins around the preceding result", async () => {
 });
 
 it.each([
-  { sectionKey: "solo", preferenceKey: "solo", label: "Chats" },
+  { sectionKey: "solo", preferenceKey: "solo", label: "Messages" },
   { sectionKey: "group:work", preferenceKey: "section:work", label: "Work" },
 ])(
   "persists a plugin sort for $sectionKey across disable and re-enable",
@@ -4156,7 +3964,7 @@ it.each(["throw", "non-finite"] as const)(
         ].map((el) => el.getAttribute("data-channel-id")),
       ).toEqual(["alpha", "beta", "gamma"]);
       const user = userEvent.setup();
-      const options = await sortMenu(user, "Chats");
+      const options = await sortMenu(user, "Messages");
       expect(
         within(options).getByRole("menuitemradio", { name: "Broken sort" }),
       ).toHaveAttribute("aria-checked", "true");
@@ -4310,7 +4118,7 @@ it("updates decorated unread data and a selected unread sort without rewriting p
     expect(renderRow.mock.calls.map(([row]) => row.id)).toEqual(["beta"]);
     expect(order()).toEqual(["alpha", "beta", "gamma"]);
     const user = userEvent.setup();
-    await chooseView(user, "Chats", "Unread first");
+    await chooseView(user, "Messages", "Unread first");
     await waitFor(() => expect(order()).toEqual(["beta", "alpha", "gamma"]));
     expect(writeSort).toHaveBeenCalledOnce();
     publish(null);

@@ -1667,7 +1667,7 @@ describe("starting a Solo chat", () => {
         visibility: "view-only",
       },
     );
-    expect(test.outbox.send.mock.calls[0]?.[0].tags).toContainEqual([
+    expect(vi.mocked(test.outbox.send).mock.calls[0]?.[0].tags).toContainEqual([
       "visibility",
       "open",
     ]);
@@ -1677,7 +1677,7 @@ describe("starting a Solo chat", () => {
     await ready;
     await flush();
     expect(test.outbox.send).toHaveBeenCalledTimes(2);
-    expect(test.outbox.send.mock.calls[1]?.[0]).toEqual({
+    expect(vi.mocked(test.outbox.send).mock.calls[1]?.[0]).toEqual({
       kind: 9002,
       content: "",
       tags: [

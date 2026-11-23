@@ -13,8 +13,8 @@ export function isChannelSectionKey(key: string) {
 export type SidebarRowKind = "channel" | "dm" | "solo" | "forum";
 
 const anyRow: readonly SidebarRowKind[] = ["solo", "channel", "forum", "dm"];
-// Chats ("solo") takes named conversations: dropping one there keeps it.
-// Shared with you ("channels") takes no drops: a row leaves it by engaging.
+// Messages ("solo") takes named conversations and DMs takes DMs. The old
+// "channels" key stays valid in saved preferences but lists nothing.
 const homeRows: Partial<Record<string, readonly SidebarRowKind[]>> = {
   solo: ["solo", "channel", "forum"],
   dms: ["dm"],
@@ -33,39 +33,9 @@ export function sidebarRowKind(channel: ChannelSummary): SidebarRowKind {
     : "channel";
 }
 
-/** What counts as the viewer having engaged with a named conversation. */
-export type Engagement = Readonly<{
-  /** Pubkeys that count as the viewer: the viewer and their own agents. */
-  mine: ReadonlySet<string>;
-  /** Channels the viewer has posted in; undefined until that read settles. */
-  posted: ReadonlySet<string> | undefined;
-  /** Channels the viewer chose to keep in Chats, saved on this device. */
-  kept: ReadonlySet<string>;
-}>;
-
-/** A named conversation is engaged when the viewer started it (or its creator
- * is not known yet, so it does not flicker into Shared with you), posted in it
- * or kept it. Without engagement data every conversation counts as engaged. */
-export function isEngaged(channel: ChannelSummary, engagement?: Engagement) {
-  if (!engagement) return true;
-  const { creator } = channel;
-  return (
-    creator === undefined ||
-    engagement.mine.has(creator) ||
-    engagement.posted === undefined ||
-    engagement.posted.has(channel.id) ||
-    engagement.kept.has(channel.id)
-  );
-}
-
-/** DMs list under DMs; other conversations under Chats once engaged and under
- * Shared with you until then. */
-export function sidebarHome(channel: ChannelSummary, engagement?: Engagement) {
-  return channel.channelType === "dm"
-    ? "dms"
-    : isEngaged(channel, engagement)
-      ? "solo"
-      : "channels";
+/** DMs list under DMs; every other conversation under Messages. */
+export function sidebarHome(channel: ChannelSummary) {
+  return channel.channelType === "dm" ? "dms" : "solo";
 }
 
 export function contributedSidebarSectionKey(key: string) {
@@ -118,8 +88,7 @@ export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
 const titles: Record<string, string> = {
   pages: "Plugins",
   starred: "Favorites",
-  solo: "Chats",
-  channels: "Shared with you",
+  solo: "Messages",
   dms: "DMs",
 };
 
@@ -133,7 +102,6 @@ export function sidebarSections<T extends ChannelSummary>(
   dormantAssignments: ReadonlySet<string> = new Set(),
   /** Include the orderable Plugins section for sidebar-placed pages. */
   pages = false,
-  engagement?: Engagement,
 ) {
   const groups = new Map(
     preferences?.sections.map((group) => [group.id, group]),
@@ -156,7 +124,7 @@ export function sidebarSections<T extends ChannelSummary>(
       ? "starred"
       : destination && groups.has(destination)
         ? `group:${destination}`
-        : sidebarHome(channel, engagement);
+        : sidebarHome(channel);
     const rows = rowsBySection.get(key);
     if (rows) rows.push(channel);
     else rowsBySection.set(key, [channel]);
@@ -165,8 +133,8 @@ export function sidebarSections<T extends ChannelSummary>(
     if (key === SIDEBAR_PAGES_SECTION && !pages) return [];
     const group = groups.get(key.slice(6));
     const rows = rowsBySection.get(key) ?? [];
-    // Shared with you is a triage pile: nothing to triage, nothing shown.
-    if (key === "channels" && !rows.length) return [];
+    // Its conversations list in Messages now.
+    if (key === "channels") return [];
     // The Solo heading owns New and its keyboard shortcut, even when every
     // chat is filed in a workspace. Plugins stay reachable in Focus.
     if (

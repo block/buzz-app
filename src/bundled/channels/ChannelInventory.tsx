@@ -128,7 +128,6 @@ import { channelIcon } from "../../features/channels/channel-icon";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import { NewWorkspace } from "../../features/solo/NewWorkspace";
 import { useSidebarStartup } from "./useSidebarStartup";
-import { useEngagement } from "./useEngagement";
 import { useChannelLabels } from "./useChannelLabels";
 import { useHiddenDms } from "./useHiddenDms";
 import { resurfaceHiddenDms } from "../../features/relay/dm-resurfacing";
@@ -332,12 +331,6 @@ export function ChannelInventory({
     // a chat that already leads, so they leave the sidebar alone.
     ...(pluginSorted ? {} : { rank: recentAt }),
   });
-  const {
-    engagement,
-    read: readEngagement,
-    settled: engagementSettled,
-    keep: keepChat,
-  } = useEngagement(queries, scope, viewer, list.status === "ready");
   const rosterRecovers = useRecoveryOwns(queries, (live) =>
     rosterRecovering(live.roster),
   );
@@ -573,10 +566,8 @@ export function ChannelInventory({
         new Set<string>(JSON.parse(activeDraftSections)),
         regions.managed,
         hasPages,
-        engagement,
       ),
     [
-      engagement,
       hasPages,
       sidebarChannels,
       preferences.data,
@@ -611,7 +602,6 @@ export function ChannelInventory({
     preferences,
     sortModesReady,
     needsActivity,
-    engagementSettled,
   );
   const sections = startup.ready ? cards : noSections;
   // Projection rejects duplicate ids; optimistic creates skip existing ids.
@@ -1080,10 +1070,10 @@ export function ChannelInventory({
         : sectionId
           ? `group:${sectionId}`
           : channel
-            ? sidebarHome(channel, readEngagement())
+            ? sidebarHome(channel)
             : "solo";
     },
-    [queries, readEngagement, regions.managed],
+    [queries, regions.managed],
   );
   const focusChannelPlacement = (channelId: string) => {
     if (
@@ -1132,11 +1122,9 @@ export function ChannelInventory({
       },
       surface,
     );
-  /** Keeping is what moves a Shared with you row into Chats; a Favorite or
-   * workspace row is also taken out of that placement, as any move to an
-   * unfiled home does. */
-  const moveToChats = (channelId: string, surface?: ChannelMenuSurface) => {
-    keepChat(channelId);
+  /** A Favorite or workspace row moved to Messages leaves that placement,
+   * as any move to an unfiled home does. */
+  const moveToMessages = (channelId: string, surface?: ChannelMenuSurface) => {
     const data = preferences.data;
     if (data?.starred.includes(channelId) || data?.assignments[channelId])
       assignGroup(channelId, undefined, surface);
@@ -1264,10 +1252,7 @@ export function ChannelInventory({
         ? sectionKey.slice("group:".length)
         : undefined;
       const starred = sectionKey === "starred";
-      const home = sidebarHome(channel, engagement);
-      // Named conversations move to Chats, which keeps a Shared with you row;
-      // a DM's own home is DMs.
-      const homeChoice = channel.channelType === "dm" ? home : "solo";
+      const home = sidebarHome(channel);
       actions.push(
         <MenuSubmenu key="move-channel">
           <MenuSubmenuTrigger>
@@ -1297,7 +1282,7 @@ export function ChannelInventory({
                 if (destination === "starred")
                   void setChannelStar(channel.id, !starred, surface);
                 else if (destination === "solo")
-                  moveToChats(channel.id, surface);
+                  moveToMessages(channel.id, surface);
                 else {
                   const groupId = destination.startsWith("group:")
                     ? destination.slice("group:".length)
@@ -1332,15 +1317,15 @@ export function ChannelInventory({
                 </MenuRadioItem>
               ))}
               <MenuRadioItem
-                value={homeChoice}
+                value={home}
                 closeOnClick={false}
                 disabled={!placementWritable}
               >
                 <MenuIcon>
                   <ChatCircleIcon size={14} />
                 </MenuIcon>
-                {sections.find((section) => section.key === homeChoice)
-                  ?.title ?? "Unfiled"}
+                {sections.find((section) => section.key === home)?.title ??
+                  "Unfiled"}
               </MenuRadioItem>
             </MenuRadioGroup>
             <MenuSeparator />
@@ -1694,7 +1679,7 @@ export function ChannelInventory({
       );
       return rowActions(
         channel,
-        placement?.key ?? sidebarHome(channel, readEngagement()),
+        placement?.key ?? sidebarHome(channel),
         surface,
       );
     });
@@ -1932,7 +1917,7 @@ export function ChannelInventory({
         onMove={(channelId, sectionKey) => {
           if (prepareSoloMove(queries, channelId)) return;
           if (sectionKey === "starred") setChannelStar(channelId, true);
-          else if (sectionKey === "solo") moveToChats(channelId);
+          else if (sectionKey === "solo") moveToMessages(channelId);
           else
             assignGroup(
               channelId,

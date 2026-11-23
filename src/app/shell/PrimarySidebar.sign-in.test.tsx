@@ -59,7 +59,9 @@ async function refusedLive(refusal: string) {
 it("offers explicit sign-in when the live socket refuses a protected community", async () => {
   const h = await refusedLive("Federated sign-in is required");
   // The cached channel list stays; nothing signs in on its own.
-  expect(screen.getByLabelText("Chats", { selector: "summary" })).toBeVisible();
+  expect(
+    screen.getByLabelText("Messages", { selector: "summary" }),
+  ).toBeVisible();
   expect(
     await screen.findByText(
       "This community requires builderlab.example sign-in.",
@@ -113,7 +115,7 @@ it.each(["adapter-refused", "grant-refused", "invalid-response"])(
       "Buzz couldn’t confirm your organization sign-in for this community. Try again. If it keeps happening, contact your administrator.",
     );
     expect(
-      screen.getByLabelText("Chats", { selector: "summary" }),
+      screen.getByLabelText("Messages", { selector: "summary" }),
     ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Sign in with builderlab.example" }),

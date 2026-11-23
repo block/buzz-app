@@ -1071,7 +1071,10 @@ export function createChannelStore(
         const chunk = Math.min(page.rows.size, page.limit ?? AUX_PAGE);
         let events: readonly RelayEvent[];
         try {
-          // The rows' thread summaries came with them.
+          // Foreground on purpose: a window reads one aux part and one older
+          // page at a time, and only the open one, so read-ahead holds at
+          // most two of the reader's slots. The rows' thread summaries came
+          // with them.
           events = await retryRead(
             (signal) =>
               source.read(

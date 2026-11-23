@@ -32,12 +32,13 @@ import {
 } from "../../shared/design-system/icons/index";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
-import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import {
   ConversationRowIdentity,
   ConversationTileIdentity,
   useConversationIdentity,
+  ViewOnlyMark,
+  viewOnlyDescriptionId,
 } from "./ConversationIdentity";
 import { SidebarCardDisplayContext } from "./SidebarCardDisplay";
 import { DmTypingBadge } from "./DmTypingBadge";
@@ -80,9 +81,6 @@ type ItemProps = {
   onRename?: ((id: string) => boolean) | undefined;
   pendingClick?:
     | RefObject<ReturnType<typeof setTimeout> | undefined>
-    | undefined;
-  onShareChat?:
-    | ((channel: ChannelSummary, trigger: HTMLElement) => void)
     | undefined;
   onOpenThread: (channelId: string, rootId: string) => void;
   onOpenMessage: (channelId: string, messageId: string) => void;
@@ -190,7 +188,6 @@ function ChannelSidebarItemCore({
   navigation,
   onRename,
   pendingClick,
-  onShareChat,
   onOpenThread,
   onOpenMessage,
   onOpenWorkingAgent,
@@ -252,6 +249,8 @@ function ChannelSidebarItemCore({
     />
   );
   const solo = channel.channelType === "solo";
+  // Only a solo conversation others can read gets a mark beside its name.
+  const viewOnly = named && mark === "solo-public";
   const plainRow = (
     <ChannelSidebarRow
       channel={channel}
@@ -318,19 +317,7 @@ function ChannelSidebarItemCore({
         )
       }
       sharedDescription={
-        onShareChat && channel.channelType === "solo"
-          ? soloSharedMarkId(channel.id)
-          : undefined
-      }
-      sharedAction={
-        onShareChat &&
-        channel.channelType === "solo" && (
-          <ChatSharedMark
-            session={session}
-            channel={channel}
-            onOpen={(trigger) => onShareChat(channel, trigger)}
-          />
-        )
+        viewOnly ? viewOnlyDescriptionId(channel.id) : undefined
       }
       working={agents.length > 0}
       ordinary={ordinary}
@@ -403,6 +390,7 @@ function ChannelSidebarItemCore({
               waiting={waiting}
             />
           </span>
+          {viewOnly && <ViewOnlyMark channelId={channel.id} tile={tiled} />}
           {channel.ttlSeconds !== undefined && agents.length === 0 && (
             <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
           )}

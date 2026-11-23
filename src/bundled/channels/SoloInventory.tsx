@@ -37,11 +37,7 @@ import { UnreadBadge } from "./UnreadBadge";
 import { useUnreadChannelIds } from "./useSidebarFilters";
 import { compareRecent } from "./sidebar-sections";
 import { SoloWorkspaces, type ChatListItem } from "./SoloWorkspaces";
-import {
-  soloSharedMarkId,
-  useSharedWithPeople,
-  useSoloOwner,
-} from "./ChatSharedMark";
+import { useViewOnly, viewOnlyDescriptionId } from "./ConversationIdentity";
 import { useChannelList } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -618,9 +614,8 @@ function SoloConversationRow({
     id,
     working,
   );
-  // Describe only by a mark that renders, using the same Shared evidence.
-  const owner = useSoloOwner(session, channel);
-  const shared = useSharedWithPeople(session, channel) || !!owner;
+  // Describe only by a mark that renders, using the same evidence.
+  const viewOnly = useViewOnly(session, channel);
   return (
     <ChannelActivityPopover
       session={session}
@@ -640,7 +635,7 @@ function SoloConversationRow({
           data-solo-channel-id={id}
           data-solo-destination-id={id}
           aria-current={selected ? "page" : undefined}
-          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
+          aria-describedby={viewOnly ? viewOnlyDescriptionId(id) : undefined}
           {...activation}
           {...springLoaded}
           icon={

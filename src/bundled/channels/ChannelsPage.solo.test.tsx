@@ -1854,22 +1854,17 @@ it("names the owner on the access controls of someone else's shared chat", async
   const f = fixture({ placed: false, ownedBy: person, people: [person] });
   f.mountWithSidebar();
   const user = userEvent.setup();
-  // The header names the owner; the sidebar mark retains the owner avatar.
+  // The header names the owner; the sidebar shows no owner avatar.
   const header = await screen.findByRole("button", {
     name: "Share access to Planning, Teammate’s chat",
   });
   expect(header).toHaveTextContent("Planning");
   expect(header).toHaveAttribute("title", "Teammate’s chat");
-  const mark = screen.getByRole("button", { name: "Teammate’s chat" });
-  expect(mark).toHaveTextContent("T");
-  await user.click(mark);
+  expect(screen.queryByRole("button", { name: "Teammate’s chat" })).toBeNull();
+  await user.click(header);
   expect(
     await screen.findByRole("dialog", { name: /Share access/ }),
   ).toBeInTheDocument();
-  // Closing returns focus to the mark, not the row's select button.
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(mark).toHaveFocus();
 });
 
 it.each([

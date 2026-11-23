@@ -5,10 +5,11 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
   ChatCircleIcon,
-  ChatGlobeIcon,
-  GlobeIcon,
+  EyeIcon,
+  HashIcon,
   LockIcon,
 } from "../../shared/design-system/icons";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import styles from "./Channels.module.css";
@@ -58,11 +59,14 @@ export function conversationMark(
       ? "solo-public"
       : "solo-private";
 }
+// The icon says who's in it. Every solo conversation shares one; whether
+// others can read it shows beside the name (see `ViewOnlyMark`).
+const SoloIcon = ChatCircleIcon;
 const markIcons = {
-  "solo-private": ChatCircleIcon,
-  "solo-public": ChatGlobeIcon,
+  "solo-private": SoloIcon,
+  "solo-public": SoloIcon,
   "group-private": LockIcon,
-  "group-public": GlobeIcon,
+  "group-public": HashIcon,
 } as const;
 /** A named conversation's mark, for a row or a tile. */
 export function ConversationMarkIcon({
@@ -74,6 +78,39 @@ export function ConversationMarkIcon({
 }) {
   const Icon = markIcons[mark];
   return <Icon size={size} data-conversation-mark={mark} />;
+}
+
+export const VIEW_ONLY_LABEL = "Others in this community can read this";
+export const viewOnlyDescriptionId = (channelId: string) =>
+  `view-only-${channelId}`;
+
+/** Beside a solo conversation others can read. Pointer users get the hint;
+ * the row describes itself by `viewOnlyDescriptionId`. A tile shows it as a
+ * corner badge, whose name hint is the tile's own. */
+export function ViewOnlyMark({
+  channelId,
+  tile = false,
+}: {
+  channelId: string;
+  tile?: boolean;
+}) {
+  const mark = (
+    <span
+      className={tile ? styles.viewOnlyBadge : styles.viewOnlyMarker}
+      data-conversation-view-only=""
+      aria-hidden="true"
+    >
+      <EyeIcon size={tile ? 12 : 16} />
+    </span>
+  );
+  return (
+    <>
+      {tile ? mark : <Tooltip content={VIEW_ONLY_LABEL}>{mark}</Tooltip>}
+      <span id={viewOnlyDescriptionId(channelId)} hidden>
+        {VIEW_ONLY_LABEL}
+      </span>
+    </>
+  );
 }
 
 /** Past this many others, a conversation's icon is a count; telling its
@@ -135,6 +172,22 @@ export function useConversationIdentity(
     [others, profiles],
   );
   return { members, profiles, mark: conversationMark(channel, people) };
+}
+
+// Stands in while a row has no channel yet; a DM loads no profiles.
+const noChannel = { id: "", name: "", channelType: "dm" } as ChannelSummary;
+
+/** Whether a conversation is solo and others in the community can read it. */
+export function useViewOnly(
+  session: RelaySession,
+  channel: ChannelSummary | undefined,
+) {
+  const { mark } = useConversationIdentity(
+    session,
+    channel ?? noChannel,
+    undefined,
+  );
+  return !!channel && channel.channelType !== "dm" && mark === "solo-public";
 }
 
 /** A conversation's icon in a sidebar row. A named conversation shows its

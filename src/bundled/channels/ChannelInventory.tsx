@@ -734,13 +734,6 @@ export function ChannelInventory({
         setChatTool({ channel, kind, visit });
     });
   };
-  const shareChat = useCallback(
-    (channel: ChannelSummary, trigger: HTMLElement) => {
-      const visit = navigator.snapshot().attempt.signal;
-      setChatTool({ channel, kind: "share", visit, trigger });
-    },
-    [navigator],
-  );
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
   const removedRowFocus = useRef<
@@ -2315,7 +2308,6 @@ export function ChannelInventory({
                                     composingMessage ? undefined : selected
                                   }
                                   onSelect={select}
-                                  onShareChat={shareChat}
                                   navigation={navigator}
                                   pendingClick={pendingChatClick}
                                   onRename={

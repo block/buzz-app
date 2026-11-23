@@ -933,6 +933,85 @@ describe("conversation identity", () => {
     expect(ensure).toHaveBeenCalledWith([agent]);
   });
 
+  it.each([
+    {
+      case: "solo, anyone can read",
+      members: [me, agent],
+      visibility: "public" as const,
+      eye: true,
+    },
+    {
+      case: "solo, private",
+      members: [me, agent],
+      visibility: "private" as const,
+      eye: false,
+    },
+    {
+      case: "group, anyone can join",
+      members: [me, tom],
+      visibility: "public" as const,
+      eye: false,
+    },
+  ])(
+    "marks only a solo conversation others can read with the eye: $case",
+    ({ members, visibility, eye }) => {
+      const { session } = viewer(
+        new Map([[agent, { name: "Scout", isAgent: true }]]),
+      );
+      render(
+        <ChannelSidebarItem
+          {...itemProps(session, false, {
+            id: "alpha",
+            name: "Notes",
+            channelType: "stream",
+            members,
+            visibility,
+          })}
+        />,
+      );
+      const row = screen.getByRole("button", { name: "Notes" });
+      if (eye) {
+        expect(
+          document.querySelector("[data-conversation-view-only]"),
+        ).not.toBeNull();
+        expect(row).toHaveAccessibleDescription(
+          "Others in this community can read this",
+        );
+      } else {
+        expect(
+          document.querySelector("[data-conversation-view-only]"),
+        ).toBeNull();
+        expect(row).not.toHaveAccessibleDescription(
+          "Others in this community can read this",
+        );
+      }
+    },
+  );
+
+  it("puts the eye on a solo tile's corner", () => {
+    const { session } = viewer(
+      new Map([[agent, { name: "Scout", isAgent: true }]]),
+    );
+    render(
+      <SidebarCardDisplayContext.Provider value="icons">
+        <ChannelSidebarItem
+          {...itemProps(session, false, {
+            id: "alpha",
+            name: "Notes",
+            channelType: "stream",
+            members: [me, agent],
+            visibility: "public",
+          })}
+        />
+      </SidebarCardDisplayContext.Provider>,
+    );
+    expect(
+      document
+        .querySelector("[data-conversation-view-only]")
+        ?.closest("[class*='tileBadge']"),
+    ).not.toBeNull();
+  });
+
   it("shows a named conversation's own picture instead of its mark", () => {
     const { session } = viewer();
     render(

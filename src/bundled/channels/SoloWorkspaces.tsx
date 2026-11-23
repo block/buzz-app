@@ -16,7 +16,7 @@ import { sidebarDropRowKinds } from "./sidebar-sections";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
-import { ChatSharedMark } from "./ChatSharedMark";
+import { useViewOnly, ViewOnlyMark } from "./ConversationIdentity";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { SoloChatName } from "./SoloChatName";
 import { canEditLifetime } from "../../features/solo/Lifetime";
@@ -1244,17 +1244,12 @@ const SoloChatEntry = memo(function SoloChatEntry({
     rename,
     channel,
   );
+  const viewOnly = useViewOnly(session, channel);
   const Default = (
     <ChatActionsMenu
       id={id}
       title={title}
-      indicator={
-        <ChatSharedMark
-          session={session}
-          channel={channel}
-          onOpen={(trigger) => actions.current.share(id, trigger)}
-        />
-      }
+      indicator={viewOnly && <ViewOnlyMark channelId={id} />}
       className={styles.organizedRow}
       content={
         channel && (

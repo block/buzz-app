@@ -946,6 +946,28 @@ html[data-keyboard-navigation]
   color: var(--text-subtle);
 }
 
+.viewOnlyMarker {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-subtle);
+}
+
+/* Unread outranks it: the mark steps aside while the row has a count. */
+[data-channel-indicators]:has(.indicatorLayer > *)
+~ [data-conversation-view-only] {
+  display: none;
+}
+
+/* A tile's corner badge, ringed off the artwork like the unread dot. */
+.viewOnlyBadge {
+  display: inline-flex;
+  padding: var(--space-half);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  color: var(--text-subtle);
+  box-shadow: 0 0 0 1px var(--border-color-standard);
+}
+
 .indicatorStack {
   display: inline-grid;
   flex-shrink: 0;

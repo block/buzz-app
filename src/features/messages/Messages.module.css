@@ -972,6 +972,11 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
   gap: var(--space-1);
   color: var(--text-subtle);
 }
+.threadLastReply {
+  display: inline-flex;
+  gap: var(--space-1);
+  color: var(--text-subtle);
+}
 .threadWorking {
   margin-inline-start: var(--space-1);
   display: inline-flex;

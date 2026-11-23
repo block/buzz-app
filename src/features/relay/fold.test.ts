@@ -479,6 +479,61 @@ describe("message fold", () => {
       expect(rows[0]?.replyCount).toBe(expected);
     },
   );
+  it.each([
+    [1_700_000_500, 1_700_000_500],
+    [0, undefined],
+    [-1, undefined],
+    [1.5, undefined],
+    ["1700000500", undefined],
+    [undefined, undefined],
+  ])("projects last reply time %s only when valid", (value, expected) => {
+    const root = message(alice, channel, "root", 10);
+    const [row] = foldMessages(channel, relay.pubkey, [
+      root,
+      summary(relay, channel, root.id, {
+        reply_count: 1,
+        last_reply_at: value,
+        participants: [],
+      }),
+    ]);
+    expect(row?.lastReplyAt).toBe(expected);
+  });
+  it("advances the last reply time to pending replies the summary has not counted", () => {
+    const root = message(alice, channel, "root", 10);
+    const reply = (at: number) =>
+      message(bob, channel, "re", at, [["e", root.id, "", "reply"]]);
+    const early = reply(15),
+      late = reply(30);
+    const lastReply = (events: Parameters<typeof foldMessages>[2]) =>
+      foldMessages(channel, relay.pubkey, [root, ...events], {
+        pendingReplies: new Set([early.id, late.id]),
+      })[0]?.lastReplyAt;
+    const counted = summary(relay, channel, root.id, {
+      reply_count: 1,
+      last_reply_at: 20,
+      participants: [],
+    });
+    expect(lastReply([counted])).toBe(20);
+    expect(lastReply([counted, early])).toBe(20);
+    expect(lastReply([counted, early, late])).toBe(30);
+    expect(lastReply([early])).toBe(15);
+  });
+  it("replaces a shared row when only its last reply time changes", () => {
+    const root = message(alice, channel, "root", 10);
+    const at = (lastReplyAt: number) =>
+      foldMessages(channel, relay.pubkey, [
+        root,
+        summary(relay, channel, root.id, {
+          reply_count: 2,
+          last_reply_at: lastReplyAt,
+          participants: [bob.pubkey],
+        }),
+      ]);
+    const before = at(20),
+      next = at(40);
+    expect(shareMessageRows(before, at(20))).toBe(before);
+    expect(shareMessageRows(before, next)[0]).toBe(next[0]);
+  });
   it("layers pending replies on their root's summary and leads participants with their authors", () => {
     const root = message(alice, channel, "root", 10);
     const reply = (key: typeof bob, at: number, channelId = channel) =>

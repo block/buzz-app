@@ -4,6 +4,8 @@ import { PencilSimpleIcon } from "../../shared/design-system/icons/index";
 import type { Profile } from "../relay/contracts";
 import styles from "./Messages.module.css";
 import { avatarMedia } from "../../shared/avatar-source";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
+import { useCurrentMinute } from "../../shared/use-current-minute";
 
 const SHOWN_PARTICIPANTS = 3;
 
@@ -22,6 +24,7 @@ export function ReplySummary({
   hideEmptyLabel = false,
   draft = false,
   replied = count > 0,
+  lastReplyAt,
 }: {
   workingParticipants?: readonly string[];
   activity?: ReactNode;
@@ -40,6 +43,8 @@ export function ReplySummary({
   media(url: string, size?: "small"): string | undefined;
   unreadLabel?: string | undefined;
   unreadCount?: number;
+  /** Unix seconds; shown only beside a reply count. */
+  lastReplyAt?: number | undefined;
 }) {
   const newest = [...new Set(participants)].filter(
     (id) => !workingParticipants.includes(id),
@@ -82,6 +87,7 @@ export function ReplySummary({
           title={unreadLabel}
         />
       ) : null}
+      {count > 0 && lastReplyAt !== undefined && <LastReply at={lastReplyAt} />}
       {draft && (
         <span className={styles.threadDraft} data-thread-draft="">
           {replied && <span aria-hidden="true">·</span>}
@@ -90,5 +96,15 @@ export function ReplySummary({
         </span>
       )}
     </>
+  );
+}
+
+function LastReply({ at }: { at: number }) {
+  useCurrentMinute();
+  return (
+    <span className={styles.threadLastReply} data-thread-last-reply="">
+      <span aria-hidden="true">·</span>
+      last reply {relativeTimestamp(at)}
+    </span>
   );
 }

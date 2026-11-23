@@ -213,6 +213,10 @@ export type ChannelMessage = Readonly<{
    * replies wait for the relay's summary).
    * Falls back to direct replies when the summary lacks a valid descendant total. */
   replyCount: number;
+  /** Unix seconds of the newest reply: the relay summary's `last_reply_at`, or
+   * a later own reply send no summary has counted yet. The relay moves it only
+   * for direct replies to this message and never moves it back on deletion. */
+  lastReplyAt?: number | undefined;
   /** Authors of this client's own reply sends no summary has counted yet, even
    * when the relay already lists them (so an own reply's avatar shows, first,
    * before the relay's summary arrives), followed by the other pubkeys the relay

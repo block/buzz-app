@@ -209,6 +209,29 @@ it("reads keys even when adopting the old key fails", async () => {
   warn.mockRestore();
 });
 
+it("reads a community's key again after it is left and joined again", async () => {
+  const native = fakeNative(["one.example", "two.example"]);
+  const communities = reader();
+  const decisions = await setup(() => native, communities);
+  decisions.status(ONE);
+  await flush();
+  expect(decisions.status(ONE)).toBe("ready");
+  expect(decisions.status(TWO)).toBe("ready");
+  const reads = native.status.mock.calls.length;
+  // Leaving removes the key; a read from before the leave is ignored.
+  communities.set({ status: "ready", memberships: [{ id: TWO }] });
+  native.keys.delete("one.example");
+  communities.set({ status: "ready", memberships: [{ id: ONE }, { id: TWO }] });
+  expect(decisions.status(ONE)).toBe("checking");
+  await flush();
+  expect(decisions.status(ONE)).toBe("needs-setup");
+  // Another community's key is not read again.
+  expect(decisions.status(TWO)).toBe("ready");
+  expect(
+    native.status.mock.calls.slice(reads).map(([community]) => community),
+  ).toEqual(["https://one.example"]);
+});
+
 it.each([
   ["invalid args `request` for command `decide`", "invalid_request"],
   ["decisions.decide not allowed", "service_error"],

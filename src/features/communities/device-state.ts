@@ -1,5 +1,6 @@
 import { forgetTabVisits } from "../messages/tab-visit-lifetime";
 import { forgetCoreMemory } from "../agents/core-memory-cache";
+import { clearCommunityTypeSafeKey } from "../decisions/keys";
 import { forgetChannelSetups } from "../channel-templates/setup";
 import { forgetQuickReactions } from "../messages/quick-reactions";
 import { relayPartition } from "../relay/partition";
@@ -27,7 +28,8 @@ function purgeFailure(
 /** Forgets what this device keeps for one community and viewer: view intent
  * (selected channel, drafts, scroll and sidebar state), channel heads, the
  * read-state journal, the outbox and smaller preference stores. Every store is
- * partitioned by `origin:viewer`, so nothing here can touch another community.
+ * partitioned by `origin:viewer`, so nothing here can touch another community,
+ * except its TypeSafe key, which is the device's for that community.
  * Each store is cleared independently: an unavailable one does not keep the
  * others, and the caller has already dropped the membership. Every failure is
  * logged and returned, named by store, so the caller can say some saved data
@@ -59,5 +61,8 @@ export async function purgeCommunityDeviceState(
   await attempt("quick reactions", () => forgetQuickReactions(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));
   await purgeRelayPartition(origin, viewer, attempt);
+  // The key the user saved, or the upgrade copied, for this community:
+  // Settings can no longer reach it once the community is gone.
+  await attempt("TypeSafe key", () => clearCommunityTypeSafeKey(origin));
   return failures;
 }

@@ -66,7 +66,7 @@ export function createApply(
       native(),
       joinedCommunities(ctx.communityReader),
     );
-    typesafe.load();
+    ctx.effect(() => typesafe.load());
     ctx.decisions.registerProvider(typesafeProvider(typesafe));
   };
 }

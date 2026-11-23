@@ -97,18 +97,27 @@ export class TypeSafeKeys {
   }
   /** Once the joined communities are known, gives them the old device-wide
    * key, then reads their keys; any other community's is read when first
-   * asked about. */
-  load() {
+   * asked about. Afterwards, a community that is left or joined is read
+   * again, as leaving removes its key. Returns the function that stops
+   * following the joined communities. */
+  load(): () => void {
     const { native, joined } = this;
-    if (!native || !joined || this.started) return;
+    if (!native || !joined || this.started) return () => {};
     this.started = true;
-    let stop: (() => void) | undefined;
-    let asked = false;
-    const attempt = () => {
+    let members: ReadonlySet<string> | undefined;
+    const changed = () => {
       const relays = joined.joined();
-      if (relays === undefined || asked) return;
-      asked = true;
-      stop?.();
+      if (relays === undefined) return;
+      const next = new Set(
+        relays.flatMap((relay) => communityKey(relay) ?? []),
+      );
+      if (members) {
+        for (const key of new Set([...members, ...next]))
+          if (members.has(key) !== next.has(key)) this.forget(key);
+        members = next;
+        return;
+      }
+      members = next;
       void (relays.length ? native.adopt(relays) : Promise.resolve())
         .catch((error) =>
           console.warn(
@@ -125,9 +134,9 @@ export class TypeSafeKeys {
           this.notify();
         });
     };
-    stop = joined.subscribe(attempt);
-    attempt();
-    if (asked) stop();
+    const stop = joined.subscribe(changed);
+    changed();
+    return stop;
   }
   desktop = () => this.native !== undefined;
   subscribe = (listener: () => void) => {
@@ -203,6 +212,12 @@ export class TypeSafeKeys {
     } finally {
       this.generations.set(key, this.generation(key) + 1);
     }
+  }
+  /** Drops what is known about `key`'s community, and ignores reads that
+   * started before, so it is read again when next asked about. */
+  private forget(key: string) {
+    this.generations.set(key, this.generation(key) + 1);
+    if (this.states.delete(key)) this.notify();
   }
   private found(key: string, state: KeyState, generation: number) {
     if (generation === this.generation(key)) this.set(key, state);

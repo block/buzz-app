@@ -266,8 +266,8 @@ account identity and display details remain those read at sign-in.
 The plugin also offers Builderlab as a Decisions API provider while the user is
 signed in, or a joined community's sign-in server serves it, so it can be
 chosen there before sign-in. Settings → Decisions API shows, for each
-community, whether its server's account can answer; signing in stays in this
-plugin's card. Each request names its community, and Builderlab answers it with
+community, whether its server's account can answer, and links a signed-out
+one to where it signs in (Community sign-ins in FI builds, else this card). Each request names its community, and Builderlab answers it with
 the sign-in of that community's sign-in server. It reads
 `capabilities.can_use_builderlab_decisions` the same way: only explicit `true`
 makes it ready in that community, and otherwise it needs setup there,

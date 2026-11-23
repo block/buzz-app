@@ -235,19 +235,22 @@ impl DecisionsHost {
             let client = client().ok_or(Failure::ServiceError)?;
             let post = match backend {
                 // Only a community has a key.
-                Backend::Typesafe => match match request.community.as_deref() {
-                    Some(community) if crate::jev::account(community).is_some() => {
-                        keys.key(community).await
+                Backend::Typesafe => {
+                    let key = match request.community.as_deref() {
+                        Some(community) if crate::jev::account(community).is_some() => {
+                            keys.key(community).await
+                        }
+                        _ => Ok(None),
+                    };
+                    match key {
+                        Ok(Some(key)) => client
+                            .post(&self.endpoints.typesafe)
+                            .bearer_auth(key.as_str()),
+                        Ok(None) => return Err(Failure::MissingCredentials),
+                        // Unreadable is not absent: the key may still be saved.
+                        Err(_) => return Err(Failure::ServiceError),
                     }
-                    _ => Ok(None),
-                } {
-                    Ok(Some(key)) => client
-                        .post(&self.endpoints.typesafe)
-                        .bearer_auth(key.as_str()),
-                    Ok(None) => return Err(Failure::MissingCredentials),
-                    // Unreadable is not absent: the key may still be saved.
-                    Err(_) => return Err(Failure::ServiceError),
-                },
+                }
                 Backend::Builderlab => {
                     let endpoint = self
                         .endpoints

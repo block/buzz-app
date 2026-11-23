@@ -1,10 +1,11 @@
 // Builderlab as a decision provider: the Builderlab sign-in of each request's
 // community, which native code sends with the call. The NIP-FI session is
-// named by its revision; its token never leaves native. It is offered while
-// the user is signed in, and ready in a community only while that community's
-// Builderlab account may use decisions; see `offerBuilderlabDecisions`.
-// Settings > Decisions API shows whether each community's account can answer;
-// signing in stays in this plugin's card.
+// named by its revision; its token never leaves native. It is offered in a
+// community its sign-in server covers, and ready there only while that
+// server's Builderlab account may use decisions; see
+// `offerBuilderlabDecisions`. Settings > Decisions API shows whether each
+// community's account can answer, and links a signed-out one to where it
+// signs in (Community sign-ins in FI builds).
 import { useSyncExternalStore } from "react";
 import type { Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
@@ -142,8 +143,8 @@ export function communityDecisionSessions(
   };
 }
 
-/** Registers Builderlab in Settings > Decisions API while the build's
- * session is signed in or being restored, or while any joined community has a
+/** Registers Builderlab in Settings > Decisions API while `session` (the
+ * session that follows the user's community, in FI builds) is signed in or being restored, or while any joined community has a
  * sign-in server that covers it (signed in, signed out or still being
  * restored), so it can be chosen there before sign-in; and removes it
  * otherwise. It is ready in a community while that community's Builderlab

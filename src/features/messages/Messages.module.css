@@ -3194,10 +3194,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --message-metadata: initial;
 }
 
-.messageBubble[data-own] .text blockquote {
-  color: inherit;
-  border-color: currentColor;
-}
 .messageBubble[data-own] .text :is(code, pre, .codeBlock) {
   color: var(--text-standard);
 }

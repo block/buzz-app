@@ -1,4 +1,5 @@
 import { useChannelHistoryFocus } from "./useChannelHistoryFocus";
+import { useConversationReplyPlacement } from "./conversation-reply-placement";
 import { useAccountLifetimes } from "../../features/solo/default-lifetime";
 import type { Conversation } from "../../features/conversation/service";
 import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
@@ -1134,6 +1135,7 @@ function ChannelWorkspace({
     };
   }, [read, readableId, queries, navigation]);
   const onComposerSend = useComposerSent(currentId, setSent);
+  const reply = useConversationReplyPlacement(queries, current);
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -2951,7 +2953,12 @@ function ChannelWorkspace({
                   }
                 : undefined
             }
-            onSend={onComposerSend}
+            replyPlacement={reply.replyPlacement}
+            sendOption={reply.sendOption}
+            onSend={(id) => {
+              reply.sent();
+              onComposerSend(id);
+            }}
             onCommand={handleCommand}
             focusRequest={composerFocus}
           />

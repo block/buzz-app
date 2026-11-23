@@ -303,8 +303,9 @@ it("includes the thread messages the session has not seen", () => {
     total: 3,
   });
   expect(prompt).toContain(`Thread root: ${root.id}\nParent: ${earlier.id}`);
+  // A reply inside a subthread keeps its answer there.
   expect(prompt).toContain(
-    "`send` replies in this thread by default, so the conversation stays threaded",
+    `Reply with \`reply_in_subthread\`, passing \`parent: "${earlier.id}"\``,
   );
   // First, as exact records, so a protection plugin can check each one.
   const history = JSON.parse(

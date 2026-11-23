@@ -1,4 +1,5 @@
 import { withTimeout } from "../../plugins/timeout";
+import { answersAtTopLevel } from "../../features/agents/solo-chat";
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
@@ -2467,7 +2468,7 @@ export class CodexRuntime {
     const channel = await reads.channel(channelId);
     const solo = await reads.soloChat(agent.owner, channelId, delivery.signal);
     const huddle = isHuddleRoom(channel?.about);
-    const topLevel = solo || huddle || wake?.topLevel === true;
+    const topLevel = huddle || answersAtTopLevel(event, solo, wake);
     if (wake && !wakeLands(wake, topLevel)) return delivery.ignored?.();
     // Only a Solo chat's Canvas is handed over.
     const canvas = reads.canvas?.bind(reads);
@@ -2653,7 +2654,9 @@ export class CodexRuntime {
         ...(root ? { root } : {}),
         ...(route ? { sourceRoot: route.root } : {}),
         ...(topLevel ? { topLevel } : {}),
-        ...(topLevel && !solo && !huddle ? { threadReplies: true } : {}),
+        ...(topLevel && !solo && !huddle && wake
+          ? { threadReplies: true }
+          : {}),
       },
       team: delivery.team ?? "",
       ...(delivery.session ? { session: delivery.session } : {}),

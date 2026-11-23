@@ -1,4 +1,5 @@
 import { interestPaused } from "./attention";
+import { answersAtTopLevel } from "./solo-chat";
 import {
   hasInvocationIntent,
   type AgentSessionAssociation,
@@ -4186,7 +4187,7 @@ export class AgentRunners {
           .then((flat) => {
             if (wake && !wakeLands(wake, flat))
               throw new Error("The wake has no conversation here");
-            return flat || wake?.topLevel === true;
+            return answersAtTopLevel(event, flat, wake);
           }),
         event,
         channel,

@@ -28,7 +28,7 @@ import type {
   ConversationWake,
   Delivery,
 } from "../agents/service";
-import { soloChat } from "../agents/solo-chat";
+import { answersAtTopLevel, soloChat } from "../agents/solo-chat";
 import type { EventData } from "../relay/events";
 import type { RelayData } from "../relay/service";
 import { threadReference } from "../relay/thread-reference";
@@ -243,7 +243,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         channel,
         signal,
       );
-      const topLevel = solo || wake?.topLevel === true;
+      const topLevel = answersAtTopLevel(event, solo, wake);
       if (wake && !wakeLands(wake, topLevel)) return undefined;
       const found = await reader(agent.key)?.channel(channel);
       const dm = found?.dm === true;
@@ -420,7 +420,7 @@ export function harnessKit(sources: Sources): HarnessKit {
         event,
         scope: key === channelId ? "channel" : "thread",
         topLevel,
-        channelLevel: topLevel && !solo,
+        channelLevel: topLevel && !solo && !!wake,
         channel: { id: channelId, ...(name ? { name } : {}), dm },
         ...(conversation.sourceRoot
           ? {

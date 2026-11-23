@@ -13,6 +13,11 @@ export const BUZZ_HELP_PROMPT = productHelp.trim();
 export const TOP_LEVEL_PROMPT =
   "This is a continuous personal chat in the current channel. Continue this channel's conversation. Post progress, results and failures at the channel top level: use the current channel and omit `reply`; do not start or continue a thread here. Destinations you are explicitly asked to use elsewhere keep their own routing.";
 
+/** The turn instruction for a message in, or asking for, a subthread: the
+ * answer goes under `parent`, never a level deeper. */
+export const subthreadReplyPrompt = (parent: string) =>
+  `IMPORTANT: This message asks for replies in a subthread. Reply with \`reply_in_subthread\`, passing \`parent: "${parent}"\`, not \`send\`, unless the human explicitly asks for another destination. Subthreads go one level deep only.`;
+
 /** The note on a turn given again after closing or reloading the app stopped
  * it partway. */
 export const RESUMED_PROMPT =

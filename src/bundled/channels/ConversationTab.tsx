@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useConversationReplyPlacement } from "./conversation-reply-placement";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type {
@@ -137,6 +138,7 @@ export function ConversationTab({
     return () => request.abort();
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
+  const answer = useConversationReplyPlacement(session, channel);
   const media = useMediaReview();
   // A retained tab re-renders with its page. Its memoized rows open links and
   // threads through stable openers that consult the latest handlers when chosen.
@@ -246,7 +248,12 @@ export function ConversationTab({
                 <ConversationComposer
                   // Shown follows the tab, not whether showing it visits the chat.
                   shown={active}
-                  onSend={setSent}
+                  replyPlacement={answer.replyPlacement}
+                  sendOption={answer.sendOption}
+                  onSend={(id) => {
+                    answer.sent();
+                    setSent(id);
+                  }}
                   {...(focusRequest ? { focusRequest } : {})}
                 />
               </SoloColumn>

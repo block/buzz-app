@@ -1,4 +1,5 @@
 import type { RelayData } from "../relay/service";
+import { replyPlacement } from "../relay/thread-reference";
 
 /** Whether a native agent's mention continues a Solo chat: one
  * channel-scoped conversation that posts at channel top level. The channel's
@@ -24,4 +25,17 @@ export async function soloChat(
       `Couldn't read this community's channels to tell where to answer (${list.error ?? "not loaded"}). Try again.`,
     );
   return channel?.channelType === "solo";
+}
+
+/** Whether a turn answers at the channel's top level. A delivered message's
+ * reply placement decides; a message without one answers at top level only
+ * in a Solo chat. A wake keeps its own placement. */
+export function answersAtTopLevel(
+  event: { readonly tags: readonly (readonly string[])[] },
+  solo: boolean,
+  wake?: { readonly topLevel?: boolean | undefined } | undefined,
+) {
+  if (wake) return solo || wake.topLevel === true;
+  const placement = replyPlacement(event);
+  return placement ? placement === "top" : solo;
 }

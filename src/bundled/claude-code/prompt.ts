@@ -1,6 +1,11 @@
 // Prompts in the shared record format, so a Claude agent here reads the same
 // sections and follows the same base prompt as a harness agent.
-import { TOP_LEVEL_PROMPT, CHANNEL_LEVEL_PROMPT } from "../../buzz-mcp/prompt";
+import {
+  TOP_LEVEL_PROMPT,
+  CHANNEL_LEVEL_PROMPT,
+  subthreadReplyPrompt,
+} from "../../buzz-mcp/prompt";
+import { subthreadReplyParent } from "../../features/relay/thread-reference";
 import type { EventData } from "../../features/relay/events";
 import { messageAuthor } from "../../features/relay/fold";
 import { mentionSection } from "../../features/agent-harness/base-prompt";
@@ -128,16 +133,21 @@ export function turnPrompt(input: TurnInput) {
   // thread a reply is for, so it names the thread itself.
   const root = thread?.rootId ?? event.id;
   const shared = channel.dm || input.scope !== "thread";
+  // A wake is not a request, so only a delivered message asks for a subthread.
+  const subthread =
+    input.topLevel || input.wake ? undefined : subthreadReplyParent(event);
   const reply =
     input.scope === "community"
       ? `IMPORTANT: Pass each reply's channel as \`channel\` to \`send\`. ${input.wake ? "Leave out the request field for this wake." : "Pass the triggering message ID as `request`."} For this request use channel "${channel.id}". ${input.topLevel ? "Leave out the reply field to post at the top level." : `Use "${root}" as the reply field to post in its thread.`} You can answer one request and continue working on another.`
       : input.topLevel
         ? `IMPORTANT: ${input.channelLevel ? CHANNEL_LEVEL_PROMPT : TOP_LEVEL_PROMPT} Pass the channel explicitly to \`send\` when handling multiple requests.`
-        : shared
-          ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass \`channel\` explicitly and leave out \`reply\`.`
-          : thread
-            ? "IMPORTANT: `send` replies in this thread by default, so the conversation stays threaded. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`. If the requested destination is ambiguous, ask before sending."
-            : "IMPORTANT: This is a new top-level message. `send` replies in its thread by default — the triggering message is the thread root. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`.";
+        : subthread
+          ? subthreadReplyPrompt(subthread)
+          : shared
+            ? `IMPORTANT: For ordinary replies in this turn, pass \`reply: "${root}"\` to \`send\` so the conversation stays threaded. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass \`channel\` explicitly and leave out \`reply\`.`
+            : thread
+              ? "IMPORTANT: `send` replies in this thread by default, so the conversation stays threaded. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`. If the requested destination is ambiguous, ask before sending."
+              : "IMPORTANT: This is a new top-level message. `send` replies in its thread by default — the triggering message is the thread root. Do NOT reply into any other (older) thread. If the human explicitly asks for a channel-root, top-level, or broadcast post, pass `channel`.";
   const fetch = input.topLevel
     ? "Use `read` for recent messages if needed."
     : shared

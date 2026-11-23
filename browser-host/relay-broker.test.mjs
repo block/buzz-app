@@ -16,6 +16,12 @@ test("read broker accepts non-channel finite reads without relaxing filter budge
     { kinds: [9], "#e": ["root"], depth_limit: 10, limit: 80 },
   ])
     assert.equal(validFilters([filter]), true);
+  // The welcome card's one question: has the viewer written anything yet?
+  const viewer = "a".repeat(64);
+  assert.equal(
+    validFilters([{ authors: [viewer], until: 1788810000, limit: 1 }], viewer),
+    true,
+  );
   for (const filters of [
     [],
     Array(5).fill({ kinds: [0], limit: 1 }),
@@ -25,8 +31,19 @@ test("read broker accepts non-channel finite reads without relaxing filter budge
     [{ kinds: [65536], limit: 1 }],
     [{ kinds: [], limit: 1 }],
     [{ limit: 1 }],
+    // Only that exact shape, about the broker's own identity, may omit kinds.
+    [{ authors: [viewer], limit: 1 }],
+    [{ authors: [viewer], until: 1788810000, limit: 2 }],
+    [{ authors: [viewer, "b".repeat(64)], until: 1, limit: 1 }],
+    [{ authors: [viewer], until: 1, limit: 1, "#h": ["channel"] }],
+    [{ authors: ["viewer"], until: 1, limit: 1 }],
+    [{ authors: ["b".repeat(64)], until: 1788810000, limit: 1 }],
   ])
-    assert.equal(validFilters(filters), false);
+    assert.equal(validFilters(filters, viewer), false);
+  assert.equal(
+    validFilters([{ authors: [viewer], until: 1788810000, limit: 1 }]),
+    false,
+  );
 });
 
 test("broker signing is limited to bounded channel messages and canonical direct and nested replies", () => {

@@ -1,4 +1,5 @@
 import { isSidebarPreferencesBatch } from "./sidebar-preferences";
+import { isEarlierActivityFilter } from "./earlier-activity";
 import { isWorkflowDefinitionBatch } from "../workflows/queries";
 import { verifyThreadWindows } from "./thread-window";
 import { yieldToHost } from "./yield";
@@ -277,7 +278,8 @@ export function createRelayReader(
                 (kind) => Number.isInteger(kind) && kind >= 0 && kind <= 65535,
               )
             ) &&
-            !(filter.kinds === undefined && filter.ids?.length)
+            !(filter.kinds === undefined && filter.ids?.length) &&
+            !isEarlierActivityFilter(filter, transport.viewer)
           )
             throw new Error("Relay reads need valid kinds or event IDs");
           if (

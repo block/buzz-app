@@ -1,0 +1,19 @@
+/* The editor and its toolbar inside the field's shared frame, which owns the
+   surface and the focus stroke. */
+.frame {
+  display: grid;
+  flex: 1;
+  align-self: stretch;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-block: var(--space-control-inset) var(--space-1);
+  color: var(--text-standard);
+}
+/* About six lines, as the plain field had, growing with the message. */
+.frame > [role="textbox"] {
+  min-height: 6lh;
+  max-height: 24rem;
+}
+.frame [data-placeholder]::before {
+  color: var(--text-metadata);
+}

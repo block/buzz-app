@@ -441,3 +441,25 @@ it.each([
     expect(info.membershipRequired).toBe(nips.includes(43));
   },
 );
+
+it("projects welcome-channel support and designation from NIP-11", async () => {
+  const landing = "6f1c2a4e-0b7d-4c1e-9a52-2f0d8b3c7e11";
+  vi.mocked(invoke).mockImplementation(async (_command, args) => ({
+    status: 200,
+    headers: {},
+    body: JSON.stringify(
+      (args as { path: string }).path === "/"
+        ? {
+            self: key.pubkey,
+            supported_extensions: ["buzz-landing-channel"],
+            landing_channel: landing,
+          }
+        : { policy: null },
+    ),
+  }));
+  const info = await communityRequest<CommunityInfo>(community, "info");
+  expect(info).toMatchObject({
+    landingChannels: true,
+    landingChannel: landing,
+  });
+});

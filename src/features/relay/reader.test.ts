@@ -153,6 +153,31 @@ it("supports the desktop's ID, reference, address, and application-data reads wi
   }
 });
 
+it("admits the welcome card's author-only read without kinds, about the viewer alone", async () => {
+  const viewer = "a".repeat(64);
+  const scripted = scriptedTransport(viewer, "relay");
+  const owner = createRelayReader(scripted.transport);
+  owners.push(owner);
+  const { next } = scripted;
+  const { read } = owner.reader;
+  const probe = { authors: [viewer], until: 1_788_810_000, limit: 1 };
+  const result = read([probe]);
+  const wire = next();
+  expect(wire.filters).toEqual([probe]);
+  wire.respond([]);
+  await expect(result).resolves.toEqual([]);
+  for (const refused of [
+    { authors: [viewer], limit: 1 },
+    { authors: [viewer], until: 1, limit: 2 },
+    { authors: [viewer], until: 1, limit: 1, "#h": ["channel"] },
+    { authors: [viewer, "b".repeat(64)], until: 1, limit: 1 },
+    { authors: ["b".repeat(64)], until: 1_788_810_000, limit: 1 },
+  ])
+    await expect(read([refused])).rejects.toThrow(
+      "Relay reads need valid kinds or event IDs",
+    );
+});
+
 it("preserves ordered bridge extensions and distinguishes their request identity", async () => {
   const { read, next, pending } = setup();
   const first = read([

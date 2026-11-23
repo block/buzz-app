@@ -31,6 +31,8 @@ function session(available = true) {
     subscribe: () => () => {},
     observeRemoval: () => () => {},
     refreshVisibility: async () => {},
+    readLanding: vi.fn(),
+    setLanding: vi.fn(),
   } satisfies ChannelLifecycleCapability;
   return {
     viewer,

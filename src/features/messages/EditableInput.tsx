@@ -453,6 +453,12 @@ export type EditableInputProps = Omit<
   acceptRecipient?(pubkey: string): MentionRecipient | null;
   /** Right-click or Mod+. on a shown annotation. Without it, marks are inert. */
   onAnnotationMenu?: ((request: AnnotationMenuRequest) => void) | undefined;
+  /** The source to insert for pasted text that replaces `start`–`end` of the
+   * draft text `source`. Raw pastes, code and links keep the text as copied. */
+  pastedText?(
+    text: string,
+    at: { source: string; start: number; end: number },
+  ): string;
 };
 
 const tableComponents: typeof sharedComponents = {
@@ -515,6 +521,7 @@ export function EditableInput({
   onSemanticPaste,
   acceptRecipient,
   onAnnotationMenu,
+  pastedText,
   ...events
 }: EditableInputProps & {
   draft: MentionDraft;
@@ -539,6 +546,7 @@ export function EditableInput({
     onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
+    pastedText,
     disabled,
     placeholder,
     autocorrect,
@@ -557,6 +565,7 @@ export function EditableInput({
     onSemanticPaste,
     acceptRecipient,
     onAnnotationMenu,
+    pastedText,
     disabled,
     placeholder,
     autocorrect,
@@ -2807,6 +2816,22 @@ export function EditableInput({
                   externalLinkMarkdown(html, hasPlain ? plain : undefined))) ||
               plain ||
               "";
+            const marks =
+              editor.state.storedMarks ?? editor.state.selection.$from.marks();
+            if (
+              !code &&
+              current.current.pastedText &&
+              !marks.some(
+                ({ type }) =>
+                  type === composerSchema.marks.code ||
+                  type === composerSchema.marks.link,
+              )
+            )
+              text = current.current.pastedText(text, {
+                source: source.draft.text,
+                start,
+                end,
+              });
             if (!text) return true;
             // A bare URL pasted over selected text links the selection, as other
             // editors do. editLink() owns the guards (code, resources, unsafe

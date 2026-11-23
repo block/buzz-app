@@ -18,6 +18,7 @@ import {
 } from "./admin-protocol";
 import { readRelayLibrary } from "../agents/relay-library";
 import { eventDto } from "../relay/events";
+import { landingInfo } from "../relay/landing";
 import { readApiFailure } from "../relay/http-admission";
 import { admitSignedRequest } from "../relay/transport";
 import type { PersonalProfile } from "./service";
@@ -75,6 +76,7 @@ export async function nativeCommunityRequest(
         response.status === 404
           ? null
           : readJoinPolicy(await readResponse(response)),
+      ...landingInfo(info),
     };
   }
   if (route === "session") {

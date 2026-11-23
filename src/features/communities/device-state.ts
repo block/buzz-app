@@ -8,6 +8,7 @@ import { forgetThreadFollows } from "../relay/thread-follows";
 import { clearViewScope } from "../../shared/view-state";
 import { saveLocalCommunityName } from "./names";
 import { saveRepositoriesFolder } from "./repositories";
+import { forgetWelcome } from "./welcome-pin";
 
 /** One piece of a left community's device state that could not be cleared. */
 export type PurgeFailure = { store: string; error: unknown };
@@ -27,7 +28,9 @@ function purgeFailure(
 /** Forgets what this device keeps for one community and viewer: view intent
  * (selected channel, drafts, scroll and sidebar state), channel heads, the
  * read-state journal, the outbox and smaller preference stores. Every store is
- * partitioned by `origin:viewer`, so nothing here can touch another community.
+ * partitioned by `origin:viewer`, so nothing here can touch another community,
+ * except the welcome record (first open and dismissals), which the device
+ * keeps per origin for all of its identities and forgets here with the rest.
  * Each store is cleared independently: an unavailable one does not keep the
  * others, and the caller has already dropped the membership. Every failure is
  * logged and returned, named by store, so the caller can say some saved data
@@ -55,6 +58,7 @@ export async function purgeCommunityDeviceState(
     saveRepositoriesFolder(origin, viewer, "");
   });
   await attempt("view state", () => clearViewScope(scope));
+  await attempt("welcome record", () => forgetWelcome(origin));
   await attempt("channel setups", () => forgetChannelSetups(scope));
   await attempt("quick reactions", () => forgetQuickReactions(scope));
   await attempt("thread follows", () => forgetThreadFollows(scope));

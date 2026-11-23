@@ -380,8 +380,16 @@ function clearScopedStorage(storage: Storage, prefix: string) {
   for (const key of stale) storage.removeItem(key);
 }
 
-/** Forgets every key saved under one scope, for a community the viewer has left. */
-export function clearViewScope(scope: string) {
+/** Forgets every key saved under one scope, for a community the viewer has
+ * left, or only the keys there that start with `viewKeyPrefix`. */
+export function clearViewScope(scope: string, viewKeyPrefix = "") {
+  if (viewKeyPrefix) {
+    // A partial clear must not retire drafts or invalidate the entire scope.
+    const prefix = `buzz-view.v1:${JSON.stringify([scope, viewKeyPrefix]).slice(0, -2)}`;
+    clearScopedStorage(localStorage, prefix);
+    changed(scope);
+    return;
+  }
   const keyPrefix = `${JSON.stringify([scope]).slice(0, -1)},`;
   const purgeKey = viewScopePurgeKey(scope);
   const token = crypto.randomUUID();

@@ -43,6 +43,8 @@ function capability() {
     subscribe: () => () => {},
     observeRemoval: () => () => {},
     refreshVisibility: async () => {},
+    readLanding: vi.fn(),
+    setLanding: vi.fn(),
   } satisfies ChannelLifecycleCapability;
 }
 const viewer = "a".repeat(64),

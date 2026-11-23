@@ -74,7 +74,7 @@ Each line is the main call. Read the types for every field.
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, community })`. It never rejects. |
 | `browser` | An embedded website (macOS) | `ctx.browser.View` inside a panel |
 | `notices` (optional) | A notice on any page, with up to three buttons | `await ctx.reflect.get("notices")?.show({ title, description?, actions? }, { signal? })` resolves with the picked action's `id`, or `undefined` if dismissed or aborted. Proceed only on an allow `id`. Pass a tool call's `client.signal` to ask the owner before it runs. |
-| `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`. Fall back to plain elements when missing. |
+| `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
 
 Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
@@ -136,7 +136,7 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 ## UI
 
 - The host supplies the shell, navigation, error boundaries, and the outer surface of panels and Settings. Don't add your own page frame, overlays, global styles or theme. Panels sit in a host card, so render only the body. Pages own their padding and scrolling.
-- Use the `ui` controls for buttons, fields, switches and dialogs. Use `className="ui-card"` for a card, `var(--space-panel-inset)` and `var(--space-2)` for spacing, and inline styles for layout. Plain `h1`–`h3`, `p` and `button` get host styling.
+- Use the `ui` controls for buttons, fields, switches, dialogs and action menus. Use `className="ui-card"` for a card, `var(--space-panel-inset)` and `var(--space-2)` for spacing, and inline styles for layout. Plain `h1`–`h3`, `p` and `button` get host styling.
 - Use host color tokens (`var(--...)`) so light and dark themes both work. Rely only on the `core` roles in `src/shared/design-system/tokens/registry.ts`; other custom properties, classes and `data-*` attributes are internal.
 - Avoid fixed widths; pages can be narrow.
 - For `ctx.agents.ui.Transcript`, set `endedAt` on a finished turn, or supply `outcome` if its end time is unknown. Use `at: 0` for an unknown item timestamp. Omit `completedAt` when a tool's start time is unknown.

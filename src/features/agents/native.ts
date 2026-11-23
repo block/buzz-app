@@ -1,10 +1,14 @@
+import type { PublishOptions } from "../../buzz-mcp/client";
 import type {
   ProtectionBinding,
   ProtectionDefaults,
 } from "../agent-protection/service";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { eventsDto, type RelayEvent } from "../relay/events";
+import type { SessionScope } from "../agent-harness/session-scope";
+import { createEventVerifier, type RelayEvent } from "../relay/events";
 import { effectiveEditDto, effectiveEditFilter } from "../relay/effective-edit";
+import { verifyNativeSignatures } from "../relay/native";
+import { parseEvents } from "../relay/transport";
 import { importedEmojiPicture } from "./import-picture";
 
 /** A plugin agent's identity in one community as native custody reports it;
@@ -77,6 +81,7 @@ export type Carry = Readonly<{
   instructions?: string;
   /** Its working directory, absolute or `~/…`. */
   workspace?: string;
+  sessionScope?: SessionScope;
 }>;
 export type PortableAgents = Readonly<{
   agents: readonly PortableAgent[];
@@ -191,7 +196,11 @@ export type AgentsNative = {
   /** Signs one event as the agent (deletions, reactions, messages, edits,
    * canvases and DM opens only) with its owner attestation and posts it to the
    * membership's community. */
-  publish(member: Membership, event: AgentEventTemplate): Promise<RelayEvent>;
+  publish(
+    member: Membership,
+    event: AgentEventTemplate,
+    options?: PublishOptions,
+  ): Promise<RelayEvent>;
   /** Reads the membership's community as the agent: one to eight filters. */
   query(member: Membership, filters: readonly object[]): Promise<RelayEvent[]>;
   effectiveEdit(
@@ -236,6 +245,8 @@ export type AgentsNative = {
   /** Keeps this Mac from idle sleep, or lets it sleep again. */
   keepAwake(hold: boolean): Promise<void>;
 };
+
+const verifyAgentRead = createEventVerifier(undefined, verifyNativeSignatures);
 
 export const nativeAgents = (): AgentsNative | undefined =>
   isTauri()
@@ -310,10 +321,13 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_delete", { pubkey, relay }),
         forget: ({ pubkey, relay }) =>
           invoke("app_agent_forget", { pubkey, relay }),
-        publish: ({ pubkey, relay }, event) =>
+        publish: ({ pubkey, relay }, event, options) =>
           invoke("app_agent_publish", {
             pubkey,
             relay,
+            ...(options?.managedAttachments && {
+              managedAttachments: options.managedAttachments,
+            }),
             event: {
               kind: event.kind,
               content: event.content,
@@ -321,8 +335,9 @@ export const nativeAgents = (): AgentsNative | undefined =>
             },
           }),
         query: async ({ pubkey, relay }, filters) =>
-          eventsDto(
+          parseEvents(
             await invoke("app_agent_query", { pubkey, relay, filters }),
+            verifyAgentRead,
           ),
         effectiveEdit: async ({ pubkey, relay }, id, channel) =>
           effectiveEditDto(
@@ -341,7 +356,9 @@ export const nativeAgents = (): AgentsNative | undefined =>
             query,
             limit,
           });
-          return found == null ? undefined : eventsDto(found);
+          return found == null
+            ? undefined
+            : parseEvents(found, verifyAgentRead);
         },
         upload: ({ pubkey, relay }, data, mime) =>
           invoke("app_agent_upload", { pubkey, relay, data, mime }),

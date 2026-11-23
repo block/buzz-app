@@ -1,12 +1,12 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { hexToBytes } from "nostr-tools/utils";
+import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import {
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
   type EventTemplate,
 } from "nostr-tools";
-import type { ReadFilter, RelayEvent } from "./events";
+import { hasTag, type ReadFilter, type RelayEvent } from "./events";
 import { PublishRejected } from "./outbox";
 import { authTagOwner } from "../agents/owner-attestation";
 import type { ReadTransport, Signer } from "./transport";
@@ -22,6 +22,30 @@ export function signed(
   template: Omit<EventTemplate, "created_at"> & { created_at?: number },
 ): RelayEvent {
   return finalizeEvent({ created_at: 1_700_000_000, ...template }, key.secret);
+}
+/** A real NIP-OA delegation on an agent's signed profile. */
+export async function ownedProfile(
+  agent: Key,
+  owner: Key,
+  name?: string,
+): Promise<RelayEvent> {
+  const conditions = "kind=0";
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`nostr:agent-auth:${agent.pubkey}:${conditions}`),
+  );
+  return signed(agent, {
+    kind: 0,
+    content: JSON.stringify(name ? { name } : {}),
+    tags: [
+      [
+        "auth",
+        owner.pubkey,
+        conditions,
+        bytesToHex(schnorr.sign(new Uint8Array(digest), owner.secret)),
+      ],
+    ],
+  });
 }
 /** The native `relay_verify_signatures` command, with real BIP-340 checks. */
 export const nativeSignatureChecks = (args: unknown) =>
@@ -203,6 +227,26 @@ export function scriptedTransport(
       return entry;
     },
   };
+}
+/** Answer the pending channel head reads as the channel's whole history:
+ * `history`'s rows in that channel, or none, so that only the rows the live
+ * stream delivered show. */
+export function completeHeads(
+  wire: { pending: Scripted[] },
+  relay: Key,
+  history: readonly RelayEvent[] = [],
+) {
+  for (const entry of [...wire.pending]) {
+    const [filter] = entry.filters;
+    const channelId = filter?.["#h"]?.[0];
+    if (!filter?.top_level || !channelId || filter.until !== undefined)
+      continue;
+    wire.pending.splice(wire.pending.indexOf(entry), 1);
+    entry.respond([
+      ...history.filter((event) => hasTag(event, "h", channelId)),
+      bounds(relay, channelId, "head", { has_more: false, next_cursor: null }),
+    ]);
+  }
 }
 export const flush = () =>
   new Promise<void>((resolve) => setTimeout(resolve, 0));

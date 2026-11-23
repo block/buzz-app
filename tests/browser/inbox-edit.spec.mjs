@@ -45,12 +45,9 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   const own = app.reply(root.id, true);
   const row = detail.locator(`[data-message-id="${own.id}"]`);
   await expect(row).toBeVisible();
-  // Opening the conversation reveals its entry reply by focusing that row. In
-  // WebKit the focus clears the editor selection, so a fill racing the reveal
-  // types nothing: let the focus and its next-frame acknowledgement land first.
-  await expect(
-    detail.locator('[data-message-id][tabindex="-1"]'),
-  ).toBeFocused();
+  // Opening the thread focuses its composer; let that and its next-frame
+  // acknowledgement land before typing.
+  await expect(reply).toBeFocused();
   await frames(page);
   await reply.fill("Unsent Inbox reply");
   const originalNode = await reply.elementHandle();
@@ -114,7 +111,7 @@ test("Inbox edits an owned reply in place and restores the reply draft", async (
   await hoverMessage(peer);
   await peer.getByRole("button", { name: "More message actions" }).click();
   await expect(
-    page.getByRole("menuitem", { name: /^Mark (read|unread)$/ }),
+    page.getByRole("menuitem", { name: /^Mark as (read|unread)$/ }),
   ).toBeVisible();
   await expect(
     page.getByRole("menuitem", { name: "Edit message", exact: true }),

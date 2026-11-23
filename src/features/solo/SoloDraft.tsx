@@ -1,3 +1,5 @@
+import { hostComposerProvenance } from "../messages/mention-draft";
+import { sendWithOwnerMentions } from "../relay/owner-mentions";
 import { linkedDraftKey, readLinkedChat, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
@@ -19,6 +21,7 @@ import {
 } from "./workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
+import { ownedSoloAgents } from "../relay/solo-admins";
 import {
   readView,
   writeView,
@@ -288,7 +291,7 @@ export function SoloDraft({
         settingsRevision = nextSettings;
         setDraftSettings(readDraftSettings(scope, draftKey));
       }
-    });
+    }, [projectKey, settingsKey]);
   }, [scope, draftKey, projectId]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -376,6 +379,7 @@ export function SoloDraft({
     picks?: MentionPicks,
     draftPicks?: DraftPicks,
     draftPicksRevision?: string | null,
+    explicitRecipientIds?: readonly string[],
   ) {
     const text = composerMarkdown(draft);
     if (submitting.current || !text.trim() || !available) return;
@@ -474,6 +478,10 @@ export function SoloDraft({
             "Solo chats can only use your available agents. Check mentions and workspace defaults.",
           );
       }
+      const admins = [
+        ...(await ownedSoloAgents(session.profiles, session.viewer, members)),
+      ];
+      if (!mounted.current) return;
       // Read at Send: the region's source may have stopped since.
       const regionOwner = () => {
         const current = region
@@ -515,7 +523,7 @@ export function SoloDraft({
       // agents read it from the start.
       // A region files its own chats.
       if (setup?.projectId && !region)
-        void session.soloPreferences
+        void session.sidebarPreferences
           .assign(channelId, setup.projectId)
           .catch((reason) =>
             console.warn("Solo chat could not join its workspace", reason),
@@ -574,7 +582,7 @@ export function SoloDraft({
               }
             : undefined,
           // Unguarded, so a restart can retry it like any New chat.
-          ...(region ? [{ labels: [region] }] : []),
+          { admins, ...(region ? { labels: [region] } : {}) },
         );
       } catch (reason) {
         if (startKey) writeView(scope, startKey, null);
@@ -595,22 +603,27 @@ export function SoloDraft({
       );
       try {
         signMessageTokens(draftTokens(draft), () =>
-          references.length || Object.keys(firstPicks).length
-            ? session.messages.send(
-                channelId,
-                text,
-                recipients,
-                uploaded,
-                undefined,
-                references,
-                firstPicks,
-              )
-            : session.messages.send(
-                channelId,
-                text,
-                recipients,
-                ...(uploaded.length ? [uploaded] : []),
-              ),
+          sendWithOwnerMentions(
+            session,
+            explicitRecipientIds?.filter((id) => recipients.includes(id)),
+            () =>
+              references.length || Object.keys(firstPicks).length
+                ? session.messages.send(
+                    channelId,
+                    text,
+                    recipients,
+                    uploaded,
+                    undefined,
+                    references,
+                    firstPicks,
+                  )
+                : session.messages.send(
+                    channelId,
+                    text,
+                    recipients,
+                    ...(uploaded.length ? [uploaded] : []),
+                  ),
+          ),
         );
         files.clear();
         writeView(
@@ -627,7 +640,13 @@ export function SoloDraft({
         writeView(scope, `draft:${channelId}`, draft);
         transferAttachmentDraft(
           files,
-          attachmentDraft(session, `${scope}:draft:${channelId}`, channelId),
+          attachmentDraft(
+            session,
+            `${scope}:draft:${channelId}`,
+            channelId,
+            false,
+            [scope, `draft:${channelId}:files`],
+          ),
         );
       }
       if (source) writeView(scope, draftKey, null);
@@ -862,6 +881,7 @@ export function SoloDraft({
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
+        evidenceOwner={hostComposerProvenance}
         key={restored.count}
         focusRequest={restored.focus ? restored.count : 0}
         chatPresentation
@@ -877,7 +897,7 @@ export function SoloDraft({
         defaultMention={defaultAgent}
         requireMention
         trailingTool={
-          session.soloPreferences ? (
+          session.sidebarPreferences ? (
             <WorkspaceControl
               session={session}
               value={selectedProject}
@@ -887,8 +907,8 @@ export function SoloDraft({
           ) : undefined
         }
         workspace={
-          session.soloPreferences && !busy
-            ? { preferences: session.soloPreferences, choose: chooseProject }
+          session.sidebarPreferences && !busy
+            ? { preferences: session.sidebarPreferences, choose: chooseProject }
             : undefined
         }
         submission={{
@@ -903,8 +923,24 @@ export function SoloDraft({
             unsaved.current = held;
           },
           onDraftChange: draftEdited,
-          submit: (draft, files, addressed, picks, draftPicks, revision) => {
-            void start(draft, files, addressed, picks, draftPicks, revision);
+          submit: (
+            draft,
+            files,
+            addressed,
+            picks,
+            draftPicks,
+            revision,
+            explicitRecipientIds,
+          ) => {
+            void start(
+              draft,
+              files,
+              addressed,
+              picks,
+              draftPicks,
+              revision,
+              explicitRecipientIds,
+            );
           },
         }}
       />

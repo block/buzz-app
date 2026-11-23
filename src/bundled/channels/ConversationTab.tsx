@@ -29,6 +29,8 @@ import styles from "./ChannelTabs.module.css";
 type ConversationTabProps = {
   tab: Tab;
   intro?: ReactNode;
+  subthreadId?: string | undefined;
+  latestRequest?: AbortSignal | undefined;
   active: boolean;
   /** Showing the tab visits its conversation, as Channels does. */
   visit?: boolean | undefined;
@@ -55,6 +57,8 @@ type ConversationTabProps = {
 export function ConversationTab({
   tab,
   intro,
+  subthreadId,
+  latestRequest,
   active,
   visit = true,
   focusOnMount = true,
@@ -82,6 +86,12 @@ export function ConversationTab({
   );
   if (reply !== restoredReply.current) restoredReply.current = undefined;
   const soloConversation = channel.channelType === "solo";
+  // Likewise a saved unread request.
+  const unread = tab.kind === "thread" ? tab.unreadRequest : undefined;
+  const restoredUnread = useRef(
+    initial?.kind === "thread" ? initial.unreadRequest : undefined,
+  );
+  if (unread !== restoredUnread.current) restoredUnread.current = undefined;
   // Likewise a saved reveal belongs to the opening that asked for it.
   const restoredReveal = useRef(initial?.revealRequest);
   if (tab.revealRequest !== restoredReveal.current)
@@ -159,8 +169,11 @@ export function ConversationTab({
         {tab.kind === "thread" ? (
           <ConversationThread
             intro={intro}
+            latestRequest={active ? latestRequest : undefined}
             active={active}
             messageId={tab.messageId}
+            subthreadId={subthreadId}
+            sourceThreadId={subthreadId ? tab.rootId : undefined}
             navigation={navigation}
             retainThread
             tabbed
@@ -171,6 +184,9 @@ export function ConversationTab({
             focusRequest={focusRequest}
             revealSelected={threadReveal !== undefined}
             revealRequest={threadReveal}
+            unreadRequest={
+              unread === restoredUnread.current ? undefined : unread
+            }
             close={close}
             parent={parent}
           />
@@ -190,6 +206,7 @@ export function ConversationTab({
           <SoloColumn enabled={soloConversation}>
             <ChannelBody
               intro={intro}
+              latestRequest={active ? latestRequest : undefined}
               viewer={session.viewer}
               cached={!!channel.cached}
               // The composer below mounts TypingIndicator for a live channel.

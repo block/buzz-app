@@ -3,7 +3,7 @@
 // session. The config the runtime actually uses comes from confirmed synced
 // copies, the delivery carries their revision IDs, and the transport under
 // the session sees no request at start beyond a turn's conversation reads,
-// online or offline.
+// online or offline, and the runner's catch-up of the agent's mentions.
 import { Context } from "@deepseek-ai/cordis";
 import { finalizeEvent } from "nostr-tools";
 import { afterEach, expect, it, vi } from "vitest";
@@ -37,6 +37,20 @@ import type { Wire } from "../../bundled/codex/rpc";
 import { gooseRun } from "../../bundled/goose/run";
 import { GooseRuntime } from "../../bundled/goose/runtime";
 import { fakeSpawn as fakeGoose } from "../../bundled/goose/goose-testing";
+
+/** A Goose runtime with its own agent storage, as the app gives it. */
+const gooseRuntime = (
+  ...[host, relay, core]: ConstructorParameters<typeof GooseRuntime>
+) =>
+  new GooseRuntime(
+    host,
+    relay,
+    core,
+    undefined,
+    undefined,
+    undefined,
+    memoryStorage(),
+  );
 
 const owner = keypair();
 const relayKey = keypair();
@@ -174,7 +188,7 @@ async function setup<Config>(
   const storage = memoryStorage();
   seed(storage, heads);
   const counted = countedTransport([
-    metadata(relayKey, channel, "general"),
+    metadata(relayKey, channel, "general", undefined, [["t", "stream"]]),
     roster(relayKey, channel, [owner.pubkey, agentKey.pubkey]),
     profile(owner, { name: "Owner" }),
     profile(agentKey, { name: typeId, is_agent: true }),
@@ -316,10 +330,18 @@ const recentNotesRead = (request: Request) =>
   request.memory?.agent === agentKey.pubkey &&
   /^mem\/notes\/\d{4}-\d{2}-\d{2}$/.test(request.memory.slug ?? "");
 
-/** Apart from the post-run core refresh, and with `notes` a start's recent
- * notes reads, the recorded requests are exactly one conversation read for
- * each of `conversations`, in order: an extra, a wider or a different read
- * fails. */
+/** The runner's catch-up read of the agent's mentions, of every channel
+ * (`runner.ts` `readMissed`): not a start's. A connect in the second after
+ * the agent's mentions began to be caught up leaves that second to read. */
+const mentionCatchUp = (request: Request) =>
+  request.filters.length === 1 &&
+  request.filters[0]?.["#p"]?.join() === agentKey.pubkey &&
+  !request.filters[0]["#h"];
+
+/** Apart from the post-run core refresh and mention catch-up, and with
+ * `notes` a start's recent notes reads, the recorded requests are exactly one
+ * conversation read for each of `conversations`, in order: an extra, a wider
+ * or a different read fails. */
 function expectOnlyAllowed(
   f: Fixture,
   conversations: readonly RelayEvent[] = [],
@@ -329,7 +351,9 @@ function expectOnlyAllowed(
     f.requests
       .filter(
         (request) =>
-          !postRunCoreRefresh(request) && !(notes && recentNotesRead(request)),
+          !postRunCoreRefresh(request) &&
+          !mentionCatchUp(request) &&
+          !(notes && recentNotesRead(request)),
       )
       .map((request) => request.filters),
   ).toEqual(conversations.map(conversationRead));
@@ -591,7 +615,7 @@ it("starts Goose sessions from the synced copies, with no relay request online o
   });
   const f = await setup(
     "goose",
-    (relay, _reads, core) => gooseRun(new GooseRuntime(host, relay, core)),
+    (relay, _reads, core) => gooseRun(gooseRuntime(host, relay, core)),
     { ...GOOSE_LOCAL },
     seeded,
     synced(),
@@ -627,7 +651,7 @@ it("refuses to start from deleted synced settings once: no launch, the reason on
   const { seeded } = heads("buzz/goose", { model: "synced-model" });
   const f = await setup(
     "goose",
-    (relay, _reads, core) => gooseRun(new GooseRuntime(host, relay, core)),
+    (relay, _reads, core) => gooseRun(gooseRuntime(host, relay, core)),
     { ...GOOSE_LOCAL },
     [[settingsSubject, deleted], seeded[1] as [Subject, RelayEvent]],
     synced(),
@@ -714,7 +738,7 @@ it.each([
       });
       const f = await setup(
         "goose",
-        (relay, _reads, core) => gooseRun(new GooseRuntime(host, relay, core)),
+        (relay, _reads, core) => gooseRun(gooseRuntime(host, relay, core)),
         { ...GOOSE_LOCAL },
         seeded,
         synced(),

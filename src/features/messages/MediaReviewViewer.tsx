@@ -1,3 +1,4 @@
+import { hostComposerProvenance } from "./mention-draft";
 import { TypingIndicator } from "./TypingIndicator";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
@@ -277,7 +278,7 @@ function ReviewShell({
   error?: string;
   retry?: () => void | Promise<void>;
 }) {
-  const source = session.media(attachment.url);
+  const source = session.media(attachment.url, undefined, channelId);
   // Listener unavailability is not a playback error the selection resets.
   const sourceUnavailable = useMediaElementSource(
     attachment.kind === "video" ? source : undefined,
@@ -334,7 +335,7 @@ function ReviewShell({
   };
   const markers = timecodesSeekable
     ? replies.flatMap((row) => {
-        const parsed = parseMediaTimeReply(row.content);
+        const parsed = parseMediaTimeReply(row.forward?.note ?? row.content);
         if (!parsed || !timecodeApplies(row)) return [];
         const displayId = row.workflowOwnerId ?? row.authorId;
         const profile = profiles.get(displayId);
@@ -524,6 +525,8 @@ function ReviewShell({
                   }}
                 >
                   <MessageComposer
+                    evidenceOwner={hostComposerProvenance}
+                    shown={commentsOpen}
                     extensions={extensions}
                     session={session}
                     scope={scope}
@@ -575,13 +578,14 @@ function ReviewShell({
       ) : attachment.kind === "video" && source ? (
         <VideoPlayer
           key={source}
+          attachmentUrl={attachment.url}
           downloadName={attachment.name ?? ""}
           videoRef={video}
           source={source}
           poster={
             (selectionRequest === 0 ? origin?.poster : undefined) ??
             (attachment.previewUrl
-              ? session.media(attachment.previewUrl)
+              ? session.media(attachment.previewUrl, undefined, channelId)
               : undefined)
           }
           initialTime={initialTime}
@@ -691,6 +695,17 @@ function ReviewComments({
         .ensure(authors.split(":"), "background")
         .catch(() => {});
   }, [session.profiles, authors, profileGeneration]);
+  // A working step joins the group above only when that row is its agent's own
+  // comment. Earlier steps are history lines here, not part of one group, so a
+  // step under one is named and shown on its own.
+  const stacks = (at: number) => {
+    const step = activity.byRow.get(replies[at]?.id ?? "");
+    return (
+      !!step?.active &&
+      step.container === "bubble" &&
+      !activity.byRow.has(replies[at - 1]?.id ?? "")
+    );
+  };
   // Comment links stay inert: no host tab opener reaches them behind the review,
   // so mentions render as static names.
   return (
@@ -702,20 +717,31 @@ function ReviewComments({
         aria-label="Media comments"
       >
         {replies.map((row, index) => {
+          const recorded = activity.byRow.get(row.id);
           return (
             <div
               key={row.id}
               data-review-comment={row.id}
               data-selected={selectedComment === row.id || undefined}
+              // Row spacing follows this grouping, not the rows drawn inside.
+              data-stack-previous={stacks(index) || undefined}
+              data-stack-next={stacks(index + 1) || undefined}
               className={styles.mediaReviewComment}
             >
               <MessageRow
                 row={row}
                 recordedActivity={stableActivity.activity(
                   row.id,
-                  activity.byRow.get(row.id),
-                  "history",
+                  recorded,
+                  // A working step is this thread's indicator, laid out like
+                  // one. Finished steps stay quiet history lines.
+                  !recorded?.active
+                    ? "history"
+                    : stacks(index)
+                      ? "bubble"
+                      : "standalone",
                 )}
+                stackNext={stacks(index + 1)}
                 extensions={extensions}
                 session={session}
                 scope={scope}

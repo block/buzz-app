@@ -176,7 +176,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "Compact feedback without moving the page or hiding recovery actions.",
     behavior:
-      "Sonner owns bottom-right placement, announcements, expiry and swipe dismissal. Buzz supplies themed content and an expanded, scrollable recovery stack. F6 focuses notifications.",
+      "Sonner owns top-right stacking, hover expansion, announcements, expiry and swipe dismissal. Buzz supplies themed content with trailing actions and hover/focus dismissal. F6 focuses notifications.",
     variants: ["transient", "actionable", "dismissible", "navigable"],
     status: "core",
     collection: "components",
@@ -255,12 +255,13 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "radio-group",
     name: "RadioGroup",
     purpose:
-      "Choose one option, including labelled settings cards and text-only tiles.",
+      "Choose one option, including labelled settings cards, text-only tiles, and compact checkmarked rows.",
     behavior: "Base UI owns form and keyboard semantics.",
     variants: [
       "default",
       "card",
       "tile",
+      "row",
       "size: sm | md",
       "disabled",
       "invalid",
@@ -390,6 +391,21 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["field", "radio-group"],
   },
   {
+    slug: "badge",
+    name: "Badge",
+    purpose:
+      "Present concise, non-interactive metadata such as a search result’s Best match label.",
+    behavior:
+      "XS text capsule with neutral and success tones. Not focusable or interactive.",
+    variants: ["xs neutral", "xs success"],
+    status: "proposed",
+    collection: "components",
+    owner: "Global search",
+    source: "shared/design-system/ui/Badge.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "count-badge",
     name: "CountBadge",
     purpose:
@@ -498,6 +514,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "ghost",
       "destructive",
       "outline",
+      "outline-subtle: standard border for quiet secondary actions",
       "attention (proposed): light dashed danger outline with slow marching ants",
       "glass",
       "glass-ghost (proposed): quiet artwork control with glass hover/open states",
@@ -885,6 +902,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "default",
       "form",
       "settings",
+      "popout",
       "navigation",
       "activity",
       "section (proposed): InlineHeader type and unindented content",

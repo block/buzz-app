@@ -869,16 +869,14 @@ it("is an agent type on the desktop app", () => {
       workspace: "~/code",
       scope: "channel",
     }),
-  ).toEqual({ instructions: "Triage.", workspace: "~/code" });
+  ).toEqual({
+    instructions: "Triage.",
+    workspace: "~/code",
+    sessionScope: "channel",
+  });
   expect(type.describeMigration?.(DEFAULT_CONFIG)).toEqual([
     { id: "model", label: "Model", isOverride: false },
     { id: "thinking", label: "Thinking", isOverride: false },
-    {
-      id: "sessions",
-      label: "Sessions",
-      isOverride: false,
-      unchangedKey: "thread",
-    },
   ]);
   expect(
     type.describeMigration?.({
@@ -890,12 +888,6 @@ it("is an agent type on the desktop app", () => {
   ).toEqual([
     { id: "model", label: "Model", isOverride: true },
     { id: "thinking", label: "Thinking", isOverride: true },
-    {
-      id: "sessions",
-      label: "Sessions",
-      isOverride: true,
-      unchangedKey: "channel",
-    },
   ]);
   expect(type.summary?.(agent({ ...DEFAULT_CONFIG, model: "opus" }))).toBe(
     "opus",
@@ -949,7 +941,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   await user.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
   fireEvent.click(
@@ -960,9 +952,7 @@ it("edits the model through the Settings dropdown and preserves agent inheritanc
   const save = vi.fn(async () => undefined);
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Fable 5.1",
-    ),
+    expect(screen.getByTitle("Fable 5.1 · Default")).toBeVisible(),
   );
   expect(save).not.toHaveBeenCalled();
 });
@@ -978,7 +968,7 @@ it("keeps the saved default and shows the error while a default could not be sav
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   const pick = async () => {
     fireEvent.click(control);
     fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
@@ -990,7 +980,9 @@ it("keeps the saved default and shows the error while a default could not be sav
   await pick();
   expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
   error.mockRestore();
-  expect(control).toHaveTextContent("Opus 5.5");
+  expect(control).toHaveAccessibleName(
+    "Claude default model: Default · Follows Claude Code settings, Automatic",
+  );
   expect(storage.get("buzz.claude-code.provider-defaults.v1")).toBeNull();
   // The same choice can be saved again.
   failing = false;
@@ -1384,11 +1376,14 @@ it("starts a new agent with finite model choices and preserves its other setting
   ).not.toBeInTheDocument();
   await user.click(
     await screen.findByRole("option", {
-      name: "Opus 5.5 · Default",
-      description: "Best for everyday, complex tasks",
+      name: "Default",
+      description: "Follows Claude Code settings",
     }),
   );
   expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "" });
+  await user.click(picker);
+  await user.click(await screen.findByRole("option", { name: "Opus 5.5" }));
+  expect(onChange).toHaveBeenLastCalledWith({ ...config, model: "opus" });
   expect(screen.getByLabelText("Instructions Optional")).toHaveValue("Triage.");
   fireEvent.change(screen.getByLabelText("Instructions Optional"), {
     target: { value: "Plan." },
@@ -1609,7 +1604,7 @@ it("returns Claude create-time effort to Default when the inherited model change
     name: /^Claude default model:/,
   });
   await waitFor(() => {
-    expect(providerModel).toHaveTextContent("Opus 5.5");
+    expect(providerModel).toHaveTextContent("Default");
     expect(providerModel).toBeEnabled();
   });
   fireEvent.click(providerModel);
@@ -1933,6 +1928,27 @@ it("holds a new Claude agent without a key, Model and Thinking disabled", async 
   expect(onReadyChange).toHaveBeenLastCalledWith(false);
 });
 
+it("gives a host's group its rows alone, still holding the agent without a key", async () => {
+  const { type } = installed({ keySaved: false });
+  const Configuration = type.CreateConfiguration;
+  if (!Configuration) throw new Error("Missing creation configuration");
+  const onReadyChange = vi.fn();
+  const { container } = render(
+    <Configuration
+      rowsOnly
+      config={DEFAULT_CONFIG}
+      disabled={false}
+      harnessControl={<div>Harness row</div>}
+      onReadyChange={onReadyChange}
+      onChange={vi.fn()}
+    />,
+  );
+  expect(screen.getByText("Harness row")).toBeVisible();
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeDisabled();
+  expect(container.querySelector(".buzz-settings-group")).toBeNull();
+  expect(onReadyChange).toHaveBeenLastCalledWith(false);
+});
+
 it("offers an interactive sign-in in Set up Claude when the build has one", async () => {
   interactive.signIn = true;
   try {
@@ -2211,11 +2227,14 @@ it("separates identity fields from runtime settings without changing the stored 
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Session scope")).not.toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   view.rerender(<Settings {...props} settingsSection="runtime" />);
   expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
-  expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
+  expect(screen.getByLabelText("Session scope")).toBeInTheDocument();
+  expect(
+    screen.getByText("Choose how your agent uses sessions to keep context."),
+  ).toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
@@ -2360,7 +2379,7 @@ it("saves model-specific default effort from the nested menu and inherits it", a
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5"));
+  await waitFor(() => expect(control).toBeEnabled());
   expect(control).toHaveTextContent("Automatic");
   fireEvent.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
@@ -2403,19 +2422,20 @@ it("retries failed model discovery from the defaults row", async () => {
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /^Claude default model:/ }),
-    ).toHaveTextContent("Opus 5.5"),
+    ).toBeEnabled(),
   );
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("keeps the model inherited when changing the default model's effort", async () => {
+it("pins the named model when choosing its effort from the defaults menu", async () => {
   const Control = installed().type.provider?.DefaultControl;
   if (!Control) throw new Error("Missing default control");
   render(<Control onConfigure={vi.fn()} />);
   const control = await screen.findByRole("button", {
     name: /^Claude default model:/,
   });
-  await waitFor(() => expect(control).toHaveTextContent("Opus 5.5 · Default"));
+  await waitFor(() => expect(control).toBeEnabled());
+  expect(control).toHaveTextContent("Default");
   fireEvent.click(control);
   fireEvent.click(await screen.findByRole("menuitem", { name: "Claude" }));
   fireEvent.click(
@@ -2423,10 +2443,14 @@ it("keeps the model inherited when changing the default model's effort", async (
   );
   fireEvent.click(await screen.findByRole("menuitemradio", { name: "High" }));
   expect(new ClaudeDefaults(localStore()).snapshot()).toMatchObject({
-    model: "",
+    model: "opus",
     effort: "high",
   });
-  expect(control).toHaveTextContent("· Default");
+  await waitFor(() =>
+    expect(control).toHaveAccessibleName(
+      "Claude default model: Opus 5.5, High",
+    ),
+  );
 });
 
 it("keeps keyboard focus through Claude defaults discovery retries", async () => {
@@ -2615,9 +2639,9 @@ it("uses target model settings for remote Claude without a local catalog or a ta
   const save = vi.fn(async () => {});
   render(<Settings agent={agent()} save={save} />);
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Target default",
-    ),
+    expect(
+      screen.getByTitle("Default · Follows the target computer's settings"),
+    ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();
   expect(
@@ -2651,9 +2675,9 @@ it("refreshes mounted Claude Settings after an execution binding changes", async
     />,
   );
   await waitFor(() =>
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveTextContent(
-      "Target default",
-    ),
+    expect(
+      screen.getByTitle("Default · Follows the target computer's settings"),
+    ).toBeVisible(),
   );
   expect(screen.getByLabelText("Workspace")).toBeDisabled();
   expect(f.execution).not.toHaveBeenCalled();
@@ -3138,4 +3162,34 @@ it("follows the recommended setup in Settings until a manual choice", async () =
   } finally {
     vi.unstubAllEnvs();
   }
+});
+
+it("blocks an unsupported proposal effort and lets the owner clear it", async () => {
+  const Settings = tab(installed().type, 0);
+  const save = vi.fn(async () => {});
+  const user = userEvent.setup();
+  render(
+    <Settings
+      agent={agent({ ...DEFAULT_CONFIG, model: "haiku", effort: "max" })}
+      save={save}
+      settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
+    />,
+  );
+  const submit = await screen.findByRole("button", { name: "Save" });
+  await waitFor(() => expect(submit).toBeEnabled());
+  await user.click(submit);
+  expect(
+    await screen.findByText(
+      /Choose a thinking level this Claude model supports/,
+    ),
+  ).toBeVisible();
+  expect(save).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "Clear model and thinking overrides" }),
+  );
+  await user.click(submit);
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ model: "", effort: "" }),
+    expect.anything(),
+  );
 });

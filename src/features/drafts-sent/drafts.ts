@@ -97,19 +97,20 @@ function draftEntry(
   );
   const text = draft.text.trim();
   const fingerprint = signature(
-    `${count}:${draft.chatCards?.length ?? 0}:${draft.gifs?.length ?? 0}:${text}`,
+    `${count}:${draft.chatCards?.length ?? 0}:${draft.gifs?.length ?? 0}:${text}${draft.forward ? `:${JSON.stringify(draft.forward)}` : ""}`,
   );
   const changed = activity[key]?.[0] !== fingerprint;
   if (changed) activity[key] = [fingerprint, nowSeconds];
   const entry: DraftEntry = {
     id: key,
-    channelId: where.channelId,
-    ...(where.threadRootId ? { threadRootId: where.threadRootId } : {}),
+    ...where,
     text:
       text ||
       (count
         ? `${count} attached file${count === 1 ? "" : "s"}`
-        : "Attached chat or GIF"),
+        : draft.forward
+          ? "Forwarded message"
+          : "Attached chat or GIF"),
     ...(text ? {} : { placeholder: true as const }),
     createdAt: activity[key]?.[1] ?? nowSeconds,
     signature: fingerprint,
@@ -191,7 +192,7 @@ export function readDrafts(
  * reloads the empty draft, or keeps unsaved edits as a conflict. Throws when
  * storage could not forget it, before discarding any files. */
 export function clearDraft(session: Session, key: string) {
-  clearView(session.scope, key);
+  clearView(session.scope, key, `${key}:files`);
   clearAttachmentDraft(
     session as Parameters<typeof clearAttachmentDraft>[0],
     `${session.scope}:${key}`,
@@ -215,12 +216,15 @@ export function useDrafts(session: Session | undefined) {
     const refresh = () => show(readDrafts(session));
     refresh();
     // Other view keys (scroll places, panels) never change the draft list, and
-    // a keystroke in a listed draft re-reads only that draft.
-    const stopViews = subscribeView(session.scope, (key) => {
-      if (key === undefined) refresh();
-      else if (draftCoordinates(key))
-        show(rereadDraft(session, current, key) ?? readDrafts(session));
-    });
+    // a save to a listed draft re-reads only that draft.
+    const stopViews = subscribeView(
+      session.scope,
+      (key) => {
+        if (key === undefined) refresh();
+        else show(rereadDraft(session, current, key) ?? readDrafts(session));
+      },
+      (key) => !!draftCoordinates(key),
+    );
     const stopFiles = subscribeAttachmentDraftCounts(
       session as Parameters<typeof subscribeAttachmentDraftCounts>[0],
       refresh,

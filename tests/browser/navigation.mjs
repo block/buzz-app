@@ -1,5 +1,12 @@
 import { expect } from "@playwright/test";
 
+export async function clickSidebarHeadingAction(action) {
+  // The heading must reveal its actions before the pointer can enter them.
+  const section = action.locator("xpath=ancestor::*[@data-sidebar-section][1]");
+  await section.locator("summary").first().hover();
+  await action.click();
+}
+
 export async function pageChoices(page, query = "") {
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz", exact: true });
@@ -28,7 +35,7 @@ export async function openPage(page, name, { connected = true } = {}) {
   await selectPage(page, name, { connected });
 }
 
-// Nexus composes chat creation inside Chats; ordinary Buzz keeps the global menu.
+// The sidebar's floating New button hosts the New options menu.
 export async function newChat(page) {
   // The community switcher appears after local startup has replaced the launch view.
   await expect(
@@ -47,25 +54,13 @@ export async function newChat(page) {
     });
     if (await show.isVisible()) await show.click();
   }
-  await page.getByRole("button", { name: "New", exact: true }).click();
-  const menu = page.getByRole("menu");
-  await expect(menu).toBeVisible();
-  const globalChat = menu.getByRole("menuitem", {
-    name: "New chat",
+  const options = page.getByRole("button", {
+    name: "New options",
     exact: true,
   });
-  if (await globalChat.isVisible()) {
-    await globalChat.click();
-    return;
-  }
-  await page.keyboard.press("Escape");
-  await page.getByRole("tab", { name: "Solo", exact: true }).click();
-  await expect(
-    page.getByRole("tab", { name: "Solo", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await page
-    .getByRole("button", { name: "New chat in Chats", exact: true })
-    .click();
+  await options.focus();
+  await options.press("Enter");
+  await page.getByRole("menuitem", { name: "New chat", exact: true }).click();
 }
 
 // The agents-only composer pill's menu adds and removes agents, never the
@@ -205,6 +200,9 @@ export async function chooseColorMode(page, name) {
 // Secondary panels enter with a transform and a parent grid transition.
 // Positions compared across separate reads must wait for both: each read sees
 // a different offset, so a fixed gap between controls can appear to overlap.
+// A covered tab skips rendering (content-visibility: hidden), so an animation
+// inside it, such as a loading mark's fade, does not advance until the tab is
+// shown again. It cannot move anything on screen, so it is not waited for.
 export async function settlePanelMotion(page) {
   await page
     .locator("[data-panel-dock]")
@@ -217,7 +215,10 @@ export async function settlePanelMotion(page) {
           ]
             .filter(
               (animation) =>
-                animation.effect?.getComputedTiming().endTime !== Infinity,
+                animation.effect?.getComputedTiming().endTime !== Infinity &&
+                !animation.effect?.target?.closest?.(
+                  "[data-covered]:not([data-leaving])",
+                ),
             )
             .map((animation) => animation.finished),
         ),

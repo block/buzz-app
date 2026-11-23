@@ -1,8 +1,12 @@
+import { resolveForward } from "../messages/resolve-forward";
 import { communityFromScope, relayGifRequests } from "../relay/gifs";
 import { onAutomatic } from "../agents/recommended";
 import { MAX_VOICE_SECONDS } from "../relay/voice-media";
 import { mentionDraft } from "../messages/mention-draft";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  draftRetirementCursor,
+  retireViewDraft,
+} from "../../shared/view-state";
 import type { RelaySession } from "../relay/session";
 import { canAddMembers } from "../channel-members/members";
 import { prepareAttachment } from "../messages/prepare-attachment";
@@ -166,6 +170,13 @@ export function createHuddleComposerOwner(
     check();
     signal.throwIfAborted();
     switch (request.op) {
+      case "forwardSource": {
+        check(true);
+        const source = await resolveForward(session, request.args, signal);
+        check(true);
+        signal.throwIfAborted();
+        return source;
+      }
       case "gifSupport":
       case "gifSearch": {
         const community = communityFromScope(session.scope);
@@ -200,10 +211,20 @@ export function createHuddleComposerOwner(
         return modelChoices(request.args);
       case "send": {
         check(true);
-        const { text, draft, mentions, references, attachments } = request.args;
+        const {
+          text,
+          draft,
+          mentions,
+          references,
+          attachments,
+          retirementCursor,
+        } = request.args;
         if (
           typeof draft !== "string" ||
           draft.length > 262144 ||
+          (retirementCursor !== undefined &&
+            (!Number.isSafeInteger(retirementCursor) ||
+              retirementCursor < 0)) ||
           typeof text !== "string" ||
           text.length > 16000 ||
           !Array.isArray(mentions) ||
@@ -212,9 +233,12 @@ export function createHuddleComposerOwner(
           mentions.length + references.length > 128 ||
           !Array.isArray(attachments) ||
           attachments.length > 10 ||
-          (!text.trim() && !attachments.length)
+          (!text.trim() && !attachments.length && !request.args.forward)
         )
           throw new Error("Invalid Huddle message.");
+        const scope = session.scope;
+        const key = `draft:${room}`;
+        const cursor = retirementCursor ?? draftRetirementCursor(scope, key);
         const files = attachments.map((file) => {
           const known = uploaded.get(JSON.stringify([file.url, file.sha256]));
           if (!known) throw new Error("Reattach this file before sending.");
@@ -271,25 +295,42 @@ export function createHuddleComposerOwner(
         }
         check(true);
         signal.throwIfAborted();
-        const id = session.messages.send(
-          room,
-          text,
-          mentions,
-          files,
-          undefined,
-          references,
-          picks,
-        );
+        const forward = request.args.forward
+          ? await resolveForward(session, request.args.forward, signal)
+          : undefined;
+        check(true);
+        signal.throwIfAborted();
+        const id = forward
+          ? session.messages.forward(
+              room,
+              forward.row,
+              forward.name,
+              text,
+              undefined,
+              { mentions, attachments: files, references, picks },
+            )
+          : session.messages.send(
+              room,
+              text,
+              mentions,
+              files,
+              undefined,
+              references,
+              picks,
+            );
         // Admission owns the persisted draft too: closing the child before its
         // acknowledgement must not restore a message already in the main
         // outbox. The stub is what the composer saves for every send; it
         // keeps the remembered agents in memory (see seedMentions).
-        const scope = session.scope;
-        const key = `draft:${room}`;
-        if (JSON.stringify(readView(scope, key, null)) === draft)
-          writeView(scope, key, mentionDraft(""));
+        const retirement = retireViewDraft(
+          scope,
+          key,
+          draft === "null" ? null : draft,
+          JSON.stringify(mentionDraft("")),
+          cursor,
+        );
         for (const file of files) release(file);
-        return id;
+        return { id, retirement };
       }
       case "release":
         release(request.args);

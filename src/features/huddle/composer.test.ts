@@ -10,6 +10,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { createElement } from "react";
 import { attachmentDraft } from "../messages/attachment-draft";
@@ -23,7 +24,12 @@ import {
   relayGifRequests,
 } from "../relay/gifs";
 import { createRelaySession } from "../relay/session";
-import { readView, writeView } from "../../shared/view-state";
+import {
+  readView,
+  subscribeView,
+  viewRevision,
+  writeView,
+} from "../../shared/view-state";
 import { createHuddleComposerOwner } from "./composer-owner";
 import { createHuddleComposerClient } from "./composer-client";
 import type { ComposerCommand, ComposerResponse } from "./composer-contract";
@@ -34,6 +40,7 @@ afterEach(() => {
   cleanupReact();
   for (const fn of cleanup.splice(0).reverse()) fn();
   localStorage.clear();
+  sessionStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -136,6 +143,9 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
   expect(communityFromScope(remote.scope)).toBe("https://example.test");
   const draft = { text: "Hello", recipients: [] };
   writeView(h.scope, "draft:room", draft);
+  const revision = viewRevision(h.scope, "draft:room");
+  const changed = vi.fn();
+  const stop = subscribeView(h.scope, changed, "draft:room");
   h.send.mockImplementationOnce(() => {
     throw new Error("Rejected");
   });
@@ -143,6 +153,7 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
     "Rejected",
   );
   expect(readView(h.scope, "draft:room", null)).toEqual(draft);
+  expect(changed).not.toHaveBeenCalled();
   await expect(remote.messages.send("room", "Hello")).resolves.toBe(
     "accepted-id",
   );
@@ -150,6 +161,10 @@ it("keeps drafts on rejection, clears persisted accepted intent in main, and ref
     text: "",
     recipients: [],
   });
+  expect(changed).toHaveBeenCalledExactlyOnceWith("draft:room", [
+    { key: "draft:room", revision },
+  ]);
+  stop();
   await remote.agentChoices.refresh();
   expect(h.refresh).toHaveBeenCalledWith(true);
   h.revoke();
@@ -312,9 +327,9 @@ it.each(["cancel", "close"])(
   },
 );
 
-it.each([false, true])(
-  "preserves the real owner's remembered-agent followup and concurrent drafts (changed=%s)",
-  async (changed) => {
+it.each(["unchanged", "different", "re-entered"] as const)(
+  "preserves the owner's remembered-agent followup and concurrent drafts (%s)",
+  async (peer) => {
     const h = harness();
     const agent = { pubkey: "ef".repeat(32), name: "Helper" };
     const profiles = new Map([
@@ -326,12 +341,39 @@ it.each([false, true])(
     writeView(h.scope, "draft:room", draft);
     const { remote } = await h.connect();
     const sent = vi.fn();
-    const newer = { text: "New work from another editor", recipients: [] };
-    if (changed)
+    const newer =
+      peer === "re-entered"
+        ? draft
+        : { text: "New work from another editor", recipients: [] };
+    if (peer === "different")
       h.send.mockImplementationOnce(() => {
         writeView(h.scope, "draft:room", newer);
         return "accepted-id";
       });
+    if (peer === "re-entered") {
+      const setItem = Storage.prototype.setItem;
+      const quota = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(function (this: Storage, key, value) {
+          if (this === localStorage && key.startsWith("buzz-ret.v1:"))
+            throw new DOMException(
+              "Storage quota exceeded",
+              "QuotaExceededError",
+            );
+          setItem.call(this, key, value);
+        });
+      cleanup.push(() => quota.mockRestore());
+      const stop = subscribeView(
+        h.scope,
+        (_key, removed) => {
+          if (!removed?.length) return;
+          stop();
+          writeView(h.scope, "draft:room", draft);
+        },
+        "draft:room",
+      );
+      cleanup.push(stop);
+    }
     render(
       createElement(MessageComposer, {
         session: remote,
@@ -348,9 +390,11 @@ it.each([false, true])(
     await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
     await act(async () => {});
     expect(readView(h.scope, "draft:room", null)).toEqual(
-      changed ? newer : mentionDraft(""),
+      peer === "unchanged" ? mentionDraft("") : newer,
     );
-    expect(editor).toHaveTextContent(changed ? newer.text : "Helper");
+    expect(editor).toHaveTextContent(
+      peer === "different" ? newer.text : "Helper",
+    );
     expect(h.send).toHaveBeenCalledTimes(1);
     expect(h.send).toHaveBeenCalledWith(
       "room",
@@ -363,6 +407,114 @@ it.each([false, true])(
     );
   },
 );
+
+it("recovers a peer draft when saved storage is unreadable at Huddle acknowledgement", async () => {
+  const h = harness();
+  const { remote } = await h.connect();
+  writeView(h.scope, "draft:room", mentionDraft("Send this"));
+  const peerDraft = mentionDraft("Unsent peer edit");
+  const getItem = Storage.prototype.getItem;
+  let readBlocked = false;
+  const reads = vi
+    .spyOn(Storage.prototype, "getItem")
+    .mockImplementation(function (this: Storage, key) {
+      if (
+        readBlocked &&
+        this === localStorage &&
+        key.startsWith("buzz-view.v1:") &&
+        key.endsWith(',"draft:room"]')
+      )
+        throw new DOMException("Storage access denied", "SecurityError");
+      return getItem.call(this, key);
+    });
+  cleanup.push(() => reads.mockRestore());
+  const stop = subscribeView(
+    h.scope,
+    (_key, removed) => {
+      if (!removed?.length) return;
+      stop();
+      writeView(h.scope, "draft:room", peerDraft);
+      readBlocked = true;
+    },
+    "draft:room",
+  );
+  cleanup.push(stop);
+  const sent = vi.fn();
+  render(
+    createElement(MessageComposer, {
+      session: remote,
+      scope: h.scope,
+      channelId: "room",
+      channelName: "Huddle",
+      label: "Huddle draft",
+      onSend: sent,
+    }),
+  );
+  const editor = screen.getByRole("textbox", { name: "Huddle draft" });
+  await waitFor(() => expect(editor).toHaveTextContent("Send this"));
+  fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(sent).toHaveBeenCalledWith("accepted-id"));
+  const retry = await screen.findByRole("button", {
+    name: "Retry draft cleanup",
+  });
+  readBlocked = false;
+  fireEvent.click(retry);
+  expect(editor).toHaveTextContent(peerDraft.text);
+  expect(
+    screen.queryByRole("button", { name: "Retry draft cleanup" }),
+  ).toBeNull();
+  expect(readView(h.scope, "draft:room", null)).toEqual(peerDraft);
+  expect(h.send).toHaveBeenCalledTimes(1);
+});
+
+it("keeps a peer draft saved while a detached send prepares its files", async () => {
+  const h = harness();
+  const { remote } = await h.connect();
+  if (!remote.attachments) throw new Error("Missing attachments");
+  type Upload = Awaited<ReturnType<typeof remote.attachments.upload>>;
+  let finishUpload!: (result: Upload) => void;
+  const upload = new Promise<Upload>((resolve) => {
+    finishUpload = resolve;
+  });
+  const transfer = vi
+    .spyOn(remote.attachments, "upload")
+    .mockReturnValue(upload);
+  const publish = vi.spyOn(remote, "sendDraft");
+  const caption = { text: "Original caption", recipients: [] };
+  writeView(h.scope, "draft:room", caption);
+  const files = attachmentDraft(remote, `${h.scope}:draft:room`, "room");
+  const prepare = vi.spyOn(files, "prepareForSend");
+  cleanup.push(() => files.clear());
+  files.add([new File(["notes"], "notes.txt", { type: "text/plain" })]);
+  render(
+    createElement(MessageComposer, {
+      session: remote,
+      scope: h.scope,
+      channelId: "room",
+      channelName: "Huddle",
+    }),
+  );
+  await waitFor(() => expect(transfer).toHaveBeenCalledOnce());
+  const send = screen.getByRole("button", { name: "Send message" });
+  fireEvent.click(send);
+  await waitFor(() => expect(prepare).toHaveBeenCalledOnce());
+  expect(send).toBeDisabled();
+  const newer = { text: "Peer caption", recipients: [] };
+  act(() => writeView(h.scope, "draft:room", newer));
+  await act(async () => {
+    finishUpload({
+      name: "notes.txt",
+      url: "https://example.test/notes.txt",
+      sha256: "ab".repeat(32),
+      type: "text/plain",
+      size: 5,
+    });
+  });
+  expect(screen.getByRole("button", { name: "Keep my draft" })).toBeVisible();
+  expect(readView(h.scope, "draft:room", null)).toEqual(newer);
+  expect(publish).not.toHaveBeenCalled();
+  expect(h.send).not.toHaveBeenCalled();
+});
 
 it("retains valid voice metadata and releases enriched upload identities", async () => {
   // Node's BroadcastChannel does not preserve File instances as browsers do.
@@ -747,3 +899,159 @@ it("carries the owner's profile purge generation so the companion rereads shown 
   await remote.profiles.ensure(["cd".repeat(32)], "background");
   await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(2));
 });
+
+it.each(["private", "dm", "solo", "public"] as const)(
+  "resolves and discloses a detached %s forward in the owning session",
+  async (privacy) => {
+    const h = harness();
+    const reference = {
+      version: 1 as const,
+      origin: "https://example.test",
+      channelId: "source",
+      id: "c".repeat(64),
+    };
+    const agent = "de".repeat(32);
+    Object.assign(h.session, {
+      agentLibrary: {
+        snapshot: () => ({
+          identities: [{ pubkey: agent, name: "Local Agent" }],
+        }),
+      },
+    });
+    let content = "Authorized source @Local Agent";
+    const row = () => ({
+      id: reference.id,
+      channelId: "source",
+      authorId: h.session.viewer,
+      createdAt: 1,
+      content,
+      mentions: [agent],
+      participants: [],
+      attachments: [],
+      reactions: [],
+      replyCount: 0,
+    });
+    const dispose = vi.fn();
+    vi.spyOn(h.session, "thread").mockImplementation(
+      () =>
+        ({
+          snapshot: () => ({
+            status: "ready",
+            targetStatus: "ready",
+            target: row(),
+            replies: [],
+            canLoadMore: false,
+          }),
+          subscribe: () => () => {},
+          refresh: async () => {},
+          dispose,
+        }) as unknown as ReturnType<typeof h.session.thread>,
+    );
+    vi.spyOn(h.session.messages, "forwardProblem").mockReturnValue(undefined);
+    const forward = vi
+      .spyOn(h.session.messages, "forward")
+      .mockReturnValue("forwarded-id");
+    Object.assign(h.session.channels, {
+      resolve: async () => {},
+      describe: () => ({
+        state: "found",
+        name: "Source",
+        private: privacy === "private",
+        hidden: false,
+        archived: false,
+        joined: true,
+        channelType:
+          privacy === "dm" || privacy === "solo" ? privacy : "stream",
+      }),
+    });
+    let { remote } = await h.connect();
+    expect(
+      (
+        await remote.forwarding?.resolve(
+          reference,
+          new AbortController().signal,
+        )
+      )?.row.content,
+    ).toBe("Authorized source @Local Agent");
+    expect(
+      (
+        await remote.forwarding?.resolve(
+          reference,
+          new AbortController().signal,
+        )
+      )?.privateSource,
+    ).toBe(privacy !== "public");
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    function Companion() {
+      return useHuddleComposer(h.owner.token);
+    }
+    const view = render(createElement(Companion));
+    await screen.findByRole("textbox", { name: "Message this Huddle" });
+    const { forwardClipboard } = await import("../messages/forward-clipboard");
+    const payload = forwardClipboard(reference, "Untrusted clipboard text");
+    fireEvent.paste(
+      screen.getByRole("textbox", { name: "Message this Huddle" }),
+      {
+        clipboardData: {
+          getData: (type: string) =>
+            type === "text/html" ? payload.html : payload.text,
+          items: [],
+        },
+      },
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      Boolean(
+        within(screen.getByRole("form")).queryByText(
+          /will be able to read this message/,
+        ),
+      ),
+    ).toBe(privacy !== "public");
+    if (privacy !== "public")
+      expect(
+        within(screen.getByRole("form")).getByText(
+          /will be able to read this message/,
+        ),
+      ).toHaveTextContent("Everyone in this Huddle");
+    view.unmount();
+    // A detached host owns one bridge client at a time. Reconnect after closing it.
+    ({ remote } = await h.connect());
+    content = "Current authorized source @Local Agent";
+    expect(
+      await remote.forwarding?.send(reference, "Note", [], [], [], {}),
+    ).toBe("forwarded-id");
+    expect(forward).toHaveBeenCalledWith(
+      "room",
+      expect.objectContaining({
+        content,
+        mentionLabels: [{ id: agent, names: ["Local Agent"] }],
+      }),
+      expect.any(String),
+      "Note",
+      undefined,
+      { mentions: [], attachments: [], references: [], picks: {} },
+    );
+    expect(dispose).toHaveBeenCalledTimes(4);
+    await expect(
+      remote.forwarding?.resolve(
+        { ...reference, origin: "https://other.example" },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/another community/);
+    h.revoke();
+    await expect(
+      remote.forwarding?.send(reference, "", [], [], [], {}),
+    ).rejects.toThrow();
+    expect(forward).toHaveBeenCalledOnce();
+  },
+);

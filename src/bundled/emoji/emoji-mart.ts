@@ -19,6 +19,19 @@ import {
 import { rootFontSize, spaciousGrid } from "./picker-layout";
 
 const martSearch = SearchIndex.search;
+/** Mart 5.6's private Picker component; `dispose` cancels its prop timer. */
+const martComponent = (picker: HTMLElement) =>
+  (picker as { component?: { nextStateTimer?: ReturnType<typeof setTimeout> } })
+    .component;
+/** An emoji-mart upgrade that renames the timer would silently reopen the
+ * closed-picker crash; say so wherever a theme write should have armed it. */
+function checkMartPropTimer(picker: HTMLElement) {
+  const component = martComponent(picker);
+  if (component && !("nextStateTimer" in component))
+    console.error(
+      "emoji-mart no longer exposes component.nextStateTimer; dispose() cannot cancel its deferred re-render",
+    );
+}
 const resolvedTheme = (value: unknown): "light" | "dark" =>
   value === "dark" ? "dark" : "light";
 
@@ -53,6 +66,8 @@ const categoryIcons = {
   custom: { svg: pickerIcons.asterisk },
   "buzz-custom": { svg: pickerIcons.asterisk },
 };
+// At most one picker is live: each mount disposes `active` first, so dispose()
+// may delete its scope's entries from Mart's shared Data.emojis without a peer.
 let active: (() => void) | undefined;
 export type EmojiSearchSelection = {
   emoji: string | undefined;
@@ -72,6 +87,7 @@ export function mountEmojiMart({
   perLine,
   emojiSize,
   emojiButtonSize,
+  navigation,
   search,
   searchSelection,
   searchChange,
@@ -90,6 +106,8 @@ export function mountEmojiMart({
   perLine: number;
   emojiSize: number;
   emojiButtonSize: number;
+  /** Show the category bar; by default, when the grid is wide enough for it. */
+  navigation?: boolean;
   search: string;
   searchSelection: { current: EmojiSearchSelection | undefined };
   searchChange(value: string): void;
@@ -148,12 +166,11 @@ export function mountEmojiMart({
     dynamicWidth: false,
     maxFrequentRows: 2,
     // Ten category tabs overlap in narrow thread panes; search/scroll still work.
-    navPosition: spaciousGrid(
-      perLine * emojiButtonSize,
-      rootFontSize(host.ownerDocument),
-    )
-      ? "bottom"
-      : "none",
+    navPosition:
+      (navigation ??
+      spaciousGrid(perLine * emojiButtonSize, rootFontSize(host.ownerDocument)))
+        ? "bottom"
+        : "none",
     perLine,
     ...(preview
       ? {
@@ -185,10 +202,13 @@ export function mountEmojiMart({
   // picker/dictionary (or lose search, focus and scroll) just to change appearance.
   const documentRoot = host.ownerDocument.documentElement;
   const syncAppearance = () => {
-    picker.setAttribute(
-      "theme",
-      resolvedTheme(colorMode ?? documentRoot.dataset.colorMode),
-    );
+    const theme = resolvedTheme(colorMode ?? documentRoot.dataset.colorMode);
+    // Same-value sets still reach Mart's attributeChangedCallback, which arms a
+    // deferred re-render. Keyboard-navigation marks must not arm one per key.
+    if (picker.getAttribute("theme") !== theme) {
+      picker.setAttribute("theme", theme);
+      if (import.meta.env.DEV) checkMartPropTimer(picker);
+    }
     picker.toggleAttribute(
       "data-keyboard-navigation",
       documentRoot.hasAttribute("data-keyboard-navigation"),
@@ -869,6 +889,11 @@ ${[1, 2, 3, 4, 5, 6].map((tone) => `    .menu .skin-tone-${tone}::before { conte
     // Base UI's removal recovery can reclaim it after the new picker mounts.
     if (root?.activeElement) host.focus({ preventScroll: true });
     picker.remove(); // unregisters Mart's document listeners and observers
+    // Mart applies attribute changes, such as a color-mode `theme` change, on
+    // a timer. If that timer fired now, the detached picker would re-render a
+    // Frequent row that names custom emoji deleted below, and the render would
+    // throw. The timer is private: emoji-mart.test.ts fails if it is renamed.
+    clearTimeout(martComponent(picker)?.nextStateTimer);
     for (const id of values.keys()) delete Data?.emojis[id];
     if (Data) {
       Data.categories = Data.categories.filter(

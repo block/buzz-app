@@ -1059,10 +1059,18 @@ export function createChannelStore(
       if (!mine.dropped) state.auxPages.unshift(page);
     };
     controllers.add(controller);
+    // Pages that failed in this fill: the drain reads each other page once
+    // before it stops on them.
+    const failed = new Set<WindowState["auxPages"][number]>();
+    let failure: unknown;
     try {
       while (live(state, generation) && canReadRemote(channelId)) {
         const next = state.auxPages.shift();
         if (!next) break;
+        if (failed.has(next)) {
+          state.auxPages.unshift(next);
+          break;
+        }
         // A page whose rows the window has since dropped needs no aux.
         const held = rowIds(state);
         if (![...next.rows].some((id) => held.has(id))) continue;
@@ -1072,9 +1080,10 @@ export function createChannelStore(
         let events: readonly RelayEvent[];
         try {
           // Foreground on purpose: a window reads one aux part and one older
-          // page at a time, and only the open one, so read-ahead holds at
-          // most two of the reader's slots. The rows' thread summaries came
-          // with them.
+          // page at a time, and only the open window starts them. A read the
+          // reader scrolled into survives a switch, so read-ahead can hold a
+          // few of the reader's slots, which its cap leaves room for. The
+          // rows' thread summaries came with them.
           events = await retryRead(
             (signal) =>
               source.read(
@@ -1098,10 +1107,15 @@ export function createChannelStore(
           if (
             isAbort(error) ||
             (error instanceof ReadError && error.retryAfterMs !== undefined)
-          )
+          ) {
             keep(page);
-          else if (!mine.dropped) state.auxPages.push(page);
-          throw error;
+            throw error;
+          }
+          if (mine.dropped) throw error;
+          failed.add(page);
+          state.auxPages.push(page);
+          failure = error;
+          continue;
         }
         if (!live(state, generation) || controller.signal.aborted)
           return keep(page);
@@ -1142,12 +1156,13 @@ export function createChannelStore(
             rows = slidRows;
             state.ceiling = slid.ceiling;
             state.atHead = false;
+            dropStrayTraffic(state);
           }
         }
         state.events = merged;
-        dropStrayTraffic(state);
         setWindow(state, { rows });
       }
+      if (failure !== undefined) throw failure;
     } catch (error) {
       if (error instanceof ReadError && error.retryAfterMs !== undefined) {
         state.auxRetryAt = performance.now() + error.retryAfterMs;
@@ -1753,13 +1768,18 @@ export function createChannelStore(
       retained = retain(kept);
     }
     // Only dropping rows paging read moves the next older read; a kept live
-    // row below the floor (a late send) must not skip the rows under it.
-    const floor = state.cursor ? (state.floor ?? -Infinity) : -Infinity;
+    // row below the cursor (a late send) must not skip the rows under it.
+    // Paged rows sit at or above the cursor in the relay's order.
+    const { cursor } = state;
+    const paged = (event: RelayEvent) =>
+      !cursor ||
+      event.created_at > cursor.createdAt ||
+      (event.created_at === cursor.createdAt && event.id <= cursor.eventId);
     const keptIds = new Set(kept.map((event) => event.id));
     const oldest = kept.at(-1);
     if (
       oldest &&
-      rows.some((event) => event.created_at >= floor && !keptIds.has(event.id))
+      rows.some((event) => paged(event) && !keptIds.has(event.id))
     ) {
       state.floor = undefined;
       moveCursor(state, { createdAt: oldest.created_at, eventId: oldest.id });

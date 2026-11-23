@@ -260,7 +260,7 @@ export async function readAhead(page, app, { hold = false } = {}) {
   const done = () =>
     history(page).evaluate(
       (element, start) =>
-        element.scrollTop >= Math.max(3000, element.clientHeight * 12) ||
+        element.scrollTop >= Math.max(3000, element.clientHeight * 6) ||
         start.every((id) =>
           element.querySelector(`[data-message-id="${id}"]`),
         ) ||

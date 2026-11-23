@@ -286,11 +286,23 @@ describe("channel store", () => {
         has_more: !!last,
         next_cursor: last ? { created_at: last.created_at, id: last.id } : null,
       });
-    async function opened(budget = {}) {
+    async function opened(budget = {}, whileHeadReads?: RelayEvent) {
       const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
-      const store = createRelaySession(scripted.transport, budget);
+      let live!: LiveCallbacks;
+      const store = createRelaySession(
+        {
+          ...scripted.transport,
+          subscribe(callbacks) {
+            live = callbacks;
+            return { update() {}, retry() {}, dispose() {} };
+          },
+        },
+        budget,
+      );
       const queries = store.session.channels;
+      live.receive([roster(relay, "c", [viewer.pubkey])]);
       queries.ensure("c");
+      if (whileHeadReads) live.receive([whileHeadReads]);
       scripted.next().respond([
         newer,
         bounds(relay, "c", "head", {
@@ -391,7 +403,7 @@ describe("channel store", () => {
       expect(take(true).filters[0]).toMatchObject({ limit: 2, until: 20 });
     });
     it("reads past a failing aux page to the pages behind it", async () => {
-      const { queries, take, page } = await opened();
+      const { take, page } = await opened();
       const [a, b] = [row(10), row(8)];
       await page(newer, a);
       const failing = take(true);
@@ -404,9 +416,21 @@ describe("channel store", () => {
         ),
       );
       await flush();
-      queries.ensure("d");
-      queries.ensure("c");
+      // The same fill reads the page behind it.
       expect(take(true).filters[0]).toMatchObject({ until: a.created_at });
+    });
+    it("keeps a live row from the head read when aux merges", async () => {
+      const late = message(alice, "c", "late", 25);
+      const { queries, take, page } = await opened({}, late);
+      const target = row(10);
+      await page(newer, target);
+      take(true).respond([target, on(7, target, "+"), below(newer)]);
+      await flush();
+      expect(queries.window("c").rows.map((row) => row.content)).toEqual([
+        "row 10",
+        "newer",
+        "late",
+      ]);
     });
     it("reads a cancelled aux read again with the next fill", async () => {
       const { take, page } = await opened();
@@ -952,6 +976,41 @@ describe("channel store", () => {
     ]);
     await flush();
     live.receive([ten, five]);
+    await flush();
+    queries.loadOlder("c");
+    expect(
+      scripted.pending.find((read) => read.filters[0]?.until)?.filters[0],
+    ).toMatchObject({ until: 30, before_id: head.id });
+  });
+  it("a live trim keeps the older cursor for rows below it in the cursor's second", async () => {
+    const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    // The relay orders a second's rows by ID: the head read ends at `head`.
+    const [head, unseen, liveA, liveB] = ["a", "b", "c", "d"]
+      .map((name) => message(alice, "c", name, 30))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    assert(head && unseen && liveA && liveB);
+    const queries = createRelaySession(
+      {
+        ...scripted.transport,
+        subscribe(callbacks) {
+          live = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { maxHistoryBytes: listByteSize([head, liveA]) },
+    ).session.channels;
+    live.receive([roster(relay, "c", [viewer.pubkey])]);
+    queries.ensure("c");
+    scripted.next().respond([
+      head,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 30, id: head.id },
+      }),
+    ]);
+    await flush();
+    live.receive([liveA, liveB]);
     await flush();
     queries.loadOlder("c");
     expect(

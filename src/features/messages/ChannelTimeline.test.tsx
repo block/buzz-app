@@ -737,8 +737,8 @@ it("loads older rows at the current DOM threshold despite a stale far-away virtu
 });
 it.each([
   { height: 2000, rows: 34 },
-  { height: 8683, rows: 20 },
-  { height: 8684, rows: undefined },
+  { height: 4675, rows: 20 },
+  { height: 4676, rows: undefined },
 ])(
   "reads ahead for a reader settled at the bottom of $height px",
   ({ height, rows }) => {
@@ -748,7 +748,7 @@ it.each([
     h.setRows(
       Array.from({ length: 40 }, (_, i) => timelineMessage(`row ${i}`)),
     );
-    // A first page sized to the prefetch distance until 12 screens (8016px)
+    // A first page sized to the prefetch distance until 6 screens (4008px)
     // sit above the reader, then no more.
     if (rows)
       expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel", rows);

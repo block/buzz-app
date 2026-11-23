@@ -1475,11 +1475,11 @@ it("leaving after the read-ahead lands cancels nothing", () => {
 it("filling stops once the reader has the prefetch distance above", () => {
   const h = fillFixture();
   try {
-    // 12 screens above a reader at the bottom of a 600px viewport.
-    h.geometry.scrollHeight = 7800;
+    // 6 screens above a reader at the bottom of a 600px viewport.
+    h.geometry.scrollHeight = 4200;
     screen.getByRole("region", {
       name: "Channel message history",
-    }).scrollTop = 7200;
+    }).scrollTop = 3600;
     h.land();
     expect(h.loadOlder).toHaveBeenCalledOnce();
   } finally {

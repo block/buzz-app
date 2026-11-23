@@ -176,7 +176,7 @@ function afterIdle(callback: () => void) {
 // Older pages a visit reads unasked, and the screens of history they keep
 // above the reader so a fling on open stays inside loaded rows.
 const FILL_PAGES = 5;
-const READ_AHEAD_SCREENS = 12;
+const READ_AHEAD_SCREENS = 6;
 // A row's content sits below its day divider and byline, and its virtual item
 // adds group spacing. All depend on the row before it, so older rows landing
 // above can remove them. Offsets of the content from the row and item tops.

@@ -12,6 +12,7 @@ import { copyEmoji } from "../../bundled/emoji/copy-emoji";
 import { setClockPreference } from "../../shared/clock-preference";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { profileTarget } from "../profiles/target";
+import { FileAttachment } from "./FileAttachment";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageRow } from "./MessageRow";
 import {
@@ -853,6 +854,39 @@ describe("serializeNode", () => {
       text: `@${markup} @${markup} ${markup} (${message})`,
       markdown: `[@${markdown}](${target}) [@${markdown}](${target}) [${markdown}](${message})`,
       html: `<p><a href="${target}">@${html}</a> <a href="${target}">@${html}</a> <a href="${messageHtml}">${html}</a></p>`,
+    });
+  });
+
+  it("copies an external file card as its file name, without its size", () => {
+    const source = "https://example.org/media/report.pdf";
+    const view = render(
+      <div data-message-id="m1">
+        <p>Notes from the review</p>
+        <FileAttachment
+          attachment={{
+            url: source,
+            kind: "file",
+            name: "report.pdf",
+            size: 2516582,
+          }}
+          source={source}
+          onOpenLink={() => false}
+        />
+      </div>,
+    );
+    const messageRow = query("[data-message-id]", view.container);
+    const size = view.getByText("2 MB").firstChild as Text;
+    // A drag from the caption's start to just past the size.
+    const { range } = select(
+      query("p", messageRow).firstChild as Node,
+      0,
+      size,
+      size.data.length,
+    );
+    expect(each(messageRow, range)).toEqual({
+      text: `Notes from the review\nreport.pdf (${source})`,
+      markdown: `Notes from the review\n[report.pdf](${source})`,
+      html: `<p>Notes from the review</p><a href="${source}">report.pdf</a>`,
     });
   });
 

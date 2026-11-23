@@ -255,6 +255,9 @@ export function FileAttachment({
         rel="noreferrer"
         aria-label={`Open ${displayName}`}
         title={displayName}
+        // A copied selection labels the link with this, not its text, which
+        // runs the name into the size.
+        data-link-label={displayName}
         onClick={(event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey) return;
           if (onOpenLink(source)) event.preventDefault();

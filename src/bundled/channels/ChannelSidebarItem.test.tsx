@@ -874,7 +874,15 @@ describe("conversation identity", () => {
       case: "only you, anyone can read",
       members: [me, agent],
       visibility: "public" as const,
-      mark: "solo-public",
+      joinRole: "guest" as const,
+      mark: "solo-view-only",
+    },
+    {
+      case: "only you, anyone can join and post",
+      members: [me, agent],
+      visibility: "public" as const,
+      joinRole: "member" as const,
+      mark: "group-public",
     },
     {
       case: "others, private",
@@ -896,7 +904,7 @@ describe("conversation identity", () => {
     },
   ])(
     "marks a named conversation by who's in it and who can read it: $case",
-    ({ members, visibility, mark }) => {
+    ({ members, visibility, joinRole, mark }) => {
       const { session } = viewer(
         new Map([[agent, { name: "Scout", isAgent: true }]]),
       );
@@ -908,6 +916,7 @@ describe("conversation identity", () => {
             channelType: "stream",
             members,
             ...(visibility ? { visibility } : {}),
+            ...(joinRole ? { joinRole } : {}),
           })}
         />,
       );
@@ -938,7 +947,15 @@ describe("conversation identity", () => {
       case: "solo, anyone can read",
       members: [me, agent],
       visibility: "public" as const,
+      joinRole: "guest" as const,
       eye: true,
+    },
+    {
+      case: "solo, anyone can join and post",
+      members: [me, agent],
+      visibility: "public" as const,
+      joinRole: "member" as const,
+      eye: false,
     },
     {
       case: "solo, private",
@@ -954,7 +971,7 @@ describe("conversation identity", () => {
     },
   ])(
     "marks only a solo conversation others can read with the eye: $case",
-    ({ members, visibility, eye }) => {
+    ({ members, visibility, joinRole, eye }) => {
       const { session } = viewer(
         new Map([[agent, { name: "Scout", isAgent: true }]]),
       );
@@ -966,6 +983,7 @@ describe("conversation identity", () => {
             channelType: "stream",
             members,
             visibility,
+            ...(joinRole ? { joinRole } : {}),
           })}
         />,
       );
@@ -1001,6 +1019,7 @@ describe("conversation identity", () => {
             channelType: "stream",
             members: [me, agent],
             visibility: "public",
+            joinRole: "guest",
           })}
         />
       </SidebarCardDisplayContext.Provider>,

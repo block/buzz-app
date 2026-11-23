@@ -53,14 +53,23 @@ export function conversationPeople(
     : others;
 }
 
-/** A named conversation with no people besides you. Without its roster, a
- * Solo chat you started counts. */
+/** Whether anyone in the community can join and post: Public, not View
+ * only. The relay admits Members unless it says Guest. */
+export function openToPosting(
+  channel: Pick<ChannelSummary, "visibility" | "joinRole">,
+) {
+  return channel.visibility === "public" && channel.joinRole !== "guest";
+}
+
+/** A named conversation only you and your agents can post in: no people
+ * besides you, and not Public. Without its roster, a Solo chat you started
+ * counts. */
 export function isSoloConversation(
   channel: ChannelSummary,
   viewer: string | undefined,
   profiles: ReadonlyMap<string, Profile>,
 ) {
-  if (channel.channelType === "dm") return false;
+  if (channel.channelType === "dm" || openToPosting(channel)) return false;
   if (!channel.members?.length)
     return channel.channelType === "solo" && channel.creator === viewer;
   return (
@@ -71,32 +80,35 @@ export function isSoloConversation(
 }
 
 /** What a named conversation's icon says: whether anyone besides you (not
- * counting agents) is in it, and whether anyone in the community can read it.
- * Visibility the relay hasn't confirmed reads as private. */
+ * counting agents) is in it or may join and post, and whether anyone in the
+ * community can read it. Visibility the relay hasn't confirmed reads as
+ * private. */
 export type ConversationMark =
   | "solo-private"
-  | "solo-public"
+  | "solo-view-only"
   | "group-private"
   | "group-public";
 export function conversationMark(
-  channel: Pick<ChannelSummary, "visibility">,
+  channel: Pick<ChannelSummary, "visibility" | "joinRole">,
   people: readonly string[],
 ): ConversationMark {
   const open = channel.visibility === "public";
-  return people.length
-    ? open
-      ? "group-public"
-      : "group-private"
-    : open
-      ? "solo-public"
-      : "solo-private";
+  return openToPosting(channel)
+    ? "group-public"
+    : people.length
+      ? open
+        ? "group-public"
+        : "group-private"
+      : open
+        ? "solo-view-only"
+        : "solo-private";
 }
 // The icon says who's in it. Every solo conversation shares one; whether
 // others can read it shows beside the name (see `ViewOnlyMark`).
 const SoloIcon = ChatCircleIcon;
 const markIcons = {
   "solo-private": SoloIcon,
-  "solo-public": SoloIcon,
+  "solo-view-only": SoloIcon,
   "group-private": LockIcon,
   "group-public": HashIcon,
 } as const;
@@ -212,7 +224,7 @@ export function useViewOnly(
     channel ?? noChannel,
     undefined,
   );
-  return !!channel && channel.channelType !== "dm" && mark === "solo-public";
+  return !!channel && channel.channelType !== "dm" && mark === "solo-view-only";
 }
 
 /** A conversation's icon in a sidebar row. A named conversation shows its

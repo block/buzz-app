@@ -250,7 +250,7 @@ function ChannelSidebarItemCore({
   );
   const solo = channel.channelType === "solo";
   // Only a solo conversation others can read gets a mark beside its name.
-  const viewOnly = named && mark === "solo-public";
+  const viewOnly = named && mark === "solo-view-only";
   const plainRow = (
     <ChannelSidebarRow
       channel={channel}

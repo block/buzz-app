@@ -79,6 +79,32 @@ Each line is the main call. Read the types for every field.
 
 Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
 
+In a Solo region, check `ui.headerMenuActions === true` before passing
+`headerMenuActions` to `ui.Workspace` or `ui.ChannelGroup`. Each **Actions**
+entry has a unique `id`, a `label`, and an `onSelect` callback.
+`onSelect` can return a promise. The host reports callback failures in the
+heading. With `placement: "team-row"`, the channel group uses the native
+Team menu and ignores these entries.
+
+## Migration writes
+
+Check `ctx.relay.snapshot().session.supportsMigrationWrites === true` before
+starting an import that needs migration labels. Older hosts omit this property.
+The property confirms that the host signs the label. Relay support for throttling
+depends on the connected community.
+
+Pass `migration: "example-import"` in `session.channelCreation.create(input)`
+and in `session.memberAdditions.add(channelId, pubkey, options)`. The host signs
+`["migration", source]` on channel creation (kind 9007) and membership additions
+(kind 9000). The source must be a nonempty string. The tag classifies workload.
+The normal access checks still apply.
+
+The host batches membership additions by source. A migration batch that fails
+delivery stops and reports the error. If a successful batch only adds some of
+its members, the host keeps the source on individual additions for the rest.
+Both calls report relay migration throttling with an error that starts with
+`rate-limited:`. Pause the import before issuing another write when you see it.
+
 ## Pre-send agent routing
 
 Feature-check `ctx.conversation.registerAgentRouter({ id, route })`. The
@@ -105,25 +131,6 @@ A router runs with the same access as other
 [trusted plugins](plugins.md#trust). Its sharing settings govern what the plugin
 forwards to its decision provider. Explain that data and the effect on
 recipients in the installation description.
-
-## Migration writes
-
-Check `ctx.relay.snapshot().session.supportsMigrationWrites === true` before
-starting an import that needs migration labels. Older hosts omit this property.
-The property confirms that the host signs the label. Relay support for throttling
-depends on the connected community.
-
-Pass `migration: "example-import"` in `session.channelCreation.create(input)`
-and in `session.memberAdditions.add(channelId, pubkey, options)`. The host signs
-`["migration", source]` on channel creation (kind 9007) and membership additions
-(kind 9000). The source must be a nonempty string. The tag classifies workload.
-The normal access checks still apply.
-
-The host batches membership additions by source. A migration batch that fails
-delivery stops and reports the error. If a successful batch only adds some of
-its members, the host keeps the source on individual additions for the rest.
-Both calls report relay migration throttling with an error that starts with
-`rate-limited:`. Pause the import before issuing another write when you see it.
 
 ## Host access (`manifest.host`)
 

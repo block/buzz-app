@@ -158,12 +158,12 @@ it("keeps alias and keyword matches ahead of often chosen fuzzy matches", async 
     (await searchEmoji(query, [], uses))[0]?.shortcode;
   // `hate` and `poop` are a keyword of 😡 and an alias of 💩, and only
   // subsequences of the chosen shortcodes.
-  for (const [query, fuzzy] of [
-    ["hate", "unicode/heart_eyes"],
-    ["poop", "unicode/person_in_lotus_position"],
+  for (const [query, fuzzy, match] of [
+    ["hate", "unicode/heart_eyes", "rage"],
+    ["poop", "unicode/person_in_lotus_position", "hankey"],
   ] as const) {
-    const plain = await first(query);
-    expect(await first(query, (id) => (id === fuzzy ? 8 : 0))).toBe(plain);
+    expect(await first(query)).toBe(match);
+    expect(await first(query, (id) => (id === fuzzy ? 8 : 0))).toBe(match);
   }
 });
 

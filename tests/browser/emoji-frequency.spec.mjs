@@ -220,5 +220,12 @@ test("choosing an existing reaction removes it and teaches nothing", async ({
   await reactRocket(inline);
   await expect(pill).toHaveCount(0);
   expect(await counts()).toEqual({ rocket: 1 });
+  // The action bar picker removes too; the inline plus needs a reaction first.
+  await reactRocket(actions);
+  await expect(pill).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(counts).toEqual({ rocket: 2 });
+  await reactRocket(actions);
+  await expect(pill).toHaveCount(0);
+  expect(await counts()).toEqual({ rocket: 2 });
   expect(errors.unexplained()).toEqual([]);
 });

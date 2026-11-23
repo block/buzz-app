@@ -9,8 +9,9 @@ import { byteSize } from "./budget";
 import { ReadError } from "./errors";
 import type { AgentLibrary } from "../agents/library";
 
-/** Reads running at once; at most one of them is background. */
-export const ACTIVE_READS = 8;
+/** Reads running at once; at most one of them is background. Below the API
+ * lane's `API_ACTIVE_LIMIT` of ten, so writes keep three slots. */
+export const ACTIVE_READS = 7;
 export type Priority = "foreground" | "background";
 export type ReadOptions = {
   signal?: AbortSignal;

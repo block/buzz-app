@@ -1206,15 +1206,17 @@ companionReadingTest(
   async ({ page, app }) => {
     await open(page, app);
     await settle(page);
-    const ahead = await readAhead(page, app);
+    await readAhead(page, app);
     const saved = await upper(page);
-    await expectNonPaging(page, app, ahead);
+    // The reader's own wheel can read ahead at its pace; the panel must not.
+    const read = [...app.report.queries];
     await companionLauncher(page, "Companion fixture").click();
     await settle(page);
     await expectAnchor(page, saved);
     await button(page, "Close Companion fixture panel").click();
     await settle(page);
     await expectAnchor(page, saved);
+    await expectNonPaging(page, app, read);
     await link(page, app, "https://github.com/block/buzz/pull/6");
     await companionLauncher(page, "Companion fixture").click();
     for (const [width, height] of [
@@ -1278,7 +1280,7 @@ companionReadingTest(
   async ({ page, app }) => {
     await open(page, app);
     await settle(page);
-    const ahead = await readAhead(page, app);
+    await readAhead(page, app);
     const original = await upper(page);
     await companionLauncher(page, "Companion fixture").click();
     await settle(page);
@@ -1322,10 +1324,12 @@ companionReadingTest(
     await expect(
       history.locator(`[data-message-id="${original.id}"]`),
     ).toBeInViewport();
+    // The wheel can read ahead at its pace; restoring the panel must not.
+    const read = [...app.report.queries];
     await button(page, "Close Companion fixture panel").click();
     await settle(page);
     await expectAnchor(page, reading);
-    await expectNonPaging(page, app, ahead);
+    await expectNonPaging(page, app, read);
   },
 );
 

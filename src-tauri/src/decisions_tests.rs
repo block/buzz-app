@@ -769,12 +769,16 @@ async fn an_fi_call_without_a_covered_community_sends_nothing() {
     let (url, seen) = server(vec![]).await;
     let (fi, revision) = federated_at(&url);
     let (_, keys) = keys(None);
-    // No sign-in server covers the last one, so the build's own server,
-    // which `server_for` falls back to, must not answer it either.
-    for community in [
-        None,
-        Some("not a relay".to_owned()),
-        Some("wss://other.example".to_owned()),
+    // A request with no relay URL is invalid. No sign-in server covers the
+    // last one, so the build's own server, which `server_for` falls back to,
+    // must not answer it either: there is no account for it.
+    for (community, reason) in [
+        (None, Failure::InvalidRequest),
+        (Some("not a relay".to_owned()), Failure::InvalidRequest),
+        (
+            Some("wss://other.example".to_owned()),
+            Failure::MissingCredentials,
+        ),
     ] {
         let mut request = yes_no_in_community();
         request.community = community;
@@ -782,7 +786,7 @@ async fn an_fi_call_without_a_covered_community_sends_nothing() {
             decide_federated(&decisions(&url), &keys, &fi, &revision, request).await,
             Decided::Failed {
                 backend: Backend::Builderlab,
-                reason: Failure::InvalidRequest,
+                reason,
             }
         );
     }

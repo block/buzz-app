@@ -345,7 +345,11 @@ export function DecisionsSettings({
                     />
                   )}
                 />
-                {current && settingsOf(current, url)}
+                {/* Where the provider isn't offered, the row says so, and
+                    its setup can't help. */}
+                {current &&
+                  row?.offered[current.key] !== false &&
+                  settingsOf(current, url)}
               </SettingsGroup>
             );
           })}

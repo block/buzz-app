@@ -645,21 +645,24 @@ async fn decide_federated(
         backend,
         reason: Failure::MissingCredentials,
     };
-    // Builderlab bills the community, so a call without one is not sent,
-    // nor one for a community no sign-in server covers: `server_for` falls
-    // back to the build's own server.
-    let Some(Ok(fi)) = request.community.as_deref().map(|community| {
-        let relay = canonical_relay(community)?;
-        let server = fi.server_for(&relay)?;
-        match server.config().map(|config| config.matches_relay(&relay)) {
-            Some(Ok(true)) => Ok(server),
-            _ => Err("No sign-in server covers this community".to_owned()),
-        }
-    }) else {
+    // Builderlab bills the community, so a call without a relay URL for one
+    // is not sent: the request is invalid.
+    let Some(Ok(relay)) = request.community.as_deref().map(canonical_relay) else {
         return Decided::Failed {
             backend,
             reason: Failure::InvalidRequest,
         };
+    };
+    // Nor is one for a community no sign-in server covers (`server_for`
+    // falls back to the build's own server): there is no account to sign in
+    // with there.
+    let covering = fi.server_for(&relay).ok().filter(|server| {
+        server
+            .config()
+            .is_some_and(|config| config.matches_relay(&relay) == Ok(true))
+    });
+    let Some(fi) = covering else {
+        return ended;
     };
     let fi = &fi;
     let Some((cancel, builderlab, session)) = federated_sign_in(fi, revision) else {

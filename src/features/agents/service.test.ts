@@ -10547,9 +10547,10 @@ it("runs a watch's classifier after its selectors and passes the event with each
   });
   expect(questions.deploy?.instructions).toContain("\nNo means: ");
   expect(questions.deploy?.instructions).toContain("untrusted data");
-  // The agent's community, which a provider such as Builderlab bills.
+  // The agent's community, which a provider such as Builderlab bills,
+  // named by its relay origin.
   expect(jev.decide.mock.calls[0]?.[0].community).toBe(
-    "wss://relay.example.test",
+    "https://relay.example.test",
   );
 });
 

@@ -152,6 +152,9 @@ it("shows each community's provider setup", async () => {
   expect(row("Pals")).toHaveTextContent(
     "builderlab isn’t offered in this community",
   );
+  // Its setup can't help there, so the row shows none.
+  expect(screen.queryByText(/Sign-in for friends/)).toBeNull();
+  expect(screen.getAllByText(/^Sign-in for /)).toHaveLength(2);
   act(() => decisions.setBackend(TYPESAFE, FRIENDS));
   typesafe = "needs-setup";
   changed();

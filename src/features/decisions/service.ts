@@ -35,9 +35,9 @@ export type DecisionRequest = Readonly<{
   questions: Readonly<Record<string, DecisionQuestion>>;
   /** How long to wait, 1 to 30 seconds. Defaults to 30. */
   timeoutMs?: number;
-  /** The Buzz community (its relay URL) the text comes from. A provider
-   * that bills the community, such as Builderlab, refuses a request
-   * without one. */
+  /** The Buzz community (its relay URL) the text comes from. Always name
+   * it: it picks the provider, and the bundled ones (Builderlab bills the
+   * community, TypeSafe uses its key) refuse a request without one. */
   community?: string;
 }>;
 

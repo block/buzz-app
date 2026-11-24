@@ -116,13 +116,15 @@ too, and stays out if a later read brings it back.
 ## How it stays current
 
 The first time it runs, the finder reads your history from the relay in pages
-of 500, newest first, with pauses between pages, until it reaches 90 days back.
+of 500, newest first, until it reaches 90 days back. Every read waits at least
+300 ms after the one before, between pages and between filters.
 That happens once per launch, followed by the read-ahead. After a reconnect it
 reads only what is newer than its last read, from 5 minutes before it, then any
 older pages the first read hadn't reached: usually one page for each of your
 messages, mentions, direct-message and thread reads. Channels already read
-ahead aren't read again. After that it adds messages the app already receives
-while it's open, plus messages found in the two scopes.
+ahead get only what is newer than their last read, the same way. After that it
+adds messages the app already receives while it's open, plus messages found in
+the two scopes.
 It does not poll.
 
 Because the first fill can read a lot of messages, the plugin starts **off** for now. That

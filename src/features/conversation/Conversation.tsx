@@ -26,10 +26,7 @@ import {
 } from "../messages/MessageManagement";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
-import {
-  ComposerScopeProvider,
-  type MediaReviewOrigin,
-} from "../messages/composer-overlay";
+import { ComposerScopeProvider } from "../messages/composer-overlay";
 import { useListedChannel } from "../relay/listed-channel";
 import { ownSolo } from "../solo/labels";
 import { useSoloHasPeople } from "../solo/people";
@@ -63,16 +60,13 @@ export type MediaReview = Pick<
   | "initialAttachments"
   | "initialTime"
   | "hasComments"
-  | "opening"
   | "restoreFocus"
   | "close"
 >;
 
-/** A review that opens over its page and returns focus to its opener. It is
- * fullscreen unless `inline` keeps the view it was opened from, to read over. */
-export function useMediaReview(
-  inline?: (opening: MediaReviewOrigin | undefined) => boolean,
-) {
+/** A fullscreen review that opens over its page and returns focus to its
+ * opener. */
+export function useMediaReview() {
   const [media, setMedia] =
     useState<Omit<MediaReview, "restoreFocus" | "close">>();
   const trigger = useRef<HTMLElement | null>(null);
@@ -84,7 +78,6 @@ export function useMediaReview(
       initialTime,
       hasComments = false,
       initialAttachments,
-      opening,
     ) => {
       trigger.current =
         document.activeElement instanceof HTMLElement
@@ -96,10 +89,9 @@ export function useMediaReview(
         initialTime,
         hasComments,
         initialAttachments,
-        opening: inline?.(opening) ? opening : undefined,
       });
     },
-    [inline],
+    [],
   );
   const review: MediaReview | undefined = media && {
     ...media,

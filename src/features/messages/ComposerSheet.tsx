@@ -13,6 +13,7 @@ import {
   SidebarRightIcon,
   XIcon,
 } from "../../shared/design-system/icons";
+import { activeModal } from "../../shared/design-system/overlayLayer";
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useFinalFocusUnlessMoved } from "../../shared/design-system/ui/finalFocus";
@@ -227,7 +228,7 @@ function useGrowth() {
 /** Crossfades the view's own composer into the sheet's, in place, without
  * moving focus or draft ownership. A close that interrupts the opening
  * reverses from the painted opacity rather than jumping. */
-export function useComposerHandoff(
+function useComposerHandoff(
   sheet: HTMLElement | null,
   source: HTMLElement,
   open: boolean,
@@ -312,7 +313,7 @@ export function useComposerHandoff(
 
 /** The header every sheet shares: its title, with what leads it and its
  * description, and its actions before Close. */
-export function SheetHeader({
+function SheetHeader({
   title,
   description,
   leading,
@@ -417,9 +418,15 @@ export function SheetHeader({
 }
 
 /** The dialog every sheet is: non-modal, so the rest of the app stays
- * interactive; only its own scrim dismisses it on an outside press, and
- * moving focus never does. Once closed, focus returns to what opened it. */
-export function SheetRoot({
+ * interactive; only its own scrim dismisses it on an outside press, moving
+ * focus never does, and Escape leaves it to a modal over it, such as media.
+ * Once closed, focus returns to what opened it. */
+const behindModal = (sheet: HTMLElement | null) => {
+  const modal = !!sheet && activeModal(sheet.ownerDocument);
+  return !!modal && !modal.contains(sheet);
+};
+
+function SheetRoot({
   open,
   onOpenChange,
   onClosed,
@@ -445,7 +452,8 @@ export function SheetRoot({
           !next &&
           (details.reason === "focus-out" ||
             (details.reason === "outside-press" &&
-              details.event?.target !== backdrop.current))
+              details.event?.target !== backdrop.current) ||
+            (details.reason === "escape-key" && behindModal(popup.current)))
         ) {
           details.cancel();
           return;
@@ -646,7 +654,7 @@ function useHeldPane(dock: HTMLElement, mounted: boolean) {
 
 /** The view's own composer stays usable under a details reader; a sheet's
  * reply box replaces it, and a panel covers it, keeping its text. */
-export function useCoveredComposer(
+function useCoveredComposer(
   composer: HTMLElement,
   mounted: boolean,
   containsComposer: boolean,

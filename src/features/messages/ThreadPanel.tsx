@@ -1,11 +1,7 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { hostComposerProvenance } from "./mention-draft";
-import {
-  composerHost,
-  type MediaReviewOrigin,
-  useComposerScope,
-} from "./composer-overlay";
+import { useComposerScope } from "./composer-overlay";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -148,7 +144,6 @@ export type ThreadPanelProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
-    opening?: MediaReviewOrigin,
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -912,6 +907,12 @@ function ThreadMessages({
   // The reading anchor's id while its row is detached, until it remounts.
   const remounted = useRef<{ id: string; top: number } | undefined>(undefined);
   const targetAnchor = useRef<number | undefined>(undefined);
+  // Opening details in place is reading intent, as opening a reply branch is:
+  // stop following the latest reply so the start of what opened stays in view.
+  const expandDetails = useCallback(() => {
+    follow.current = false;
+    targetAnchor.current = undefined;
+  }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
     targetAnchor.current = undefined;
@@ -1411,7 +1412,6 @@ function ThreadMessages({
     (snapshot.root?.replyCount ?? 0) > 0 ||
     snapshot.replies.length > 0 ||
     (!!snapshot.target && snapshot.target.id !== rootId);
-  // Media opens over this thread's view while its reply box shows.
   const composerView = useComposerScope();
   // Links outside a message row, such as profiles in an activity preview,
   // open over this thread's view, as a row's do.
@@ -1435,17 +1435,15 @@ function ThreadMessages({
       attachments?: ChannelMessage["attachments"],
     ) => {
       if (!rootId) return;
-      const host = composerHost(composerView?.handle);
       onOpenMediaReview?.(
         _rowId,
         attachment,
         seconds,
         hasMediaComments,
         attachments,
-        host ? { host, rootId } : undefined,
       );
     },
-    [rootId, onOpenMediaReview, hasMediaComments, composerView],
+    [rootId, onOpenMediaReview, hasMediaComments],
   );
   // Without a selected viewer, bare timecodes need one unambiguous video.
   const videoUrls = new Set(
@@ -2069,6 +2067,7 @@ function ThreadMessages({
             layout={continuation ? "continuation" : "thread"}
             compactAvatar={depth > 0}
             retry={session.messages.retry}
+            onExpandDetails={expandDetails}
             {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
             {...(onOpenMediaReview && rootId
               ? { onOpenMediaReview: openRootMedia }

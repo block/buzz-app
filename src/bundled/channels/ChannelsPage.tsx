@@ -48,7 +48,6 @@ import {
   threadDraftKey,
 } from "../../features/messages/reply-target";
 import { type InlineHost, placeIn } from "./placement";
-import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import type { Seen } from "../../features/seen/service";
 import {
   type ConversationTab,
@@ -1457,7 +1456,6 @@ function ChannelWorkspace({
     initialAttachments?: readonly Attachment[] | undefined;
     initialTime: number;
     hasComments: boolean;
-    opening?: MediaReviewOrigin | undefined;
     entryId?: string | undefined;
   }>();
   // The current destination may be an authorized public preview, which is
@@ -1468,12 +1466,8 @@ function ChannelWorkspace({
   useEffect(() => {
     if (mediaReview && !showingMediaReview) setMediaReview(undefined);
   }, [mediaReview, showingMediaReview]);
-  // Media in a sheet reads over its view and leaves the panes as they are;
-  // the fullscreen viewer takes over the page, as before.
-  const fullscreenMedia =
-    showingMediaReview && !showingMediaReview.opening
-      ? showingMediaReview
-      : undefined;
+  // The fullscreen media viewer takes over the page.
+  const fullscreenMedia = showingMediaReview;
   // Panels a thread tab's links open can become dialogs on that tab's view;
   // `openInView`, below, decides.
   const inView =

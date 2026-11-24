@@ -84,6 +84,67 @@ test("media opens fullscreen under inline, as under tabs, without a history step
   expect(await page.evaluate(() => history.length)).toBe(steps);
 });
 
+test.describe("From an inline thread", () => {
+  test.use({
+    productionBroker: true,
+    readState: true,
+    threadUnread: true,
+    historyCounts: { alpha: 20, beta: 1 },
+  });
+
+  test("Escape on media closes only the media", async ({
+    page,
+    app,
+    context,
+  }) => {
+    await context.route("**/api/relay/primary/media?**", (route) =>
+      route.fulfill({
+        path: fileURLToPath(
+          new URL("../../public/shell-gradient.png", import.meta.url),
+        ),
+        contentType: "image/png",
+      }),
+    );
+    await open(page, app);
+    const [root] = app.histories
+      .get("primary/alpha")
+      .filter((row) => row.content.startsWith("Thread root"));
+    app.append(
+      "primary",
+      "alpha",
+      "Reply photo",
+      false,
+      true,
+      root.id,
+      undefined,
+      photo,
+    );
+    await clickRow(
+      page,
+      page
+        .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+        .getByRole("button", { name: /^View thread:/ }),
+    );
+    const thread = page.getByRole("heading", { name: "Thread", exact: true });
+    await expect(thread).toBeVisible();
+    await clickRow(
+      page,
+      page
+        .locator("[data-details-sheet-surface] [data-message-id]")
+        .filter({ hasText: "Reply photo" })
+        .getByRole("link", { name: "Open image attachment", exact: true }),
+    );
+    const close = page.getByRole("button", {
+      name: "Close fullscreen viewer",
+      exact: true,
+    });
+    await expect(close).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(close).toHaveCount(0);
+    await expect(thread).toBeVisible();
+  });
+});
+
 test.describe("Intro", () => {
   test.use({
     threadIntro: true,

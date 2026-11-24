@@ -190,6 +190,20 @@ test.describe("Inline", () => {
     details(app, "Nested findings", root);
     await expandsInPlace(page, sheet(page), "Nested findings", 1);
     await expect(reply(sheet(page))).toBeVisible();
+    // Opening long details at the latest reply keeps their start in view,
+    // rather than following the latest reply past it.
+    app.append(
+      "primary",
+      "alpha",
+      `Long findings\n\n${`${filler}\n\n`.repeat(6)}`,
+      true,
+      false,
+      root.id,
+      undefined,
+      [["audience", "details"]],
+    );
+    await showMore(sheet(page), "Long findings").click();
+    await expect(sheet(page).getByText("Long findings")).toBeInViewport();
     await page.goBack();
     await expect(sheet(page)).toHaveCount(0);
   });

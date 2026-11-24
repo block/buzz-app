@@ -13,27 +13,6 @@
   opacity: 0.15;
   transition: opacity var(--duration-settle) var(--easing-enter);
 }
-/* Media dims the whole window without intercepting navigation. Outside-press
-   dismissal stays on the source view through its hit region. */
-.scrim[data-window] {
-  inset: 0;
-  width: auto;
-  height: auto;
-  border-radius: 0;
-  clip-path: none;
-  pointer-events: none;
-}
-.scrim[data-window]::after {
-  content: "";
-  position: fixed;
-  top: var(--scrim-top);
-  left: var(--scrim-left);
-  width: var(--scrim-width);
-  height: var(--scrim-height);
-  border-radius: var(--scrim-radius);
-  clip-path: inset(var(--scrim-inset));
-  pointer-events: auto;
-}
 /* Inside another sheet, whose material places it, the scrim dims all of
    that sheet, header included. */
 .sheet .scrim {
@@ -326,78 +305,6 @@ html[data-keyboard-navigation] .sheet[data-contained-composer] {
 }
 @media (prefers-reduced-motion: reduce) {
   .sheet[data-contained-composer] {
-    transition: none;
-  }
-}
-
-/* Media spans the workspace at a stable height, with its own stage, comments
-   and comment box. Its side insets match its bottom inset in this pane. */
-.mediaSheet {
-  --media-sheet-inset: max(
-    0px,
-    calc(var(--composer-pane-bottom) - var(--sheet-gap))
-  );
-  position: fixed;
-  z-index: 1;
-  left: calc(var(--pane-left) + var(--media-sheet-inset));
-  right: auto;
-  bottom: calc(var(--composer-bottom) - var(--sheet-gap));
-  width: calc(var(--pane-width) - 2 * var(--media-sheet-inset));
-  height: var(--sheet-max-height);
-}
-.sheet[data-contained-composer][data-height="stable"] > .content {
-  flex: 1;
-  min-height: 0;
-}
-.sheet[data-contained-composer][data-height="stable"] > .content > .body {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  overflow: hidden;
-  padding: var(--space-4) 0 0;
-}
-.sheet[data-contained-composer][data-height="stable"]
-  > .content
-  > .body
-  > .reader {
-  flex: 1;
-  overflow: hidden;
-}
-/* Its header sits above the stage rather than over a reader. */
-.sheet[data-height="stable"] > .content > .header {
-  position: relative;
-  padding: var(--space-4) var(--space-4) 0;
-}
-/* Its comments fill their column above the comment box. */
-.sheet[data-contained-composer][data-height="stable"] [data-message-scroller] {
-  flex: 1;
-}
-/* Media is workspace-sized, so it never folds into its composer. CSS reverses
-   from the painted state when Close interrupts the entrance. */
-.sheet[data-height="stable"] {
-  opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity var(--duration-settle) var(--easing-enter),
-    transform var(--duration-settle) var(--easing-enter);
-
-  @starting-style {
-    opacity: 0;
-    transform: translateY(var(--space-2));
-  }
-}
-.sheet[data-height="stable"]:is([data-starting-style], [data-ending-style]) {
-  opacity: 0;
-  transform: translateY(var(--space-2));
-}
-.sheet[data-height="stable"][data-ending-style] {
-  transition-duration: var(--duration-fast);
-}
-html[data-keyboard-navigation] .sheet[data-height="stable"] {
-  transition: none;
-}
-@media (prefers-reduced-motion: reduce) {
-  .sheet[data-height="stable"] {
     transition: none;
   }
 }

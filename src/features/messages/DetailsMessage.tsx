@@ -43,6 +43,7 @@ export function DetailsMessage({
   createdAt,
   preview,
   keepMounted,
+  onExpand,
   children,
 }: {
   messageId: string;
@@ -53,6 +54,8 @@ export function DetailsMessage({
   preview: ReactNode;
   /** Pins the row in a virtualized list while it draws the reader. */
   keepMounted?: ((messageId: string) => () => void) | undefined;
+  /** Expanding or folding in place, which is reading intent. */
+  onExpand?: (() => void) | undefined;
   /** The reader's body. */
   children: ReactNode;
 }) {
@@ -64,11 +67,15 @@ export function DetailsMessage({
   const addressed = !!address && !!view && !inPlace;
   const show = () =>
     inPlace
-      ? setExpanded(true)
+      ? toggle(true)
       : addressed
         ? address.show({ messageId, channelId, rootId: view.rootId })
         : setLocal(true);
   const close = () => setLocal(false);
+  const toggle = (next: boolean) => {
+    onExpand?.();
+    setExpanded(next);
+  };
   useEffect(
     () => (local ? keepMounted?.(messageId) : undefined),
     [local, keepMounted, messageId],
@@ -122,7 +129,7 @@ export function DetailsMessage({
             {...(inPlace
               ? { "aria-expanded": expanded }
               : { "aria-haspopup": "dialog" as const })}
-            onClick={expanded ? () => setExpanded(false) : show}
+            onClick={expanded ? () => toggle(false) : show}
           >
             {expanded ? "Show less" : "Show more"}
           </Button>

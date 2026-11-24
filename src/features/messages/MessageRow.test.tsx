@@ -1447,7 +1447,6 @@ it.each([
             attachment,
             { ...attachment, url: "https://fixture.test/second.png" },
           ],
-      undefined,
     );
     cleanup();
   },
@@ -2353,7 +2352,6 @@ it.each([true, false])(
           0,
           true,
           attachments,
-          undefined,
         );
       } else {
         expect(screen.queryByText("+3")).toBeNull();

@@ -47,7 +47,7 @@ import {
   setReplyTarget,
   threadDraftKey,
 } from "../../features/messages/reply-target";
-import { type InlineHost, inlineMedia, placeIn } from "./placement";
+import { type InlineHost, placeIn } from "./placement";
 import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import type { Seen } from "../../features/seen/service";
 import {
@@ -2272,7 +2272,6 @@ function ChannelWorkspace({
       initialTime: number,
       hasComments = false,
       initialAttachments?: readonly Attachment[],
-      opening?: MediaReviewOrigin,
     ) => {
       const { current, navigation } = destination.current;
       if (!current) return;
@@ -2288,7 +2287,6 @@ function ChannelWorkspace({
         initialTime,
         hasComments,
         initialAttachments,
-        ...(inlineMedia(opening) ? { opening } : {}),
         ...(navigation ? { entryId: navigation.entryId } : {}),
       });
     },

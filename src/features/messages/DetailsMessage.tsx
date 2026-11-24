@@ -32,9 +32,10 @@ function holdsBack(clip: HTMLElement) {
 }
 
 /** A details message reads in the chat as its opening brief, and opens whole.
- * On a page that addresses its views' layers, the view's `LayerReader` draws
- * it from its id, over the view's composer; elsewhere, as in Bestie, this row
- * opens it in a dialog. */
+ * In a thread or a view the address never names, such as media's comments, it
+ * expands in place. In a conversation on a page that addresses its views'
+ * layers, the view's `LayerReader` draws it from its id, over the view's
+ * composer; elsewhere this row opens it in a dialog. */
 export function DetailsMessage({
   messageId,
   channelId,
@@ -58,11 +59,15 @@ export function DetailsMessage({
   const view = useComposerScope();
   const address = useContext(LayerAddressContext);
   const [local, setLocal] = useState(false);
-  const addressed = !!address && !!view && !view.local;
+  const [expanded, setExpanded] = useState(false);
+  const inPlace = !!view && (!!view.local || view.rootId !== undefined);
+  const addressed = !!address && !!view && !inPlace;
   const show = () =>
-    addressed
-      ? address.show({ messageId, channelId, rootId: view.rootId })
-      : setLocal(true);
+    inPlace
+      ? setExpanded(true)
+      : addressed
+        ? address.show({ messageId, channelId, rootId: view.rootId })
+        : setLocal(true);
   const close = () => setLocal(false);
   useEffect(
     () => (local ? keepMounted?.(messageId) : undefined),
@@ -71,9 +76,10 @@ export function DetailsMessage({
   const trigger = useRef<HTMLButtonElement>(null);
   const clip = useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = useState(false);
+  // Expanded, nothing is held back; the toggle stays for Show less.
   useLayoutEffect(() => {
     const element = clip.current;
-    if (!element) return;
+    if (!element || expanded) return;
     const measure = () => setClipped(holdsBack(element));
     measure();
     const observer =
@@ -82,7 +88,7 @@ export function DetailsMessage({
         : new ResizeObserver(measure);
     observer?.observe(element);
     return () => observer?.disconnect();
-  }, []);
+  }, [expanded]);
   const time = formatItemTimestamp(createdAt, { withTime: true });
   const reader = <div className={styles.detailsReader}>{children}</div>;
   return (
@@ -91,11 +97,12 @@ export function DetailsMessage({
       {/* biome-ignore lint/a11y/noStaticElementInteractions: Show more is the keyboard path; this only widens the pointer target. */}
       <div
         ref={clip}
-        className={styles.detailsClip}
+        className={expanded ? undefined : styles.detailsClip}
         onClick={(event) => {
           // Links, mentions and selected text keep their own meaning.
           if (
             !clipped ||
+            expanded ||
             (event.target instanceof Element &&
               event.target.closest("a, button, [role=button]")) ||
             !getSelection()?.isCollapsed
@@ -112,10 +119,12 @@ export function DetailsMessage({
             ref={trigger}
             variant="link"
             size="inline"
-            aria-haspopup="dialog"
-            onClick={show}
+            {...(inPlace
+              ? { "aria-expanded": expanded }
+              : { "aria-haspopup": "dialog" as const })}
+            onClick={expanded ? () => setExpanded(false) : show}
           >
-            Show more
+            {expanded ? "Show less" : "Show more"}
           </Button>
         </span>
       )}

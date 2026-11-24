@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type ReactNode,
-  useContext,
 } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -27,8 +26,6 @@ import { rootOfTab, type ConversationTab as Tab } from "./useChannelTabState";
 import { ComposerScopeProvider } from "../../features/messages/composer-overlay";
 import { LayerReader } from "../../features/messages/LayerReader";
 import type { PageNavigation } from "../../features/navigation/service";
-import { LayerAddressContext } from "../../features/messages/view-layer";
-import { inlineMedia } from "./placement";
 import styles from "./ChannelTabs.module.css";
 
 type ConversationTabProps = {
@@ -134,11 +131,7 @@ export function ConversationTab({
     return () => request.abort();
   }, [revealKey]);
   const [sent, setSent] = useState<string>();
-  // Media reads inline only on a page that addresses its views' layers;
-  // Bestie's thread tabs keep the fullscreen viewer.
-  const media = useMediaReview(
-    useContext(LayerAddressContext) ? inlineMedia : undefined,
-  );
+  const media = useMediaReview();
   // A retained tab re-renders with its page. Its memoized rows open links and
   // threads through stable openers that consult the latest handlers when chosen.
   const latest = useRef({ openLink, openThread });

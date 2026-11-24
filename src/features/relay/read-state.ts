@@ -20,7 +20,6 @@ import {
   readCoordinate,
   unreadActive,
   unreadBlob,
-  unreadCanonical,
   unreadGroups,
   unreadReceive,
   unreadStamp,
@@ -294,22 +293,6 @@ const localState = (journal: ReadJournal, now: number): ReadState => {
     ),
   });
 };
-/** An incoming group as admitted: a channel whose history was forgotten is
- * judged against the durable floor that absorbed it, so a delayed group cannot
- * revive an unread an earlier read ended. An accepted group stays as it is. */
-function admitGroup(
-  journal: ReadJournal,
-  key: string,
-  value: ReadState["overrides"][string],
-  frontier: number,
-  mine: Readonly<Record<string, number>>,
-  clock: number,
-): ReadState["overrides"][string] {
-  const accepted = journal.state.overrides[key];
-  if (mine[key] !== undefined || (accepted && same(accepted, value)))
-    return value;
-  return unreadCanonical(value, Math.max(frontier, journal.floor ?? 0), clock);
-}
 /** Saved marks that a peer read advancing past their cover ends, judged on
  * the incoming reads before retention can drop them below the floor. */
 function peerCleared(
@@ -342,7 +325,6 @@ const heldCount = (journal: ReadJournal | undefined) =>
 function settleUnread(journal: ReadJournal, now: number): ReadJournal {
   const unread = journal.unread ?? newUnreadJournal();
   const clock = Math.max(now, unread.watermark);
-  const mine = localState(journal, now).frontiers;
   const held: Record<string, readonly HeldGroup[]> = {};
   const overrides: Record<string, ReadState["overrides"][string]> = {};
   const frontiers: Record<string, number> = {};
@@ -356,11 +338,10 @@ function settleUnread(journal: ReadJournal, now: number): ReadJournal {
       frontiers[key] = Math.max(frontiers[key] ?? 0, frontier);
       if (verdict === "merge") {
         const old = overrides[key];
-        const admitted = admitGroup(journal, key, value, frontier, mine, clock);
         overrides[key] = {
-          set: Math.max(old?.set ?? 0, admitted.set),
-          clear: Math.max(old?.clear ?? 0, admitted.clear),
-          baseline: Math.max(old?.baseline ?? 0, admitted.baseline),
+          set: Math.max(old?.set ?? 0, set),
+          clear: Math.max(old?.clear ?? 0, clear),
+          baseline: Math.max(old?.baseline ?? 0, baseline),
         };
       }
       return false;
@@ -1056,15 +1037,7 @@ export function createReadState({
       const overrides: Record<string, ReadState["overrides"][string]> = {};
       for (const [key, value] of Object.entries(state.overrides)) {
         const verdict = unreadReceive(value, at);
-        if (verdict === "merge")
-          overrides[key] = admitGroup(
-            current,
-            key,
-            value,
-            state.frontiers[key] ?? 0,
-            mine,
-            at,
-          );
+        if (verdict === "merge") overrides[key] = value;
         else if (verdict === "defer") {
           const group: HeldGroup = [
             value.set,

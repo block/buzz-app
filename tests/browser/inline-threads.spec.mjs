@@ -250,20 +250,146 @@ test.describe("Inline", () => {
     await page.reload();
     await expect(sheet(page)).toBeVisible();
     await expect(detailsSheet(page)).toBeVisible();
-    // Escape closes only the details; X on the thread closes both for good.
+    // Escape closes only the details, which cover the thread's header; then
+    // X on the thread closes it for good.
     await page.keyboard.press("Escape");
     await expect(detailsSheet(page)).toHaveCount(0);
     await expect(sheet(page)).toBeVisible();
-    await showMore(sheet(page), "Nested findings").click();
-    await expect(detailsSheet(page)).toBeVisible();
-    await sheet(page)
-      .getByRole("button", { name: "Close", exact: true })
-      .first()
-      .click();
+    await close(sheet(page)).click();
     await expect(sheet(page)).toHaveCount(0);
-    await expect(detailsSheet(page)).toHaveCount(0);
     await page.goForward();
     await expect(sheet(page)).toHaveCount(0);
+    await expect(detailsSheet(page)).toHaveCount(0);
+  });
+
+  test.describe("over a short thread", () => {
+    // Enough history that an older thread's root is outside the timeline.
+    test.use({ historyCounts: { alpha: 400, beta: 1 } });
+
+    test("details stack over it as a panel does, grow it to fit and wait for its reply box", async ({
+      page,
+      app,
+    }) => {
+      let gate;
+      await page.route("**/api/relay/primary/query", async (route) => {
+        if (gate && route.request().postData()?.includes(gate.root))
+          await gate.held;
+        await route.fallback();
+      });
+      await open(page, app);
+      const root = roots(app)[1];
+      const long = `${filler}\n\n`.repeat(3);
+      const findings = app.append(
+        "primary",
+        "alpha",
+        `Stacked findings\n\n${long}`,
+        true,
+        false,
+        root.id,
+        undefined,
+        [["audience", "details"]],
+      );
+      await clickRow(page, viewThread(page, root));
+      await expect(sheet(page).getByText("Unread reply 1")).toBeVisible();
+      const box = (locator) =>
+        locator.evaluate((element) => {
+          const { top, bottom, left, right, height } =
+            element.getBoundingClientRect();
+          return { top, bottom, left, right, height };
+        });
+      const short = await box(sheet(page));
+      await showMore(sheet(page), "Stacked findings").click();
+      await expect(detailsSheet(page)).toBeVisible();
+      // Only a strip of the thread shows above the details; its header and
+      // Close lie under them.
+      const covered = async () => {
+        const [thread, reader] = [
+          await box(sheet(page)),
+          await box(detailsSheet(page)),
+        ];
+        const threadClose = await close(sheet(page)).evaluate((button) => {
+          const { left, top, width, height } = button.getBoundingClientRect();
+          return document
+            .elementFromPoint(left + width / 2, top + height / 2)
+            ?.closest("[data-details-sheet-surface]")
+            ?.querySelector("[data-composer-dock]")
+            ? "thread"
+            : "details";
+        });
+        return {
+          strip: Math.round(reader.top - thread.top) <= 24,
+          inside:
+            reader.left >= thread.left &&
+            reader.right <= thread.right &&
+            reader.bottom <= thread.bottom,
+          threadClose,
+        };
+      };
+      await expect
+        .poll(covered)
+        .toEqual({ strip: true, inside: true, threadClose: "details" });
+      // The thread grows upward to fit them, and they read whole.
+      await expect
+        .poll(async () => (await box(sheet(page))).height)
+        .toBeGreaterThan(short.height + 100);
+      const whole = (reader) => {
+        const body = reader.querySelector("[data-sheet-body]");
+        return body.scrollHeight <= body.clientHeight + 1;
+      };
+      await expect.poll(() => detailsSheet(page).evaluate(whole)).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(detailsSheet(page)).toHaveCount(0);
+      await expect
+        .poll(async () => (await box(sheet(page))).height)
+        .toBeLessThan(short.height + 1);
+
+      // The same address over an older thread, whose root is read rather
+      // than found in the timeline: the details wait for its reply box
+      // instead of opening over the window first.
+      await showMore(sheet(page), "Stacked findings").click();
+      await expect(detailsSheet(page)).toBeVisible();
+      const older = app.histories.get("primary/alpha")[3];
+      const olderFindings = app.append(
+        "primary",
+        "alpha",
+        `Older findings\n\n${long}`,
+        true,
+        false,
+        older.id,
+        undefined,
+        [["audience", "details"]],
+      );
+      const address = page
+        .url()
+        .replaceAll(root.id, older.id)
+        .replaceAll(findings.id, olderFindings.id);
+      expect(address).not.toEqual(page.url());
+      let release;
+      gate = { root: older.id, held: new Promise((done) => (release = done)) };
+      const detailsRead = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/relay/primary/query") &&
+          !!response.request().postData()?.includes(olderFindings.id) &&
+          !response.request().postData()?.includes(older.id),
+      );
+      await page.goto(address);
+      await detailsRead;
+      await page.evaluate(
+        () =>
+          new Promise((done) =>
+            requestAnimationFrame(() => requestAnimationFrame(done)),
+          ),
+      );
+      await expect(sheet(page)).toBeVisible();
+      await expect(page.getByRole("dialog")).toHaveCount(1);
+      release();
+      await expect(
+        detailsSheet(page).getByText("Older findings"),
+      ).toBeVisible();
+      await expect
+        .poll(covered)
+        .toEqual({ strip: true, inside: true, threadClose: "details" });
+    });
   });
 
   test("a thread sheet fits its content, starts at its header's edge and fades into its own surface", async ({

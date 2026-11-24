@@ -4,7 +4,10 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
+  useReducer,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -111,6 +114,25 @@ export function useComposerDock(handle: ComposerHandle | undefined) {
     () => handle?.dock() ?? null,
     () => handle?.dock() ?? null,
   );
+}
+
+/** `handle`'s composer while it is on screen, following its dock as it mounts,
+ * leaves, and gains or loses its box. */
+export function useComposerHost(handle: ComposerHandle | undefined) {
+  const dock = useComposerDock(handle);
+  const host = dock ? composerHost(handle) : null;
+  const drawn = useRef(!!host);
+  drawn.current = !!host;
+  const [, redraw] = useReducer((count: number) => count + 1, 0);
+  useLayoutEffect(() => {
+    if (!dock || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (!!composerHost(handle) !== drawn.current) redraw();
+    });
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [dock, handle]);
+  return host;
 }
 
 /** Mounts the element as its view's composer dock. */

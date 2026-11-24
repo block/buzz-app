@@ -34,17 +34,14 @@
   clip-path: inset(var(--scrim-inset));
   pointer-events: auto;
 }
-/* Inside another sheet, whose material places it, the scrim dims that
-   sheet below its header; a panel's dims the header too. */
+/* Inside another sheet, whose material places it, the scrim dims all of
+   that sheet, header included. */
 .sheet .scrim {
-  inset: var(--thread-header-height) 0 0;
+  inset: 0;
   width: auto;
   height: auto;
   border-radius: 0;
   clip-path: none;
-}
-.sheet .scrim[data-panel] {
-  inset: 0;
 }
 .scrim:is([data-starting-style], [data-ending-style]) {
   opacity: 0;
@@ -277,7 +274,10 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
   --sheet-header-height: calc(var(--space-5) + var(--size-control-sm));
   height: var(--sheet-max-height);
 }
-.sheet[data-reader-only] > .content {
+/* So does a layer over another sheet; details keep the composer's space at
+   the bottom of the height they fill. */
+.sheet[data-reader-only] > .content,
+.sheet .sheet > .content {
   flex: 1;
 }
 .sheet[data-reader-only] > .content > .body {
@@ -288,14 +288,24 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
   padding: var(--space-4) 0 0;
 }
 
-/* A thread under a panel takes the full height, so the panel over its reply
-   box is not as small as a short thread; it settles back after. */
+/* A thread under a layer grows to fit it, so the layer over its reply box is
+   not as small as a short thread; it settles back after. The layer publishes
+   the height it needs (`--layer-height`: a panel's is the full height), and
+   the thread adds the strip of itself that shows above it. */
 .sheet[data-contained-composer] {
   min-height: 0;
   transition: min-height var(--duration-settle) var(--easing-enter);
 }
 .sheet[data-contained-composer][data-tall] {
-  min-height: var(--sheet-max-height);
+  min-height: min(
+    var(--sheet-max-height),
+    calc(
+      var(--layer-height, 0px) +
+      var(--space-4) +
+      2 *
+      var(--sheet-border-width)
+    )
+  );
 }
 .sheet[data-contained-composer][data-tall] > .content,
 .sheet[data-contained-composer][data-tall] > .content > .body,
@@ -413,12 +423,10 @@ html[data-keyboard-navigation] .sheet[data-height="stable"] {
   opacity: 1;
 }
 
-/* Over a composer inside another sheet, details stop below that sheet's
-   header, whose Close still closes both; a panel stacks tightly over it,
-   covering its header, and only a strip of the sheet beneath shows above. */
+/* Over a composer inside another sheet, details and panels stack tightly
+   over it, covering its header: only a strip of the sheet beneath shows
+   above. */
 .sheet .sheet {
-  --sheet-top: calc(var(--view-top) + var(--thread-header-height));
-}
-.sheet .sheet[data-reader-only] {
   --sheet-top: calc(var(--view-top) + var(--space-4));
+  height: var(--sheet-max-height);
 }

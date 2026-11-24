@@ -2956,9 +2956,9 @@ function ChannelWorkspace({
           channel={current}
           rootId={inlineThread}
           messageId={addressed?.inlineMessage}
-          // A panel over the thread takes the full height; so does the thread.
+          // A layer over the thread grows the thread to fit it.
           tall={
-            !!layerTarget?.target &&
+            !!layerTarget &&
             layerTarget.rootId === inlineThread &&
             !layerTarget.channelId
           }

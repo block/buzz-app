@@ -1,10 +1,7 @@
 import { useContext, useRef } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import {
-  composerHost,
-  useComposerDock,
-  useComposerScope,
-} from "./composer-overlay";
+import { useConversation } from "../conversation/Conversation";
+import { useComposerHost, useComposerScope } from "./composer-overlay";
 import { DetailsReader } from "./DetailsReader";
 import { ComposerSheet } from "./ComposerSheet";
 import { LayerAddressContext, type OpenLayer, layerInView } from "./view-layer";
@@ -12,8 +9,10 @@ import { LayerAddressContext, type OpenLayer, layerInView } from "./view-layer";
 /** The layer of the view it is mounted in, when the address names one: a
  * details message, read from its id so it opens whether or not its row is on
  * screen, or a panel. It is a sheet over that view's composer (a panel's at
- * full height), or a centered dialog when the composer isn't on screen. The
- * address owns whether it is open. */
+ * full height), or a centered dialog when the view has no composer on screen.
+ * A thread's reply box arrives with its root, so a layer over a thread waits
+ * for it rather than opening elsewhere first. The address owns whether it is
+ * open. */
 export function LayerReader({ channelId }: { channelId: string }) {
   const view = useComposerScope();
   const address = useContext(LayerAddressContext);
@@ -27,7 +26,9 @@ export function LayerReader({ channelId }: { channelId: string }) {
 function Layer({ open }: { open: OpenLayer }) {
   const view = useComposerScope();
   const address = useContext(LayerAddressContext);
-  const dock = useComposerDock(view?.handle);
+  const host = useComposerHost(view?.handle);
+  // Solo threads are read-only: they never bring a reply box.
+  const { soloConversation } = useConversation();
   // Close hands focus back to what opened the layer, when it is still there.
   const opener = useRef(
     document.activeElement instanceof HTMLElement
@@ -35,7 +36,8 @@ function Layer({ open }: { open: OpenLayer }) {
       : null,
   );
   if (!address || !view) return null;
-  const host = dock ? composerHost(view.handle) : null;
+  // The layer reads at once, and draws once its thread's reply box is there.
+  const waiting = !host && view.rootId !== undefined && !soloConversation;
   const onOpenChange = (next: boolean) => {
     if (!next) address.dismiss(open);
   };
@@ -43,7 +45,7 @@ function Layer({ open }: { open: OpenLayer }) {
     return (
       <DetailsReader channelId={open.channelId} messageId={open.messageId}>
         {({ title, avatar, time, body }) =>
-          host ? (
+          waiting ? null : host ? (
             <ComposerSheet
               open
               onOpenChange={onOpenChange}
@@ -71,7 +73,7 @@ function Layer({ open }: { open: OpenLayer }) {
       </DetailsReader>
     );
   const drawn = address.renderPanel(open);
-  if (!drawn) return null;
+  if (!drawn || waiting) return null;
   return host ? (
     <ComposerSheet
       open

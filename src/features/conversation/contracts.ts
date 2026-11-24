@@ -494,10 +494,9 @@ export type ComposerCompletion = Readonly<{
   component: ComponentType<ComposerCompletionProps>;
 }>;
 
-/** A new message as the composer would send it: Markdown and the exact
- * notified recipients (`p` tags). A name need not appear in the text. A
- * transform returns both fields, `mentions: []` for none; the host names
- * returned recipients itself and ignores the `name` it is given. */
+/** A new message as the composer would send it: Markdown and the people the
+ * person addressed (`mentions`), which need not all appear in the text. A
+ * transform returns both fields, `mentions: []` for none. */
 export type SendDraft = Readonly<{
   text: string;
   mentions: readonly Readonly<{ pubkey: string; name: string }>[];
@@ -506,16 +505,39 @@ export type SendTransformContext = Readonly<{
   session: RelaySession;
   channelId: string;
   threadRootId?: string | undefined;
-  /** Aborts when the user cancels or leaves before the send completes. */
+  /** Aborts when the person presses Esc while the transform is pending, when
+   * the composer is disabled, hidden or retargeted to another reply or media
+   * comment, when it unmounts, and after 10 seconds, when the send fails with
+   * `<plugin id>: timed out`. A result that arrives after an abort is dropped.
+   * Pass it to anything slow; a write already queued is not undone. */
   signal: AbortSignal;
+  /** Call right before the first write (react, edit, publish). From then on,
+   * a timeout, Esc, hiding or a throw no longer fails the send as retryable:
+   * the message counts as consumed, the draft clears, nothing is offered for
+   * resending and a late result is dropped. A timeout, Esc or hide shows
+   * `<plugin id>: still finishing`; a throw shows its error, with the draft
+   * still cleared. Calling it again does nothing. Without it, a transform
+   * that returns normally behaves as before. */
+  commit(): void;
 }>;
 /**
  * Rewrites, consumes or blocks a new message typed in a composer, once, before
  * it is published. One transform runs per send; see `MatchOrder`. Edits,
- * attachments, GIFs, agent sends and New Message or new Solo chat composers
- * never reach it. Returned mentions pass the same admission, 32-recipient,
- * archive and membership checks as typed ones; a Solo chat takes no recipient
- * the send did not already address.
+ * attachments, GIFs, forwards, chat cards, unresolved chips, agent sends,
+ * huddle windows and the composers that start a conversation (New Message,
+ * a new Solo chat) never reach it.
+ *
+ * Returned `mentions` must be a subset, by pubkey, of `draft.mentions`: a
+ * transform can drop people the person addressed but never add one, and a
+ * returned pubkey outside the draft fails the send with `<plugin id>: ...`.
+ * Those people are then tagged as typed mentions are: someone outside the
+ * channel is a reference or asks to be invited, and a 1:1 DM tags its agent
+ * partner whatever is returned.
+ *
+ * If it throws, returns something invalid, times out or is cancelled before it
+ * calls `commit()`, nothing is sent and the typed draft stays. If it returns and the outbox accepts the
+ * message but the relay refuses it, the rewritten message stays in the thread
+ * with Retry, and Retry does not run the transform again.
  */
 export type SendTransform = Readonly<{
   id: string;
@@ -525,9 +547,11 @@ export type SendTransform = Readonly<{
   matches(draft: SendDraft): boolean;
   /** Resolve the message to send instead; empty text with no mentions sends
    * nothing and clears the draft. Throw to keep the draft and show the error.
-   * A transform that writes (edits, reacts) should consume the message; a
-   * rewrite should not write, since a prompt or refusal after it can leave
-   * the draft unsent and a second Send runs it again. */
+   * A transform that writes (edits, reacts) should consume the message and
+   * call `commit()` right before the write, so a timeout cannot leave the
+   * draft to be sent again after the write already happened. A rewrite should
+   * not write, since a prompt or refusal after it can leave the draft unsent
+   * and a second Send runs it again. */
   transform(
     draft: SendDraft,
     context: SendTransformContext,

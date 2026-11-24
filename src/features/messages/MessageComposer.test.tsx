@@ -762,49 +762,46 @@ function sendTransform(
   };
 }
 
-it("sends a plugin's rewrite with exactly the recipients it returns", async () => {
-  const transform = vi.fn<SendTransform["transform"]>(async ({ text }) => ({
-    text: text.slice(4).toUpperCase(),
+it("sends a plugin's rewrite to the typed recipients it keeps, and no one else", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(async () => ({
+    text: "HELLO",
     mentions: [second],
   }));
-  sendTransforms = [sendTransform(transform)];
-  const h = mount();
-  h.fill("/md hello");
-  h.submit();
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(h.messages.send).toHaveBeenCalledWith(
-    "channel",
-    "HELLO",
-    [second.pubkey],
-    [],
-  );
-  expect(transform).toHaveBeenCalledExactlyOnceWith(
-    { text: "/md hello", mentions: [] },
-    expect.objectContaining({
-      session: h.session,
-      channelId: "channel",
-      signal: expect.any(AbortSignal),
-    }),
-  );
-  await waitFor(() => expect(h.input()).toHaveValue(""));
-});
-
-it("gives a plugin the typed mentions and lets it drop them", async () => {
-  const transform = vi.fn<SendTransform["transform"]>(() => ({
-    text: "quiet",
-    mentions: [],
-  }));
   sendTransforms = [
-    sendTransform(transform, { matches: (draft) => draft.mentions.length > 0 }),
+    sendTransform(transform, { matches: (draft) => draft.mentions.length > 1 }),
   ];
   const h = mount();
   act(() => {
     expect(h.commands().insertMention(first)).toBe(true);
+    expect(h.commands().insertMention(second)).toBe(true);
   });
   h.submit();
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(h.messages.send).toHaveBeenCalledWith("channel", "quiet", [], []);
-  expect(transform.mock.calls[0]?.[0].mentions).toEqual([first]);
+  expect(h.messages.send.mock.calls[0]?.slice(1, 3)).toEqual([
+    "HELLO",
+    [second.pubkey],
+  ]);
+  expect(transform.mock.calls[0]?.[0].mentions).toEqual([first, second]);
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+});
+
+it("fails a send whose transform adds a recipient the person did not address", async () => {
+  sendTransforms = [
+    sendTransform(({ text }) => ({ text, mentions: [first, second] }), {
+      matches: () => true,
+    }),
+  ];
+  const h = mount();
+  act(() => {
+    h.commands().insertMention(second);
+  });
+  const typed = h.input().value;
+  h.submit();
+  expect(
+    await screen.findByText(/test: returned a recipient you did not address/),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue(typed);
 });
 
 it("consumes a message a plugin transforms to nothing", async () => {
@@ -826,7 +823,7 @@ it("consumes a message a plugin transforms to nothing", async () => {
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
-it("keeps the draft and shows why when a plugin blocks or breaks a send", async () => {
+it("keeps the draft and shows why when a plugin blocks a send", async () => {
   sendTransforms = [
     sendTransform(async () => {
       throw new Error("Markdown needs a body.");
@@ -840,19 +837,6 @@ it("keeps the draft and shows why when a plugin blocks or breaks a send", async 
   );
   expect(h.input()).toHaveValue("/md x");
 
-  sendTransforms = [
-    sendTransform(() => ({
-      text: "",
-      mentions: [{ pubkey: "not-a-key", name: "Nobody" }],
-    })),
-  ];
-  h.submit();
-  await waitFor(() =>
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Fixture transform returned an invalid message.",
-    ),
-  );
-  expect(h.input()).toHaveValue("/md x");
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
@@ -943,32 +927,105 @@ it("frees the composer when a send is cancelled under a transform that ignores i
   expect(h.messages.send).toHaveBeenCalledWith("channel", "plain", [], []);
 });
 
-it("times out a transform that never settles, keeping the draft and freeing Send", async () => {
+it("cancels a pending transform on Esc and nothing else, keeping the draft and freeing Send", async () => {
+  let signal: AbortSignal | undefined;
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      (_draft, context) =>
+        new Promise((resolve) => {
+          signal = context.signal;
+          finish = resolve;
+        }),
+    ),
+  ];
+  const outside = vi.fn();
+  const h = mount();
+  document.addEventListener("keydown", outside);
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(signal).toBeDefined());
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeDisabled();
+  fireEvent.keyDown(h.input(), { key: "Escape" });
+  await waitFor(() => expect(send).toBeEnabled());
+  document.removeEventListener("keydown", outside);
+  expect(outside).not.toHaveBeenCalled();
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish({ text: "late", mentions: [] }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(h.input()).toHaveValue("/md slow");
+});
+
+it("cancels a pending transform when the composer is hidden, and drops its late result", async () => {
+  let signal: AbortSignal | undefined;
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      (_draft, context) =>
+        new Promise((resolve) => {
+          signal = context.signal;
+          finish = resolve;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(signal).toBeDefined());
+  h.retarget({ shown: false });
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish({ text: "late", mentions: [] }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  h.retarget({ shown: true });
+  expect(h.input()).toHaveValue("/md slow");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+});
+
+it("drops a late result once its plugin is no longer registered", async () => {
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  sendTransforms = [];
+  await act(async () => finish({ text: "late", mentions: [] }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "test: was turned off before it finished",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/md slow");
+});
+
+it("spends the draft when a plugin that committed is interrupted, and does not offer a resend", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
-    let signal: AbortSignal | undefined;
-    sendTransforms = [
-      sendTransform(
-        (_draft, context) =>
-          new Promise<never>(() => {
-            signal = context.signal;
-          }),
-      ),
-    ];
+    const run = vi.fn<SendTransform["transform"]>((_draft, { commit }) => {
+      commit();
+      return new Promise<never>(() => {});
+    });
+    sendTransforms = [sendTransform(run)];
     const h = mount();
-    h.fill("/md stuck");
+    h.fill("/md react");
     h.submit();
-    await act(async () => {});
-    const send = screen.getByRole("button", { name: "Send message" });
-    expect(send).toBeDisabled();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
-    expect(signal?.aborted).toBe(true);
-    expect(screen.getByRole("alert")).toHaveTextContent("test: timed out");
-    expect(h.input()).toHaveValue("/md stuck");
-    expect(send).toBeEnabled();
-    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.input()).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    h.fill("/md react");
+    h.submit();
+    expect(run).toHaveBeenCalledTimes(2);
   } finally {
     vi.useRealTimers();
   }
@@ -1078,56 +1135,6 @@ it("retries a queued rewritten send with the rewrite and without running the tra
   expect(transform).toHaveBeenCalledOnce();
 });
 
-it("refuses more than 32 returned recipients before any membership change", async () => {
-  const many = Array.from({ length: 33 }, (_, index) => ({
-    pubkey: (index + 1).toString(16).padStart(64, "0"),
-    name: "x",
-  }));
-  sendTransforms = [sendTransform(() => ({ text: "hi", mentions: many }))];
-  const h = mount();
-  h.fill("/md crowd");
-  h.submit();
-  expect(
-    await screen.findByText(/test: tagged more than 32 recipients/),
-  ).toBeVisible();
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue("/md crowd");
-});
-
-it("asks to invite a plugin-added outsider under the host's name, not the plugin's", async () => {
-  sendTransforms = [
-    sendTransform(() => ({
-      text: "hi",
-      mentions: [{ pubkey: first.pubkey, name: "Mallory" }],
-    })),
-  ];
-  const h = mount();
-  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
-  const add = vi.fn(async () => {});
-  const list = {
-    status: "ready",
-    channels: [
-      { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
-    ],
-  };
-  Object.assign(h.session, {
-    viewer: "d".repeat(64),
-    channels: { list: () => list, subscribeList: () => () => {} },
-    memberAdditions: { add },
-  });
-  h.fill("/md hello");
-  h.submit();
-  expect(
-    await screen.findByText(
-      "Honey is not in this channel. Invite them to the channel, or send without inviting them.",
-    ),
-  ).toBeVisible();
-  expect(screen.queryByText(/Mallory/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Invite" }));
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(add).toHaveBeenCalledWith("channel", first.pubkey);
-});
-
 it("sends an unclaimed message synchronously, as without any transform", () => {
   sendTransforms = [
     sendTransform(() => ({ text: "x", mentions: [] }), {
@@ -1143,39 +1150,6 @@ it("sends an unclaimed message synchronously, as without any transform", () => {
     [],
     [],
   );
-});
-
-it("checks a plugin-added recipient like a typed one", async () => {
-  sendTransforms = [
-    sendTransform(() => ({ text: "hi", mentions: [first] }), {
-      matches: () => true,
-    }),
-  ];
-  const h = mount();
-  h.retarget({
-    session: {
-      ...h.session,
-      archives: {
-        snapshot: () => firstArchived,
-        subscribe: () => () => {},
-        state: (key: string) =>
-          key === first.pubkey ? "archived" : "not-archived",
-        ensure: async () => {},
-        refresh: async () => {},
-        writable: false,
-        supported: true,
-        consent: vi.fn(),
-        request: vi.fn(),
-      },
-    },
-  });
-  h.fill("hello");
-  h.submit();
-  expect(
-    await screen.findByText("test: tagged someone who can't be tagged here."),
-  ).toBeVisible();
-  expect(h.messages.send).not.toHaveBeenCalled();
-  expect(h.input()).toHaveValue("hello");
 });
 
 it("publishes typing for text edits but not caret-driven token expansion", () => {
@@ -15811,7 +15785,7 @@ it("a person who joined since the pill was shown stops its untagged send", async
   expect(h.messages.send).not.toHaveBeenCalled();
 });
 
-it("refuses a Solo recipient a plugin adds and keeps the toolbar's agents", async () => {
+it("lets a plugin drop a Solo toolbar agent but not add another", async () => {
   let tagged: readonly { pubkey: string; name: string }[] = [];
   sendTransforms = [
     sendTransform(() => ({ text: "hi", mentions: tagged }), {
@@ -15826,10 +15800,10 @@ it("refuses a Solo recipient a plugin adds and keeps the toolbar's agents", asyn
     ]),
   );
   h.fill("hello");
-  tagged = [{ pubkey: second.pubkey, name: "Bea" }];
+  tagged = [{ pubkey: "c".repeat(64), name: "Cy" }];
   h.submit();
   expect(
-    await screen.findByText(/test: tried to tag someone you did not choose/),
+    await screen.findByText(/test: returned a recipient you did not address/),
   ).toBeVisible();
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(addAgents).not.toHaveBeenCalled();
@@ -15841,7 +15815,6 @@ it("refuses a Solo recipient a plugin adds and keeps the toolbar's agents", asyn
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   await waitFor(() => expect(h.input()).toHaveValue(""));
-  expect(sendingTo("Ada")).toBeInTheDocument();
 });
 
 it("a member who joined with no loaded profile also stops the untagged send", async () => {

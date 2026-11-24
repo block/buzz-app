@@ -234,6 +234,11 @@ one only if you trust its author with your account and your computer. An optiona
 publishers and can include plugins you sign with your own Buzz identity. Manage
 the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the reason.
 
+A plugin can take over a new message when you press Send, for example to format
+it, edit your previous message or react instead of posting. It never adds
+recipients. While it works, Esc cancels and keeps your draft; if it fails or
+takes longer than 10 seconds, nothing is sent and the draft stays with the error.
+
 ## Docs
 
 Docs is a bundled plugin for live Markdown documents shared with people and

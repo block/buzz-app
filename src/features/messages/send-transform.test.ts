@@ -5,7 +5,7 @@ import type {
   SendTransform,
   SendTransformContext,
 } from "../conversation/contracts";
-import { transformRecipients, transformSend } from "./send-transform";
+import { transformSend } from "./send-transform";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -13,7 +13,7 @@ afterEach(() => {
 
 const alice = { pubkey: "a".repeat(64), name: "alice" };
 const bob = { pubkey: "b".repeat(64), name: "bob" };
-const draft: SendDraft = { text: "hello", mentions: [alice] };
+const draft: SendDraft = { text: "hello", mentions: [alice, bob] };
 
 function transform(
   key: string,
@@ -35,7 +35,7 @@ function context(signal = new AbortController().signal) {
     session: {},
     channelId: "channel",
     signal,
-  } as unknown as SendTransformContext;
+  } as unknown as Omit<SendTransformContext, "commit">;
 }
 
 it("hands the winner the draft and context, awaiting an async result", async () => {
@@ -43,7 +43,10 @@ it("hands the winner the draft and context, awaiting an async result", async () 
   const run = vi.fn(async () => ({ text: "later", mentions: [bob] }));
   await expect(
     transformSend(transform("one", { transform: run }), draft, ctx),
-  ).resolves.toEqual({ text: "later", mentions: [bob] });
+  ).resolves.toEqual({
+    draft: { text: "later", mentions: [bob] },
+    committed: false,
+  });
   expect(run).toHaveBeenCalledWith(
     draft,
     expect.objectContaining({ session: ctx.session, channelId: "channel" }),
@@ -57,31 +60,51 @@ it("treats empty text without recipients as consumed", async () => {
       draft,
       context(),
     ),
-  ).resolves.toBeNull();
+  ).resolves.toEqual({ draft: null, committed: false });
 });
 
-it("dedupes recipients by key and drops stray fields", async () => {
+it("keeps only drafted recipients, under the host's names, deduped, in the order returned", async () => {
   await expect(
     transformSend(
       transform("one", {
         transform: () =>
           ({
             text: "x",
-            mentions: [alice, { ...alice, extra: 1 }, bob],
+            mentions: [
+              { pubkey: bob.pubkey, name: "Mallory" },
+              alice,
+              { ...alice, extra: 1 },
+            ],
             other: true,
           }) as SendDraft,
       }),
       draft,
       context(),
     ),
-  ).resolves.toEqual({ text: "x", mentions: [alice, bob] });
+  ).resolves.toEqual({
+    draft: { text: "x", mentions: [bob, alice] },
+    committed: false,
+  });
 });
 
-it("reads each recipient once, so a getter cannot change after validation", async () => {
+it("fails the send, naming the plugin, for a recipient the person did not address", async () => {
+  const stranger = { pubkey: "c".repeat(64), name: "carol" };
+  await expect(
+    transformSend(
+      transform("one", {
+        transform: () => ({ text: "x", mentions: [alice, stranger] }),
+      }),
+      draft,
+      context(),
+    ),
+  ).rejects.toThrow("test.plugin: returned a recipient you did not address");
+});
+
+it("reads each recipient once, so a getter cannot swap in someone else", async () => {
   let reads = 0;
   const shifty = {
     get pubkey() {
-      return reads++ === 0 ? alice.pubkey : "not-a-key";
+      return reads++ === 0 ? alice.pubkey : "c".repeat(64);
     },
     name: "alice",
   };
@@ -93,25 +116,20 @@ it("reads each recipient once, so a getter cannot change after validation", asyn
       draft,
       context(),
     ),
-  ).resolves.toEqual({ text: "x", mentions: [alice] });
+  ).resolves.toEqual({
+    draft: { text: "x", mentions: [alice] },
+    committed: false,
+  });
 });
 
 it.each([
   ["not an object", "text"],
   ["null", null],
   ["missing text", { mentions: [] }],
-
   ["omitted mentions", { text: "x" }],
   ["non-string text", { text: 1, mentions: [] }],
   ["non-array mentions", { text: "x", mentions: alice }],
-  [
-    "mention without a name",
-    { text: "x", mentions: [{ pubkey: alice.pubkey }] },
-  ],
-  [
-    "mention with a bad pubkey",
-    { text: "x", mentions: [{ pubkey: "ABC", name: "alice" }] },
-  ],
+  ["mention without a key", { text: "x", mentions: [{ name: "alice" }] }],
   ["recipients without a message", { text: " ", mentions: [alice] }],
 ])("rejects a malformed result: %s", async (_name, value) => {
   await expect(
@@ -142,22 +160,6 @@ it("names the plugin in a thrown or invalid-result error", async () => {
       context(),
     ),
   ).rejects.toThrow("test.plugin: Title one returned an invalid message.");
-});
-
-it("does not return a result once the send was aborted", async () => {
-  const abort = new AbortController();
-  await expect(
-    transformSend(
-      transform("one", {
-        transform: (value) => {
-          abort.abort();
-          return value;
-        },
-      }),
-      draft,
-      context(abort.signal),
-    ),
-  ).rejects.toThrow();
 });
 
 it("settles on abort for a transform that ignores the signal, and drops its late result", async () => {
@@ -205,12 +207,6 @@ it("times out a transform that never settles, aborting its signal and dropping i
   await Promise.resolve();
 });
 
-it("clears the timeout once the transform settles", async () => {
-  vi.useFakeTimers();
-  await transformSend(transform("one"), draft, context());
-  expect(vi.getTimerCount()).toBe(0);
-});
-
 it("does not run a transform for an attempt already aborted", async () => {
   const abort = new AbortController();
   abort.abort();
@@ -225,51 +221,46 @@ it("does not run a transform for an attempt already aborted", async () => {
   expect(run).not.toHaveBeenCalled();
 });
 
-const plugin = { pluginId: "test.plugin" };
-function rules(overrides = {}) {
-  return {
-    mayAdd: true,
-    admitted: () => true,
-    nameOf: (pubkey: string) => (pubkey === bob.pubkey ? "Robert" : undefined),
-    ...overrides,
-  };
-}
-
-it("names a new recipient from host data, never the plugin's label", () => {
-  expect(
-    transformRecipients(
-      plugin,
-      [alice, { pubkey: bob.pubkey, name: "Alice" }],
-      [{ pubkey: alice.pubkey, name: "Alice (typed)" }],
-      rules(),
+it("keeps a committed write from being replayed: timeout, abort or a throw spend the draft", async () => {
+  vi.useFakeTimers();
+  const never = (): Promise<SendDraft> => new Promise(() => {});
+  const committing = (after: () => Promise<SendDraft>) =>
+    transform("one", {
+      transform: (_value, { commit }) => {
+        commit();
+        commit();
+        return after();
+      },
+    });
+  const timed = transformSend(committing(never), draft, context());
+  await vi.advanceTimersByTimeAsync(10_000);
+  await expect(timed).resolves.toEqual({
+    draft: null,
+    committed: true,
+    notice: "test.plugin: still finishing",
+  });
+  const abort = new AbortController();
+  const escaped = transformSend(
+    committing(never),
+    draft,
+    context(abort.signal),
+  );
+  abort.abort();
+  await expect(escaped).resolves.toMatchObject({
+    committed: true,
+    notice: "test.plugin: still finishing",
+  });
+  await expect(
+    transformSend(
+      committing(async () => {
+        throw new Error("relay said no");
+      }),
+      draft,
+      context(),
     ),
-  ).toEqual([
-    { pubkey: alice.pubkey, name: "Alice (typed)" },
-    { pubkey: bob.pubkey, name: "Robert" },
-  ]);
-});
-
-it.each([
-  ["a key the host cannot admit", rules({ admitted: () => false })],
-  ["a key the host cannot name", rules({ nameOf: () => undefined })],
-])("refuses %s, naming the plugin", (_name, ruleset) => {
-  expect(() => transformRecipients(plugin, [bob], [], ruleset)).toThrow(
-    "test.plugin: tagged someone who can't be tagged here.",
-  );
-});
-
-it("refuses more than 32 recipients and, where adding is barred, any new one", () => {
-  const many = Array.from({ length: 33 }, (_, index) => ({
-    pubkey: index.toString(16).padStart(64, "0"),
-    name: "x",
-  }));
-  expect(() => transformRecipients(plugin, many, [], rules())).toThrow(
-    "test.plugin: tagged more than 32 recipients",
-  );
-  expect(() =>
-    transformRecipients(plugin, [bob], [alice], rules({ mayAdd: false })),
-  ).toThrow("test.plugin: tried to tag someone you did not choose");
-  expect(
-    transformRecipients(plugin, [alice], [alice], rules({ mayAdd: false })),
-  ).toEqual([alice]);
+  ).resolves.toEqual({
+    draft: null,
+    committed: true,
+    error: "test.plugin: relay said no",
+  });
 });

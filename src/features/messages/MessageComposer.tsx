@@ -206,7 +206,7 @@ import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
 import { resolveMatch } from "../../plugins/contributions";
-import { transformRecipients, transformSend } from "./send-transform";
+import { transformSend, type Transformed } from "./send-transform";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -642,10 +642,15 @@ function Composer({
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
+  // A plugin is rewriting the send: its wait ends if the composer is hidden.
+  const transforming = useRef(false);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
     if (disabled || !active) sendAttempt.current?.abort();
   }, [disabled, active]);
+  useLayoutEffect(() => {
+    if (!shown && transforming.current) sendAttempt.current?.abort();
+  }, [shown]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(
     () => () => sendAttempt.current?.abort(),
@@ -3373,8 +3378,7 @@ function Composer({
       !threadRootId &&
       followUpBehaviorPreference() === "queue";
     // A command or transform that took the whole message clears the draft.
-    const stillCurrent = () => {
-      attempt.signal.throwIfAborted();
+    const unchanged = () => {
       if (valueRef.current !== captured) return false;
       const current = viewRevision(scope, draftKey);
       if (current !== savedRevision) {
@@ -3384,13 +3388,17 @@ function Composer({
       }
       return true;
     };
-    const clear = () => {
+    const stillCurrent = () => {
+      attempt.signal.throwIfAborted();
+      return unchanged();
+    };
+    const clear = (refocus = true) => {
       const next = mentionDraft("");
       saveDraft(next);
       completion.invalidate();
       caret.current = undefined;
       input.current?.reset(next);
-      input.current?.focus();
+      if (refocus) input.current?.focus();
       setError(undefined);
       automaticTag.current = undefined;
       seedClosed.current = false;
@@ -3438,40 +3446,41 @@ function Composer({
         );
         if (winner) {
           setSending(true);
-          const result = await transformSend(winner, draft, {
-            session: host,
-            channelId,
-            threadRootId,
-            signal: attempt.signal,
-          });
+          transforming.current = true;
+          let outcome: Transformed;
+          try {
+            outcome = await transformSend(winner, draft, {
+              session: host,
+              channelId,
+              threadRootId,
+              signal: attempt.signal,
+            });
+          } finally {
+            transforming.current = false;
+          }
+          const result = outcome.draft;
+          if (outcome.committed && !result) {
+            // The plugin may have written, so the draft is spent and a
+            // resend is not offered, whatever interrupted it.
+            if (outcome.notice) notify(outcome.notice, "info");
+            if (unchanged()) {
+              clear(!attempt.signal.aborted);
+              if (outcome.error) setError(outcome.error);
+            }
+            return;
+          }
           if (!stillCurrent()) return;
+          // A plugin turned off or reloaded meanwhile no longer speaks for the send.
+          if (!extensions?.sendTransforms?.snapshot().includes(winner))
+            throw new Error(
+              `${winner.pluginId}: was turned off before it finished. Send again to send without it.`,
+            );
           if (result === null) {
             clear();
             return;
           }
-          // Recipients and their names come from the host, as for typed mentions.
-          const admitted = admits();
-          const members = session.channels
-            .list()
-            .channels.find((item) => item.id === channelId)?.members;
-          capturedRecipients = transformRecipients(
-            winner,
-            result.mentions,
-            capturedRecipients,
-            {
-              mayAdd: !solo,
-              admitted,
-              nameOf: (pubkey) =>
-                session.profiles.snapshot().get(pubkey)?.name ||
-                session.agentChoices
-                  .snapshot()
-                  .identities.find((agent) => agent.pubkey === pubkey)?.name ||
-                (agents?.joinable() ?? []).find(
-                  (agent) => agent.pubkey === pubkey,
-                )?.name ||
-                (members?.includes(pubkey) ? pubkey.slice(0, 12) : undefined),
-            },
-          );
+          // Only people the draft addressed remain, under the names they had.
+          capturedRecipients = result.mentions;
           transformed = result;
           // Signed chips belong to the text they were typed in.
           if (result.text !== markdown) tokens = [];
@@ -4293,6 +4302,21 @@ function Composer({
             undefined
           }
           onKeyDown={(event) => {
+            // Esc cancels a pending plugin transform and nothing else: the
+            // draft stays, and a reply, editor or viewer around it stays open.
+            if (
+              transforming.current &&
+              event.key === "Escape" &&
+              !event.defaultPrevented &&
+              !event.nativeEvent.isComposing &&
+              event.nativeEvent.keyCode !== 229 &&
+              !completion.composing.current
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              sendAttempt.current?.abort();
+              return;
+            }
             if (
               editing.target &&
               event.key === "Escape" &&

@@ -36,6 +36,7 @@ import {
   messageAutocorrectPreference,
   setMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
+import { emoticonPreference } from "../features/messages/emoticon-preference";
 import {
   clockPreference,
   setClockPreference,
@@ -56,6 +57,7 @@ afterEach(() => {
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
+  emoticonPreference.set(true);
   setUnreadFirstPreference(true);
   setMessageSortPreference("relevance");
   setClockPreference({
@@ -546,6 +548,32 @@ it("offers message spelling correction only on Mac WebKit, off until this device
     );
   });
   expect(toggle()).not.toBeChecked();
+});
+
+it("converts emoticons until this device turns it off, retrying a failed save", async () => {
+  const user = userEvent.setup();
+  const toggle = () =>
+    screen.getByRole("switch", { name: "Convert emoticons to emoji" });
+  render(preferencesPage(), { wrapper: ToastProvider });
+  expect(toggle()).toBeChecked();
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementation(() => {
+      throw new Error("unavailable");
+    });
+  await user.click(toggle());
+  expect(emoticonPreference.read()).toBe(false);
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    "Emoticon preference wasn’t saved",
+  );
+  write.mockRestore();
+  await user.click(
+    screen.getByRole("button", { name: "Retry saving emoticon conversion" }),
+  );
+  expect(localStorage.getItem("buzz-convert-emoticons.v1")).toBe("off");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
 });
 
 it("leads search with unread until this device turns it off", async () => {

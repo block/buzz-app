@@ -3,16 +3,24 @@ import { useSyncExternalStore } from "react";
 const unsavedError =
   "This choice is active, but could not be saved on this device. Try again.";
 
-/** A device-local boolean choice with an independent unsaved fallback. */
-export function devicePreference(preferenceKey: string, changedEvent: string) {
+/** A device-local boolean choice with an independent unsaved fallback. Only
+ * the stored opposite of `enabledByDefault` overrides it. */
+export function devicePreference(
+  preferenceKey: string,
+  changedEvent: string,
+  { enabledByDefault = false } = {},
+) {
   let unsavedPreference: boolean | undefined;
 
   function read(): boolean {
     if (unsavedPreference !== undefined) return unsavedPreference;
     try {
-      return localStorage.getItem(preferenceKey) === "on";
+      const opposite = enabledByDefault ? "off" : "on";
+      return localStorage.getItem(preferenceKey) === opposite
+        ? !enabledByDefault
+        : enabledByDefault;
     } catch {
-      return false;
+      return enabledByDefault;
     }
   }
   function subscribe(listener: () => void) {
@@ -32,10 +40,11 @@ export function devicePreference(preferenceKey: string, changedEvent: string) {
     return useSyncExternalStore(subscribe, read);
   }
   /** The save failure for the active unsaved choice, until it is saved. */
+  function saveError() {
+    return unsavedPreference === undefined ? null : unsavedError;
+  }
   function useSaveError() {
-    return useSyncExternalStore(subscribe, () =>
-      unsavedPreference === undefined ? null : unsavedError,
-    );
+    return useSyncExternalStore(subscribe, saveError);
   }
   function set(enabled: boolean): string | null {
     let error: string | null = null;
@@ -50,5 +59,5 @@ export function devicePreference(preferenceKey: string, changedEvent: string) {
     return error;
   }
 
-  return { read, subscribe, usePreference, useSaveError, set };
+  return { read, subscribe, usePreference, saveError, useSaveError, set };
 }

@@ -323,6 +323,10 @@ export function createCommunityUnreads(
   update();
   return {
     snapshot: () => states,
+    /** The session behind a community's known unread, for acting on it without
+     * selecting it; absent whenever `snapshot` has no entry for it. */
+    session: (id: string) =>
+      states.has(id) ? entries.get(id)?.session : undefined,
     subscribe(listener: () => void) {
       listeners.add(listener);
       return () => {

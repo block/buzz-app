@@ -598,30 +598,64 @@ it.each([
   },
 );
 
-it("classifies p-tagged DM messages as direct, not mention", async () => {
-  const h = await setup();
-  h.emit([profile(h.peer, { name: "Pinky" })]);
-  const now = Math.floor(Date.now() / 1000);
-  h.emit([
-    signed(h.relay, {
-      kind: 39000,
-      content: JSON.stringify({ name: "internal-dm-id", channel_type: "dm" }),
-      tags: [
-        ["d", "room"],
-        ["name", "internal-dm-id"],
-        ["t", "dm"],
-      ],
-      created_at: now,
-    }),
-  ]);
-  // Agent and CLI DM traffic p-tags the recipient; that must not reroute the
-  // message to the mention category (label, sound, and preference toggle).
-  h.emit([h.make("hello")], "live");
-  await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
-  expect(h.show.mock.calls[0]?.[0].title).toBe(
-    "Pinky sent you a direct message",
-  );
-});
+it.each([false, true])(
+  "keeps p-tagged DMs direct and identifies other recipients (group=%s)",
+  async (group) => {
+    const h = await setup();
+    const other = keypair();
+    h.emit([
+      profile(h.peer, { name: "Pinky" }),
+      profile(other, { name: "Helper", bot: true }),
+    ]);
+    const now = Math.floor(Date.now() / 1000);
+    h.emit([
+      roster(
+        h.relay,
+        "room",
+        [h.viewer.pubkey, h.peer.pubkey, ...(group ? [other.pubkey] : [])],
+        now,
+      ),
+      signed(h.relay, {
+        kind: 39000,
+        content: JSON.stringify({ name: "internal-dm-id", channel_type: "dm" }),
+        tags: [
+          ["d", "room"],
+          ["name", "internal-dm-id"],
+          ["t", "dm"],
+        ],
+        created_at: now,
+      }),
+    ]);
+    // Agent and CLI DM traffic p-tags the recipient; that must not reroute the
+    // message to the mention category (label, sound, and preference toggle).
+    h.notifications.updatePreferences({
+      categories: {
+        ...h.notifications.snapshot().preferences.categories,
+        mention: false,
+      },
+    });
+    const row = h.make("hello");
+    h.emit([row], "live");
+    await vi.waitFor(() => expect(h.show).toHaveBeenCalledOnce());
+    const notification = h.show.mock.calls[0]?.[0];
+    expect(notification.body).toBe("hello");
+    if (group) {
+      expect(notification.title).toContain("Group DM");
+      expect(notification.title).toContain("Pinky");
+      expect(notification.title).toContain("Helper");
+      expect(notification.title).not.toContain("internal-dm-id");
+      expect(notification.title).not.toContain(h.viewer.pubkey);
+    } else {
+      expect(notification.title).toBe("Pinky sent you a direct message");
+      expect(notification.title).not.toContain("Helper");
+    }
+    h.click();
+    expect(h.navigation.navigation.snapshot().entry.target).toMatchObject({
+      channelId: "room",
+      messageId: row.id,
+    });
+  },
+);
 
 function deferred() {
   let release = () => {};

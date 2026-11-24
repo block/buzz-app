@@ -139,6 +139,9 @@ if that desktop app is up and running.
   **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
+- **Group-DM notifications** say **Group DM** and name the sender and up to two
+  other recipients, including agents, with a count for any more. One-to-one DMs
+  keep their usual notification.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.

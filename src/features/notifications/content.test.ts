@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import { resolveIdentityNames } from "../identity-names/policy";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import {
   messageNotificationText,
   messagePreview,
@@ -91,6 +93,87 @@ it("DM mentions do not expose an internal DM name; missing names use key fragmen
     messageNotificationText(message, "thread", undefined, { name: " " }).title,
   ).toBe("aaaaaaaaaa replied in #room");
 });
+it("keeps group identity and other recipients visible with bounded names and an overflow count", () => {
+  const participants = [
+    message.authorId,
+    "c".repeat(64),
+    "d".repeat(64),
+    "e".repeat(64),
+  ];
+  const names = new Map([
+    [participants[1], `Amy\u202E\n${"😀".repeat(50)}`],
+    [participants[2], "Bea"],
+    [participants[3], "Zed"],
+  ]);
+  const text = messageNotificationText(
+    message,
+    "direct",
+    { id: "room", name: "internal-id", channelType: "dm", participants },
+    { name: "Pinky" },
+    undefined,
+    (id) => names.get(id),
+  );
+  expect(text.title).toContain("Group DM");
+  expect(text.title).toContain("Pinky");
+  expect(text.title).toContain("Amy");
+  expect(text.title).toContain("Bea");
+  expect(text.title).toContain("1 more");
+  expect(text.title).not.toContain("Zed");
+  expect(text.title).not.toContain("internal-id");
+  expect(text.title).not.toMatch(/[\p{Cc}\p{Bidi_Control}]/u);
+  expect(Array.from(text.title).length).toBeLessThanOrEqual(128);
+  expect(() => encodeURIComponent(text.title)).not.toThrow();
+  expect(text.body).toBe("Hello Wes");
+});
+
+it.each([
+  ["Customer Support Assistant", "Customer Support Assistant"],
+  ["Customer Support East Escalations", "Customer Support West Escalations"],
+])("keeps shortened recipients distinguishable: %s / %s", (first, second) => {
+  const ids = ["c".repeat(64), "d".repeat(64)] as const;
+  const resolved = resolveIdentityNames([
+    { pubkey: ids[0], name: first, isAgent: true },
+    { pubkey: ids[1], name: second, isAgent: true },
+  ]);
+  const keys = publicKeyLabels(ids);
+  const text = messageNotificationText(
+    message,
+    "direct",
+    {
+      id: "room",
+      name: "internal-id",
+      channelType: "dm",
+      participants: [message.authorId, ...ids],
+    },
+    { name: "Pinky" },
+    undefined,
+    (id) => resolved.get(id)?.name,
+  );
+  for (const id of ids) {
+    const identifyingPart = resolved.get(id)?.qualifier ?? keys.get(id);
+    expect(identifyingPart).toBeTruthy();
+    expect(text.title).toContain(identifyingPart);
+  }
+  expect(Array.from(text.title).length).toBeLessThanOrEqual(128);
+});
+
+it("identifies a group DM even before another recipient's name is cached", () => {
+  const text = messageNotificationText(
+    message,
+    "direct",
+    {
+      id: "room",
+      name: "internal-id",
+      channelType: "dm",
+      participants: [message.authorId, "c".repeat(64)],
+    },
+    { name: "Pinky" },
+  );
+  expect(text.title).toContain("Group DM");
+  expect(text.title).toContain("npub…");
+  expect(text.title).not.toContain("internal-id");
+});
+
 it("flattens blocks, links, images, escapes and code without URLs", () => {
   expect(
     messagePreview(

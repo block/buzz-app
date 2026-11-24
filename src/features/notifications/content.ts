@@ -1,4 +1,6 @@
 import { workflowLabel } from "../relay/workflow-attribution";
+import { publicKeyLabels } from "../../shared/identity/public-key";
+import { sortParticipantNames } from "../identity-names/participant-order";
 import type { ChannelSummary, Profile } from "../relay/contracts";
 import type { IncomingMessage } from "../relay/incoming";
 import { scanMarkdown, visibleHtmlSource } from "../relay/message-content";
@@ -12,7 +14,7 @@ export type NotificationText = Readonly<{ title: string; body: string }>;
 const loneSurrogate =
   /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
-function shortText(value: string, limit: number) {
+function shortText(value: string, limit: number, tail = 0) {
   const points = Array.from(
     value
       .replace(loneSurrogate, "\uFFFD")
@@ -21,7 +23,7 @@ function shortText(value: string, limit: number) {
       .trim(),
   );
   return points.length > limit
-    ? `${points.slice(0, limit - 1).join("")}…`
+    ? `${points.slice(0, limit - tail - 1).join("")}…${tail ? points.slice(-tail).join("") : ""}`
     : points.join("");
 }
 
@@ -129,11 +131,46 @@ export function messageNotificationText(
   channel: ChannelSummary | undefined,
   profile: Profile | undefined,
   resolvedName?: string | undefined,
+  recipientName?: (pubkey: string) => string | undefined,
 ): NotificationText {
   const name =
     shortText(resolvedName ?? profile?.name ?? "", 64) ||
     (message.workflowOwnerId ?? message.authorId).slice(0, 10);
   const sender = message.workflowOwnerId ? workflowLabel(name) : name;
+  // Participants come from the authorized roster and already exclude the viewer.
+  // Count agents too: a DM with a person and an agent is not one-to-one.
+  const participants =
+    channel?.channelType === "dm" ? channel.participants : undefined;
+  if (category === "direct" && participants && participants.length > 1) {
+    const ids = participants.filter((id) => id !== message.authorId);
+    const keys = publicKeyLabels(ids);
+    // Keep the end of long names, where scoped identity qualifiers live.
+    const labels = ids.map(
+      (id) =>
+        shortText(recipientName?.(id) ?? "", 24, 8) ||
+        keys.get(id) ||
+        "Unknown",
+    );
+    // Shortening can still collapse different names. Distinct key labels are
+    // preferable to showing two indistinguishable recipients.
+    const recipients = sortParticipantNames(
+      labels.map((label, index) =>
+        labels.indexOf(label) !== labels.lastIndexOf(label)
+          ? (keys.get(ids[index] ?? "") ?? label)
+          : label,
+      ),
+    );
+    const others = recipients.slice(0, 2).join(", ");
+    const remaining =
+      recipients.length > 2 ? ` and ${recipients.length - 2} more` : "";
+    return Object.freeze({
+      title: shortText(
+        `Group DM · ${shortText(sender, 40)} to you, ${others}${remaining}`,
+        128,
+      ),
+      body: messagePreview(message.previewContent),
+    });
+  }
   const destination =
     channel?.channelType === "dm"
       ? "a direct message"

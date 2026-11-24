@@ -508,6 +508,10 @@ export type PageTabTarget = {
   messageId?: string;
   unreadSince?: number;
 };
+/** Optional `ConversationWorkspaceProps` a workspace provider renders. */
+export type WorkspaceSlots = Readonly<{
+  headerActions?: true;
+}>;
 /** A page-owned conversation with the host's reader, composer, and side pane. */
 export type ConversationWorkspaceProps = {
   id: string;
@@ -521,6 +525,8 @@ export type ConversationWorkspaceProps = {
   label: string;
   /** Content at the start of history. It scrolls with the messages. */
   intro?: ReactNode;
+  /** Controls in the main tab's toolbar, before the actions menu. */
+  headerActions?: ReactNode;
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

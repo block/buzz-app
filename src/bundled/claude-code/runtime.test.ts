@@ -458,7 +458,7 @@ function setup(
   };
 }
 
-it("names each saved session's channel as the community lists it", () => {
+it("names each saved session's channel as the community lists it, and omits one it does not", () => {
   const { runtime, data } = setup();
   const saved = localSessions(
     localStore({
@@ -470,7 +470,11 @@ it("names each saved session's channel as the community lists it", () => {
   );
   saved.set(channel, { id: "s1", seen: 100, at: 5 });
   saved.set("chan-gone/root-1", { id: "s2", seen: 100, at: 3 });
-  expect(runtime.conversations(self)).toEqual([
+  // Internal consumers keep every saved session; the owner sees only theirs.
+  expect(runtime.conversations(self).map(({ sessionId }) => sessionId)).toEqual(
+    ["s1", "s2"],
+  );
+  expect(runtime.ownerConversations(self)).toEqual([
     {
       key: channel,
       agent: self,
@@ -479,14 +483,6 @@ it("names each saved session's channel as the community lists it", () => {
       name: "general",
       channelType: "stream",
       at: 5,
-    },
-    {
-      key: "chan-gone/root-1",
-      agent: self,
-      sessionId: "s2",
-      channelId: "chan-gone",
-      root: "root-1",
-      at: 3,
     },
   ]);
 });

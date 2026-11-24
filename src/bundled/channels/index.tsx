@@ -78,9 +78,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   extensions.registerTabs((props) => (
     <PageTabs {...props} host={ctx} extensions={extensions} />
   ));
-  extensions.registerWorkspace((props) => (
-    <ConversationWorkspace {...props} host={ctx} extensions={extensions} />
-  ));
+  extensions.registerWorkspace(
+    (props) => (
+      <ConversationWorkspace {...props} host={ctx} extensions={extensions} />
+    ),
+    { slots: { headerActions: true } },
+  );
   const relay = ctx.relay;
   const navigator = ctx.navigation;
   ctx.conversation.registerMessageAction({
@@ -192,6 +195,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         agents={agents}
         communities={ctx.communityReader}
         membership={membership}
+        seen={ctx.reflect.get("seen")}
       />
     ),
   });

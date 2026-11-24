@@ -335,13 +335,17 @@ function applied({
       },
       snapshot: () => ({ status: "ready", agents: [], running: [] }),
       relay: () =>
-        channels &&
         ({
           snapshot: () => ({
             status: "ready",
-            session: { channels: { list: () => ({ channels }) } },
+            session: {
+              channels: {
+                list: () => ({ channels: channels ?? [] }),
+                get: (id: string) => (channels ? undefined : { id }),
+              },
+            },
           }),
-        } as unknown as RelayData),
+        }) as unknown as RelayData,
       subscribe: () => () => undefined,
     },
     effect: vi.fn(),
@@ -526,7 +530,7 @@ function longTranscript() {
   const file = "./-Users-me--buzz/kept.jsonl";
   const gap = JSON.stringify({ type: "progress", data: "x".repeat(2 ** 21) });
   const { home, type, spawn } = installed({
-    channels: [],
+    channels: [{ id: "channel", name: "channel", channelType: "stream" }],
     files: {
       [file]: [
         sessionPrompt("earlier", earlierEvent),

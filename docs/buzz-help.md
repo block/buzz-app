@@ -55,14 +55,23 @@ if that desktop app is up and running.
 - **Left nav**: the icons at the top of the far left switch between
   **Messages**, **Agents** and any pages plugins add. Your communities are at
   the bottom, and your profile picture below them opens **Settings**.
-- **Tabs**: threads, agents and other things you open appear as tabs on the
-  right.
+- **Threads and tabs**: threads, profiles and link panels open by default as a
+  sheet over the conversation's message box; Back or **X** closes it. **Move to
+  side panel** on the sheet moves that thread into a tab. To open them as tabs
+  instead, set **Settings → Appearance → Open threads in** to **Side pane** or
+  **Main pane**. Calls, canvases and apps always open as tabs on the right.
 - **Left Sidebar**: **Activity** and other pinned pages at the top, then workspaces
   which organize groups of channels/chats/dms. It includes "new" buttons for creating
   more of the same.
 - **Search**: the top bar (⌘K or ⌘T; Ctrl elsewhere). ⌘F searches the current
   conversation. ⌘/ lists shortcuts.
-- **Settings** groups:
+- **History shortcuts.** On macOS, ⌘← and ⌘→ go back and forward when the
+  message composer is empty. A mention Buzz filled in for you still counts as
+  empty. Once you’ve typed, they move to the start or end of the line. ⌘[ and ⌘]
+  work either way. If a plugin uses ⌘← or ⌘→, change Go back or Go forward in
+  Settings → Shortcuts to give it the key.
+- **Settings** (⌘,, or **Buzz → Settings…** in the Mac app; Ctrl+, elsewhere)
+  groups:
   - **Community**: **Profile**, **Local settings** (community address,
     repositories folder, cache, **New Solo chats** lifetime), **Mobile app**
     (or **Pair mobile**) and **Leave or remove**.
@@ -125,11 +134,18 @@ if that desktop app is up and running.
 - **Sidebar actions.** Hover over a workspace or channel heading, or press Tab
   to reach its actions. On touch, tap **⋯**. In workspaces and Solo channels
   that support tasks, **⋯ → New task** works even when the pencil is hidden.
+  Plugins can add actions after **View channel details** in a Solo channel’s
+  **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.
+- **Finder.** With the Finder plugin on (it's off by default), ⌘P (Ctrl+P)
+  finds a message in the channel you're in from any piece you remember, and
+  ⌘⇧P (Ctrl+Shift+P) searches all of Buzz; a switch under the field changes
+  between them. Letters don't need to be next to each other: `dplyrlbk` finds
+  "deploy rollback". While typing in a text field, ⌘⇧P stays Spoiler.
 - **Charts.** With the Charts plugin on, a `buzz-chart` code block of JSON
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.
@@ -160,6 +176,10 @@ if that desktop app is up and running.
   community on this computer deletes its list.
 - **Instructions** change how an agent behaves. They don't give it new tools,
   accounts or permissions.
+- **Settings → Agent setup → Base instructions** shows the instructions Buzz
+  gives agents on this device. Open a section to read it. For editable
+  sections, use **Save** or **Cancel**. **Options** lets you disable or enable
+  a section, or put the default text back in the editor for you to save.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
@@ -202,6 +222,46 @@ confirm the update to save the new source; no reinstall is needed.
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
 one only if you trust its author with your account and your computer.
 
+## Docs
+
+Docs is a bundled plugin for live Markdown documents shared with people and
+agents. It’s off by default. Enable **Docs** in **Settings → Plugins → Manage
+plugins**, then open it from the dock. Auto-save waits until you pause typing.
+You can keep editing while a save is in progress. If a save fails, use Retry save.
+Unsaved drafts survive browsing within the connected session and are cleared
+when you restart the app.
+
+The collection shows the docs you can read. Search by title or content. Each
+doc row shows its last editor’s avatar beside the relative save time. Hover for
+their name.
+Loaded collections follow saved revisions and access changes. Revoked docs are
+removed. Use **Filter docs → Show Trash** to browse or search only
+trashed docs. Select the **Trash** chip in the search bar to return to the main list.
+The list and open docs check for edits automatically. If **Refresh docs** or
+**Refresh doc** appears, use it to check again.
+
+New docs are private. After the first save, open **Share doc** to grant access
+or choose **Copy link**. View only allows community members to read. Readers see
+a disabled **Viewing** control with a hint explaining their access. A link
+grants no access. Sharing includes retained revisions, and the relay operator
+can read content. Doc actions offers revision history with each revision’s
+author and avatar. Use **Move to Trash** to hide a doc from the main list. A doc in Trash shows its
+title with “(in Trash)”. Readers can view earlier versions under **Doc actions →
+Revision history**. Editors can choose **Restore** or restore a specific version
+from the revision preview.
+Revision times are relative; hover to see the exact date and time.
+Restore saves a new revision.
+Conflicting edits preserve the draft until you reconcile the newer revision.
+
+Doc references open beside the conversation, with normal Back/Forward and tab
+close behavior. Choose **Open in Docs** from the tab’s context menu or Doc
+actions to see the same doc in the main Docs view. Tables display as grids in
+Viewing and formatted Editing. Use Markdown source to change table cells.
+Agents can call `doc_help`, create and verify a Doc,
+post its returned reference, then update the same document on follow-ups. The execution
+host must have Docs enabled. Saving requires relay support for NIP-AR doc
+records. Docs does not migrate Canvas or the separate Shared notes format.
+
 ## Attention
 
 Ask an agent to keep an eye on something, such as "tell me when CI finishes on
@@ -234,6 +294,8 @@ mentions still work.
    defaults**.
 5. **For a workflow or a watch**, the workflow's **Runs** tab or the agent's
    **Attention** tab shows what happened.
+6. **In a DM you're not in**, a desktop agent still answers mentions, but allow
+   about a minute. It reads that DM as itself, which gives you no access to it.
 
 ### Can't open, sign in or connect
 

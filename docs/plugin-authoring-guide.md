@@ -83,8 +83,24 @@ In a Solo region, check `ui.headerMenuActions === true` before passing
 `headerMenuActions` to `ui.Workspace` or `ui.ChannelGroup`. Each **Actions**
 entry has a unique `id`, a `label`, and an `onSelect` callback.
 `onSelect` can return a promise. The host reports callback failures in the
-heading. With `placement: "team-row"`, the channel group uses the native
+heading.
+
+In a Solo channel group, entries follow **View channel details**. An optional
+`icon` supplies decorative artwork and `hint` adds short help on focus or hover.
+The host rechecks the row’s channel membership before calling `onSelect`.
+
+With `placement: "team-row"`, the channel group uses the native
 Team menu and ignores these entries.
+
+Check `ctx.conversation.workspaceSlots?.headerActions === true` when you
+render, before passing `headerActions` to `ui.Workspace`. The Channels
+workspace renders those controls in the main tab's toolbar, before the
+three-dot menu. The flag is absent on an older host or when the active
+workspace provider does not declare the slot; keep the controls in your page
+then. Use compact icon buttons with an `aria-label` and `title`, and set
+`aria-pressed` or `aria-expanded` on a toggle. A plugin that replaces the
+workspace with `registerWorkspace(component, { slots })` names the optional
+props its component renders.
 
 For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
 
@@ -139,6 +155,12 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - Use the `ui` controls for buttons, fields, switches, dialogs and action menus. Use `className="ui-card"` for a card, `var(--space-panel-inset)` and `var(--space-2)` for spacing, and inline styles for layout. Plain `h1`–`h3`, `p` and `button` get host styling.
 - Use host color tokens (`var(--...)`) so light and dark themes both work. Rely only on the `core` roles in `src/shared/design-system/tokens/registry.ts`; other custom properties, classes and `data-*` attributes are internal.
 - Avoid fixed widths; pages can be narrow.
+- A canonical plugin page link can open beside a conversation if the named
+  plugin registers a matching panel with `addressable: true`. Links fall back
+  to the plugin page if the panel does not qualify.
+- Call `ctx.panels.useTabTitle(label, icon?, actions?)` inside a panel to set
+  its tab title. Optional `{ label, run }` actions appear in its context menu
+  while the panel is mounted. Keep the actions array stable across renders.
 - For `ctx.agents.ui.Transcript`, set `endedAt` on a finished turn, or supply `outcome` if its end time is unknown. Use `at: 0` for an unknown item timestamp. Omit `completedAt` when a tool's start time is unknown.
 
 ## Common mistakes

@@ -40,8 +40,12 @@ import inlineStyles from "../../shared/InlineReference.module.css";
 import { GitHubBody } from "./GitHubBody";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { RelaySession } from "../../features/relay/session";
-import { ownSolo } from "../../features/solo/labels";
-import { createSoloPulls, writeLink, type SoloPulls } from "./solo-pull";
+import {
+  createSoloPulls,
+  linksSolo,
+  writeLink,
+  type SoloPulls,
+} from "./solo-pull";
 import {
   createPullStates,
   PANEL_REFRESH_MS,
@@ -195,7 +199,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         .list()
         .channels.find((item) => item.id === channel);
       // The owner's Solo chats include ones this agent started for them.
-      if (!ownSolo(found, session.viewer) && !ownSolo(found, client.pubkey))
+      if (!linksSolo(found, session.viewer, client.pubkey))
         throw new Error("Only a Solo chat can be linked to a pull request");
       const link = url === null ? null : url.url;
       await writeLink(session, channel, link);

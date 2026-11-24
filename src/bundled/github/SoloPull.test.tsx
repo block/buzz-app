@@ -19,9 +19,24 @@ import {
   SoloPullLauncher,
 } from "./SoloPull";
 
+// Signed NIP-OA attestations name these agents' owners.
+const attested = vi.hoisted(() => new Map<string, string>());
+vi.mock("../../features/profiles/useAgentOwnerEvidence", () => ({
+  useAgentOwnerEvidence: (_: unknown, pubkey: string | undefined) => {
+    const owner = pubkey ? attested.get(pubkey) : undefined;
+    return {
+      status: owner ? "ready" : "unavailable",
+      owner,
+      failed: false,
+      settled: !!owner,
+    };
+  },
+}));
+
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  attested.clear();
 });
 
 const chat = "11111111-1111-4111-8111-111111111111";
@@ -285,6 +300,52 @@ it("offers unlink only for a linked owned chat and clears the link after publica
   expect(
     screen.queryByRole("menuitem", { name: "Unlink pull request" }),
   ).not.toBeInTheDocument();
+});
+
+it("lets the owner manage the link of a Solo chat their agent started", async () => {
+  const agent = "a".repeat(64);
+  const stranger = "d".repeat(64);
+  const started = "33333333-3333-4333-8333-333333333333";
+  const theirs = "44444444-4444-4444-8444-444444444444";
+  attested.set(agent, viewer);
+  attested.set(stranger, "e".repeat(64));
+  const { relay, session } = relayWith([
+    { id: started, channelType: "solo", creator: agent },
+    { id: theirs, channelType: "solo", creator: stranger },
+  ]);
+  const pulls = fakePulls({
+    [started]: { url: pull },
+    [theirs]: { url: pull },
+  });
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu session={session} pulls={pulls} channelId={started} />
+        <SoloPullMenu session={session} pulls={pulls} channelId={theirs} />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  expect(
+    screen.getAllByRole("menuitem", { name: "Unlink pull request" }),
+  ).toHaveLength(1);
+  cleanup();
+  render(
+    <>
+      <SoloPullLink
+        relay={relay}
+        pullsFor={() => pulls}
+        channelId={started}
+        url={pull}
+      />
+      <SoloPullLink
+        relay={relay}
+        pullsFor={() => pulls}
+        channelId={theirs}
+        url={pull}
+      />
+    </>,
+  );
+  expect(screen.getAllByRole("button", { name: "Unlink" })).toHaveLength(1);
 });
 
 it("hides unlink for unlinked chats and team channels", () => {

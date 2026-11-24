@@ -858,6 +858,20 @@ function HostPage({ View, state, interactive, update }) {
 		}));
 	}, [state.url]);
 	useEffect(() => {
+		const view = frame.current;
+		const typed = () => {
+			typing.current = true;
+		};
+		const left = () => {
+			typing.current = false;
+		};
+		const entered = () => {
+			typing.current = false;
+			quietUntil.current = 0;
+		};
+		view?.addEventListener("input", typed);
+		view?.addEventListener("focusout", left);
+		view?.addEventListener("submit", entered);
 		const timer = setInterval(() => {
 			const address = frame.current?.querySelector("input[aria-label=\"Address\"]");
 			const url = address && !typing.current && pageUrl(address.value);
@@ -865,21 +879,16 @@ function HostPage({ View, state, interactive, update }) {
 			seen.current = url;
 			if (share.current.interactive && Date.now() >= quietUntil.current) share.current.update({ url });
 		}, 500);
-		return () => clearInterval(timer);
+		return () => {
+			clearInterval(timer);
+			view?.removeEventListener("input", typed);
+			view?.removeEventListener("focusout", left);
+			view?.removeEventListener("submit", entered);
+		};
 	}, []);
 	return /* @__PURE__ */ createElement("div", {
 		ref: frame,
-		className: styles.fill,
-		onInput: () => {
-			typing.current = true;
-		},
-		onSubmit: () => {
-			typing.current = false;
-			quietUntil.current = 0;
-		},
-		onBlur: () => {
-			typing.current = false;
-		}
+		className: styles.fill
 	}, /* @__PURE__ */ createElement(View, {
 		key: guest.opened,
 		url: guest.url,

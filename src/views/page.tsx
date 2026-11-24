@@ -108,6 +108,21 @@ function HostPage({
     }));
   }, [state.url]);
   useEffect(() => {
+    const view = frame.current;
+    const typed = () => {
+      typing.current = true;
+    };
+    const left = () => {
+      typing.current = false;
+    };
+    // An address the viewer entered is theirs, however soon it comes.
+    const entered = () => {
+      typing.current = false;
+      quietUntil.current = 0;
+    };
+    view?.addEventListener("input", typed);
+    view?.addEventListener("focusout", left);
+    view?.addEventListener("submit", entered);
     const timer = setInterval(() => {
       const address = frame.current?.querySelector<HTMLInputElement>(
         'input[aria-label="Address"]',
@@ -118,24 +133,15 @@ function HostPage({
       if (share.current.interactive && Date.now() >= quietUntil.current)
         share.current.update({ url });
     }, 500);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      view?.removeEventListener("input", typed);
+      view?.removeEventListener("focusout", left);
+      view?.removeEventListener("submit", entered);
+    };
   }, []);
   return (
-    <div
-      ref={frame}
-      className={styles.fill}
-      onInput={() => {
-        typing.current = true;
-      }}
-      onSubmit={() => {
-        // An address the viewer entered is theirs, however soon it comes.
-        typing.current = false;
-        quietUntil.current = 0;
-      }}
-      onBlur={() => {
-        typing.current = false;
-      }}
-    >
+    <div ref={frame} className={styles.fill}>
       <View key={guest.opened} url={guest.url} storage="canvas" />
     </div>
   );

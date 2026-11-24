@@ -30,6 +30,9 @@ export type ToolCall = Readonly<{
   conversation: number;
   /** Where the tools default to for that conversation. */
   context: Context;
+  /** That conversation's context size when it called: the tokens of its
+   * latest model call; absent when unknown. */
+  contextTokens?: number;
   name: string;
   arguments: Record<string, unknown>;
 }>;

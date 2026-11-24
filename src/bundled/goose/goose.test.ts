@@ -357,6 +357,8 @@ describe("GooseProcess", () => {
       "channel/root",
       { id: 1, method: "tools/list", params: {} },
       expect.objectContaining({ aborted: true }),
+      // It has made no model call yet.
+      undefined,
     );
     // goose matches the reply to its request by the id it sent.
     expect(response).toEqual({

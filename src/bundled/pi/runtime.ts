@@ -23,6 +23,7 @@ import {
 // turn that fails; what Pi writes without `send` stays in local activity.
 import { isFinalMessage } from "../../buzz-mcp/session-tools";
 import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
+import { contextSize } from "../../features/agent-harness/context-meter";
 import type { BuzzClient, Context } from "../../buzz-mcp/client";
 import { content, errorText } from "../../buzz-mcp/rpc";
 import {
@@ -1309,6 +1310,8 @@ export class PiRuntime {
     const client = () =>
       entry?.handle &&
       appClient(entry.handle, {
+        // Each message it posts carries its conversation's context size.
+        contextTokens: () => contextSize(call.contextTokens),
         protectionContext: () =>
           this.pi.request("protectionContext", {
             agent: call.agent,

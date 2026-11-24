@@ -61,6 +61,9 @@ export type ToolServer = (
   message: Readonly<{ id: string | number; method: string; params?: unknown }>,
   /** Captured work lifetime; aborted while idle or before the session opens. */
   signal?: AbortSignal,
+  /** The calling session's context size when it called: the tokens of its
+   * last model call, from its `usage_update`; undefined when unknown. */
+  contextTokens?: number,
 ) => Promise<unknown>;
 
 /** The provider, model and thinking level a session's turns run on; empty is

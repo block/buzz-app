@@ -560,6 +560,17 @@ describe("a session without hooks", () => {
       ["tool_call_update", false],
     ]);
   });
+  it("keeps the context size of the harness's last usage report", async () => {
+    const harness = fakeHarness();
+    const acp = await start(harness);
+    const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+    // A new session reports no calls yet.
+    session.update({ sessionUpdate: "usage_update", used: 0, size: 1000 });
+    expect(session.contextTokens).toBeUndefined();
+    session.update({ sessionUpdate: "usage_update", used: 435_123, size: 1e6 });
+    session.update({ sessionUpdate: "usage_update", used: "lots" });
+    expect(session.contextTokens).toBe(435_123);
+  });
   it("handles each update and answer even when its observer throws", async () => {
     const harness = fakeHarness();
     const acp = await start(harness);
@@ -751,6 +762,35 @@ describe("a session without hooks", () => {
     await acp.exited;
     expect(active?.aborted).toBe(true);
     await expect(done).resolves.toMatchObject({ ok: false });
+  });
+
+  it("gives each Buzz tool call its session's context size", async () => {
+    const fake = fakeGoose({ hold: true });
+    const sizes: (number | undefined)[] = [];
+    const handler: ToolServer = async (_conversation, message, _signal, n) => {
+      sizes.push(n);
+      return { jsonrpc: "2.0", id: message.id, result: {} };
+    };
+    const acp = await AcpProcess.start(fake.spawn, GOOSE, {
+      cwd: "/work",
+      serve: fake.serve,
+    });
+    const session = await acp.open({
+      cwd: "/work",
+      systemPrompt: "",
+      tools: handler,
+    });
+    const process = fake.geese[0];
+    if (!process) throw new Error("Missing process");
+    await process.mcp(session.id, "tools/list");
+    process.update(session.id, {
+      sessionUpdate: "usage_update",
+      used: 435_123,
+      size: 1_000_000,
+    });
+    await vi.waitFor(() => expect(session.contextTokens).toBe(435_123));
+    await process.mcp(session.id, "tools/list");
+    expect(sizes).toEqual([undefined, 435_123]);
   });
 
   it("keeps the harness's error code on a failed turn", async () => {

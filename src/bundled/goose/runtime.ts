@@ -1738,7 +1738,12 @@ export class GooseRuntime {
     };
     // Every session of the agent shares them, so they read the settings, the
     // handle and the conversation's place as they are when called.
-    const tools: ToolServer = async (conversation, message, workSignal) => {
+    const tools: ToolServer = async (
+      conversation,
+      message,
+      workSignal,
+      contextTokens,
+    ) => {
       const handle = entry.handle;
       // A call in a conversation answers only while its turn runs unstopped.
       // A forwarded turn's session runs in its own goose, outside `sessions`;
@@ -1761,6 +1766,8 @@ export class GooseRuntime {
               if (!current()) throw new Error("The Goose turn has ended");
             },
           }),
+          // Each message it posts carries its session's context size.
+          contextTokens: () => contextTokens,
           // Its pre-tool check reviews every call, Buzz's extension included.
           nativeToolGate: true,
           // Read from the process hosting the session, which it never starts.

@@ -716,6 +716,51 @@ describe("harnessKit.tools", () => {
     expect(read).toHaveBeenCalledWith("./a.txt");
   });
 
+  it("stamps each message with the context size the harness feeds in", async () => {
+    const { kit, agent, delivery, published } = setup();
+    const event = reply("2", "1", "@Ampy go");
+    const conversation = await kit.conversation(
+      delivery({ type: "mention", event }),
+      "thread",
+    );
+    let tokens: number | undefined = 435_123;
+    const handler = kit.tools(agent, conversation, {
+      contextTokens: () => tokens,
+    });
+    const send = (id: number, text: string) =>
+      handler({
+        jsonrpc: "2.0",
+        id,
+        method: "tools/call",
+        params: { name: "send", arguments: { text, audience: "agents" } },
+      });
+    await send(5, "sized");
+    tokens = undefined;
+    await send(6, "unknown");
+    await kit.tools(
+      agent,
+      conversation,
+    )({
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: {
+        name: "send",
+        arguments: { text: "unfed", audience: "agents" },
+      },
+    });
+    expect(
+      published.map((event) => [
+        event.content,
+        event.tags.filter(([name]) => name === "buzz:context"),
+      ]),
+    ).toEqual([
+      ["sized", [["buzz:context", "435123"]]],
+      ["unknown", []],
+      ["unfed", []],
+    ]);
+  });
+
   it("builds its client again after a reload, with the new session's relay key", async () => {
     const { kit, agent, session, state } = setup();
     const relay = keypair();

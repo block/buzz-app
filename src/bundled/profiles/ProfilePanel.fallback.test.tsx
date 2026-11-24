@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -99,14 +99,26 @@ function fixture(configuredNames = false) {
   };
 }
 
+/** The profile read answered with no profile. That is not a failure, so the
+ * panel says nothing about it and offers no retry. */
+async function readFindsNoProfile() {
+  await waitFor(() =>
+    expect(screen.queryByText("Loading profile…")).not.toBeInTheDocument(),
+  );
+  expect(
+    screen.getByRole("region", { name: "Profile details" }),
+  ).not.toHaveTextContent(/profile/i);
+  expect(
+    screen.queryByRole("button", { name: "Retry profile" }),
+  ).not.toBeInTheDocument();
+}
+
 it("identifies unnamed profiles by public key and scopes shared agent hints to the exact community", async () => {
   const f = fixture();
   const label = formatPublicKey(f.person.pubkey) ?? "";
   try {
     const view = render(f.panel());
-    await screen.findByText(
-      "No profile metadata is available in this community.",
-    );
+    await readFindsNoProfile();
     expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
     expect(
       screen.getByRole("img", { name: `${label} avatar` }),
@@ -124,9 +136,7 @@ it("identifies unnamed profiles by public key and scopes shared agent hints to t
 
     const stranger = keypair().pubkey;
     view.rerender(f.panel(stranger));
-    await screen.findByText(
-      "No profile metadata is available in this community.",
-    );
+    await readFindsNoProfile();
     expect(
       screen.getByRole("heading", { name: formatPublicKey(stranger) ?? "" }),
     ).toBeInTheDocument();
@@ -181,6 +191,9 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
     expect(
       screen.queryByText("Could not load this profile."),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry profile" }),
+    ).not.toBeInTheDocument();
   } finally {
     f.dispose();
   }
@@ -200,9 +213,7 @@ it("keeps an agent-avatar hint without granting ownership or native controls", a
       </StrictMode>
     );
     const view = render(show(true));
-    await screen.findByText(
-      "No profile metadata is available in this community.",
-    );
+    await readFindsNoProfile();
     expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     expect(
       screen
@@ -277,9 +288,7 @@ it("preserves the configured name of a stopped local agent without a relay profi
   const f = fixture(true);
   try {
     render(f.panel());
-    await screen.findByText(
-      "No profile metadata is available in this community.",
-    );
+    await readFindsNoProfile();
     await screen.findByRole("heading", { name: f.agent.name });
   } finally {
     f.dispose();

@@ -548,6 +548,10 @@ function ProfileDetails({
     attempt,
   );
   const verifiedOwner = ownership.owner;
+  // A read that finds no profile is an answer, not a failure: it shows no
+  // notice and no retry. A verified overlay can exist while its kind-0 read
+  // failed.
+  const readFailed = status === "error" && (!profile || !!profile.verified);
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
   useEffect(() => {
@@ -838,22 +842,14 @@ function ProfileDetails({
                       />
                     )}
                     <ProfilePublicMetadata nip05={profile?.nip05} />
-                    {/* A verified overlay can exist while its kind-0 read failed. */}
-                    {(!profile ||
-                      (profile.verified && (status === "error" || retrying))) &&
-                      (status === "loading" ? (
-                        <p role="status">Loading profile…</p>
-                      ) : (
-                        <p role={status === "error" ? "alert" : undefined}>
-                          {status === "error"
-                            ? "Could not load this profile."
-                            : "No profile metadata is available in this community."}
-                        </p>
-                      ))}
-                    {((!profile && status !== "loading") ||
-                      (profile?.verified && status === "error") ||
-                      retrying ||
-                      ownership.failed) && (
+                    {status === "loading"
+                      ? (!profile || (profile.verified && retrying)) && (
+                          <p role="status">Loading profile…</p>
+                        )
+                      : readFailed && (
+                          <p role="alert">Could not load this profile.</p>
+                        )}
+                    {(readFailed || retrying || ownership.failed) && (
                       <Button
                         ref={retryButton}
                         size="compact"

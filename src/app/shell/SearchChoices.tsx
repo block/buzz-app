@@ -116,6 +116,8 @@ export type SearchGroup = {
   tone?: SearchTone | undefined;
   /** Rows show their whole detail, wrapped, rather than one line of it. */
   multiline?: boolean | undefined;
+  /** Rows are one line each, as close together as the sidebar's. */
+  dense?: boolean | undefined;
   /** Peek lists it beside Top results and shows it whole when chosen, but
    * not among them. */
   browse?: boolean | undefined;
@@ -696,6 +698,7 @@ export function SearchChoices({
       kind,
     }: SearchDestination,
     multiline: boolean | undefined,
+    dense: boolean | undefined,
   ) =>
     content ? (
       // biome-ignore lint/a11y/useSemanticElements: Interactive search grid, not a data table.
@@ -780,7 +783,7 @@ export function SearchChoices({
       >
         <div role={hasControls ? "gridcell" : "presentation"}>
           <NavigationItem
-            variant="search"
+            variant={dense ? "row" : "search"}
             key={key}
             {...(!hasControls ? highlight.rowProps(key) : {})}
             role={hasControls ? "button" : "option"}
@@ -1185,6 +1188,7 @@ export function SearchChoices({
                       reranked,
                       tone,
                       multiline,
+                      dense,
                     }) => {
                       const shown = truncated.get(label);
                       const count = countOf(
@@ -1310,12 +1314,12 @@ export function SearchChoices({
                                     scrollRef={resultsContent}
                                     keepMounted={keepMounted}
                                   >
-                                    {(row) => renderRow(row, multiline)}
+                                    {(row) => renderRow(row, multiline, dense)}
                                   </Virtualizer>
                                 </div>
                               ) : (
                                 destinations.map((row) =>
-                                  renderRow(row, multiline),
+                                  renderRow(row, multiline, dense),
                                 )
                               )}
                               {(notice ||

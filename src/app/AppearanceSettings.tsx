@@ -34,10 +34,6 @@ import {
   useMessageAutocorrectPreference,
 } from "../features/messages/autocorrect-preference";
 import {
-  setUnreadFirstPreference,
-  useUnreadFirstPreference,
-} from "../features/search/unread-first-preference";
-import {
   setMessageSortPreference,
   useMessageSortPreference,
 } from "../features/search/message-sort-preference";
@@ -82,7 +78,6 @@ export function AppearanceSettings({
 }) {
   const followUp = useFollowUpBehaviorPreference();
   const autocorrect = useMessageAutocorrectPreference();
-  const unreadFirst = useUnreadFirstPreference();
   const messageSort = useMessageSortPreference();
   const clock = useClockPreference();
   const names = useNamePreference();
@@ -492,12 +487,6 @@ export function AppearanceSettings({
                 onCheckedChange={setMessageAutocorrectPreference}
               />
             )}
-            <SwitchPreferenceRow
-              label="Show unread first in search"
-              description="With nothing typed, search leads with unread channels and DMs and selects the newest."
-              checked={unreadFirst.enabled}
-              onCheckedChange={setUnreadFirstPreference}
-            />
             <PreferenceRow
               title="Sort messages by"
               subtitle="Where the relay supports sorting, new searches of one conversation start in this order. Sort messages in the search field changes only that search."
@@ -577,20 +566,6 @@ export function AppearanceSettings({
               }
             >
               Retry saving spelling correction
-            </Button>
-          </ToastNotice>
-        )}
-        {active && unreadFirst.unsaved && (
-          <ToastNotice
-            title="Search preference wasn’t saved"
-            description="This choice is active, but could not be saved on this device. Try again."
-          >
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setUnreadFirstPreference(unreadFirst.enabled)}
-            >
-              Retry saving search preference
             </Button>
           </ToastNotice>
         )}

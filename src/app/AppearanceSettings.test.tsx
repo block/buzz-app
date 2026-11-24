@@ -14,10 +14,6 @@ import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { createAppearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
 import {
-  setUnreadFirstPreference,
-  unreadFirstPreference,
-} from "../features/search/unread-first-preference";
-import {
   messageSortPreference,
   setMessageSortPreference,
 } from "../features/search/message-sort-preference";
@@ -59,7 +55,6 @@ afterEach(() => {
   setThreadPlacementPreference("side");
   setFollowUpBehaviorPreference("immediate");
   setMessageAutocorrectPreference(false);
-  setUnreadFirstPreference(true);
   setMessageSortPreference("relevance");
   setClockPreference({
     hourCycle: "system",
@@ -609,33 +604,6 @@ it("keeps an unsaved spelling opt-in active and retries the same choice", async 
   );
 });
 
-it("leads search with unread until this device turns it off", async () => {
-  const user = userEvent.setup();
-  const appearance = createAppearance();
-  preferenceAppearances.push(appearance);
-  const toggle = () =>
-    screen.getByRole("switch", { name: "Show unread first in search" });
-  render(<AppearanceSettings appearance={appearance} />, {
-    wrapper: ToastProvider,
-  });
-  expect(toggle()).toBeChecked();
-  await user.click(toggle());
-  expect(unreadFirstPreference()).toBe(false);
-  expect(localStorage.getItem("buzz-search-unread-first.v1")).toBe("off");
-  cleanup();
-  render(<AppearanceSettings appearance={appearance} />, {
-    wrapper: ToastProvider,
-  });
-  expect(toggle()).not.toBeChecked();
-  act(() => {
-    localStorage.setItem("buzz-search-unread-first.v1", "on");
-    window.dispatchEvent(
-      new StorageEvent("storage", { key: "buzz-search-unread-first.v1" }),
-    );
-  });
-  expect(toggle()).toBeChecked();
-});
-
 it("saves the message sort default, or keeps it active and retries when saving fails", async () => {
   const user = userEvent.setup();
   const appearance = createAppearance();
@@ -673,35 +641,6 @@ it("saves the message sort default, or keeps it active and retries when saving f
     screen.getByRole("button", { name: "Retry saving message sort" }),
   );
   expect(localStorage.getItem("buzz-search-message-sort.v1")).toBe("relevance");
-  await waitFor(() =>
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-  );
-});
-
-it("keeps an unsaved unread-first choice active and retries the same choice", async () => {
-  const user = userEvent.setup();
-  const appearance = createAppearance();
-  preferenceAppearances.push(appearance);
-  render(<AppearanceSettings appearance={appearance} />, {
-    wrapper: ToastProvider,
-  });
-  const write = vi
-    .spyOn(Storage.prototype, "setItem")
-    .mockImplementation(() => {
-      throw new Error("unavailable");
-    });
-  await user.click(
-    screen.getByRole("switch", { name: "Show unread first in search" }),
-  );
-  expect(unreadFirstPreference()).toBe(false);
-  expect(await screen.findByRole("dialog")).toHaveTextContent(
-    "Search preference wasn’t saved",
-  );
-  write.mockRestore();
-  await user.click(
-    screen.getByRole("button", { name: "Retry saving search preference" }),
-  );
-  expect(localStorage.getItem("buzz-search-unread-first.v1")).toBe("off");
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );

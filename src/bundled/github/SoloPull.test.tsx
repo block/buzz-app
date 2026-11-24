@@ -89,7 +89,9 @@ it("stands in for the chat icon with the pull request's state, in words too", ()
   expect(container).toHaveTextContent(/^bubble$/);
 });
 
-function relayWith(channels: { id: string; channelType: string }[]) {
+function relayWith(
+  channels: { id: string; channelType: string; creator?: string }[],
+) {
   const sign = vi.fn(async (template: object) => ({
     ...template,
     id: "f".repeat(64),
@@ -100,9 +102,9 @@ function relayWith(channels: { id: string; channelType: string }[]) {
   const list = {
     status: "ready" as const,
     channels: channels.map((channel) => ({
-      ...channel,
       name: channel.id,
       creator: viewer,
+      ...channel,
     })),
   };
   const session = {
@@ -212,6 +214,44 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
   expect(await tool?.call(client, { channel: chat }, { unlink: true })).toBe(
     "Unlinked this chat's pull request.",
   );
+});
+
+it("lets github_link_pr link a Solo chat its agent started for the owner", async () => {
+  const agent = "a".repeat(64);
+  const started = "33333333-3333-4333-8333-333333333333";
+  const someone = "44444444-4444-4444-8444-444444444444";
+  const { relay, sign } = relayWith([
+    { id: started, channelType: "solo", creator: agent },
+    { id: someone, channelType: "solo", creator: "d".repeat(64) },
+  ]);
+  let tool: AddedTool | undefined;
+  apply({
+    host: {},
+    panels: { register: () => {} },
+    conversation: {
+      registerChatIcon: () => {},
+      registerChatMenu: () => {},
+      registerLink: () => {},
+    },
+    relay,
+    agents: {
+      addTool: (added: AddedTool) => {
+        if (added.name === "github_link_pr") tool = added;
+      },
+      relay: () => relay,
+    },
+    inject: vi.fn(),
+    provide: () => {},
+  } as never);
+  const client = { key: agent, pubkey: agent } as BuzzClient;
+  expect(await tool?.call(client, { channel: started }, { url: pull })).toBe(
+    `Linked ${pull}. The sidebar shows its state for this chat.`,
+  );
+  expect(sign).toHaveBeenCalledOnce();
+  // Someone else's Solo chat stays theirs.
+  await expect(
+    tool?.call(client, { channel: someone }, { url: pull }),
+  ).rejects.toThrow("Only a Solo chat can be linked");
 });
 
 it("offers unlink only for a linked owned chat and clears the link after publication", async () => {

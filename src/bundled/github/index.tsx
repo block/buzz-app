@@ -191,12 +191,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       const session = relay?.status === "ready" ? relay.session : undefined;
       if (!session || !channel)
         throw new Error("github_link_pr needs this conversation's community");
-      if (
-        !ownSolo(
-          session.channels.list().channels.find((item) => item.id === channel),
-          session.viewer,
-        )
-      )
+      const found = session.channels
+        .list()
+        .channels.find((item) => item.id === channel);
+      // The owner's Solo chats include ones this agent started for them.
+      if (!ownSolo(found, session.viewer) && !ownSolo(found, client.pubkey))
         throw new Error("Only a Solo chat can be linked to a pull request");
       const link = url === null ? null : url.url;
       await writeLink(session, channel, link);

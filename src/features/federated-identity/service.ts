@@ -41,6 +41,21 @@ export type SessionSnapshot = Readonly<{
    * computer's clock, in seconds, when far enough off to suggest the clock
    * is wrong. The refusal keeps its own meaning; this only adds a hint. */
   clockOffset?: number | null;
+  /** Why the latest sign-ins ended, oldest first (`endings.rs`): codes and
+   * times only, never the account or the session. */
+  endings?: readonly SignInEnding[];
+}>;
+export type SignInEnding = Readonly<{
+  /** RFC 3339, UTC. */
+  at: string;
+  reason:
+    | "expired"
+    | "ended-by-server"
+    | "signed-out"
+    | "already-ended"
+    | "not-confirmed";
+  /** The failure code that came with it, such as `network-timeout`. */
+  failure: string | null;
 }>;
 /** First run's sign-in choices (`FirstRunIdentity`); plugins see `signIn()`. */
 export type SignInOptions = Readonly<{

@@ -26,6 +26,7 @@ import {
   signInServers,
   type FederatedIdentity,
   type SessionSnapshot,
+  type SignInEnding,
 } from "../features/federated-identity/service";
 import type { Membership } from "../features/communities/service";
 import {
@@ -659,6 +660,56 @@ function needsRenewal(state: SessionSnapshot) {
   );
 }
 
+const ENDING_REASONS: Record<SignInEnding["reason"], string> = {
+  expired: "The sign-in expired",
+  "ended-by-server": "The sign-in server ended it",
+  "signed-out": "You signed out",
+  // Found marked for removal: by a sign-out, an expiry or the server, in
+  // another Buzz window or before a restart. Which one isn't known.
+  "already-ended":
+    "It had already ended, in another Buzz window or before Buzz restarted",
+  "not-confirmed": "Couldn’t check the saved sign-in, so Buzz kept it",
+};
+
+/** Why this host's latest sign-ins ended, newest first, so a sign-in
+ * prompt has a visible cause. */
+function SignInEndings({
+  endings = [],
+}: {
+  endings?: readonly SignInEnding[] | undefined;
+}) {
+  if (endings.length === 0) return null;
+  // Two endings can share a second and a reason: each repeat keys by how
+  // many came before it.
+  const repeats = new Map<string, number>();
+  const keyed = endings.map((ending) => {
+    const same = `${ending.at} ${ending.reason} ${ending.failure ?? ""}`;
+    const count = repeats.get(same) ?? 0;
+    repeats.set(same, count + 1);
+    return { ending, key: `${same} ${count}` };
+  });
+  return (
+    <section aria-label="Recent sign-in endings" className="grid gap-1">
+      <p className="m-0 text-caption text-secondary">
+        Why recent sign-ins ended
+      </p>
+      <ul className="m-0 grid gap-0.5 p-0 list-none">
+        {keyed.reverse().map(({ ending, key }) => (
+          <li key={key} className="text-caption text-subtle">
+            {new Date(ending.at).toLocaleString(undefined, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+            {": "}
+            {ENDING_REASONS[ending.reason] ?? ending.reason}
+            {ending.failure && ` (${ending.failure})`}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** One host and its current sign-in, with its actions and endnote below. */
 function AccountCard({
   state,
@@ -750,6 +801,7 @@ function AccountCard({
             })}
           </p>
         )}
+        <SignInEndings endings={state.endings} />
         {communities.length > 0 && (
           <section
             aria-label="Saved communities for this host"

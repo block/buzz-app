@@ -598,6 +598,10 @@ impl FederatedIdentity {
                     if !state.closed && state.snapshot.revision == revision {
                         if failure.session_denied {
                             self.signal(super::SessionChange::Expired);
+                            let reason = super::ended(&session.record);
+                            let code = (reason == super::endings::Reason::EndedByServer)
+                                .then_some(failure.code);
+                            self.note_ending(&mut state, reason, code);
                             let retired = self.retire_state(
                                 &mut state,
                                 Status::ReauthenticationRequired,
@@ -2316,5 +2320,59 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(dispatched.load(Ordering::SeqCst), 1);
+    }
+    /// A session past its fixed lifetime still signs out: the request goes
+    /// unsigned, so the relay's refusal reads as sign-in required.
+    #[tokio::test]
+    async fn an_expired_session_still_signs_out_and_says_why() {
+        use super::super::endings::Reason;
+        use super::super::tests::{host, record, Memory};
+        let store = Arc::new(Memory::default());
+        let mut expired = record();
+        let session = Arc::get_mut(&mut expired).unwrap();
+        session.record.expires_at = "2000-01-01T00:00:00Z".into();
+        session.raw = zeroize::Zeroizing::new(serde_json::to_vec(&session.record).unwrap());
+        *store.raw.lock().unwrap() = Some(session.raw.clone());
+        let host = host(store.clone());
+        {
+            let mut state = host.state();
+            state.session = Some(expired);
+            state.snapshot.status = Status::SignedIn;
+            state.restored = true;
+        }
+        host.discovered("wss://relay.example", true);
+        let identity = IdentityHost::fixture();
+        let url = Url::parse("https://relay.example/events").unwrap();
+        let unsigned = host.assertion_for_relay(&identity, &url).await.unwrap();
+        assert!(unsigned.assertion.is_none());
+        assert_eq!(unsigned.refusal(401), Some(SIGNED_OUT));
+        let snapshot = host.snapshot();
+        assert!(snapshot.status == Status::ReauthenticationRequired);
+        assert_eq!(snapshot.endings.last().unwrap().reason, Reason::Expired);
+        assert!(store.raw.lock().unwrap().is_none());
+    }
+    /// The issuer ending the session still signs out, whatever this device
+    /// last saw, and the ending names the server.
+    #[tokio::test]
+    async fn a_session_the_server_ended_still_signs_out_and_says_why() {
+        use super::super::endings::Reason;
+        use super::super::tests::{adapter_with_status, at_adapter, record, Memory};
+        let store = Arc::new(Memory::default());
+        *store.raw.lock().unwrap() = Some(record().raw.clone());
+        let (base, server) =
+            adapter_with_status(vec![(401, serde_json::json!({"error": "session_expired"}))]).await;
+        let host = at_adapter(store.clone(), base);
+        host.discovered("wss://relay.example", true);
+        let identity = IdentityHost::fixture();
+        let url = Url::parse("https://relay.example/events").unwrap();
+        let unsigned = host.assertion_for_relay(&identity, &url).await.unwrap();
+        assert_eq!(unsigned.refusal(401), Some(SIGNED_OUT));
+        let snapshot = host.snapshot();
+        assert!(snapshot.status == Status::ReauthenticationRequired);
+        let ending = snapshot.endings.last().unwrap();
+        assert_eq!(ending.reason, Reason::EndedByServer);
+        assert_eq!(ending.failure.as_deref(), Some("reauthentication-required"));
+        assert!(store.raw.lock().unwrap().is_none());
+        server.await.unwrap();
     }
 }

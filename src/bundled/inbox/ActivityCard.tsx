@@ -33,6 +33,9 @@ export function ActivityCard({
       isOpen={isOpen}
       unreadFirst
       showTime={false}
+      openChannelId={
+        target.kind === "conversation" ? target.channelId : undefined
+      }
     />
   );
 }

@@ -79,6 +79,7 @@ export function ActivityFeed({
   onOpen,
   unreadFirst = false,
   showTime = true,
+  openChannelId,
 }: {
   session: RelaySession;
   scope: NavigationScope;
@@ -96,6 +97,9 @@ export function ActivityFeed({
   unreadFirst?: boolean;
   /** Whether rows show when their latest message was sent. */
   showTime?: boolean;
+  /** The conversation open now. A row opened while unread keeps its place
+   * and look until another conversation opens. */
+  openChannelId?: string | undefined;
 }) {
   const list = useChannelList(session.channels);
   const muted = useActivityMutes(session);
@@ -159,12 +163,15 @@ export function ActivityFeed({
   // Only someone else's message makes a row unread; yours and reactions never do.
   // A row opened while unread keeps its place while it stays open; once you
   // move on, it settles among the rest by when it was last active.
-  const [held, setHeld] = useState<readonly string[]>([]);
+  const [held, setHeld] =
+    useState<Readonly<{ channelId: string; ids: readonly string[] }>>();
   const unreadIds = new Set(
     conversationRows.flatMap((row) =>
       row.kind === "conversation" &&
       (hasUnread(row.item) ||
-        (held.includes(row.item.id) && isOpen?.(row.item)))
+        (!!held &&
+          held.channelId === openChannelId &&
+          held.ids.includes(row.item.id)))
         ? [row.item.id]
         : [],
     ),
@@ -384,7 +391,10 @@ export function ActivityFeed({
         : row.item;
   const open = (row: (typeof rows)[number]) => {
     const item = destination(row);
-    setHeld(row.unread.map((item) => item.id));
+    setHeld({
+      channelId: item.channelId,
+      ids: row.unread.map((unread) => unread.id),
+    });
     onOpen?.();
     void navigator.open({
       version: 1,

@@ -53,6 +53,8 @@ import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
 import finderManifest from "./finder/manifest.json";
 import * as finder from "./finder";
+import voiceJumpManifest from "./voice-jump/manifest.json";
+import * as voiceJump from "./voice-jump";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
@@ -212,6 +214,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...finderManifest, apiVersion: 1 },
     module: finder,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...voiceJumpManifest, apiVersion: 1 },
+    module: voiceJump,
     enabledByDefault: false,
   },
   {

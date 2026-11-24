@@ -35,6 +35,7 @@ import {
   inlineToTab,
   layerDismissal,
   layerVisit,
+  panelVisitTarget,
   routedInline,
 } from "./inline-address";
 import {
@@ -93,7 +94,11 @@ import {
 import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
-import { targetKey, type OpenTarget } from "../../features/navigation/targets";
+import {
+  canStoreOpenTarget,
+  targetKey,
+  type OpenTarget,
+} from "../../features/navigation/targets";
 import {
   buzzLinkTarget,
   isBuzzLink,
@@ -129,6 +134,7 @@ import { channelIcon, channelText } from "../../features/channels/channel-icon";
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import { splitPartition } from "../../features/relay/partition";
 import {
   useChannelList,
   useChannelRoster,
@@ -1315,16 +1321,7 @@ function ChannelWorkspace({
       )
         return;
       tabState.leaveVisit();
-      void navigator.open({
-        version: 1,
-        kind: "conversation",
-        scope: target.scope,
-        channelId: entry.channelId,
-        detail: {
-          target: entry.target,
-          ...(entry.rootId ? { rootId: entry.rootId } : {}),
-        },
-      });
+      void navigator.open(panelVisitTarget(target.scope, entry));
     },
     [navigator, tabState.leaveVisit],
   );
@@ -1471,10 +1468,10 @@ function ChannelWorkspace({
       (
         opening: PanelOpening,
         view: Readonly<{ channelId: string; rootId?: string | undefined }>,
-      ) => boolean
+      ) => boolean | "invalid-target"
     >(undefined);
   const secondary = useConversationTabs({
-    openInView: (opening, view) => inView.current?.(opening, view) ?? false,
+    openInView: (opening, view) => inView.current?.(opening, view) === true,
     state: tabState,
     relay,
     session: queries,
@@ -1600,6 +1597,12 @@ function ChannelWorkspace({
     navigationSignal: navigation?.signal,
     isLive: () => !destination.current.navigation?.signal.aborted,
     openLink: (url) => openLink(url, { fromThread: true }),
+    openPluginLink: (url, channelId, origin) =>
+      openLink(url, {
+        fromThread: true,
+        originChannelId: channelId,
+        ...origin,
+      }),
     // A Solo conversation has no channel menu; its history takes focus instead.
     fallbackFocus: solo ? historyContainer : settingsTrigger,
     openMembers: () => setMembersOpen(true),
@@ -2105,8 +2108,7 @@ function ChannelWorkspace({
     [navigator],
   );
   // Under inline, a panel opened from a view's message becomes a dialog on
-  // that view: the conversation, its inline thread, or a thread tab. False
-  // when it opens as a tab instead.
+  // that view: the conversation, its inline thread, or a thread tab.
   const openInView = (
     opening: PanelOpening,
     view: Readonly<{ channelId: string; rootId?: string | undefined }>,
@@ -2120,31 +2122,38 @@ function ChannelWorkspace({
       ) !== "inline"
     )
       return false;
-    setSettings(undefined);
-    panelTrigger.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    showLayer({
+    const current = navigator?.snapshot().entry.target;
+    if (!navigator || current?.kind !== "conversation") return false;
+    const target = layerVisit(current, {
       target: opening.target,
       ...(opening.rootId ? { threadId: opening.rootId } : {}),
       channelId: view.channelId,
       ...(view.rootId ? { rootId: view.rootId } : {}),
     });
+    if (
+      parseBuzzLink(opening.target)?.format === "plugin" &&
+      !canStoreOpenTarget(target)
+    )
+      return "invalid-target";
+    setSettings(undefined);
+    panelTrigger.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    void navigator.open(target);
     return true;
   };
   inView.current = openInView;
   // Draws the addressed panel layer. Its own links stay in its view; Open as
   // tab hands it to a tab.
   const renderLayer = (layer: PanelLayerAddress) => {
-    const panel = panels.resolve(layer.target);
-    if (!panel) return undefined;
-    const opening: PanelOpening = {
-      channelId: layer.channelId,
-      ...(layer.threadId ? { rootId: layer.threadId } : {}),
-      panel,
-      target: layer.target,
-    };
+    const opening = panelOpening(
+      panels,
+      layer.channelId,
+      layer.target,
+      layer.threadId,
+    );
+    if (!opening) return undefined;
     const content = secondary.renderLayerPanel(opening, {
       navigate: (target) => {
         const next = panelOpening(
@@ -2154,14 +2163,16 @@ function ChannelWorkspace({
           layer.threadId,
         );
         if (!next) return false;
-        if (!openInView(next, layer)) open(next, true);
+        const placed = openInView(next, layer);
+        if (placed === "invalid-target") return false;
+        if (!placed) open(next, true);
         return true;
       },
       close: () => dismissLayer(),
     });
     if (!content) return undefined;
     return {
-      title: panel.title,
+      title: opening.panel.title,
       content,
       openAsTab: () => {
         const entry = navigator?.snapshot().entry;
@@ -2171,16 +2182,7 @@ function ChannelWorkspace({
         if (historyPanel(opening)) {
           // The tab's own address replaces the layer's, as Move to side
           // panel does for a thread.
-          dismissLayer({
-            version: 1,
-            kind: "conversation",
-            scope: target.scope,
-            channelId: opening.channelId,
-            detail: {
-              target: opening.target,
-              ...(opening.rootId ? { rootId: opening.rootId } : {}),
-            },
-          });
+          dismissLayer(panelVisitTarget(target.scope, opening));
           open(opening, true);
           return;
         }
@@ -2314,11 +2316,13 @@ function ChannelWorkspace({
       url: string,
       {
         fromThread = false,
+        originChannelId,
         returnFocus,
         rootId,
         view,
       }: {
         fromThread?: boolean;
+        originChannelId?: string;
         returnFocus?: HTMLElement | undefined;
         rootId?: string;
         /** The view of the message the link is in, when it is in one. */
@@ -2382,14 +2386,30 @@ function ChannelWorkspace({
         tabState.select(id);
         return true;
       }
-      // A plugin may expose the same document as a page and an addressable
-      // panel. Only its own panel can keep its link beside this conversation.
-      const linkedPanel =
-        parsed?.format === "plugin" ? panels.resolve(url) : undefined;
-      const pluginPanel =
-        parsed?.format === "plugin" &&
-        linkedPanel?.pluginId === parsed.pluginId &&
-        linkedPanel.addressable;
+      const { channelId: currentChannelId, routedThread } = linkContext.current;
+      const channelId = originChannelId ?? currentChannelId;
+      const pluginLink = parsed?.format === "plugin";
+      let pluginPanel: PanelOpening | undefined;
+      if (pluginLink && channelId) {
+        const opening = panelOpening(panels, channelId, url, rootId);
+        if (opening) {
+          const placed =
+            view &&
+            inView.current?.(opening, { channelId, rootId: view.rootId });
+          if (placed === true) return true;
+          const visit = navigator?.snapshot().entry.target;
+          const visitScope =
+            visit?.kind === "conversation"
+              ? visit.scope
+              : splitPartition(scope);
+          if (
+            placed !== "invalid-target" &&
+            visitScope &&
+            canStoreOpenTarget(panelVisitTarget(visitScope, opening))
+          )
+            pluginPanel = opening;
+        }
+      }
       if (isBuzzLink(url) && navigator && viewer && !pluginPanel) {
         const target = buzzLinkTarget(url, {
           viewer,
@@ -2412,12 +2432,17 @@ function ChannelWorkspace({
           return true;
         }
       }
-      const { channelId, routedThread } = linkContext.current;
-      const next = channelId && panelOpening(panels, channelId, url, rootId);
+      const next = pluginLink
+        ? pluginPanel
+        : channelId && panelOpening(panels, channelId, url, rootId);
       if (
+        !pluginLink &&
         next &&
         view &&
-        inView.current?.(next, { channelId, rootId: view.rootId })
+        inView.current?.(next, {
+          channelId: next.channelId,
+          rootId: view.rootId,
+        })
       )
         return true;
       if (next) {
@@ -2429,7 +2454,7 @@ function ChannelWorkspace({
             : null);
         // Thread-origin details cover the live thread instead of retiring it.
         if (!fromThread && routedThread && !historyPanel(next))
-          select(channelId);
+          select(next.channelId);
         open(next, fromThread);
         return true;
       }

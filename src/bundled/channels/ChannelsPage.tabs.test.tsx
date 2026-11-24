@@ -411,12 +411,16 @@ it.each([
   { owner: "example.documents", addressable: true, panel: true },
   { owner: "example.documents", addressable: undefined, panel: false },
   { owner: "another.plugin", addressable: true, panel: false },
+  { owner: "example.documents", addressable: true, panel: false, padded: true },
 ])(
   "keeps a plugin page beside the conversation only for its addressable owner: %o",
-  async ({ owner, addressable, panel }) => {
+  async ({ owner, addressable, panel, padded }) => {
     const host = createNavigationController(createMemoryHistory());
-    const url =
+    const link =
       "buzz://plugin?id=example.documents&page=documents&route.id=plan";
+    const padding = `${link}&padding=`;
+    // This fits the detail string but JSON escaping makes the visit too big.
+    const url = padded ? padding + "\\".repeat(4096 - padding.length) : link;
     const open = vi.fn(host.navigation.open);
     const h = await page(
       "stream",
@@ -444,6 +448,7 @@ it.each([
         kind: "plugin",
         pluginId: "example.documents",
         pageId: "documents",
+        params: { id: "plan" },
       });
       expect(screen.queryByText("App content")).not.toBeInTheDocument();
     }

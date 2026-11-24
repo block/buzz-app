@@ -588,6 +588,15 @@ export function parseOpenTarget(input: unknown): OpenTarget {
   }
 }
 
+export function canStoreOpenTarget(target: OpenTarget): boolean {
+  try {
+    parseOpenTarget(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function targetKey(target: OpenTarget): string {
   return JSON.stringify(parseOpenTarget(target));
 }

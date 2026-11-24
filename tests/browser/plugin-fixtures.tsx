@@ -709,6 +709,53 @@ export const fixturePlugins: readonly BundledPlugin[] = [
           primary: true,
           component: Legacy,
         });
+        const {
+          useTabTitle,
+          ui: { Workspace },
+        } = ctx.panels;
+        function BuildActions() {
+          const actions = useMemo(() => [{ label: "Show logs", run() {} }], []);
+          useTabTitle?.("Build", undefined, actions);
+          return null;
+        }
+        function BuildWorkspace() {
+          const [active, setActive] = useState(true);
+          const [opened, setOpened] = useState(false);
+          const actions = useMemo(
+            () => [{ label: "Open build", run: () => setOpened(true) }],
+            [],
+          );
+          useEffect(() => {
+            const withdraw = () => setActive(false);
+            window.addEventListener("fixture-withdraw-build", withdraw);
+            return () =>
+              window.removeEventListener("fixture-withdraw-build", withdraw);
+          }, []);
+          return (
+            <Workspace
+              value="build"
+              select={() => {}}
+              items={[
+                {
+                  id: "build",
+                  label: "Build",
+                  actions,
+                  content: (
+                    <>
+                      {active && <BuildActions />}
+                      <p>{opened ? "Build opened" : "Build summary"}</p>
+                    </>
+                  ),
+                },
+              ]}
+            />
+          );
+        }
+        ctx.pages.register({
+          id: "builds",
+          title: "Builds",
+          component: BuildWorkspace,
+        });
       },
     },
   },

@@ -17,6 +17,42 @@ const companionLauncher = (page, name) =>
 const card = (page, name) =>
   page.getByRole("complementary", { name, exact: true });
 
+test("a tab menu stays keyboard navigable when its focused plugin action is withdrawn", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await page.waitForFunction(() => window.fixtureNavigation);
+  const result = await page.evaluate(() =>
+    window.fixtureNavigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "fixture.notes",
+      pageId: "builds",
+    }),
+  );
+  expect(result).toEqual({ status: "opened" });
+  const tab = page.getByRole("tab", { name: "Build", exact: true });
+  const menu = page.getByRole("menu", { name: "Actions for Build tab" });
+  const contributedAction = menu.getByRole("menuitem", { name: "Show logs" });
+  const hostAction = menu.getByRole("menuitem", { name: "Open build" });
+  await tab.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(menu).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(contributedAction).toBeFocused();
+
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("fixture-withdraw-build")),
+  );
+  await expect(contributedAction).toHaveCount(0);
+  await page.keyboard.press("ArrowDown");
+  await expect(hostAction).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("Build opened", { exact: true })).toBeVisible();
+  await expect(tab).toBeFocused();
+});
+
 test("a second plugin uses the same launcher slot without remounting a legacy page or accepting stale handlers", async ({
   page,
   app,

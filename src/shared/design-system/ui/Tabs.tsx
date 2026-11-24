@@ -386,6 +386,8 @@ export function TabMenu({
   );
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
+  const lastFocused = useRef<HTMLElement>(null);
   const [anchor, setAnchor] = useState<HTMLElement>();
   const closingAll = useRef(false);
   // An action runs once the menu has closed, from its tab, so a
@@ -400,8 +402,18 @@ export function TabMenu({
       (pending?.contributed && !contributedActions?.includes(pending.action))
     )
       afterClose.current = undefined;
-    if (!hasMenu) setOpen(false);
-  }, [contributedActions, hasMenu]);
+    if (!hasMenu) {
+      setOpen(false);
+      return;
+    }
+    const menu = popup.current;
+    const previousFocus = lastFocused.current;
+    // WebKit can leave focus on the body when a focused menu item is removed.
+    if (open && menu && previousFocus && !previousFocus.isConnected) {
+      const doc = menu.ownerDocument;
+      if (doc.activeElement === doc.body) menu.focus({ preventScroll: true });
+    }
+  }, [contributedActions, hasMenu, open]);
   const renderAction = (action: TabAction, contributed: boolean) => (
     <MenuItem
       key={`${contributed ? "panel" : "host"}:${action.label}`}
@@ -471,6 +483,10 @@ export function TabMenu({
         {children}
       </ContextMenuTrigger>
       <MenuPopup
+        ref={popup}
+        onFocus={(event) => {
+          lastFocused.current = event.target;
+        }}
         aria-label={`Actions for ${label} tab`}
         size="compact"
         anchor={anchor}

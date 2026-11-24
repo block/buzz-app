@@ -2679,7 +2679,7 @@ export class CodexRuntime {
       ...(trigger.type === "mention" && trigger.resumed
         ? { resumed: true }
         : {}),
-      ...(solo && delivery.named ? { named: delivery.named } : {}),
+      ...(delivery.named ? { named: delivery.named } : {}),
       ...(delivery.gateway ? { gateway: delivery.gateway } : {}),
       ...(wake && delivery.gatewayFallback
         ? { gatewayFallback: delivery.gatewayFallback }

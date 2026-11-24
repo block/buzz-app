@@ -1722,7 +1722,7 @@ export class ClaudeRuntime {
       if (error)
         await this.report(agent, channel, event, error, topLevel, route);
     });
-    if (solo && named && settings.scope !== "community")
+    if (named && settings.scope !== "community")
       void this.offerTitle(done, agent.key, key, settings.workspace, named);
   }
 

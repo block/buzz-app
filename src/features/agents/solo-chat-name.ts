@@ -31,12 +31,18 @@ export async function nameSoloChat(
   if (snapshot?.status !== "ready" || snapshot.viewer !== owner)
     return skip("owner not connected");
   const { session } = snapshot;
-  const solo = () =>
-    ownSolo(
-      session.channels.list().channels.find((item) => item.id === channel),
-      owner,
+  // Any conversation the owner started, other than a DM, which is known by
+  // its people rather than a name.
+  const solo = () => {
+    const listed = session.channels
+      .list()
+      .channels.find((item) => item.id === channel);
+    return (
+      ownSolo(listed, owner) ||
+      (!!listed && listed.channelType !== "dm" && listed.creator === owner)
     );
-  if (!channel || !solo()) return skip("not the owner's Solo chat");
+  };
+  if (!channel || !solo()) return skip("not the owner's conversation");
   const name = [...chatSlug(title)].slice(0, 120).join("").replace(/-+$/, "");
   const details = session.channelDetails;
   if (!name) return skip("empty title");

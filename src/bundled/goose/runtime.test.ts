@@ -1887,18 +1887,6 @@ describe("GooseRuntime", () => {
     });
     await flush(100);
     expect(named).toHaveBeenCalledExactlyOnceWith("Fix login bug");
-    // A channel's session keeps Buzz's title, which goose never replaces.
-    const team = setup({ hold: true });
-    await team.deliver(message("1", "@Gander hi"), { named: vi.fn() });
-    await flush(100);
-    expect(team.goose()?.opened[0]?._meta).toMatchObject({
-      sessionTitle: "Buzz agent · #general · 11111111",
-      // goose finds the conversation's sessions by these.
-      tags: {
-        "buzz.agent": self,
-        "buzz.conversation": `${channel}/${"1".repeat(64)}`,
-      },
-    });
   });
 
   it("names the agent in a timer's prompt, so its session is listed as the agent's", async () => {

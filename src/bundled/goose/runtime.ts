@@ -974,7 +974,7 @@ export class GooseRuntime {
             return marking ? marked(text, marking) : text;
           },
           // A Solo chat takes the name goose gives its first session.
-          ...(solo && named ? { named } : {}),
+          ...(named ? { named } : {}),
         });
       },
     );

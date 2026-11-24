@@ -6724,21 +6724,6 @@ it("titles a new Solo chat once, from its first message on an ephemeral read-onl
   expect(named).toHaveBeenCalledOnce();
 });
 
-it("does not title a conversation outside a Solo chat", async () => {
-  const f = fixture();
-  const named = vi.fn();
-  await f.runtime.run({ ...f.delivery("@Codex fix the login bug"), named });
-  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
-  await f.complete(0, "FIRST");
-  await vi.waitFor(() =>
-    expect(f.runtime.sessions(pubkey)[0]?.status).toBe("Idle"),
-  );
-  expect(f.sent.filter((wire) => wire.method === "thread/start")).toHaveLength(
-    1,
-  );
-  expect(named).not.toHaveBeenCalled();
-});
-
 it("keeps the first-message title without another protected model input", async () => {
   const f = protectedPreview();
   asSoloChat(f);

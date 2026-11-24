@@ -942,6 +942,8 @@ impl FederatedIdentity {
                 return revision;
             }
         }
+        // A session known to have ended, whose record could not be removed.
+        let ended = self.state().snapshot.cleanup;
         self.change_current(&revision, Status::Restoring, None);
         // Removing a stored session that has ended can fail. The end still
         // stands, and the failed removal is reported beside it as cleanup:
@@ -949,7 +951,16 @@ impl FederatedIdentity {
         // never restored, and requests don't wait for it to be confirmed.
         let mut cleanup = None;
         let result = async {
-            let (raw, refusal) = self.storage(|store| store.load()).await?;
+            let (raw, refusal) = match self.storage(|store| store.load()).await {
+                Ok(loaded) => loaded,
+                // A read that doesn't answer leaves a known end standing:
+                // only its record's absence or replacement changes it.
+                Err(failure) if ended && !failure.session_denied => {
+                    cleanup = Some(failure.code);
+                    return Ok(None);
+                }
+                Err(failure) => return Err(failure),
+            };
             let Some(raw) = raw else {
                 return Ok(None);
             };

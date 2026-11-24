@@ -2531,5 +2531,20 @@ mod tests {
         // The record stays marked as refused, so no later restore takes it.
         assert!(store.raw.lock().unwrap().is_some());
         assert!(host.restore().await.cleanup);
+        // A later read that finds storage busy too leaves the end standing:
+        // requests go unsigned instead of waiting on a check.
+        store.load_busy.store(true, Ordering::SeqCst);
+        let unsigned = host.assertion_for_relay(&identity, &url).await.unwrap();
+        assert!(unsigned.assertion.is_none());
+        let snapshot = host.snapshot();
+        assert!(snapshot.cleanup);
+        assert!(!snapshot.unconfirmed());
+        // Once storage answers, the record is removed and the session ends.
+        store.load_busy.store(false, Ordering::SeqCst);
+        store.busy.store(false, Ordering::SeqCst);
+        let snapshot = host.restore().await;
+        assert!(snapshot.status == Status::SignedOut);
+        assert!(!snapshot.cleanup);
+        assert!(store.raw.lock().unwrap().is_none());
     }
 }

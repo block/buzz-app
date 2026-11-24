@@ -2,7 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { stubAvatarBrowserApis } from "../../features/agents/avatar-testing";
 stubAvatarBrowserApis();
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  waitForElementToBeRemoved,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -100,17 +107,13 @@ function fixture(configuredNames = false) {
 }
 
 /** The profile read answered with no profile. That is not a failure, so the
- * panel says nothing about it and offers no retry. */
+ * panel says nothing about it and offers no retry: "Retry profile" would match
+ * too. Throws when the read was not pending on entry. */
 async function readFindsNoProfile() {
-  await waitFor(() =>
-    expect(screen.queryByText("Loading profile…")).not.toBeInTheDocument(),
-  );
+  await waitForElementToBeRemoved(() => screen.queryByText("Loading profile…"));
   expect(
     screen.getByRole("region", { name: "Profile details" }),
   ).not.toHaveTextContent(/profile/i);
-  expect(
-    screen.queryByRole("button", { name: "Retry profile" }),
-  ).not.toBeInTheDocument();
 }
 
 it("identifies unnamed profiles by public key and scopes shared agent hints to the exact community", async () => {
@@ -161,6 +164,8 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
     });
     render(f.panel());
     await screen.findByText("Could not load this profile.");
+    // The owner check failed with it; one reason is enough for one Retry.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(
       screen.getByRole("heading", {
         name: "Unknown agent",
@@ -194,6 +199,42 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
     expect(
       screen.queryByRole("button", { name: "Retry profile" }),
     ).not.toBeInTheDocument();
+  } finally {
+    f.dispose();
+  }
+});
+
+it("says why Retry is offered when only an agent's owner check failed, and clears both on retry", async () => {
+  const f = fixture();
+  try {
+    f.known();
+    // The owner check observes the agent's newest signed profile on its own;
+    // the profile read itself answers with no profile.
+    f.query.mockImplementation(async (filters) => {
+      if (
+        filters.some(
+          (filter) => filter.kinds?.includes(0) && filter.limit === 1,
+        )
+      )
+        throw new Error("Owner evidence unavailable");
+      return [];
+    });
+    render(f.panel());
+    const reason = await screen.findByText(
+      "Could not confirm who manages this agent.",
+    );
+    expect(screen.getAllByRole("alert")).toEqual([reason]);
+
+    f.query.mockImplementation(async () => []);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Retry profile" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Retry profile" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   } finally {
     f.dispose();
   }

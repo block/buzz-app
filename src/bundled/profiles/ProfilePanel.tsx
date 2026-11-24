@@ -552,6 +552,10 @@ function ProfileDetails({
   // notice and no retry. A verified overlay can exist while its kind-0 read
   // failed.
   const readFailed = status === "error" && (!profile || !!profile.verified);
+  // The owner check reads the agent's signed profile on its own, so it can
+  // fail beside a profile that loaded or was never set. A failed profile read
+  // already states the reason for Retry, and a pending retry needs none.
+  const ownerUnconfirmed = ownership.failed && !readFailed && !retrying;
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
   useEffect(() => {
@@ -849,6 +853,11 @@ function ProfileDetails({
                       : readFailed && (
                           <p role="alert">Could not load this profile.</p>
                         )}
+                    {ownerUnconfirmed && (
+                      <p role="alert">
+                        Could not confirm who manages this agent.
+                      </p>
+                    )}
                     {(readFailed || retrying || ownership.failed) && (
                       <Button
                         ref={retryButton}

@@ -24,6 +24,7 @@ import { useIdentityNames } from "../../features/identity-names/react";
 import { dmNamedParticipants } from "../../features/identity-names/participant-order";
 import { channelIcon } from "../channels/channel-icon";
 import { avatarMedia } from "../../shared/avatar-source";
+import { useClockFormat } from "../../shared/clock-preference";
 import {
   formatDayGroupLabel,
   formatFullTimestamp,
@@ -205,6 +206,7 @@ function ScopedPage({
     trigger: HTMLButtonElement;
     autoFocus: boolean;
   };
+  useClockFormat();
   const [selected, setSelected] = useState<Visit>();
   const visit = useRef<Visit | undefined>(undefined);
   const focusAfterClose = useRef<HTMLElement | null>(null);

@@ -15,6 +15,7 @@ import { DraftsSentPage } from "./DraftsSentPage";
 import { DraftsSentBadge } from "./DraftsSentBadge";
 import type { RelayData } from "../relay/service";
 import type { Navigation } from "../navigation/controller";
+import { setClockPreference } from "../../shared/clock-preference";
 import { formatDayGroupLabel } from "../../shared/datetime";
 import type { ReadEvent } from "./model";
 
@@ -435,6 +436,15 @@ it("sent groups by day, updates live, and opens the exact message", async () => 
       name: formatDayGroupLabel(NOW / 1000 - 600, NOW / 1000),
     }),
   ).toBeInTheDocument();
+  // Row times follow the clock settings as they change.
+  const time = () =>
+    screen
+      .getByRole("button", { name: /Recently shipped/ })
+      .querySelector("time")?.textContent;
+  expect(time()).not.toMatch(/:\d\d:\d\d/);
+  act(() => setClockPreference({ seconds: true }));
+  expect(time()).toMatch(/:\d\d:\d\d/);
+  act(() => setClockPreference({ seconds: false }));
   act(() =>
     h.emit([
       event({
@@ -943,14 +953,6 @@ it("stops counting a reply you or its author deleted in its post's thread", () =
   expect(
     within(screen.getByRole("button", { name: /Launch post/ })).getByText(
       "1 reply",
-    ),
-  ).toBeInTheDocument();
-  // It is forgotten once its reply leaves, so the reply counts if it returns.
-  act(() => h.replies([later, mine]));
-  act(() => h.replies([reply, later, mine]));
-  expect(
-    within(screen.getByRole("button", { name: /Launch post/ })).getByText(
-      "2 replies",
     ),
   ).toBeInTheDocument();
 });

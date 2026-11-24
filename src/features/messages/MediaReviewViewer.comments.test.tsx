@@ -26,10 +26,14 @@ import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { ThreadPanel } from "./ThreadPanel";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
+import type { ConversationExtensions } from "../conversation/contracts";
+import { sendTransformPlugin } from "../conversation/send-transform-testing";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
+const transformPlugins: { dispose(): Promise<void> }[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  for (const plugin of transformPlugins.splice(0)) await plugin.dispose();
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -52,6 +56,7 @@ type ReviewFixtureOptions = {
   attachmentInReply?: boolean;
   openThreadTab?: () => boolean;
   media?: (url: string) => string | undefined;
+  extensions?: ConversationExtensions;
 };
 
 function mime(kind: MediaKind) {
@@ -69,6 +74,7 @@ async function setupReview({
   attachmentInReply = false,
   openThreadTab,
   media = (url) => url,
+  extensions,
 }: ReviewFixtureOptions) {
   // The DOM emulator has no playback engine; keep native playback calls observable.
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
@@ -187,6 +193,7 @@ async function setupReview({
         hasComments={fromThread}
         close={() => setSelectedId(undefined)}
         onOpenLink={() => false}
+        extensions={extensions}
       />
     ) : (
       <ThreadPanel
@@ -1038,4 +1045,81 @@ it("keeps the comment composer forward announcer inside the media-review modal",
   expect(document.getElementById(`${input.id}-forward-announcement`)).toBe(
     announcement,
   );
+});
+
+/** A plugin whose transform waits until the test settles it. */
+async function stalledTransform(commits = false) {
+  let signal: AbortSignal | undefined;
+  let settle!: (draft: { text: string; mentions: [] }) => void;
+  const plugin = await sendTransformPlugin({
+    id: "slow",
+    title: "Slow",
+    matches: () => true,
+    transform: (_draft, context) =>
+      new Promise((resolve) => {
+        signal = context.signal;
+        settle = resolve;
+        if (commits) context.commit();
+      }),
+  });
+  transformPlugins.push(plugin);
+  return {
+    extensions: plugin.service,
+    signal: () => signal,
+    settle: (text: string) => settle({ text, mentions: [] }),
+  };
+}
+
+it("cancels a pending comment transform on Esc without closing the review", async () => {
+  const slow = await stalledTransform();
+  const { sign, user } = await setupReview({
+    kind: "image",
+    extensions: slow.extensions,
+  });
+  await typeAndSend(user, "needs a look");
+  await waitFor(() => expect(slow.signal()).toBeDefined());
+  const composer = screen.getByRole("textbox", { name: "Reply to thread" });
+  fireEvent.keyDown(composer, { key: "Escape" });
+  await waitFor(() => expect(slow.signal()?.aborted).toBe(true));
+  expect(screen.getByRole("dialog", { name: "Image viewer" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  await act(async () => slow.settle("late"));
+  expect(sign).not.toHaveBeenCalled();
+  expect(composer).toHaveTextContent("needs a look");
+});
+
+it("cancels a pending comment transform when Hide comments is pressed", async () => {
+  const slow = await stalledTransform();
+  const { sign, user } = await setupReview({
+    kind: "image",
+    extensions: slow.extensions,
+  });
+  await typeAndSend(user, "keep me");
+  await waitFor(() => expect(slow.signal()).toBeDefined());
+  await user.click(screen.getByRole("button", { name: "Hide comments" }));
+  expect(slow.signal()?.aborted).toBe(true);
+  await act(async () => slow.settle("late"));
+  expect(sign).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Show comments" }));
+  expect(
+    screen.getByRole("textbox", { name: "Reply to thread" }),
+  ).toHaveTextContent("keep me");
+});
+
+it("clears the comment when Esc interrupts a transform that already committed", async () => {
+  const slow = await stalledTransform(true);
+  const { sign, user } = await setupReview({
+    kind: "image",
+    extensions: slow.extensions,
+  });
+  await typeAndSend(user, "+:tada:");
+  await waitFor(() => expect(slow.signal()).toBeDefined());
+  const composer = screen.getByRole("textbox", { name: "Reply to thread" });
+  fireEvent.keyDown(composer, { key: "Escape" });
+  await waitFor(() => expect(composer).toHaveTextContent(""));
+  await act(async () => slow.settle("late"));
+  expect(sign).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog", { name: "Image viewer" })).toBeVisible();
 });

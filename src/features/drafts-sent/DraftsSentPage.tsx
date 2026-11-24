@@ -14,13 +14,21 @@ import type { PageNavigation } from "../navigation/service";
 import { PanelFrame } from "../panels/PanelFrame";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { useChannelList, useRelayConnection } from "../../features/relay/react";
+import {
+  useChannelRoster,
+  useRelayConnection,
+} from "../../features/relay/react";
 import { messageAuthor } from "../../features/relay/fold";
 import type { Navigation } from "../../features/navigation/controller";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { dmNamedParticipants } from "../../features/identity-names/participant-order";
 import { channelIcon } from "../channels/channel-icon";
 import { avatarMedia } from "../../shared/avatar-source";
+import {
+  formatDayGroupLabel,
+  formatFullTimestamp,
+  formatTime,
+} from "../../shared/datetime";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import {
   ArrowsClockwiseIcon,
@@ -54,16 +62,7 @@ import {
   type Shape,
 } from "./context";
 import { clearDraft, useDrafts } from "./drafts";
-import {
-  SENT_LIMIT,
-  clockTime,
-  dayLabel,
-  fullTime,
-  matches,
-  preview,
-  sentEntries,
-  type Entry,
-} from "./model";
+import { SENT_LIMIT, matches, preview, sentEntries, type Entry } from "./model";
 import { listed, scopeOf } from "./scope";
 import { useActivity, useDeletions, useSent } from "./views";
 import styles from "./DraftsSent.module.css";
@@ -99,6 +98,16 @@ const conversationOf = ({ entry, shape }: { entry: Entry; shape: Shape }) =>
     : shape === "room"
       ? entry.channelId
       : entry.id;
+/** An entry's preview line: its Markdown is parsed once, not on every render. */
+const lines = new WeakMap<Entry, string>();
+function lineOf(entry: Entry) {
+  let line = lines.get(entry);
+  if (line === undefined) {
+    line = preview(entry.text, "Attachment");
+    lines.set(entry, line);
+  }
+  return line;
+}
 const plural = (count: number, word: string) =>
   `${count} ${word}${count === 1 ? "" : "s"}`;
 
@@ -216,7 +225,8 @@ function ScopedPage({
     }
   }, [selected]);
   const drafts = useDrafts(session);
-  const { channels, status: channelListStatus } = useChannelList(
+  // The roster, not the live list: a message in any channel replaces the list.
+  const { channels, status: channelListStatus } = useChannelRoster(
     session.channels,
   );
   const profiles = useSyncExternalStore(
@@ -470,7 +480,7 @@ function ScopedPage({
   }, [session, missing]);
 
   const text = (row: Row) =>
-    row.placeholder ? row.entry.text : preview(row.entry.text, "Attachment");
+    row.placeholder ? row.entry.text : lineOf(row.entry);
   const visibleDrafts = draftRows.filter((row) =>
     matches(text(row), row.place.title, search),
   );
@@ -556,7 +566,7 @@ function ScopedPage({
     const time = entry.createdAt
       ? draft
         ? relativeTimestamp(entry.createdAt, now / 1000)
-        : clockTime(entry.createdAt)
+        : formatTime(entry.createdAt)
       : "";
     const where = `${place.title}${entry.threadRootId ? ", thread" : ""}`;
     const label = [
@@ -632,7 +642,7 @@ function ScopedPage({
               {time && entry.createdAt !== undefined && (
                 <time
                   dateTime={new Date(entry.createdAt * 1000).toISOString()}
-                  title={fullTime(entry.createdAt)}
+                  title={formatFullTimestamp(entry.createdAt)}
                 >
                   {time}
                 </time>
@@ -668,7 +678,7 @@ function ScopedPage({
 
   const groups: { label: string; rows: Row[] }[] = [];
   for (const item of visibleSent) {
-    const label = dayLabel(item.entry.createdAt ?? 0, now);
+    const label = formatDayGroupLabel(item.entry.createdAt ?? 0, now / 1000);
     const last = groups[groups.length - 1];
     if (last?.label === label) last.rows.push(item);
     else groups.push({ label, rows: [item] });

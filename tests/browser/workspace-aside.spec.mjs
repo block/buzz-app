@@ -58,6 +58,7 @@ const layout = (page) =>
       reader: box(widget.previousElementSibling),
       composer: box(element.parentElement.querySelector("form")),
       region: {
+        bottom: region.getBoundingClientRect().bottom,
         scrollHeight: region.scrollHeight,
         clientHeight: region.clientHeight,
         scrollTop: region.scrollTop,
@@ -101,9 +102,11 @@ test("a docked aside keeps the history and composer beside it", async ({
         at.scrollbar / 2,
     ),
   ).toBeLessThanOrEqual(2);
-  // A tall plan spans the history, never the composer, and scrolls itself.
+  // A tall plan runs from the history's top to the reader's bottom, beside
+  // the composer, and scrolls itself.
   expect(Math.abs(at.aside.top - at.history.top)).toBeLessThanOrEqual(1);
-  expect(Math.abs(at.aside.bottom - at.history.bottom)).toBeLessThanOrEqual(1);
+  expect(Math.abs(at.aside.bottom - at.reader.bottom)).toBeLessThanOrEqual(1);
+  expect(at.aside.bottom).toBeGreaterThan(at.composer.bottom);
   expect(at.region.scrollHeight).toBeGreaterThan(at.region.clientHeight);
 
   // Wheeling over the plan scrolls only the plan.
@@ -114,6 +117,18 @@ test("a docked aside keeps the history and composer beside it", async ({
     .poll(async () => (await layout(page)).region.scrollTop)
     .toBeGreaterThan(100);
   expect(await region.evaluate((element) => element.scrollTop)).toBe(offset);
+
+  // Scrolled to its end, the plan's card ends inside the box and the window.
+  await plan(page).evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  const end = await layout(page);
+  expect(end.region.scrollTop).toBeGreaterThanOrEqual(
+    end.region.scrollHeight - end.region.clientHeight - 1,
+  );
+  expect(end.region.bottom).toBeLessThan(end.aside.bottom);
+  expect(end.aside.bottom).toBeLessThanOrEqual(page.viewportSize().height);
+  await expect(plan(page).getByText("End of plan")).toBeInViewport();
 
   // The page's control hides it, and the rows take the width back.
   await page.getByRole("button", { name: "Hide plan" }).click();
@@ -280,6 +295,18 @@ test("a narrow reader floats the aside over the history while the page opens it"
     .toBeGreaterThan(100);
   expect(await region.evaluate((element) => element.scrollTop)).toBe(offset);
 
+  // Scrolled to its end, the plan's card ends inside the box and the window.
+  await plan(page).evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  const end = await layout(page);
+  expect(end.region.scrollTop).toBeGreaterThanOrEqual(
+    end.region.scrollHeight - end.region.clientHeight - 1,
+  );
+  expect(end.region.bottom).toBeLessThan(end.aside.bottom);
+  expect(end.aside.bottom).toBeLessThanOrEqual(page.viewportSize().height);
+  await expect(plan(page).getByText("End of plan")).toBeInViewport();
+
   // Escape closes only the overlay and returns focus to the page's control.
   await page.keyboard.press("Escape");
   await expect(plan(page)).toBeHidden();
@@ -359,6 +386,11 @@ test.describe("in a thread", () => {
         thread: box(element),
         scrollbar: element.offsetWidth - element.clientWidth,
         rows: box(element.querySelector("[data-thread-rows]")),
+        composer: box(
+          widget.previousElementSibling.querySelector(
+            '[contenteditable="true"]',
+          ),
+        ),
         aside: box(widget),
         reader: box(widget.previousElementSibling),
       };
@@ -370,7 +402,8 @@ test.describe("in a thread", () => {
       Math.abs(at.aside.right - (at.thread.right - at.scrollbar)),
     ).toBeLessThanOrEqual(1);
     expect(at.aside.top).toBeGreaterThanOrEqual(at.thread.top - 1);
-    expect(at.aside.bottom).toBeLessThanOrEqual(at.thread.bottom + 1);
+    expect(at.composer.right).toBeLessThanOrEqual(at.aside.left + 1);
+    expect(at.aside.bottom).toBeLessThanOrEqual(at.reader.bottom + 1);
   });
 });
 

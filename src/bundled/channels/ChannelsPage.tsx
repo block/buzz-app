@@ -31,11 +31,13 @@ import { ChannelBody } from "./ChannelBody";
 import { InlineThreadSheet } from "./InlineThreadSheet";
 import {
   canonicalInline,
+  type ConversationTarget,
   inlineDismissal,
   inlineToTab,
   layerDismissal,
   layerVisit,
   routedInline,
+  sameScope,
   threadTabVisit,
 } from "./inline-address";
 import {
@@ -836,11 +838,26 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
-  // The conversation's inline thread and open details: dialogs on its visit.
+  // The conversation's inline thread and layer belong to its visit. While
+  // the router binds the next visit in this conversation, keep the old
+  // presentation mounted so a layer can open without reopening its thread.
+  const conversationAddress =
+    navigation?.target.kind === "conversation" ? navigation.target : undefined;
+  const presentedAddress = useRef<ConversationTarget>(undefined);
+  const pendingAddress = navigation ? undefined : navigator.snapshot();
+  const previousAddress = presentedAddress.current;
   const addressed =
-    navigator && navigation?.target.kind === "conversation"
-      ? navigation.target
-      : undefined;
+    conversationAddress ??
+    (previousAddress &&
+    previousAddress.channelId === currentId &&
+    pendingAddress &&
+    !pendingAddress.ingress &&
+    sameScope(pendingAddress.entry.target, previousAddress)
+      ? previousAddress
+      : undefined);
+  useLayoutEffect(() => {
+    presentedAddress.current = addressed;
+  }, [addressed]);
   // Inline threads draw over the composer, which these conversations lack,
   // as does a connection that can only read: its composer has no box.
   const { readingOnly } = useComposerWrites(
@@ -1748,7 +1765,8 @@ function ChannelWorkspace({
     threadsInPane: false,
   });
   inlineHost.current = {
-    addressed: !!navigator && addressed?.channelId === currentId,
+    addressed:
+      !!conversationAddress && conversationAddress.channelId === currentId,
     channelId: currentId,
     composes: !!composes && current?.channelType !== "solo",
     threadsInPane: !!threadPane,

@@ -317,10 +317,18 @@ test.describe("Inline", () => {
       }),
     ).toBeFocused();
     const threadVisit = await address(page);
-    // The profile reads over the thread's reply box; the thread grows tall
-    // beneath it.
-    await avatar(thread(page)).click();
-    await expect(profile(page)).toBeVisible();
+    // The profile reads over the thread's reply box without exposing the
+    // channel and replaying the thread's opening.
+    const visibleThread = await thread(page).elementHandle();
+    try {
+      await avatar(thread(page)).click();
+      await expect(profile(page)).toBeVisible();
+      expect(
+        await visibleThread.evaluate((element) => element.isConnected),
+      ).toBe(true);
+    } finally {
+      await visibleThread.dispose();
+    }
     expect((await address(page)).layer).toMatchObject({ rootId: root.id });
     await expect(thread(page)).toHaveAttribute("data-tall", "true");
     // Opening the profile draws the thread again; it takes input once drawn.
@@ -352,8 +360,9 @@ test.describe("Inline", () => {
     await page.goForward();
     await page.goForward();
     await expect(pullHeading(github(page))).toBeVisible();
-    // X closes only the top layer; the thread stays.
-    await close(github(page)).click();
+    // X closes only the top layer; the thread stays. The sheet can still
+    // move after Forward, so exercise the control without chasing its bounds.
+    await activate(close(github(page)));
     await expect(github(page)).toHaveCount(0);
     await expect(thread(page)).toBeVisible();
     expect((await address(page)).layer).toBeUndefined();

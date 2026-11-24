@@ -4635,6 +4635,52 @@ describe("goose turns through the agent gateway", () => {
     }
   });
 
+  it("hands held messages over once isolation recovers with the role still restricted, except one interrupted while it waited", async () => {
+    let rootless = true;
+    const f = setup({
+      wrap: (spawn) => async (id, options) => {
+        if (id === "goose-root" && rootless)
+          throw new Error("No symlinks here");
+        return spawn(id, options);
+      },
+    });
+    const reviewer = {
+      ...f.agent,
+      config: { ...DEFAULT_CONFIG, toolPreset: "reviewer" },
+    } as unknown as Agent;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      f.runtime.sync([reviewer]);
+      const kept = f.deliver(message("1", "Kept"));
+      const cancelled = f.deliver(message("2", "Cancelled"));
+      await vi.waitFor(() =>
+        expect(f.runtime.paused(f.agent.key)).toBeTruthy(),
+      );
+      await f.runtime.session(
+        reviewer,
+        { channelId: channel, root: "2".repeat(64) },
+        "interrupt",
+      );
+      rootless = false;
+      await vi.advanceTimersByTimeAsync(60_000);
+      await Promise.all([kept, cancelled]);
+      await vi.waitFor(() =>
+        expect(
+          f.fake.geese.flatMap((goose) => goose.turns.map((turn) => turn.text)),
+        ).toEqual([expect.stringContaining("Kept")]),
+      );
+      expect(f.fake.geese[0]?.env.GOOSE_PATH_ROOT).toContain("goose-agents");
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(
+        f.fake.geese.flatMap((goose) => goose.turns.map((turn) => turn.text)),
+      ).toEqual([expect.stringContaining("Kept")]);
+      expect(f.runtime.paused(f.agent.key)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      f.runtime.dispose();
+    }
+  });
+
   it("runs a standalone turn on a binding of its own, saving nothing, and the agent retires only once its goose has exited and closed", async () => {
     const g = gateway();
     const f = setup({ forwarding: g.forwarding, hold: true });

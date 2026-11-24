@@ -7441,6 +7441,19 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
+it("converts a just-typed trailing emoticon when Enter sends, never a pasted one", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "nice :)");
+  await h.user.keyboard("{Enter}");
+  await h.user.click(h.input());
+  await h.user.paste("pasted :)");
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send.mock.calls.map((call) => call[1])).toEqual([
+    "nice 🙂",
+    "pasted :)",
+  ]);
+});
+
 it("sends with Ctrl+Enter and adds lines with Enter once that is chosen", async () => {
   const h = mount();
   try {

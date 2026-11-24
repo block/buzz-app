@@ -3143,6 +3143,7 @@ function Composer({
   }
   async function send(human = false) {
     if (!permitted.current || voice.isCapturing() || forwarded.blocked) return;
+    input.current?.convertEmoticon();
     if (editing.target) {
       if (editDisabled || editing.locked) return;
       if ("saveDraft" in editing.target) {

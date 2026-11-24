@@ -150,6 +150,8 @@ export type ComposerInputElement = HTMLDivElement & {
     range: { start: number; end: number },
   ): boolean;
   toggleFormat(format: ComposerFormat): void;
+  /** Turn an emoticon ending at the caret into emoji, as sending does. */
+  convertEmoticon(): void;
   insertLineBreak(kind?: "paragraph" | "hard"): boolean;
   editLink(): ComposerLinkEdit | null;
   /** Append source links and this app's copied `text/html` as a quote. Leave

@@ -58,7 +58,8 @@
   gap: var(--space-4);
   /* Align headings with the field while retaining row focus clearance. */
   margin-inline: calc(-1 * var(--member-bleed));
-  padding: 0 var(--space-1) var(--space-6);
+  padding: 0 var(--space-1)
+    calc(var(--space-6) + var(--member-scroll-reserve, 0px));
 }
 .memberList > * {
   flex-shrink: 0;

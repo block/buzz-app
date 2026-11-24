@@ -59,6 +59,111 @@ function tabKey(browserName, backwards = false) {
 }
 
 test.describe("member scrolling", () => {
+  test("a short member tab preserves the pointer after paging and releases spare space on return", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(
+      `${url}?administration&editable-access&people-scale&short-panel`,
+    );
+    await page.getByRole("button", { name: "Access", exact: true }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Manage members",
+      exact: true,
+    });
+    const list = dialog.getByRole("region", {
+      name: "Member list",
+      exact: true,
+    });
+    await expect(list).toHaveAttribute("data-refreshing", "false");
+    const people = dialog.getByRole("tab", {
+      name: "People · 62",
+      exact: true,
+    });
+    const agents = dialog.getByRole("tab", { name: "Agents · 1", exact: true });
+    const panel = dialog.getByRole("tabpanel", {
+      name: "People · 62",
+      exact: true,
+    });
+    await panel.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(panel.getByText("Page 2 of 2", { exact: true })).toBeVisible();
+    await expect(panel).toBeFocused();
+    await animationsSettled(dialog, { subtree: true });
+    const measure = () =>
+      list.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const tabs = element
+          .querySelector('[role="tablist"]')
+          .getBoundingClientRect();
+        const visible = [...element.children].filter(
+          (child) => child.getClientRects().length,
+        );
+        const bottom = Math.max(
+          ...visible.map((child) => child.getBoundingClientRect().bottom),
+        );
+        return {
+          top: tabs.top,
+          scrollTop: element.scrollTop,
+          scrollHeight: element.scrollHeight,
+          clientHeight: element.clientHeight,
+          contentBottom: bottom - rect.top + element.scrollTop,
+          paddingBottom: getComputedStyle(element).paddingBottom,
+        };
+      });
+    const before = await measure();
+    const bounds = await agents.boundingBox();
+    const point = {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    };
+    expect(await centerHit(agents)).toBe(true);
+    await page.mouse.click(point.x, point.y);
+    await expect(agents).toHaveAttribute("aria-selected", "true");
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    const after = await measure();
+    console.log(
+      "short-panel geometry " + JSON.stringify({ before, after, point }),
+    );
+    expect(after.top).toBeCloseTo(before.top, 1);
+    expect(after.scrollTop).toBeCloseTo(before.scrollTop, 1);
+    expect(
+      await agents.evaluate(
+        (tab, point) =>
+          tab.contains(document.elementFromPoint(point.x, point.y)),
+        point,
+      ),
+    ).toBe(true);
+    const peopleBounds = await people.boundingBox();
+    await page.mouse.click(
+      peopleBounds.x + peopleBounds.width / 2,
+      peopleBounds.y + peopleBounds.height / 2,
+    );
+    await expect(people).toHaveAttribute("aria-selected", "true");
+    const returned = await measure();
+    console.log("short-panel returned " + JSON.stringify(returned));
+    expect(returned.scrollHeight).toBe(before.scrollHeight);
+    expect(returned.contentBottom).toBeCloseTo(before.contentBottom, 1);
+    expect(returned.paddingBottom).toBe(before.paddingBottom);
+    // At offset zero, the natural maximum already suffices for a short tab.
+    await list.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    const shortBounds = await agents.boundingBox();
+    await page.mouse.click(
+      shortBounds.x + shortBounds.width / 2,
+      shortBounds.y + shortBounds.height / 2,
+    );
+    await expect(agents).toHaveAttribute("aria-selected", "true");
+    const atStart = await measure();
+    expect(atStart.scrollTop).toBe(0);
+    expect(atStart.paddingBottom).toBe(before.paddingBottom);
+  });
+
   test("a pointer tab change keeps the tab under the pointer and Tab reaches the first member", async ({
     page,
     browserName,

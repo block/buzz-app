@@ -1376,6 +1376,34 @@ export function ChannelMembersDialog({
   }
   if (pages !== memberPages.pages)
     setMemberPages({ text, accessFilter, pages });
+  const pendingMemberTab = useRef<number | null>(null);
+  // Clear the previous tab's reserve before measuring the new content. Its
+  // bottom can be above the viewport bottom, which scrollHeight alone hides.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pages, text and accessFilter end the reserve even when the selected group stays the same.
+  useLayoutEffect(() => {
+    const list = scrollport.current;
+    const offset = pendingMemberTab.current;
+    pendingMemberTab.current = null;
+    if (!list) return;
+    list.style.removeProperty("--member-scroll-reserve");
+    if (!showTabs || offset === null) return;
+    const top = list.getBoundingClientRect().top + list.clientTop;
+    const bottom = Math.max(
+      top,
+      ...Array.from(list.children)
+        .filter((child) => child.getClientRects().length > 0)
+        .map((child) => child.getBoundingClientRect().bottom),
+    );
+    const contentEnd =
+      bottom -
+      top +
+      list.scrollTop +
+      Number.parseFloat(getComputedStyle(list).paddingBottom);
+    const reserve = Math.max(0, offset + list.clientHeight - contentEnd);
+    if (offset > 0 && reserve > 0)
+      list.style.setProperty("--member-scroll-reserve", `${reserve}px`);
+    list.scrollTop = offset;
+  }, [memberGroup, showTabs, pages, text, accessFilter]);
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
     const group = pendingMemberPage.current;
@@ -2519,7 +2547,11 @@ export function ChannelMembersDialog({
                     label: `${group.name} · ${narrowed ? group.keys.length : group.count}`,
                     panelId: `${presenceId}-${group.name}-page`,
                   }))}
-                  onValueChange={setSelectedGroup}
+                  onValueChange={(group) => {
+                    pendingMemberTab.current =
+                      scrollport.current?.scrollTop ?? 0;
+                    setSelectedGroup(group);
+                  }}
                 />
               </div>
             )}

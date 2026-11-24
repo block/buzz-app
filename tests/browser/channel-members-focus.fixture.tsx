@@ -92,13 +92,16 @@ const inventory =
 const lastPageAlone = new URLSearchParams(location.search).has(
   "last-page-alone",
 );
+const shortPanel = new URLSearchParams(location.search).has("short-panel");
 const searchScale =
-  new URLSearchParams(location.search).has("search-scale") || lastPageAlone;
+  new URLSearchParams(location.search).has("search-scale") ||
+  lastPageAlone ||
+  shortPanel;
 const idleOverlap = new URLSearchParams(location.search).has("idle-overlap");
 const managed =
   searchScale || idleOverlap
     ? Array.from(
-        { length: idleOverlap ? 2 : lastPageAlone ? 51 : 60 },
+        { length: shortPanel ? 1 : idleOverlap ? 2 : lastPageAlone ? 51 : 60 },
         (_, index) => ({
           key: keypair(),
           name: `Agent ${index + 1}`,

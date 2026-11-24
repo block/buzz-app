@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler", "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true, "noEmit": true, "skipLibCheck": true, "exactOptionalPropertyTypes": true, "noUncheckedIndexedAccess": true,
+    "jsx": "react", "jsxFactory": "createElement", "jsxFragmentFactory": "Fragment",
+    "typeRoots": ["../.wt-canvas/node_modules/@types"], "types": ["react"],
+    "paths": { "react": ["./../.wt-canvas/node_modules/@types/react"] }
+  },
+  "include": ["src"], "exclude": ["src/react.ts"]
+}

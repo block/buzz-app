@@ -9,6 +9,9 @@ import {
 } from "./reading.mjs";
 import { channelUnread } from "./unread-state.mjs";
 
+// Each journey owns its app, relay state and browser context.
+test.describe.configure({ mode: "parallel" });
+
 /** A synced whole-channel mark unread on Alpha is live (NIP-RS override group). */
 const marked = (stored) => {
   const group = stored?.state.overrides[alphaId];

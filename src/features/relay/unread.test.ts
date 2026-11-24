@@ -9054,3 +9054,43 @@ it.each([
     expect(again.journal()?.localUnread[key]).toBeUndefined();
   },
 );
+
+it.each([
+  ["an older envelope with a smaller read", 800, 70],
+  ["the same envelope again", 900, 80],
+  ["a newer envelope repeating the same read", 1000, 80],
+])(
+  "a peer read that is not a new advance keeps a local reminder: %s",
+  async (_, createdAt, receipt) => {
+    const h = setup({}, true, (journal) => ({ ...journal, floor: 100 }));
+    h.grant("room");
+    const top = message(h.alice, "room", "top", 60);
+    h.emit([top]);
+    const peer = (at: number, room: number) =>
+      signReadState(
+        {
+          slot: "a".repeat(32),
+          createdAt: at,
+          blob: { v: 1, client_id: "peer", contexts: { room } },
+        },
+        h.viewer.secret,
+        at,
+      );
+    const first = await peer(900, 80);
+    h.emit([first]);
+    await vi.waitFor(() => expect(h.journal()?.floor).toBe(100));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const key = `msg:${top.id}`;
+    await h.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: top.id,
+    });
+    const cover = h.journal()?.localCovers?.[key];
+    expect(cover?.[1]).toBeLessThan(70);
+    h.emit([createdAt === 900 ? first : await peer(createdAt, receipt)]);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(h.journal()?.localUnread[key]).toBeDefined();
+    expect(h.session.unread.attention("room", top.id).unread).toBe(true);
+  },
+);

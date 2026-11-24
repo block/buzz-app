@@ -1122,42 +1122,36 @@ export function createReadState({
         current,
         committed.map(({ parsed }) => parsed.state),
       );
+      // Re-reading an admitted envelope, or an older one, is bookkeeping, not
+      // a later read intent.
+      const admitted = committed.flatMap(({ event, parsed }) => {
+        if (parsed.clientId === current.clientId) return [];
+        const previous = slots.get(readCoordinate(event) ?? "");
+        if (previous && newer(previous.event, event).id === previous.event.id)
+          return [];
+        return [{ parsed, prior: previous?.parsed.state.frontiers }];
+      });
       const capturedUndoVersions = invalidateCapturedUndoVersions(
         current.capturedUndoVersions,
-        committed
-          .filter(({ event, parsed }) => {
-            if (parsed.clientId === current.clientId) return false;
-            const previous = slots.get(readCoordinate(event) ?? "");
-            // Re-reading an admitted envelope is bookkeeping, not a later read intent.
-            return (
-              !previous || newer(previous.event, event).id !== previous.event.id
-            );
-          })
-          .flatMap(({ event, parsed }) => {
-            const previous = slots.get(readCoordinate(event) ?? "");
-            return Object.entries(parsed.state.frontiers)
-              .filter(
-                ([key, value]) =>
-                  key.startsWith("msg:") &&
-                  previous?.parsed.state.frontiers[key] !== value,
-              )
-              .map(([key]) => key);
-          }),
+        admitted.flatMap(({ parsed, prior }) =>
+          Object.entries(parsed.state.frontiers)
+            .filter(
+              ([key, value]) =>
+                key.startsWith("msg:") && prior?.[key] !== value,
+            )
+            .map(([key]) => key),
+        ),
       );
       const localUnread = peerCleared(
         current,
-        committed.map(({ event, parsed }) => {
-          const previous = slots.get(readCoordinate(event) ?? "");
-          return {
-            frontiers: Object.fromEntries(
-              Object.entries(parsed.state.frontiers).filter(
-                ([key, value]) =>
-                  previous?.parsed.state.frontiers[key] !== value,
-              ),
+        admitted.map(({ parsed, prior }) => ({
+          frontiers: Object.fromEntries(
+            Object.entries(parsed.state.frontiers).filter(
+              ([key, value]) => value > (prior?.[key] ?? -1),
             ),
-            overrides: {},
-          };
-        }),
+          ),
+          overrides: {},
+        })),
       );
       return {
         ...current,

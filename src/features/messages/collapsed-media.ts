@@ -103,16 +103,18 @@ export function mediaGroupKey(messageId: string, url: string) {
   return JSON.stringify([messageId, url]);
 }
 
-// The thread owns each request, including which groups the reader has hidden
-// since selecting the timecode. A new thread can safely reuse a request number.
+// Each request records which groups the reader has hidden since selecting the timecode.
 export function createMediaSeek(
   scope: string | undefined,
   row: ChannelMessage,
   seconds: number,
-  request: number,
+  request: number | undefined,
+  keepHidden = false,
 ) {
   const keys = row.attachments.map(({ url }) => mediaGroupKey(row.id, url));
-  const retiredGroups = new Set<string>();
+  const retiredGroups = new Set(
+    keepHidden ? groups(scope).filter((key) => keys.includes(key)) : [],
+  );
   return {
     seconds,
     request,

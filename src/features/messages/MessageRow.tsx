@@ -94,7 +94,11 @@ import {
   contributionKey,
 } from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
-import { mediaGroupKey, type MediaSeek } from "./collapsed-media";
+import {
+  createMediaSeek,
+  mediaGroupKey,
+  type MediaSeek,
+} from "./collapsed-media";
 import { CollapsibleMediaGroup } from "./CollapsibleMediaGroup";
 import { AttachmentImage } from "./AttachmentImage";
 import { AgentDeclineNotes } from "./AgentDeclineNotes";
@@ -200,7 +204,8 @@ export type MessageRowProps = {
   alignViewer?: boolean;
 
   mediaMode?: "inline" | "thread";
-  mediaSeek?: MediaSeek | undefined;
+  mediaSeekTo?: number;
+  mediaSeekRequest?: number;
   onMediaPlayback?: (playback: MediaPlayback) => void;
   onMediaTime?: (seconds: number) => void;
   onOpenMediaReview?: (
@@ -212,7 +217,12 @@ export type MessageRowProps = {
   ) => void;
 };
 
-type MessageContentProps = MessageRowProps & {
+// ThreadPanel owns a request across row remounts. Plugins only pass numbers.
+type InternalMessageRowProps = MessageRowProps & {
+  mediaSeek?: MediaSeek | undefined;
+};
+
+type MessageContentProps = InternalMessageRowProps & {
   shownRow?: ChannelMessage;
   /** Leave out the reactions row and its controls. */
   withoutReactions?: boolean;
@@ -980,7 +990,9 @@ function MessageRowContent({
                   allowSeek
                     ? {
                         seekTo: mediaSeek.seconds,
-                        seekRequest: mediaSeek.request,
+                        ...(mediaSeek.request !== undefined && {
+                          seekRequest: mediaSeek.request,
+                        }),
                       }
                     : {})}
                   {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
@@ -1905,13 +1917,55 @@ function MessageRowContent({
     messageActions(message, true)
   );
 }
+// A mounted row can distinguish a new numeric request from its initial props.
+// On mount, an existing request must respect groups the reader already hid.
+function useNumericMediaSeek({
+  row,
+  scope,
+  mediaSeekTo,
+  mediaSeekRequest,
+}: MessageRowProps) {
+  const capture = (keepHidden: boolean) => ({
+    id: row.id,
+    scope,
+    seek:
+      mediaSeekTo === undefined
+        ? undefined
+        : createMediaSeek(
+            scope,
+            row,
+            mediaSeekTo,
+            mediaSeekRequest,
+            keepHidden,
+          ),
+  });
+  const [previous, setPrevious] = useState(() => capture(true));
+  const sameRow = previous.id === row.id && previous.scope === scope;
+  let seek = previous.seek;
+  if (
+    !sameRow ||
+    !Object.is(seek?.seconds, mediaSeekTo) ||
+    (seek && !Object.is(seek.request, mediaSeekRequest))
+  ) {
+    const next = capture(!sameRow);
+    setPrevious(next);
+    seek = next.seek;
+  }
+  useLayoutEffect(() => seek?.observeHides(), [seek]);
+  return seek;
+}
+
 /** Coordination between agents reads as one quiet line in time order: who
  * wrote it, who it is for, and its first paragraph. Opening the line shows
  * the whole message. The mentions it opens with become the line's recipients,
  * so they are not repeated in its text. */
 export const MessageRow = memo(function AudienceMessageRow(
-  props: MessageRowProps,
+  inputs: InternalMessageRowProps,
 ) {
+  const numericSeek = useNumericMediaSeek(inputs);
+  const props = numericSeek
+    ? { ...inputs, mediaSeek: inputs.mediaSeek ?? numericSeek }
+    : inputs;
   const { onOpenLink, canOpenLink, row } = props;
   const rootId = row.threadRootId ?? row.id;
   const view = useComposerScope();
@@ -1953,7 +2007,9 @@ export const MessageRow = memo(function AudienceMessageRow(
 // What can hold focus in an activity entry. Its line is the first.
 const focusStops =
   "a[href], button, input, select, textarea, summary, audio[controls], video[controls], [tabindex]";
-function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
+function AgentsMessageRow(
+  props: InternalMessageRowProps & { failure?: boolean },
+) {
   const {
     row,
     session,
@@ -2240,7 +2296,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
 /** Another agent's message that its owner relayed here from another chat. It
  * reads as that agent's quiet line, never as the signer's own message, and
  * opens to the text without the notice older clients show in its place. */
-function RelayedMessageRow(props: MessageRowProps) {
+function RelayedMessageRow(props: InternalMessageRowProps) {
   const { row, session, media, participantProfiles, agentPubkeys } = props;
   const source = row.relayedFrom;
   const references = props.references ?? session;

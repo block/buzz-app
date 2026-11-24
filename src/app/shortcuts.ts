@@ -1,4 +1,4 @@
-import { keyboardKey } from "../shared/keyboard-key";
+import { isPlainCommandArrow } from "../shared/keyboard-key";
 import { isTauri } from "@tauri-apps/api/core";
 import { isApplePlatform } from "../features/shortcuts/format";
 import { inEditable } from "../features/shortcuts/bindings";
@@ -373,15 +373,7 @@ export function registerNavigationShortcuts(
 ) {
   const apple = isApplePlatform(navigator.platform);
   const canNavigate = (event: KeyboardEvent) => {
-    if (
-      !apple ||
-      !event.metaKey ||
-      event.shiftKey ||
-      event.altKey ||
-      event.ctrlKey ||
-      !["ArrowLeft", "ArrowRight"].includes(keyboardKey(event)) ||
-      !inEditable(event)
-    )
+    if (!apple || !isPlainCommandArrow(event) || !inEditable(event))
       return true;
     // Command arrows keep their editing meaning except in an empty composer.
     return event.composedPath().some((target) => {

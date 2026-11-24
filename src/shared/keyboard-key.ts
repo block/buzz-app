@@ -54,3 +54,16 @@ export function keyboardKey(
     CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
   );
 }
+/** Command-Left or Command-Right with no other modifier: the line-edge keys
+ * that an empty message composer lends to Back and Forward on macOS. */
+export function isPlainCommandArrow(
+  event: Pick<
+    globalThis.KeyboardEvent,
+    "key" | "code" | "keyCode" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"
+  >,
+) {
+  if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)
+    return false;
+  const key = keyboardKey(event);
+  return key === "ArrowLeft" || key === "ArrowRight";
+}

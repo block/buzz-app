@@ -1,4 +1,8 @@
-import { controlCharacterText, keyboardKey } from "../../shared/keyboard-key";
+import {
+  controlCharacterText,
+  isPlainCommandArrow,
+  keyboardKey,
+} from "../../shared/keyboard-key";
 import {
   memo,
   useLayoutEffect,
@@ -2488,16 +2492,6 @@ export function EditableInput({
           }
           if (historyShortcut(event, key)) return true;
           if (named === "ArrowLeft" || named === "ArrowRight") {
-            // Explicit line movement also works when WebKit leaves a restored
-            // composer's native Command-arrow caret in place.
-            if (
-              apple &&
-              primary &&
-              !event.altKey &&
-              !event.shiftKey &&
-              projection().draft.text !== ""
-            )
-              return moveCaret(named, event);
             if (
               !event.altKey &&
               !primary &&
@@ -2607,14 +2601,10 @@ export function EditableInput({
             // captures them for caret movement in an empty message input.
             if (
               isApplePlatform(navigator.platform) &&
-              event.metaKey &&
-              !event.ctrlKey &&
-              !event.altKey &&
-              !event.shiftKey &&
+              isPlainCommandArrow(event) &&
               !event.isComposing &&
               !composing.current &&
               event.keyCode !== 229 &&
-              ["ArrowLeft", "ArrowRight"].includes(keyboardKey(event)) &&
               isEmptyForShortcuts()
             )
               return true;

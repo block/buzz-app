@@ -1,4 +1,6 @@
 import { hostComposerProvenance } from "./mention-draft";
+import { MessageLoading } from "./MessageLoading";
+import { mediaWorkspace } from "./MediaSheet";
 import { TypingIndicator } from "./TypingIndicator";
 import { workflowLabel } from "../relay/workflow-attribution";
 import { MessageEditScope } from "./MessageEditScope";
@@ -48,10 +50,28 @@ import { parseMediaTimeReply } from "./media-timecode";
 import { VideoReviewReactions } from "./VideoReviewReactions";
 import styles from "./Messages.module.css";
 import { MediaReviewFrame } from "./MediaReviewFrame";
+import {
+  type ComposerOverlayHost,
+  ComposerScopeProvider,
+  type MediaReviewOrigin,
+} from "./composer-overlay";
 import { avatarMedia } from "../../shared/avatar-source";
 import { LinkThreadTabContext } from "../conversation/LinkLabelContext";
 
+/** A sheet over the view the media was opened from, or the fullscreen viewer. */
+export type MediaReviewPlacement =
+  | {
+      kind: "sheet";
+      host: ComposerOverlayHost;
+      /** What the sheet spans: the workspace around the view's pane. */
+      workspace: HTMLElement;
+      rootId: string;
+    }
+  | { kind: "fullscreen" };
+
 type MediaReviewViewerProps = {
+  /** The view a row opened this from, when its page reads media inline. */
+  opening?: MediaReviewOrigin | undefined;
   attachment: Attachment;
   initialAttachments?: readonly Attachment[] | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -69,6 +89,18 @@ type MediaReviewViewerProps = {
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
+  const [placement] = useState<MediaReviewPlacement>(() => {
+    const host = props.opening?.host;
+    // A view no longer on screen keeps the fullscreen viewer.
+    if (!props.opening || !host?.composer.isConnected)
+      return { kind: "fullscreen" };
+    return {
+      kind: "sheet",
+      host,
+      workspace: mediaWorkspace(host),
+      rootId: props.opening.rootId,
+    };
+  });
   const [{ origin, readingAnchor }] = useState(() => {
     const opener =
       props.restoreFocus?.current ??
@@ -102,6 +134,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
     ...props,
     origin,
     readingAnchor,
+    placement,
     attachment: active.attachment,
     initialTime: active.initialTime,
     selectionRequest: active.request,
@@ -112,8 +145,11 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
         request: current.request + 1,
       })),
   };
+  // The review's comment box is its own view's composer, not the page's.
   return (
-    <ResolvedReview {...activeProps} view={view} threadError={threadError} />
+    <ComposerScopeProvider local>
+      <ResolvedReview {...activeProps} view={view} threadError={threadError} />
+    </ComposerScopeProvider>
   );
 }
 
@@ -128,6 +164,7 @@ function firstVisibleMessageId(opener: HTMLElement | null) {
 }
 
 type ActiveReviewProps = MediaReviewViewerProps & {
+  placement: MediaReviewPlacement;
   origin: ReturnType<typeof readReviewOrigin>;
   readingAnchor: string | undefined;
   selectionRequest: number;
@@ -252,6 +289,7 @@ function ReviewShell({
   hasComments = false,
   origin,
   readingAnchor,
+  placement,
   close,
   onOpenLink,
   rootId,
@@ -292,8 +330,12 @@ function ReviewShell({
   const video = useRef<HTMLVideoElement>(null);
   const [commentsChoice, setCommentsOpen] = useState<boolean>();
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  // A sheet reads its comments beside the media, with their composer in the
+  // place of the view's own.
+  const sheet = placement.kind === "sheet";
   const commentsOpen =
-    commentsChoice ?? (loading ? hasComments : replies.length > 0 || !!error);
+    sheet ||
+    (commentsChoice ?? (loading ? hasComments : replies.length > 0 || !!error));
   useEffect(() => {
     if (rootId && !loading)
       setCommentsOpen((choice) => choice ?? replies.length > 0);
@@ -412,6 +454,7 @@ function ReviewShell({
   };
   return (
     <MediaReviewFrame
+      placement={placement}
       title={mediaTitle}
       label={attachment.kind === "video" ? "Video review" : "Image viewer"}
       isVideo={attachment.kind === "video"}
@@ -449,17 +492,19 @@ function ReviewShell({
               />
             </div>
           )}
-          <IconButton
-            size="compact"
-            aria-label={commentsOpen ? "Hide comments" : "Show comments"}
-            aria-pressed={commentsOpen}
-            onClick={(event) => {
-              prepareSidebarMotion(event.detail > 0);
-              setCommentsMotion(event.detail > 0);
-              setCommentsOpen(!commentsOpen);
-            }}
-            icon={<SidebarIcon size={20} />}
-          />
+          {!sheet && (
+            <IconButton
+              size="compact"
+              aria-label={commentsOpen ? "Hide comments" : "Show comments"}
+              aria-pressed={commentsOpen}
+              onClick={(event) => {
+                prepareSidebarMotion(event.detail > 0);
+                setCommentsMotion(event.detail > 0);
+                setCommentsOpen(!commentsOpen);
+              }}
+              icon={<SidebarIcon size={20} />}
+            />
+          )}
         </>
       }
       sidebar={
@@ -545,9 +590,11 @@ function ReviewShell({
                   />
                 </div>
               </MessageEditScope>
+            ) : !error ? (
+              <MessageLoading label="Loading comments…" />
             ) : (
-              <p className={styles.empty} role={error ? "alert" : "status"}>
-                {error ?? "Loading comments…"}
+              <p className={styles.empty} role="alert">
+                {error}
                 {retry && !unavailable && (
                   <Button size="sm" type="button" onClick={retryThread}>
                     Retry

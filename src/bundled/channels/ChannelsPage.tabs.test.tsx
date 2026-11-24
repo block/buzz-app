@@ -307,6 +307,8 @@ async function page(
 }
 
 it("passes only the visible side thread's root to the timeline and clears it when hidden or moved", async () => {
+  // A routed thread opens inline under the default; this is about its tab.
+  setThreadPlacementPreference("side");
   const h = await page("stream", undefined, true);
   await screen.findByRole("tab", { name: "Initiating thread" });
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
@@ -390,6 +392,7 @@ it.each([
 ])(
   "$direction preserves the selected thread after following a $link link to another channel",
   async ({ link, direction }) => {
+    setThreadPlacementPreference("side");
     const host = createNavigationController(createMemoryHistory());
     const h = await page("stream", host.navigation, true);
     if (!h.navigation || !h.root) throw new Error("Thread visit unavailable");

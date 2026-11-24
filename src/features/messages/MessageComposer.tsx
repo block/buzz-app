@@ -23,6 +23,9 @@ import { useConversationPresentation } from "../conversation/ConversationPresent
 import { TypingPresentation } from "../conversation/typing-presentation";
 import { useTypingBroadcast } from "./useTypingBroadcast";
 import { TypingIndicator } from "./TypingIndicator";
+import { useComposerDockRef, useComposerScope } from "./composer-overlay";
+import { LayerAddressContext, layerInView } from "./view-layer";
+import { retireReplyTarget, threadDraftKey } from "./reply-target";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { selectNewestMessage } from "./message-selection";
@@ -645,13 +648,10 @@ function Composer({
   );
   const inputId = useId();
   const forwardDisclosureId = useId();
-  const threadDraftKey = threadRootId
-    ? sourceRootId
-      ? `draft:${channelId}:thread:${sourceRootId}:subthread:${threadRootId}`
-      : `draft:${channelId}:thread:${threadRootId}`
+  const threadKey = threadRootId
+    ? threadDraftKey(channelId, threadRootId, sourceRootId)
     : undefined;
-  const draftKey =
-    submission?.draftKey ?? threadDraftKey ?? `draft:${channelId}`;
+  const draftKey = submission?.draftKey ?? threadKey ?? `draft:${channelId}`;
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);
@@ -1743,6 +1743,10 @@ function Composer({
     { ids: readonly string[]; owner: Element | null } | undefined
   >(undefined);
   const form = useRef<HTMLFormElement>(null);
+  const composerView = useComposerScope();
+  // Rows above draw their readers in this dock, around the form.
+  const dockRef = useComposerDockRef();
+  const layerAddress = useContext(LayerAddressContext);
   const [announcementHost, setAnnouncementHost] = useState<Element | null>(
     null,
   );
@@ -3581,6 +3585,13 @@ function Composer({
       }
       // Every prompt passed, so this message goes out to who was declined.
       oldAgents.decline(declinedImports);
+      // The reader keeps the reply this draft is aimed at beside the draft. A
+      // send that lands once this composer is gone, where its reader cannot
+      // hear of it, still answers that reply.
+      const answered = () => {
+        if (threadKey)
+          retireReplyTarget(session, scope, threadKey, replyParentId);
+      };
       // Destination and content are fixed here; a background send never retargets.
       function publishNow(
         uploaded: readonly UploadedAttachment[],
@@ -3776,6 +3787,7 @@ function Composer({
               return send.publish(recovery);
             },
             onSend: (id) => {
+              answered();
               if (live.current) onSend?.(id);
             },
           },
@@ -3817,6 +3829,7 @@ function Composer({
             // Report a synchronous publication before the new row can render.
             const result = publish(uploaded);
             const sent = typeof result === "string" ? result : await result;
+            if (sent) answered();
             if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
@@ -3921,6 +3934,16 @@ function Composer({
       };
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
+      // A send answers the details read over this composer, as ✕ closes them.
+      // It names the details it was sent under: by now the reader may have
+      // opened another layer, which stays.
+      const details = layerAddress?.open;
+      if (
+        composerView &&
+        details?.messageId &&
+        layerInView(details, channelId, composerView)
+      )
+        layerAddress?.dismiss(details);
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();
@@ -4170,687 +4193,696 @@ function Composer({
           </div>,
           announcementHost,
         )}
-      <form
-        ref={form}
-        className={styles.composer}
-        data-composer-surface=""
-        data-chat-presentation={chatPresentation || undefined}
-        data-file-drag={dragging || undefined}
-        data-editing={!!editing.target || undefined}
-        data-conversation-controls={
-          (active && !editing.target && !!trailingTool) || undefined
-        }
-        data-attachments={
-          (!editing.target && (hasAttachments || attachmentsExiting)) ||
-          undefined
-        }
-        onKeyDown={(event) => {
-          if (
-            editing.target &&
-            event.key === "Escape" &&
-            !event.defaultPrevented &&
-            !event.nativeEvent.isComposing &&
-            event.nativeEvent.keyCode !== 229 &&
-            !completion.composing.current
-          ) {
+      <ComposerDockSlot dockRef={composerView ? dockRef : undefined}>
+        <form
+          ref={form}
+          className={styles.composer}
+          data-composer-surface=""
+          data-message-composer=""
+          data-chat-presentation={chatPresentation || undefined}
+          data-file-drag={dragging || undefined}
+          data-editing={!!editing.target || undefined}
+          data-conversation-controls={
+            (active && !editing.target && !!trailingTool) || undefined
+          }
+          data-attachments={
+            (!editing.target && (hasAttachments || attachmentsExiting)) ||
+            undefined
+          }
+          onKeyDown={(event) => {
+            if (
+              editing.target &&
+              event.key === "Escape" &&
+              !event.defaultPrevented &&
+              !event.nativeEvent.isComposing &&
+              event.nativeEvent.keyCode !== 229 &&
+              !completion.composing.current
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!editing.busy) editing.close();
+            }
+          }}
+          onPasteCapture={(event) => {
+            const files = pastedFiles(event.clipboardData);
+            if (!files.length) return;
             event.preventDefault();
             event.stopPropagation();
-            if (!editing.busy) editing.close();
+            attachFiles(files);
+          }}
+          aria-label={
+            editing.target
+              ? "Edit message"
+              : threadRootId
+                ? "Reply to thread"
+                : `Send a message to ${channelName}`
           }
-        }}
-        onPasteCapture={(event) => {
-          const files = pastedFiles(event.clipboardData);
-          if (!files.length) return;
-          event.preventDefault();
-          event.stopPropagation();
-          attachFiles(files);
-        }}
-        aria-label={
-          editing.target
-            ? "Edit message"
-            : threadRootId
-              ? "Reply to thread"
-              : `Send a message to ${channelName}`
-        }
-        onSubmit={(event) => {
-          event.preventDefault();
-          send();
-        }}
-      >
-        <label className="sr-only" htmlFor={inputId}>
-          {label}
-        </label>
-        {active && extensions?.completions && (
-          <WorkspaceCompletion.Provider
-            value={editing.target ? undefined : workspace}
-          >
-            <AddressedAgentsContext.Provider
-              value={editing.target ? noAgents : addressedAgents}
+          onSubmit={(event) => {
+            event.preventDefault();
+            send();
+          }}
+        >
+          <label className="sr-only" htmlFor={inputId}>
+            {label}
+          </label>
+          {active && extensions?.completions && (
+            <WorkspaceCompletion.Provider
+              value={editing.target ? undefined : workspace}
             >
-              <ComposerCompletions
-                registry={extensions.completions}
-                identityMarks={extensions.identityMarks}
-                editor={completion}
-                input={input}
-                session={session}
-                scope={scope}
-                channelId={channelId}
-                threadRootId={threadRootId}
-                inviteAgents={agentChoices && !editing.target}
-                replace={replaceCompletion}
-                resolved={chips.length ? { ...value, tokens: chips } : value}
-              />
-            </AddressedAgentsContext.Provider>
-          </WorkspaceCompletion.Provider>
-        )}
-        {extensions?.annotators && (
-          // Annotators see exactly what completion providers may observe.
-          <ComposerAnnotators
-            registry={extensions.annotators}
-            input={input}
-            enabled={active && !editingDisabled && !!outbox?.supports(9)}
-            epoch={[
-              scope,
-              channelId,
-              threadRootId ?? "",
-              editing.target?.id ?? "",
-            ].join("\n")}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            threadRootId={threadRootId}
-            inviteAgents={agentChoices && !editing.target}
-          />
-        )}
-        {annotationMenu && (
-          <AnnotationMenu
-            key={`${annotationMenu.revision}:${annotationMenu.mark.start}`}
-            request={annotationMenu}
-            input={input}
-            onClose={closeAnnotationMenu}
-          />
-        )}
-        <BackgroundUploadStatus
-          session={session}
-          focusTarget={input}
-          here={
-            presented ? conversationLink(channelId, threadRootId) : undefined
-          }
-          onOpenLink={onOpenLink}
-        />
-        {dragging && <FileDropOverlay composer={form} />}
-        {attachmentError && (
-          <ToastNotice
-            title={attachmentError.title}
-            description={attachmentError.description}
-            onDismiss={() => setAttachmentError(undefined)}
-          />
-        )}
-        {/* A composer under a covering tab keeps uploading. This notice
-            names no conversation, so it waits until its own is shown. */}
-        {presented && unsupported.length > 0 && (
-          <ToastNotice
-            title={
-              unsupported.length === 1
-                ? "Could not attach file"
-                : `Could not attach ${unsupported.length} files`
-            }
-            description={unsupportedTypes(
-              unsupported.map((item) => item.file.name),
-            )}
-            onDismiss={() => setRefusedTypes([])}
-          />
-        )}
-        <ComposerContext key={editing.target ? "edit" : "reply"}>
-          {editing.target ? (
-            <div className={styles.replyContext}>
-              <PencilSimpleIcon size={18} aria-hidden="true" />
-              <div>Editing message</div>
-              <IconButton
-                type="button"
-                size="sm"
-                aria-label={editing.locked ? "Close edit" : "Cancel edit"}
-                disabled={editing.busy}
-                onClick={editing.close}
-                icon={<XIcon size={16} aria-hidden="true" />}
-              />
-            </div>
-          ) : (
-            replyContext
+              <AddressedAgentsContext.Provider
+                value={editing.target ? noAgents : addressedAgents}
+              >
+                <ComposerCompletions
+                  registry={extensions.completions}
+                  identityMarks={extensions.identityMarks}
+                  editor={completion}
+                  input={input}
+                  session={session}
+                  scope={scope}
+                  channelId={channelId}
+                  threadRootId={threadRootId}
+                  inviteAgents={agentChoices && !editing.target}
+                  replace={replaceCompletion}
+                  resolved={chips.length ? { ...value, tokens: chips } : value}
+                />
+              </AddressedAgentsContext.Provider>
+            </WorkspaceCompletion.Provider>
           )}
-        </ComposerContext>
-        <div className={styles.composerContent}>
-          {!editing.target && value.forward && (
-            <ComposerForward
-              session={host}
-              state={forwarded}
-              scope={scope}
-              onRemove={() => {
-                saveDraft({ ...valueRef.current, forward: null });
-                setError(undefined);
-                input.current?.focus();
-              }}
-            />
-          )}
-          {!editing.target && (
-            <ComposerAttachments
-              media={session.media}
-              renderers={extensions?.attachments}
-              items={attachments.items}
-              gifs={gifs?.map((markdown) => ({
-                markdown,
-                // The alt text names the tile even when its media is unavailable.
-                title: markdown.slice(2, markdown.indexOf("](")) || "GIF",
-                source: draftGif(markdown, session.media)?.source,
-              }))}
-              removeGif={(markdown) => {
-                saveDraft({
-                  ...valueRef.current,
-                  gifs:
-                    valueRef.current.gifs?.filter(
-                      (item) => item !== markdown,
-                    ) ?? [],
-                });
-                input.current?.focus();
-              }}
-              disabled={editingDisabled}
-              onExitComplete={() => setAttachmentsExiting(false)}
-              remove={(id) => {
-                const item = attachments.items.find(
-                  (candidate) => candidate.id === id,
-                );
-                attachments.store.remove(id);
-                if (item?.status === "error" && item.error === error)
-                  setError(undefined);
-                input.current?.focus();
-              }}
-              retry={(id) => {
-                const item = attachments.items.find(
-                  (candidate) => candidate.id === id,
-                );
-                attachments.store.retry(id);
-                if (item?.status === "error" && item.error === error)
-                  setError(undefined);
-              }}
-            />
-          )}
-          <div className={styles.composerInput}>
-            <RichComposerInput
-              isEmptyForShortcuts={isEmptyForShortcuts}
-              ref={input}
-              id={inputId}
-              disabled={editingDisabled}
-              value={draft}
-              draft={editorDraft}
+          {extensions?.annotators && (
+            // Annotators see exactly what completion providers may observe.
+            <ComposerAnnotators
+              registry={extensions.annotators}
+              input={input}
+              enabled={active && !editingDisabled && !!outbox?.supports(9)}
+              epoch={[
+                scope,
+                channelId,
+                threadRootId ?? "",
+                editing.target?.id ?? "",
+              ].join("\n")}
               session={session}
               scope={scope}
               channelId={channelId}
-              extensions={extensions}
-              emoji={emojiCatalog.entries}
-              onSemanticPaste={(data) => {
-                const reference = pastedForward(data);
-                if (reference) {
-                  if (editing.target || submission) {
-                    setError(
-                      "Finish this edit before pasting a forwarded message.",
-                    );
-                    return true;
-                  }
-                  if (valueRef.current.forward) {
-                    setError(
-                      "Only one forwarded message can be attached. Remove it before pasting another.",
-                    );
-                    return true;
-                  }
-                  const { note, ...source } = reference;
-                  if (note && !insert(note)) return true;
-                  saveDraft({ ...valueRef.current, forward: source });
-                  return true;
-                }
-                return false;
-              }}
-              onPasteTooLong={() => setPasteTooLong(true)}
-              aria-describedby={
-                pasteTooLong ? `${inputId}-paste-error` : undefined
-              }
-              onDraftChange={(next) => {
-                // Remounting the editor can replay our own prefill as a change.
-                if (
-                  automaticTag.current !== undefined &&
-                  automaticTag.current === JSON.stringify(next)
-                )
-                  return;
-                setPasteTooLong(false);
-                const textChanged = next.text !== valueRef.current.text;
-                // The default tag's prefill shows without being saved.
-                if (seeding.current) {
-                  saveDraft(next, "prefill");
-                  return;
-                }
-                if (!editing.target) {
-                  // The user's edit settles the seed on screen, as settled
-                  // evidence does: clearing it lasts until the composer is
-                  // shown again, while a newer message of the viewer's, sent
-                  // elsewhere, still seeds.
-                  if (seedSource) seedApplied.current = seedKey(seedSource);
-                  automaticTag.current = undefined;
-                }
-                saveDraft(next, "editor");
-                completion.observe(true);
-                if (textChanged && next.text.trim()) notifyTyping();
-              }}
-              onFormatsChange={setActiveFormats}
-              onEditLink={setLinkEdit}
-              onAnnotationMenu={
-                extensions?.annotators ? setAnnotationMenu : undefined
-              }
-              // Pasted identity links notify admitted recipients under their
-              // current names; edits never add recipients. Send still asks
-              // before adding someone outside the channel.
-              acceptRecipient={(pubkey) =>
-                editing.target
-                  ? null
-                  : pastedMentionRecipient(
-                      session,
-                      channelId,
-                      pubkey,
-                      agentChoices,
-                      mentionRoster,
-                    )
-              }
-              data-single-emoji={largeEmojiDraft || undefined}
-              data-emoji-images-only={
-                (largeEmojiDraft &&
-                  /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
-                undefined
-              }
-              // Choosing this conversation's tab resumes typing here.
-              data-tab-focus=""
-              maxLength={Math.max(
-                0,
-                16000 -
-                  [...(chatCards ?? []), ...(gifs ?? [])].reduce(
-                    (size, card) => size + card.length + 2,
-                    0,
-                  ),
-              )}
-              aria-label={label}
-              placeholder={placeholder ?? label}
-              onFocus={() => {
-                hasFocused.current = true;
-                completion.observe(true);
-              }}
-              onBlur={() => {
-                flushDraft();
-                completion.invalidate();
-              }}
-              onSelect={() => {
-                completion.observe();
-              }}
-              onCompositionStart={() => {
-                completion.composing.current = true;
-                completion.invalidate();
-              }}
-              onCompositionEnd={() => {
-                completion.composing.current = false;
-                completion.observe(true);
-              }}
-              onKeyDown={(event) => {
-                if (
-                  event.nativeEvent.isComposing ||
-                  event.nativeEvent.keyCode === 229 ||
-                  completion.composing.current
-                )
-                  return;
-                if (
-                  event.shiftKey &&
-                  ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
-                ) {
-                  completion.invalidate();
-                  return;
-                }
-                if (completion.keys.current?.(event)) return;
-                if (
-                  event.key === "ArrowUp" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.repeat &&
-                  !event.defaultPrevented &&
-                  isEmptyForShortcuts()
-                ) {
-                  // The default selects the newest message; the preference
-                  // and ⌘↑ edit using the same conversation-scoped lookup.
-                  if (
-                    !event.metaKey &&
-                    !editWithUpArrow &&
-                    selectNewestMessage(editScope?.list.current)
-                  ) {
-                    event.preventDefault();
-                    return;
-                  }
-                  const target = lastEditableMessage(session, editableRows());
-                  if (target) {
-                    event.preventDefault();
-                    startEdit(target);
-                  }
-                  return;
-                }
-                // With ⌘/Ctrl+Enter chosen, plain Enter falls through to the editor's line break.
-                if (
-                  sendWithModEnter &&
-                  matches(
-                    [{ key: "Enter", mod: true }],
-                    event.nativeEvent,
-                    isApplePlatform(navigator.platform),
-                  )
-                ) {
-                  event.preventDefault();
-                  if (!event.repeat) send(event.nativeEvent.isTrusted);
-                  return;
-                }
-                if (
-                  !sendWithModEnter &&
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.altKey &&
-                  !event.ctrlKey &&
-                  !event.metaKey
-                ) {
-                  event.preventDefault();
-                  // Holding Enter must not send after an empty list item exits.
-                  if (event.repeat) return;
-                  if (
-                    activeFormats.includes("bullet_list") ||
-                    activeFormats.includes("ordered_list")
-                  ) {
-                    event.currentTarget.insertLineBreak();
-                    return;
-                  }
-                  send(event.nativeEvent.isTrusted);
-                }
-              }}
+              threadRootId={threadRootId}
+              inviteAgents={agentChoices && !editing.target}
             />
-            {iconPlaceholder && (
-              // Its words are drawn by CSS, like the editor's own placeholder,
-              // so find-in-page and copying skip them.
-              <span
-                className={styles.channelPlaceholder}
-                aria-hidden="true"
-                data-lead="Message"
-                data-name={channelName}
-              >
-                <ChannelIcon className={channelIconClass(ChannelIcon)} />
-              </span>
+          )}
+          {annotationMenu && (
+            <AnnotationMenu
+              key={`${annotationMenu.revision}:${annotationMenu.mark.start}`}
+              request={annotationMenu}
+              input={input}
+              onClose={closeAnnotationMenu}
+            />
+          )}
+          <BackgroundUploadStatus
+            session={session}
+            focusTarget={input}
+            here={
+              presented ? conversationLink(channelId, threadRootId) : undefined
+            }
+            onOpenLink={onOpenLink}
+          />
+          {dragging && <FileDropOverlay composer={form} />}
+          {attachmentError && (
+            <ToastNotice
+              title={attachmentError.title}
+              description={attachmentError.description}
+              onDismiss={() => setAttachmentError(undefined)}
+            />
+          )}
+          {/* A composer under a covering tab keeps uploading. This notice
+            names no conversation, so it waits until its own is shown. */}
+          {presented && unsupported.length > 0 && (
+            <ToastNotice
+              title={
+                unsupported.length === 1
+                  ? "Could not attach file"
+                  : `Could not attach ${unsupported.length} files`
+              }
+              description={unsupportedTypes(
+                unsupported.map((item) => item.file.name),
+              )}
+              onDismiss={() => setRefusedTypes([])}
+            />
+          )}
+          <ComposerContext key={editing.target ? "edit" : "reply"}>
+            {editing.target ? (
+              <div className={styles.replyContext}>
+                <PencilSimpleIcon size={18} aria-hidden="true" />
+                <div>Editing message</div>
+                <IconButton
+                  type="button"
+                  size="sm"
+                  aria-label={editing.locked ? "Close edit" : "Cancel edit"}
+                  disabled={editing.busy}
+                  onClick={editing.close}
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              </div>
+            ) : (
+              replyContext
             )}
+          </ComposerContext>
+          <div className={styles.composerContent}>
+            {!editing.target && value.forward && (
+              <ComposerForward
+                session={host}
+                state={forwarded}
+                scope={scope}
+                onRemove={() => {
+                  saveDraft({ ...valueRef.current, forward: null });
+                  setError(undefined);
+                  input.current?.focus();
+                }}
+              />
+            )}
+            {!editing.target && (
+              <ComposerAttachments
+                media={session.media}
+                renderers={extensions?.attachments}
+                items={attachments.items}
+                gifs={gifs?.map((markdown) => ({
+                  markdown,
+                  // The alt text names the tile even when its media is unavailable.
+                  title: markdown.slice(2, markdown.indexOf("](")) || "GIF",
+                  source: draftGif(markdown, session.media)?.source,
+                }))}
+                removeGif={(markdown) => {
+                  saveDraft({
+                    ...valueRef.current,
+                    gifs:
+                      valueRef.current.gifs?.filter(
+                        (item) => item !== markdown,
+                      ) ?? [],
+                  });
+                  input.current?.focus();
+                }}
+                disabled={editingDisabled}
+                onExitComplete={() => setAttachmentsExiting(false)}
+                remove={(id) => {
+                  const item = attachments.items.find(
+                    (candidate) => candidate.id === id,
+                  );
+                  attachments.store.remove(id);
+                  if (item?.status === "error" && item.error === error)
+                    setError(undefined);
+                  input.current?.focus();
+                }}
+                retry={(id) => {
+                  const item = attachments.items.find(
+                    (candidate) => candidate.id === id,
+                  );
+                  attachments.store.retry(id);
+                  if (item?.status === "error" && item.error === error)
+                    setError(undefined);
+                }}
+              />
+            )}
+            <div className={styles.composerInput}>
+              <RichComposerInput
+                isEmptyForShortcuts={isEmptyForShortcuts}
+                ref={input}
+                id={inputId}
+                disabled={editingDisabled}
+                value={draft}
+                draft={editorDraft}
+                session={session}
+                scope={scope}
+                channelId={channelId}
+                extensions={extensions}
+                emoji={emojiCatalog.entries}
+                onSemanticPaste={(data) => {
+                  const reference = pastedForward(data);
+                  if (reference) {
+                    if (editing.target || submission) {
+                      setError(
+                        "Finish this edit before pasting a forwarded message.",
+                      );
+                      return true;
+                    }
+                    if (valueRef.current.forward) {
+                      setError(
+                        "Only one forwarded message can be attached. Remove it before pasting another.",
+                      );
+                      return true;
+                    }
+                    const { note, ...source } = reference;
+                    if (note && !insert(note)) return true;
+                    saveDraft({ ...valueRef.current, forward: source });
+                    return true;
+                  }
+                  return false;
+                }}
+                onPasteTooLong={() => setPasteTooLong(true)}
+                aria-describedby={
+                  pasteTooLong ? `${inputId}-paste-error` : undefined
+                }
+                onDraftChange={(next) => {
+                  // Remounting the editor can replay our own prefill as a change.
+                  if (
+                    automaticTag.current !== undefined &&
+                    automaticTag.current === JSON.stringify(next)
+                  )
+                    return;
+                  setPasteTooLong(false);
+                  const textChanged = next.text !== valueRef.current.text;
+                  // The default tag's prefill shows without being saved.
+                  if (seeding.current) {
+                    saveDraft(next, "prefill");
+                    return;
+                  }
+                  if (!editing.target) {
+                    // The user's edit settles the seed on screen, as settled
+                    // evidence does: clearing it lasts until the composer is
+                    // shown again, while a newer message of the viewer's, sent
+                    // elsewhere, still seeds.
+                    if (seedSource) seedApplied.current = seedKey(seedSource);
+                    automaticTag.current = undefined;
+                  }
+                  saveDraft(next, "editor");
+                  completion.observe(true);
+                  if (textChanged && next.text.trim()) notifyTyping();
+                }}
+                onFormatsChange={setActiveFormats}
+                onEditLink={setLinkEdit}
+                onAnnotationMenu={
+                  extensions?.annotators ? setAnnotationMenu : undefined
+                }
+                // Pasted identity links notify admitted recipients under their
+                // current names; edits never add recipients. Send still asks
+                // before adding someone outside the channel.
+                acceptRecipient={(pubkey) =>
+                  editing.target
+                    ? null
+                    : pastedMentionRecipient(
+                        session,
+                        channelId,
+                        pubkey,
+                        agentChoices,
+                        mentionRoster,
+                      )
+                }
+                data-single-emoji={largeEmojiDraft || undefined}
+                data-emoji-images-only={
+                  (largeEmojiDraft &&
+                    /^\s*(?::[a-z0-9_-]{1,64}:\s*)+$/i.test(draft)) ||
+                  undefined
+                }
+                // Choosing this conversation's tab resumes typing here.
+                data-tab-focus=""
+                maxLength={Math.max(
+                  0,
+                  16000 -
+                    [...(chatCards ?? []), ...(gifs ?? [])].reduce(
+                      (size, card) => size + card.length + 2,
+                      0,
+                    ),
+                )}
+                aria-label={label}
+                placeholder={placeholder ?? label}
+                onFocus={() => {
+                  hasFocused.current = true;
+                  completion.observe(true);
+                }}
+                onBlur={() => {
+                  flushDraft();
+                  completion.invalidate();
+                }}
+                onSelect={() => {
+                  completion.observe();
+                }}
+                onCompositionStart={() => {
+                  completion.composing.current = true;
+                  completion.invalidate();
+                }}
+                onCompositionEnd={() => {
+                  completion.composing.current = false;
+                  completion.observe(true);
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    event.nativeEvent.isComposing ||
+                    event.nativeEvent.keyCode === 229 ||
+                    completion.composing.current
+                  )
+                    return;
+                  if (
+                    event.shiftKey &&
+                    ["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                      event.key,
+                    )
+                  ) {
+                    completion.invalidate();
+                    return;
+                  }
+                  if (completion.keys.current?.(event)) return;
+                  if (
+                    event.key === "ArrowUp" &&
+                    !event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.repeat &&
+                    !event.defaultPrevented &&
+                    isEmptyForShortcuts()
+                  ) {
+                    // The default selects the newest message; the preference
+                    // and ⌘↑ edit using the same conversation-scoped lookup.
+                    if (
+                      !event.metaKey &&
+                      !editWithUpArrow &&
+                      selectNewestMessage(editScope?.list.current)
+                    ) {
+                      event.preventDefault();
+                      return;
+                    }
+                    const target = lastEditableMessage(session, editableRows());
+                    if (target) {
+                      event.preventDefault();
+                      startEdit(target);
+                    }
+                    return;
+                  }
+                  // With ⌘/Ctrl+Enter chosen, plain Enter falls through to the editor's line break.
+                  if (
+                    sendWithModEnter &&
+                    matches(
+                      [{ key: "Enter", mod: true }],
+                      event.nativeEvent,
+                      isApplePlatform(navigator.platform),
+                    )
+                  ) {
+                    event.preventDefault();
+                    if (!event.repeat) send(event.nativeEvent.isTrusted);
+                    return;
+                  }
+                  if (
+                    !sendWithModEnter &&
+                    event.key === "Enter" &&
+                    !event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.metaKey
+                  ) {
+                    event.preventDefault();
+                    // Holding Enter must not send after an empty list item exits.
+                    if (event.repeat) return;
+                    if (
+                      activeFormats.includes("bullet_list") ||
+                      activeFormats.includes("ordered_list")
+                    ) {
+                      event.currentTarget.insertLineBreak();
+                      return;
+                    }
+                    send(event.nativeEvent.isTrusted);
+                  }
+                }}
+              />
+              {iconPlaceholder && (
+                // Its words are drawn by CSS, like the editor's own placeholder,
+                // so find-in-page and copying skip them.
+                <span
+                  className={styles.channelPlaceholder}
+                  aria-hidden="true"
+                  data-lead="Message"
+                  data-name={channelName}
+                >
+                  <ChannelIcon className={channelIconClass(ChannelIcon)} />
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        {!editing.target &&
-          threadRootId &&
-          mediaTimeSeconds !== undefined &&
-          !hideMediaTimeIndicator && (
-            <div className={styles.mediaComposerAnchor}>
-              <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
+          {!editing.target &&
+            threadRootId &&
+            mediaTimeSeconds !== undefined &&
+            !hideMediaTimeIndicator && (
+              <div className={styles.mediaComposerAnchor}>
+                <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
+                <IconButton
+                  size="compact"
+                  type="button"
+                  onClick={clearMediaTime}
+                  aria-label="Remove video time"
+                  icon={<XIcon size={13} />}
+                />
+              </div>
+            )}
+          {disclosure && (
+            <div id={forwardDisclosureId} className="text-subtle">
+              {disclosure}
+            </div>
+          )}
+          {voice.element}
+          <div className={styles.composerActions} hidden={voice.capturing}>
+            <div className={styles.composerToolRow}>
+              {active && (
+                <ComposerFormattingTools
+                  disabled={editingDisabled}
+                  singleRow={chatPresentation || !!trailingTool}
+                  // Conversation controls (Berd's project) follow the tools.
+                  trailing={!editing.target ? trailingTool : undefined}
+                  activeFormats={activeFormats}
+                  toggleFormat={(format) => input.current?.toggleFormat(format)}
+                  editLink={() => {
+                    const edit = input.current?.editLink();
+                    if (edit) setLinkEdit(edit);
+                  }}
+                >
+                  {extensions ? (
+                    <ComposerTools
+                      registry={extensions.tools}
+                      {...(canAttach && !editing.target
+                        ? { capture: voiceCommands.capture }
+                        : {})}
+                      renderLeading={renderLeadingTools}
+                      session={session}
+                      scope={scope}
+                      channelId={channelId}
+                      threadRootId={threadRootId}
+                      disabled={editingDisabled}
+                      inviteAgents={agentChoices && !editing.target}
+                      recipients={recipients}
+                      audience={audience}
+                      {...toolCommands}
+                    />
+                  ) : (
+                    renderLeadingTools(null)
+                  )}
+                </ComposerFormattingTools>
+              )}
+              {active &&
+                !editing.target &&
+                (!submission || ownSoloConversation) &&
+                !!addressedKeys.length && (
+                  <ComposerModels
+                    profiles={session.profiles}
+                    media={session.media}
+                    pubkeys={addressedKeys}
+                    value={picks}
+                    disabled={editingDisabled || pickReadFailed || !picksLoaded}
+                    resettable={stickyPicks}
+                    explicitOnly={!!submission && stickyPicks}
+                    onChange={changePicks}
+                    focusAfterPickerRemoval={() => input.current?.focus()}
+                    onResolved={(next, error) => {
+                      resolvedPicks.current =
+                        next === undefined
+                          ? undefined
+                          : {
+                              source: picksSnapshot,
+                              pubkeys: addressedKeys,
+                              value: next,
+                              error,
+                            };
+                    }}
+                    onRetryInventory={() => void session.agentChoices.refresh()}
+                    startsThread={startsThread}
+                    place={sessionPlace}
+                  />
+                )}
               <IconButton
-                size="compact"
-                type="button"
-                onClick={clearMediaTime}
-                aria-label="Remove video time"
-                icon={<XIcon size={13} />}
+                variant={
+                  draft.trim() ||
+                  value.forward ||
+                  chatCards?.length ||
+                  gifs?.length ||
+                  attachments.items.length
+                    ? "primary"
+                    : "ghost"
+                }
+                size="toolbar"
+                type="submit"
+                onClick={(event) => {
+                  if (!event.nativeEvent.isTrusted) return;
+                  event.preventDefault();
+                  void send(true);
+                }}
+                style={editing.target ? undefined : accentButtonStyle}
+                aria-label={editing.target ? "Save changes" : "Send message"}
+                aria-describedby={
+                  !editing.target && forwarded.disclosure
+                    ? forwardDisclosureId
+                    : undefined
+                }
+                title={
+                  editing.target
+                    ? "Save changes"
+                    : compacting
+                      ? "Wait for compaction to finish, or interrupt it."
+                      : untagged
+                        ? recipientHint
+                        : "Send message"
+                }
+                focusableWhenDisabled={
+                  untagged || (!editing.target && compacting) || undefined
+                }
+                disabled={
+                  disabled ||
+                  (!editing.target &&
+                    stickyPicks &&
+                    (pickReadPending || pickReadFailed)) ||
+                  untagged ||
+                  (!editing.target && compacting) ||
+                  (!editing.target &&
+                    (!!accepted || conflict || sendPending)) ||
+                  (!!editing.target && (editing.locked || editDisabled)) ||
+                  admitting ||
+                  sending ||
+                  submission?.disabled ||
+                  (!editing.target && forwarded.blocked) ||
+                  (!editing.target && attachments.blocked) ||
+                  (!draft.trim() &&
+                    !value.forward &&
+                    !chatCards?.length &&
+                    ((!!submission && !submission.allowAttachmentOnly) ||
+                      (!attachments.items.length && !gifs?.length)) &&
+                    !(
+                      editing.target &&
+                      requestDeletion &&
+                      session.outbox?.supports(5)
+                    ))
+                }
+                icon={<ArrowUpIcon size={16} />}
               />
             </div>
+          </div>
+          {!editing.target && compacting && (
+            <p className={styles.composerStatus} role="status">
+              Compacting session…
+            </p>
           )}
-        {disclosure && (
-          <div id={forwardDisclosureId} className="text-subtle">
-            {disclosure}
-          </div>
-        )}
-        {voice.element}
-        <div className={styles.composerActions} hidden={voice.capturing}>
-          <div className={styles.composerToolRow}>
-            {active && (
-              <ComposerFormattingTools
-                disabled={editingDisabled}
-                singleRow={chatPresentation || !!trailingTool}
-                // Conversation controls (Berd's project) follow the tools.
-                trailing={!editing.target ? trailingTool : undefined}
-                activeFormats={activeFormats}
-                toggleFormat={(format) => input.current?.toggleFormat(format)}
-                editLink={() => {
-                  const edit = input.current?.editLink();
-                  if (edit) setLinkEdit(edit);
-                }}
+          {pasteTooLong && (
+            <p id={`${inputId}-paste-error`} role="alert">
+              This paste would make your message too long.{" "}
+              {canAttach && !editing.target
+                ? "Shorten it or attach the text as a file."
+                : "Shorten the text and try again."}
+            </p>
+          )}
+          {(error || editing.error) && (
+            <p role="alert">{error ?? editing.error}</p>
+          )}
+          {stickyPicks && (pickReadPending || pickReadFailed) && (
+            <div className={pickReadFailed ? undefined : "sr-only"}>
+              <LoadingRegion
+                pending={pickReadPending}
+                label="Loading saved model and effort…"
+                statusVisibility="screen-reader"
+                feedback={
+                  pickReadFailed ? (
+                    <div>
+                      <p role="alert">
+                        Could not read saved model and effort for this chat on
+                        this device. Retry before sending.
+                      </p>
+                      <Button
+                        type="button"
+                        disabled={pickReadPending}
+                        onClick={() => void refreshPicks()}
+                      >
+                        Retry saved choices
+                      </Button>
+                    </div>
+                  ) : undefined
+                }
               >
-                {extensions ? (
-                  <ComposerTools
-                    registry={extensions.tools}
-                    {...(canAttach && !editing.target
-                      ? { capture: voiceCommands.capture }
-                      : {})}
-                    renderLeading={renderLeadingTools}
-                    session={session}
-                    scope={scope}
-                    channelId={channelId}
-                    threadRootId={threadRootId}
-                    disabled={editingDisabled}
-                    inviteAgents={agentChoices && !editing.target}
-                    recipients={recipients}
-                    audience={audience}
-                    {...toolCommands}
-                  />
-                ) : (
-                  renderLeadingTools(null)
-                )}
-              </ComposerFormattingTools>
-            )}
-            {active &&
-              !editing.target &&
-              (!submission || ownSoloConversation) &&
-              !!addressedKeys.length && (
-                <ComposerModels
-                  profiles={session.profiles}
-                  media={session.media}
-                  pubkeys={addressedKeys}
-                  value={picks}
-                  disabled={editingDisabled || pickReadFailed || !picksLoaded}
-                  resettable={stickyPicks}
-                  explicitOnly={!!submission && stickyPicks}
-                  onChange={changePicks}
-                  focusAfterPickerRemoval={() => input.current?.focus()}
-                  onResolved={(next, error) => {
-                    resolvedPicks.current =
-                      next === undefined
-                        ? undefined
-                        : {
-                            source: picksSnapshot,
-                            pubkeys: addressedKeys,
-                            value: next,
-                            error,
-                          };
-                  }}
-                  onRetryInventory={() => void session.agentChoices.refresh()}
-                  startsThread={startsThread}
-                  place={sessionPlace}
-                />
-              )}
-            <IconButton
-              variant={
-                draft.trim() ||
-                value.forward ||
-                chatCards?.length ||
-                gifs?.length ||
-                attachments.items.length
-                  ? "primary"
-                  : "ghost"
-              }
-              size="toolbar"
-              type="submit"
-              onClick={(event) => {
-                if (!event.nativeEvent.isTrusted) return;
-                event.preventDefault();
-                void send(true);
-              }}
-              style={editing.target ? undefined : accentButtonStyle}
-              aria-label={editing.target ? "Save changes" : "Send message"}
-              aria-describedby={
-                !editing.target && forwarded.disclosure
-                  ? forwardDisclosureId
-                  : undefined
-              }
-              title={
-                editing.target
-                  ? "Save changes"
-                  : compacting
-                    ? "Wait for compaction to finish, or interrupt it."
-                    : untagged
-                      ? recipientHint
-                      : "Send message"
-              }
-              focusableWhenDisabled={
-                untagged || (!editing.target && compacting) || undefined
-              }
-              disabled={
-                disabled ||
-                (!editing.target &&
-                  stickyPicks &&
-                  (pickReadPending || pickReadFailed)) ||
-                untagged ||
-                (!editing.target && compacting) ||
-                (!editing.target && (!!accepted || conflict || sendPending)) ||
-                (!!editing.target && (editing.locked || editDisabled)) ||
-                admitting ||
-                sending ||
-                submission?.disabled ||
-                (!editing.target && forwarded.blocked) ||
-                (!editing.target && attachments.blocked) ||
-                (!draft.trim() &&
-                  !value.forward &&
-                  !chatCards?.length &&
-                  ((!!submission && !submission.allowAttachmentOnly) ||
-                    (!attachments.items.length && !gifs?.length)) &&
-                  !(
-                    editing.target &&
-                    requestDeletion &&
-                    session.outbox?.supports(5)
-                  ))
-              }
-              icon={<ArrowUpIcon size={16} />}
-            />
-          </div>
-        </div>
-        {!editing.target && compacting && (
-          <p className={styles.composerStatus} role="status">
-            Compacting session…
-          </p>
-        )}
-        {pasteTooLong && (
-          <p id={`${inputId}-paste-error`} role="alert">
-            This paste would make your message too long.{" "}
-            {canAttach && !editing.target
-              ? "Shorten it or attach the text as a file."
-              : "Shorten the text and try again."}
-          </p>
-        )}
-        {(error || editing.error) && (
-          <p role="alert">{error ?? editing.error}</p>
-        )}
-        {stickyPicks && (pickReadPending || pickReadFailed) && (
-          <div className={pickReadFailed ? undefined : "sr-only"}>
-            <LoadingRegion
-              pending={pickReadPending}
-              label="Loading saved model and effort…"
-              statusVisibility="screen-reader"
-              feedback={
-                pickReadFailed ? (
-                  <div>
-                    <p role="alert">
-                      Could not read saved model and effort for this chat on
-                      this device. Retry before sending.
-                    </p>
-                    <Button
-                      type="button"
-                      disabled={pickReadPending}
-                      onClick={() => void refreshPicks()}
-                    >
-                      Retry saved choices
-                    </Button>
-                  </div>
-                ) : undefined
-              }
-            >
-              {null}
-            </LoadingRegion>
-          </div>
-        )}
-        {pickStorageFailed && (
-          <p role="alert">
-            Could not save model and effort for this chat on this device. The
-            current choices remain until this composer closes.
-          </p>
-        )}
-        {!editing.target &&
-          !submission &&
-          (accepted || conflict || storageFailed) && (
-            <div>
-              <p role="alert">
-                {accepted
-                  ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
-                  : storageFailed
-                    ? "Could not save this draft on this device. Your edits are kept here."
-                    : "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."}
-              </p>
-              {accepted ? (
-                <Button type="button" onClick={() => finishDraft(accepted)}>
-                  Retry draft cleanup
-                </Button>
-              ) : conflict ? (
-                <>
-                  <Button type="button" onClick={() => resolveDraft(false)}>
-                    Load saved draft
-                  </Button>
-                  <Button type="button" onClick={() => resolveDraft(true)}>
-                    Keep my draft
-                  </Button>
-                </>
-              ) : (
-                <Button type="button" onClick={() => persist(valueRef.current)}>
-                  Retry draft save
-                </Button>
-              )}
+                {null}
+              </LoadingRegion>
             </div>
           )}
-        {editing.retryable && (
-          <>
-            <p role="status">Your edit is still in the outbox.</p>
+          {pickStorageFailed && (
+            <p role="alert">
+              Could not save model and effort for this chat on this device. The
+              current choices remain until this composer closes.
+            </p>
+          )}
+          {!editing.target &&
+            !submission &&
+            (accepted || conflict || storageFailed) && (
+              <div>
+                <p role="alert">
+                  {accepted
+                    ? "Message accepted. Could not update the saved draft. Retry cleanup before sending again."
+                    : storageFailed
+                      ? "Could not save this draft on this device. Your edits are kept here."
+                      : "This draft changed elsewhere. Your edits are kept here; choose which draft to keep."}
+                </p>
+                {accepted ? (
+                  <Button type="button" onClick={() => finishDraft(accepted)}>
+                    Retry draft cleanup
+                  </Button>
+                ) : conflict ? (
+                  <>
+                    <Button type="button" onClick={() => resolveDraft(false)}>
+                      Load saved draft
+                    </Button>
+                    <Button type="button" onClick={() => resolveDraft(true)}>
+                      Keep my draft
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={() => persist(valueRef.current)}
+                  >
+                    Retry draft save
+                  </Button>
+                )}
+              </div>
+            )}
+          {editing.retryable && (
+            <>
+              <p role="status">Your edit is still in the outbox.</p>
+              <Button
+                type="button"
+                disabled={editDisabled}
+                onClick={editing.retry}
+              >
+                Retry edit
+              </Button>
+            </>
+          )}
+          {(error || editing.error) && emojiCatalog.status === "error" && (
             <Button
               type="button"
-              disabled={editDisabled}
-              onClick={editing.retry}
+              disabled={editingDisabled}
+              onClick={() => {
+                void session.emoji.refresh().then(() => {
+                  if (
+                    input.current?.isConnected &&
+                    session.emoji.snapshot().status === "ready"
+                  ) {
+                    setError(undefined);
+                    editing.clearError();
+                  }
+                });
+              }}
             >
-              Retry edit
+              Retry message preparation
             </Button>
-          </>
-        )}
-        {(error || editing.error) && emojiCatalog.status === "error" && (
-          <Button
-            type="button"
-            disabled={editingDisabled}
-            onClick={() => {
-              void session.emoji.refresh().then(() => {
-                if (
-                  input.current?.isConnected &&
-                  session.emoji.snapshot().status === "ready"
-                ) {
-                  setError(undefined);
-                  editing.clearError();
-                }
-              });
-            }}
-          >
-            Retry message preparation
-          </Button>
-        )}
-      </form>
+          )}
+        </form>
+      </ComposerDockSlot>
       {active && linkEdit && (
         <ComposerLinkDialog
           edit={linkEdit}
@@ -5019,5 +5051,23 @@ function RecipientAvatars({
         );
       })}
     </section>
+  );
+}
+
+/** In a view, the composer sits in a dock that sheets opened from its rows
+ * are drawn inside, around it; elsewhere it stands alone. */
+function ComposerDockSlot({
+  dockRef,
+  children,
+}: {
+  dockRef: ((element: HTMLElement | null) => void) | undefined;
+  children: ReactNode;
+}) {
+  return dockRef ? (
+    <div ref={dockRef} className={styles.composerDock} data-composer-dock="">
+      {children}
+    </div>
+  ) : (
+    children
   );
 }

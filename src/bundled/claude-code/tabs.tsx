@@ -1208,7 +1208,7 @@ export function createTabs({
       (listener) => runtime.subscribe(listener),
       () => runtime.sessions(agent.key),
     );
-    const conversations = runtime.conversations(agent.key);
+    const conversations = runtime.ownerConversations(agent.key);
     const busy = new Map(
       sessions.map((session) => [session.key, session.busy]),
     );

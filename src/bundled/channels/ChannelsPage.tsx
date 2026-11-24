@@ -47,7 +47,7 @@ import {
   setReplyTarget,
   threadDraftKey,
 } from "../../features/messages/reply-target";
-import { type InlineHost, placeIn } from "./placement";
+import { composesIn, type InlineHost, placeIn } from "./placement";
 import type { Seen } from "../../features/seen/service";
 import {
   type ConversationTab,
@@ -842,12 +842,7 @@ function ChannelWorkspace({
     currentId,
     current?.channelType === "solo",
   );
-  const composes =
-    !!current &&
-    !current.archived &&
-    current.viewerRole !== "guest" &&
-    (!current.readOnly || current.cached) &&
-    !readingOnly;
+  const composes = composesIn(current, readingOnly);
   const inlineRoot =
     addressed?.inline &&
     addressed.channelId === currentId &&

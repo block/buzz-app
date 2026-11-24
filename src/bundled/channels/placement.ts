@@ -1,5 +1,6 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import type { Panel } from "../../features/panels/service";
+import type { ChannelSummary } from "../../features/relay/contracts";
 
 /** What the viewer opened from a view: a thread, a panel (a profile, a pull
  * request, a diff, a plugin's link panel), media, or a link to a Solo chat. */
@@ -37,6 +38,19 @@ export function placeOpening(
   if (opening.kind === "panel" && opening.panel.inline === false) return "tab";
   return "inline";
 }
+
+/** Whether `channel` shows a composer box, which an inline thread takes the
+ * place of: not archived, not a guest's, writable unless only saved, on a
+ * connection that can write. */
+export const composesIn = (
+  channel: ChannelSummary | undefined,
+  readingOnly: boolean,
+) =>
+  !!channel &&
+  !channel.archived &&
+  channel.viewerRole !== "guest" &&
+  (!channel.readOnly || !!channel.cached) &&
+  !readingOnly;
 
 /** What the page on screen can hold inline, read when something is opened. */
 export type InlineHost = Readonly<{

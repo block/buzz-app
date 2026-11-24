@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -13,6 +14,8 @@ import { ChannelMembersDialog } from "../channels/ChannelMembersDialog";
 import { UnreadOptions } from "../channels/UnreadBadge";
 import { diagnosticsAvailable } from "../../features/developer/mode";
 import { ChannelBody } from "../channels/ChannelBody";
+import { InlineThreadSheet } from "../channels/InlineThreadSheet";
+import { composesIn, placeOpening } from "../channels/placement";
 import {
   historyPanel,
   useConversationTabs,
@@ -34,6 +37,17 @@ import { LinkThreadTabContext } from "../../features/conversation/LinkLabelConte
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
+import { useComposerWrites } from "../../features/messages/composer-writes";
+import { LayerReader } from "../../features/messages/LayerReader";
+import {
+  setReplyTarget,
+  threadDraftKey,
+} from "../../features/messages/reply-target";
+import {
+  type LayerAddress,
+  LayerAddressContext,
+  type OpenLayer,
+} from "../../features/messages/view-layer";
 import { MessageManagementStatus } from "../../features/messages/MessageManagement";
 import type { Navigation } from "../../features/navigation/controller";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -58,11 +72,14 @@ import type { RelaySession } from "../../features/relay/session";
 import { GearIcon, SidebarRightIcon } from "../../shared/design-system/icons";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  type BestieRoute,
   bestieBaseTarget,
   bestieRoute,
   bestieThreadTarget,
   bestieDetailRoute,
   bestieDetailTarget,
+  bestieInlineRoute,
+  bestieInlineTarget,
 } from "./routes";
 import { FirstAgentWelcome, useFirstAgentWelcome } from "./FirstAgentWelcome";
 import styles from "./PinnedBestie.module.css";
@@ -109,6 +126,20 @@ export function BestieConversation({
   };
   const [sent, setSent] = useState<string>();
   const [composerFocus, focusComposer] = useState(0);
+  // The open layer (details) belongs to this visit and is not addressed: a
+  // new visit closes it.
+  const [layer, setLayer] = useState<OpenLayer>();
+  const layerAddress = useMemo<LayerAddress>(
+    () => ({
+      open: layer,
+      show: setLayer,
+      dismiss: (closed) =>
+        setLayer((open) => (open === closed ? undefined : open)),
+      // Panels open as tabs here.
+      renderPanel: () => undefined,
+    }),
+    [layer],
+  );
   const trigger = useRef<HTMLElement | null>(null);
   const main = useRef<HTMLElement>(null);
   const dismissedTo = useRef<{
@@ -140,7 +171,11 @@ export function BestieConversation({
     navigation?.target.kind === "page"
       ? bestieDetailRoute(navigation.target.route?.params)
       : undefined;
-  const addressed = routed ?? detail;
+  const inline =
+    navigation?.target.kind === "page"
+      ? bestieInlineRoute(navigation.target.route?.params)
+      : undefined;
+  const addressed = routed ?? detail ?? inline;
   const ownsCurrentVisit = useCallback(
     () =>
       !navigation ||
@@ -166,7 +201,8 @@ export function BestieConversation({
         return false;
       const route =
         bestieRoute(target.route?.params) ??
-        bestieDetailRoute(target.route?.params);
+        bestieDetailRoute(target.route?.params) ??
+        bestieInlineRoute(target.route?.params);
       return !!route && route.channelId !== channel.id;
     }, base);
   }, [addressed, channel.id, navigation, navigator, ownsCurrentVisit]);
@@ -326,6 +362,7 @@ export function BestieConversation({
     )
       return;
     appliedVisit.current = navigation.entryId;
+    setLayer(undefined);
     state.enterVisit(
       `${navigation.entryId}:${routed ? "thread" : detail ? "detail" : "channel"}`,
       routed && {
@@ -357,12 +394,49 @@ export function BestieConversation({
     host.panels,
     secondary.open,
   ]);
+  const { readingOnly } = useComposerWrites(session, channel.id, false);
+  const composes = composesIn(channel, readingOnly);
+  const hasThreadTab = (rootId: string) =>
+    state.tabs.some(
+      (tab) =>
+        tab.kind === "thread" &&
+        tab.channelId === channel.id &&
+        rootOfTab(tab) === rootId,
+    );
   const openThread = (messageId: string, rootId: string, intent?: "reply") => {
     if (!ownsCurrentVisit()) return;
     trigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+    // Inline opens the thread over the composer, unless it already has a
+    // tab, which is focused instead: never both.
+    if (
+      placeOpening(
+        { kind: "thread" },
+        { hasTab: hasThreadTab(rootId), canHold: composes },
+      ) === "inline"
+    ) {
+      // Reply on a row answers its thread, so a reply the thread's draft was
+      // aimed at before is dropped, as a tab's reply request drops it.
+      if (intent === "reply")
+        setReplyTarget(
+          session,
+          scope,
+          threadDraftKey(channel.id, rootId),
+          undefined,
+        );
+      if (navigation?.target.kind === "page" && inline?.inline !== rootId) {
+        state.leaveVisit();
+        void navigator.open(
+          bestieInlineTarget(bestieBaseTarget(navigation.target), {
+            channelId: channel.id,
+            inline: rootId,
+          }),
+        );
+      }
+      return;
+    }
     state.leaveVisit();
     state.openThreadTab(channel.id, messageId, rootId, intent);
     if (navigation?.target.kind === "page")
@@ -373,6 +447,24 @@ export function BestieConversation({
           threadRootId: rootId,
         }),
       );
+  };
+  // A thread is never inline and in a tab at once: its tab wins.
+  const inlineThread =
+    inline?.channelId === channel.id && composes && !hasThreadTab(inline.inline)
+      ? inline.inline
+      : undefined;
+  /** ✕ or Escape on the inline thread, or Move to side panel: its visits
+   * retire and `fallback` takes their place. */
+  const dismissInline = (rootId: string, fallback?: BestieRoute) => {
+    if (navigation?.target.kind !== "page" || !ownsCurrentVisit()) return;
+    const base = bestieBaseTarget(navigation.target);
+    navigator.dismiss(
+      (target) =>
+        target.kind === "page" &&
+        targetKey(bestieBaseTarget(target)) === targetKey(base) &&
+        bestieInlineRoute(target.route?.params)?.inline === rootId,
+      fallback ? bestieThreadTarget(base, fallback) : base,
+    );
   };
   const media = useMediaReview();
   const split = usePanelSplit(
@@ -480,7 +572,7 @@ export function BestieConversation({
       }
     />
   );
-  return (
+  const conversation = (
     <ForwardMessageProvider
       session={session}
       scope={scope}
@@ -622,6 +714,32 @@ export function BestieConversation({
                                 focusRequest={composerFocus}
                                 onSend={setSent}
                               />
+                              {inlineThread && (
+                                <InlineThreadSheet
+                                  key={inlineThread}
+                                  session={session}
+                                  channel={channel}
+                                  rootId={inlineThread}
+                                  tall={layer?.rootId === inlineThread}
+                                  close={() => dismissInline(inlineThread)}
+                                  moveToTab={() => {
+                                    state.leaveVisit();
+                                    state.openThreadTab(
+                                      channel.id,
+                                      inlineThread,
+                                      inlineThread,
+                                      "focus",
+                                      "side",
+                                    );
+                                    dismissInline(inlineThread, {
+                                      channelId: channel.id,
+                                      messageId: inlineThread,
+                                      threadRootId: inlineThread,
+                                    });
+                                  }}
+                                />
+                              )}
+                              <LayerReader channelId={channel.id} />
                             </section>
                           </ConversationPresentation>
                         ),
@@ -682,5 +800,10 @@ export function BestieConversation({
         </ConversationChannel>
       </LinkThreadTabContext>
     </ForwardMessageProvider>
+  );
+  return (
+    <LayerAddressContext value={layerAddress}>
+      {conversation}
+    </LayerAddressContext>
   );
 }

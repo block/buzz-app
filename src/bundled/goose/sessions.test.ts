@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn as spawnChild } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -2027,7 +2027,7 @@ describe("goose-root", () => {
       encoding: "utf8",
     }).split("\n")[0] as string;
 
-  it("shares the owner's data and state across restarts, even before goose made them", () => {
+  it("shares the owner's data and state across restarts, even before goose made them", async () => {
     const base = mkdtempSync(join(tmpdir(), "buzz-goose-root-"));
     const owner = join(base, "owner");
     mkdirSync(join(owner, "config"), { recursive: true });
@@ -2040,6 +2040,34 @@ describe("goose-root", () => {
       "saved",
     );
     expect(lstatSync(join(root, "state")).isSymbolicLink()).toBe(true);
+
+    // Concurrent refreshes leave every link in place and pointing at the owner.
+    const links = () =>
+      ["data", "state", "config/config.yaml"].map((name) =>
+        lstatSync(join(root, name)).isSymbolicLink(),
+      );
+    const parallel = Array.from(
+      { length: 6 },
+      () =>
+        new Promise<void>((resolve, reject) => {
+          const child = spawnChild(
+            "/bin/sh",
+            ["-c", script, "buzz-goose-root", "agent-a"],
+            {
+              env: { ...globalThis.process.env, ...env },
+            },
+          );
+          child.on("exit", (code) =>
+            code === 0 ? resolve() : reject(new Error(`exit ${code}`)),
+          );
+        }),
+    );
+    const seen: boolean[][] = [];
+    const watching = setInterval(() => seen.push(links()), 1);
+    await Promise.all(parallel);
+    clearInterval(watching);
+    expect(seen.flat().every(Boolean)).toBe(true);
+    expect(links()).toEqual([true, true, true]);
 
     // A root an earlier start left with its own directory links it again.
     rmSync(join(root, "data"));

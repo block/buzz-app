@@ -562,30 +562,3 @@ export function missingToolPolicyDenial(
     `${name} is disabled because this agent's live Tools setting is unavailable.`,
   );
 }
-
-/** Goose's actual developer tools. Every real name goes through the same
- * capability policy as the other harnesses; no assumed aggregate editor. */
-const GOOSE_DEVELOPER_TOOLS = ["shell", "write", "edit", "tree", "read_image"];
-
-/** Undefined preserves Goose's unrestricted launch. Null expressly enables
- * no platform extension: Goose treats an empty `available_tools` list as all
- * tools, so a role allowing none must omit the developer extension instead. */
-export function goosePlatform(config: ToolConfig | ToolPolicy | unknown):
-  | Readonly<{
-      type: "platform";
-      name: "developer";
-      available_tools: readonly string[];
-    }>
-  | null
-  | undefined {
-  if (toolPolicy(config).preset === "coder") return;
-  const available = GOOSE_DEVELOPER_TOOLS.filter((name) =>
-    nativeToolAllowed(name, config),
-  );
-  if (!available.length) return null;
-  return {
-    type: "platform",
-    name: "developer",
-    available_tools: available,
-  };
-}

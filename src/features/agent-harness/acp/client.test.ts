@@ -429,15 +429,21 @@ describe("a process that decides tool permissions", () => {
   const PERMISSION_OPTIONS = ["allow_always", "allow_once", "reject_once"].map(
     (kind) => ({ optionId: kind, name: kind, kind }),
   );
-  async function gated() {
-    const harness = fakeHarness();
+  async function gated(load?: string) {
+    const harness = fakeHarness({
+      capabilities: { mcpCapabilities: { http: true }, loadSession: true },
+    });
     let config: unknown = { toolPreset: "coding" };
     const acp = await start(
       harness,
       { permits: (name) => nativeToolAllowed(name, config) },
       { ...HOOKS, askingMode: "approve" },
     );
-    const session = await acp.open({ cwd: "/work", systemPrompt: "" });
+    const session = await acp.open({
+      cwd: "/work",
+      systemPrompt: "",
+      ...(load ? { load } : {}),
+    });
     const harnessSays = (message: Record<string, unknown>) =>
       harness.started[0]?.options.onStdout?.(
         `${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`,
@@ -490,6 +496,17 @@ describe("a process that decides tool permissions", () => {
     expect(harness.sent("session/set_mode")).toMatchObject([
       { params: { sessionId: session.id, modeId: "approve" } },
     ]);
+  });
+
+  it("decides a resumed session's calls by the current role, tightened or loosened", async () => {
+    const { harness, ask, save } = await gated("saved-session");
+    expect(harness.sent("session/set_mode")).toMatchObject([
+      { params: { sessionId: "saved-session", modeId: "approve" } },
+    ]);
+    save({ toolPreset: "reviewer" });
+    expect(await ask("developer__shell")).toBe("reject_once");
+    save({ toolPreset: "coder" });
+    expect(await ask("developer__shell")).toBe("allow_once");
   });
 
   it("decides the next call by the policy saved after the session opened", async () => {

@@ -142,12 +142,16 @@ import {
   AgentSessions,
   localSessions,
 } from "./sessions";
-import { ownerAllows, prepareRoot, UNENFORCEABLE } from "./permissions";
+import {
+  type GooseRoot,
+  ownerAllows,
+  prepareRoot,
+  UNENFORCEABLE,
+} from "./permissions";
 
 /** How often messages paused for an unenforceable role check again. */
 const PAUSE_RETRY_MS = 60_000;
 import {
-  goosePlatform,
   nativeToolAllowed,
   pickToolConfig,
   toolPolicyKey,
@@ -448,15 +452,29 @@ export class GooseRuntime {
     return this.agents.get(agent)?.paused?.reason;
   }
 
+  /** Each agent's latest root preparation, which the next one waits for. */
+  private readonly rooting = new Map<
+    AgentKey,
+    Promise<GooseRoot | undefined>
+  >();
+
   /** An agent's tool access for its goose: its own root, and every tool
    * call decided by the owner's saved permissions and its current role. */
   private access(agent: AgentKey, current: () => Config): GooseAccess {
     return {
-      root: () =>
-        prepareRoot(this.desktop.spawn, agent).catch((error: unknown) => {
-          console.warn("goose's root couldn't be prepared", error);
-          return undefined;
-        }),
+      root: () => {
+        // One preparation at a time per agent, so concurrent starts never
+        // refresh the links a running goose is using.
+        const prepared = (this.rooting.get(agent) ?? Promise.resolve())
+          .catch(() => undefined)
+          .then(() => prepareRoot(this.desktop.spawn, agent))
+          .catch((error: unknown) => {
+            console.warn("goose's root couldn't be prepared", error);
+            return undefined;
+          });
+        this.rooting.set(agent, prepared);
+        return prepared;
+      },
       restricted: () => toolPolicyKey(current()) !== "",
       permits: async (name, root) =>
         nativeToolAllowed(name, current()) &&
@@ -1509,7 +1527,6 @@ export class GooseRuntime {
           return {
             cwd: await absolute(desktop.resolveDirectory, launched.workspace),
             systemPrompt,
-            ...(launched.platform && { platform: launched.platform }),
           };
         },
         tools: entry.tools,
@@ -2018,12 +2035,8 @@ export class GooseRuntime {
     const cwd = assigned
       ? await existingFolder(resolveDirectory, assigned)
       : workspace;
-    const platform = goosePlatform(entry.config);
     return {
       workspace: cwd,
-      ...(platform !== undefined
-        ? { platform: platform ? [platform] : [] }
-        : {}),
       systemPrompt: systemPrompt({
         scope,
         cwd,

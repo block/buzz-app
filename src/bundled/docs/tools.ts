@@ -64,6 +64,7 @@ export function docTools(
       );
     return value;
   };
+  const READS = new Set(["doc_help", "doc_get", "doc_history"]);
   function tool(
     name: string,
     description: string,
@@ -74,6 +75,9 @@ export function docTools(
     return {
       name,
       description,
+      // Reading docs is a read; creating, editing and deleting them changes
+      // deliverables, which read roles can't.
+      effect: READS.has(name) ? "read" : "deliverable",
       inputSchema: {
         type: "object",
         properties,

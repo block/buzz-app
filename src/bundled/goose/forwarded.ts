@@ -11,7 +11,6 @@ import {
 } from "../../features/agents/gateway/forwarding";
 import { STOP_TIMEOUT_MS } from "../../features/agent-harness/acp/process";
 import type { AcpSession } from "../../features/agent-harness/acp/session";
-import type { PlatformTools } from "../../features/agent-harness/acp/types";
 import { forwardChildren } from "./forward-children";
 import type {
   ActivityReceipt,
@@ -41,9 +40,7 @@ export type ForwardedTurn = Readonly<{
     env: Readonly<Record<string, string>>,
     onProcess: (goose: GooseProcess) => void,
   ): Promise<GooseProcess>;
-  launch(): Promise<
-    Readonly<{ cwd: string; systemPrompt: string; platform?: PlatformTools }>
-  >;
+  launch(): Promise<Readonly<{ cwd: string; systemPrompt: string }>>;
   tools: ToolServer;
   /** The resolved provider, even when ACP inherits the configured choice. */
   provider: GatewayProvider;
@@ -121,15 +118,11 @@ export async function forwardedTurn(
     const goose = await abortable(starting, halt.signal).finally(() =>
       halt.signal.removeEventListener("abort", kill),
     );
-    const { cwd, systemPrompt, platform } = await abortable(
-      turn.launch(),
-      halt.signal,
-    );
+    const { cwd, systemPrompt } = await abortable(turn.launch(), halt.signal);
     session = await abortable(
       goose.open({
         cwd,
         systemPrompt,
-        ...(platform && { platform }),
         tools: turn.tools,
         choice: turn.choice,
         ...(turn.load === undefined

@@ -211,9 +211,10 @@ if that desktop app is up and running.
   on or off. Saving applies to the agent's next tool call, even in a running
   turn; hidden Buzz tools are also refused when called directly, and native
   subagents inherit the role. Read roles get each harness's own read tools:
-  Claude Code, Codex and Pi can read and search files, while Goose can only list
+  Claude Code, Codex and Pi can read and search files, while Goose's read tools only list
   folders (`tree`) and view images (`read_image`), so a Goose Reviewer can't open
-  text files or diffs. A role without Shell can't run Attention command watches. Goose agents also obey the owner's saved Goose
+  text files or diffs. Goose sessions list every developer tool and Buzz refuses
+  the ones the current role disallows, so a resumed session follows role changes. A role without Shell can't run Attention command watches. Goose agents also obey the owner's saved Goose
   denials and approval requirements, but a saved "always allow" never overrides
   the role; where Buzz can't enforce that, a Goose agent with a restricted role
   stops its running turn and holds new messages, saying so under its name,

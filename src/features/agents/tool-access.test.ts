@@ -4,7 +4,6 @@ import {
   buzzToolAllowed,
   isCodexBuzzTool,
   classifiedBuzzTool,
-  goosePlatform,
   hookedToolName,
   missingToolPolicyDenial,
   nativeCapability,
@@ -164,25 +163,6 @@ it("fails closed when a running agent's live policy is unavailable", () => {
       "bash is disabled because this agent's live Tools setting is unavailable.",
   });
   expect(missingToolPolicyDenial("pi", "SessionStart", "")).toBeUndefined();
-});
-
-it("maps Goose's actual tools and never uses an empty allow-all tool list", () => {
-  expect(goosePlatform(CODER)).toBeUndefined();
-  expect(goosePlatform(REVIEWER)).toEqual({
-    type: "platform",
-    name: "developer",
-    available_tools: ["tree", "read_image"],
-  });
-  expect(
-    goosePlatform({ toolPreset: "custom", toolAllow: "buzz:message" }),
-  ).toBeNull();
-  expect(
-    goosePlatform({ toolPreset: "custom", toolAllow: "native:shell" }),
-  ).toEqual({
-    type: "platform",
-    name: "developer",
-    available_tools: ["shell"],
-  });
 });
 
 it("covers Pi 1.5's concrete CodingTools names", () => {

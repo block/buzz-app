@@ -4606,3 +4606,9 @@ html[data-keyboard-navigation]
   display: flex;
   margin-top: var(--space-1);
 }
+
+/* An opening keeps its rows unpainted until they take the reader's place,
+   so measuring and scroll corrections never show as the history jumping. */
+.feed[data-positioning] > * {
+  opacity: 0;
+}

@@ -77,6 +77,7 @@ export function ActivityFeed({
   focusFallback,
   isOpen,
   onOpen,
+  unreadFirst = false,
 }: {
   session: RelaySession;
   scope: NavigationScope;
@@ -90,6 +91,8 @@ export function ActivityFeed({
   isOpen?: (destination: FeedDestination) => boolean;
   /** Before a row opens its conversation. */
   onOpen?: () => void;
+  /** Unread conversations lead, each part newest first. */
+  unreadFirst?: boolean;
 }) {
   const list = useChannelList(session.channels);
   const muted = useActivityMutes(session);
@@ -150,6 +153,12 @@ export function ActivityFeed({
     view === "mentions" ? new Map() : own,
     (mine) => !unreadOnly && (view === "all" || !!mine.rootId),
   );
+  // Only someone else's message makes a row unread; yours and reactions never do.
+  const unreadIds = new Set(
+    conversationRows.flatMap((row) =>
+      row.kind === "conversation" && hasUnread(row.item) ? [row.item.id] : [],
+    ),
+  );
   const rows = [
     ...conversationRows,
     ...(view === "all" && !unreadOnly
@@ -171,7 +180,14 @@ export function ActivityFeed({
       ...row,
       id: row.kind === "own" ? row.own.id : row.item.id,
     }))
-    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id))
+    .sort(
+      (a, b) =>
+        (unreadFirst
+          ? Number(unreadIds.has(b.id)) - Number(unreadIds.has(a.id))
+          : 0) ||
+        b.createdAt - a.createdAt ||
+        a.id.localeCompare(b.id),
+    )
     .slice(0, maxRows);
   const profileKey = withMentionedIds(
     [

@@ -27,6 +27,8 @@ export function MessageListRow({
 >) {
   return (
     <NavigationItem
+      // Two lines everywhere, sidebar rows included.
+      multiline
       {...props}
       icon={<span className={styles.rowAvatar}>{avatar}</span>}
       label={

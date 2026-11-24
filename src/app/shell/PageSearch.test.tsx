@@ -865,12 +865,21 @@ it("finds a page by typed words in any order and underlines each", async () => {
       pages={[
         page("test/drafts", "Drafts & sent"),
         page("test/notes", "Shared notes"),
+        page("test/launch", "Team launch planning notes"),
       ]}
       onSelect={select}
     />,
   );
   await user.click(screen.getByRole("button", { name: "Search Buzz" }));
   const input = await screen.findByRole("combobox", { name: "Search Buzz" });
+  // Initials and a word in another order match only as words apart.
+  await user.type(input, "notes tlp");
+  const apart = screen.getByRole("option");
+  expect(apart).toHaveTextContent("Team launch planning notes");
+  expect(
+    [...apart.querySelectorAll("mark")].map((mark) => mark.textContent),
+  ).toEqual(["T", "l", "p", "notes"]);
+  await user.clear(input);
   await user.type(input, "sent dra");
   const row = screen.getByRole("option");
   expect(row).toHaveTextContent("Drafts & sent");

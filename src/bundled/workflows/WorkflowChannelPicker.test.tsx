@@ -347,6 +347,7 @@ it("finds a channel by its words in any order, after whole-text matches", async 
         { id: "1", name: "buzz-community" },
         { id: "2", name: "community buzz chat" },
         { id: "3", name: "community" },
+        { id: "4", name: "team-launch-planning-notes" },
       ]}
       profiles={profileQueries()}
       onSelect={onSelect}
@@ -357,6 +358,12 @@ it("finds a channel by its words in any order, after whole-text matches", async 
   expect(
     (await screen.findAllByRole("option")).map((option) => option.textContent),
   ).toEqual(["community buzz chat", "buzz-community"]);
+  await user.clear(input);
+  // Initials and a word in another order match only as words apart.
+  await user.type(input, "notes tlp");
+  expect(
+    (await screen.findAllByRole("option")).map((option) => option.textContent),
+  ).toEqual(["team-launch-planning-notes"]);
   await user.clear(input);
   // One word lists what it always has.
   await user.type(input, "community");

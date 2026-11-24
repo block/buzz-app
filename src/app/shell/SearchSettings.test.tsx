@@ -623,6 +623,8 @@ it("matches a plugin's description and a setting's keywords by contiguous text o
   ]);
   // "direct mess[a]ges co[n]versatio[n] [a]lerts"
   expect(listed(palette, "anna", "Settings")).toEqual([]);
+  // Word starts across a keyword list: "[d]irect [m]essages [c]onversation".
+  expect(listed(palette, "dmc", "Settings")).toEqual([]);
   expect(listed(palette, "alerts", "Settings")).toEqual([
     "Sound — Notifications",
     "Notify while viewing — Notifications",
@@ -640,6 +642,8 @@ it("matches a plugin's category by word runs but not by letters merely in order"
   });
   // "People & co[m]m[u]ni[t]i[e]s"
   expect(listed(palette, "mute", "Plugins")).toEqual([]);
+  // The category's words in another order, typed as one word.
+  expect(listed(palette, "communities-people", "Plugins")).toEqual([]);
   expect(listed(palette, "pc", "Plugins")).toEqual([
     "Profiles — People & communities",
   ]);

@@ -11,24 +11,71 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { ownSolo } from "../../features/solo/labels";
-import { writeLink, type SoloPulls } from "./solo-pull";
+import {
+  linkPull,
+  unlinkPull,
+  writeLinks,
+  type SoloPull,
+  type SoloPulls,
+} from "./solo-pull";
+import { parseGitHubReference } from "./references";
 import { describePull, pullTone, stateIcons } from "./pull-state-view";
 import styles from "./GitHub.module.css";
 import { useOpenGitHubLinksInBuzz } from "./link-preference";
 
-/** A Solo chat's linked pull request in place of its chat icon. */
+/** Which linked pull request the chat icon shows: the one most in need of
+ * attention, then the earliest linked. */
+const urgency = [
+  "failure",
+  "pending",
+  "draft",
+  "open",
+  "unknown",
+  "merged",
+  "closed",
+];
+export function mostUrgent(pulls: readonly SoloPull[]) {
+  const rank = (pull: SoloPull) => urgency.indexOf(pullTone(pull));
+  return pulls.reduce((shown, pull) =>
+    rank(pull) < rank(shown) ? pull : shown,
+  );
+}
+
+/** A pull request's short name, such as `owner/repo#12`. */
+const pullName = (pull: SoloPull) => {
+  const reference = parseGitHubReference(pull.url);
+  return reference ? `${reference.repository}${reference.label}` : pull.url;
+};
+
+/** A Solo chat's linked pull requests in place of its chat icon: the one most
+ * in need of attention, with every one in its description. */
 export function SoloPullIcon({
   pulls,
   channelId,
   fallback,
 }: Pick<ChatIconProps, "channelId" | "fallback"> & { pulls: SoloPulls }) {
-  const pull = useSoloPull(pulls, channelId);
-  if (!pull) return fallback;
+  const linked = useSoloPulls(pulls, channelId);
+  if (!linked) return fallback;
+  const pull = mostUrgent(linked);
   const Icon = stateIcons[pull.state?.state ?? "open"];
+  const description =
+    linked.length === 1
+      ? describePull(pull)
+      : linked
+          .map((item) => `${pullName(item)}: ${describePull(item)}`)
+          .join("\n");
   return (
-    <span className={styles.soloPull} data-tone={pullTone(pull)}>
+    <span
+      className={styles.soloPull}
+      data-tone={pullTone(pull)}
+      title={linked.length > 1 ? description : undefined}
+    >
       <Icon size={16} aria-hidden="true" />
-      <span className="sr-only">{describePull(pull)}: </span>
+      <span className="sr-only">
+        {linked.length === 1
+          ? `${description}: `
+          : `${linked.length} pull requests (${description.replaceAll("\n", "; ")}). `}
+      </span>
     </span>
   );
 }
@@ -75,37 +122,43 @@ export function SessionPullLauncher({
   canOpen(target: string): boolean;
 }) {
   const inBuzz = useOpenGitHubLinksInBuzz();
-  const pull = useSoloPull(pulls, channelId);
-  if (!pull) return null;
-  const label = `Open linked ${describePull(pull).toLowerCase()}`;
-  const Icon = stateIcons[pull.state?.state ?? "open"];
+  const linked = useSoloPulls(pulls, channelId);
   return (
-    <IconButton
-      size="sm"
-      variant="ghost"
-      aria-label={label}
-      title={label}
-      disabled={inBuzz && !canOpen(pull.url)}
-      icon={<Icon size="1rem" aria-hidden="true" />}
-      {...(inBuzz
-        ? { onClick: () => open(pull.url) }
-        : {
-            nativeButton: false,
-            role: "link",
-            render: (props) => (
-              <a
-                {...props}
-                href={pull.url}
-                target="_blank"
-                rel="noopener noreferrer"
-              />
-            ),
-          })}
-    />
+    linked?.map((pull) => {
+      const label = `Open linked ${describePull(pull).toLowerCase()}${
+        linked.length > 1 ? `, ${pullName(pull)}` : ""
+      }`;
+      const Icon = stateIcons[pull.state?.state ?? "open"];
+      return (
+        <IconButton
+          key={pull.url}
+          size="sm"
+          variant="ghost"
+          aria-label={label}
+          title={label}
+          disabled={inBuzz && !canOpen(pull.url)}
+          icon={<Icon size="1rem" aria-hidden="true" />}
+          {...(inBuzz
+            ? { onClick: () => open(pull.url) }
+            : {
+                nativeButton: false,
+                role: "link",
+                render: (props) => (
+                  <a
+                    {...props}
+                    href={pull.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                ),
+              })}
+        />
+      );
+    }) ?? null
   );
 }
 
-function useSoloPull(pulls: SoloPulls, channelId: string) {
+function useSoloPulls(pulls: SoloPulls, channelId: string) {
   const subscribe = useCallback(
     (listener: () => void) => pulls.watch(channelId, listener),
     [pulls, channelId],
@@ -150,17 +203,25 @@ function SessionPullLink({
   url: string;
 }) {
   const list = useChannelList(session.channels);
-  const linked = useSoloPull(pulls, channelId)?.url === url;
+  const linked = !!useSoloPulls(pulls, channelId)?.some(
+    (pull) => pull.url === url,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const channel = list.channels.find((item) => item.id === channelId);
   if (!ownSolo(channel, session.viewer)) return null;
-  const change = async (next: string | null) => {
+  const change = async (link: boolean) => {
     setBusy(true);
     setError(undefined);
     try {
-      await writeLink(session, channelId, next);
-      pulls.linked(channelId, next);
+      pulls.linked(
+        channelId,
+        await writeLinks(
+          session,
+          channelId,
+          link ? linkPull(url) : unlinkPull(url),
+        ),
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -174,11 +235,7 @@ function SessionPullLink({
           ? "Shown in the sidebar for this chat."
           : "Show this pull request’s state in the sidebar for this chat."}
       </span>
-      <Button
-        size="sm"
-        loading={busy}
-        onClick={() => void change(linked ? null : url)}
-      >
+      <Button size="sm" loading={busy} onClick={() => void change(!linked)}>
         {linked ? "Unlink" : "Link to this chat"}
       </Button>
       {error && (
@@ -199,33 +256,37 @@ export function SoloPullMenu({
   pulls: SoloPulls;
   channelId: string;
 }) {
-  const pull = useSoloPull(pulls, channelId);
+  const linked = useSoloPulls(pulls, channelId);
   const list = useChannelList(session.channels);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string>();
   const notify = useToastNotification();
   const channel = list.channels.find((item) => item.id === channelId);
   if (
-    !pull ||
+    !linked ||
     !ownSolo(channel, session.viewer) ||
     channel?.archived ||
     channel?.readOnly
   )
     return null;
-  return (
+  const writable = !!session.configArtifactWriter && !!session.snapshotRead;
+  return linked.map((pull) => (
     <MenuItem
-      disabled={busy || !session.configArtifactWriter || !session.snapshotRead}
+      key={pull.url}
+      disabled={!!busy || !writable}
       title={
-        !session.configArtifactWriter || !session.snapshotRead
-          ? "Unlinking needs a native desktop relay connection."
-          : undefined
+        writable
+          ? undefined
+          : "Unlinking needs a native desktop relay connection."
       }
       closeOnClick={false}
       onClick={async () => {
         if (busy) return;
-        setBusy(true);
+        setBusy(pull.url);
         try {
-          await writeLink(session, channelId, null);
-          pulls.linked(channelId, null);
+          pulls.linked(
+            channelId,
+            await writeLinks(session, channelId, unlinkPull(pull.url)),
+          );
           notify("Pull request unlinked", "success");
         } catch (error) {
           notify(
@@ -235,14 +296,18 @@ export function SoloPullMenu({
             "error",
           );
         } finally {
-          setBusy(false);
+          setBusy(undefined);
         }
       }}
     >
       <MenuIcon>
         <LinkBreakIcon size={16} />
       </MenuIcon>
-      {busy ? "Unlinking pull request…" : "Unlink pull request"}
+      {busy === pull.url
+        ? "Unlinking pull request…"
+        : linked.length === 1
+          ? "Unlink pull request"
+          : `Unlink ${pullName(pull)}`}
     </MenuItem>
-  );
+  ));
 }

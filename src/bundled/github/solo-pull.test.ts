@@ -6,14 +6,17 @@ import { uuidv5 } from "../../features/agents/agent-config-artifacts";
 import type { ReadFilter } from "../../features/relay/events";
 import { createRelaySession } from "../../features/relay/session";
 import { keypair } from "../../features/relay/testing";
+import { PublishRejected } from "../../features/relay/outbox";
 import type { GitHubCli } from "./gh";
 import { createPullStates, PULL_REFRESH_MS } from "./pull-states";
 import {
   createSoloPulls,
-  linkOf,
+  linkPull,
+  linksOf,
   SOLO_PULL_TYPE,
   SOLO_REFRESH_MS,
-  writeLink,
+  unlinkPull,
+  writeLinks,
 } from "./solo-pull";
 
 const chat = "11111111-1111-4111-8111-111111111111";
@@ -28,7 +31,7 @@ afterEach(() => {
 
 const revision = (
   channel: string,
-  url: string | null,
+  url: string | null | readonly string[],
   extra: Partial<EventData> = {},
 ) => ({
   id: `${channel.slice(0, 8)}${"e".repeat(56)}`,
@@ -36,7 +39,11 @@ const revision = (
   sig: "",
   created_at: 1,
   kind: 45010,
-  content: JSON.stringify({ version: 1, url }),
+  content: JSON.stringify(
+    Array.isArray(url)
+      ? { version: 2, url: url[0] ?? null, urls: url }
+      : { version: 1, url },
+  ),
   tags: [
     ["ar", "1"],
     ["d", "d"],
@@ -70,24 +77,38 @@ function session(heads: ReturnType<typeof revision>[] = []) {
   };
 }
 
-it("reads a link only from a Solo pull request revision", () => {
-  expect(linkOf(revision(chat, pull))).toBe(pull);
-  expect(linkOf(revision(chat, null))).toBeNull();
-  expect(linkOf(revision(chat, "https://github.com/block/buzz-app"))).toBe(
+it("reads links only from a Solo pull request revision", () => {
+  expect(linksOf(revision(chat, pull))).toEqual([pull]);
+  expect(linksOf(revision(chat, null))).toEqual([]);
+  expect(linksOf(revision(chat, [pull, second]))).toEqual([pull, second]);
+  // A list wins over the first-link field older clients read, and drops
+  // repeats and what isn't a pull request.
+  expect(
+    linksOf({
+      ...revision(chat, pull),
+      content: JSON.stringify({
+        version: 2,
+        url: pull,
+        urls: [second, "https://github.com/block/buzz-app", second],
+      }),
+    }),
+  ).toEqual([second]);
+  expect(linksOf(revision(chat, []))).toEqual([]);
+  expect(linksOf(revision(chat, "https://github.com/block/buzz-app"))).toBe(
     undefined,
   );
   expect(
-    linkOf({
+    linksOf({
       ...revision(chat, pull),
       tags: [["type", "buzz.agent.settings"]],
     }),
   ).toBeUndefined();
-  expect(linkOf({ ...revision(chat, pull), content: "{" })).toBeUndefined();
+  expect(linksOf({ ...revision(chat, pull), content: "{" })).toBeUndefined();
 });
 
-it("creates, replaces and unlinks a chat's pull request as one artifact", async () => {
+it("adds and removes a chat's pull requests in one artifact", async () => {
   const empty = session();
-  await writeLink(empty.session, chat, pull);
+  expect(await writeLinks(empty.session, chat, linkPull(pull))).toEqual([pull]);
   expect(empty.snapshotRead).toHaveBeenCalledWith(
     [
       expect.objectContaining({
@@ -108,34 +129,53 @@ it("creates, replaces and unlinks a chat's pull request as one artifact", async 
     ["title", "Pull request"],
     ["op", "create"],
   ]);
-  expect(JSON.parse(created.content)).toEqual({ version: 1, url: pull });
+  expect(JSON.parse(created.content)).toEqual({
+    version: 2,
+    url: pull,
+    urls: [pull],
+  });
   expect(empty.publish).toHaveBeenCalledOnce();
 
+  // Each change applies to the head it reads, so a link another device added
+  // since stays linked.
   const linked = session([revision(chat, pull)]);
-  await writeLink(linked.session, chat, pull);
+  expect(await writeLinks(linked.session, chat, linkPull(pull))).toEqual([
+    pull,
+  ]);
   expect(linked.sign).not.toHaveBeenCalled();
-  await writeLink(linked.session, chat, second);
-  await writeLink(linked.session, chat, null);
-  const [replaced, unlinked] = linked.sign.mock.calls.map(
+  expect(await writeLinks(linked.session, chat, linkPull(second))).toEqual([
+    pull,
+    second,
+  ]);
+  expect(await writeLinks(linked.session, chat, unlinkPull(pull))).toEqual([]);
+  expect(await writeLinks(linked.session, chat, unlinkPull())).toEqual([]);
+  const [added, removed, cleared] = linked.sign.mock.calls.map(
     ([event]) => event as EventData,
   );
-  expect(replaced?.tags).toContainEqual(["op", "update"]);
-  expect(replaced?.tags).toContainEqual(["prev", revision(chat, pull).id]);
-  expect(JSON.parse(replaced?.content ?? "")).toEqual({
-    version: 1,
-    url: second,
+  expect(added?.tags).toContainEqual(["op", "update"]);
+  expect(added?.tags).toContainEqual(["prev", revision(chat, pull).id]);
+  expect(JSON.parse(added?.content ?? "")).toEqual({
+    version: 2,
+    url: pull,
+    urls: [pull, second],
   });
-  expect(JSON.parse(unlinked?.content ?? "")).toEqual({
-    version: 1,
+  expect(JSON.parse(removed?.content ?? "")).toEqual({
+    version: 2,
     url: null,
+    urls: [],
+  });
+  expect(JSON.parse(cleared?.content ?? "")).toEqual({
+    version: 2,
+    url: null,
+    urls: [],
   });
 
   // Nothing to unlink writes nothing; without a writer it says why.
-  await writeLink(empty.session, other, null);
+  await writeLinks(empty.session, other, unlinkPull());
   expect(empty.sign).toHaveBeenCalledOnce();
-  await expect(writeLink({} as RelaySession, chat, pull)).rejects.toThrow(
-    "can't save pull request links",
-  );
+  await expect(
+    writeLinks({} as RelaySession, chat, linkPull(pull)),
+  ).rejects.toThrow("can't save pull request links");
 });
 
 const rollup = (state: string, checks?: string) => ({
@@ -167,7 +207,7 @@ it("shows every shown chat's linked pull request from one shared read", async ()
     pulls.watch(other, changed),
     pulls.watch("33333333-3333-4333-8333-333333333333", changed),
   ];
-  await vi.waitFor(() => expect(pulls.get(other)?.state).toBeDefined());
+  await vi.waitFor(() => expect(pulls.get(other)?.[0]?.state).toBeDefined());
   expect(relay.snapshotRead).toHaveBeenCalledOnce();
   expect(relay.snapshotRead.mock.calls[0]?.[0]).toEqual([
     expect.objectContaining({
@@ -177,12 +217,14 @@ it("shows every shown chat's linked pull request from one shared read", async ()
   // Two chats linking one pull request cost one read of it.
   expect(gh).toHaveBeenCalledOnce();
   expect(gh.mock.calls[0]?.[1]).toEqual({ o0: "block", n0: "buzz-app", p0: 7 });
-  expect(pulls.get(chat)).toEqual({
-    url: pull,
-    state: { state: "open", checks: "failure", conflicts: false },
-  });
+  expect(pulls.get(chat)).toEqual([
+    {
+      url: pull,
+      state: { state: "open", checks: "failure", conflicts: false },
+    },
+  ]);
   expect(pulls.get(chat)).toBe(pulls.get(chat));
-  expect(pulls.get(other)?.state).toBe(pulls.get(chat)?.state);
+  expect(pulls.get(other)?.[0]?.state).toBe(pulls.get(chat)?.[0]?.state);
   expect(pulls.get("33333333-3333-4333-8333-333333333333")).toBeUndefined();
   // The store polls it while a chat that links it is shown; a poll that
   // reads the same state leaves the rows' views, and the rows, alone.
@@ -207,19 +249,52 @@ it("shows a state the shared store moved to while the chat was not shown", async
   const pulls = pullsOver(relay.session, gh);
   const unwatch = pulls.watch(chat, () => {});
   const stopOther = pulls.watch(other, () => {});
-  await vi.waitFor(() => expect(pulls.get(chat)?.state?.state).toBe("open"));
+  await vi.waitFor(() =>
+    expect(pulls.get(chat)?.[0]?.state?.state).toBe("open"),
+  );
   // The chat scrolls out; the other, still shown, keeps the pull request read.
   unwatch();
   state = "MERGED";
   await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
-  expect(pulls.get(other)?.state?.state).toBe("merged");
+  expect(pulls.get(other)?.[0]?.state?.state).toBe("merged");
   // Back in view, the chat shows where the pull request is now, not where it
   // was: merged is terminal, so no later read would have corrected it.
   const changed = vi.fn();
   pulls.watch(chat, changed);
-  expect(pulls.get(chat)?.state?.state).toBe("merged");
+  expect(pulls.get(chat)?.[0]?.state?.state).toBe("merged");
   expect(pulls.get(chat)).toBe(pulls.get(chat));
   stopOther();
+});
+
+it("writes on top of the forked head the chat shows", async () => {
+  const forked = () =>
+    session([
+      revision(chat, []),
+      revision(chat, [second], { id: "d".repeat(64) }),
+    ]);
+  const unlink = forked();
+  expect(await writeLinks(unlink.session, chat, unlinkPull(second))).toEqual(
+    [],
+  );
+  const removed = unlink.sign.mock.calls[0]?.[0] as EventData | undefined;
+  expect(removed?.tags).toContainEqual(["prev", "d".repeat(64)]);
+  const link = forked();
+  expect(await writeLinks(link.session, chat, linkPull(pull))).toEqual([
+    second,
+    pull,
+  ]);
+  expect(link.snapshotRead.mock.calls[0]?.[0]).toEqual([
+    expect.objectContaining({ limit: 20 }),
+  ]);
+});
+
+it("prefers a forked head that links pull requests over an empty one", async () => {
+  const relay = session([revision(chat, []), revision(chat, [second])]);
+  const pulls = pullsOver(relay.session);
+  pulls.watch(chat, () => {});
+  await vi.waitFor(() =>
+    expect(pulls.get(chat)?.map((item) => item.url)).toEqual([second]),
+  );
 });
 
 it("reads links within the session reader's limit, only the link artifacts", async () => {
@@ -253,7 +328,7 @@ it("reads links once, not on the poll, and only a new row's own link", async () 
   })) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
   const pulls = pullsOver(relay.session, gh);
   pulls.watch(chat, () => {});
-  await vi.waitFor(() => expect(pulls.get(chat)?.state).toBeDefined());
+  await vi.waitFor(() => expect(pulls.get(chat)?.[0]?.state).toBeDefined());
   await vi.advanceTimersByTimeAsync(3 * PULL_REFRESH_MS);
   expect(relay.snapshotRead).toHaveBeenCalledOnce();
   expect(gh).toHaveBeenCalledTimes(4);
@@ -287,8 +362,8 @@ it("shows a link this device wrote before the next read", async () => {
   pulls.watch(chat, changed);
   await vi.waitFor(() => expect(relay.snapshotRead).toHaveBeenCalled());
   expect(pulls.get(chat)).toBeUndefined();
-  pulls.linked(chat, pull);
-  expect(pulls.get(chat)).toEqual({ url: pull, state: undefined });
+  pulls.linked(chat, [pull]);
+  expect(pulls.get(chat)).toEqual([{ url: pull, state: undefined }]);
   expect(changed).toHaveBeenCalled();
 });
 
@@ -306,8 +381,76 @@ it("reads links again on the poll after a first read fails", async () => {
   expect(pulls.get(chat)).toBeUndefined();
   await vi.advanceTimersByTimeAsync(SOLO_REFRESH_MS);
   expect(relay.snapshotRead).toHaveBeenCalledTimes(2);
-  expect(pulls.get(chat)?.state?.checks).toBe("success");
+  expect(pulls.get(chat)?.[0]?.state?.checks).toBe("success");
   // Once read, links are not read again on the poll.
   await vi.advanceTimersByTimeAsync(SOLO_REFRESH_MS);
   expect(relay.snapshotRead).toHaveBeenCalledTimes(2);
+});
+
+it("shows each of a chat's linked pull requests, in the order linked", async () => {
+  const relay = session([revision(chat, [second, pull])]);
+  const gh = vi.fn(async (_query: string, vars: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.keys(vars)
+        .filter((key) => key.startsWith("p"))
+        .map((key) => [
+          `r${key.slice(1)}`,
+          rollup("OPEN", vars[key] === 7 ? "FAILURE" : "SUCCESS"),
+        ]),
+    ),
+  ) as unknown as GitHubCli & ReturnType<typeof vi.fn>;
+  const pulls = pullsOver(relay.session, gh);
+  pulls.watch(chat, () => {});
+  await vi.waitFor(() =>
+    expect(pulls.get(chat)?.map((item) => item.state?.checks)).toEqual([
+      "success",
+      "failure",
+    ]),
+  );
+  expect(pulls.get(chat)?.map((item) => item.url)).toEqual([second, pull]);
+});
+
+it("applies this app's changes to one chat in turn, keeping each", async () => {
+  let head: ReturnType<typeof revision> | undefined;
+  const relay = session();
+  relay.snapshotRead.mockImplementation(async () => (head ? [head] : []));
+  relay.publish.mockImplementation(async (event?: unknown) => {
+    head = event as ReturnType<typeof revision>;
+    return "";
+  });
+  const third = "https://github.com/block/buzz/pull/10";
+  const written = await Promise.all([
+    writeLinks(relay.session, chat, linkPull(pull)),
+    writeLinks(relay.session, chat, linkPull(second)),
+    writeLinks(relay.session, chat, linkPull(third)),
+  ]);
+  expect(written.at(-1)).toEqual([pull, second, third]);
+  expect(JSON.parse(head?.content ?? "")).toMatchObject({
+    urls: [pull, second, third],
+  });
+});
+
+it("reads the head again once when another device saved first", async () => {
+  const third = "https://github.com/block/buzz/pull/10";
+  const relay = session([revision(chat, pull)]);
+  // The other device's revision is what the second read finds.
+  relay.snapshotRead
+    .mockResolvedValueOnce([revision(chat, pull)])
+    .mockResolvedValueOnce([revision(chat, [pull, third])]);
+  relay.publish
+    .mockRejectedValueOnce(
+      new PublishRejected("Not saved", "conflict: stale revision"),
+    )
+    .mockResolvedValue("");
+  expect(await writeLinks(relay.session, chat, linkPull(second))).toEqual([
+    pull,
+    third,
+    second,
+  ]);
+  expect(relay.snapshotRead).toHaveBeenCalledTimes(2);
+  expect(relay.publish).toHaveBeenCalledTimes(2);
+  relay.publish.mockRejectedValueOnce(new Error("blocked: no"));
+  await expect(
+    writeLinks(relay.session, chat, linkPull(second)),
+  ).rejects.toThrow("blocked");
 });

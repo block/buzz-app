@@ -12,6 +12,7 @@ import { apply } from "./index";
 import { setOpenGitHubLinksInBuzz } from "./link-preference";
 import type { SoloPull, SoloPulls } from "./solo-pull";
 import {
+  mostUrgent,
   SoloPullIcon,
   SoloPullLink,
   SoloPullMenu,
@@ -28,9 +29,17 @@ const chat = "11111111-1111-4111-8111-111111111111";
 const team = "22222222-2222-4222-8222-222222222222";
 const viewer = "c".repeat(64);
 const pull = "https://github.com/block/buzz-app/pull/7";
+const second = "https://github.com/block/buzz/pull/9";
 
-function fakePulls(initial: Record<string, SoloPull> = {}) {
-  const links = new Map(Object.entries(initial));
+function fakePulls(
+  initial: Record<string, SoloPull | readonly SoloPull[]> = {},
+) {
+  const links = new Map<string, readonly SoloPull[]>(
+    Object.entries(initial).map(([channel, linked]) => [
+      channel,
+      Array.isArray(linked) ? linked : [linked as SoloPull],
+    ]),
+  );
   const listeners = new Set<() => void>();
   return {
     watch: vi.fn((_channel: string, listener: () => void) => {
@@ -38,8 +47,12 @@ function fakePulls(initial: Record<string, SoloPull> = {}) {
       return () => listeners.delete(listener);
     }),
     get: (channel: string) => links.get(channel),
-    linked: vi.fn((channel: string, url: string | null) => {
-      if (url) links.set(channel, { url });
+    linked: vi.fn((channel: string, urls: readonly string[]) => {
+      if (urls.length)
+        links.set(
+          channel,
+          urls.map((url) => ({ url })),
+        );
       else links.delete(channel);
       for (const listener of listeners) listener();
     }),
@@ -96,7 +109,12 @@ function relayWith(channels: { id: string; channelType: string }[]) {
     pubkey: viewer,
     sig: "",
   }));
-  const publish = vi.fn(async () => "");
+  /** The last revision published, read back as the chat's head. */
+  let head: object | undefined;
+  const publish = vi.fn(async (event?: object) => {
+    head = event;
+    return "";
+  });
   const list = {
     status: "ready" as const,
     channels: channels.map((channel) => ({
@@ -107,7 +125,7 @@ function relayWith(channels: { id: string; channelType: string }[]) {
   };
   const session = {
     viewer,
-    snapshotRead: vi.fn(async () => []),
+    snapshotRead: vi.fn(async () => (head ? [head] : [])),
     configArtifactWriter: { sign, publish },
     channels: {
       ensureList: () => () => {},
@@ -141,7 +159,7 @@ it("links the pull request to the Solo chat it was opened from, and unlinks it",
     screen.getByRole("button", { name: "Link to this chat" }),
   );
   expect(await screen.findByRole("button", { name: "Unlink" })).toBeEnabled();
-  expect(pulls.linked).toHaveBeenCalledWith(chat, pull);
+  expect(pulls.linked).toHaveBeenCalledWith(chat, [pull]);
   expect(sign).toHaveBeenCalledOnce();
   expect(publish).toHaveBeenCalledOnce();
   expect(
@@ -151,7 +169,7 @@ it("links the pull request to the Solo chat it was opened from, and unlinks it",
   expect(
     await screen.findByRole("button", { name: "Link to this chat" }),
   ).toBeInTheDocument();
-  expect(pulls.linked).toHaveBeenLastCalledWith(chat, null);
+  expect(pulls.linked).toHaveBeenLastCalledWith(chat, []);
 
   // A team channel is not a Solo chat; nothing to link.
   rerender(
@@ -209,9 +227,29 @@ it("gives agents a github_link_pr tool for the Solo chat they work in", async ()
     `Linked ${pull}. The sidebar shows its state for this chat.`,
   );
   expect(sign).toHaveBeenCalledOnce();
-  expect(await tool?.call(client, { channel: chat }, { unlink: true })).toBe(
-    "Unlinked this chat's pull request.",
+  expect(
+    await tool?.call(client, { channel: chat }, { unlink: true, url: second }),
+  ).toBe(`${second} wasn't linked to this chat. Still linked: ${pull}.`);
+  // Replacing links one in place of the rest.
+  expect(
+    await tool?.call(client, { channel: chat }, { url: second, replace: true }),
+  ).toBe(
+    `Linked ${second}. The sidebar shows its state for this chat. Unlinked: ${pull}.`,
   );
+  await expect(
+    tool?.call(
+      client,
+      { channel: chat },
+      { url: pull, replace: true, unlink: true },
+    ),
+  ).rejects.toThrow("cannot be combined");
+  expect(await tool?.call(client, { channel: chat }, { unlink: true })).toBe(
+    "Unlinked this chat's pull requests.",
+  );
+  expect(
+    await tool?.call(client, { channel: chat }, { unlink: true, url: null }),
+  ).toBe("This chat had no linked pull requests.");
+  expect(sign).toHaveBeenCalledTimes(3);
 });
 
 it("offers unlink only for a linked owned chat and clears the link after publication", async () => {
@@ -241,7 +279,7 @@ it("offers unlink only for a linked owned chat and clears the link after publica
     await screen.findByRole("menuitem", { name: "Unlink pull request" }),
   );
   expect(publish).toHaveBeenCalledOnce();
-  expect(pulls.linked).toHaveBeenCalledWith(chat, null);
+  expect(pulls.linked).toHaveBeenCalledWith(chat, []);
   expect(
     screen.queryByRole("menuitem", { name: "Unlink pull request" }),
   ).not.toBeInTheDocument();
@@ -314,7 +352,7 @@ it("opens the current linked PR from the header and removes the shortcut on unli
   );
   expect(open).toHaveBeenCalledWith(pull);
   expect(screen.getByRole("button").querySelector("[data-tone]")).toBeNull();
-  act(() => pulls.linked(chat, `${pull}8`));
+  act(() => pulls.linked(chat, [`${pull}8`]));
   await userEvent.click(
     screen.getByRole("button", { name: "Open linked pull request" }),
   );
@@ -328,7 +366,7 @@ it("opens the current linked PR from the header and removes the shortcut on unli
     />,
   );
   expect(screen.getByRole("button")).toBeDisabled();
-  act(() => pulls.linked(chat, null));
+  act(() => pulls.linked(chat, []));
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
 
@@ -396,4 +434,99 @@ it("only mounts the PR shortcut for a Solo in the current community", () => {
   expect(
     screen.getByRole("button", { name: "Open linked pull request" }),
   ).toBeVisible();
+});
+
+it("shows the linked pull request most in need of attention, and lists them all", () => {
+  const pulls = fakePulls({
+    [chat]: [
+      { url: pull, state: { state: "merged" } },
+      { url: second, state: { state: "open", checks: "failure" } },
+    ],
+  });
+  const { container } = render(
+    <SoloPullIcon pulls={pulls} channelId={chat} fallback="bubble" />,
+  );
+  const icon = container.querySelector("[data-tone]");
+  expect(icon).toHaveAttribute("data-tone", "failure");
+  expect(icon?.getAttribute("title")).toContain("block/buzz-app#7");
+  expect(icon?.getAttribute("title")).toContain("block/buzz#9");
+  expect(screen.getByText(/^2 pull requests \(/)).toBeInTheDocument();
+  expect(
+    mostUrgent([
+      { url: pull, state: { state: "draft" } },
+      { url: second, state: { state: "open", checks: "pending" } },
+    ]).url,
+  ).toBe(second);
+  expect(
+    mostUrgent([
+      { url: pull, state: { state: "open" } },
+      { url: second, state: { state: "open" } },
+    ]).url,
+  ).toBe(pull);
+});
+
+it("opens each of several linked pull requests from the header", async () => {
+  const open = vi.fn(() => true);
+  const pulls = fakePulls({ [chat]: [{ url: pull }, { url: second }] });
+  setOpenGitHubLinksInBuzz(true);
+  render(
+    <SessionPullLauncher
+      pulls={pulls}
+      channelId={chat}
+      open={open}
+      canOpen={() => true}
+    />,
+  );
+  await userEvent.click(
+    screen.getByRole("button", {
+      name: "Open linked pull request, block/buzz#9",
+    }),
+  );
+  expect(open).toHaveBeenCalledWith(second);
+  expect(screen.getAllByRole("button")).toHaveLength(2);
+});
+
+it("unlinks one of several pull requests and keeps the others", async () => {
+  const { session: baseSession, sign } = relayWith([
+    { id: chat, channelType: "solo" },
+  ]);
+  const pulls = fakePulls({ [chat]: [{ url: pull }, { url: second }] });
+  const session = {
+    ...baseSession,
+    snapshotRead: vi.fn(async () => [
+      {
+        kind: 45010,
+        id: "a".repeat(64),
+        content: JSON.stringify({
+          version: 2,
+          url: pull,
+          urls: [pull, second],
+        }),
+        tags: [["type", "buzz.solo.pr"]],
+      },
+    ]),
+  } as unknown as RelaySession;
+  render(
+    <MenuRoot open>
+      <MenuPopup>
+        <SoloPullMenu session={session} pulls={pulls} channelId={chat} />
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "Unlink block/buzz-app#7" }),
+  );
+  expect(pulls.linked).toHaveBeenCalledWith(chat, [second]);
+  expect(
+    JSON.parse(
+      (sign.mock.calls[0]?.[0] as { content?: string })?.content ?? "",
+    ),
+  ).toEqual({
+    version: 2,
+    url: second,
+    urls: [second],
+  });
+  expect(
+    screen.getByRole("menuitem", { name: "Unlink pull request" }),
+  ).toBeInTheDocument();
 });

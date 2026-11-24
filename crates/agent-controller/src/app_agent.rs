@@ -26,6 +26,8 @@ const KINDS: [u16; 19] = [
 
 /// Content of a live channel Canvas (40100), in UTF-8 bytes. Mirrors
 /// `LIVE_CANVAS_BYTES` in `canvas-limits.ts`.
+/// The longest profile description an agent may have.
+pub const ABOUT_LIMIT: usize = 4096;
 pub const LIVE_CANVAS_BYTES: usize = 256 * 1024;
 /// The largest complete signed Canvas event: the relay's 512 KiB frame less
 /// the `["EVENT",…]` wrapper. Mirrors `CANVAS_MAX_EVENT_BYTES`.
@@ -1159,6 +1161,15 @@ impl AppAgents {
             return Err("Use an HTTPS image URL without credentials".into());
         }
         self.edit(pubkey, relay, |agent| agent.picture = picture)
+    }
+    /// Sets or, with `None`, clears its profile description (kind-0 `about`)
+    /// in the community at `relay`.
+    pub fn set_about(&self, pubkey: &str, relay: &str, about: Option<String>) -> Result<()> {
+        let about = about.filter(|text| !text.trim().is_empty());
+        if about.as_ref().is_some_and(|text| text.len() > ABOUT_LIMIT) {
+            return Err(format!("Keep the description under {ABOUT_LIMIT} bytes"));
+        }
+        self.edit(pubkey, relay, |agent| agent.about = about)
     }
     /// Records a profile the community at `relay` accepted, unless a newer one
     /// already is.

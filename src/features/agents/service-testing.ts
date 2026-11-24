@@ -522,6 +522,11 @@ export function fakeNative(identities: AgentIdentity[] = []) {
       const { picture: _, ...identity } = identities[index] as AgentIdentity;
       identities[index] = picture ? { ...identity, picture } : identity;
     }),
+    setAbout: vi.fn(async (member: Membership, about: string | null) => {
+      const index = at(member);
+      const { about: _, ...identity } = identities[index] as AgentIdentity;
+      identities[index] = about ? { ...identity, about } : identity;
+    }),
     setType: vi.fn(async (pubkey: string, type: string) => {
       change(pubkey, { type });
     }),

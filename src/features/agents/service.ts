@@ -320,6 +320,8 @@ export type Agent<Config = unknown> = Readonly<{
   name: string;
   /** Its picture in this community. */
   picture?: string;
+  /** Its profile description in this community. */
+  about?: string;
   /** The agent type's key, `pluginId/typeId`. */
   type: string;
   owner: string;
@@ -359,6 +361,8 @@ export type AgentChange<Config = unknown> = Readonly<{
   name?: string;
   /** An HTTPS image URL; `null` or empty removes the picture. */
   picture?: string | null;
+  /** Its profile description; `null` or empty removes it. Local agents only. */
+  about?: string | null;
   config?: Config;
   /** @deprecated A no-op: Attention runs for every agent while a plugin
    * shows it. Still stored, but nothing reads it. */
@@ -6082,10 +6086,14 @@ export class AgentsService extends Service implements Agents {
     const renamed = name !== undefined && name !== identity.name;
     const repictured =
       picture !== undefined && picture !== (identity.picture ?? null);
+    const about =
+      change.about === undefined ? undefined : change.about?.trim() || null;
+    const described = about !== undefined && about !== (identity.about ?? null);
     if (renamed) await this.native.rename(pubkey, name);
     if (repictured) await this.native.setPicture(identity, picture);
-    // Shows the new name or picture and publishes it as the agent's profile.
-    if (renamed || repictured) await this.refresh();
+    if (described) await this.native.setAbout(identity, about);
+    // Shows the new profile and publishes it.
+    if (renamed || repictured || described) await this.refresh();
   }
 
   /** Why `identity`'s synced settings can't be revised here: their head
@@ -6179,6 +6187,10 @@ export class AgentsService extends Service implements Agents {
       change.attentionEnabled !== undefined
     )
       throw new Error("A hosted agent's settings save through its provider");
+    if (change.about !== undefined)
+      throw new Error(
+        "A hosted agent's description saves through its provider",
+      );
     const name = change.name === undefined ? agent.name : change.name.trim();
     if (!name) throw new Error("Name the agent");
     const picture =
@@ -8482,6 +8494,7 @@ export class AgentsService extends Service implements Agents {
       pubkey: identity.pubkey,
       name: identity.name,
       ...(identity.picture && { picture: identity.picture }),
+      ...(identity.about && { about: identity.about }),
       type: identity.type,
       owner: identity.owner,
       relay: identity.relay,
@@ -9147,6 +9160,7 @@ export class AgentsService extends Service implements Agents {
         prior &&
           prior.name === identity.name &&
           prior.picture === identity.picture &&
+          prior.about === identity.about &&
           prior.type === identity.type &&
           prior.protectionRevision === (identity.protectionRevision ?? 0) &&
           JSON.stringify(prior.executionBinding) ===

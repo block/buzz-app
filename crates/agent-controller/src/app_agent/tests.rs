@@ -329,6 +329,35 @@ fn a_set_picture_is_published_and_can_be_cleared() {
 }
 
 #[test]
+fn a_set_description_is_published_and_blank_clears_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let credentials = Memory::default();
+    let (agents, agent) = created(dir.path(), &credentials);
+    let key = agent.read_key(&credentials).unwrap();
+    assert!(agents
+        .set_about(&agent.pubkey, RELAY, Some("x".repeat(ABOUT_LIMIT + 1)))
+        .is_err());
+    agents
+        .set_about(&agent.pubkey, RELAY, Some("First responder.".into()))
+        .unwrap();
+    let described = agents.get(&agent.pubkey, RELAY).unwrap();
+    assert!(!described.profile_is_current());
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(
+            described.profile_event(&key).unwrap()["content"]
+                .as_str()
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::json!({"bot":true,"name":"Ada","about":"First responder."})
+    );
+    agents
+        .set_about(&agent.pubkey, RELAY, Some("  ".into()))
+        .unwrap();
+    assert_eq!(agents.get(&agent.pubkey, RELAY).unwrap().about, None);
+}
+
+#[test]
 fn a_failed_key_deletion_keeps_the_identity_for_a_retry() {
     let dir = tempfile::tempdir().unwrap();
     let credentials = Memory::default();

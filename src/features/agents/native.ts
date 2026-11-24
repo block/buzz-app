@@ -24,6 +24,8 @@ export type AgentIdentity = Readonly<{
   name: string;
   /** Its profile picture in this community, an HTTPS image URL. */
   picture?: string;
+  /** Its profile description in this community. */
+  about?: string;
   /** It left this community, or was deleted: this community still has to
    * drop it from its channels and archive it, after which `forget` removes
    * it. */
@@ -163,6 +165,9 @@ export type AgentsNative = {
   /** Sets its profile picture in one community, an HTTPS image URL, or with
    * `null` clears it. */
   setPicture(member: Membership, picture: string | null): Promise<void>;
+  /** Sets its profile description in one community, or with `null` clears
+   * it. */
+  setAbout(member: Membership, about: string | null): Promise<void>;
   /** Makes it an agent of another type, keeping its identity and profile. */
   setType(pubkey: string, type: string): Promise<void>;
   /** Adds it to `destination`, another community, with the key it has in
@@ -293,6 +298,8 @@ export const nativeAgents = (): AgentsNative | undefined =>
         rename: (pubkey, name) => invoke("app_agent_rename", { pubkey, name }),
         setPicture: ({ pubkey, relay }, picture) =>
           invoke("app_agent_set_picture", { pubkey, relay, picture }),
+        setAbout: ({ pubkey, relay }, about) =>
+          invoke("app_agent_set_about", { pubkey, relay, about }),
         setType: (pubkey, agentType) =>
           invoke("app_agent_set_type", { pubkey, agentType }),
         join: (pubkey, from, destination, picture) =>

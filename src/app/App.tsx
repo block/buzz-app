@@ -24,6 +24,7 @@ import { ModalWindowDragProvider } from "../shared/design-system/ui/ModalWindowD
 import { modalWindowDragHandlers } from "./shell/title-bar";
 import { isTauri } from "@tauri-apps/api/core";
 import { PairingPrompt } from "../features/credential-pairing/PairingPrompt";
+import { AgentApplyPrompt } from "../features/agent-files/AgentApplyPrompt";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
 import { UpdateAction } from "../features/updates/UpdateAction";
@@ -775,6 +776,17 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         <PairingPrompt
           communities={client.memberships.map((membership) => membership.id)}
           active={client.selected}
+        />
+      )}
+      {isTauri() && (
+        <AgentApplyPrompt
+          host={{
+            agents: services.agents,
+            relay: () => {
+              const relay = services.relay.snapshot();
+              return relay.status === "ready" ? relay.session : undefined;
+            },
+          }}
         />
       )}
       <ChannelNavigationProvider relay={services.relay}>

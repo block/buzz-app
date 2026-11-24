@@ -36,7 +36,7 @@ async fn asked(notices: &Arc<Mutex<Vec<Notice>>>) -> String {
 }
 
 /// Pairs and approves; the paired token.
-async fn paired(fixture: &Fixture) -> String {
+pub(super) async fn paired(fixture: &Fixture) -> String {
     let service = fixture.service.clone();
     let pairing = tokio::spawn(async move { pair_request(&service, &[CLIENT, RELAY]).await });
     let id = asked(&fixture.notices).await;

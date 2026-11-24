@@ -183,6 +183,10 @@ impl CredentialService {
             }
             // An owner's events carry no NIP-OA tag.
             ("auth_tag", []) => Ok(String::new()),
+            ("agent_read", [_agent]) => self.0.agent_calls.call("agent_read", params).await,
+            ("agent_apply", [_agent, _document, _revision, _options]) => {
+                self.0.agent_calls.call("agent_apply", params).await
+            }
             (method, _) => Err(unsupported(method)),
         }
     }

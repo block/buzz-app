@@ -756,6 +756,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         credential_service::credential_pair_answer,
         credential_service::credential_pairing_communities,
         credential_service::credential_pair_prompt,
+        credential_service::credential_agent_answer,
+        credential_service::credential_agent_listen,
         credential_service::credential_pairings_list,
         credential_service::credential_pairing_revoke,
         window_state::onboarding_preserve_window,
@@ -921,6 +923,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_port,
         app_agents::app_agent_rename,
         app_agents::app_agent_set_picture,
+        app_agents::app_agent_set_about,
         app_agents::app_agent_set_type,
         app_agents::app_agent_delete,
         app_agents::app_agent_begin_delete,
@@ -1437,6 +1440,15 @@ fn credential_notice<R: tauri::Runtime>(
         }
         Notice::Closed(id) => app.emit_to("main", "credential-pair-closed", id),
         Notice::Changed => app.emit_to("main", "credential-pairings-changed", ()),
+        Notice::Agent(call) => {
+            if call.method == "agent_apply" {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+                }
+            }
+            app.emit_to("main", "credential-agent-request", call)
+        }
+        Notice::AgentClosed(id) => app.emit_to("main", "credential-agent-closed", id),
     };
 }
 

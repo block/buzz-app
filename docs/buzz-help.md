@@ -108,6 +108,9 @@ if that desktop app is up and running.
   Agents pin with the `pin` tool.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
   folder and **/** a skill. Attach files by pasting or dragging them in.
+  An emoticon typed as its own word, such as `:D`, `;)` or `<3`, becomes its
+  emoji when you press Space or Enter. ⌘Z brings back what you typed.
+  Emoticons in code and links stay as typed.
 - **Drafts.** Every message box open on a conversation shares its draft. A box
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my

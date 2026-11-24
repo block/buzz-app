@@ -7484,6 +7484,19 @@ it("sends channel messages and thread replies through real form and keyboard eve
   expect(h.input()).toHaveValue("");
 });
 
+it("sends an emoticon that ends the message as its emoji", async () => {
+  const h = mount();
+  await h.user.type(h.input(), "first :D{Shift>}{Enter}{/Shift}nice <3");
+  expect(h.input()).toHaveValue("first 😄\nnice <3");
+  await h.user.keyboard("{Enter}");
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "first 😄\nnice ❤️",
+    [],
+    [],
+  );
+});
+
 it("sends with Ctrl+Enter and adds lines with Enter once that is chosen", async () => {
   const h = mount();
   try {

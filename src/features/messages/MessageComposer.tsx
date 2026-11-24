@@ -4523,6 +4523,10 @@ function Composer({
                     return;
                   }
                   if (completion.keys.current?.(event)) return;
+                  // Enter ends an emoticon as Space does, before it sends or
+                  // breaks the line; an open completion list keeps Enter above.
+                  if (event.key === "Enter")
+                    event.currentTarget.convertEmoticon();
                   if (
                     event.key === "ArrowUp" &&
                     !event.shiftKey &&

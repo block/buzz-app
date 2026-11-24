@@ -100,6 +100,7 @@ import {
   MarkdownTable,
   sharedComponents,
 } from "../markdown/MarkdownDocument";
+import { composerEmoticon } from "./composer-emoticons";
 import {
   annotationAt,
   annotationPlugin,
@@ -2454,7 +2455,8 @@ export function EditableInput({
           // A typed delimiter converts in a second transaction: the third
           // character of a lone ``` or ~~~ line opens a code block at once, the
           // space after a lone block marker opens that block, and a
-          // closing delimiter converts its inline span. One undo restores the
+          // closing delimiter converts its inline span, and a space after an
+          // emoticon such as :D types its emoji. One undo restores the
           // typed source, that character included, and the next keystroke never
           // merges into the conversion. Near maxLength the typed character
           // itself can be filtered out; then nothing converts. Completions
@@ -2475,7 +2477,8 @@ export function EditableInput({
                 editor.state,
                 text,
                 current.current.markdownMode,
-              );
+              ) ??
+              composerEmoticon(editor.state, text);
             const conversion = block ?? editor.state.tr;
             if (block || applyComposerInlineInput(conversion, text)) {
               const unconverted = editor.state;
@@ -3030,6 +3033,19 @@ export function EditableInput({
           const inserted = !!tr || insert("\n");
           editor.focus();
           return inserted;
+        },
+      },
+      convertEmoticon: {
+        configurable: true,
+        value: () => {
+          if (!editable() || composing.current || editor.composing)
+            return false;
+          const tr = composerEmoticon(editor.state, "");
+          if (!tr) return false;
+          editor.dispatch(closeHistory(tr).scrollIntoView());
+          // Typing after an unsent Enter is its own step, as after Space.
+          separateHistory = true;
+          return true;
         },
       },
       editLink: { configurable: true, value: editLink },

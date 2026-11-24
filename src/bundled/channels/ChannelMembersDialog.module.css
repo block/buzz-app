@@ -41,6 +41,7 @@
   gap: var(--space-2);
 }
 .memberList {
+  --member-scroll-reserve: 0px;
   container: member-list / size;
   /* Contain absolutely positioned descendants (sr-only pager text) here.
      Otherwise they reach the overflow: hidden dialog body, giving it hidden
@@ -58,8 +59,7 @@
   gap: var(--space-4);
   /* Align headings with the field while retaining row focus clearance. */
   margin-inline: calc(-1 * var(--member-bleed));
-  padding: 0 var(--space-1)
-    calc(var(--space-6) + var(--member-scroll-reserve, 0px));
+  padding: 0 var(--space-1) calc(var(--space-6) + var(--member-scroll-reserve));
 }
 .memberList > * {
   flex-shrink: 0;

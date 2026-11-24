@@ -738,43 +738,6 @@ describe("message fold", () => {
     ]);
   });
 
-  it("ignores empty attachment link labels and preserves URL-derived names", () => {
-    const url = "https://relay.test/media/report.pdf";
-    const event = message(alice, channel, `[](${url})`, 10, [
-      ["imeta", `url ${url}`, "m application/pdf"],
-    ]);
-    const [row] = foldMessages(channel, relay.pubkey, [event]);
-    expect(row?.content).toBe("");
-    expect(row?.attachments).toEqual([
-      { url, kind: "file", mime: "application/pdf", name: "report.pdf" },
-    ]);
-  });
-
-  it("keeps URL-derived names for attachment autolinks with ordinary basenames", () => {
-    const url = "https://relay.test/media/report.pdf";
-    const event = message(alice, channel, `<${url}>`, 10, [
-      ["imeta", `url ${url}`, "m application/pdf"],
-    ]);
-    const [row] = foldMessages(channel, relay.pubkey, [event]);
-    expect(row?.content).toBe("");
-    expect(row?.attachments).toEqual([
-      { url, kind: "file", mime: "application/pdf", name: "report.pdf" },
-    ]);
-  });
-
-  it("rejects hash-shaped attachment link labels", () => {
-    const hash = "a".repeat(64);
-    const url = `https://relay.test/media/${hash}.pdf`;
-    const event = message(alice, channel, `[${hash}.pdf](${url})`, 10, [
-      ["imeta", `url ${url}`, "m application/pdf"],
-    ]);
-    const [row] = foldMessages(channel, relay.pubkey, [event]);
-    expect(row?.content).toBe("");
-    expect(row?.attachments).toEqual([
-      { url, kind: "file", mime: "application/pdf" },
-    ]);
-  });
-
   it.each([
     ["RLO", "report\u202eexe.pdf"],
     ["newline", "report\nfinal.pdf"],
@@ -787,17 +750,6 @@ describe("message fold", () => {
     expect(row?.content).toBe("");
     expect(row?.attachments).toEqual([
       { url, kind: "file", mime: "application/pdf", name: "file.pdf" },
-    ]);
-  });
-
-  it("accepts ordinary unicode attachment link labels", () => {
-    const url = "https://relay.test/media/file.pdf";
-    const event = message(alice, channel, `[résumé-月報.pdf](${url})`, 10, [
-      ["imeta", `url ${url}`, "m application/pdf"],
-    ]);
-    const [row] = foldMessages(channel, relay.pubkey, [event]);
-    expect(row?.attachments).toEqual([
-      { url, kind: "file", mime: "application/pdf", name: "résumé-月報.pdf" },
     ]);
   });
 

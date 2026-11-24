@@ -15,14 +15,16 @@ afterEach(cleanup);
 function Host({
   onReveal,
   rest,
+  restHeight = 124,
 }: {
   onReveal: () => void;
   rest: { current?: () => void };
+  restHeight?: number;
 }) {
   const scroller = useRef<HTMLElement>(null);
   const card = useTrailingSheet(
     {
-      restHeight: 124,
+      restHeight,
       content: ({ expanded }) => (
         <article aria-label={expanded ? "Grown card" : "Resting card"} />
       ),
@@ -60,4 +62,19 @@ it("grows with its layer's scroll, returns to Rest, and places Jump to latest ab
   screen.getByRole("article", { name: "Resting card" });
   unmount();
   expect(history.style.getPropertyValue("--timeline-trailing-rest")).toBe("");
+});
+
+// A new rest height moves the card's top over other rows without a scroll.
+it("tells reading when a mounted card's rest height changes", () => {
+  const onReveal = vi.fn();
+  const rest: { current?: () => void } = {};
+  const { rerender } = render(<Host onReveal={onReveal} rest={rest} />);
+  expect(onReveal).not.toHaveBeenCalled();
+  rerender(<Host onReveal={onReveal} rest={rest} restHeight={200} />);
+  expect(onReveal).toHaveBeenCalledOnce();
+  expect(
+    screen
+      .getByRole("region", { name: "History" })
+      .style.getPropertyValue("--timeline-trailing-rest"),
+  ).toBe("200px");
 });

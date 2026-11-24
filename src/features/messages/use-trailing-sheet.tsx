@@ -59,8 +59,19 @@ export function useTrailingSheet(
         `${restHeight + sheetGrowth(sheet.current)}px`,
       );
   }, [restHeight, scroller]);
+  // A new rest height moves the card's top over other rows; reading measures
+  // again, as neither layer scrolls.
+  const reveal = useRef(onReveal);
+  useLayoutEffect(() => {
+    reveal.current = onReveal;
+  }, [onReveal]);
+  const shownRest = useRef(restHeight);
   useLayoutEffect(() => {
     const element = scroller.current;
+    if (shownRest.current !== restHeight) {
+      shownRest.current = restHeight;
+      reveal.current();
+    }
     if (restHeight === undefined || !element) return;
     placeJumpToLatest();
     return () => {

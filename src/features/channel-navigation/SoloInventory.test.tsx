@@ -33,6 +33,11 @@ import {
   scope,
   viewer,
 } from "../../app/shell/sidebar-testing";
+
+// The once-per-device sidebar tour is covered by its own tests.
+vi.mock("../../bundled/channels/SidebarTour", () => ({
+  SidebarTour: () => null,
+}));
 stubAvatarBrowserApis();
 const rowOwners: Context[] = [];
 afterEach(async () => {

@@ -37,6 +37,7 @@ and token in both themes.
 | A form value | `Select`; `Combobox` when it needs search |
 | A hint on a control | `Tooltip`, or `title` on `Button`/`IconButton` |
 | A preview of an object | `PreviewCard` |
+| A one-time tip about a control | `EducationHint`: `PreviewCard tone="inverse"` with an X; Seen remembers the dismissal |
 | A settled empty or setup state | `EmptyState` with the next action |
 | Content that's loading | `LoadingRegion`: it stays quiet for the first second, so fast loads don't flicker |
 | A transient result | The shared Toast |
@@ -87,6 +88,8 @@ measures every pairing in `tokens.css` in both themes.
 Elevation reads as less translucency, not as a lighter colour: the higher a
 surface sits, the more opaque its glass, with a shadow to separate it. Use the
 shared materials in `styles/materials.css` instead of mixing your own.
+A surface floating over the whole app, such as a tour, uses `shadow-overlay`
+(`Popover elevation="overlay"`).
 
 ## Hover timing
 

@@ -8,9 +8,14 @@ import {
   type ReactNode,
 } from "react";
 import { readView, subscribeView, writeView } from "../../shared/view-state";
+import { EducationHint } from "../../shared/design-system/ui/EducationHint";
 import { Button } from "../../shared/design-system/ui/Button";
 import { needsYou } from "./conversation-rows";
 import styles from "./Channels.module.css";
+import { sidebarTourKey, stayMessyKey, useSeen } from "./seen-context";
+import { tidyShow } from "./tidy-show";
+
+const never = () => () => {};
 
 /** Conversations each card shows. The earlier pixel heights, saved under
  * "sidebar:card-heights", are no longer read: those cards show the default. */
@@ -20,6 +25,8 @@ const sizesKey = "sidebar:card-sizes";
 const DEFAULT_SIZE = 7;
 /** The saved size of a card opened full. */
 const ALL = Number.MAX_SAFE_INTEGER;
+/** The grip's tip shows until the person dismisses it. */
+const gripTipKey = "buzz.channels/sidebar-grip-tip";
 
 function savedSizes(scope: string): Record<string, number> {
   const saved = readView<unknown>(scope, sizesKey, {});
@@ -37,12 +44,30 @@ function savedSizes(scope: string): Record<string, number> {
  * A card's size, remembered on this device: how many conversations it shows,
  * the same in a list or as icons, or full. Only the grip sets it. Toggling
  * opens a card full, and closes a full card back to the default.
+ *
+ * A card never sized shows everything, like the earlier sidebar, until the
+ * tour's "Tidy it up" trims it to the default. "Stay messy" keeps it full.
+ * Solo was already trimmed before, so it keeps the default either way.
  */
 export function useSidebarCardSize(scope: string, card: string) {
-  const size = useSyncExternalStore(
+  const seen = useSeen();
+  const saved = useSyncExternalStore(
     (change) => subscribeView(scope, change),
     () => savedSizes(scope)[card],
   );
+  const untidy = useSyncExternalStore(
+    seen?.subscribe ?? never,
+    () =>
+      seen?.has(sidebarTourKey) === false || seen?.has(stayMessyKey) === true,
+  );
+  const key = `${scope}/${card}`;
+  const held = useSyncExternalStore(tidyShow.subscribe, () =>
+    tidyShow.held(key),
+  );
+  // Full only because the tour is unanswered (or its show hasn't come here).
+  const provisional =
+    saved === undefined && (untidy || held) && card !== "solo";
+  const size = provisional ? ALL : saved;
   const resize = (next: number | undefined) => {
     const { [card]: _, ...rest } = savedSizes(scope);
     writeView(
@@ -51,8 +76,9 @@ export function useSidebarCardSize(scope: string, card: string) {
       next === undefined ? rest : { ...rest, [card]: next },
     );
   };
-  const toggle = () => resize(size === ALL ? undefined : ALL);
-  return [size, resize, toggle] as const;
+  // Closing full lands on the default explicitly, so it holds while untidy.
+  const toggle = () => resize(size === ALL ? DEFAULT_SIZE : ALL);
+  return [size, resize, toggle, provisional ? key : undefined] as const;
 }
 
 /**
@@ -69,6 +95,7 @@ export function SidebarCardResize({
   size,
   onResize,
   onToggle,
+  tidyKey,
   children,
 }: {
   label: string;
@@ -78,6 +105,8 @@ export function SidebarCardResize({
   onResize(size: number): void;
   /** Open full, or close full back to the default. */
   onToggle(): void;
+  /** Set while the card is full only until the tour's tidy: it may trim. */
+  tidyKey?: string | undefined;
   children: ReactNode;
 }) {
   const list = useRef<HTMLDivElement>(null);
@@ -85,26 +114,37 @@ export function SidebarCardResize({
   const stop = useRef<() => void>(undefined);
   useEffect(() => () => stop.current?.(), []);
   const [count, setCount] = useState(0);
+  useEffect(() => {
+    const rows = list.current;
+    if (!tidyKey || !rows || count <= DEFAULT_SIZE) return;
+    return tidyShow.register(tidyKey, rows, count - DEFAULT_SIZE);
+  }, [tidyKey, count]);
   // Rows the card shows now, for assistive technology.
   const [shown, setShown] = useState(0);
   // Conversations past the edge that wait on you, and the lowest one's row.
   const [waiting, setWaiting] = useState<Waiting>(none);
-  const apply = useCallback((rows: HTMLElement, size: number | undefined) => {
-    setShown(clip(rows, size));
-    const next = waitingPastEdge(rows);
-    setWaiting((previous) =>
-      previous.count === next.count && previous.lowest === next.lowest
-        ? previous
-        : next,
-    );
-  }, []);
+  const apply = useCallback(
+    (rows: HTMLElement, size: number | undefined, glide = false) => {
+      setShown(clip(rows, size, glide));
+      const next = waitingPastEdge(rows);
+      setWaiting((previous) =>
+        previous.count === next.count && previous.lowest === next.lowest
+          ? previous
+          : next,
+      );
+    },
+    [],
+  );
   const saved = useRef(size);
+  const seen = useSeen();
   // Apply the saved size before paint, and again whenever rows come, go,
   // re-wrap or first get a size (a card opened after starting closed). Only
   // the grip saves a size; settling never does.
   useLayoutEffect(() => {
+    // A new size (not a first render) glides, such as the tour's trim.
+    const glide = saved.current !== size;
     saved.current = size;
-    if (list.current && !stop.current) apply(list.current, size);
+    if (list.current && !stop.current) apply(list.current, size, glide);
   }, [size, apply]);
   useEffect(() => {
     const rows = list.current;
@@ -196,121 +236,133 @@ export function SidebarCardResize({
       </div>
       {/* Only a card with more than one row has anything to hide. */}
       {count > 1 && (
-        <hr
-          ref={handle}
-          className={styles.cardResize}
-          aria-label={`Resize ${label}`}
-          aria-orientation="horizontal"
-          aria-valuemin={1}
-          aria-valuemax={count}
-          aria-valuenow={shown}
-          aria-valuetext={`${shown} of ${count} conversations`}
-          // Rows past the edge keep the handle showing, so the card reads
-          // as having more.
-          data-more={shown < count ? "" : undefined}
-          aria-keyshortcuts="Enter"
-          tabIndex={0}
-          onDoubleClick={onToggle}
-          onKeyDown={(event) => {
-            const rows = list.current;
-            if (!rows || event.altKey || event.ctrlKey || event.metaKey) return;
-            if (event.key === "Enter") {
+        <EducationHint
+          seen={seen}
+          seenKey={gripTipKey}
+          content={
+            size === ALL
+              ? "Drag to resize · Double-click to collapse"
+              : "Drag to resize · Double-click to expand"
+          }
+        >
+          <hr
+            ref={handle}
+            className={styles.cardResize}
+            aria-label={`Resize ${label}`}
+            aria-orientation="horizontal"
+            aria-valuemin={1}
+            aria-valuemax={count}
+            aria-valuenow={shown}
+            aria-valuetext={`${shown} of ${count} conversations`}
+            // Rows past the edge keep the handle showing, so the card reads
+            // as having more.
+            data-more={shown < count ? "" : undefined}
+            aria-keyshortcuts="Enter"
+            tabIndex={0}
+            onDoubleClick={onToggle}
+            onKeyDown={(event) => {
+              const rows = list.current;
+              if (!rows || event.altKey || event.ctrlKey || event.metaKey)
+                return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                return onToggle();
+              }
+              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
               event.preventDefault();
-              return onToggle();
-            }
-            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-            event.preventDefault();
-            // Step one whole row from where the shown rows end now, not counting
-            // a pinned one.
-            const pinned = unpin(rows);
-            const ends = stops(rows);
-            const [first, last] = [ends[0], ends.at(-1)];
-            if (first === undefined || last === undefined) return;
-            const current = pinned
-              ? (ends[shown - 1] ?? rows.offsetHeight)
-              : rows.offsetHeight;
-            const target = through(
-              ends,
-              event.key === "ArrowUp"
-                ? (ends.filter((end) => end < current - 1).at(-1) ?? first)
-                : (ends.find((end) => end > current + 1) ?? last),
-            );
-            if (target === size) apply(rows, size);
-            else onResize(target);
-          }}
-          onPointerDown={(event) => {
-            const rows = list.current;
-            if (event.button !== 0 || stop.current || !rows) return;
-            event.preventDefault();
-            const { pointerId, clientY: startY } = event;
-            // The drag moves the edge of the shown rows; a pinned row goes back
-            // to its place until the card settles.
-            const pinned = unpin(rows);
-            const ends = stops(rows);
-            const start = pinned
-              ? (ends[shown - 1] ?? rows.offsetHeight)
-              : rows.offsetHeight;
-            const [min = 0] = ends;
-            const max = ends.at(-1) ?? start;
-            // Rows sliding under the pointer must not take hover mid-drag. The
-            // grip stays hit-testable, so a double-click still lands on it.
-            const surface = rows.closest("nav") ?? rows;
-            const grip = event.currentTarget;
-            let next = start;
-            let frame: number | undefined;
-            // Preview on the element; the saved size changes on release.
-            const move = (event: PointerEvent) => {
-              if (event.pointerId !== pointerId) return;
-              event.preventDefault();
-              next = Math.min(
-                max,
-                Math.max(min, start + event.clientY - startY),
-              );
-              frame ??= requestAnimationFrame(() => {
-                frame = undefined;
-                rows.style.maxHeight = `${next}px`;
-              });
-            };
-            const finish = (event: Event) => {
-              if ("pointerId" in event && event.pointerId !== pointerId) return;
-              stop.current?.();
-              // Released, the list glides onto the nearest whole row. Dragged
-              // to the bottom, it keeps showing every row as new ones arrive.
-              // A click without a drag (half of a double-click) changes nothing.
-              if (event.type !== "pointerup" || next === start)
-                return apply(rows, size);
+              // Step one whole row from where the shown rows end now, not counting
+              // a pinned one.
+              const pinned = unpin(rows);
               const ends = stops(rows);
-              const target = through(ends, nearest(ends, next));
+              const [first, last] = [ends[0], ends.at(-1)];
+              if (first === undefined || last === undefined) return;
+              const current = pinned
+                ? (ends[shown - 1] ?? rows.offsetHeight)
+                : rows.offsetHeight;
+              const target = through(
+                ends,
+                event.key === "ArrowUp"
+                  ? (ends.filter((end) => end < current - 1).at(-1) ?? first)
+                  : (ends.find((end) => end > current + 1) ?? last),
+              );
               if (target === size) apply(rows, size);
               else onResize(target);
-            };
-            stop.current = () => {
-              stop.current = undefined;
-              if (frame !== undefined) cancelAnimationFrame(frame);
-              window.removeEventListener("pointermove", move);
-              window.removeEventListener("pointerup", finish);
-              window.removeEventListener("pointercancel", finish);
-              window.removeEventListener("blur", finish);
-              handle.current?.removeAttribute("data-resizing");
-              rows.removeAttribute("data-resizing");
-              document.documentElement.style.removeProperty("cursor");
-              document.body.style.removeProperty("user-select");
-              surface.style.removeProperty("pointer-events");
-              grip.style.removeProperty("pointer-events");
-            };
-            window.addEventListener("pointermove", move);
-            window.addEventListener("pointerup", finish);
-            window.addEventListener("pointercancel", finish);
-            window.addEventListener("blur", finish);
-            event.currentTarget.setAttribute("data-resizing", "");
-            rows.setAttribute("data-resizing", "");
-            rows.style.maxHeight = `${start}px`;
-            document.documentElement.style.cursor = "grabbing";
-            document.body.style.userSelect = "none";
-            surface.style.pointerEvents = "none";
-            grip.style.pointerEvents = "auto";
-          }}
-        />
+            }}
+            onPointerDown={(event) => {
+              const rows = list.current;
+              if (event.button !== 0 || stop.current || !rows) return;
+              event.preventDefault();
+              const { pointerId, clientY: startY } = event;
+              // The drag moves the edge of the shown rows; a pinned row goes back
+              // to its place until the card settles.
+              const pinned = unpin(rows);
+              const ends = stops(rows);
+              const start = pinned
+                ? (ends[shown - 1] ?? rows.offsetHeight)
+                : rows.offsetHeight;
+              const [min = 0] = ends;
+              const max = ends.at(-1) ?? start;
+              // Rows sliding under the pointer must not take hover mid-drag. The
+              // grip stays hit-testable, so a double-click still lands on it.
+              const surface = rows.closest("nav") ?? rows;
+              const grip = event.currentTarget;
+              let next = start;
+              let frame: number | undefined;
+              // Preview on the element; the saved size changes on release.
+              const move = (event: PointerEvent) => {
+                if (event.pointerId !== pointerId) return;
+                event.preventDefault();
+                next = Math.min(
+                  max,
+                  Math.max(min, start + event.clientY - startY),
+                );
+                frame ??= requestAnimationFrame(() => {
+                  frame = undefined;
+                  rows.style.maxHeight = `${next}px`;
+                });
+              };
+              const finish = (event: Event) => {
+                if ("pointerId" in event && event.pointerId !== pointerId)
+                  return;
+                stop.current?.();
+                // Released, the list glides onto the nearest whole row. Dragged
+                // to the bottom, it keeps showing every row as new ones arrive.
+                // A click without a drag (half of a double-click) changes nothing.
+                if (event.type !== "pointerup" || next === start)
+                  return apply(rows, size);
+                const ends = stops(rows);
+                const target = through(ends, nearest(ends, next));
+                if (target === size) apply(rows, size);
+                else onResize(target);
+              };
+              stop.current = () => {
+                stop.current = undefined;
+                if (frame !== undefined) cancelAnimationFrame(frame);
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", finish);
+                window.removeEventListener("pointercancel", finish);
+                window.removeEventListener("blur", finish);
+                handle.current?.removeAttribute("data-resizing");
+                rows.removeAttribute("data-resizing");
+                document.documentElement.style.removeProperty("cursor");
+                document.body.style.removeProperty("user-select");
+                surface.style.removeProperty("pointer-events");
+                grip.style.removeProperty("pointer-events");
+              };
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", finish);
+              window.addEventListener("pointercancel", finish);
+              window.addEventListener("blur", finish);
+              event.currentTarget.setAttribute("data-resizing", "");
+              rows.setAttribute("data-resizing", "");
+              rows.style.maxHeight = `${start}px`;
+              document.documentElement.style.cursor = "grabbing";
+              document.body.style.userSelect = "none";
+              surface.style.pointerEvents = "none";
+              grip.style.pointerEvents = "auto";
+            }}
+          />
+        </EducationHint>
       )}
     </>
   );
@@ -321,7 +373,11 @@ export function SidebarCardResize({
  * round up to fill their last row. Rows past the clip are inert, so focus and
  * the keyboard skip what the card hides. Returns how many rows show.
  */
-function clip(list: HTMLElement, size: number | undefined): number {
+function clip(
+  list: HTMLElement,
+  size: number | undefined,
+  glide = false,
+): number {
   unpin(list);
   const ends = stops(list);
   const total = ends.length;
@@ -351,6 +407,12 @@ function clip(list: HTMLElement, size: number | undefined): number {
     if (pinned.style.getPropertyValue("--card-pin-top") !== at)
       pinned.style.setProperty("--card-pin-top", at);
     pinned.setAttribute("data-card-pinned", "");
+  }
+  // An unclipped list has no height to transition from: start the glide at
+  // its full height.
+  if (glide && clipped && laidOut && !list.style.maxHeight) {
+    list.style.maxHeight = `${list.scrollHeight}px`;
+    void list.offsetHeight;
   }
   setMaxHeight(list, clipped && laidOut ? `${end + room}px` : "");
   rows.forEach((row, index) => {

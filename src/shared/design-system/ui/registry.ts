@@ -140,6 +140,41 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
+    slug: "tour",
+    name: "Tour",
+    purpose:
+      "Introduce a shipped change with a few short pages beside the feature they explain.",
+    behavior:
+      "Composes the shared popover surface. Opens without taking focus and ignores outside clicks so work can continue; Escape and Close dismiss it. Each page pairs a decorative visual with a title and optional description. Dots show progress, Back and Next page through, and the forward action carries the device accent. Arrow keys page while focus is inside. Callers own when it appears and remember that it was seen.",
+    variants: ["single page", "multi-page", "final page"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Tour.tsx",
+    baseUi: [BASE_UI_PARTS.popover],
+    composes: ["popover", "button", "icon-button"],
+  },
+  {
+    slug: "schematic",
+    name: "Schematic",
+    purpose:
+      "Draw simplified product UI, such as cards, rows, handles and a hand, to illustrate a gesture.",
+    behavior:
+      "Decorative and hidden from assistive tech, so surrounding copy carries the meaning. Parts share one looping timeline (grow, expand, lift, yield, row entry, drag and double-tap); reduced motion holds the finished frame, and a still scene never loops. An alternate drawing takes turns with the main one, one loop each, swapping while the scene is faded out. The resize grip sits inside the card's bottom edge, as in the app. Accent marks only the part a scene is about.",
+    variants: [
+      "grow",
+      "expand",
+      "reorder",
+      "rows entering",
+      "alternating",
+      "still",
+    ],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Schematic.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "calendar",
     name: "Calendar",
     purpose: "Choose a date using a month grid.",

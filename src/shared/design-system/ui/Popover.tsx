@@ -53,6 +53,8 @@ type PopoverPopupProps = Omit<
     size?: "compact" | "default" | "wide";
     /** Embedded pickers own their internal spacing. */
     padding?: "content" | "list" | "none";
+    /** Overlay lifts a surface above the whole app, such as a tour. */
+    elevation?: "default" | "overlay";
   };
 
 export function PopoverPopup({
@@ -67,6 +69,7 @@ export function PopoverPopup({
   sticky,
   size = "default",
   padding = "content",
+  elevation = "default",
   colorMode,
   finalFocus,
   ref,
@@ -94,6 +97,7 @@ export function PopoverPopup({
           data-buzz-ui=""
           data-size={size}
           data-padding={padding}
+          data-elevation={elevation}
           data-color-mode={colorMode}
           className={`buzz-popover-popup text-body ${colorMode ?? ""}`}
         />

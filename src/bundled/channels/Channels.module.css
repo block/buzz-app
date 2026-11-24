@@ -1112,6 +1112,11 @@ html[data-keyboard-navigation]
 .cardRows:not([data-resizing]) {
   transition: max-height var(--duration-fast) var(--easing-enter);
 }
+/* The tour's tidy trims every card slowly, as a show. */
+.cardRows[data-card-showcase]:not([data-resizing]) {
+  transition-duration: var(--card-trim-duration, var(--duration-showcase));
+  transition-timing-function: var(--easing-settle);
+}
 /* The grip sits in the card's bottom edge and appears on hover. */
 .cardResize {
   position: relative;

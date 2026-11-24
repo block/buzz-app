@@ -1,0 +1,495 @@
+@layer components {
+  /*
+   * Schematic: decorative product sketches. Every part shares one looping
+   * timeline so a scene reads as a single gesture:
+   *   0–12% rest · 12–22% press · 22–56% act · 56–88% hold · 88–100% fade.
+   * The loop length is a scene rhythm, not an interaction duration, so it stays
+   * local to this component.
+   */
+  .buzz-schematic-scene {
+    --schematic-loop: 4.8s;
+    --schematic-row: var(--space-3);
+    --schematic-gap: var(--space-1);
+    --schematic-unit: calc(var(--schematic-row) + var(--schematic-gap));
+    --schematic-pad: var(--space-1h);
+    --schematic-stack-gap: var(--space-2);
+    --schematic-delay: 0s;
+    --schematic-state: running;
+    display: grid;
+    /* Even space above and below the drawing. */
+    align-content: center;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: var(--floating-inner-radius, var(--radius-container));
+    background: var(--surface-inset);
+    padding-block: var(--space-5);
+    padding-inline: var(--space-16);
+    pointer-events: none;
+    user-select: none;
+  }
+  /* A card that grows downward stays anchored at the top, so its header
+     does not drift up as rows reveal. */
+  .buzz-schematic-scene:has(
+    [data-motion="grow"],
+    [data-motion="expand"],
+    [data-motion="trim"]
+  ) {
+    align-content: start;
+  }
+  .buzz-schematic-stage {
+    display: grid;
+    align-content: start;
+    gap: var(--schematic-stack-gap);
+    animation: schematic-stage var(--schematic-loop) linear
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+
+  /* Lays out as part of the stage; it exists only to restart a turn. */
+  .buzz-schematic-turn {
+    display: contents;
+  }
+
+  .buzz-schematic-slot {
+    position: relative;
+    display: grid;
+    gap: var(--space-1);
+  }
+  .buzz-schematic-card {
+    display: grid;
+    gap: var(--schematic-gap);
+    padding: var(--schematic-pad);
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-chip);
+    background: var(--surface-panel);
+    color: var(--border-standard);
+  }
+  .buzz-schematic-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    block-size: var(--schematic-row);
+    padding-inline: var(--space-1);
+  }
+  .buzz-schematic-bar {
+    flex: 1;
+    max-inline-size: 60%;
+    block-size: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: currentColor;
+  }
+  .buzz-schematic-header > .buzz-schematic-bar {
+    color: var(--text-subtle);
+    max-inline-size: 40%;
+  }
+  .buzz-schematic-rows {
+    display: grid;
+    gap: var(--schematic-gap);
+    overflow: hidden;
+    max-block-size: max(
+      0px,
+      calc(
+        var(--schematic-unit) *
+        var(--schematic-visible) -
+        var(--schematic-gap)
+      )
+    );
+  }
+  .buzz-schematic-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1h);
+    block-size: var(--schematic-row);
+    flex-shrink: 0;
+    padding-inline: var(--space-1);
+    border-radius: var(--radius-pill);
+    color: var(--border-standard);
+  }
+  .buzz-schematic-row[data-tone="accent"] {
+    background: var(--surface-sidebar-selected);
+    color: var(--text-sidebar-selected);
+  }
+  .buzz-schematic-lead {
+    flex-shrink: 0;
+    inline-size: var(--space-2);
+    block-size: var(--space-2);
+    background: currentColor;
+    border-radius: var(--space-half);
+  }
+  .buzz-schematic-lead[data-lead="person"] {
+    border-radius: var(--radius-pill);
+  }
+  .buzz-schematic-lead[data-lead="chat"] {
+    border-radius: var(--radius-pill) var(--radius-pill) var(--radius-pill) 0;
+  }
+
+  .buzz-schematic-grip {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    padding-block: var(--space-half);
+  }
+  .buzz-schematic-grip-bar {
+    inline-size: var(--space-8);
+    block-size: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--border-standard);
+  }
+  .buzz-schematic-grip[data-tone="accent"] .buzz-schematic-grip-bar {
+    background: var(--affordance-accent-prominent);
+  }
+
+  .buzz-schematic-drop-line {
+    position: absolute;
+    inset-inline: 0;
+    inset-block-end: calc(
+      var(--schematic-stack-gap) /
+      -2 -
+      var(--space-half) /
+      2
+    );
+    block-size: var(--space-half);
+    border-radius: var(--radius-pill);
+    background: var(--affordance-accent-prominent);
+    opacity: 0;
+    animation: schematic-drop-line var(--schematic-loop) var(--ease-state)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+
+  .buzz-schematic-pointer {
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-end: var(--space-3);
+    display: grid;
+    color: var(--text-standard);
+    translate: 0 -25%;
+  }
+  .buzz-schematic-grip .buzz-schematic-pointer {
+    inset-inline-end: auto;
+    inset-inline-start: calc(50% + var(--space-2));
+  }
+  .buzz-schematic-hand {
+    grid-area: 1 / 1;
+    inline-size: var(--space-5);
+    block-size: var(--space-5);
+  }
+  .buzz-schematic-pointer[data-motion="drag"] [data-hand="open"] {
+    animation: schematic-hand-open var(--schematic-loop) step-end
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-pointer[data-motion="drag"] [data-hand="grab"] {
+    animation: schematic-hand-grab var(--schematic-loop) step-end
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-pointer[data-motion="double-tap"] {
+    animation: schematic-double-tap var(--schematic-loop) var(--ease-state)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+
+  /* Double-clicking does not move the hand: it holds its place while the
+     handle travels down beneath it, on the expand's own timing. */
+  .buzz-schematic-slot[data-motion="expand"]
+    .buzz-schematic-grip
+    .buzz-schematic-pointer {
+    animation-name: schematic-double-tap, schematic-hold;
+    animation-timing-function: var(--ease-state), var(--ease-settle);
+  }
+
+  /* Card motions. */
+  .buzz-schematic-slot[data-motion="grow"] .buzz-schematic-rows {
+    animation: schematic-grow var(--schematic-loop) var(--ease-settle)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-slot[data-motion="expand"] .buzz-schematic-rows {
+    animation: schematic-expand var(--schematic-loop) var(--ease-settle)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-slot[data-motion="trim"] .buzz-schematic-rows {
+    animation: schematic-trim var(--schematic-loop) var(--ease-settle)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-slot[data-motion="lift"],
+  .buzz-schematic-slot[data-motion="yield"] {
+    /* The other card's full height plus the gap between cards: travel is
+       the other card's row count, so the two swap places exactly. */
+    --schematic-shift: calc(
+      var(--schematic-pad) *
+      2 +
+      2px +
+      var(--schematic-row) +
+      var(--schematic-unit) *
+      var(--schematic-travel) +
+      var(--schematic-stack-gap)
+    );
+    z-index: 0;
+  }
+  .buzz-schematic-slot[data-motion="lift"] {
+    z-index: 1;
+    animation: schematic-lift var(--schematic-loop) var(--ease-settle)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-slot[data-motion="lift"] .buzz-schematic-card {
+    animation: schematic-raise var(--schematic-loop) var(--ease-state)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-slot[data-motion="yield"] {
+    animation: schematic-yield var(--schematic-loop) var(--ease-settle)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-row[data-enter] {
+    animation: schematic-enter-1 var(--schematic-loop) var(--ease-enter)
+      var(--schematic-delay) infinite both var(--schematic-state);
+  }
+  .buzz-schematic-row[data-enter="2"] {
+    animation-name: schematic-enter-2;
+  }
+  .buzz-schematic-row[data-enter="3"] {
+    animation-name: schematic-enter-3;
+  }
+
+  /* A still scene never loops. */
+  .buzz-schematic-scene[data-still] .buzz-schematic-stage {
+    animation: none;
+  }
+
+  /* Reduced motion holds the finished frame of every part. */
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-schematic-scene {
+      --schematic-delay: calc(var(--schematic-loop) * -0.7);
+      --schematic-state: paused;
+    }
+  }
+
+  @keyframes schematic-stage {
+    0% {
+      opacity: 0;
+    }
+    6%,
+    88% {
+      opacity: 1;
+    }
+    96%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes schematic-hand-open {
+    0% {
+      opacity: 1;
+    }
+    18% {
+      opacity: 0;
+    }
+    60% {
+      opacity: 1;
+    }
+  }
+  @keyframes schematic-hand-grab {
+    0% {
+      opacity: 0;
+    }
+    18% {
+      opacity: 1;
+    }
+    60% {
+      opacity: 0;
+    }
+  }
+  @keyframes schematic-double-tap {
+    0%,
+    12%,
+    17%,
+    22%,
+    100% {
+      scale: 1;
+    }
+    14%,
+    19% {
+      scale: 0.82;
+    }
+  }
+  @keyframes schematic-grow {
+    0%,
+    22% {
+      max-block-size: max(
+        0px,
+        calc(
+          var(--schematic-unit) *
+          var(--schematic-visible) -
+          var(--schematic-gap)
+        )
+      );
+    }
+    56%,
+    100% {
+      max-block-size: calc(
+        var(--schematic-unit) *
+        var(--schematic-total) -
+        var(--schematic-gap)
+      );
+    }
+  }
+  @keyframes schematic-expand {
+    0%,
+    26% {
+      max-block-size: max(
+        0px,
+        calc(
+          var(--schematic-unit) *
+          var(--schematic-visible) -
+          var(--schematic-gap)
+        )
+      );
+    }
+    48%,
+    100% {
+      max-block-size: calc(
+        var(--schematic-unit) *
+        var(--schematic-total) -
+        var(--schematic-gap)
+      );
+    }
+  }
+  @keyframes schematic-trim {
+    0%,
+    30% {
+      max-block-size: calc(
+        var(--schematic-unit) *
+        var(--schematic-total) -
+        var(--schematic-gap)
+      );
+    }
+    54%,
+    100% {
+      max-block-size: max(
+        0px,
+        calc(
+          var(--schematic-unit) *
+          var(--schematic-visible) -
+          var(--schematic-gap)
+        )
+      );
+    }
+  }
+  @keyframes schematic-hold {
+    0%,
+    26% {
+      margin-block-start: 0;
+    }
+    48%,
+    100% {
+      margin-block-start: calc(
+        var(--schematic-unit) *
+        (var(--schematic-visible) - var(--schematic-total))
+      );
+    }
+  }
+  @keyframes schematic-raise {
+    0%,
+    16%,
+    60%,
+    100% {
+      box-shadow: none;
+    }
+    20%,
+    56% {
+      box-shadow: var(--shadow-sm);
+    }
+  }
+  @keyframes schematic-lift {
+    0%,
+    26% {
+      translate: 0 0;
+    }
+    56%,
+    100% {
+      translate: 0 var(--schematic-shift);
+    }
+  }
+  @keyframes schematic-yield {
+    0%,
+    30% {
+      translate: 0 0;
+    }
+    56%,
+    100% {
+      translate: 0 calc(var(--schematic-shift) * -1);
+    }
+  }
+  @keyframes schematic-drop-line {
+    0%,
+    30% {
+      opacity: 0;
+    }
+    36%,
+    54% {
+      opacity: 1;
+    }
+    60%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes schematic-enter-1 {
+    0%,
+    12% {
+      opacity: 0;
+      translate: calc(var(--space-2) * -1) 0;
+      background: var(--surface-sidebar-selected);
+      color: var(--text-sidebar-selected);
+    }
+    22%,
+    40% {
+      opacity: 1;
+      translate: 0 0;
+      background: var(--surface-sidebar-selected);
+      color: var(--text-sidebar-selected);
+    }
+    56%,
+    100% {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+  @keyframes schematic-enter-2 {
+    0%,
+    22% {
+      opacity: 0;
+      translate: calc(var(--space-2) * -1) 0;
+      background: var(--surface-sidebar-selected);
+      color: var(--text-sidebar-selected);
+    }
+    32%,
+    48% {
+      opacity: 1;
+      translate: 0 0;
+      background: var(--surface-sidebar-selected);
+      color: var(--text-sidebar-selected);
+    }
+    64%,
+    100% {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+  @keyframes schematic-enter-3 {
+    0%,
+    32% {
+      opacity: 0;
+      translate: calc(var(--space-2) * -1) 0;
+      background: var(--surface-sidebar-selected);
+      color: var(--text-sidebar-selected);
+    }
+    42%,
+    56% {
+      opacity: 1;
+      translate: 0 0;
+      background: var(--surface-sidebar-selected);
+      color: var(--text-sidebar-selected);
+    }
+    72%,
+    100% {
+      opacity: 1;
+      translate: 0 0;
+    }
+  }
+}

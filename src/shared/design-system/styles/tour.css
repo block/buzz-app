@@ -1,0 +1,84 @@
+@layer components {
+  /* Tour: a paged card inside the shared popover surface. */
+  .buzz-tour {
+    position: relative;
+    display: grid;
+    gap: var(--space-3);
+    cursor: grab;
+    user-select: none;
+  }
+  .buzz-tour:active {
+    cursor: grabbing;
+  }
+  .buzz-tour-visual {
+    display: grid;
+  }
+  .buzz-tour-close {
+    position: absolute;
+    inset-block-start: var(--space-1);
+    inset-inline-end: var(--space-1);
+  }
+  .buzz-tour-copy {
+    display: grid;
+    padding-inline: var(--space-1);
+    text-wrap: pretty;
+  }
+  .buzz-tour-copy .buzz-popover-description {
+    margin-block-start: var(--space-1);
+  }
+  .buzz-tour-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding-inline-start: var(--space-1);
+  }
+  .buzz-tour-dots {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  .buzz-tour-dot {
+    inline-size: var(--space-1h);
+    block-size: var(--space-1h);
+    border-radius: var(--radius-pill);
+    background: var(--border-standard);
+    transition:
+      inline-size var(--duration-state) var(--ease-settle),
+      background-color var(--duration-state) var(--ease-state);
+  }
+  .buzz-tour-dot[data-active] {
+    inline-size: var(--space-4);
+    background: var(--affordance-accent-prominent);
+  }
+  /* A last-page choice: two equal answers under the copy. */
+  .buzz-tour-choice {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+  }
+  /* The tour's forward action carries the person's accent, like Send. */
+  .buzz-tour-choice,
+  .buzz-tour-actions {
+    --affordance-prominent: var(--affordance-accent-prominent);
+    --affordance-prominent-hover: var(--affordance-accent-prominent-hover);
+    --affordance-prominent-pressed: var(--affordance-accent-prominent-pressed);
+    --text-on-prominent: var(--text-on-accent);
+  }
+  .buzz-tour-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+  /* Education hint: a one-time tip, its dismiss on the same line. */
+  .buzz-education-hint {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-tour-dot {
+      transition: none;
+    }
+  }
+}

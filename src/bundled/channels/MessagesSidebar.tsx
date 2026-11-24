@@ -19,6 +19,7 @@ import { RecoveryNotice } from "../../features/relay/RecoveryNotice";
 import { ChannelInventory } from "./ChannelInventory";
 import { SidebarBoundary } from "../../features/channel-navigation/SidebarBoundary";
 import { SidebarList } from "../../features/channel-navigation/SidebarList";
+import { SidebarTour } from "./SidebarTour";
 import { SidebarUnread } from "./SidebarUnread";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RelayData } from "../../features/relay/service";
@@ -314,6 +315,12 @@ function ScopedSidebar({
                         {after}
                       </props.Frame>
                       {dialogs}
+                      {!restriction && (
+                        <SidebarTour
+                          listRef={sidebar.list}
+                          ready={committedSlots?.generation === slotGeneration}
+                        />
+                      )}
                     </>
                   );
                 },

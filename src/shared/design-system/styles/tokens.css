@@ -887,6 +887,10 @@
     0 2px 4px rgba(0, 0, 0, 0.04);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-sm: 0 0 2px rgba(0, 0, 0, 0.1), 0 4px 8px -2px rgba(0, 0, 0, 0.06);
+  /* A surface that floats over the whole app rather than one panel, like a tour. */
+  --shadow-overlay:
+    0 0 0 1px rgba(0, 0, 0, 0.06), 0 4px 8px -2px rgba(0, 0, 0, 0.08),
+    0 24px 48px -8px rgba(0, 0, 0, 0.18);
 
   /* --- Space. Six steps extracted from the Messages frame. --
      The scale is intentionally short: 4/8/12/16/20/24 covers the repeated
@@ -916,6 +920,7 @@
   --time-state: 150ms;
   --time-panel-enter: 180ms;
   --time-settle: 220ms;
+  --time-showcase: 960ms;
   --ease-state: ease;
   --ease-enter: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-settle: cubic-bezier(0.645, 0.045, 0.355, 1);
@@ -1326,6 +1331,7 @@
   --text-mention-own: var(--text-mention);
   --shadow-card: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --shadow-panel: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-overlay: 0 0 0 1px rgba(255, 255, 255, 0.08);
   --surface-base: var(--neutral-1);
   --surface-panel: var(--neutral-3);
   --surface-composer: var(--neutral-4);
@@ -1588,6 +1594,7 @@
   --duration-state: var(--time-state);
   --duration-panel-enter: var(--time-panel-enter);
   --duration-settle: var(--time-settle);
+  --duration-showcase: var(--time-showcase);
   --duration-field-focus: var(--time-state);
   --easing-state: var(--ease-state);
   --easing-enter: var(--ease-enter);

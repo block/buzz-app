@@ -6,6 +6,14 @@ import {
 } from "../../../../src/shared/design-system/ui/SettingsGroup";
 import { ValueChip } from "../../../../src/shared/design-system/ui/ValueChip";
 import { EmptyState } from "../../../../src/shared/design-system/ui/EmptyState";
+import {
+  SchematicCard,
+  SchematicGrip,
+  SchematicPointer,
+  SchematicRow,
+  SchematicScene,
+} from "../../../../src/shared/design-system/ui/Schematic";
+import { Tour } from "../../../../src/shared/design-system/ui/Tour";
 import { ExamplePreview } from "./ExamplePreview";
 import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
 import { FieldButton } from "../../../../src/shared/design-system/ui/FieldButton";
@@ -68,7 +76,7 @@ import {
   SparklesIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import {
   ThemePicker,
   type ThemeMode,
@@ -2348,6 +2356,106 @@ function LoadingRegionSpecimen() {
   );
 }
 
+function ResizeScene() {
+  return (
+    <SchematicScene>
+      <SchematicCard
+        visibleRows={2}
+        motion="grow"
+        grip={
+          <SchematicGrip tone="accent">
+            <SchematicPointer motion="drag" />
+          </SchematicGrip>
+        }
+      >
+        <SchematicRow lead="channel" />
+        <SchematicRow lead="person" />
+        <SchematicRow lead="chat" />
+        <SchematicRow lead="channel" />
+      </SchematicCard>
+    </SchematicScene>
+  );
+}
+
+function SchematicSpecimen() {
+  return (
+    <SpecimenFrame
+      code={`<SchematicScene>
+  <SchematicCard
+    visibleRows={2}
+    motion="grow"
+    grip={
+      <SchematicGrip tone="accent">
+        <SchematicPointer motion="drag" />
+      </SchematicGrip>
+    }
+  >
+    <SchematicRow lead="channel" />
+    <SchematicRow lead="person" />
+    <SchematicRow lead="chat" />
+    <SchematicRow lead="channel" />
+  </SchematicCard>
+</SchematicScene>`}
+    >
+      <div className="w-full max-w-sm">
+        <ResizeScene />
+      </div>
+    </SpecimenFrame>
+  );
+}
+
+function TourSpecimen() {
+  const anchor = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <SpecimenFrame
+      code={`<Tour
+  open={open}
+  label="What’s new in the sidebar"
+  anchor={sidebar}
+  onDismiss={() => remember()}
+  pages={[{ id: "resize", title: "Resize a workspace", description: "…", visual: <SchematicScene>…</SchematicScene> }]}
+/>`}
+    >
+      <div ref={anchor}>
+        <Button onClick={() => setOpen(true)}>Show tour</Button>
+      </div>
+      <Tour
+        open={open}
+        label="What’s new"
+        anchor={anchor}
+        side="bottom"
+        align="start"
+        onDismiss={() => setOpen(false)}
+        pages={[
+          {
+            id: "resize",
+            title: "Resize a workspace",
+            description:
+              "Drag the handle under a workspace to show more or fewer rows.",
+            visual: <ResizeScene />,
+          },
+          {
+            id: "anything",
+            title: "Workspaces hold anything",
+            description:
+              "Put chats, channels and DMs together in any workspace.",
+            visual: (
+              <SchematicScene>
+                <SchematicCard>
+                  <SchematicRow lead="channel" />
+                  <SchematicRow lead="person" enter={1} />
+                  <SchematicRow lead="chat" enter={2} />
+                </SchematicCard>
+              </SchematicScene>
+            ),
+          },
+        ]}
+      />
+    </SpecimenFrame>
+  );
+}
+
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "loading-region": LoadingRegionSpecimen,
   "alert-dialog": AlertDialogSpecimen,
@@ -2402,6 +2510,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     </SpecimenFrame>
   ),
   calendar: CalendarSpecimen,
+  tour: TourSpecimen,
+  schematic: SchematicSpecimen,
   "field-button": FieldButtonSpecimen,
   input: InputExamples,
   textarea: TextareaExamples,

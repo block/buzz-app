@@ -468,6 +468,12 @@
   ) {
     color: var(--text-subtle);
   }
+  /* A text-size icon action sits in a line of copy, so it hugs its glyph
+     rather than taking a control's square. */
+  .buzz-button[data-icon-variant][data-size="text"] {
+    width: auto;
+    height: auto;
+  }
   .buzz-button[data-icon-variant][data-size="sm"] {
     width: var(--size-control-sm);
     height: var(--size-control-sm);
@@ -841,6 +847,25 @@
   .buzz-preview-card[data-destination],
   .buzz-preview-card[data-interactive] {
     pointer-events: auto;
+  }
+
+  /* A tip about a control reads like a Tooltip, a step larger so a sentence
+     stays easy to read; its text and controls take the prominent fill's
+     foreground. */
+  .buzz-preview-card[data-tone="inverse"] {
+    @apply text-body-sm;
+    --text-standard: var(--text-on-prominent);
+    display: block;
+    max-width: min(24rem, calc(100vw - 2rem), var(--available-width, 100vw));
+    border: 0;
+    border-radius: calc((1lh + 2 * var(--space-1)) / 2);
+    /* The X glyph carries its own inset, so the copy side gets one step more
+       to look even. */
+    padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+    backdrop-filter: none;
+    background: var(--affordance-prominent);
+    color: var(--text-on-prominent);
+    box-shadow: var(--shadow-sm);
   }
 
   .buzz-preview-card[data-destination] {
@@ -2913,6 +2938,9 @@
     overflow-y: auto;
     padding: var(--space-3);
     color: var(--text-standard);
+  }
+  .buzz-popover-popup[data-elevation="overlay"] {
+    box-shadow: var(--shadow-overlay);
   }
   .buzz-popover-popup[data-size="compact"] {
     width: 14rem;

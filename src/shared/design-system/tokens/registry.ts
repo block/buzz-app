@@ -2210,6 +2210,12 @@ export const MOTION = [
     use: "A tab indicator or released panel settling into place.",
   },
   {
+    token: "duration-showcase",
+    variable: "--duration-showcase",
+    value: "960ms",
+    use: "A one-time change performed for the person to watch, such as the tour trimming cards.",
+  },
+  {
     token: "easing-state",
     variable: "--easing-state",
     value: "ease",
@@ -2238,6 +2244,11 @@ export const ELEVATION = [
     token: "shadow-sm",
     variable: "--shadow-sm",
     use: "Ordinary elevation for bordered dialogs, tooltips, and raised controls.",
+  },
+  {
+    token: "shadow-overlay",
+    variable: "--shadow-overlay",
+    use: "A surface floating over the whole app, such as a tour: a deep ambient shadow in light mode; the quiet light rim in dark mode.",
   },
 ];
 

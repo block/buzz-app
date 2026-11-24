@@ -1,6 +1,7 @@
 import type { SidebarContextProps } from "../../features/sidebar/contracts";
 import { useSyncExternalStore } from "react";
 import { MessagesSidebar } from "./MessagesSidebar";
+import { SeenContext } from "./seen-context";
 import { soloSidebarSource } from "./SoloSidebarSource";
 import { teamSidebarSource } from "./TeamSidebarSource";
 import { StartLinkedChat, canStartLinkedChatFrom } from "./StartLinkedChat";
@@ -46,21 +47,23 @@ export const apply: PluginModule["apply"] = (ctx) => {
         ctx.communityReader.snapshot,
       );
       return (
-        <MessagesSidebar
-          {...props}
-          relay={ctx.relay}
-          navigator={ctx.navigation}
-          agents={ctx.agents}
-          federatedIdentity={ctx.reflect.get("federatedIdentity")}
-          memberships={client.memberships}
-          chatIcons={ctx.conversation.chatIcons}
-          chatMenus={ctx.conversation.chatMenus}
-          sidebarSections={ctx.reflect.get("sidebarSections")}
-          sidebarScope={ctx.reflect.get("sidebarScope")}
-          sidebarRows={ctx.reflect.get("sidebarRows")}
-        >
-          {props.children}
-        </MessagesSidebar>
+        <SeenContext.Provider value={ctx.reflect.get("seen")}>
+          <MessagesSidebar
+            {...props}
+            relay={ctx.relay}
+            navigator={ctx.navigation}
+            agents={ctx.agents}
+            federatedIdentity={ctx.reflect.get("federatedIdentity")}
+            memberships={client.memberships}
+            chatIcons={ctx.conversation.chatIcons}
+            chatMenus={ctx.conversation.chatMenus}
+            sidebarSections={ctx.reflect.get("sidebarSections")}
+            sidebarScope={ctx.reflect.get("sidebarScope")}
+            sidebarRows={ctx.reflect.get("sidebarRows")}
+          >
+            {props.children}
+          </MessagesSidebar>
+        </SeenContext.Provider>
       );
     },
   });

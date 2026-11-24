@@ -35,6 +35,8 @@ export type PreviewCardProps = {
   actionRef?: RefObject<HTMLElement | null>;
   /** Keep within the viewport when space is tight; defaults to interactive previews. */
   sticky?: boolean;
+  /** "inverse" uses the tooltip's prominent fill, for a short tip about a control. */
+  tone?: "surface" | "inverse";
 };
 
 const focusableActions =
@@ -76,6 +78,7 @@ export function PreviewCard({
   link,
   actionRef,
   sticky = !!actionRef,
+  tone = "surface",
   "aria-label": label,
 }: PreviewCardProps) {
   const triggerRef = useRef<HTMLAnchorElement>(null);
@@ -330,6 +333,7 @@ export function PreviewCard({
             data-interactive={actionRef ? "" : undefined}
             tabIndex={link ? 0 : undefined}
             data-destination={link ? "" : undefined}
+            data-tone={tone === "inverse" ? tone : undefined}
             aria-label={label}
           >
             {children}

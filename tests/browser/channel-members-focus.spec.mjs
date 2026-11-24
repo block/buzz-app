@@ -43,7 +43,154 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
+async function centerHit(control) {
+  return control.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(
+      bounds.left + bounds.width / 2,
+      bounds.top + bounds.height / 2,
+    );
+    return hit === element || (hit !== null && element.contains(hit));
+  });
+}
+
+function tabKey(browserName, backwards = false) {
+  return `${browserName === "webkit" && process.platform === "darwin" ? "Alt+" : ""}${backwards ? "Shift+" : ""}Tab`;
+}
+
 test.describe("member scrolling", () => {
+  test("a pointer tab change keeps the tab under the pointer and Tab reaches the first member", async ({
+    page,
+    browserName,
+  }) => {
+    await page.setViewportSize({ width: 600, height: 460 });
+    await page.goto(
+      `${url}?administration&editable-access&search-scale&people-scale`,
+    );
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+    );
+    await page.getByRole("button", { name: "Access", exact: true }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Manage members",
+      exact: true,
+    });
+    const list = dialog.getByRole("region", {
+      name: "Member list",
+      exact: true,
+    });
+    await expect(list).toHaveAttribute("data-refreshing", "false");
+    await animationsSettled(dialog, { subtree: true });
+    // Start partway through the list with the tab center exposed.
+    await list.evaluate((element) => {
+      const tabs = element.querySelector('[role="tablist"]');
+      const layout = element.parentElement;
+      layout.scrollTop +=
+        element.getBoundingClientRect().top -
+        layout.getBoundingClientRect().top;
+      const bounds = tabs.getBoundingClientRect();
+      element.scrollTop +=
+        bounds.top - element.getBoundingClientRect().top + bounds.height / 4;
+    });
+    const agents = dialog.getByRole("tab", { name: /^Agents ·/ });
+    expect(await centerHit(agents)).toBe(true);
+    const tabs = dialog.getByRole("tablist");
+    const top = (await tabs.boundingBox()).y;
+    const bounds = await agents.boundingBox();
+    const point = {
+      x: bounds.x + bounds.width / 2,
+      y: bounds.y + bounds.height / 2,
+    };
+    await page.mouse.click(point.x, point.y);
+    await expect(agents).toHaveAttribute("aria-selected", "true");
+    expect((await tabs.boundingBox()).y).toBeCloseTo(top, 0);
+    expect(
+      await agents.evaluate(
+        (tab, { x, y }) => tab.contains(document.elementFromPoint(x, y)),
+        point,
+      ),
+    ).toBe(true);
+    const first = dialog
+      .getByRole("tabpanel")
+      .getByRole("button", { name: /^Open profile for / })
+      .first();
+    await page.keyboard.press(tabKey(browserName));
+    await expect(first).toBeFocused();
+    expect(await centerHit(first)).toBe(true);
+  });
+
+  test("Shift+Tab after paging reaches the selected tab and the tabs scroll away with the rows", async ({
+    page,
+    browserName,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(
+      `${url}?administration&editable-access&search-scale&people-scale`,
+    );
+    await page.getByRole("button", { name: "Access", exact: true }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Manage members",
+      exact: true,
+    });
+    const people = dialog.getByRole("tab", { name: /^People ·/ });
+    const panel = dialog.getByRole("tabpanel", { name: /^People ·/ });
+    await panel.getByRole("button", { name: "Next", exact: true }).click();
+    await expect(panel.getByText("Page 2 of 2", { exact: true })).toBeVisible();
+    await expect(panel).toBeFocused();
+    const first = panel
+      .getByRole("button", { name: /^Open profile for / })
+      .first();
+    expect(await centerHit(first)).toBe(true);
+    expect(await centerHit(people)).toBe(true);
+    await page.keyboard.press(tabKey(browserName, true));
+    await expect(people).toBeFocused();
+    expect(await centerHit(people)).toBe(true);
+    await dialog
+      .getByRole("region", { name: "Member list", exact: true })
+      .evaluate((list) => {
+        list.scrollTop = list.scrollHeight;
+      });
+    await expect(people).not.toBeInViewport();
+    await panel.getByRole("button", { name: "Previous", exact: true }).click();
+    await expect(panel).toBeFocused();
+    expect(await centerHit(first)).toBe(true);
+    expect(await centerHit(people)).toBe(true);
+  });
+
+  test("backward focus keeps all Solo channel Share buttons clear of sticky headings", async ({
+    page,
+    browserName,
+  }) => {
+    await page.goto(
+      `${url}?solo&editable-access&search-scale&people-scale&solo-channels`,
+    );
+    await page.getByRole("button", { name: "Access", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("searchbox").fill("Destination");
+    const shares = dialog
+      .getByRole("region", { name: "Channels", exact: true })
+      .getByRole("button", { name: /^Share #Destination/ });
+    await expect(shares).toHaveCount(18);
+    const list = dialog.getByRole("region", {
+      name: "Member list",
+      exact: true,
+    });
+    await list.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await dialog
+      .getByRole("button", { name: "Done", exact: true })
+      .evaluate((element) => element.focus({ preventScroll: true }));
+    await page.keyboard.press(tabKey(browserName, true));
+    await expect(
+      dialog.getByRole("button", { name: "Copy link", exact: true }),
+    ).toBeFocused();
+    for (let index = 17; index >= 0; index--) {
+      await page.keyboard.press(tabKey(browserName, true));
+      await expect(shares.nth(index)).toBeFocused();
+      expect(await centerHit(shares.nth(index))).toBe(true);
+    }
+  });
   for (const tabbed of [true, false]) {
     test(`paging keeps focused content visible at enlarged size (${tabbed ? "tabs" : "one group"})`, async ({
       page,
@@ -83,32 +230,20 @@ test.describe("member scrolling", () => {
         expect(errors).toEqual([]);
         return;
       }
-      await expect(group.getByRole("listitem").first()).toBeInViewport({
-        ratio: 1,
-      });
-      // The first new member must be reachable, not behind a sticky control or
-      // clipped by the dialog's outer short-height scrolling fallback.
-      await expect
-        .poll(() =>
-          group
-            .getByRole("button", { name: /^Open profile for / })
-            .first()
-            .evaluate((button) => {
-              const r = button.getBoundingClientRect();
-              return button.contains(
-                document.elementFromPoint(
-                  r.left + r.width / 2,
-                  r.top + r.height / 2,
-                ),
-              );
-            }),
-        )
-        .toBe(true);
+      const first = group
+        .getByRole("button", { name: /^Open profile for / })
+        .first();
+      expect(await centerHit(first)).toBe(true);
+      await pages
+        .getByRole("button", { name: "Previous", exact: true })
+        .click();
+      await expect(group).toBeFocused();
+      expect(await centerHit(first)).toBe(true);
       expect(errors).toEqual([]);
     });
   }
 
-  test("tab changes preserve General until scrolling into a member panel", async ({
+  test("tab changes preserve General when the tabs are visible", async ({
     page,
   }) => {
     await page.goto(
@@ -139,17 +274,9 @@ test.describe("member scrolling", () => {
     await expect(general).toBeFocused();
     await dialog.getByRole("tab", { name: /^Agents ·/ }).click();
     await expect(general).toBeInViewport();
-    await list.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
-    await expect(general).not.toBeInViewport();
-    await dialog.getByRole("tab", { name: /^People ·/ }).click();
-    await expect(general).not.toBeInViewport();
-    const first = dialog.getByRole("tabpanel").getByRole("listitem").first();
-    await expect(first).toBeInViewport({ ratio: 1 });
   });
 
-  test("other-agent heading disclosure stays clickable below sticky member tabs", async ({
+  test("other-agent heading disclosure stays clickable after scrolling past the member tabs", async ({
     page,
   }) => {
     const { errors } = watchPageErrors(page);

@@ -22,6 +22,15 @@ import {
 } from "../../src/features/relay/testing";
 import "../../src/shared/styles/globals.css";
 
+// Enough destinations to exercise backward focus through a sticky Channels group.
+const soloDestinations = new URLSearchParams(location.search).has(
+  "solo-channels",
+)
+  ? Array.from({ length: 18 }, (_, index) => ({
+      id: `destination-${index}`,
+      name: `Destination ${String(index + 1).padStart(2, "0")}`,
+    }))
+  : [];
 const solo = new URLSearchParams(location.search).has("solo");
 const plugin = new URLSearchParams(location.search).has("plugin");
 const administration =
@@ -190,6 +199,33 @@ const { session: sharedSession } = createRelaySession(
         await namesReady;
       }
       return [
+        ...soloDestinations.flatMap((destination) => [
+          signed(relay, {
+            kind: 39000,
+            content: "",
+            tags: [
+              ["d", destination.id],
+              ["t", "stream"],
+              ["name", destination.name],
+            ],
+          }),
+          signed(relay, {
+            kind: 39002,
+            content: "",
+            tags: [
+              ["d", destination.id],
+              ["p", viewer.pubkey, "", "owner"],
+            ],
+          }),
+          signed(relay, {
+            kind: 39001,
+            content: "",
+            tags: [
+              ["d", destination.id],
+              ["p", viewer.pubkey, "owner"],
+            ],
+          }),
+        ]),
         ...(administration
           ? [
               signed(relay, {

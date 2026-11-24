@@ -669,28 +669,6 @@ export function ChannelMembersDialog({
   const selection = shownIntent?.change;
   const scrollport = useRef<HTMLElement>(null);
   const memberTabs = useRef<HTMLDivElement>(null);
-  const measureMemberTabs = useCallback((element: HTMLDivElement | null) => {
-    memberTabs.current = element;
-    const list = element?.parentElement;
-    if (!element || !list) return;
-    // Native overflow and interface scaling can both change the sticky height.
-    const measure = () =>
-      list.style.setProperty(
-        "--member-tabs-height",
-        `${element.offsetHeight}px`,
-      );
-    measure();
-    const observer =
-      typeof ResizeObserver === "undefined"
-        ? undefined
-        : new ResizeObserver(measure);
-    observer?.observe(element);
-    return () => {
-      memberTabs.current = null;
-      observer?.disconnect();
-      list.style.removeProperty("--member-tabs-height");
-    };
-  }, []);
   // Set when the step is left by confirming. That member's Actions are then
   // watched until its row leaves and until the change settles.
   const confirmed = useRef(false);
@@ -821,8 +799,14 @@ export function ChannelMembersDialog({
     listFocus.current = undefined;
     const active = document.activeElement;
     if (!list || (active && !active.contains(list))) return;
+    const tab = list.querySelector<HTMLElement>(
+      '[role="tab"][aria-selected="true"]',
+    );
+    if (tab) {
+      tab.focus();
+      return;
+    }
     (
-      list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
       document.getElementById(`${presenceId}-${previous.group}-page`) ??
       input.current
     )?.focus({ preventScroll: true });
@@ -1392,22 +1376,31 @@ export function ChannelMembersDialog({
   }
   if (pages !== memberPages.pages)
     setMemberPages({ text, accessFilter, pages });
-  const pendingMemberPage = useRef<{ group: string; focus: boolean } | null>(
-    null,
-  );
+  const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
-    const pending = pendingMemberPage.current;
+    const group = pendingMemberPage.current;
+    if (group === null) return;
     pendingMemberPage.current = null;
-    if (pending === null) return;
-    const target = document.getElementById(
-      `${presenceId}-${pending.group}-page`,
-    );
-    if (pending.focus) target?.focus({ preventScroll: true });
-    if (showTabs) target?.scrollIntoView({ block: "start" });
-    else target?.parentElement?.scrollIntoView({ block: "start" });
+    const target = document.getElementById(`${presenceId}-${group}-page`);
+    target?.focus({ preventScroll: true });
+    if (!showTabs) {
+      target?.parentElement?.scrollIntoView({ block: "start" });
+      return;
+    }
+    memberTabs.current?.scrollIntoView({ block: "start" });
+    // Keep the tabs above the new page when space permits. In a short list,
+    // move only far enough to reveal the complete first row.
+    const list = scrollport.current;
+    const first = target?.querySelector("li");
+    if (list && first) {
+      const overflow =
+        first.getBoundingClientRect().bottom -
+        list.getBoundingClientRect().bottom;
+      if (overflow > 0) list.scrollTop += Math.ceil(overflow);
+    }
   });
   const changeMemberPage = (group: string, page: number) => {
-    pendingMemberPage.current = { group, focus: true };
+    pendingMemberPage.current = group;
     setMemberPages({
       text,
       accessFilter,
@@ -2515,7 +2508,7 @@ export function ChannelMembersDialog({
           >
             {accessControl}
             {showTabs && (
-              <div ref={measureMemberTabs} className={styles.memberTabs}>
+              <div ref={memberTabs} className={styles.memberTabs}>
                 <Tabs
                   label="Member type"
                   variant="panel"
@@ -2526,25 +2519,7 @@ export function ChannelMembersDialog({
                     label: `${group.name} · ${narrowed ? group.keys.length : group.count}`,
                     panelId: `${presenceId}-${group.name}-page`,
                   }))}
-                  onValueChange={(value) => {
-                    const panel = document.getElementById(
-                      `${presenceId}-${memberGroup}-page`,
-                    );
-                    // Keep General in its natural position until the user has
-                    // scrolled into the old panel. Then reveal the new page's
-                    // start below the sticky tabs, without moving tab focus.
-                    if (
-                      panel &&
-                      memberTabs.current &&
-                      panel.getBoundingClientRect().top <
-                        memberTabs.current.getBoundingClientRect().bottom
-                    )
-                      pendingMemberPage.current = {
-                        group: value,
-                        focus: false,
-                      };
-                    setSelectedGroup(value);
-                  }}
+                  onValueChange={setSelectedGroup}
                 />
               </div>
             )}

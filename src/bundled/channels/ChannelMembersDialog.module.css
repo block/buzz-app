@@ -67,18 +67,9 @@
 .memberList > section + section:not(.memberGroup) {
   margin-block-start: calc(-1 * var(--space-2));
 }
-.memberList:has(.memberTabs) {
-  /* Leave usable rows below the sticky tabs, including at enlarged text. */
-  min-height: calc(var(--size-row) * 2 + var(--member-tabs-height, 0px));
-  scroll-padding-block-start: var(--member-tabs-height, 0px);
-}
 .memberTabs {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   min-width: 0;
   padding: var(--space-2) var(--space-control-inset);
-  background: var(--surface-popover);
 }
 .loadingMembers {
   display: grid;
@@ -94,9 +85,6 @@
   padding-block-start: var(--space-2);
   padding-inline: var(--space-control-inset);
   background: var(--surface-popover);
-}
-.memberTabs ~ section .groupHeading {
-  top: var(--member-tabs-height, 0px);
 }
 /* Short lists cannot spare room for a wrapped label and a complete action. */
 @container member-list (max-height: 8rem) {

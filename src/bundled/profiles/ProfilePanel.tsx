@@ -549,13 +549,18 @@ function ProfileDetails({
   );
   const verifiedOwner = ownership.owner;
   // A read that finds no profile is an answer, not a failure: it shows no
-  // notice and no retry. A verified overlay can exist while its kind-0 read
-  // failed.
-  const readFailed = status === "error" && (!profile || !!profile.verified);
+  // notice and no retry. A failed read is reported unless kind-0 metadata is
+  // already shown; a verified overlay can exist while its kind-0 read failed.
+  const reportsFailure = !profile || !!profile.verified;
+  const readFailed = status === "error" && reportsFailure;
+  const readPending = status === "loading" && reportsFailure;
   // The owner check reads the agent's signed profile on its own, so it can
-  // fail beside a profile that loaded or was never set. A failed profile read
-  // already states the reason for Retry, and a pending retry needs none.
-  const ownerUnconfirmed = ownership.failed && !readFailed && !retrying;
+  // fail beside a profile that loaded or was never set. Its alert and Retry
+  // wait for a profile read whose failure would be reported, so only one of
+  // the two alerts is ever announced, and never beside "Loading profile…".
+  // A pending retry states no reason.
+  const ownerUnconfirmed =
+    ownership.failed && !readPending && !readFailed && !retrying;
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
   useEffect(() => {
@@ -858,7 +863,7 @@ function ProfileDetails({
                         Could not confirm who manages this agent.
                       </p>
                     )}
-                    {(readFailed || retrying || ownership.failed) && (
+                    {(readFailed || retrying || ownerUnconfirmed) && (
                       <Button
                         ref={retryButton}
                         size="compact"

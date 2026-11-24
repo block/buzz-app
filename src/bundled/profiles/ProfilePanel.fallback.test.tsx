@@ -18,7 +18,10 @@ import { bindNames } from "../../features/identity-names/service";
 import { createAgentDirectory } from "../../features/identity-names/testing";
 import { profileTarget } from "../../features/profiles/target";
 import type { RelayData } from "../../features/relay/service";
-import { createRelaySession } from "../../features/relay/session";
+import {
+  createRelaySession,
+  type RelaySession,
+} from "../../features/relay/session";
 import { keypair, profile } from "../../features/relay/testing";
 import { mediaUrl, type ReadTransport } from "../../features/relay/transport";
 import { ProfilePanel } from "./ProfilePanel";
@@ -239,6 +242,90 @@ it("says why Retry is offered when only an agent's owner check failed, and clear
     f.dispose();
   }
 });
+
+it.each([
+  ["fails", "Could not load this profile."],
+  ["finds no profile", "Could not confirm who manages this agent."],
+] as const)(
+  "holds an agent's owner alert while the profile read is pending, then gives one reason when the read %s",
+  async (outcome, reason) => {
+    const f = fixture();
+    try {
+      f.known();
+      // The owner check's own views, so the test can tell when it has failed.
+      const ownerChecks: ReturnType<RelaySession["observe"]>[] = [];
+      const session: RelaySession = {
+        ...f.session,
+        observe(filters) {
+          const view = f.session.observe(filters);
+          if (filters.some((filter) => filter.limit === 1))
+            ownerChecks.push(view);
+          return view;
+        },
+      };
+      const snapshot = { ...f.relay.snapshot(), session };
+      const relay: RelayData = { ...f.relay, snapshot: () => snapshot };
+      // The owner check fails at once; the profile read waits to be settled.
+      let held:
+        | { resolve(events: []): void; reject(error: Error): void }
+        | undefined;
+      f.query.mockImplementation((filters) => {
+        if (!filters.some((filter) => filter.kinds?.includes(0)))
+          return Promise.resolve([]);
+        if (filters.some((filter) => filter.limit === 1))
+          return Promise.reject(new Error("Owner evidence unavailable"));
+        return new Promise((resolve, reject) => {
+          held = { resolve, reject };
+        });
+      });
+      const alerts = () =>
+        screen.queryAllByRole("alert").map((alert) => alert.textContent);
+      /** The profile read is out and this owner check has already failed. */
+      const pending = async (checks: number) => {
+        await waitFor(() => {
+          expect(held).toBeDefined();
+          expect(ownerChecks).toHaveLength(checks);
+          expect(ownerChecks.at(-1)?.snapshot().status).toBe("error");
+        });
+        expect(screen.getByText("Loading profile…")).toBeInTheDocument();
+        expect(alerts()).toEqual([]);
+      };
+      const settle = async () => {
+        const read = held;
+        held = undefined;
+        await act(async () =>
+          outcome === "fails"
+            ? read?.reject(new Error("Profile unavailable"))
+            : read?.resolve([]),
+        );
+        await waitFor(() => expect(alerts()).toEqual([reason]));
+      };
+
+      render(
+        <ProfilePanel
+          relay={relay}
+          target={profileTarget(f.person.pubkey) ?? ""}
+          close={() => {}}
+        />,
+      );
+      await pending(1);
+      // No reason is stated yet, so no Retry is offered either.
+      expect(
+        screen.queryByRole("button", { name: "Retry profile" }),
+      ).not.toBeInTheDocument();
+      await settle();
+
+      // A pending retry states no reason, whichever alert it was offered for.
+      const retryButton = screen.getByRole("button", { name: "Retry profile" });
+      await userEvent.setup().click(retryButton);
+      await pending(2);
+      expect(retryButton).toHaveAttribute("aria-busy", "true");
+      await settle();
+    } finally {
+      f.dispose();
+    }
+  },
+);
 
 it("keeps an agent-avatar hint without granting ownership or native controls", async () => {
   const f = fixture();

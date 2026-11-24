@@ -23,7 +23,7 @@ export function ActivityCard({
   const isOpen = (destination: FeedDestination) =>
     target.kind === "conversation" &&
     target.channelId === destination.channelId &&
-    target.threadRootId === destination.rootId;
+    (target.threadRootId ?? target.inline) === destination.rootId;
   return (
     <ActivityFeed
       key={`${scope}:${connection.generation}`}
@@ -33,9 +33,6 @@ export function ActivityCard({
       isOpen={isOpen}
       unreadFirst
       showTime={false}
-      openChannelId={
-        target.kind === "conversation" ? target.channelId : undefined
-      }
     />
   );
 }

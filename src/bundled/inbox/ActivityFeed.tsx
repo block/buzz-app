@@ -79,7 +79,6 @@ export function ActivityFeed({
   onOpen,
   unreadFirst = false,
   showTime = true,
-  openChannelId,
 }: {
   session: RelaySession;
   scope: NavigationScope;
@@ -97,9 +96,6 @@ export function ActivityFeed({
   unreadFirst?: boolean;
   /** Whether rows show when their latest message was sent. */
   showTime?: boolean;
-  /** The conversation open now. A row opened while unread keeps its place
-   * and look until another conversation opens. */
-  openChannelId?: string | undefined;
 }) {
   const list = useChannelList(session.channels);
   const muted = useActivityMutes(session);
@@ -161,19 +157,13 @@ export function ActivityFeed({
     (mine) => !unreadOnly && (view === "all" || !!mine.rootId),
   );
   // Only someone else's message makes a row unread; yours and reactions never do.
-  // A row opened while unread keeps its place while it stays open; once you
-  // move on, it settles among the rest by when it was last active.
-  const [held, setHeld] =
-    useState<Readonly<{ channelId: string; ids: readonly string[] }>>();
+  // A row opened while unread is read, and keeps its place while it stays
+  // open; once you move on, it settles among the rest by when it was last
+  // active. `seen` waits for the open to land before leaving can count.
+  const [held, setHeld] = useState<Readonly<{ key: string; seen: boolean }>>();
   const unreadIds = new Set(
     conversationRows.flatMap((row) =>
-      row.kind === "conversation" &&
-      (hasUnread(row.item) ||
-        (!!held &&
-          held.channelId === openChannelId &&
-          held.ids.includes(row.item.id)))
-        ? [row.item.id]
-        : [],
+      row.kind === "conversation" && hasUnread(row.item) ? [row.item.id] : [],
     ),
   );
   const activity = [
@@ -229,12 +219,31 @@ export function ActivityFeed({
       group.unread.push(row.item);
     groups.set(key, group);
   }
-  const rows = [...groups.values()]
-    .map(({ row, unread }) => ({ ...row, unread }))
+  const destination = (row: (typeof activity)[number]): FeedDestination =>
+    row.kind === "reaction"
+      ? {
+          channelId: row.item.channelId,
+          messageId: row.item.message.id,
+          rootId: row.item.message.threadRootId,
+        }
+      : row.kind === "own"
+        ? row.own
+        : row.item;
+  const heldGroup = held && groups.get(held.key);
+  const heldOpen =
+    !!heldGroup && (isOpen?.(destination(heldGroup.row)) ?? false);
+  useEffect(() => {
+    if (!held) return;
+    if (heldOpen && !held.seen) setHeld({ key: held.key, seen: true });
+    else if (!heldOpen && held.seen) setHeld(undefined);
+  }, [held, heldOpen]);
+  const rows = [...groups.entries()]
+    .map(([key, { row, unread }]) => ({ ...row, key, unread }))
     .sort(
       (a, b) =>
         (unreadFirst
-          ? Number(b.unread.length > 0) - Number(a.unread.length > 0)
+          ? Number(b.unread.length > 0 || b.key === held?.key) -
+            Number(a.unread.length > 0 || a.key === held?.key)
           : 0) ||
         b.createdAt - a.createdAt ||
         a.id.localeCompare(b.id),
@@ -379,22 +388,10 @@ export function ActivityFeed({
     if (failure || document.activeElement !== document.body) return;
     focusFallback?.current?.focus({ preventScroll: true });
   }, [failure, focusFallback]);
-  const destination = (row: (typeof rows)[number]): FeedDestination =>
-    row.kind === "reaction"
-      ? {
-          channelId: row.item.channelId,
-          messageId: row.item.message.id,
-          rootId: row.item.message.threadRootId,
-        }
-      : row.kind === "own"
-        ? row.own
-        : row.item;
   const open = (row: (typeof rows)[number]) => {
     const item = destination(row);
-    setHeld({
-      channelId: item.channelId,
-      ids: row.unread.map((unread) => unread.id),
-    });
+    setHeld({ key: row.key, seen: false });
+    if (canRead && row.unread.length) void markRead(row.id, row.unread);
     onOpen?.();
     void navigator.open({
       version: 1,

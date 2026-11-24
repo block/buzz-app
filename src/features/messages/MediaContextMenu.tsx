@@ -11,6 +11,7 @@ import {
   CopyIcon,
   ArrowsOutIcon,
   DownloadIcon,
+  FolderOpenIcon,
   LinkIcon,
 } from "../../shared/design-system/icons";
 import {
@@ -30,8 +31,14 @@ import {
 } from "./attachment-source";
 import { copyImageToClipboard, supportsImageCopy } from "./image-copy";
 import { copyNativeImage } from "./native-image-copy";
-import { downloadNativeMedia } from "./native-download";
+import {
+  downloadNativeMedia,
+  openSavedDownload,
+  savedDownloadStatus,
+  subscribeSavedDownloads,
+} from "./native-download";
 import { useMediaActionNotification } from "./MediaActionAnnouncements";
+import { isApplePlatform } from "../shortcuts/format";
 
 type Target = {
   source: string;
@@ -82,6 +89,31 @@ export function MediaContextMenu({
   const supported =
     source && url && safeOpenUrl(url) && (native || isProxySource(source));
   const current = active && target?.source === source && target?.url === url;
+  // The answer belongs to one attachment, so another forgets it. A closing
+  // menu keeps it rather than dropping a row as it goes.
+  const [savedCopy, setSavedCopy] = useState(false);
+  useEffect(() => {
+    void source;
+    void name;
+    setSavedCopy(false);
+  }, [source, name]);
+  // Only an open menu asks, so a list of attachments costs the host nothing
+  // until someone wants one. Any window's download arrives as a change.
+  useEffect(() => {
+    if (!open || !native || !source) return;
+    let mounted = true;
+    const ask = () =>
+      savedDownloadStatus(source, name).then(
+        (saved) => mounted && setSavedCopy(saved),
+        () => mounted && setSavedCopy(false),
+      );
+    void ask();
+    const stop = subscribeSavedDownloads(() => void ask());
+    return () => {
+      mounted = false;
+      stop();
+    };
+  }, [open, native, source, name]);
   const run = async (
     action: () => Promise<void>,
     success: string,
@@ -102,6 +134,20 @@ export function MediaContextMenu({
     } finally {
       if (notice) dismiss(notice);
       if (downloadSource) pending.delete(downloadSource);
+    }
+  };
+  /** Shows the host's saved copy in its folder. The file manager coming
+   * forward is the answer, so only a failure is worth saying. A record the
+   * host has dropped means the copy is gone, which asks for a new download. */
+  const showSaved = async (saved: string) => {
+    try {
+      if ((await openSavedDownload(saved, name, true)) === "moved")
+        notify(
+          `That ${kind} is no longer in Downloads. Download it again.`,
+          "error",
+        );
+    } catch {
+      notify(`Couldn’t show the ${kind}. Try again.`, "error");
     }
   };
   const show = (element: HTMLElement, rect: DOMRect, focus?: HTMLElement) => {
@@ -247,21 +293,33 @@ export function MediaContextMenu({
             </MenuItem>
             <MenuSeparator />
             {native ? (
-              <MenuItem
-                onClick={() =>
-                  void run(
-                    () => downloadNativeMedia(target.source, name),
-                    "Saved to Downloads",
-                    "Couldn’t download. Try again.",
-                    target.source,
-                  )
-                }
-              >
-                <MenuIcon>
-                  <DownloadIcon size={16} />
-                </MenuIcon>
-                Download {kind}
-              </MenuItem>
+              <>
+                {savedCopy && (
+                  <MenuItem onClick={() => void showSaved(target.source)}>
+                    <MenuIcon>
+                      <FolderOpenIcon size={16} />
+                    </MenuIcon>
+                    {isApplePlatform(navigator.platform)
+                      ? "Show in Finder"
+                      : "Show in folder"}
+                  </MenuItem>
+                )}
+                <MenuItem
+                  onClick={() =>
+                    void run(
+                      () => downloadNativeMedia(target.source, name),
+                      "Saved to Downloads",
+                      "Couldn’t download. Try again.",
+                      target.source,
+                    )
+                  }
+                >
+                  <MenuIcon>
+                    <DownloadIcon size={16} />
+                  </MenuIcon>
+                  {savedCopy ? `Download ${kind} again` : `Download ${kind}`}
+                </MenuItem>
+              </>
             ) : (
               <MenuLinkItem href={target.source} download={name} closeOnClick>
                 <MenuIcon>

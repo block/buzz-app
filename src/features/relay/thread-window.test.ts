@@ -1111,6 +1111,34 @@ it("revalidates a missing strict root before repair and preserves tombstones on 
   expect(h.view.snapshot().missing).toBeUndefined();
 });
 
+it("marks a legacy read missing when an old relay's fallback answers without the root", async () => {
+  // The strict root read finds it; the window has no bounds, so the reader
+  // falls back to the legacy read, which no longer returns the root.
+  let rootReads = 0;
+  const h = await setup((f) =>
+    f.ids
+      ? ++rootReads === 1
+        ? [root]
+        : []
+      : f.thread_window
+        ? [reply(100)]
+        : [reply(0)],
+  );
+  await h.view.refresh();
+  expect(rootReads).toBe(2);
+  expect(h.requests.at(-1)).toHaveLength(2);
+  expect(h.requests.at(-1)?.[1]).not.toHaveProperty("thread_window");
+  expect(h.view.snapshot()).toMatchObject({
+    status: "error",
+    root: undefined,
+    canLoadMore: false,
+    missing: true,
+  });
+  expect(h.view.snapshot().error).toContain(
+    "original thread message is unavailable",
+  );
+});
+
 it("never marks a thread missing when its read fails", async () => {
   const h = await setup((filter) => {
     if (filter.ids) throw new Error("relay down");

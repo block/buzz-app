@@ -2963,6 +2963,38 @@ it("reports a canvas write the relay refused or another write overtook", async (
     `conflict: the canvas was saved as version ${"e".repeat(64)}, but another (${nested}) is now current`,
   );
   expect(published).toEqual([]);
+  // Another session created the canvas between the read and the write.
+  const { client: racing } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+  ]);
+  racing.publish = vi.fn(async () => {
+    throw new Error(
+      "relay rejected: conflict: canvas changed since it was loaded",
+    );
+  });
+  await expect(
+    callTool(racing, { channel: "chan" }, "canvas_set", { content: "# Mine" }),
+  ).rejects.toThrow(
+    "Another canvas was just saved. Read it with canvas_get, merge your change into it",
+  );
+  // The write landed but could not be confirmed, so the agent is told it saved.
+  const { client: unread } = fake([head]);
+  const publish = unread.publish;
+  unread.publish = vi.fn(async (template) => {
+    const signed = await publish(template);
+    (unread.query as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("socket closed"),
+    );
+    return signed;
+  });
+  await expect(
+    callTool(unread, { channel: "chan" }, "canvas_set", {
+      content: "# Mine",
+      expected: nested,
+    }),
+  ).rejects.toThrow(
+    `saved as version ${"e".repeat(64)}, but the canvas could not be read back to confirm it is current: socket closed`,
+  );
 });
 
 it("lists canvas revisions newest first, a page at a time", async () => {

@@ -8,31 +8,27 @@
   height: 100%;
   min-height: 0;
   min-width: 0;
+  position: relative;
 }
-.bar {
+/* The buttons sit at the end of the view's top row, which leaves them room. */
+.buttons {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-2);
+  z-index: 1;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  min-height: var(--size-row);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border-standard);
+  gap: var(--space-1);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
 }
-.status {
-  flex: 1;
-  min-width: 8rem;
-  color: var(--text-subtle);
-}
-.status[data-driving] {
-  color: var(--text-standard);
-  font-weight: var(--type-weight-medium);
-}
-.stage {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
+.quiet {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .view {
   display: flex;

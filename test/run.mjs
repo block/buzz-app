@@ -36,7 +36,7 @@ try {
     await ada.getByRole("button", { name: "Take control" }).click();
     await ada.getByRole("button", { name: "Browser" }).click();
     await ada.getByRole("textbox", { name: "Shared address" }).fill("pages.example/roadmap");
-    await ada.getByRole("button", { name: "Go" }).click();
+    await ada.getByRole("textbox", { name: "Shared address" }).press("Enter");
     await shows(ben, "https://pages.example/roadmap");
     assert.equal(await ada.getByRole("textbox").count(), 1, "the driver has one address bar");
     assert.equal(await ben.locator("[inert] [data-native]").count(), 0, "the host hides its view inside anything inert");
@@ -73,15 +73,21 @@ try {
   await ada.getByRole("button", { name: "Take control" }).click();
   await ada.getByRole("button", { name: "Browser" }).click();
   await ada.getByRole("textbox", { name: "Shared address" }).fill("pages.example/roadmap");
-  await ada.getByRole("button", { name: "Go" }).click();
+  await ada.getByRole("textbox", { name: "Shared address" }).press("Enter");
   await ben.frameLocator("iframe").getByRole("heading", { name: "Roadmap" }).waitFor();
   assert.equal(await status(ben), "Following Ada.");
   assert.equal(await ben.getByRole("textbox").count(), 0, "a follower has no address bar");
+  // One view, one tab, named after it; nothing but the view's own row below.
+  assert.deepEqual(await ada.getByRole("tab").allTextContents(), ["Browser"]);
+  assert.equal(await ada.getByRole("tablist").count(), 1);
 
   await assert.rejects(agent("canvas_open", { type: "map", state: { center: [0, 0], zoom: 2 } }), /Someone else is driving/);
   await agent("canvas_drive", { drive: true });
   await agent("canvas_open", { type: "map", title: "Coffee", state: { center: [-122.42, 37.77], zoom: 13, markers: [{ coordinates: [-122.42, 37.77], label: "Roastery" }] } });
+  // A second view is a second tab at the top, and followers are taken to it.
   await ben.getByText("Roastery").waitFor();
+  assert.deepEqual(await ben.getByRole("tab").allTextContents(), ["Browser", "Coffee"]);
+  assert.equal(await ben.getByRole("tab", { name: "Coffee" }).getAttribute("aria-selected"), "true");
   assert.equal(await status(ada), "Following Scout.");
 
   // A follower's tab click changes nothing for anyone.
@@ -91,22 +97,45 @@ try {
 
   // Looking around alone, then taking control, keeps what the agent added meanwhile.
   await ben.getByRole("button", { name: "Stop following" }).click();
+  await ben.getByRole("tab", { name: "Coffee" }).click();
   await ben.getByRole("button", { name: "Zoom in" }).click();
   await agent("canvas_open", { type: "video", state: { url: "https://media.example/a.webm" } });
   await ada.getByRole("tab", { name: "Video" }).waitFor();
+  assert.equal(await ada.getByRole("tab", { name: "Video" }).getAttribute("aria-selected"), "true");
   assert.equal(await ben.getByRole("tab").count(), 2);
-  // The "+" menu adds a view while looking around alone; it stays private.
-  await ben.getByRole("button", { name: "Add a view" }).click();
-  await page.getByRole("menuitem", { name: "Map" }).click();
+  // The menu adds a view while looking around alone; it stays private.
+  await ben.getByRole("button", { name: "Views" }).click();
+  await page.getByRole("menuitem", { name: "New map" }).click();
+  await ben.getByRole("tab", { name: "Map" }).waitFor();
   assert.equal(await ben.getByRole("tab").count(), 3);
   assert.equal(await ada.getByRole("tab").count(), 3);
   await ben.getByRole("tab", { name: "Coffee" }).click();
   await ben.getByRole("button", { name: "Take control" }).click();
-  await ada.getByText("Following Ben.").waitFor();
+  await ada.getByRole("tab", { name: "Coffee", selected: true }).waitFor();
+  assert.equal(await status(ada), "Following Ben.");
   const scene = await agent("canvas_read");
   assert.deepEqual(scene.views.map((view) => view.type), ["browser", "map", "video", "map"]);
   assert.equal(scene.active, "map-1");
   assert.equal(scene.views[1].state.zoom, 14);
+  assert.equal(await ben.getByRole("tab").count(), 3, "the driver keeps the tab of the view they added alone");
+
+  // Removing a view closes its tab for everyone.
+  await ben.getByRole("button", { name: "Views" }).click();
+  await page.getByRole("menuitem", { name: "Remove this view for everyone" }).click();
+  await ada.getByRole("tab", { name: "Coffee" }).waitFor({ state: "detached" });
+  assert.equal(await ben.getByRole("tab", { name: "Coffee" }).count(), 0);
+  // Removing the first view moves the next one into the canvas's own tab.
+  await ben.getByRole("tab", { name: "Browser" }).click();
+  await ben.getByRole("button", { name: "Views" }).click();
+  await page.getByRole("menuitem", { name: "Remove this view for everyone" }).click();
+  await ada.getByRole("tab", { name: "Browser" }).waitFor({ state: "detached" });
+  await settle();
+  assert.deepEqual(await ada.getByRole("tab").allTextContents(), ["Video"]);
+  // A view nobody brought to the front is one step away, even for a follower.
+  await ada.getByRole("button", { name: "Views" }).click();
+  await page.getByRole("menuitem", { name: "Go to Map" }).click();
+  assert.deepEqual(await ada.getByRole("tab").allTextContents(), ["Video", "Map"]);
+  assert.deepEqual((await agent("canvas_read")).views.map((view) => view.id), ["video-1", "map-2"]);
   assert.deepEqual(errors.filter((text) => !/media\.example|ERR_/.test(text)), []);
   if (process.env.SHOT && !ui) await page.screenshot({ path: process.env.SHOT });
   assert.equal(await page.locator("[data-host]").count() > 0, ui !== "");

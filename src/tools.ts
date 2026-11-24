@@ -27,8 +27,9 @@ const string = (args: Record<string, unknown>, key: string) => {
  * the relay applies the agent's access to the channel, not its owner's. */
 export function canvasTools(
   views: CanvasViews,
-  /** Shows the canvas beside the conversation when the owner is viewing it. */
-  show: (channelId: string, rootId?: string) => boolean,
+  /** Shows a view's tab beside the conversation, or the canvas's own, when
+   * the owner is viewing it. */
+  show: (channelId: string, rootId?: string, view?: string) => boolean,
 ): AddedTool[] {
   const read =
     (client: BuzzClient): SceneRead =>
@@ -130,7 +131,11 @@ export function canvasTools(
         );
         return report(
           scene,
-          show(id, context.root)
+          show(
+            id,
+            context.root,
+            scene.active === scene.items[0]?.id ? undefined : scene.active,
+          )
             ? "Shown beside the conversation."
             : "Saved. Your owner is not viewing this conversation in the desktop app now.",
         );

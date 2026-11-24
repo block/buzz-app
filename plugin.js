@@ -16,7 +16,7 @@ var useSyncExternalStore = (...args) => host.useSyncExternalStore(...args);
 var styles = {
 	actions: "buzz-canvas-actions",
 	address: "buzz-canvas-address",
-	bar: "buzz-canvas-bar",
+	buttons: "buzz-canvas-buttons",
 	canvas: "buzz-canvas-canvas",
 	credit: "buzz-canvas-credit",
 	empty: "buzz-canvas-empty",
@@ -30,18 +30,12 @@ var styles = {
 	pin: "buzz-canvas-pin",
 	pinDot: "buzz-canvas-pinDot",
 	pinLabel: "buzz-canvas-pinLabel",
-	stage: "buzz-canvas-stage",
-	status: "buzz-canvas-status",
-	tab: "buzz-canvas-tab",
-	tabButton: "buzz-canvas-tabButton",
-	tabClose: "buzz-canvas-tabClose",
-	tablist: "buzz-canvas-tablist",
-	tabs: "buzz-canvas-tabs",
+	quiet: "buzz-canvas-quiet",
 	tile: "buzz-canvas-tile",
 	video: "buzz-canvas-video",
 	view: "buzz-canvas-view"
 };
-var css = "/* Fills its panel whether the host lays that out as a flex column or a grid. */ .buzz-canvas-canvas { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; min-width: 0; } .buzz-canvas-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; min-height: var(--size-row); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-standard); } .buzz-canvas-status { flex: 1; min-width: 8rem; color: var(--text-subtle); } .buzz-canvas-status[data-driving] { color: var(--text-standard); font-weight: var(--type-weight-medium); } .buzz-canvas-stage { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; } .buzz-canvas-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; } .buzz-canvas-empty { flex: 1; display: grid; place-items: center; padding: var(--space-4); } .buzz-canvas-actions { display: flex; justify-content: center; gap: var(--space-2); flex-wrap: wrap; } .buzz-canvas-error { padding: var(--space-2) var(--space-3); color: var(--text-danger); } .buzz-canvas-fill { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; } .buzz-canvas-address { display: flex; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-standard); } .buzz-canvas-address > :first-child { flex: 1; min-width: 0; } .buzz-canvas-hint { margin: auto; padding: var(--space-4); color: var(--text-subtle); text-align: center; } .buzz-canvas-frame, .buzz-canvas-video { flex: 1; min-height: 0; width: 100%; border: 0; } .buzz-canvas-video { background: var(--bg-media-canvas); } .buzz-canvas-map { position: relative; flex: 1; min-height: 12rem; overflow: hidden; touch-action: none; user-select: none; cursor: grab; } .buzz-canvas-map[data-dragging] { cursor: grabbing; } .buzz-canvas-tile { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; } .buzz-canvas-pin { position: absolute; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: var(--space-1); pointer-events: none; } .buzz-canvas-pinLabel { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-1); border: 1px solid var(--border-standard); border-radius: var(--radius-control); background: var(--surface-popover); color: var(--text-standard); font-size: var(--type-xsmall-size); } .buzz-canvas-pinDot { width: 0.75rem; height: 0.75rem; border: 2px solid var(--surface-popover); border-radius: 50%; background: var(--text-danger); } .buzz-canvas-mapControls { position: absolute; top: var(--space-2); right: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); } .buzz-canvas-credit { position: absolute; right: 0; bottom: 0; padding: 0 var(--space-1); background: var(--surface-popover); color: var(--text-subtle); font-size: var(--type-xsmall-size); } .buzz-canvas-tabs { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); border-bottom: 1px solid var(--border-standard); } .buzz-canvas-tablist { display: flex; gap: var(--space-3); min-width: 0; overflow-x: auto; } .buzz-canvas-tab { display: flex; align-items: center; gap: var(--space-1); border-bottom: 2px solid transparent; color: var(--text-subtle); white-space: nowrap; } .buzz-canvas-tab[data-selected] { border-bottom-color: currentColor; color: var(--text-standard); } .buzz-canvas-tabButton, .buzz-canvas-tabClose { padding: var(--space-2) 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; } .buzz-canvas-tabClose { padding-inline: var(--space-1); } .buzz-canvas-emptyState { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 28rem; text-align: center; }";
+var css = "/* Fills its panel whether the host lays that out as a flex column or a grid. */ .buzz-canvas-canvas { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; min-width: 0; position: relative; } /* The buttons sit at the end of the view's top row, which leaves them room. */ .buzz-canvas-buttons { position: absolute; top: var(--space-1); right: var(--space-2); z-index: 1; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-control); background: var(--surface-panel); } .buzz-canvas-quiet { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .buzz-canvas-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; } .buzz-canvas-empty { flex: 1; display: grid; place-items: center; padding: var(--space-4); } .buzz-canvas-actions { display: flex; justify-content: center; gap: var(--space-2); flex-wrap: wrap; } .buzz-canvas-error { padding: var(--space-2) var(--space-3); color: var(--text-danger); } .buzz-canvas-fill { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; } .buzz-canvas-address { display: flex; gap: var(--space-2); padding: var(--space-1) var(--space-2); padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); border-bottom: 1px solid var(--border-standard); } /* The host's browser view brings its own top row: the canvas's buttons go at its end, in place of the page title the tab already shows. */ .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] { padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); } .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] > span { display: none; } .buzz-canvas-address > :first-child { flex: 1; min-width: 0; } .buzz-canvas-hint { margin: auto; padding: var(--space-4); color: var(--text-subtle); text-align: center; } .buzz-canvas-frame, .buzz-canvas-video { flex: 1; min-height: 0; width: 100%; border: 0; } .buzz-canvas-video { background: var(--bg-media-canvas); } .buzz-canvas-map { position: relative; flex: 1; min-height: 12rem; overflow: hidden; touch-action: none; user-select: none; cursor: grab; } .buzz-canvas-map[data-dragging] { cursor: grabbing; } .buzz-canvas-tile { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; } .buzz-canvas-pin { position: absolute; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: var(--space-1); pointer-events: none; } .buzz-canvas-pinLabel { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-1); border: 1px solid var(--border-standard); border-radius: var(--radius-control); background: var(--surface-popover); color: var(--text-standard); font-size: var(--type-xsmall-size); } .buzz-canvas-pinDot { width: 0.75rem; height: 0.75rem; border: 2px solid var(--surface-popover); border-radius: 50%; background: var(--text-danger); } .buzz-canvas-mapControls { position: absolute; top: var(--space-2); left: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); } .buzz-canvas-credit { position: absolute; right: 0; bottom: 0; padding: 0 var(--space-1); background: var(--surface-popover); color: var(--text-subtle); font-size: var(--type-xsmall-size); } .buzz-canvas-emptyState { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 28rem; text-align: center; }";
 //#endregion
 //#region src/kit.tsx
 var ui;
@@ -72,28 +66,6 @@ function Input({ value, onValueChange, invalid, ...props }) {
 		value,
 		onChange: (event) => onValueChange(event.currentTarget.value)
 	});
-}
-function Tabs({ label, value, onValueChange, items, trailing }) {
-	return /* @__PURE__ */ createElement("div", { className: styles.tabs }, /* @__PURE__ */ createElement("div", {
-		role: "tablist",
-		"aria-label": label,
-		className: styles.tablist
-	}, items.map((item) => /* @__PURE__ */ createElement("span", {
-		key: item.value,
-		className: styles.tab,
-		"data-selected": item.value === value ? "" : void 0
-	}, /* @__PURE__ */ createElement("button", {
-		type: "button",
-		role: "tab",
-		"aria-selected": item.value === value,
-		className: styles.tabButton,
-		onClick: () => onValueChange(item.value)
-	}, item.label), item.onClose && /* @__PURE__ */ createElement("button", {
-		type: "button",
-		className: styles.tabClose,
-		"aria-label": `Close ${item.label}`,
-		onClick: item.onClose
-	}, "×")))), trailing);
 }
 /** A "+" that offers each choice. */
 function AddMenu({ label, items }) {
@@ -193,6 +165,7 @@ function openItem(scene, views, input) {
 		active: id
 	};
 }
+/** The id a new view of this type would get. */
 var nextId = (scene, type) => {
 	for (let index = 1;; index++) {
 		const id = `${type}-${index}`;
@@ -269,111 +242,232 @@ var replay = (scene, edits) => edits.reduce((current, edit) => {
 		return current;
 	}
 }, scene);
-/** A channel's canvas: the views on it, who is driving, and whether this
-* viewer follows them. Following is this viewer's own choice and is never
-* saved; everything else is the shared scene. */
-function CanvasPanel({ channel, views, viewer, name }) {
+/** Set while this viewer looks around alone instead of following the driver:
+* the scene they left, and what they have done to it since. One for all the
+* tabs of a canvas, and never saved. */
+function createRoaming() {
+	let own;
+	const listeners = /* @__PURE__ */ new Set();
+	return {
+		snapshot: () => own,
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => {
+				listeners.delete(listener);
+			};
+		},
+		set(next) {
+			own = typeof next === "function" ? next(own) : next;
+			for (const listener of [...listeners]) listener();
+		}
+	};
+}
+var Wheel = () => /* @__PURE__ */ createElement("svg", {
+	width: "16",
+	height: "16",
+	viewBox: "0 0 16 16",
+	fill: "none",
+	stroke: "currentColor",
+	strokeWidth: "1.5",
+	strokeLinecap: "round",
+	"aria-hidden": "true"
+}, /* @__PURE__ */ createElement("circle", {
+	cx: "8",
+	cy: "8",
+	r: "6.25"
+}), /* @__PURE__ */ createElement("circle", {
+	cx: "8",
+	cy: "8",
+	r: "1.5"
+}), /* @__PURE__ */ createElement("path", { d: "M1.9 7h4.7M9.4 7h4.7M8 9.5v4.7" }));
+var Eye = () => /* @__PURE__ */ createElement("svg", {
+	width: "16",
+	height: "16",
+	viewBox: "0 0 16 16",
+	fill: "none",
+	stroke: "currentColor",
+	strokeWidth: "1.5",
+	strokeLinejoin: "round",
+	"aria-hidden": "true"
+}, /* @__PURE__ */ createElement("path", { d: "M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z" }), /* @__PURE__ */ createElement("circle", {
+	cx: "8",
+	cy: "8",
+	r: "2"
+}));
+/** One view of a channel's canvas, in a tab of its own. The first view lives
+* in the canvas's own tab (no `id`); the host opens a tab for each other one.
+* Who drives and what each view shows is the shared scene; following is this
+* viewer's own choice. */
+function CanvasPanel({ channel, roaming, views, viewer, name, id, open, close, TabTitle }) {
 	const shared = useSyncExternalStore(channel.subscribe, channel.snapshot);
 	const types = useSyncExternalStore(views.subscribe, views.list);
-	const [own, setOwn] = useState();
+	const own = useSyncExternalStore(roaming.subscribe, roaming.snapshot);
 	const driver = shared.scene.driver;
 	const driving = driver === viewer;
 	const led = !!driver && !driving;
-	if (own && !led) setOwn(void 0);
-	const roaming = led && !!own;
+	useEffect(() => {
+		if (own && !led) roaming.set(void 0);
+	}, [
+		own,
+		led,
+		roaming
+	]);
+	const alone = led && !!own;
 	const following = led && !own;
-	const scene = roaming && own ? replay(own.base, own.edits) : shared.scene;
-	const change = (update) => {
+	const scene = alone && own ? replay(own.base, own.edits) : shared.scene;
+	const first = scene.items[0];
+	const item = id ? scene.items.find((other) => other.id === id) : first;
+	/** The tab a view is in. */
+	const tabOf = (view) => view === first?.id ? void 0 : view;
+	const change = async (update) => {
 		if (following) return;
-		if (roaming) setOwn((current) => current && {
+		if (alone) roaming.set((current) => current && {
 			...current,
 			edits: [...current.edits, update]
 		});
-		else channel.change((latest) => latest.driver && latest.driver !== viewer ? latest : update(latest)).catch(() => {});
+		else await channel.change((latest) => latest.driver && latest.driver !== viewer ? latest : update(latest)).catch(() => {});
 	};
+	const root = useRef(null);
+	const [shown, setShown] = useState(true);
+	useEffect(() => {
+		const check = () => setShown(!root.current?.closest("[data-covered]"));
+		check();
+		const observer = new MutationObserver(check);
+		observer.observe(document.body, {
+			subtree: true,
+			attributes: true,
+			attributeFilter: ["data-covered"]
+		});
+		return () => observer.disconnect();
+	}, []);
+	const now = {
+		change,
+		open,
+		close,
+		tabOf
+	};
+	const latest = useRef(now);
+	latest.current = now;
+	const mine = item?.id;
+	useEffect(() => {
+		if (shown && mine && (driving || alone)) latest.current.change((current) => current.active === mine ? current : activateItem(current, mine));
+	}, [
+		shown,
+		mine,
+		driving,
+		alone
+	]);
+	const front = scene.active;
+	const went = useRef(following ? void 0 : front);
+	useEffect(() => {
+		if (went.current === front) return;
+		went.current = front;
+		if (front && front !== mine && !driving && !alone) latest.current.open(latest.current.tabOf(front));
+	}, [
+		front,
+		mine,
+		driving,
+		alone
+	]);
+	const gone = !!id && shared.status === "ready" && !item;
+	const moved = !!id && item === first;
+	useEffect(() => {
+		if (!gone && !moved) return;
+		if (moved && shown) latest.current.open();
+		latest.current.close();
+	}, [
+		gone,
+		moved,
+		shown
+	]);
+	const buttons = useRef(null);
+	useEffect(() => {
+		const element = buttons.current;
+		const canvas = root.current;
+		if (!element || !canvas) return;
+		const measure = () => canvas.style.setProperty("--buzz-canvas-room", `${element.offsetWidth}px`);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, []);
 	const takeControl = () => {
-		const looking = roaming ? scene.active : void 0;
-		const edits = [...own?.edits ?? [], ...looking ? [(latest) => activateItem(latest, looking)] : []];
-		setOwn(void 0);
-		channel.change((latest) => setDriver(replay(latest, edits), viewer)).catch(() => {});
+		const edits = [...own?.edits ?? [], ...mine ? [(next) => activateItem(next, mine)] : []];
+		channel.change((next) => setDriver(replay(next, edits), viewer)).catch(() => {});
 	};
+	const add = (type) => {
+		const wanted = nextId(scene, type.type);
+		change((current) => openItem(current, views, {
+			type: type.type,
+			state: type.initial,
+			...current.items.some((other) => other.id === wanted) ? {} : { id: wanted }
+		})).then(() => {
+			if (first) latest.current.open(wanted);
+		});
+	};
+	const titleOf = (view) => view.title ?? views.get(view.type)?.title ?? "Unknown view";
 	const driverName = driver ? name(driver) : "";
-	const status = driving ? "You are driving. Followers see what you see." : following ? `Following ${driverName}.` : roaming ? `Looking around on your own. ${driverName} is driving.` : "Nobody is driving. Changes are shared with everyone.";
+	const status = driving ? "You are driving. Followers see what you see." : following ? `Following ${driverName}.` : alone ? `Looking around on your own. ${driverName} is driving.` : "Nobody is driving. Changes are shared with everyone.";
 	const addable = types.filter((view) => view.initial !== void 0);
-	const shown = scene.items.find((item) => item.id === scene.active);
-	const view = (item) => {
-		const type = views.get(item.type);
-		if (!type) return /* @__PURE__ */ createElement("div", { className: styles.empty }, /* @__PURE__ */ createElement(EmptyState, {
-			title: "This view needs a plugin",
-			description: `Nothing on this device can show a "${item.type}" view.`
-		}));
-		const View = type.component;
-		return /* @__PURE__ */ createElement("div", {
-			key: item.id,
-			className: styles.view
-		}, /* @__PURE__ */ createElement(View, {
-			state: item.state,
-			interactive: !following,
-			update: (next) => change((current) => updateItem(current, views, item.id, next))
-		}));
-	};
+	const menu = [...scene.items.filter((other) => other !== item).map((other) => ({
+		label: `Go to ${titleOf(other)}`,
+		onSelect: () => open(tabOf(other.id))
+	})), ...following ? [] : [...addable.map((type) => ({
+		label: `New ${type.title.toLowerCase()}`,
+		onSelect: () => add(type)
+	})), ...item ? [{
+		label: "Remove this view for everyone",
+		onSelect: () => void change((current) => closeItem(current, item.id))
+	}] : []]];
+	const View = (item && views.get(item.type))?.component;
 	return /* @__PURE__ */ createElement("section", {
+		ref: root,
 		className: styles.canvas,
 		"aria-label": "Canvas"
-	}, /* @__PURE__ */ createElement("div", { className: styles.bar }, /* @__PURE__ */ createElement("p", {
-		className: styles.status,
-		role: "status",
-		"data-driving": driving ? "" : void 0
-	}, shared.status === "loading" ? "Loading the canvas…" : status), following && /* @__PURE__ */ createElement(Button, {
-		variant: "outline",
-		onClick: () => setOwn({
+	}, /* @__PURE__ */ createElement("p", {
+		className: styles.quiet,
+		role: "status"
+	}, shared.status === "loading" ? "Loading the canvas…" : status), TabTitle && item && /* @__PURE__ */ createElement(TabTitle, { label: titleOf(item) }), /* @__PURE__ */ createElement("div", {
+		ref: buttons,
+		className: styles.buttons
+	}, menu.length > 0 && /* @__PURE__ */ createElement(AddMenu, {
+		label: "Views",
+		items: menu
+	}), led && /* @__PURE__ */ createElement(Button, {
+		variant: following ? "outline" : "ghost",
+		"aria-label": following ? "Stop following" : `Follow ${driverName}`,
+		title: following ? `Following ${driverName}. Look around on your own` : `Follow ${driverName}`,
+		onClick: () => roaming.set(following ? {
 			base: shared.scene,
 			edits: []
-		})
-	}, "Stop following"), roaming && /* @__PURE__ */ createElement(Button, {
-		variant: "outline",
-		onClick: () => setOwn(void 0)
-	}, "Follow ", driverName), driving ? /* @__PURE__ */ createElement(Button, {
-		variant: "outline",
-		onClick: () => change((current) => setDriver(current))
-	}, "Stop driving") : /* @__PURE__ */ createElement(Button, {
-		variant: "prominent",
+		} : void 0)
+	}, /* @__PURE__ */ createElement(Eye, null)), /* @__PURE__ */ createElement(Button, {
+		variant: driving ? "prominent" : "ghost",
+		"aria-label": driving ? "Stop driving" : "Take control",
+		title: driving ? "You are driving. Stop driving" : led ? `${driverName} is driving. Take control` : "Take control: others see what you see",
 		disabled: shared.status === "loading",
-		onClick: takeControl
-	}, "Take control")), shared.error && /* @__PURE__ */ createElement("p", {
+		onClick: driving ? () => void change((current) => setDriver(current)) : takeControl
+	}, /* @__PURE__ */ createElement(Wheel, null))), shared.error && /* @__PURE__ */ createElement("p", {
 		className: styles.error,
 		role: "alert"
-	}, shared.error), /* @__PURE__ */ createElement("div", { className: styles.stage }, scene.items.length ? /* @__PURE__ */ createElement(Fragment, null, /* @__PURE__ */ createElement(Tabs, {
-		label: "Canvas views",
-		value: scene.active,
-		onValueChange: (id) => change((current) => activateItem(current, id)),
-		items: scene.items.map((item) => ({
-			value: item.id,
-			label: item.title ?? views.get(item.type)?.title ?? "Unknown view",
-			onClose: following ? void 0 : () => change((current) => closeItem(current, item.id))
-		})),
-		trailing: !following && addable.length ? /* @__PURE__ */ createElement(AddMenu, {
-			label: "Add a view",
-			items: addable.map((type) => ({
-				label: type.title,
-				onSelect: () => change((current) => openItem(current, views, {
-					type: type.type,
-					state: type.initial
-				}))
-			}))
-		}) : void 0
-	}), shown && view(shown)) : /* @__PURE__ */ createElement("div", { className: styles.empty }, /* @__PURE__ */ createElement(EmptyState, {
+	}, shared.error), item && View ? /* @__PURE__ */ createElement("div", {
+		key: item.id,
+		className: styles.view
+	}, /* @__PURE__ */ createElement(View, {
+		state: item.state,
+		interactive: !following,
+		update: (next) => void change((current) => updateItem(current, views, item.id, next))
+	})) : /* @__PURE__ */ createElement("div", { className: styles.empty }, item ? /* @__PURE__ */ createElement(EmptyState, {
+		title: "This view needs a plugin",
+		description: `Nothing on this device can show a "${item.type}" view.`
+	}) : /* @__PURE__ */ createElement(EmptyState, {
 		title: "Nothing on the canvas yet",
 		description: following ? `${driverName} hasn't opened anything.` : "Add a view, or ask an agent to open one. Everyone in this conversation sees it.",
 		action: !following && addable.length ? /* @__PURE__ */ createElement("div", { className: styles.actions }, addable.map((type) => /* @__PURE__ */ createElement(Button, {
 			key: type.type,
-			variant: "outline",
-			onClick: () => change((current) => openItem(current, views, {
-				type: type.type,
-				state: type.initial
-			}))
+			onClick: () => add(type)
 		}, type.title))) : void 0
-	}))));
+	})));
 }
 //#endregion
 //#region src/store.ts
@@ -580,7 +674,7 @@ function canvasTools(views, show) {
 				...typeof args.title === "string" && { title: args.title },
 				...typeof args.id === "string" && { id: args.id }
 			}));
-			return report(scene, show(id, context.root) ? "Shown beside the conversation." : "Saved. Your owner is not viewing this conversation in the desktop app now.");
+			return report(scene, show(id, context.root, scene.active === scene.items[0]?.id ? void 0 : scene.active) ? "Shown beside the conversation." : "Saved. Your owner is not viewing this conversation in the desktop app now.");
 		}),
 		tool("canvas_update", "Change what one view on the canvas shows, such as its address or position, for everyone following.", {
 			id: str,
@@ -821,7 +915,7 @@ function AddressBar({ url, label, go }) {
 		placeholder: "https://",
 		value: draft,
 		onValueChange: setDraft
-	}), /* @__PURE__ */ createElement(Button, { type: "submit" }, "Go"));
+	}));
 }
 /** How long after a page is opened for this viewer its address changes count
 * as the site redirecting, not as the viewer going somewhere. */
@@ -1034,7 +1128,8 @@ var videoView = {
 };
 //#endregion
 //#region src/index.tsx
-/** What a link or an agent opens to show a conversation's canvas. */
+/** What a link or an agent opens to show a conversation's canvas, followed by
+* a view's id for that view's own tab. */
 var CANVAS_TARGET = "buzz-canvas:";
 var still = () => () => {};
 var inject = [
@@ -1059,47 +1154,88 @@ function apply(ctx) {
 	views.register(webView);
 	views.register(mapView());
 	views.register(videoView);
-	function Live({ session, viewer, channelId }) {
-		const channel = useMemo(() => createCanvasChannel({
-			channelId,
-			views,
-			read: async (filters, signal) => {
-				if (!session.snapshotRead) throw new Error("Connect to your community to use the canvas.");
-				return session.snapshotRead(filters, signal ? { signal } : {});
-			},
-			publish: async (template, signal) => {
-				const writer = session.configArtifactWriter;
-				if (!writer) throw new Error("This community can't save a canvas yet.");
-				const event = await writer.sign({
-					...template,
-					created_at: Math.floor(Date.now() / 1e3)
-				}, signal ?? session.lifetimeSignal);
-				await writer.publish(event, signal ?? session.lifetimeSignal);
-				return event;
-			},
-			follow: (listener) => session.artifacts.follow([channelId], listener)
-		}), [session, channelId]);
-		useEffect(() => () => channel.dispose(), [channel]);
+	const rooms = /* @__PURE__ */ new Map();
+	const useTabTitle = ctx.panels.useTabTitle;
+	const TabTitle = useTabTitle && (({ label }) => {
+		useTabTitle(label);
+		return null;
+	});
+	function Live({ room: key, session, viewer, channelId, view, close }) {
+		const room = useMemo(() => {
+			const open = rooms.get(key);
+			if (open) return open;
+			const made = {
+				users: 0,
+				roaming: createRoaming(),
+				channel: createCanvasChannel({
+					channelId,
+					views,
+					read: async (filters, signal) => {
+						if (!session.snapshotRead) throw new Error("Connect to your community to use the canvas.");
+						return session.snapshotRead(filters, signal ? { signal } : {});
+					},
+					publish: async (template, signal) => {
+						const writer = session.configArtifactWriter;
+						if (!writer) throw new Error("This community can't save a canvas yet.");
+						const event = await writer.sign({
+							...template,
+							created_at: Math.floor(Date.now() / 1e3)
+						}, signal ?? session.lifetimeSignal);
+						await writer.publish(event, signal ?? session.lifetimeSignal);
+						return event;
+					},
+					follow: (listener) => session.artifacts.follow([channelId], listener)
+				})
+			};
+			rooms.set(key, made);
+			return made;
+		}, [
+			key,
+			session,
+			channelId
+		]);
+		useEffect(() => {
+			room.users += 1;
+			return () => {
+				room.users -= 1;
+				setTimeout(() => {
+					if (room.users || rooms.get(key) !== room) return;
+					rooms.delete(key);
+					room.channel.dispose();
+				});
+			};
+		}, [room, key]);
 		useSyncExternalStore(session.names?.subscribe ?? still, () => session.names?.snapshot() ?? 0);
 		return /* @__PURE__ */ createElement(CanvasPanel, {
-			channel,
+			channel: room.channel,
+			roaming: room.roaming,
 			views,
 			viewer,
+			id: view,
+			open: (next) => void ctx.panels.requestOpen({
+				target: CANVAS_TARGET + (next ?? ""),
+				channelId
+			}),
+			close,
+			TabTitle,
 			name: (pubkey) => {
 				const short = `${pubkey.slice(0, 8)}…`;
 				return session.names?.resolve(pubkey, short) ?? short;
 			}
 		});
 	}
-	function Panel({ channelContext, context }) {
+	function Panel({ channelContext, context, target, close }) {
 		const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
 		const channelId = channelContext?.channelId ?? context?.channelId;
 		if (!channelId || state.status !== "ready" || !state.viewer || channelContext && state.scope !== channelContext.scope) return /* @__PURE__ */ createElement("p", { role: "status" }, "The canvas is unavailable while the connection recovers.");
 		return /* @__PURE__ */ createElement(Live, {
 			key: `${state.scope}:${state.generation}:${channelId}`,
+			room: `${state.scope}:${state.generation}:${channelId}`,
 			session: state.session,
 			viewer: state.viewer,
-			channelId
+			channelId,
+			view: target?.slice(12) || void 0,
+			close: close ?? still
 		});
 	}
 	ctx.panels.register({
@@ -1108,15 +1244,15 @@ function apply(ctx) {
 		inline: false,
 		keepOpen: true,
 		channelPlacement: "tab",
-		matches: (target) => target === CANVAS_TARGET,
+		matches: (target) => /^[a-z0-9._-]{0,64}$/.test(target.startsWith(CANVAS_TARGET) ? target.slice(12) : "/"),
 		channelMenu: {
 			label: "Share a view",
 			eligible: (channel, session) => !channel.cached && !channel.archived && !!channel.members?.includes(session.viewer ?? "")
 		},
 		component: Panel
 	});
-	for (const tool of canvasTools(views, (channelId, rootId) => ctx.panels.requestOpen({
-		target: CANVAS_TARGET,
+	for (const tool of canvasTools(views, (channelId, rootId, view) => ctx.panels.requestOpen({
+		target: CANVAS_TARGET + (view ?? ""),
 		channelId,
 		...rootId ? { rootId } : {}
 	}))) ctx.agents.addTool(tool);

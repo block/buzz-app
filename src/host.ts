@@ -63,6 +63,10 @@ export type RelaySnapshot = {
 export type PanelProps = {
   channelContext?: { channelId: string; scope: string };
   context?: { channelId?: string };
+  /** What this tab was opened for. */
+  target?: string;
+  /** Closes this tab. */
+  close?(): void;
 };
 
 export type PluginContext = {
@@ -75,6 +79,8 @@ export type PluginContext = {
       channelId: string;
       rootId?: string;
     }): boolean;
+    /** A hook for a panel's component: names its tab. Newer hosts only. */
+    useTabTitle?(label: string): void;
   };
   relay: {
     subscribe(listener: () => void): () => void;

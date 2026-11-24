@@ -63,8 +63,12 @@ function NativeView({ url }) {
   );
 }
 
+// Each seat is a pretend channel page: a strip of tabs, one per target the
+// plugin asks to open, with every tab but the chosen one covered as the host
+// covers them.
+const TabName = React.createContext(undefined);
 function host(viewer) {
-  const seat = { tools: [], effects: [] };
+  const seat = { tools: [], effects: [], open: () => false };
   const session = {
     viewer,
     lifetimeSignal: new AbortController().signal,
@@ -77,7 +81,14 @@ function host(viewer) {
   plugin.apply({
     react: React,
     browser: native ? { available: true, get View() { return (props) => <NativeView {...props} />; } } : { available: false, View: () => null },
-    panels: { register: (panel) => (seat.panel = panel), requestOpen: () => true },
+    panels: {
+      register: (panel) => (seat.panel = panel),
+      requestOpen: ({ target }) => seat.panel.matches(target) && seat.open(target),
+      useTabTitle(label) {
+        const name = React.useContext(TabName);
+        React.useLayoutEffect(() => (name?.(label), () => name?.(undefined)), [name, label]);
+      },
+    },
     relay: { subscribe: () => () => {}, snapshot: () => snapshot },
     agents: { addTool: (tool) => seat.tools.push(tool), addInstructions() {} },
     reflect: { get: (name) => (name === "ui" && hostUi) || undefined },
@@ -85,6 +96,44 @@ function host(viewer) {
     provide() {},
   });
   return seat;
+}
+function Tab({ seat, target, chosen, close, setNames }) {
+  const name = React.useCallback((label) => setNames((was) => ({ ...was, [target]: label })), [target, setNames]);
+  return (
+    <TabName.Provider value={name}>
+      <div role="tabpanel" data-covered={chosen ? undefined : ""} style={{ display: chosen ? "flex" : "none", flex: 1, minHeight: 0, flexDirection: "column" }}>
+        <seat.panel.component context={{ channelId: CHANNEL }} target={target} close={close} />
+      </div>
+    </TabName.Provider>
+  );
+}
+function Seat({ seat, label }) {
+  const [tabs, setTabs] = React.useState(["buzz-canvas:"]);
+  const [chosen, setChosen] = React.useState("buzz-canvas:");
+  const [names, setNames] = React.useState({});
+  seat.open = (target) => {
+    setTabs((was) => (was.includes(target) ? was : [...was, target]));
+    setChosen(target);
+    return true;
+  };
+  const close = (target) => {
+    setTabs((was) => was.filter((other) => other !== target));
+    setChosen((was) => (was === target ? "buzz-canvas:" : was));
+  };
+  return (
+    <section aria-label={label} style={{ flex: 1, minWidth: 0, border: "1px solid #ddd", display: "flex", flexDirection: "column" }}>
+      <div role="tablist" style={{ display: "flex", gap: 8, padding: 4, borderBottom: "1px solid #ddd" }}>
+        {tabs.map((target) => (
+          <button key={target} type="button" role="tab" aria-selected={target === chosen} style={{ fontWeight: target === chosen ? 700 : 400 }} onClick={() => setChosen(target)}>
+            {names[target] ?? "Canvas"}
+          </button>
+        ))}
+      </div>
+      {tabs.map((target) => (
+        <Tab key={target} seat={seat} target={target} chosen={target === chosen} close={() => close(target)} setNames={setNames} />
+      ))}
+    </section>
+  );
 }
 const seats = [host(ada), host(ben)];
 window.canvasHarness = {
@@ -98,9 +147,7 @@ window.canvasHarness = {
 createRoot(document.getElementById("root")).render(
   <main style={{ display: "flex", gap: 12, height: "100vh", padding: 12, boxSizing: "border-box" }}>
     {seats.map((seat, index) => (
-      <section key={index} aria-label={`${index ? "Ben" : "Ada"}'s screen`} style={{ flex: 1, minWidth: 0, border: "1px solid #ddd", display: "flex", flexDirection: "column" }}>
-        <seat.panel.component context={{ channelId: CHANNEL }} />
-      </section>
+      <Seat key={index} seat={seat} label={`${index ? "Ben" : "Ada"}'s screen`} />
     ))}
   </main>,
 );

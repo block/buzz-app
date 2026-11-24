@@ -6,7 +6,7 @@ import {
   type FormEvent,
 } from "react";
 import type { Browser } from "../host";
-import { Button, Input } from "../kit";
+import { Input } from "../kit";
 import type { CanvasViewProps, CanvasViewType } from "../view";
 import { styles } from "../styles";
 
@@ -66,9 +66,6 @@ export function AddressBar({
         value={draft}
         onValueChange={setDraft}
       />
-      <Button type="submit">
-        Go
-      </Button>
     </form>
   );
 }

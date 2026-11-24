@@ -4,11 +4,11 @@ import {
   useMemo,
   useSyncExternalStore,
 } from "react";
-import { CanvasPanel } from "./CanvasPanel";
+import { CanvasPanel, createRoaming, type Roaming } from "./CanvasPanel";
 import type { PanelProps, PluginContext, Session } from "./host";
 import { useHostUi } from "./kit";
 import { useHost } from "./react";
-import { createCanvasChannel } from "./store";
+import { createCanvasChannel, type CanvasChannel } from "./store";
 import { css } from "./styles";
 import { canvasTools } from "./tools";
 import { createCanvasViews } from "./view";
@@ -16,7 +16,8 @@ import { mapView } from "./views/map";
 import { browserView, webView } from "./views/page";
 import { videoView } from "./views/video";
 
-/** What a link or an agent opens to show a conversation's canvas. */
+/** What a link or an agent opens to show a conversation's canvas, followed by
+ * a view's id for that view's own tab. */
 const CANVAS_TARGET = "buzz-canvas:";
 const still = () => () => {};
 
@@ -42,18 +43,40 @@ export function apply(ctx: PluginContext) {
   views.register(mapView());
   views.register(videoView);
 
+  // Each view is a tab of its own, so one canvas is shared by several panels.
+  type Room = { channel: CanvasChannel; roaming: Roaming; users: number };
+  const rooms = new Map<string, Room>();
+  // Named by the view the tab shows, where the host lets a panel name its tab.
+  const useTabTitle = ctx.panels.useTabTitle;
+  const TabTitle =
+    useTabTitle &&
+    (({ label }: { label: string }) => {
+      useTabTitle(label);
+      return null;
+    });
+
   function Live({
+    room: key,
     session,
     viewer,
     channelId,
+    view,
+    close,
   }: {
+    room: string;
     session: Session;
     viewer: string;
     channelId: string;
+    view: string | undefined;
+    close(): void;
   }) {
-    const channel = useMemo(
-      () =>
-        createCanvasChannel({
+    const room = useMemo(() => {
+      const open = rooms.get(key);
+      if (open) return open;
+      const made: Room = {
+        users: 0,
+        roaming: createRoaming(),
+        channel: createCanvasChannel({
           channelId,
           views,
           read: async (filters, signal) => {
@@ -74,9 +97,22 @@ export function apply(ctx: PluginContext) {
           },
           follow: (listener) => session.artifacts.follow([channelId], listener),
         }),
-      [session, channelId],
-    );
-    useEffect(() => () => channel.dispose(), [channel]);
+      };
+      rooms.set(key, made);
+      return made;
+    }, [key, session, channelId]);
+    useEffect(() => {
+      room.users += 1;
+      return () => {
+        room.users -= 1;
+        // Another tab of this canvas may be about to take its place.
+        setTimeout(() => {
+          if (room.users || rooms.get(key) !== room) return;
+          rooms.delete(key);
+          room.channel.dispose();
+        });
+      };
+    }, [room, key]);
     // Re-render when a name arrives.
     useSyncExternalStore(
       session.names?.subscribe ?? still,
@@ -84,9 +120,19 @@ export function apply(ctx: PluginContext) {
     );
     return (
       <CanvasPanel
-        channel={channel}
+        channel={room.channel}
+        roaming={room.roaming}
         views={views}
         viewer={viewer}
+        id={view}
+        open={(next) =>
+          void ctx.panels.requestOpen({
+            target: CANVAS_TARGET + (next ?? ""),
+            channelId,
+          })
+        }
+        close={close}
+        TabTitle={TabTitle}
         name={(pubkey) => {
           const short = `${pubkey.slice(0, 8)}…`;
           return session.names?.resolve(pubkey, short) ?? short;
@@ -95,7 +141,7 @@ export function apply(ctx: PluginContext) {
     );
   }
 
-  function Panel({ channelContext, context }: PanelProps) {
+  function Panel({ channelContext, context, target, close }: PanelProps) {
     const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
     const channelId = channelContext?.channelId ?? context?.channelId;
     if (
@@ -112,9 +158,12 @@ export function apply(ctx: PluginContext) {
     return (
       <Live
         key={`${state.scope}:${state.generation}:${channelId}`}
+        room={`${state.scope}:${state.generation}:${channelId}`}
         session={state.session}
         viewer={state.viewer}
         channelId={channelId}
+        view={target?.slice(CANVAS_TARGET.length) || undefined}
+        close={close ?? still}
       />
     );
   }
@@ -126,7 +175,12 @@ export function apply(ctx: PluginContext) {
     inline: false,
     keepOpen: true,
     channelPlacement: "tab",
-    matches: (target: string) => target === CANVAS_TARGET,
+    matches: (target: string) =>
+      /^[a-z0-9._-]{0,64}$/.test(
+        target.startsWith(CANVAS_TARGET)
+          ? target.slice(CANVAS_TARGET.length)
+          : "/",
+      ),
     channelMenu: {
       label: "Share a view",
       eligible: (
@@ -140,9 +194,9 @@ export function apply(ctx: PluginContext) {
     component: Panel,
   });
 
-  for (const tool of canvasTools(views, (channelId, rootId) =>
+  for (const tool of canvasTools(views, (channelId, rootId, view) =>
     ctx.panels.requestOpen({
-      target: CANVAS_TARGET,
+      target: CANVAS_TARGET + (view ?? ""),
       channelId,
       ...(rootId ? { rootId } : {}),
     }),

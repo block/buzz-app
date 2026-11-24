@@ -24,6 +24,8 @@ export function Button({
   type?: "button" | "submit";
   disabled?: boolean;
   onClick?: () => void;
+  /** Shown as a tooltip. */
+  title?: string;
   "aria-label"?: string;
   children?: ReactNode;
 }) {
@@ -69,59 +71,6 @@ export function Input({
       value={value}
       onChange={(event) => onValueChange(event.currentTarget.value)}
     />
-  );
-}
-
-export function Tabs({
-  label,
-  value,
-  onValueChange,
-  items,
-  trailing,
-}: {
-  label: string;
-  value: string | undefined;
-  onValueChange(value: string): void;
-  items: readonly {
-    value: string;
-    label: string;
-    onClose?: (() => void) | undefined;
-  }[];
-  trailing?: ReactNode;
-}) {
-  return (
-    <div className={styles.tabs}>
-      <div role="tablist" aria-label={label} className={styles.tablist}>
-        {items.map((item) => (
-          <span
-            key={item.value}
-            className={styles.tab}
-            data-selected={item.value === value ? "" : undefined}
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={item.value === value}
-              className={styles.tabButton}
-              onClick={() => onValueChange(item.value)}
-            >
-              {item.label}
-            </button>
-            {item.onClose && (
-              <button
-                type="button"
-                className={styles.tabClose}
-                aria-label={`Close ${item.label}`}
-                onClick={item.onClose}
-              >
-                ×
-              </button>
-            )}
-          </span>
-        ))}
-      </div>
-      {trailing}
-    </div>
   );
 }
 

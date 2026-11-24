@@ -116,7 +116,8 @@ export function openItem(
   };
 }
 
-const nextId = (scene: CanvasScene, type: string) => {
+/** The id a new view of this type would get. */
+export const nextId = (scene: CanvasScene, type: string) => {
   for (let index = 1; ; index++) {
     const id = `${type}-${index}`;
     if (!scene.items.some((item) => item.id === id)) return id;

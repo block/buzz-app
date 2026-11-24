@@ -69,7 +69,7 @@ describe("history prefetch", () => {
     });
   });
 
-  it("ignores frame-stall catch-up bursts during steady upward scrolling", () => {
+  it("ignores bunched scroll events after a gap during steady upward scrolling", () => {
     const pace = historyPace();
     let top = 7345;
     let at = 2000;

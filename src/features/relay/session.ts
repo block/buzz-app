@@ -1346,7 +1346,14 @@ export function createRelaySession(
     const known = profiles.queries.snapshot();
     const cached = peopleKinds.get(channel);
     if (cached?.profiles === known) return cached.channel;
-    const kind = peopleKind(channel, transport?.viewer, known);
+    const found = peopleKind(channel, transport?.viewer, known);
+    // While a member's profile loads, keep the kind last worked out, or the
+    // relay's own until then.
+    const kind =
+      found === "loading"
+        ? (lastKinds.get(channel.id) ?? channel.channelType)
+        : found;
+    if (found !== "loading") lastKinds.set(channel.id, found);
     const next =
       kind === channel.channelType
         ? channel
@@ -1354,6 +1361,7 @@ export function createRelaySession(
     peopleKinds.set(channel, { profiles: known, channel: next });
     return next;
   };
+  const lastKinds = new Map<string, ChannelSummary["channelType"]>();
   let peopleSource: ChannelList | undefined;
   let peopleProfiles: ReadonlyMap<string, Profile> | undefined;
   let peopleList: ChannelList | undefined;

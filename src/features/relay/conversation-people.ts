@@ -59,13 +59,21 @@ export function peopleKind(
   channel: ChannelSummary,
   viewer: string | undefined,
   profiles: ReadonlyMap<string, Profile>,
-): ChannelSummary["channelType"] {
+): ChannelSummary["channelType"] | "loading" {
   const type = channel.channelType;
   if (
     (type !== "solo" && type !== "stream" && type !== undefined) ||
     channel.huddle
   )
     return type;
+  // An agent whose profile hasn't loaded would count as a person.
+  const others = conversationOthers(channel, viewer);
+  if (
+    !openToPosting(channel) &&
+    others.length <= identityProfileLimit &&
+    others.some((key) => !profiles.has(key))
+  )
+    return "loading";
   if (isSoloConversation(channel, viewer, profiles)) return "solo";
   return type === "solo" ? "stream" : type;
 }

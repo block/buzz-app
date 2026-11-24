@@ -51,7 +51,10 @@ export type ConversationMark =
   | "solo-private"
   | "solo-view-only"
   | "group-private"
-  | "group-public";
+  | "group-public"
+  /** A member's profile is still loading and the conversation has no known
+   * mark yet: no icon, rather than a lock that swaps away. */
+  | "pending";
 export function conversationMark(
   channel: Pick<ChannelSummary, "visibility" | "joinRole">,
   people: readonly string[],
@@ -84,6 +87,7 @@ export function ConversationMarkIcon({
   mark: ConversationMark;
   size: number;
 }) {
+  if (mark === "pending") return null;
   const Icon = markIcons[mark];
   return <Icon size={size} data-conversation-mark={mark} />;
 }
@@ -172,8 +176,21 @@ export function useConversationIdentity(
     () => conversationPeople(others, profiles),
     [others, profiles],
   );
-  return { members, profiles, mark: conversationMark(channel, people) };
+  // Until every member's profile has loaded, an agent would count as a
+  // person. Keep the last known mark meanwhile, or none, never a guess.
+  const loading =
+    !dm &&
+    !openToPosting(channel) &&
+    others.length <= identityProfileLimit &&
+    others.some((key) => !profiles.has(key));
+  const computed = conversationMark(channel, people);
+  if (!loading) knownMarks.set(channel.id, computed);
+  const mark = loading ? (knownMarks.get(channel.id) ?? "pending") : computed;
+  return { members, profiles, mark };
 }
+
+/** Each conversation's last mark worked out from loaded profiles. */
+const knownMarks = new Map<string, ConversationMark>();
 
 // Stands in while a row has no channel yet; a DM loads no profiles.
 const noChannel = { id: "", name: "", channelType: "dm" } as ChannelSummary;

@@ -60,6 +60,9 @@ describe("peopleKind", () => {
     ).toBe("solo");
     expect(peopleKind(chat({ members: [] }), me, profiles)).toBe("stream");
   });
+  it("says loading while a member's profile hasn't arrived", () => {
+    expect(peopleKind(chat({}), me, new Map())).toBe("loading");
+  });
   it("leaves DMs, forums and huddles alone", () => {
     expect(peopleKind(chat({ channelType: "dm" }), me, profiles)).toBe("dm");
     expect(peopleKind(chat({ channelType: "forum" }), me, profiles)).toBe(

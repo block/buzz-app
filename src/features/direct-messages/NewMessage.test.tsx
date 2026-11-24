@@ -587,7 +587,7 @@ it("disables the Name field and shows the people while sending a Direct message"
   await pick(t, one.name);
   const name = screen.getByRole("textbox", { name: "Name" });
   expect(name).toBeEnabled();
-  expect(name).toHaveAttribute("placeholder", "New message");
+  expect(name).toHaveAttribute("placeholder", "Message title (Optional)");
   await t.user.click(directRow());
   expect(name).toBeDisabled();
   expect(name).toHaveAttribute("placeholder", "Person 1");
@@ -1695,7 +1695,7 @@ it("removes once for pointerdown plus click, then Backspace; effects outlive chi
   expect(recipient()).toHaveFocus();
   await t.user.keyboard("{Escape}");
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  await t.user.click(screen.getByText("To:"));
+  await t.user.click(recipient());
   expect(screen.getByRole("listbox")).toBeVisible();
 });
 

@@ -66,6 +66,7 @@ export function RecipientPicker({
   disabled,
   excludedPubkeys = noExclusions,
   initiallyOpen = true,
+  optional = false,
   searchOnly = false,
   maxRecipients = 8,
   channelOptions = noChannels,
@@ -85,6 +86,8 @@ export function RecipientPicker({
   excludedPubkeys?: readonly string[];
   /** Share dialogs keep the people list closed until the To field is used. */
   initiallyOpen?: boolean;
+  /** Recipients may be left out: no To label, and the placeholder says so. */
+  optional?: boolean;
   /** Keep results closed until a search is typed. */
   searchOnly?: boolean;
   maxRecipients?: number;
@@ -521,9 +524,11 @@ export function RecipientPicker({
           ref={anchor}
           wrap
           leading={
-            <label htmlFor={id} className={styles.toLabel}>
-              To:
-            </label>
+            optional ? undefined : (
+              <label htmlFor={id} className={styles.toLabel}>
+                To:
+              </label>
+            )
           }
           onClick={focus}
           onKeyDown={(event) => {
@@ -606,7 +611,9 @@ export function RecipientPicker({
                   : "Add another person…"
                 : channelOptions.length
                   ? "Find a person or conversation…"
-                  : "Find a person…"
+                  : optional
+                    ? "Find a person (Optional)"
+                    : "Find a person…"
             }
             value={query}
             disabled={disabled}

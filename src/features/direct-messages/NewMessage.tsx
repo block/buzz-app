@@ -714,7 +714,7 @@ export function NewMessage({
           value={direct ? "" : title}
           maxLength={120}
           autoComplete="off"
-          placeholder={direct ? peopleNames : "New message"}
+          placeholder={direct ? peopleNames : "Message title (Optional)"}
           disabled={locked || direct}
           onChange={(event) => changeTitle(event.target.value)}
         />
@@ -727,6 +727,7 @@ export function NewMessage({
         disabled={locked}
         onChange={change}
         initiallyOpen={false}
+        optional
         // After a pick, the group's conversations show; typing brings the
         // people list back for the next name.
         searchOnly={recipients.length > 0}

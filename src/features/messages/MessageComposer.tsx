@@ -132,6 +132,7 @@ import {
 } from "react";
 import { fullSession, type ComposerSession } from "./composer-session";
 import { sendWithOwnerMentions } from "../relay/owner-mentions";
+import { prefetchLinkedMessagesIn } from "./linked-messages";
 import {
   draftTokens,
   messageTokenTags,
@@ -914,6 +915,16 @@ function Composer({
     return caption;
   }, [value]);
   const draft = value.text;
+  // A message link being written reads its message once typing pauses, so
+  // the sent message shows its card at once.
+  useEffect(() => {
+    if (!host || !/buzz:/i.test(draft)) return;
+    const timer = setTimeout(
+      () => prefetchLinkedMessagesIn(host, [draft], "background"),
+      400,
+    );
+    return () => clearTimeout(timer);
+  }, [host, draft]);
   const forwarded = useComposerForward(
     session,
     value.forward,

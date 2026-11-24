@@ -607,7 +607,8 @@ test("copied Buzz links and the desktop alias reveal their destination from a co
   );
   for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
     await sharedConversation.click();
-    await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
+    // The link in the message text, not the card below it.
+    await page.locator(`[data-channel-timeline] p a[href="${href}"]`).click();
     await expect(row).toBeVisible();
     await expect(row).toBeFocused();
   }

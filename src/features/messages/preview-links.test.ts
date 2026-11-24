@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { scanMarkdown } from "../relay/message-content";
 import { preparedMarkdown } from "./markdown-preparation";
-import { previewLinks } from "./preview-links";
+import { previewLinks, previewMessageLinks } from "./preview-links";
 
 vi.mock("../relay/message-content", async (actual) => {
   const module = await actual<typeof import("../relay/message-content")>();
@@ -77,5 +77,52 @@ describe("previewLinks", () => {
     expect(preparedMarkdown(content).kind).toBe("markdown");
     expect(previewLinks(content)).toEqual(["https://example.com/once"]);
     expect(scanMarkdown).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("previewMessageLinks", () => {
+  const a = `buzz://message?channel=general&id=${"a".repeat(64)}`;
+  const b = `buzz://message?channel=general&id=${"b".repeat(64)}`;
+
+  it("lists bare and labeled Buzz message links once each, in order", () => {
+    expect(
+      previewMessageLinks(`See ${a}, [that one](${b}) and ${a} again.`),
+    ).toEqual([a, b]);
+  });
+
+  it("skips channel links, web links, angle links and code", () => {
+    expect(
+      previewMessageLinks(
+        [
+          "buzz://channel?id=general",
+          "https://example.com",
+          `<${a}>`,
+          `\`${a}\``,
+          `\`\`\`\n${a}\n\`\`\``,
+          b,
+        ].join("\n\n"),
+      ),
+    ).toEqual([b]);
+  });
+
+  it("skips a quote's source line but keeps links elsewhere", () => {
+    expect(
+      previewMessageLinks(`Draft\n\nFrom ${a}:\n\n> Hello **world**\n\nreply`),
+    ).toEqual([]);
+    expect(
+      previewMessageLinks(`From ${a}:\n\n> quoted ${b}\n\nFrom ${b}:`),
+    ).toEqual([b]);
+    expect(previewMessageLinks(`From ${a}:\n\nnot a quote`)).toEqual([a]);
+    // A quote spanning several messages names each source on its own line.
+    expect(
+      previewMessageLinks(`From ${a}:\n\nFrom ${b}:\n\n> Hello\n\nreply`),
+    ).toEqual([]);
+    expect(
+      previewMessageLinks(`From ${a}:\n\nFrom ${b}:\n\nnot a quote`),
+    ).toEqual([a, b]);
+  });
+
+  it("finds nothing without a Buzz link", () => {
+    expect(previewMessageLinks("https://example.com and text")).toEqual([]);
   });
 });

@@ -55,3 +55,13 @@
 .body[data-overflows]:not([data-expanded]) {
   mask-image: linear-gradient(to bottom, black calc(100% - 1.5em), transparent);
 }
+/* A card that opens what it shows, as a message link card does: a tint over
+ * the same fill. */
+.card[data-opens] {
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .card[data-opens]:hover {
+    background: color-mix(in srgb, var(--surface-panel), var(--surface-hover));
+  }
+}

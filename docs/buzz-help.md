@@ -100,6 +100,11 @@ if that desktop app is up and running.
 - **Messages.** Hover or right-click a message to react, **Reply**, copy a link,
   forward it, or start a chat about it. On an agent's reply, **View activity**
   shows what it did.
+- **Message links.** A link to a Buzz message shows that message below it as
+  a card framed like a forward: its author, time, channel and formatted text,
+  or why it can't be shown. Clicking the card opens the message. After three
+  cards, the rest fold behind **Show more linked messages**. Write a link as
+  `<buzz://message?…>` to leave out its card; a quote's "From" link shows none.
 - **Pins.** **Pin to channel** (**Pin to DM** in a DM) in a message's More
   menu adds it to the pin list, up to 250; the pin button in the header lists
   them. Solo chats have no pins.

@@ -10,3 +10,16 @@
 .previews > * {
   max-width: 100%;
 }
+/* The card's time, its keyboard way in; the surface opens it by pointer. */
+.messageLink {
+  color: inherit;
+  text-decoration: none;
+}
+.messageLink:hover {
+  color: inherit;
+  text-decoration: underline;
+}
+html[data-keyboard-navigation] .messageLink:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

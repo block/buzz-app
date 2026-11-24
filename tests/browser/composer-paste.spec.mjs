@@ -57,7 +57,10 @@ test("pasting copied messages into the composer restores chips, the recipient an
       .getByRole("button", { name: "View Fixture Reader profile" }),
   ).toBeVisible();
   await expect(row.getByRole("link", { name: "#Beta" })).toBeVisible();
-  await expect(row.getByRole("link", { name: "Alpha" })).toHaveCount(2);
+  // The message’s own links, not the linked-message card below it.
+  await expect(
+    row.locator("p").getByRole("link", { name: "Alpha" }),
+  ).toHaveCount(2);
   const paragraph = row.locator("p").first();
   const box = await paragraph.boundingBox();
   await page.mouse.move(box.x + 1, box.y + box.height / 2);

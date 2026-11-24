@@ -67,6 +67,7 @@ import {
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
+import { useComposerWrites } from "./composer-writes";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
@@ -2312,14 +2313,21 @@ function ThreadMessages({
       : undefined;
   // Layers over this thread wait for its reply box only while one is coming:
   // it shows, or may once the thread's read settles. A preview, a Solo
-  // thread or a settled read without a root has none.
+  // thread, a settled read without a root, or a connection that can only
+  // read (whose composer is a footer without a box) has none.
+  const { readingOnly } = useComposerWrites(
+    session,
+    channelId,
+    soloConversation,
+  );
   const composerExpected =
-    !!composerRoot ||
-    (!preview &&
-      !soloConversation &&
-      (snapshot.status === "idle" ||
-        snapshot.status === "loading" ||
-        snapshot.targetStatus === "loading"));
+    !readingOnly &&
+    (!!composerRoot ||
+      (!preview &&
+        !soloConversation &&
+        (snapshot.status === "idle" ||
+          snapshot.status === "loading" ||
+          snapshot.targetStatus === "loading")));
   const composerHandle = composerView?.handle;
   useLayoutEffect(() => {
     composerHandle?.expect(composerExpected);

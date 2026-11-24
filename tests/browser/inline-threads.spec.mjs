@@ -337,8 +337,39 @@ test.describe("Inline", () => {
         return body.scrollHeight <= body.clientHeight + 1;
       };
       await expect.poll(() => detailsSheet(page).evaluate(whole)).toBe(true);
+      // Nor can the keyboard reach the covered header's controls, whose Close
+      // would dismiss both; Tab still reaches the thread's reply box.
+      const header = threadHeading(page).locator("xpath=ancestor::header[1]");
+      const targets = [
+        await sheet(page).elementHandle(),
+        await header.elementHandle(),
+        await reply(sheet(page)).elementHandle(),
+      ];
+      const stops = { header: 0, reply: 0 };
+      // Back from the details through the thread, until focus leaves it.
+      await detailsSheet(page).getByText("Stacked findings").click();
+      for (let step = 0; step < 60; step++) {
+        await page.keyboard.press("Shift+Tab");
+        const [inThread, onHeader, onReply] = await page.evaluate(
+          ([thread, covered, box]) => [
+            thread.contains(document.activeElement),
+            covered.contains(document.activeElement),
+            box === document.activeElement,
+          ],
+          targets,
+        );
+        if (!inThread) break;
+        if (onHeader) stops.header++;
+        if (onReply) stops.reply++;
+      }
+      expect(stops.header).toBe(0);
+      expect(stops.reply).toBeGreaterThan(0);
+      await detailsSheet(page).getByText("Stacked findings").click();
       await page.keyboard.press("Escape");
       await expect(detailsSheet(page)).toHaveCount(0);
+      // Closed, the header is reachable again.
+      await close(sheet(page)).focus();
+      await expect(close(sheet(page))).toBeFocused();
       // Closed, the thread settles back to its own height.
       await expect
         .poll(async () => (await box(sheet(page))).height)
@@ -388,6 +419,29 @@ test.describe("Inline", () => {
         detailsSheet(page).getByText("Older findings"),
       ).toBeVisible();
       await expect.poll(covered).toEqual(stacked);
+    });
+  });
+
+  test.describe("on a connection that can only read", () => {
+    test.use({ productionBroker: false, channelWriteKinds: [30315] });
+
+    test("details over its thread open as a dialog", async ({ page, app }) => {
+      await page.goto(app.origin);
+      await openPage(page, "Messages");
+      const root = roots(app)[1];
+      await expect(viewThread(page, root)).toBeVisible();
+      await settle(page);
+      details(app, "Read-only findings", root);
+      await clickRow(page, viewThread(page, root));
+      await expect(threadTab(page, root)).toBeVisible();
+      await expect(side(page)).toContainText("supports reading only");
+      await showMore(side(page), "Read-only findings").click();
+      const reader = page
+        .getByRole("dialog")
+        .filter({ hasText: filler.trim() });
+      await expect(reader).toBeVisible();
+      await close(reader).click();
+      await expect(reader).toHaveCount(0);
     });
   });
 

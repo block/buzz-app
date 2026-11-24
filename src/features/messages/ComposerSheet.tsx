@@ -323,6 +323,7 @@ export function SheetHeader({
   onOpenAsTab,
   spotlight,
   onSpotlightAnchor,
+  covered = false,
 }: {
   title: ReactNode;
   description?: ReactNode;
@@ -335,9 +336,12 @@ export function SheetHeader({
   onOpenAsTab?: (() => void) | undefined;
   spotlight?: InlineThreadIntroStep | undefined;
   onSpotlightAnchor?: ((element: HTMLElement | null) => void) | undefined;
+  /** A layer covers it: its controls leave the focus order as well as the
+   * pointer's reach, so a hidden Close can't dismiss both. */
+  covered?: boolean | undefined;
 }) {
   return (
-    <header className={`buzz-dialog-header ${styles.header}`}>
+    <header className={`buzz-dialog-header ${styles.header}`} inert={covered}>
       {material && <DialogBarMaterial className={styles.headerMaterial} />}
       <div className={styles.byline}>
         {leading}
@@ -499,8 +503,8 @@ export function ComposerSheet({
   /** A panel: it takes the full height and covers the composer, which it
    * leaves untouched underneath. */
   readerOnly?: boolean;
-  /** Takes the full height while true, as a thread does under a panel, and
-   * settles back to its content after. */
+  /** A layer sits over it: it grows to fit that layer and its covered header
+   * is inert, then settles back to its content after. */
   tall?: boolean;
   /** Once a close has finished its motion. */
   onClosed?: (() => void) | undefined;
@@ -602,6 +606,7 @@ export function ComposerSheet({
               onOpenAsTab={onOpenAsTab}
               spotlight={spotlight}
               onSpotlightAnchor={onSpotlightAnchor}
+              covered={tall}
             />
             <div
               className={`buzz-dialog-body ${styles.body}`}

@@ -476,7 +476,12 @@ function NativeFileDownload({
           }
         }}
       />
-      <span className="sr-only" role={alert ? "alert" : "status"}>
+      {/* Not shown, so not copied by a selection that runs past the card. */}
+      <span
+        className="sr-only"
+        role={alert ? "alert" : "status"}
+        data-copy-skip
+      >
         {notice}
       </span>
       <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>

@@ -25,8 +25,11 @@ import {
   useMessageSelectionCopy,
 } from "./selection-copy";
 
+// The desktop host: it has saved no file, and every download fails.
 vi.mock("./native-download", () => ({
   downloadNativeMedia: () => Promise.reject(new Error("offline")),
+  savedDownloadStatus: () => Promise.resolve(false),
+  subscribeSavedDownloads: () => () => {},
 }));
 
 const person = "a".repeat(64);
@@ -872,6 +875,12 @@ describe("serializeNode", () => {
       markdown: `${caption}\nreport.pdf`,
       html: `<p>${caption}</p><p>report.pdf</p>`,
     };
+    // A preview card copies nothing.
+    const preview = {
+      text: caption,
+      markdown: caption,
+      html: `<p>${caption}</p>`,
+    };
 
     // The card in a message row's markup, and what the selections a drag
     // leaves there copy as.
@@ -983,19 +992,22 @@ describe("serializeNode", () => {
     // jsdom applies no style sheet, as the macOS app's engine reports no
     // `user-select` for the card's unselectable row.
     it("copies nothing for a preview card whose style is not computed", () => {
-      expect(card(link, 2516582, () => {}).past()).toEqual({
-        text: caption,
-        markdown: caption,
-        html: `<p>${caption}</p>`,
-      });
+      expect(card(link, 2516582, () => {}).past()).toEqual(preview);
     });
 
-    it("leaves out a failed download's announcement", async () => {
-      const { view, past } = card(button, 2516582);
-      fireEvent.click(view.getByRole("button"));
-      await view.findByText("Couldn’t download report.pdf. Try again.");
-      expect(past()).toEqual(name);
-    });
+    // Each desktop card announces its download in text that is not shown.
+    it.each([
+      ["download button", undefined, name],
+      ["preview", () => {}, preview],
+    ] as const)(
+      "leaves out the %s card's announcement of a failed download",
+      async (_card, onPreview, copied) => {
+        const { view, past } = card(button, 2516582, onPreview);
+        fireEvent.click(view.getByRole("button", { name: /^Download/ }));
+        await view.findByText("Couldn’t download report.pdf. Try again.");
+        expect(past()).toEqual(copied);
+      },
+    );
   });
 
   it("emits unsafe or unverifiable destinations as text only", () => {

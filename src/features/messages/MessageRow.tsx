@@ -989,9 +989,7 @@ function MessageRowContent({
               <div className={styles.fileGroup} key={group[0]?.url}>
                 {/* A block each, so a copied selection puts every
                     card on its own line. */}
-                {items.map(
-                  (item) => item && <div key={item.key}>{item}</div>,
-                )}
+                {items.map((item) => item && <div key={item.key}>{item}</div>)}
               </div>
             ) : (
               items

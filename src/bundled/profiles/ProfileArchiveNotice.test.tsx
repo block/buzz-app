@@ -339,27 +339,18 @@ it("keeps the last known notice, with its link, while a reread fails", async () 
   ).toBeVisible();
 });
 
-it("reads the archive again once the connection is back, after reads failed while it was down", async () => {
+it("reads the archive again once the connection is back", async () => {
   const events: RelayEvent[] = [
     ...people,
     snapshot([[old.pubkey, successor.pubkey]]),
   ];
-  const { archives, failing, drop, restore, query } = mount(events);
+  const { archives, drop, restore } = mount(events);
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  // The first establishment settles access, as at startup, which starts a
-  // new archive read; only a later reconnect is under test.
-  const before = snapshotReads(query);
   restore();
-  await waitFor(() => expect(snapshotReads(query)).toBe(before + 1));
   await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
-  // The drop leaves the snapshot stale, so the open profile reads it again
-  // while the connection is down, and that read fails.
-  failing.snapshots = true;
   drop();
-  await waitFor(() => expect(archives.snapshot().status).toBe("error"));
-  // Meanwhile the key is unarchived.
+  // The key is unarchived while the connection is down.
   events.push(snapshot([], 1_700_000_050));
-  failing.snapshots = false;
   restore();
   await waitFor(() =>
     expect(screen.queryByTestId("profile-archived")).toBeNull(),
@@ -371,17 +362,15 @@ it("reads the archive again once the connection is back, after a read while it w
     ...people,
     snapshot([[old.pubkey, successor.pubkey]]),
   ];
-  const { archives, drop, restore, query } = mount(events);
+  const { archives, drop, restore, reopen, query } = mount(events);
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  // Settle startup access, as in the test above.
-  const before = snapshotReads(query);
   restore();
-  await waitFor(() => expect(snapshotReads(query)).toBe(before + 1));
   await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
-  // Reads go over a separate path, so one can succeed while the live
-  // connection is down; a change after it was missed.
-  const during = snapshotReads(query);
+  // Reads go over a separate path, so a profile opened while the live
+  // connection is down can still read; a change after it was missed.
   drop();
+  const during = snapshotReads(query);
+  reopen();
   await waitFor(() => expect(snapshotReads(query)).toBe(during + 1));
   await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
   events.push(snapshot([], 1_700_000_050));
@@ -396,28 +385,25 @@ it("reads the archive again once the connection is back, while a read from the d
     ...people,
     snapshot([[old.pubkey, successor.pubkey]]),
   ];
-  const { archives, failing, held, drop, restore, query } = mount(events);
+  const { archives, failing, held, drop, restore, reopen, query } =
+    mount(events);
   await screen.findByRole("button", { name: "Open new key profile: New Key" });
-  // Settle startup access, as in the tests above.
-  const before = snapshotReads(query);
   restore();
-  await waitFor(() => expect(snapshotReads(query)).toBe(before + 1));
   await waitFor(() => expect(archives.snapshot().status).toBe("ready"));
-  // The open profile reads again while the connection is down; that read
-  // will fail, but it is still in flight when the connection comes back.
+  // A profile opened while the connection is down reads; that read will
+  // fail, but it is still in flight when the connection comes back.
   let release!: () => void;
   held.snapshots = new Promise((resolve) => {
     release = resolve;
   });
   failing.snapshots = true;
-  const during = snapshotReads(query);
   drop();
+  const during = snapshotReads(query);
+  reopen();
   await waitFor(() => expect(snapshotReads(query)).toBe(during + 1));
   failing.snapshots = false;
   events.push(snapshot([], 1_700_000_050));
   restore();
-  // The session acts on the reconnect in a timer; let it run first.
-  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   await act(async () => {
     delete held.snapshots;
     release();

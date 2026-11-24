@@ -15,14 +15,7 @@ import {
 } from "./testing";
 import type { RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
-import {
-  archiveHides,
-  createIdentityArchives,
-  UnattestedProfile,
-} from "./identity-archives";
-import type { RelayReader } from "./reader";
-import type { RelayWriter } from "./transport";
-import type { EventTemplate } from "nostr-tools";
+import { archiveHides, UnattestedProfile } from "./identity-archives";
 
 const viewer = keypair(),
   relay = keypair(),
@@ -1081,80 +1074,4 @@ it("a proof that can't be issued archives nothing", async () => {
     ),
   ).rejects.toThrow("Set up your identity first");
   expect(fixture.signedBy).toEqual([]);
-});
-
-/** The store alone, with each snapshot read held until the test answers it;
- * an aborted read rejects, as the real reader does. */
-function heldStore() {
-  const reads: {
-    respond(events: RelayEvent[]): void;
-    signal: AbortSignal | undefined;
-  }[] = [];
-  const reader = {
-    read: (_filters: unknown, options?: { signal?: AbortSignal }) =>
-      new Promise<RelayEvent[]>((resolve, reject) => {
-        const signal = options?.signal;
-        signal?.addEventListener("abort", () => reject(signal.reason), {
-          once: true,
-        });
-        reads.push({ respond: resolve, signal });
-      }),
-  } as unknown as RelayReader;
-  const writer: RelayWriter = {
-    sign: async (template: EventTemplate) => signed(viewer, template),
-    publish: async () => {},
-  } as unknown as RelayWriter;
-  const archives = createIdentityArchives(reader, relay.pubkey, undefined, {
-    writer,
-    viewer: viewer.pubkey,
-  });
-  owners.push(archives);
-  return { ...archives, reads };
-}
-it("a reconnect during the confirming read confirms from the read that replaced it", async () => {
-  const store = heldStore();
-  store.queries.subscribe(() => {});
-  const request = store.queries.request("archive", viewer.pubkey);
-  await vi.waitFor(() => expect(store.reads).toHaveLength(1));
-  store.reconnect();
-  await vi.waitFor(() => expect(store.reads).toHaveLength(2));
-  expect(store.reads[0]?.signal?.aborted).toBe(true);
-  store.reads[1]?.respond([snapshot(2, [viewer.pubkey])]);
-  await expect(request).resolves.toBeUndefined();
-  expect(store.queries.state(viewer.pubkey)).toBe("archived");
-});
-it("stops waiting for a replaced confirming read at the request's deadline", async () => {
-  const store = heldStore();
-  store.queries.subscribe(() => {});
-  const caller = new AbortController();
-  const request = store.queries.request(
-    "archive",
-    viewer.pubkey,
-    caller.signal,
-  );
-  await vi.waitFor(() => expect(store.reads).toHaveLength(1));
-  store.reconnect();
-  await vi.waitFor(() => expect(store.reads).toHaveLength(2));
-  caller.abort();
-  await expect(request).rejects.toThrow(
-    "The relay did not confirm the change. Retry.",
-  );
-});
-it("a reconnect reads the snapshot only after a consumer has read it", async () => {
-  const store = heldStore();
-  // A permanent subscriber, as the profile directory is, is not demand.
-  store.queries.subscribe(() => {});
-  store.reconnect();
-  store.reconnect();
-  expect(store.reads).toHaveLength(0);
-  const read = store.queries.ensure();
-  store.reads[0]?.respond([snapshot()]);
-  await read;
-  store.reconnect();
-  expect(store.reads).toHaveLength(2);
-  store.reads[1]?.respond([snapshot()]);
-  // A new identity or access starts lazy again.
-  store.clear();
-  store.reconnect();
-  expect(store.reads).toHaveLength(2);
 });

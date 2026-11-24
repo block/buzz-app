@@ -33,8 +33,8 @@ export function ProfileArchiveNotice({
   );
   // Archive reads are finite snapshots, so each opening reads the current
   // one, and so does selecting a retained tab again, or a stale (idle)
-  // snapshot, as after a new access. A hidden tab reads nothing. After a
-  // reconnect the store reads again for every view it serves.
+  // snapshot, as after a new access or a reconnect. A hidden tab reads
+  // nothing.
   const shown = usePanelShown();
   useEffect(() => {
     void pubkey;

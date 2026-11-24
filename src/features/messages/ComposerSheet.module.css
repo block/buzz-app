@@ -197,13 +197,33 @@
   z-index: -1;
   pointer-events: none;
 }
+/* What a thread's reader shows first starts where the header's material
+   ends. A row brings its own top padding, which lies under that fade rather
+   than below it; the unread line has none, so it keeps the row's lead. */
+.sheet[data-contained-composer] {
+  --thread-row-lead: calc(var(--space-3) + var(--space-half));
+  --thread-reader-top: calc(
+    var(--sheet-header-height) +
+    var(--space-3) -
+    var(--thread-row-lead)
+  );
+}
+:where(html[data-message-density="compact"]) .sheet[data-contained-composer] {
+  --thread-row-lead: calc(var(--space-1) + var(--space-half));
+}
 .sheet[data-contained-composer]
   [data-thread-history-frame]
   > [data-message-scroller] {
-  padding-top: calc(var(--sheet-header-height) + var(--space-3));
-  scroll-padding-top: calc(var(--sheet-header-height) + var(--space-3));
+  padding-top: var(--thread-reader-top);
+  scroll-padding-top: var(--thread-reader-top);
   /* The edge materials replace the conversation history's scroll fade. */
   mask-image: none;
+}
+.sheet[data-contained-composer]
+  [data-thread-history-frame]
+  > [data-message-scroller]
+  [data-new-messages-boundary] {
+  scroll-margin-top: var(--thread-row-lead);
 }
 /* The reader fades into the raised surface above the reply box too. */
 .sheet[data-contained-composer]

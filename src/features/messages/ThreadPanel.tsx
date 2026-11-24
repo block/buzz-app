@@ -1692,9 +1692,11 @@ function ThreadMessages({
         ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
         : null;
     if (line) {
-      // Below any header the reader scrolls under, as a thread sheet's.
+      // Below any header the reader scrolls under, as a thread sheet's, by
+      // the line's own scroll margin.
       const cover =
-        Number.parseFloat(getComputedStyle(element).scrollPaddingTop) || 0;
+        (Number.parseFloat(getComputedStyle(element).scrollPaddingTop) || 0) +
+        (Number.parseFloat(getComputedStyle(line).scrollMarginTop) || 0);
       correctScrollTop(
         element,
         line.getBoundingClientRect().top -

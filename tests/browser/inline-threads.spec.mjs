@@ -228,7 +228,7 @@ test.describe("Inline", () => {
     await expect(sheet(page)).toHaveCount(0);
   });
 
-  test("a thread sheet fits its content and fades into its own surface", async ({
+  test("a thread sheet fits its content, starts at its header's edge and fades into its own surface", async ({
     page,
     app,
   }) => {
@@ -236,6 +236,18 @@ test.describe("Inline", () => {
     const [short, long] = roots(app);
     await clickRow(page, viewThread(page, short));
     await expect(sheet(page).getByText("Unread reply 0")).toBeVisible();
+    // The first row's name starts where the header's material ends: the
+    // row's own top padding lies under that fade, not below it.
+    const lead = (surface) =>
+      Math.abs(
+        surface
+          .querySelector("[data-message-scroller] [data-message-author]")
+          .getBoundingClientRect().top -
+          surface
+            .querySelector("header .buzz-dialog-bar-material")
+            .getBoundingClientRect().bottom,
+      );
+    await expect.poll(() => sheet(page).evaluate(lead)).toBeLessThan(4);
     // A short thread hugs its rows instead of taking the full height.
     const room = (element) =>
       Number.parseFloat(getComputedStyle(element).maxHeight) -
@@ -256,6 +268,8 @@ test.describe("Inline", () => {
     await expect(
       sheet(page).getByRole("button", { name: "Jump to latest", exact: true }),
     ).toBeVisible();
+    // Scrolled to its start, a long one leads as a short one does.
+    await expect.poll(() => sheet(page).evaluate(lead)).toBeLessThan(4);
     // The panel-colored composer fade would paint a darker strip over the
     // raised sheet; the sheet's own edge material replaces it.
     expect(

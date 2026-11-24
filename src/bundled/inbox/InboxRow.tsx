@@ -181,6 +181,7 @@ export function InboxRowButton({
   feed,
   time,
   previewId,
+  unread: unreadOverride,
   ...props
 }: (
   | { item: InboxItem; own?: OwnActivity | undefined }
@@ -191,11 +192,13 @@ export function InboxRowButton({
   feed: InboxFeedSnapshot;
   time: ReactNode;
   previewId?: string | undefined;
+  /** Unread for the whole conversation the row stands for. */
+  unread?: boolean | undefined;
 } & Omit<
     ComponentProps<typeof NavigationItem>,
     "icon" | "label" | "trailing" | "aria-label"
   >) {
-  const unread = !!item && hasUnread(item);
+  const unread = unreadOverride ?? (!!item && hasUnread(item));
   const workflow = own ? undefined : item?.workflowOwnerId;
   const createdAt = own?.createdAt ?? item?.createdAt ?? 0;
   return (
@@ -269,10 +272,13 @@ export function ReactionRowButton({
   name,
   channel,
   time = relativeTimestamp(item.createdAt),
+  unread = false,
   ...props
 }: {
   item: InboxReaction;
   time?: ReactNode;
+  /** The reaction stands for a conversation with someone's unread message. */
+  unread?: boolean;
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile>;
   name: ResolveName;
@@ -325,6 +331,7 @@ export function ReactionRowButton({
   return (
     <MessageListRow
       {...props}
+      unread={unread}
       aria-labelledby={`${nameId} ${previewId}`}
       avatar={
         <Avatar

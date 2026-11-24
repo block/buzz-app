@@ -159,16 +159,17 @@ export function ActivityFeed({
   // Only someone else's message makes a row unread; yours and reactions never do.
   // A row opened while unread keeps its place while it stays open; once you
   // move on, it settles among the rest by when it was last active.
-  const [held, setHeld] = useState<string>();
+  const [held, setHeld] = useState<readonly string[]>([]);
   const unreadIds = new Set(
     conversationRows.flatMap((row) =>
       row.kind === "conversation" &&
-      (hasUnread(row.item) || (row.item.id === held && isOpen?.(row.item)))
+      (hasUnread(row.item) ||
+        (held.includes(row.item.id) && isOpen?.(row.item)))
         ? [row.item.id]
         : [],
     ),
   );
-  const rows = [
+  const activity = [
     ...conversationRows,
     ...(view === "all" && !unreadOnly
       ? reactionRows(
@@ -184,15 +185,49 @@ export function ActivityFeed({
       item,
       createdAt: item.createdAt,
     })),
-  ]
-    .map((row) => ({
-      ...row,
-      id: row.kind === "own" ? row.own.id : row.item.id,
-    }))
+  ].map((row) => ({
+    ...row,
+    id: row.kind === "own" ? row.own.id : row.item.id,
+  }));
+  // One row per conversation: a channel's main conversation, each thread, a
+  // DM or a chat. Its newest activity, from anyone, stands for it, and it is
+  // unread while any of someone else's messages in it are.
+  const conversationOf = (row: (typeof activity)[number]) => {
+    const where =
+      row.kind === "own"
+        ? row.own
+        : row.kind === "reaction"
+          ? {
+              channelId: row.item.channelId,
+              rootId: row.item.message.threadRootId,
+            }
+          : { channelId: row.item.channelId, rootId: row.item.rootId };
+    return channelOf(where.channelId)?.channelType === "dm" || !where.rootId
+      ? where.channelId
+      : `${where.channelId}:${where.rootId}`;
+  };
+  const groups = new Map<
+    string,
+    { row: (typeof activity)[number]; unread: InboxItem[] }
+  >();
+  for (const row of activity) {
+    const key = conversationOf(row);
+    const group = groups.get(key) ?? { row, unread: [] };
+    if (
+      row.createdAt > group.row.createdAt ||
+      (row.createdAt === group.row.createdAt && row.id < group.row.id)
+    )
+      group.row = row;
+    if (row.kind === "conversation" && unreadIds.has(row.id))
+      group.unread.push(row.item);
+    groups.set(key, group);
+  }
+  const rows = [...groups.values()]
+    .map(({ row, unread }) => ({ ...row, unread }))
     .sort(
       (a, b) =>
         (unreadFirst
-          ? Number(unreadIds.has(b.id)) - Number(unreadIds.has(a.id))
+          ? Number(b.unread.length > 0) - Number(a.unread.length > 0)
           : 0) ||
         b.createdAt - a.createdAt ||
         a.id.localeCompare(b.id),
@@ -281,25 +316,26 @@ export function ActivityFeed({
     ...(listRef.current?.querySelectorAll<HTMLElement>("[data-preview-row]") ??
       []),
   ];
-  const markRead = async (item: InboxItem) => {
-    if (reading.has(item.id)) return;
+  /** Reads every unread message in the conversation a row stands for. */
+  const markRead = async (rowId: string, items: readonly InboxItem[]) => {
+    if (reading.has(rowId)) return;
     const before = feedRows();
     const held = before.some(
       (row) =>
-        row.dataset.previewRow === item.id &&
+        row.dataset.previewRow === rowId &&
         row.contains(document.activeElement),
     );
     const order = before.map((row) => row.dataset.previewRow);
-    const index = order.indexOf(item.id);
-    setReading((current) => new Set(current).add(item.id));
+    const index = order.indexOf(rowId);
+    setReading((current) => new Set(current).add(rowId));
     try {
-      await readRow(session, item);
+      for (const item of items) await readRow(session, item);
     } catch {
       notify("Couldn't mark as read", "error");
     } finally {
       setReading((current) => {
         const next = new Set(current);
-        next.delete(item.id);
+        next.delete(rowId);
         return next;
       });
     }
@@ -311,7 +347,7 @@ export function ActivityFeed({
       const focused = document.activeElement;
       if (focused && focused !== document.body) return;
       const current = feedRows();
-      const row = [item.id, order[index + 1], order[index - 1]]
+      const row = [rowId, order[index + 1], order[index - 1]]
         .map((id) =>
           current
             .find((entry) => entry.dataset.previewRow === id)
@@ -348,7 +384,7 @@ export function ActivityFeed({
         : row.item;
   const open = (row: (typeof rows)[number]) => {
     const item = destination(row);
-    setHeld(unreadIds.has(row.id) ? row.id : undefined);
+    setHeld(row.unread.map((item) => item.id));
     onOpen?.();
     void navigator.open({
       version: 1,
@@ -400,6 +436,22 @@ export function ActivityFeed({
         >
           {rows.map((row) => {
             const selected = isOpen?.(destination(row)) ?? false;
+            const unread = row.unread.length > 0;
+            const readAction = (label: string) =>
+              canRead &&
+              unread && (
+                <span className={listRowStyles.unreadAction}>
+                  <IconButton
+                    size="sm"
+                    variant="ghost"
+                    loading={reading.has(row.id)}
+                    aria-label={`Mark as read ${label}`}
+                    title="Mark as read"
+                    onClick={() => void markRead(row.id, row.unread)}
+                    icon={<EnvelopeOpenIcon size={16} aria-hidden="true" />}
+                  />
+                </span>
+              );
             if (row.kind === "reaction")
               return (
                 <li
@@ -416,9 +468,13 @@ export function ActivityFeed({
                     time={
                       showTime ? shortRelativeTimestamp(row.createdAt) : null
                     }
+                    unread={unread}
                     selected={selected}
                     onClick={() => open(row)}
                   />
+                  {readAction(
+                    `reactions in ${channelOf(row.item.channelId)?.name ?? "this conversation"}`,
+                  )}
                 </li>
               );
             if (row.kind === "own")
@@ -441,9 +497,13 @@ export function ActivityFeed({
                     time={
                       showTime ? shortRelativeTimestamp(row.createdAt) : null
                     }
+                    unread={unread}
                     selected={selected}
                     onClick={() => open(row)}
                   />
+                  {readAction(
+                    `your message in ${channelOf(row.own.channelId)?.name ?? "this conversation"}`,
+                  )}
                 </li>
               );
             const item = row.item;
@@ -464,22 +524,11 @@ export function ActivityFeed({
                   session={session}
                   feed={feed}
                   time={showTime ? shortRelativeTimestamp(row.createdAt) : null}
+                  unread={unread}
                   selected={selected}
                   onClick={() => open(row)}
                 />
-                {canRead && hasUnread(item) && (
-                  <span className={listRowStyles.unreadAction}>
-                    <IconButton
-                      size="sm"
-                      variant="ghost"
-                      loading={reading.has(item.id)}
-                      aria-label={`Mark as read ${identity.sender} in ${identity.context}`}
-                      title="Mark as read"
-                      onClick={() => void markRead(item)}
-                      icon={<EnvelopeOpenIcon size={16} aria-hidden="true" />}
-                    />
-                  </span>
-                )}
+                {readAction(`${identity.sender} in ${identity.context}`)}
               </li>
             );
           })}

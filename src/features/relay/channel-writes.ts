@@ -804,10 +804,10 @@ export function createChannelWrites(
             ["visibility", visibility === "private" ? "private" : "open"],
             ["channel_type", "stream"],
             ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
+            // Who is in it makes it a chat; new chats no longer carry the
+            // older Solo tag.
             ...channelLabelTags(
-              solo
-                ? [SOLO_LABEL, ...(named ? [SOLO_NAMED_LABEL] : []), ...labels]
-                : labels,
+              solo && named ? [SOLO_NAMED_LABEL, ...labels] : labels,
             ),
             ...[...new Set(members)].map((key) => ["p", key]),
           ],

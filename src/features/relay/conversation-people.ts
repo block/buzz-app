@@ -51,3 +51,21 @@ export function isSoloConversation(
     !conversationPeople(conversationOthers(channel, viewer), profiles).length
   );
 }
+
+/** A conversation's kind by the people rule: one only you and your agents
+ * can post in is a chat ("solo"); a chat anyone else can post in is a
+ * channel ("stream"). DMs, forums, system channels and huddles keep theirs. */
+export function peopleKind(
+  channel: ChannelSummary,
+  viewer: string | undefined,
+  profiles: ReadonlyMap<string, Profile>,
+): ChannelSummary["channelType"] {
+  const type = channel.channelType;
+  if (
+    (type !== "solo" && type !== "stream" && type !== undefined) ||
+    channel.huddle
+  )
+    return type;
+  if (isSoloConversation(channel, viewer, profiles)) return "solo";
+  return type === "solo" ? "stream" : type;
+}

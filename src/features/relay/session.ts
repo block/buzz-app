@@ -1,5 +1,6 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { peopleKind } from "./conversation-people";
 import { mergeLegacyWorkspaces } from "./workspace-migration";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -93,6 +94,7 @@ import type {
   ChannelList,
   ChannelReadOptions,
   ChannelSummary,
+  Profile,
 } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import {
@@ -1333,8 +1335,36 @@ export function createRelaySession(
   });
   let channelActivityRevision = channelActivity.revision();
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
+  // The people rule names a conversation's kind: one only you and your agents
+  // can post in is a chat ("solo"); once anyone else can, it is a channel.
+  // The older Solo tag counts only while a chat's roster is unknown.
+  const peopleKinds = new WeakMap<
+    ChannelSummary,
+    { profiles: ReadonlyMap<string, Profile>; channel: ChannelSummary }
+  >();
+  const byPeople = (channel: ChannelSummary): ChannelSummary => {
+    const known = profiles.queries.snapshot();
+    const cached = peopleKinds.get(channel);
+    if (cached?.profiles === known) return cached.channel;
+    const kind = peopleKind(channel, transport?.viewer, known);
+    const next =
+      kind === channel.channelType
+        ? channel
+        : Object.freeze({ ...channel, channelType: kind } as ChannelSummary);
+    peopleKinds.set(channel, { profiles: known, channel: next });
+    return next;
+  };
+  let peopleSource: ChannelList | undefined;
+  let peopleProfiles: ReadonlyMap<string, Profile> | undefined;
+  let peopleList: ChannelList | undefined;
   const channelQueries = Object.freeze({
     ...channels.queries,
+    ...(channels.queries.get && {
+      get: (channelId: string) => {
+        const channel = channels.queries.get?.(channelId);
+        return channel && byPeople(channel);
+      },
+    }),
     // Viewer surfaces promote their lookups by default. Explicit agent lookups
     // extend discovery without turning watch-only channels into mention targets.
     ...(channels.queries.resolve && {
@@ -1352,7 +1382,19 @@ export function createRelaySession(
       },
     }),
     list() {
-      const snapshot = channels.queries.list();
+      const source = channels.queries.list();
+      const known = profiles.queries.snapshot();
+      if (source !== peopleSource || known !== peopleProfiles || !peopleList) {
+        const classified = source.channels.map(byPeople);
+        peopleList = classified.every(
+          (channel, index) => channel === source.channels[index],
+        )
+          ? source
+          : Object.freeze({ ...source, channels: Object.freeze(classified) });
+        peopleSource = source;
+        peopleProfiles = known;
+      }
+      const snapshot = peopleList;
       const activityRevision = channelActivity.revision();
       if (
         snapshot === sourceChannelList &&
@@ -1405,9 +1447,11 @@ export function createRelaySession(
     subscribeList(listener: () => void) {
       const offChannels = channels.queries.subscribeList(listener);
       const offActivity = channelActivity.subscribe(listener);
+      const offProfiles = profiles.queries.subscribe(listener);
       return () => {
         offChannels();
         offActivity();
+        offProfiles();
       };
     },
   });

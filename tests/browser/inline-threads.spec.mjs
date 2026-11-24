@@ -335,6 +335,49 @@ test.describe("Inline", () => {
     await expect(sheet(page)).toHaveCount(0);
     await expect(reply(side(page))).toHaveText("Half-written reply");
   });
+
+  // On a cold start the open channel is listed from saved membership until
+  // its roster read settles, and the session reads no thread of it before
+  // then. Only a real reload restores that listing with the thread's address.
+  test("a thread restored before its channel is confirmed waits, then shows", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(sheet(page).getByText("Unread reply 0")).toBeVisible();
+    let release;
+    const roster = new Promise((resolve) => {
+      release = resolve;
+    });
+    let requested = false;
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = [route.request().postDataJSON()].flat();
+      if (filters.some((filter) => filter?.kinds?.includes(39002))) {
+        requested = true;
+        await roster;
+      }
+      return route.continue().catch(() => {});
+    });
+    try {
+      await page.reload();
+      await expect.poll(() => requested).toBe(true);
+      // The sheet is drawn once the saved channel is open. A thread mounted
+      // on it would be refused at once, so settled geometry is past that.
+      await expect(sheet(page)).toBeVisible();
+      await settle(page);
+      await expect(sheet(page).locator("[data-message-loading]")).toBeVisible();
+      await expect(sheet(page).getByRole("alert")).toHaveCount(0);
+      release();
+      await expect(sheet(page).getByText("Unread reply 0")).toBeVisible();
+      await expect(sheet(page).locator("[data-message-loading]")).toHaveCount(
+        0,
+      );
+    } finally {
+      release();
+    }
+  });
 });
 
 test.describe("Sending", () => {

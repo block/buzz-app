@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ConfirmedChannel } from "../../features/conversation/ConfirmedChannel";
 import { ConversationThread } from "../../features/conversation/Conversation";
 import {
   ComposerScopeProvider,
@@ -14,14 +15,18 @@ import {
   introducesInlineThreads,
 } from "../../features/messages/InlineThreadIntro";
 import { LayerReader } from "../../features/messages/LayerReader";
+import type { ChannelSummary } from "../../features/relay/contracts";
+import type { RelaySession } from "../../features/relay/session";
 import type { Seen } from "../../features/seen/service";
 
 /** The conversation's inline thread: a dialog drawn over the conversation's
  * composer, with the thread's own reply box in its place. The address owns
  * whether it is open; this only presents it. The viewer's first one
- * introduces itself. */
+ * introduces itself. The thread and its layers mount once the relay has
+ * confirmed the channel, as a thread tab's do; until then the sheet waits. */
 export function InlineThreadSheet({
-  channelId,
+  session,
+  channel,
   rootId,
   messageId,
   tall,
@@ -30,7 +35,9 @@ export function InlineThreadSheet({
   moveToTab,
   onResolvedRoot,
 }: {
-  channelId: string;
+  session: RelaySession;
+  /** The open conversation, which may still be listed from saved membership. */
+  channel: ChannelSummary;
   rootId: string;
   /** The reply a link named, which the thread opens at. */
   messageId?: string | undefined;
@@ -73,16 +80,25 @@ export function InlineThreadSheet({
           moveToTab();
         }}
       >
-        {/* The thread's own view, for the details and panels its rows open. */}
-        <ComposerScopeProvider rootId={rootId}>
-          <ConversationThread
-            messageId={messageId ?? rootId}
-            revealSelected={messageId !== undefined}
-            focusRequest={1}
-            onResolvedRoot={onResolvedRoot}
-          />
-          <LayerReader channelId={channelId} />
-        </ComposerScopeProvider>
+        <ConfirmedChannel
+          session={session}
+          view="thread"
+          channelId={channel.id}
+          channel={channel}
+        >
+          {(confirmed) => (
+            // The thread's own view, for the details and panels its rows open.
+            <ComposerScopeProvider rootId={rootId}>
+              <ConversationThread
+                messageId={messageId ?? rootId}
+                revealSelected={messageId !== undefined}
+                focusRequest={1}
+                onResolvedRoot={onResolvedRoot}
+              />
+              <LayerReader channelId={confirmed.id} />
+            </ComposerScopeProvider>
+          )}
+        </ConfirmedChannel>
       </ComposerSheet>
       {intro && (
         <InlineThreadIntro

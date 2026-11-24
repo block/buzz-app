@@ -2892,7 +2892,8 @@ function ChannelWorkspace({
       {inlineThread && current && (
         <InlineThreadSheet
           key={inlineThread}
-          channelId={current.id}
+          session={queries}
+          channel={current}
           rootId={inlineThread}
           messageId={addressed?.inlineMessage}
           // A panel over the thread takes the full height; so does the thread.

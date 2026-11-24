@@ -33,16 +33,23 @@ test("Command arrows traverse empty composers and move the caret in a draft", as
     await expect(destination).toBeFocused();
   }
 
-  // The caret starts on the second line, so the keys must stop at line edges.
   await alpha.fill("first line\nsecond line");
-  await page.keyboard.press("Meta+ArrowLeft");
-  await expect(alpha).toHaveJSProperty("selectionStart", "first line\n".length);
-  await page.keyboard.press("Meta+ArrowRight");
-  await expect(alpha).toHaveJSProperty(
-    "selectionStart",
-    "first line\nsecond line".length,
-  );
-  await expect(alpha).toBeFocused();
+  // Only a macOS host binds Command arrows to line edges; the spoofed platform
+  // above changes Buzz, not the engine's native editing keys.
+  if (process.platform === "darwin") {
+    // The caret starts on the second line, so the keys must stop at line edges.
+    await page.keyboard.press("Meta+ArrowLeft");
+    await expect(alpha).toHaveJSProperty(
+      "selectionStart",
+      "first line\n".length,
+    );
+    await page.keyboard.press("Meta+ArrowRight");
+    await expect(alpha).toHaveJSProperty(
+      "selectionStart",
+      "first line\nsecond line".length,
+    );
+    await expect(alpha).toBeFocused();
+  }
 
   await alpha.fill("");
   await page.keyboard.press("Meta+ArrowLeft");

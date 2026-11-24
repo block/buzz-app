@@ -258,6 +258,9 @@ type Entry = {
   /** The section choices each conversation's session prompt was last built
    * with: a message that steers its turn reads its Canvas with these. */
   located: Map<string, SectionChoices | undefined>;
+  /** Forwarded turns' goose processes that run without the agent's own
+   * root, stopped once its role restricts any tool. */
+  unisolated: Set<GooseProcess>;
   policies: Map<
     string,
     {
@@ -511,6 +514,8 @@ export class GooseRuntime {
         entry.name = agent.name;
         entry.goose.enforce();
         entry.worker?.enforce();
+        if (toolPolicyKey(next))
+          for (const goose of entry.unisolated) void goose.kill();
         entry.sessions.reconfigure();
       }
     }
@@ -1417,7 +1422,7 @@ export class GooseRuntime {
           const access = this.access(agent, () => entry.config);
           const root = await access.root();
           if (!root && access.restricted()) throw new Error(UNENFORCEABLE);
-          return GooseProcess.start(desktop.spawn, {
+          const goose = await GooseProcess.start(desktop.spawn, {
             cwd: await workspace(),
             env: { ...env, ...(root && { GOOSE_PATH_ROOT: root.root }) },
             // Its Buzz tools' server counts in the pool sessions share.
@@ -1431,6 +1436,16 @@ export class GooseRuntime {
               secrets: ["agent-env"],
             }),
           });
+          if (!root) {
+            // Tightened while it started.
+            if (access.restricted()) {
+              await goose.kill();
+              throw new Error(UNENFORCEABLE);
+            }
+            entry.unisolated.add(goose);
+            void goose.exited.finally(() => entry.unisolated.delete(goose));
+          }
+          return goose;
         },
         launch: async () => {
           // A conversation given its own folder runs there.
@@ -1772,6 +1787,7 @@ export class GooseRuntime {
       contexts: new Map(),
       folders: new Map(),
       located: new Map(),
+      unisolated: new Set(),
       policies: new Map(),
     };
     // Every session of the agent shares them, so they read the settings, the

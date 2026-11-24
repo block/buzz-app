@@ -4571,6 +4571,36 @@ describe("goose turns through the agent gateway", () => {
     }
   });
 
+  it("stops a forwarded turn that runs without its own root once the role tightens", async () => {
+    const g = gateway();
+    const f = setup({
+      forwarding: g.forwarding,
+      provider: "databricks",
+      hold: true,
+      wrap: (spawn) => async (id, options) => {
+        if (id === "goose-root") throw new Error("No symlinks here");
+        return spawn(id, options);
+      },
+    });
+    const coder = { ...DEFAULT_CONFIG, provider: "databricks" };
+    try {
+      f.runtime.sync([{ ...f.agent, config: coder } as unknown as Agent]);
+      await f.deliver(root, dispatched());
+      await vi.waitFor(() => expect(f.fake.geese[0]?.turns).toHaveLength(1));
+      expect(f.fake.geese[0]?.env.GOOSE_PATH_ROOT).toBeUndefined();
+      f.runtime.sync([
+        {
+          ...f.agent,
+          config: { ...coder, toolPreset: "reviewer" },
+        } as unknown as Agent,
+      ]);
+      await vi.waitFor(() => expect(f.fake.geese[0]?.killed).toBe(true));
+      expect(f.published).toEqual([]);
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
   it("runs a standalone turn on a binding of its own, saving nothing, and the agent retires only once its goose has exited and closed", async () => {
     const g = gateway();
     const f = setup({ forwarding: g.forwarding, hold: true });

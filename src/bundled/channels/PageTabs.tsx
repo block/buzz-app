@@ -49,6 +49,7 @@ import { ConversationTab as ConversationReader } from "./ConversationTab";
 import { panelOpening } from "../../features/panels/service";
 import { coveringDock, useCoveredByDock } from "./useCoveredByDock";
 import styles from "./Channels.module.css";
+import { BOARD_MAIN_MIN_REM } from "./panel-split";
 
 export type { PageTabOptions, PageTabsProps, PageTabTarget };
 
@@ -88,7 +89,8 @@ export function PageTabs({
   }) {
   const tabState = useChannelTabState(session, undefined, `page:${id}`);
   const list = useChannelList(session.channels);
-  const { channels, profiles } = useChannelLabels(
+  // Every joined row, as in Channels: sidebar visibility is not access.
+  const { joined: channels, profiles } = useChannelLabels(
     // As in Channels, a Huddle room's tabs show the unavailable placeholder.
     list.channels.filter(
       (channel) => !channel.huddle && !channel.metadataPending,
@@ -236,7 +238,14 @@ export function PageTabs({
       { channelId, threadId, messageId, unreadSince },
       { keep, markRead } = {},
     ) => {
-      if (!mounted.current || !secondary.canOpenConversation(channelId))
+      // A thread tab shows a channel the viewer can only read; a
+      // conversation tab needs one they can post in.
+      if (
+        !mounted.current ||
+        !(threadId
+          ? secondary.canOpenThread(channelId)
+          : secondary.canOpenConversation(channelId))
+      )
         return false;
       setCloses(committedCloses.current);
       const known = new Set(tabState.tabs.map((tab) => tab.id));
@@ -365,7 +374,14 @@ export function PageTabs({
       fallbackFocus.current
     )?.focus({ preventScroll: true });
   });
-  const split = usePanelSplit(scope, `page:${id}`);
+  const split = usePanelSplit(
+    scope,
+    `page:${id}`,
+    undefined,
+    undefined,
+    undefined,
+    BOARD_MAIN_MIN_REM,
+  );
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
   const covered = useCoveredByDock(split.ref, fallbackFocus, showingPanel);
@@ -398,7 +414,10 @@ export function PageTabs({
     ...(primaryTarget.threadId
       ? {
           kind: "thread" as const,
-          messageId: primaryTarget.messageId ?? primaryTarget.threadId,
+          messageId:
+            primaryTarget.messageId ??
+            primaryTarget.subthreadId ??
+            primaryTarget.threadId,
           rootId: primaryTarget.threadId,
         }
       : {
@@ -534,6 +553,7 @@ export function PageTabs({
                             key={JSON.stringify(primaryTarget)}
                             tab={primaryTab}
                             intro={workspace.intro}
+                            subthreadId={primaryTarget?.subthreadId}
                             latestRequest={latestRequest}
                             active={
                               secondary.selectedMain === "conversation" &&

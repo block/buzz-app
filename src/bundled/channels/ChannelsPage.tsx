@@ -117,6 +117,7 @@ import { PanelWorkspace } from "../../features/panels/PanelWorkspace";
 import { usePanelSplit } from "../../features/panels/usePanelSplit";
 import { PanelDock } from "../../features/panels/PanelDock";
 import { COMPANION_SPLIT, PanelFrame } from "../../features/panels/PanelFrame";
+import { diagnosticsAvailable } from "../../features/developer/mode";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
@@ -137,6 +138,7 @@ import { useSidebarPreferences } from "./useSidebarPreferences";
 import { channelHasUnread } from "./useSidebarFilters";
 import { inFieldOutsideComposer } from "./conversation-rows";
 import styles from "./Channels.module.css";
+import { BOARD_MAIN_MIN_REM } from "./panel-split";
 import type { CommunityReader } from "../../features/communities/service";
 import { avatarMedia } from "../../shared/avatar-source";
 
@@ -492,7 +494,7 @@ function ChannelWorkspace({
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const { channels, profiles } = useChannelLabels(
+  const { channels, joined, profiles } = useChannelLabels(
     list.channels.filter(
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
@@ -1401,7 +1403,9 @@ function ChannelWorkspace({
     panels,
     current,
     scope,
-    channels,
+    // Sidebar visibility is not access: a tab shows an archived or hidden
+    // channel the viewer has joined.
+    channels: joined,
     profiles,
     conversationIcon,
     // A Solo chat beside another conversation keeps its own header actions.
@@ -1960,7 +1964,15 @@ function ChannelWorkspace({
         tabState.select(id);
         return true;
       }
-      if (isBuzzLink(url) && navigator && viewer) {
+      // A plugin may expose the same document as a page and an addressable
+      // panel. Only its own panel can keep its link beside this conversation.
+      const linkedPanel =
+        parsed?.format === "plugin" ? panels.resolve(url) : undefined;
+      const pluginPanel =
+        parsed?.format === "plugin" &&
+        linkedPanel?.pluginId === parsed.pluginId &&
+        linkedPanel.addressable;
+      if (isBuzzLink(url) && navigator && viewer && !pluginPanel) {
         const target = buzzLinkTarget(url, {
           viewer,
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
@@ -2061,13 +2073,14 @@ function ChannelWorkspace({
         tab.id === selectedTab &&
         tab.channelId === currentId,
     );
-  // While the companion is in the dock it keeps its width and bounds from
-  // other pages; threads alone keep their own split.
+  // The companion shares its saved width with other pages; threads keep their own split.
   const split = usePanelSplit(
     scope,
     companion ? COMPANION_SPLIT.name : "channels",
     companion ? COMPANION_SPLIT.defaultWidth : undefined,
     companion ? COMPANION_SPLIT.min : undefined,
+    undefined,
+    BOARD_MAIN_MIN_REM,
   );
   const docked = !!showingPanel && !showingMediaReview;
   // A floating dock covers the conversation, even the strip beside a card:
@@ -2143,46 +2156,56 @@ function ChannelWorkspace({
       onOpenLink={openLink}
       close={closeSettings}
     >
-      <UnreadOptions session={queries} channelId={current?.id} />
-      <LiveStatus
-        live={queries.live}
-        channelId={current?.id}
-        partialRoster={list.coverage === "partial"}
-        diagnostics
-      />
-      <p>
-        {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
-        {channels.length} channels
-      </p>
-      <Button type="button" onClick={() => queries.channels.refreshList?.()}>
-        Refresh channels
-      </Button>
-      {preferences.error && <p>Saved groups and stars: {preferences.error}</p>}
-      {preferences.status !== "unsupported" && (
-        <Button
-          type="button"
-          disabled={preferences.status === "loading"}
-          onClick={preferences.reload}
-        >
-          Refresh groups and stars
-        </Button>
-      )}
-      {current && (
-        <Button
-          type="button"
-          onClick={() => queries.channels.refresh?.(current.id)}
-        >
-          Refresh messages
-        </Button>
-      )}
-      {queries.outbox ? (
-        <OutboxStatus
-          outbox={queries.outbox}
-          profiling={queries.profiling}
-          memberAdditions={queries.memberAdditions}
-        />
-      ) : (
-        <RelayTimings profiling={queries.profiling} />
+      {diagnosticsAvailable && (
+        <>
+          <UnreadOptions session={queries} channelId={current?.id} />
+          <LiveStatus
+            live={queries.live}
+            channelId={current?.id}
+            partialRoster={list.coverage === "partial"}
+            diagnostics
+          />
+          <p>
+            {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
+            {channels.length} channels
+          </p>
+          <Button
+            type="button"
+            onClick={() => queries.channels.refreshList?.()}
+          >
+            Refresh channels
+          </Button>
+          {preferences.error && (
+            <p>Saved groups and stars: {preferences.error}</p>
+          )}
+          {preferences.status !== "unsupported" && (
+            <Button
+              type="button"
+              disabled={preferences.status === "loading"}
+              onClick={preferences.reload}
+            >
+              Refresh groups and stars
+            </Button>
+          )}
+          {current && (
+            <Button
+              type="button"
+              onClick={() => queries.channels.refresh?.(current.id)}
+            >
+              Refresh messages
+            </Button>
+          )}
+          {queries.outbox ? (
+            <OutboxStatus
+              outbox={queries.outbox}
+              profiling={queries.profiling}
+              memberAdditions={queries.memberAdditions}
+              pins={queries}
+            />
+          ) : (
+            <RelayTimings profiling={queries.profiling} />
+          )}
+        </>
       )}
     </ChannelSettingsPanel>
   );
@@ -2448,6 +2471,8 @@ function ChannelWorkspace({
           <ConversationComposer
             key={`composer:${current.id}`}
             onFocusedRemoval={focusArchivedHistory}
+            // Another main tab covers it while it stays mounted.
+            shown={secondary.selectedMain === "conversation"}
             autoFocus={
               // Remote unarchive restores controls within the reader's current visit.
               !(continuingVisit && committedVisit.current?.archived) &&

@@ -91,15 +91,13 @@
 :where(html[data-message-density="compact"]) .timelineEnd {
   height: calc(var(--space-6) + var(--channel-preview-inset, 0px));
 }
-.feed ol {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-/* Center the list itself so coordination and membership rows share the measure. */
+/* Center the list itself so coordination and membership rows share the measure.
+   The reset stays on this list alone so numbered lists in messages keep numbers. */
 .feed > ol {
+  list-style: none;
   width: min(100%, var(--timeline-measure));
-  margin-inline: auto;
+  margin: 0 auto;
+  padding: 0;
 }
 .edge {
   width: min(100%, var(--timeline-measure));
@@ -1114,7 +1112,8 @@ html[data-keyboard-navigation] .attachmentImage:focus-visible {
 .threadHistoryPageStatus p {
   margin: 0;
 }
-.threadHistory ol {
+/* Reset only the thread's own reply lists, never lists inside message text. */
+.threadList {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -2607,6 +2606,26 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   padding-block: var(--space-2);
   margin-bottom: var(--space-2);
 }
+/* A working step stacked under its agent's comment reads as one group: the
+   row spacing between them gives way to the thread's stacked-row gap. The
+   viewer marks the pair; rows drawn inside a comment never change it. */
+.mediaReviewViewer .mediaReviewComment[data-stack-next] {
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+.mediaReviewViewer .mediaReviewComment[data-stack-previous] {
+  padding-top: var(--space-half);
+}
+:where(html[data-message-density="compact"])
+  .mediaReviewViewer
+  .mediaReviewComment[data-stack-next] {
+  padding-bottom: var(--space-1);
+}
+:where(html[data-message-density="compact"])
+  .mediaReviewViewer
+  .mediaReviewComment[data-stack-previous] {
+  padding-top: var(--space-1);
+}
 .mediaReviewComment[data-selected] {
   outline: 1px solid var(--border-prominent);
   outline-offset: -1px;
@@ -2636,8 +2655,9 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   border-radius: inherit;
   clip-path: var(--media-corner-clip, none);
 }
+/* Only the gutter avatar: an avatar inside a comment keeps its own size. */
 .mediaReviewViewer .mediaReviewComment .message > :first-child,
-.mediaReviewViewer .mediaReviewComment [data-avatar-shape] {
+.mediaReviewViewer .mediaReviewComment .messageAvatar [data-avatar-shape] {
   width: 1.5rem;
   height: 1.5rem;
   min-width: 1.5rem;
@@ -3174,10 +3194,6 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   --message-metadata: initial;
 }
 
-.messageBubble[data-own] .text blockquote {
-  color: inherit;
-  border-color: currentColor;
-}
 .messageBubble[data-own] .text :is(code, pre, .codeBlock) {
   color: var(--text-standard);
 }
@@ -3431,8 +3447,12 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 .activityExpansionRoot {
   display: contents;
 }
+/* One column as wide as the timeline: an implicit auto column would grow to a
+   row's unwrapped content, such as a relayed line's whole preview, and push
+   the row past the conversation's edge. */
 .activityExpansion {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(var(--activity-reveal-min, 0px), 1fr);
 }
 .activityExpansionContent {
@@ -3954,6 +3974,17 @@ html[data-keyboard-navigation] .activityExpansion {
   width: var(--size-control-sm);
   height: var(--size-control-sm);
 }
+/* Media comments use 24px avatars. Size the slot, not only the image, so
+   comment and working-agent avatars share one column in every engine.
+   `.messageAvatar` keeps this above the slot sizes set by layout and density. */
+.mediaReviewViewer
+  .mediaReviewThread
+  .messageAvatar
+  :is(.nestedAvatar, .agentAvatarGroup) {
+  flex-basis: 1.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
+}
 .agentAvatarGroupItem {
   position: absolute;
   inset: 0;
@@ -4185,15 +4216,30 @@ html[data-keyboard-navigation] .activityExpansion {
   line-height: var(--text-body-sm--line-height);
   white-space: nowrap;
 }
-/* Three senders' stack is wider than the avatar lane: the text starts past
-   its last avatar's artwork, half the 44px stack, with a 4px gap. */
+/* A stack of senders is wider than the avatar lane. Half its artwork is 15px
+   for two and 22px for three. It keeps 8px from the line's start edge, as the
+   line's end does, and the text starts 4px past its last avatar. */
+.relayedHeader[data-senders="2"] {
+  --relayed-stack-half: calc(
+    var(--space-5) -
+    var(--space-1h) /
+    2 -
+    var(--space-half)
+  );
+}
 .relayedHeader[data-senders="3"] {
+  --relayed-stack-half: calc(var(--space-5) + var(--space-half));
+}
+.relayedHeader:is([data-senders="2"], [data-senders="3"]) {
+  --relayed-stack-center: max(
+    var(--relayed-avatar-center),
+    calc(var(--space-2) + var(--relayed-stack-half))
+  );
   padding-inline-start: max(
     var(--relayed-text-start),
     calc(
-      var(--relayed-avatar-center) +
-      var(--space-5) +
-      var(--space-half) +
+      var(--relayed-stack-center) +
+      var(--relayed-stack-half) +
       var(--space-1)
     )
   );
@@ -4230,7 +4276,7 @@ html[data-keyboard-navigation]
 .relayedAvatar {
   position: absolute;
   inset-block-start: 50%;
-  inset-inline-start: var(--relayed-avatar-center);
+  inset-inline-start: var(--relayed-stack-center, var(--relayed-avatar-center));
   /* A definite row and no line box of its own keep the avatar 16px square and
      on the line's center; a stack's ringed avatars overflow it evenly. */
   display: grid;
@@ -4267,6 +4313,9 @@ html[data-keyboard-navigation]
 .relayedHeader > .relayedChat > * {
   margin-inline: 0;
 }
+.relayedHeader:not([data-open]) > .relayedChat {
+  max-inline-size: 20rem;
+}
 .relayedPreview {
   flex: 1 1 0;
   min-inline-size: 0;
@@ -4285,9 +4334,11 @@ html[data-keyboard-navigation]
   max-inline-size: max-content;
 }
 /* A narrow conversation keeps the avatar, the chat and the message: the name
-   and "from" go. An opened fold's lines keep naming each sender. */
+   and "from" go. An opened fold's lines keep naming each sender, and "from"
+   stays before a direct message's person, whose name has no "#" to mark it
+   as the chat. */
 @container messages (max-width: 30rem) {
-  .relayedHeader > [data-relayed-from],
+  .relayedHeader > [data-relayed-from]:not([data-relayed-from="dm"]),
   .relayedHeader > .relayedName:not(.relayedRunItems .relayedName) {
     display: none;
   }
@@ -4347,4 +4398,13 @@ html[data-keyboard-navigation]
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
+}
+
+.pinnedMarker {
+  composes: sentFromThread;
+}
+.pinnedMarker > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }

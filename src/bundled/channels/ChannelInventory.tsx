@@ -60,7 +60,9 @@ import type {
   SidebarSections,
 } from "../../features/channel-navigation/sidebar-sections-service";
 import {
+  pluginRowSectionKey,
   sidebarRow,
+  sidebarRowMenuItems,
   sidebarRowSortModes,
   sortSidebarRows,
   type SidebarRows,
@@ -94,7 +96,6 @@ import {
   ChatCircleIcon,
   FolderSimpleIcon,
   MinusIcon,
-  PencilSimpleIcon,
   PlusIcon,
   XIcon,
 } from "../../shared/design-system/icons";
@@ -699,7 +700,7 @@ export function ChannelInventory({
           aria-description="Unsent draft"
           selected={selected}
           aria-current={selected ? "page" : undefined}
-          icon={<PencilSimpleIcon size={16} />}
+          icon={<PlusIcon size={16} />}
           onClick={() => {
             if (selected) soloDraftInput()?.focus();
             else void navigator.open(destination);
@@ -1348,6 +1349,38 @@ export function ChannelInventory({
         </MenuItem>,
       );
     }
+    for (const item of sidebarRowMenuItems(
+      rowContributions,
+      sidebarRow(
+        channel,
+        pluginRowSectionKey(channel, sectionKey),
+        rowUnread.get(channel.id) ??
+          queries.unread.snapshot({ kind: "channel", channelId: channel.id }),
+      ),
+    ))
+      actions.push(
+        <ContributionBoundary
+          key={item.key}
+          fallback={null}
+          resetIdentity={rowContributions}
+        >
+          <MenuItem
+            disabled={surface?.pending ?? readWrite?.pending ?? false}
+            onClick={() => {
+              try {
+                void Promise.resolve(item.onSelect()).catch((error) =>
+                  console.error(`Row menu item failed: ${item.key}`, error),
+                );
+              } catch (error) {
+                console.error(`Row menu item failed: ${item.key}`, error);
+              }
+            }}
+          >
+            <MenuIcon>{item.icon}</MenuIcon>
+            {item.label}
+          </MenuItem>
+        </ContributionBoundary>,
+      );
     if (readable)
       actions.push(
         <ChannelReadMenuItem
@@ -1740,7 +1773,11 @@ export function ChannelInventory({
     },
     [lifecycleCallbacks, openSuccessor],
   );
-  const workspaceNewAction = (workspace: string, name: string) => (
+  const workspaceNewAction: WorkspaceSidebarComposition["newAction"] = (
+    workspace,
+    name,
+    menuAnchor,
+  ) => (
     <WorkspaceNewMenu
       key={`${scope}:${workspace}`}
       scope={scope}
@@ -1748,6 +1785,7 @@ export function ChannelInventory({
       name={name}
       channelAvailable={queries.channelCreation.available}
       dmAvailable={queries.directMessages.available}
+      menuAnchor={menuAnchor}
       choose={(action, trigger) => {
         if (relay.snapshot().session !== queries) return;
         if (action === "chat") newChat(workspace);

@@ -33,13 +33,16 @@ export interface HeadPersistence {
   remove(channelId: string): Promise<void>;
   retain(channelIds: readonly string[]): Promise<void>;
   clear(): Promise<void>;
+  /** Bytes saved for this viewer and relay, as recorded when each was written. */
+  usage?(): Promise<number>;
   close(): void;
 }
 const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
 const MIRROR = ":profiles";
-const MAX_BYTES = 8 * 1024 * 1024;
+/** The largest row saved; a larger one is not written at all. */
+export const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
 type HeadMeta = { key: string; bytes: number; savedAt: number };
@@ -340,6 +343,34 @@ export function createHeadPersistence(
           done(undefined);
         }),
       );
+    },
+    usage: async () => {
+      type Sized = { bytes: number } | undefined;
+      const startup = await transact<number>(
+        "readonly",
+        (store, done, then) =>
+          then(store.get(scope), (saved: Sized) =>
+            then(store.get(profiles), (mirror: Sized) =>
+              done((saved?.bytes ?? 0) + (mirror?.bytes ?? 0)),
+            ),
+          ),
+        STARTUP,
+      );
+      // Metadata rows carry each head's size without loading its events.
+      const heads = await transact<number>("readonly", (store, done, then) =>
+        then(
+          store.getAll(metadataKeys()),
+          (rows: { scope: string; head: HeadMeta }[]) =>
+            done(
+              rows.reduce(
+                (total, row) =>
+                  row.scope === scope ? total + row.head.bytes : total,
+                0,
+              ),
+            ),
+        ),
+      );
+      return startup + heads;
     },
     close() {
       closed = true;

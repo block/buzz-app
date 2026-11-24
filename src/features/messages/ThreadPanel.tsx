@@ -1,11 +1,12 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { hostComposerProvenance } from "./mention-draft";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import {
   activityPresentation,
-  useChannelActivitySnapshot,
+  useActivityHistorySnapshot,
   useStableRowActivity,
 } from "./activity-presentation";
 import { activityRuns, relayedRuns } from "./activity-groups";
@@ -61,6 +62,7 @@ import { ChannelJoinNotice } from "./ChannelJoinNotice";
 import { useListedChannel } from "../relay/listed-channel";
 import type { CSSProperties } from "react";
 import styles from "./Messages.module.css";
+import { ThreadLoading } from "./ThreadLoading";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
@@ -81,6 +83,9 @@ export type ThreadPanelProps = {
   soloConversation?: boolean | undefined;
   disabled?: boolean | undefined;
   messageId: string;
+  /** Display and compose only within this invocation's branch. */
+  subthreadId?: string | undefined;
+  sourceThreadId?: string | undefined;
   /** Channel workspaces retain the editor across same-thread link navigation. */
   retainThread?: boolean | undefined;
   /** The hosting tab strip owns the title, close and Escape. */
@@ -113,6 +118,9 @@ export type ThreadPanelProps = {
   /** The hosting preview may track delivery of this exact outgoing message. */
   onSend?: ((id: string) => void) | undefined;
   active?: boolean | undefined;
+  /** Whether a retained tab shows this thread, apart from `active`, its read
+   * policy: a preview is shown without reading. Its composer follows this. */
+  shown?: boolean | undefined;
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
@@ -194,7 +202,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
           </Button>
         </p>
       )}
-      {props.retainThread ? (
+      {props.retainThread && !props.subthreadId ? (
         <RetainedThreadPanel key={viewKey} {...props} />
       ) : (
         <OwnedThreadPanel key={viewKey} {...props} />
@@ -444,6 +452,8 @@ function OwnedThreadPanel({
   channelName,
   channelId,
   messageId,
+  subthreadId,
+  sourceThreadId,
   navigation,
   onOpenLink,
   onOpenMediaReview,
@@ -454,8 +464,11 @@ function OwnedThreadPanel({
   focusRequest,
   autoFocus,
   active = true,
+  shown,
   revealSelected,
   revealFocus,
+  revealRequest,
+  latestRequest,
   unreadRequest,
   requireReadyRoot,
   onDraftSaved,
@@ -470,13 +483,15 @@ function OwnedThreadPanel({
     try {
       if (navigation?.signal.aborted) return;
       const exact =
+        !!subthreadId ||
         requireReadyRoot ||
         revealSelected ||
         (navigation?.target.kind === "conversation" &&
           navigation.target.threadRootId !== messageId);
-      const owned = session.thread(channelId, messageId, {
+      const owned = session.thread(channelId, subthreadId ?? messageId, {
         exact,
         reading: true,
+        ...(subthreadId ? { subthread: true } : {}),
       });
       const cancel = () => {
         owned.dispose();
@@ -485,7 +500,8 @@ function OwnedThreadPanel({
       setError(undefined);
       setView(owned);
       navigation?.signal.addEventListener("abort", cancel, { once: true });
-      void owned.refresh();
+      if (subthreadId) void owned.refresh({ messageId, sourceThreadId });
+      else void owned.refresh();
       return () => {
         navigation?.signal.removeEventListener("abort", cancel);
         owned.dispose();
@@ -502,6 +518,8 @@ function OwnedThreadPanel({
     session,
     channelId,
     messageId,
+    subthreadId,
+    sourceThreadId,
     attempt,
     navigation,
     revealSelected,
@@ -531,10 +549,14 @@ function OwnedThreadPanel({
       focusRequest={focusRequest}
       autoFocus={autoFocus}
       active={active}
+      shown={shown}
       revealSelected={revealSelected}
       revealFocus={revealFocus}
+      revealRequest={subthreadId ? revealRequest : undefined}
+      latestRequest={subthreadId ? latestRequest : undefined}
       unreadRequest={unreadRequest}
       requireReadyRoot={requireReadyRoot}
+      subthreadId={subthreadId}
       onDraftSaved={onDraftSaved}
       onSend={onSend}
       onOpenLink={onOpenLink}
@@ -564,12 +586,14 @@ function ThreadMessages({
   focusRequest,
   autoFocus,
   active,
+  shown: composerShown,
   revealSelected,
   revealFocus,
   revealRequest,
   latestRequest,
   unreadRequest,
   requireReadyRoot,
+  subthreadId,
   onDraftSaved,
   onSend,
   selectionFailure,
@@ -577,6 +601,7 @@ function ThreadMessages({
   routePending,
 }: {
   intro?: ReactNode;
+  subthreadId?: string | undefined;
   onResolvedRoot?: ThreadPanelProps["onResolvedRoot"];
   /** A route to this reader is on its way: until it lands, a reader not yet
    * shown stays hidden and unread rather than showing a place the route
@@ -598,6 +623,7 @@ function ThreadMessages({
   focusRequest?: number | undefined;
   autoFocus?: ThreadPanelProps["autoFocus"];
   active?: boolean | undefined;
+  shown?: ThreadPanelProps["shown"];
   revealSelected?: boolean | undefined;
   /** Reveal an inline target without taking focus from its host. */
   revealFocus?: boolean | undefined;
@@ -646,10 +672,9 @@ function ThreadMessages({
     view.snapshot,
     view.snapshot,
   );
-  const threadChannels = useMemo(() => new Set([channelId]), [channelId]);
-  const activitySnapshot = useChannelActivitySnapshot(
+  const activitySnapshot = useActivityHistorySnapshot(
     session.agentActivity,
-    threadChannels,
+    channelId,
   );
   const stableActivity = useStableRowActivity();
   const resolvedRoot = snapshot.root?.id;
@@ -756,7 +781,7 @@ function ThreadMessages({
     void profileGeneration;
     if (authors)
       void session.profiles
-        .ensure(authors.split(":"), "background")
+        .ensure(authors.split(":"), "background", { withStatuses: true })
         .catch(() => {});
   }, [session.profiles, authors, profileGeneration]);
   const profiles = useRowProfiles(session.profiles, rows);
@@ -2114,7 +2139,9 @@ function ThreadMessages({
             }}
           >
             {expanded.has(row.id) && (
-              <ol>{renderReplies(row.id, depth + 1)}</ol>
+              <ol className={styles.threadList}>
+                {renderReplies(row.id, depth + 1)}
+              </ol>
             )}
           </ReplyBranch>
         </li>
@@ -2207,6 +2234,7 @@ function ThreadMessages({
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
       : undefined;
+  const sourceRootId = subthreadId ? composerRoot?.threadRootId : undefined;
   const retryThread = () => {
     if (showOlderPageStatus) {
       if (scroller.current) captureOlderAnchor(scroller.current);
@@ -2224,12 +2252,10 @@ function ThreadMessages({
         // exact reply under an unavailable original shows alone, so it, not
         // its signed root, is the thread: its hidden siblings stay unread.
         rootId={snapshot.root?.id ?? messageId}
-        // A visible exact reply can outlive its unavailable root. Until resolved,
-        // observe rows individually; an absent root must not mean channel catch-up.
-        // The same order the rows are shown in, so a same-second tie names
-        // the row a folded group shows as its latest.
+        // Projected branches and replies with unavailable roots only mark visible rows.
+        // For a full thread, use display order to break same-second ties.
         latestMessageId={
-          snapshot.root
+          snapshot.root && !subthreadId
             ? snapshot.replies.reduce<ChannelMessage | undefined>(
                 (latest, row) =>
                   !latest || compareMessages(row, latest) > 0 ? row : latest,
@@ -2388,7 +2414,7 @@ function ThreadMessages({
                 <p className={styles.empty}>Original message unavailable.</p>
               )
             ) : null}
-            <ol>
+            <ol className={styles.threadList}>
               {showOlderPageStatus && snapshot.error && (
                 <li className={styles.threadHistoryPageStatus}>
                   <p role="alert">{snapshot.error}</p>
@@ -2498,6 +2524,7 @@ function ThreadMessages({
       )}
       {composerRoot && (
         <MessageComposer
+          evidenceOwner={hostComposerProvenance}
           onFocusedRemoval={focusArchivedHistory}
           key={`${scope}:${channelId}:${composerRoot.id}`}
           extensions={extensions}
@@ -2507,8 +2534,12 @@ function ThreadMessages({
           channelName={channelName}
           placeholder={replyPlaceholder(composerRoot)}
           threadRootId={composerRoot.id}
+          sourceRootId={sourceRootId}
+          shown={composerShown}
           threadSeed={threadSeed}
-          replyParentId={replyParent}
+          replyParentId={
+            replyParent ?? (sourceRootId ? composerRoot.id : undefined)
+          }
           disabled={
             disabled ||
             (requireReadyRoot &&
@@ -2605,19 +2636,4 @@ function shownAnchor(anchor: { element: HTMLElement; top: number }) {
   return !height || anchor.top + height > 0
     ? anchor
     : { element: anchor.element, top: 0 };
-}
-
-function ThreadLoading() {
-  return (
-    <div className={styles.threadLoading} role="status">
-      <picture>
-        <source
-          media="(prefers-reduced-motion: reduce)"
-          srcSet="/buzz-mark.svg"
-        />
-        <img src="/buzz-loading-mark.svg" alt="" width="498" height="341" />
-      </picture>
-      <span className="sr-only">Loading thread…</span>
-    </div>
-  );
 }

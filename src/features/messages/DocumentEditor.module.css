@@ -24,7 +24,6 @@
 }
 .editorToolbar {
   @apply popover-surface;
-  --floating-radius: var(--radius-row);
   position: absolute;
   inset-block-end: 0;
   inline-size: max-content;
@@ -38,8 +37,30 @@
   max-height: none;
   overflow: visible;
 }
+.editorBody [role="textbox"] p {
+  line-height: inherit;
+}
 .editorBody [role="textbox"] :where(h1, h2, h3, h4, h5, h6) {
   margin: var(--space-4) 0 var(--space-1h);
+}
+/* Document blocks need breathing room beyond the composer's compact defaults. */
+.editorBody [role="textbox"] > :where(p, ul, ol, blockquote, pre) {
+  margin-block: var(--space-4);
+}
+.editorBody [role="textbox"] > p:has(+ :is(ul, ol)) {
+  margin-bottom: var(--space-2);
+}
+.editorBody [role="textbox"] > p + :where(ul, ol) {
+  margin-top: var(--space-2);
+}
+.editorBody [role="textbox"] li + li {
+  margin-top: var(--space-1);
+}
+.editorBody [role="textbox"] > :first-child {
+  margin-top: 0;
+}
+.editorBody [role="textbox"] > :last-child {
+  margin-bottom: 0;
 }
 .sourceEditor {
   flex: 1;

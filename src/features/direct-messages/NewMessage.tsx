@@ -44,6 +44,8 @@ import {
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { Profile } from "../relay/contracts";
+import { useIdentityNames } from "../identity-names/react";
+import { sortParticipantNames } from "../identity-names/participant-order";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -267,6 +269,8 @@ export function NewMessage({
   const isAgent = (person: Recipient) =>
     !!person.isAgent || !!profiles.get(person.pubkey)?.isAgent;
   const people = named.filter((person) => !isAgent(person));
+  // The DM's name as the sidebar shows it, following the name setting.
+  const resolveName = useIdentityNames(session.names);
   const peopleNames = new Intl.ListFormat(undefined, {
     type: "conjunction",
   }).format(people.map((person) => person.name));
@@ -731,6 +735,19 @@ export function NewMessage({
       />
     </div>
   );
+  const dmMembers =
+    existing?.participants ?? people.map((person) => person.pubkey);
+  const dmLabel = sortParticipantNames(
+    dmMembers.map((key) =>
+      resolveName(
+        key,
+        profiles.get(key)?.name ??
+          named.find((person) => person.pubkey === key)?.name ??
+          key.slice(0, 10),
+        dmMembers,
+      ),
+    ),
+  ).join(", ");
   // With no person picked, this is a new Solo chat with its agent.
   if (solo && !people.length && !pending)
     return (
@@ -775,7 +792,7 @@ export function NewMessage({
               <NavigationSection>
                 {/* Their DM as the sidebar shows it, new or with history. */}
                 <NavigationItem
-                  label={existing?.name || people.map((p) => p.name).join(", ")}
+                  label={dmLabel}
                   icon={dmIdentity?.({
                     members: people.map((person) => person.pubkey),
                     profiles,

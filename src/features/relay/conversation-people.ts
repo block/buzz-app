@@ -20,10 +20,23 @@ export const identityProfileLimit = 32;
 export function conversationPeople(
   others: readonly string[],
   profiles: ReadonlyMap<string, Profile>,
+  agents?: ReadonlySet<string>,
 ): readonly string[] {
   return others.length <= identityProfileLimit
-    ? others.filter((key) => !profiles.get(key)?.isAgent)
+    ? others.filter(
+        (key) => !profiles.get(key)?.isAgent && !agents?.has(key),
+      )
     : others;
+}
+
+/** Whether a member is still unknown: no loaded profile, and not one of the
+ * agents this device already knows. */
+export function unknownMember(
+  key: string,
+  profiles: ReadonlyMap<string, Profile>,
+  agents?: ReadonlySet<string>,
+) {
+  return !profiles.has(key) && !agents?.has(key);
 }
 
 /** Whether anyone in the community can join and post: Public, not View
@@ -41,6 +54,7 @@ export function isSoloConversation(
   channel: ChannelSummary,
   viewer: string | undefined,
   profiles: ReadonlyMap<string, Profile>,
+  agents?: ReadonlySet<string>,
 ) {
   if (channel.channelType === "dm" || openToPosting(channel)) return false;
   if (!channel.members?.length)
@@ -48,7 +62,8 @@ export function isSoloConversation(
   return (
     !!viewer &&
     channel.members.includes(viewer) &&
-    !conversationPeople(conversationOthers(channel, viewer), profiles).length
+    !conversationPeople(conversationOthers(channel, viewer), profiles, agents)
+      .length
   );
 }
 
@@ -59,6 +74,7 @@ export function peopleKind(
   channel: ChannelSummary,
   viewer: string | undefined,
   profiles: ReadonlyMap<string, Profile>,
+  agents?: ReadonlySet<string>,
 ): ChannelSummary["channelType"] | "loading" {
   const type = channel.channelType;
   if (
@@ -71,9 +87,9 @@ export function peopleKind(
   if (
     !openToPosting(channel) &&
     others.length <= identityProfileLimit &&
-    others.some((key) => !profiles.has(key))
+    others.some((key) => unknownMember(key, profiles, agents))
   )
     return "loading";
-  if (isSoloConversation(channel, viewer, profiles)) return "solo";
+  if (isSoloConversation(channel, viewer, profiles, agents)) return "solo";
   return type === "solo" ? "stream" : type;
 }

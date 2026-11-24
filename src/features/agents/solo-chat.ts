@@ -5,6 +5,15 @@ import { isSoloConversation } from "../relay/conversation-people";
 
 const noProfiles = new Map();
 
+/** The agents this device knows, which count before their profiles load. */
+function localAgents(session: {
+  agentChoices?: { snapshot(): { identities: readonly { pubkey: string }[] } };
+}) {
+  return new Set(
+    session.agentChoices?.snapshot().identities.map((agent) => agent.pubkey),
+  );
+}
+
 /** Whether a native agent's mention continues a conversation only its owner
  * and their agents can post in: one channel-scoped session. The people rule
  * decides, not the older Solo tag, which counts only while the roster is
@@ -30,7 +39,12 @@ export async function soloChat(
     );
   if (!channel) return false;
   const profiles = snapshot.session.profiles?.snapshot?.() ?? noProfiles;
-  return isSoloConversation(channel, owner, profiles);
+  return isSoloConversation(
+    channel,
+    owner,
+    profiles,
+    localAgents(snapshot.session),
+  );
 }
 
 /** The people rule for a channel already in hand: only `owner` and their
@@ -43,7 +57,12 @@ export function ownerAndAgentsOnly(
   const snapshot = relay()?.snapshot();
   if (!channel || snapshot?.status !== "ready") return false;
   const profiles = snapshot.session.profiles?.snapshot?.() ?? noProfiles;
-  return isSoloConversation(channel, owner, profiles);
+  return isSoloConversation(
+    channel,
+    owner,
+    profiles,
+    localAgents(snapshot.session),
+  );
 }
 
 /** Whether a turn answers at the channel's top level. A delivered message's

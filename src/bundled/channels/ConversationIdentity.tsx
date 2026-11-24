@@ -8,6 +8,7 @@ import {
   identityProfileLimit,
   isSoloConversation,
   openToPosting,
+  unknownMember,
 } from "../../features/relay/conversation-people";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
@@ -163,6 +164,16 @@ export function useConversationIdentity(
     if (missing.length) void queries.ensure(missing).catch(() => {});
   }, [queries, wanted]);
   const profiles = (dm ? given : selected) ?? noProfiles;
+  // This device's own agents count as agents before their profiles load.
+  const choices = useSyncExternalStore(
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
+    session.agentChoices.snapshot,
+  );
+  const agents = useMemo(
+    () => new Set(choices.identities.map((agent) => agent.pubkey)),
+    [choices],
+  );
   const members = useMemo(
     () =>
       others.length <= identityProfileLimit
@@ -173,8 +184,8 @@ export function useConversationIdentity(
   // The people besides you: agents never count. Past the profile limit every
   // member counts, since a conversation that size has people in it.
   const people = useMemo(
-    () => conversationPeople(others, profiles),
-    [others, profiles],
+    () => conversationPeople(others, profiles, agents),
+    [others, profiles, agents],
   );
   // Until every member's profile has loaded, an agent would count as a
   // person. Keep the last known mark meanwhile, or none, never a guess.
@@ -182,7 +193,7 @@ export function useConversationIdentity(
     !dm &&
     !openToPosting(channel) &&
     others.length <= identityProfileLimit &&
-    others.some((key) => !profiles.has(key));
+    others.some((key) => unknownMember(key, profiles, agents));
   const computed = conversationMark(channel, people);
   if (!loading) knownMarks.set(channel.id, computed);
   const mark = loading ? (knownMarks.get(channel.id) ?? "pending") : computed;

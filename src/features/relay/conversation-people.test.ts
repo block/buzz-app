@@ -63,6 +63,9 @@ describe("peopleKind", () => {
   it("says loading while a member's profile hasn't arrived", () => {
     expect(peopleKind(chat({}), me, new Map())).toBe("loading");
   });
+  it("knows this device's own agents before their profiles load", () => {
+    expect(peopleKind(chat({}), me, new Map(), new Set([agent]))).toBe("solo");
+  });
   it("leaves DMs, forums and huddles alone", () => {
     expect(peopleKind(chat({ channelType: "dm" }), me, profiles)).toBe("dm");
     expect(peopleKind(chat({ channelType: "forum" }), me, profiles)).toBe(

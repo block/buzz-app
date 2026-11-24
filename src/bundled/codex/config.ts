@@ -27,7 +27,6 @@ export type Config = {
   /** Device-local tool policy fields; absent preserves full access. */
   toolPreset?: string;
   toolAllow?: string;
-  toolDeny?: string;
 };
 export type Model = {
   model: string;

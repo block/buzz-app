@@ -143,6 +143,7 @@ import {
 } from "./sessions";
 import {
   goosePlatform,
+  nativeToolAllowed,
   pickToolConfig,
   toolPolicyKey,
 } from "../../features/agents/tool-access";
@@ -166,7 +167,6 @@ export type Config = Readonly<{
   /** Device-local tool policy fields; absent preserves full access. */
   toolPreset?: string;
   toolAllow?: string;
-  toolDeny?: string;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",
@@ -1399,6 +1399,7 @@ export class GooseRuntime {
             // Its Buzz tools' server counts in the pool sessions share.
             serve: entry.sessions.pooled((handler) => this.serve(handler)),
             onProcess,
+            permits: (name) => nativeToolAllowed(name, entry.config),
             // Acts as the agent, with its variables, as its ordinary goose
             // does.
             ...(entry.handle && {
@@ -1417,6 +1418,7 @@ export class GooseRuntime {
           return {
             cwd: await absolute(desktop.resolveDirectory, launched.workspace),
             systemPrompt,
+            ...(launched.platform && { platform: launched.platform }),
           };
         },
         tools: entry.tools,
@@ -1737,6 +1739,7 @@ export class GooseRuntime {
         undefined,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
+        (name) => nativeToolAllowed(name, entry.config),
       ),
       tools: undefined as unknown as ToolServer,
       retiring: new Set(),
@@ -1848,6 +1851,7 @@ export class GooseRuntime {
         protection,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
+        (name) => nativeToolAllowed(name, entry.config),
       );
       const worker = entry.worker;
       const { stopping } = entry;

@@ -98,6 +98,9 @@ export type AcpHooks = Readonly<{
   /** Its environment, under the launch's own. The Buzz identity is always
    * removed, whatever either says. */
   env: Readonly<Record<string, string | null>>;
+  /** The session mode in which the harness asks before every tool call,
+   * set on each session of a process that decides tool permissions. */
+  askingMode?: string;
   /** Whether the harness names an untitled session itself, read once per
    * process. Without it, a session opened to be named keeps its title. */
   names?(process: AcpProcess): Promise<boolean>;

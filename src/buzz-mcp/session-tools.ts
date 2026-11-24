@@ -12,6 +12,10 @@ import {
   ownerInstructions,
   pluginInstructions,
 } from "../features/agent-harness/plugin-instructions";
+import {
+  buzzToolAllowed,
+  type ToolEffect,
+} from "../features/agents/tool-access";
 import type { AgentHandle } from "../features/agents/service";
 import {
   ATTENTION_TOOLS,
@@ -49,6 +53,8 @@ export type AddedTool = Readonly<{
   inputSchema: Readonly<Record<string, unknown>>;
   /** A provider operation checked with these exact tool arguments. */
   operation?: AgentToolOperation;
+  /** Which agent roles get the tool; undeclared counts as `deliverable`. */
+  effect?: ToolEffect;
   /** Runs as the agent in `context`. Use `client.signal` to cancel waits and
    * check it before external writes. A throw is a tool error for the agent. */
   call(
@@ -95,17 +101,18 @@ export type SessionTool = Listed & Readonly<{ load: "always" | "search" }>;
 /** The tools a session lists: the Buzz tools, then those plugins add. */
 export const sessionTools = (
   added: readonly AddedTool[] = [],
-  // Kept for existing harness call sites: native policy never restricts Buzz.
-  _access?: unknown,
-): readonly SessionTool[] => [
-  ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
-  ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-  ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-  ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-  ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-  ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
-  ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
-];
+  /** The agent's tool access; without it, every tool. */
+  access?: unknown,
+): readonly SessionTool[] =>
+  [
+    ...TOOLS.map((tool) => ({ ...tool, load: "always" as const })),
+    ...ATTENTION_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+    ...SOLO_WORKER_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+    ...PLUGIN_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+    ...SETTINGS_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+    ...BESTIE_TOOLS.map((tool) => ({ ...tool, load: "search" as const })),
+    ...added.map((tool) => ({ ...listed(tool), load: "search" as const })),
+  ].filter((tool) => buzzToolAllowed(tool.name, access, added));
 
 /** What the server (Claude) or namespace (Codex) with the tools says up
  * front, so the model knows what it can search for. */
@@ -182,9 +189,12 @@ export async function callSessionTool(
   name: string,
   args: Record<string, unknown>,
   added: readonly AddedTool[] = [],
-  // Kept for existing harness call sites: native policy never restricts Buzz.
-  _access?: unknown,
+  /** The agent's tool access, read when it calls; without it, every tool. */
+  access?: unknown,
 ): Promise<Reply> {
+  // A hidden tool is refused too, however the call names it.
+  if (!buzzToolAllowed(name, access, added))
+    throw new Error(`${name} is disabled by this agent's Tools setting.`);
   let client = typeof source === "function" ? source() : source;
   if (client?.settle) {
     await client.settle();

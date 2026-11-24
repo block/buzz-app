@@ -114,6 +114,7 @@ export function applyApps(
   const reply = (value: unknown) => JSON.stringify(value, null, 2);
   ctx.agents.addTool({
     name: "apps_contract",
+    effect: "read",
     description:
       "Read this tenant's Apps Platform contract, supported runtimes, schema location, client requirements and readiness policy before building. This does not grant app or workspace access.",
     inputSchema: {
@@ -268,6 +269,7 @@ export function applyApps(
   });
   ctx.agents.addTool({
     name: "apps_status",
+    effect: "read",
     description:
       "Check an accepted deployment's exact version without creating or deploying anything. Use after a readiness timeout or error.",
     inputSchema: {
@@ -295,6 +297,7 @@ export function applyApps(
   });
   ctx.agents.addTool({
     name: "apps_list",
+    effect: "read",
     description: "List the Builderlab apps your owner owns, with their URLs.",
     inputSchema: {
       type: "object",

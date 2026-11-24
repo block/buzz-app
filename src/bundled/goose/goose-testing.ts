@@ -41,6 +41,8 @@ export type FakeGoose = {
   closed: string[];
   /** Sessions `session/load` resumed. */
   loaded: string[];
+  /** Each session's mode, as `session/set_mode` last set it. */
+  modes: Map<string, string>;
   /** Every `session/load` is answered with this error. */
   loadError?: string;
   /** Kill asks it to stop, and it never exits on its own. */
@@ -223,6 +225,7 @@ export function fakeSpawn(
       turns: [],
       closed: [],
       loaded: [],
+      modes: new Map(),
       holdExit: false,
       cancelled: [],
       deleted: [],
@@ -407,6 +410,9 @@ export function fakeSpawn(
             models.set(sessionId, String(params.value));
           if (params.configId === "provider") models.delete(sessionId);
           return reply(id, { configOptions: configOptions(sessionId) });
+        case "session/set_mode":
+          fake.modes.set(sessionId, String(params.modeId));
+          return reply(id, {});
         case "session/cancel":
           fake.cancelled.push(sessionId);
           running.get(sessionId)?.finish("cancelled");

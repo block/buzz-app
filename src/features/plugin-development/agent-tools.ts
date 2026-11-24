@@ -136,6 +136,7 @@ export function registerPluginDevelopmentTools(host: PluginDevelopmentHost) {
 
   host.agents.addTool({
     name: "plugin_authoring_guide",
+    effect: "read",
     description:
       "Read this before writing or changing a Buzz plugin (a page, panel, sidebar section, settings card or agent tool in this app). Returns the plugin contract, a template to copy and how to install and reload it.",
     inputSchema: {
@@ -150,6 +151,7 @@ export function registerPluginDevelopmentTools(host: PluginDevelopmentHost) {
 
   host.agents.addTool({
     name: "plugin_status",
+    effect: "read",
     description:
       "List Buzz plugins with whether each is enabled and running (starting, active, failed or stopped). With id, also returns that plugin's error, revision, source folder and what it registered (pages, panels, sidebar sections, agent tools). Use it before and after plugin_reload.",
     inputSchema: {

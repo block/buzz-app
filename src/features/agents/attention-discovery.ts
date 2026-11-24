@@ -11,6 +11,7 @@ export function registerDiscovery(agents: {
 }) {
   agents.addTool({
     name: "attention_sources",
+    effect: "read",
     description:
       "List active Attention source providers and their configuration examples. Use watch_add type source with a provider id and config; Interest instructions say what to do with output.",
     inputSchema: {

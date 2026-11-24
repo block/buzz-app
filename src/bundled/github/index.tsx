@@ -165,6 +165,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ));
   ctx.agents.addTool({
     name: "github_link_pr",
+    effect: "coordinate",
     description:
       "Links a GitHub pull request to this Solo chat, so the owner's sidebar shows its state (draft, checks, merged) in place of the chat's icon. A chat has one; linking another replaces it.",
     inputSchema: {

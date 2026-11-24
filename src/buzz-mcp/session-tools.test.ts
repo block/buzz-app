@@ -289,23 +289,19 @@ it("never hands a plugin's tool or operation the owner's workspaces", async () =
   for (const plugin of seen) expect(plugin).not.toHaveProperty("workspaces");
 });
 
-it("keeps every Buzz tool available regardless of native policy or legacy overrides", async () => {
-  const access = {
-    toolPreset: "chat",
-    toolAllow: "mem_get",
-    toolDeny: "notes_add,send,channel_create",
-  };
-  const names = sessionTools([tool("notes_add")], access).map(
-    (tool) => tool.name,
-  );
-  expect(names).toEqual(
-    sessionTools([tool("notes_add")]).map((tool) => tool.name),
-  );
-  expect(names).toEqual(
-    expect.arrayContaining(["notes_add", "channel_create", "watch_add"]),
-  );
+it("hides and refuses Buzz and plugin tools a role does not allow", async () => {
+  const access = { toolPreset: "reviewer" };
+  const added = [
+    tool("notes_add"),
+    { ...tool("tasks_list"), effect: "read" as const },
+  ];
+  const names = sessionTools(added, access).map((tool) => tool.name);
+  expect(names).toEqual(expect.arrayContaining(["send", "read", "tasks_list"]));
+  expect(names).not.toContain("notes_add");
+  expect(names).not.toContain("channel_create");
+  expect(names).not.toContain("watch_add");
 
-  const call = vi.fn(async () => "allowed");
+  const call = vi.fn(async () => "called");
   await expect(
     callSessionTool(
       {} as import("./client").BuzzClient,
@@ -315,37 +311,44 @@ it("keeps every Buzz tool available regardless of native policy or legacy overri
       [{ ...tool("notes_add"), call }],
       access,
     ),
-  ).resolves.toBe("allowed");
-  expect(call).toHaveBeenCalledOnce();
+  ).rejects.toThrow("disabled by this agent's Tools setting");
+  expect(call).not.toHaveBeenCalled();
+  await expect(
+    callSessionTool(
+      {} as import("./client").BuzzClient,
+      {},
+      "notes_add",
+      {},
+      [{ ...tool("notes_add"), call }],
+      { toolPreset: "custom", toolAllow: "plugin:notes_add" },
+    ),
+  ).resolves.toBe("called");
 });
 
-it("exposes the complete Buzz catalog through MCP regardless of native policy", async () => {
+it("lists and refuses Buzz tools through MCP by the agent's role", async () => {
   const listed = await respond(
     undefined,
     {},
     { id: 1, method: "tools/list" },
     [],
     {},
-    { toolPreset: "chat" },
+    { toolPreset: "reviewer" },
   );
-  expect(
-    (listed as { result: { tools: { name: string }[] } }).result.tools.some(
-      (tool) => tool.name === "watch_add",
-    ),
-  ).toBe(true);
+  const names = (
+    listed as { result: { tools: { name: string }[] } }
+  ).result.tools.map((tool) => tool.name);
+  expect(names).toContain("send");
+  expect(names).not.toContain("watch_add");
   const called = await respond(
     undefined,
     {},
     { id: 2, method: "tools/call", params: { name: "mem_set", arguments: {} } },
     [],
     {},
-    { toolPreset: "chat" },
-  );
-  expect((called as { result: { isError: boolean } }).result.isError).toBe(
-    true,
+    { toolPreset: "reviewer" },
   );
   expect(
     (called as { result: { content: { text: string }[] } }).result.content[0]
       ?.text,
-  ).toContain("Buzz is not ready");
+  ).toContain("disabled by this agent's Tools setting");
 });

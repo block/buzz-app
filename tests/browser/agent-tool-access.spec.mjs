@@ -43,26 +43,24 @@ test.afterAll(async () => {
   if (directory) await rm(directory, { recursive: true, force: true });
 });
 
-test("changes a role and a targeted override, then saves the complete config", async ({
+test("starts Custom from a role, adjusts tools and a connected server, then saves", async ({
   page,
 }) => {
   const { errors } = watchPageErrors(page);
   await page.goto(url);
-  await page.getByRole("combobox", { name: "Tool access role" }).click();
-  await page.getByRole("option", { name: "Chat", exact: true }).click();
-  const effective = page.getByText(/Effective access:/);
-  await expect(effective).toContainText("Effective access: all Buzz tools on");
-  await expect(effective).toContainText("1 of 7 native capability groups");
-  await expect(page.getByRole("searchbox")).toHaveCount(0);
-  const override = page.getByRole("combobox", {
-    name: "native:shell override",
-    exact: true,
-  });
-  await override.click();
-  await page.getByRole("option", { name: "Deny", exact: true }).click();
-  await expect(
-    page.getByRole("combobox", { name: "Tool access role" }),
-  ).toHaveText("Chat");
+  const role = page.getByRole("combobox", { name: "Tool access role" });
+  await role.click();
+  await page.getByRole("option", { name: /^Super-agent/ }).click();
+  await expect(page.getByRole("switch", { name: "Shell" })).not.toBeChecked();
+  await expect(page.getByRole("switch", { name: "Subagents" })).toBeChecked();
+  await role.click();
+  await page.getByRole("option", { name: /^Custom/ }).click();
+  await page.getByRole("switch", { name: "Subagents" }).click();
+  await page
+    .getByRole("textbox", { name: "Connected server name" })
+    .fill("github");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByRole("switch", { name: "github" })).toBeChecked();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => window.toolSave))
@@ -70,9 +68,9 @@ test("changes a role and a targeted override, then saves the complete config", a
       config: {
         model: "sonnet",
         instructions: "Keep these",
-        toolPreset: "chat",
-        toolAllow: "",
-        toolDeny: "native:shell",
+        toolPreset: "custom",
+        toolAllow:
+          "buzz:coordinate,buzz:message,buzz:read,connected:github,native:meta,native:read,native:web",
       },
     });
   expect(errors).toEqual([]);
@@ -99,7 +97,7 @@ for (const { name, width, height, query } of [
       page.getByRole("combobox", { name: "Tool access role" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("combobox", { name: "native:read override", exact: true }),
+      page.getByRole("switch", { name: "Files: read", exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("searchbox")).toHaveCount(0);
     await expect(page.getByRole("button", { name: /Advanced:/ })).toHaveCount(

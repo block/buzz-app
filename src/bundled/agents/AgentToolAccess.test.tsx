@@ -8,9 +8,8 @@ import { AgentToolAccess } from "./AgentToolAccess";
 
 afterEach(cleanup);
 
-it("changes a role and saves only the tool fields with the rest of the config", async () => {
-  const user = userEvent.setup();
-  const agent = {
+const agentWith = (config: Record<string, unknown>) =>
+  ({
     key: "a".repeat(64),
     pubkey: "a".repeat(64),
     owner: "f".repeat(64),
@@ -18,40 +17,55 @@ it("changes a role and saves only the tool fields with the rest of the config", 
     type: "buzz.claude-code/claude-code",
     place: "here",
     relay: "wss://example.com",
-    config: { model: "sonnet", instructions: "Keep these" },
+    config,
     attention: {},
     skipped: {},
     timers: {},
     attentionEnabled: true,
-  } satisfies Agent;
+  }) satisfies Agent;
+
+it("saves a Custom selection that starts from the chosen role", async () => {
+  const user = userEvent.setup();
+  const agent = agentWith({
+    model: "sonnet",
+    instructions: "Keep these",
+    toolDeny: "native:web",
+  });
   const save = vi.fn(async () => {});
-  const added: never[] = [];
   const agents = {
     save,
     subscribe: () => () => {},
-    tools: () => added,
+    tools: () => [
+      {
+        name: "tasks_update",
+        description: "Update a Task",
+        effect: "coordinate",
+      },
+    ],
   } as unknown as Agents;
   render(<AgentToolAccess agents={agents} agent={agent} />);
 
-  await user.click(screen.getByRole("combobox", { name: "Tool access role" }));
-  await user.click(await screen.findByRole("option", { name: "Chat" }));
-  const effective = screen.getByText(/Effective access:/);
-  expect(effective).toHaveTextContent("Effective access: all Buzz tools on");
-  expect(effective).toHaveTextContent("1 of 7 native capability groups");
-  expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
-  await user.click(
-    screen.getByRole("combobox", { name: "native:shell override" }),
+  const role = screen.getByRole("combobox", { name: "Tool access role" });
+  await user.click(role);
+  await user.click(await screen.findByRole("option", { name: /^Reviewer/ }));
+  expect(screen.getByRole("switch", { name: "Shell" })).not.toBeChecked();
+  await user.click(role);
+  await user.click(await screen.findByRole("option", { name: /^Custom/ }));
+  expect(screen.getByRole("switch", { name: "Files: read" })).toBeChecked();
+  await user.click(screen.getByRole("switch", { name: "tasks_update" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Connected server name" }),
+    "github{Enter}",
   );
-  await user.click(await screen.findByRole("option", { name: "Deny" }));
 
   await user.click(screen.getByRole("button", { name: "Save" }));
   expect(save).toHaveBeenCalledExactlyOnceWith(agent.key, {
     config: {
       model: "sonnet",
       instructions: "Keep these",
-      toolPreset: "chat",
-      toolAllow: "",
-      toolDeny: "native:shell",
+      toolPreset: "custom",
+      toolAllow:
+        "buzz:message,buzz:read,connected:github,native:meta,native:read,native:web,plugin:tasks_update",
     },
   });
 });

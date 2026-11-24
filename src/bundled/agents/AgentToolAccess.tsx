@@ -1,28 +1,31 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useId, useMemo, useState } from "react";
 import type { Agent, Agents } from "../../features/agents/service";
 import {
-  joinToolOverrides,
-  nativeToolAllowed,
+  BUZZ_TOOL_GROUPS,
+  buzzToolAllowed,
+  CONNECTED,
+  CONNECTED_TOOLS,
+  joinToolSelection,
   NATIVE_TOOLS,
+  nativeToolAllowed,
   PRESET_INFO,
+  presetSelection,
   toolPolicy,
-  toolPolicyProblem,
   type ToolPolicy,
+  type ToolPreset,
 } from "../../features/agents/tool-access";
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Input } from "../../shared/design-system/ui/Input";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import { Select } from "../../shared/design-system/ui/Select";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
+import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 
-const OVERRIDE_CHOICES = [
-  { value: "preset", label: "Use preset" },
-  { value: "allow", label: "Allow" },
-  { value: "deny", label: "Deny" },
-] as const;
-const GROUPS = [{ label: "Override", options: OVERRIDE_CHOICES }];
 const same = (left: ToolPolicy, right: ToolPolicy) =>
   JSON.stringify(left) === JSON.stringify(right);
+const SERVER_PREFIX = `${CONNECTED}:`;
 
 /** The shared Tools tab for bundled local harnesses. Tool policy is config on
  * this device, so older app versions' strict synced-settings schema stays valid. */
@@ -35,33 +38,40 @@ export function AgentToolAccess({
 }) {
   const saved = useMemo(() => toolPolicy(agent.config), [agent.config]);
   const [draft, setDraft] = useState(saved);
+  const [server, setServer] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const form = useId();
   const dirty = !same(saved, draft);
+  const plugins = agents.tools();
   useEffect(() => {
     if (!dirty) setDraft(saved);
   }, [saved, dirty]);
-  const enabledNative = NATIVE_TOOLS.filter((tool) =>
-    nativeToolAllowed(tool.id, draft),
-  );
-  const problem = toolPolicyProblem(draft);
-  const setOverride = (name: string, value: string) => {
-    const allow = draft.allow.filter((item) => item !== name);
-    const deny = draft.deny.filter((item) => item !== name);
-    if (value === "allow") allow.push(name);
-    if (value === "deny") deny.push(name);
-    setDraft({ ...draft, allow, deny });
+  const custom = draft.preset === "custom";
+  const servers = draft.allow.filter((id) => id.startsWith(SERVER_PREFIX));
+  const choose = (preset: ToolPreset) => {
+    setDraft({
+      preset,
+      allow: preset === "custom" ? presetSelection(draft.preset) : [],
+    });
     setError("");
   };
-  const override = (name: string) =>
-    draft.deny.includes(name)
-      ? "deny"
-      : draft.allow.includes(name)
-        ? "allow"
-        : "preset";
+  const toggle = (id: string, on: boolean) =>
+    setDraft({
+      ...draft,
+      allow: on
+        ? [...draft.allow, id]
+        : draft.allow.filter((item) => item !== id),
+    });
+  const addServer = () => {
+    const name = server.trim();
+    if (!name || /\s|,/.test(name)) return;
+    if (!servers.includes(SERVER_PREFIX + name))
+      toggle(SERVER_PREFIX + name, true);
+    setServer("");
+  };
   const save = async () => {
-    if (!dirty || problem || saving) return;
+    if (!dirty || saving) return;
     setSaving(true);
     setError("");
     try {
@@ -71,12 +81,12 @@ export function AgentToolAccess({
         !Array.isArray(agent.config)
           ? (agent.config as Record<string, unknown>)
           : {};
+      const { toolDeny: _, ...rest } = config;
       await agents.save(agent.key, {
         config: {
-          ...config,
+          ...rest,
           toolPreset: draft.preset,
-          toolAllow: joinToolOverrides(draft.allow),
-          toolDeny: joinToolOverrides(draft.deny),
+          toolAllow: joinToolSelection(draft.allow),
         },
         ...(agent.configBase && { base: agent.configBase }),
       });
@@ -86,6 +96,19 @@ export function AgentToolAccess({
       setSaving(false);
     }
   };
+  const row = (
+    tool: Readonly<{ id: string; label: string; description: string }>,
+    on: boolean,
+  ) => (
+    <SwitchPreferenceRow
+      key={tool.id}
+      label={tool.label}
+      description={tool.description}
+      checked={on}
+      disabled={!custom || saving}
+      onCheckedChange={(checked) => toggle(tool.id, checked)}
+    />
+  );
   return (
     <form
       id={form}
@@ -97,11 +120,11 @@ export function AgentToolAccess({
     >
       <InlineHeader
         title="Tool access"
-        subtitle="Buzz tools are always available. Choose a role, then adjust native capabilities such as files, Shell and Web. Changes on this device apply to new tool calls and sessions."
+        subtitle="Choose what this agent can do on this device. Changes apply to its next tool call, including in a turn that is already running."
       />
       <SettingsGroup>
         <PreferenceRow
-          title="Role preset"
+          title="Role"
           subtitle={
             PRESET_INFO.find((preset) => preset.id === draft.preset)
               ?.description
@@ -120,101 +143,107 @@ export function AgentToolAccess({
                   })),
                 },
               ]}
-              onValueChange={(preset) => {
-                setDraft({ ...draft, preset: preset as ToolPolicy["preset"] });
-                setError("");
-              }}
+              onValueChange={(preset) => choose(preset as ToolPreset)}
               variant="compact"
               disabled={saving}
             />
           }
         />
       </SettingsGroup>
-      <div className="rounded-control border border-line bg-soft p-panel-inset text-body-sm text-subtle">
-        <strong className="text-primary">
-          Effective access: all Buzz tools on; {enabledNative.length} of{" "}
-          {NATIVE_TOOLS.length} native capability groups.
-        </strong>
-        <p className="mb-0 mt-2">
-          Subagents inherit this policy. Native names differ by harness, so they
-          are grouped by capability. Tool access is not a sandbox: when Shell is
-          enabled, commands can still use credentials available to the agent
-          process.
-        </p>
-      </div>
-      <SettingsGroup>
-        {NATIVE_TOOLS.map((tool) => (
-          <ToolRow
-            key={tool.id}
-            name={tool.id}
-            title={tool.label}
-            description={tool.description}
-            enabled={nativeToolAllowed(tool.id, draft)}
-            value={override(tool.id)}
-            disabled={saving}
-            onChange={(value) => setOverride(tool.id, value)}
+      <p className="m-0 text-body-sm text-subtle">
+        Subagents inherit this access. It is not a sandbox: with Shell on,
+        commands can use any credentials the agent's process has.
+      </p>
+      <Section title="Buzz">
+        {BUZZ_TOOL_GROUPS.map((group) =>
+          row(group, draft.preset === "coder" || allowsGroup(draft, group.id)),
+        )}
+      </Section>
+      <Section title="Native">
+        {NATIVE_TOOLS.map((tool) =>
+          row(tool, nativeToolAllowed(tool.id, draft)),
+        )}
+      </Section>
+      <Section title="Connected">
+        {row(
+          CONNECTED_TOOLS,
+          draft.preset === "coder" || allowsGroup(draft, CONNECTED),
+        )}
+        {servers.map((id) =>
+          row(
+            {
+              id,
+              label: id.slice(SERVER_PREFIX.length),
+              description: "Every tool from this MCP server.",
+            },
+            true,
+          ),
+        )}
+        {custom && (
+          <PreferenceRow
+            title="Allow one server"
+            subtitle="Its name as the harness shows it, such as github for mcp__github__ tools."
+            trailing={
+              <div className="flex items-center gap-2">
+                <Input
+                  aria-label="Connected server name"
+                  value={server}
+                  onChange={(event) => setServer(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    addServer();
+                  }}
+                  controlSize="sm"
+                  disabled={saving}
+                />
+                <Button size="sm" onClick={addServer} disabled={saving}>
+                  Add
+                </Button>
+              </div>
+            }
           />
-        ))}
-      </SettingsGroup>
-      {(problem || error) && (
+        )}
+      </Section>
+      {plugins.length > 0 && (
+        <Section title="Plugin tools">
+          {plugins.map((tool) =>
+            row(
+              {
+                id: `plugin:${tool.name}`,
+                label: tool.name,
+                description: tool.description,
+              },
+              buzzToolAllowed(tool.name, draft, plugins),
+            ),
+          )}
+        </Section>
+      )}
+      {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">
-          {problem ?? error}
+          {error}
         </p>
       )}
       <AgentSaveButton
         form={form}
         saving={saving}
         dirty={dirty}
-        disabled={!dirty || saving || Boolean(problem)}
+        disabled={!dirty || saving}
       />
     </form>
   );
 }
 
-function ToolRow({
-  name,
-  title,
-  description,
-  enabled,
-  value,
-  disabled,
-  onChange,
-}: {
-  name: string;
-  title: string;
-  description: string;
-  enabled: boolean;
-  value: string;
-  disabled: boolean;
-  onChange(value: string): void;
-}) {
+const allowsGroup = (policy: ToolPolicy, id: string) =>
+  policy.preset === "custom"
+    ? policy.allow.includes(id)
+    : presetSelection(policy.preset).includes(id);
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <PreferenceRow
-      title={<span className="break-all">{title}</span>}
-      subtitle={description}
-      trailing={
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-          <span
-            className={
-              enabled ? "text-body-sm text-success" : "text-body-sm text-subtle"
-            }
-          >
-            {enabled ? "On" : "Off"}
-          </span>
-          <Select
-            label={`${name} override`}
-            value={value}
-            valueLabel={
-              OVERRIDE_CHOICES.find((choice) => choice.value === value)?.label
-            }
-            groups={GROUPS}
-            onValueChange={onChange}
-            variant="compact"
-            size="xs"
-            disabled={disabled}
-          />
-        </div>
-      }
-    />
+    <section className="grid min-w-0 gap-2">
+      <InlineHeader title={title} />
+      <SettingsGroup>{children}</SettingsGroup>
+    </section>
   );
 }

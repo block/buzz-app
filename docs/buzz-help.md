@@ -200,16 +200,18 @@ if that desktop app is up and running.
   gives agents on this device. Open a section to read it. For editable
   sections, use **Save** or **Cancel**. **Options** lets you disable or enable
   a section, or put the default text back in the editor for you to save.
-- **Tools.** Buzz tools are always available. Local Claude Code, Codex, Goose
-  and Pi agents have a per-device **Tools** tab for high-level native
-  capabilities: file reads and writes, Shell, Web, subagents, planning and tool
-  search, and other native tools. Choose Full access, Coordinator, Coding,
-  Research or Chat, then Allow or Deny individual capability groups. Existing
-  agents default to Full access. The runtime enforces these native controls,
-  including in older sessions; native subagents inherit the policy. Goose's
-  restricted roles omit its developer tools when no file or shell access is
-  allowed. Tool access is not a process sandbox: an allowed Shell can still use
-  files and credentials available to the agent process.
+- **Tools.** Local Claude Code, Codex, Goose and Pi agents have a per-device
+  **Tools** tab with four roles. **Super-agent** reads, coordinates, delegates
+  and manages Tasks. **Reviewer** reads files, diffs and the web and reports
+  findings in Buzz. Neither can change files, run Shell or use Buzz, plugin or
+  connected tools that create or change deliverables, such as repositories,
+  canvases, notes, channels or app deploys. **Coder** has every tool the
+  harness allows, and is what existing agents use. **Custom** starts from a role
+  and lets you switch individual groups, plugin tools and connected MCP servers
+  on or off. Saving applies to the agent's next tool call, even in a running
+  turn; hidden Buzz tools are also refused when called directly, and native
+  subagents inherit the role. Tool access is not a process sandbox: an allowed
+  Shell can still use files and credentials available to the agent process.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.
 - **Auto models.** Some builds add choices such as **Auto Balanced** to the
@@ -321,7 +323,8 @@ mentions still work.
 - **The `buzz` CLI** comes with the desktop app. `buzz auth desktop pair` asks
   you to **Allow** it, and then it can read and post as you.
 - **External apps** connect from the app's side: you approve them in Buzz, for
-  one community and agent, and they can use Buzz tools as that agent. Approve
+  one community and agent, and they can use the Buzz tools that agent's role
+  allows. Approve
   only setups you started.
 - **Settings → Security** and **Settings → External apps** list connections and
   revoke them.

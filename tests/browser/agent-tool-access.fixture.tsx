@@ -25,7 +25,9 @@ const agent = {
   timers: {},
   attentionEnabled: true,
 } satisfies Agent;
-const added: never[] = [];
+const added = [
+  { name: "tasks_update", description: "Update a Task.", effect: "coordinate" },
+];
 const agents = {
   save: async (_key: string, update: unknown) => {
     (window as unknown as { toolSave: unknown }).toolSave = update;

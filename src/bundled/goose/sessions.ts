@@ -7,6 +7,7 @@ import {
 } from "../../features/agent-harness/acp/agent-sessions";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
+import type { ToolPermits } from "../../features/agent-harness/acp/process";
 import { GooseProcess, type GooseHost, type ServeMcp } from "./goose";
 import type {
   SavedConversation,
@@ -44,6 +45,8 @@ export class AgentProcess {
       | undefined = () => undefined,
     /** The context size, in tokens, its sessions compact at. */
     private readonly compactAt: () => number | undefined = () => undefined,
+    /** The agent's current native tool policy, asked on every tool call. */
+    private readonly permits?: ToolPermits,
   ) {}
 
   /** The running process. One that failed to start is started again on the
@@ -84,6 +87,7 @@ export class AgentProcess {
               ...(limit && { compactAt: limit }),
               cwd: await this.host.resolveDirectory("~"),
               serve: this.serve,
+              ...(this.permits && { permits: this.permits }),
               onProcess: (goose) => {
                 start.process = goose;
               },

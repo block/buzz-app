@@ -186,7 +186,6 @@ export type Config = Readonly<{
   /** Device-local tool policy fields; absent preserves full access. */
   toolPreset?: string;
   toolAllow?: string;
-  toolDeny?: string;
 }>;
 export const DEFAULT_CONFIG: Config = Object.freeze({
   model: "",

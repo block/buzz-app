@@ -125,7 +125,11 @@ import {
   unverifiedSynced,
 } from "../../features/agents/agent-config";
 import { conversationHistory } from "./history";
-import { toolPolicyKey } from "../../features/agents/tool-access";
+import {
+  pickToolConfig,
+  type ToolConfig,
+  toolPolicyKey,
+} from "../../features/agents/tool-access";
 import { buzzHome } from "./setup";
 import {
   contextText,
@@ -563,6 +567,8 @@ export class CodexRuntime {
     }
   >();
   private entries = new Map<AgentKey, Entry>();
+  /** Each agent's tool access as the owner last saved it. */
+  private access = new Map<AgentKey, ToolConfig>();
   private actions = new Map<
     AgentKey,
     Set<{ abort: AbortController; done: Promise<void> }>
@@ -1381,6 +1387,9 @@ export class CodexRuntime {
     if (this.ownServers.get(agent) === server) this.ownServers.delete(agent);
   }
   sync(agents: readonly Agent[]) {
+    this.access = new Map(
+      agents.map((agent) => [agent.key, pickToolConfig(agent.config)]),
+    );
     const present = new Set(agents.map((agent) => agent.key));
     const held = new Set([
       ...this.entries.keys(),
@@ -3723,7 +3732,8 @@ export class CodexRuntime {
       call.tool,
       args,
       this.added(),
-      owner.settings,
+      // The owner's latest save, not the one the turn started with.
+      this.access.get(agent.key) ?? owner.settings,
     ).catch((error) => {
       if (final)
         for (const taken of settling)

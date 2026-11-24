@@ -545,10 +545,22 @@ function ChannelWorkspace({
   const metadataPending = list.channels.some(
     (channel) => channel.metadataPending,
   );
-  const requestedChannel =
-    navigation?.target.kind === "conversation"
-      ? navigation.target.channelId
+  const conversationAddress =
+    navigation?.target.kind === "conversation" ? navigation.target : undefined;
+  const requestedChannel = conversationAddress?.channelId;
+  const presentedAddress = useRef<ConversationTarget>(undefined);
+  // The next visit to this conversation may bind after the previous request
+  // is withdrawn. Keep its channel and sheets visible during that handoff.
+  const pendingAddress = navigation ? undefined : navigator.snapshot();
+  const previousAddress = presentedAddress.current;
+  const retainedAddress =
+    previousAddress &&
+    pendingAddress &&
+    !pendingAddress.ingress &&
+    sameScope(pendingAddress.entry.target, previousAddress)
+      ? previousAddress
       : undefined;
+  const destinationChannel = requestedChannel ?? retainedAddress?.channelId;
   const [resolved, setResolved] = useState<{
     request: PageNavigation;
     available: boolean;
@@ -609,12 +621,14 @@ function ChannelWorkspace({
   }>(undefined);
   // The last resolved channel, saved or computed; see `requestedDestination`.
   const chosen = useRef<string>(undefined);
+  const visiblePreviewChannel =
+    !cached && visiblePreview.current?.queries === queries
+      ? visiblePreview.current.channelId
+      : undefined;
   const previewAvailable =
-    resolved?.request === navigation
-      ? resolved?.available
-      : !cached &&
-        visiblePreview.current?.channelId === requestedChannel &&
-        visiblePreview.current?.queries === queries;
+    navigation && resolved?.request === navigation
+      ? resolved.available
+      : visiblePreviewChannel === destinationChannel;
   // Lifecycle completion must not reopen retained archived/hidden membership
   // through the mounted workspace's saved selection or first-channel fallback.
   const emptyDestination =
@@ -623,15 +637,15 @@ function ChannelWorkspace({
       navigation.target.route?.params === "empty");
   const requestedDestination = emptyDestination
     ? undefined
-    : requestedChannel
-      ? (channels.find((channel) => channel.id === requestedChannel) ??
-        // Sidebar visibility is not access: retain a joined archived selection.
-        list.channels.find((channel) => channel.id === requestedChannel) ??
+    : destinationChannel
+      ? (channels.find((channel) => channel.id === destinationChannel) ??
+        // The sidebar omits some joined channels that can still be opened.
+        list.channels.find((channel) => channel.id === destinationChannel) ??
         (previewAvailable
-          ? queries.channels.get?.(requestedChannel)
+          ? queries.channels.get?.(destinationChannel)
           : undefined))
-      : ((!navigation && !cached && visiblePreview.current?.queries === queries
-          ? queries.channels.get?.(visiblePreview.current.channelId)
+      : ((!navigation && visiblePreviewChannel
+          ? queries.channels.get?.(visiblePreviewChannel)
           : undefined) ??
         channels.find((channel) => channel.id === selected) ??
         // A computed choice stays put while its channel is listed, so a channel
@@ -838,23 +852,9 @@ function ChannelWorkspace({
     }
   }, [cached, current, navigation]);
   const currentId = current?.id;
-  // The conversation's inline thread and layer belong to its visit. While
-  // the router binds the next visit in this conversation, keep the old
-  // presentation mounted so a layer can open without reopening its thread.
-  const conversationAddress =
-    navigation?.target.kind === "conversation" ? navigation.target : undefined;
-  const presentedAddress = useRef<ConversationTarget>(undefined);
-  const pendingAddress = navigation ? undefined : navigator.snapshot();
-  const previousAddress = presentedAddress.current;
   const addressed =
     conversationAddress ??
-    (previousAddress &&
-    previousAddress.channelId === currentId &&
-    pendingAddress &&
-    !pendingAddress.ingress &&
-    sameScope(pendingAddress.entry.target, previousAddress)
-      ? previousAddress
-      : undefined);
+    (retainedAddress?.channelId === currentId ? retainedAddress : undefined);
   useLayoutEffect(() => {
     presentedAddress.current = addressed;
   }, [addressed]);

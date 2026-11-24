@@ -394,6 +394,41 @@ test.describe("Inline", () => {
     await expect(thread(page)).toHaveCount(0);
     await expect(side(page).getByRole("tab")).toHaveCount(0);
   });
+
+  test("opening a profile keeps the thread mounted in a joined hidden channel", async ({
+    page,
+    app,
+  }) => {
+    app.hideChannel("alpha");
+    await page.goto(app.origin);
+    await openPage(page, "Messages");
+    await page.locator('button[data-channel-id="beta"]').click();
+    const link = app.append(
+      "primary",
+      "beta",
+      "[Hidden Alpha](buzz://channel/alpha)",
+    );
+    await activate(
+      page.locator(`[data-message-id="${link.id}"]`).getByRole("link"),
+    );
+    await expect(composer(page)).toBeVisible();
+    await expect(page.locator('button[data-channel-id="alpha"]')).toHaveCount(
+      0,
+    );
+    const [root] = roots(app);
+    await clickRow(page, viewThread(page, root));
+    await expect(thread(page)).toBeVisible();
+    const visibleThread = await thread(page).elementHandle();
+    try {
+      await clickRow(page, avatar(thread(page)));
+      await expect(profile(page)).toBeVisible();
+      expect(
+        await visibleThread.evaluate((element) => element.isConnected),
+      ).toBe(true);
+    } finally {
+      await visibleThread.dispose();
+    }
+  });
 });
 
 // Huddles and apps can't open in this fixture (a Huddle needs a UUID channel,

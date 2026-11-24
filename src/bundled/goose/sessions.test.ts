@@ -17,7 +17,9 @@ import {
   AgentProcess,
   type SessionStore,
   type SessionsOptions,
+  type GooseAccess,
 } from "./sessions";
+import { type GooseRoot, UNENFORCEABLE } from "./permissions";
 
 const tools: ToolServer = async (_conversation, message) => ({
   jsonrpc: "2.0",
@@ -1918,4 +1920,50 @@ it("asks for the variables of the local agent it runs, and none for no agent", a
   expect(fake.geese[0]?.options.envAgent).toBe(agent.pubkey);
   await own.shutdown();
   await none.shutdown();
+});
+
+describe("AgentProcess tool access", () => {
+  const access = (
+    root: GooseRoot | undefined,
+    restricted: () => boolean,
+  ): GooseAccess => ({
+    root: async () => root,
+    restricted,
+    permits: async () => true,
+  });
+  const ROOT = { root: "/data/goose-agents/a", permissions: "/c/perm.yaml" };
+
+  it("runs goose in the agent's own root with Buzz deciding its tools", async () => {
+    const fake = fakeSpawn();
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => undefined,
+      access(ROOT, () => true),
+    );
+    await process.get();
+    expect(fake.geese[0]?.env).toMatchObject({ GOOSE_PATH_ROOT: ROOT.root });
+    await process.shutdown();
+  });
+
+  it("refuses a restricted role where the root can't be prepared, and replaces an unisolated goose once the role tightens", async () => {
+    const fake = fakeSpawn();
+    let restricted = false;
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => undefined,
+      access(undefined, () => restricted),
+    );
+    const plain = await process.get();
+    expect(fake.geese[0]?.env.GOOSE_PATH_ROOT).toBeUndefined();
+    expect(await process.get()).toBe(plain);
+    restricted = true;
+    await expect(process.get()).rejects.toThrow(UNENFORCEABLE);
+    await process.shutdown();
+  });
 });

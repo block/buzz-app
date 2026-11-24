@@ -178,6 +178,7 @@ export function fakeSpawn(
     id: string,
     process: HostProcessOptions = {},
   ): Promise<HostProcess> => {
+    if (id === "goose-root") return gooseRoot(options.home, process);
     let resolveExit!: (code: number | null) => void;
     const exited = new Promise<number | null>((resolve) => {
       resolveExit = resolve;
@@ -573,6 +574,25 @@ export function fakeSpawn(
     get geese() {
       return processes.filter((process) => process.id === "goose");
     },
+  };
+}
+
+/** The `goose-root` step: prints the agent's root and the owner's permission
+ * file under `home`, and exits. */
+function gooseRoot(
+  home = "/home/test",
+  process: HostProcessOptions,
+): HostProcess {
+  queueMicrotask(() =>
+    process.onStdout?.(
+      `${home}/.local/share/buzz/goose-agents/${process.args?.[0]}\n${home}/.config/goose/permission.yaml\n`,
+    ),
+  );
+  return {
+    write: async () => undefined,
+    end: async () => undefined,
+    kill: async () => undefined,
+    exited: Promise.resolve(0),
   };
 }
 

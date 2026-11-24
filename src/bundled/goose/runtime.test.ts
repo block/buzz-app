@@ -404,14 +404,16 @@ it("reads a protected Goose file under containment and reviews the captured text
         })
       ).result,
     ).not.toMatchObject({ isError: true });
-    expect(f.spawn).toHaveBeenCalledExactlyOnceWith(
-      "read-protected",
-      expect.objectContaining({
-        cwd: DEFAULT_CONFIG.workspace,
-        args: ["notes.md"],
-        protection: protection.processProtection,
-      }),
-    );
+    expect(f.spawn.mock.calls.filter(([id]) => id !== "goose-root")).toEqual([
+      [
+        "read-protected",
+        expect.objectContaining({
+          cwd: DEFAULT_CONFIG.workspace,
+          args: ["notes.md"],
+          protection: protection.processProtection,
+        }),
+      ],
+    ]);
     expect(f.readFile).not.toHaveBeenCalled();
     expect(check).toHaveBeenCalledWith(
       expect.objectContaining({

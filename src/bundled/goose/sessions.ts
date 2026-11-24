@@ -7,8 +7,19 @@ import {
 } from "../../features/agent-harness/acp/agent-sessions";
 import type { AgentProtection } from "../../features/agent-protection/service";
 import { nativeProtectionBridge } from "../../features/agent-protection/native-bridge";
-import type { ToolPermits } from "../../features/agent-harness/acp/process";
 import { GooseProcess, type GooseHost, type ServeMcp } from "./goose";
+import { type GooseRoot, UNENFORCEABLE } from "./permissions";
+
+/** An agent's tool access as its goose process needs it. */
+export type GooseAccess = Readonly<{
+  /** The agent's own root, prepared again at each start; undefined where
+   * it can't be. */
+  root(): Promise<GooseRoot | undefined>;
+  /** Whether its current role restricts any tool. */
+  restricted(): boolean;
+  /** Whether it may run `name` now, given the root it runs in. */
+  permits(name: string, root: GooseRoot | undefined): Promise<boolean>;
+}>;
 import type {
   SavedConversation,
   SessionStore,
@@ -45,8 +56,8 @@ export class AgentProcess {
       | undefined = () => undefined,
     /** The context size, in tokens, its sessions compact at. */
     private readonly compactAt: () => number | undefined = () => undefined,
-    /** The agent's current native tool policy, asked on every tool call. */
-    private readonly permits?: ToolPermits,
+    /** Where its goose runs and what it may run, asked on every tool call. */
+    private readonly access?: GooseAccess,
   ) {}
 
   /** The running process. One that failed to start is started again on the
@@ -58,7 +69,14 @@ export class AgentProcess {
   ): Promise<GooseProcess> {
     this.protection?.assertAvailable();
     const limit = this.compactAt();
-    if (this.current && limit === this.current.limit) return this.current.ready;
+    // One started where saved permissions can't be overridden is replaced
+    // once the agent's role is restricted.
+    if (
+      this.current &&
+      limit === this.current.limit &&
+      (this.current.isolated || !this.access?.restricted())
+    )
+      return this.current.ready;
     const previous = this.current;
     const old = previous?.process;
     const stopped =
@@ -69,11 +87,20 @@ export class AgentProcess {
             .catch(() => undefined)
         : undefined;
     const agent = this.agent();
+    // Filled in by the start below, once its root is known.
+    const isolation = { isolated: false };
     const start: Start = {
       limit,
       previous,
+      get isolated() {
+        return isolation.isolated;
+      },
       ready: (async () => {
         await stopped;
+        const root = this.access && (await this.access.root());
+        isolation.isolated = !!root;
+        if (!root && this.access?.restricted()) throw new Error(UNENFORCEABLE);
+        const { access } = this;
         const bridge =
           this.protection &&
           (await nativeProtectionBridge(this.serve, this.protection));
@@ -87,7 +114,9 @@ export class AgentProcess {
               ...(limit && { compactAt: limit }),
               cwd: await this.host.resolveDirectory("~"),
               serve: this.serve,
-              ...(this.permits && { permits: this.permits }),
+              ...(access && {
+                permits: (name: string) => access.permits(name, root),
+              }),
               onProcess: (goose) => {
                 start.process = goose;
               },
@@ -96,9 +125,11 @@ export class AgentProcess {
               }),
               // Only a local agent's unprotected launch gets its variables.
               ...(agent && !bridge && { secrets: ["agent-env"] }),
+              ...(root && !bridge && { env: { GOOSE_PATH_ROOT: root.root } }),
               ...(bridge && {
                 protected: true,
                 env: {
+                  ...(root && { GOOSE_PATH_ROOT: root.root }),
                   ...bridge.env,
                   BASH_ENV: null,
                   ENV: null,
@@ -162,6 +193,8 @@ export class AgentProcess {
 type Start = {
   ready: Promise<GooseProcess>;
   limit: number | undefined;
+  /** Whether it runs in the agent's own root, apart from saved permissions. */
+  readonly isolated: boolean;
   previous?: Start | undefined;
   process?: GooseProcess;
 };

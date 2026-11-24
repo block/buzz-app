@@ -73,7 +73,7 @@ type Pending = {
 };
 
 /** Whether the agent may run a tool now, by the harness's name for it. */
-export type ToolPermits = (toolName: string) => boolean;
+export type ToolPermits = (toolName: string) => boolean | Promise<boolean>;
 
 /** The harness's own name for a tool call, where it reports one. */
 const toolNameOf = (call: Record<string, unknown>) => {
@@ -608,12 +608,15 @@ export class AcpProcess {
   /** Answers what the harness asks its client. Without `permits`, tools run
    * without asking, so any permission prompt is allowed. With it, each is
    * decided once by the tool's name, which unknown fails closed on. */
-  private decide(params: Record<string, unknown>) {
+  private async decide(params: Record<string, unknown>) {
     if (!this.permits) return allow(params);
     const call = (params.toolCall ?? {}) as Record<string, unknown>;
     const id = typeof call.toolCallId === "string" ? call.toolCallId : "";
     const name = this.toolNames.get(id) ?? toolNameOf(call) ?? "";
-    return this.permits(name) ? allowOnce(params) : rejectOnce(params);
+    const permitted = await Promise.resolve(this.permits(name)).catch(
+      () => false,
+    );
+    return permitted ? allowOnce(params) : rejectOnce(params);
   }
   private async answer(
     id: number | string,
@@ -622,7 +625,11 @@ export class AcpProcess {
   ) {
     let reply: Wire;
     if (method === "session/request_permission")
-      reply = { jsonrpc: "2.0", id, result: { outcome: this.decide(params) } };
+      reply = {
+        jsonrpc: "2.0",
+        id,
+        result: { outcome: await this.decide(params) },
+      };
     else
       reply = {
         jsonrpc: "2.0",

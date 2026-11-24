@@ -138,9 +138,11 @@ import { marked, sessionTags, unforged } from "./transcript";
 import {
   absolute,
   AgentProcess,
+  type GooseAccess,
   AgentSessions,
   localSessions,
 } from "./sessions";
+import { ownerAllows, prepareRoot, UNENFORCEABLE } from "./permissions";
 import {
   goosePlatform,
   nativeToolAllowed,
@@ -393,6 +395,23 @@ export class GooseRuntime {
   /** A file as the agent's sessions read one: in its saved workspace. */
   workspaceFile(agent: Agent, path: string) {
     return this.desktop.readFile(path, { cwd: config(agent.config).workspace });
+  }
+
+  /** An agent's tool access for its goose: its own root, and every tool
+   * call decided by the owner's saved permissions and its current role. */
+  private access(agent: AgentKey, current: () => Config): GooseAccess {
+    return {
+      root: () =>
+        prepareRoot(this.desktop.spawn, agent).catch((error: unknown) => {
+          console.warn("goose's root couldn't be prepared", error);
+          return undefined;
+        }),
+      restricted: () => toolPolicyKey(current()) !== "",
+      permits: async (name, root) =>
+        nativeToolAllowed(name, current()) &&
+        (!root ||
+          (await ownerAllows(this.desktop.readFile, root.permissions, name))),
+    };
   }
 
   /** The desktop host's methods goose agents run with. */
@@ -1392,21 +1411,25 @@ export class GooseRuntime {
               ? AbortSignal.any([signal, turn.signal])
               : signal,
           ),
-        start: async (env, onProcess) =>
-          GooseProcess.start(desktop.spawn, {
+        start: async (env, onProcess) => {
+          const access = this.access(agent, () => entry.config);
+          const root = await access.root();
+          if (!root && access.restricted()) throw new Error(UNENFORCEABLE);
+          return GooseProcess.start(desktop.spawn, {
             cwd: await workspace(),
-            env,
+            env: { ...env, ...(root && { GOOSE_PATH_ROOT: root.root }) },
             // Its Buzz tools' server counts in the pool sessions share.
             serve: entry.sessions.pooled((handler) => this.serve(handler)),
             onProcess,
-            permits: (name) => nativeToolAllowed(name, entry.config),
+            permits: (name) => access.permits(name, root),
             // Acts as the agent, with its variables, as its ordinary goose
             // does.
             ...(entry.handle && {
               agent: { pubkey: entry.handle.pubkey, relay: entry.handle.relay },
               secrets: ["agent-env"],
             }),
-          }),
+          });
+        },
         launch: async () => {
           // A conversation given its own folder runs there.
           const launched = await this.launch(
@@ -1739,7 +1762,7 @@ export class GooseRuntime {
         undefined,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
-        (name) => nativeToolAllowed(name, entry.config),
+        this.access(agent, () => entry.config),
       ),
       tools: undefined as unknown as ToolServer,
       retiring: new Set(),
@@ -1851,7 +1874,7 @@ export class GooseRuntime {
         protection,
         () => entry.handle,
         () => compactAt(entry.config.compactAt),
-        (name) => nativeToolAllowed(name, entry.config),
+        this.access(agent, () => entry.config),
       );
       const worker = entry.worker;
       const { stopping } = entry;

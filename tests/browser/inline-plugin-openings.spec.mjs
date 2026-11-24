@@ -45,6 +45,19 @@ test("a plugin's link panel opens inline and drills in with a visit of its own",
   await expect(titled(page, "Wrong panel")).toBeVisible();
   await page.goBack();
   await expect(sheets(page)).toHaveCount(0);
+  // The panel has no address, so Open as tab returns to the visit beneath
+  // it, which had no tabs. Its tab still opens, selected.
+  await page.goForward();
+  await titled(page, "Wrong panel")
+    .getByRole("button", { name: "Open as tab", exact: true })
+    .click();
+  await expect(sheets(page)).toHaveCount(0);
+  await expect(
+    side(page).getByRole("tab", { name: "Wrong panel", selected: true }),
+  ).toBeVisible();
+  await expect(
+    side(page).getByRole("button", { name: "Open child detail" }),
+  ).toBeVisible();
 });
 
 test("a Solo chat link goes to the chat instead of opening its tab", async ({

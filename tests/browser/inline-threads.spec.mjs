@@ -74,7 +74,7 @@ test.describe("Side panel", () => {
     app,
   }) => {
     await open(page, app);
-    const [root] = roots(app);
+    const [root, other] = roots(app);
     await clickRow(page, viewThread(page, root));
     await expect(threadTab(page, root)).toBeVisible();
     details(app, "Tab findings", root);
@@ -100,6 +100,20 @@ test.describe("Side panel", () => {
     await close(detailsSheet(page)).click();
     await expect(detailsSheet(page)).toHaveCount(0);
     await expect(threadTab(page, root)).toBeVisible();
+    // The visit now names another thread, and the first tab is chosen
+    // again without a visit. Its details still read over it.
+    const selected = (tab) =>
+      expect(tab).toHaveAttribute("aria-selected", "true");
+    await clickRow(page, viewThread(page, other));
+    await selected(threadTab(page, other));
+    await threadTab(page, root).click();
+    await showMore(side(page), "Tab findings").click();
+    await expect(detailsSheet(page)).toBeVisible();
+    await selected(threadTab(page, root));
+    await page.reload();
+    await expect(detailsSheet(page)).toBeVisible();
+    await selected(threadTab(page, root));
+    await expect(threadTab(page, other)).toBeVisible();
   });
 });
 

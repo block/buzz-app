@@ -1372,6 +1372,24 @@ function ChannelWorkspace({
      * launcher's side panel keeps the visibility it had before the close. */
     paneOpen: boolean;
   }>(undefined);
+  /** A local tab has no routed address, so the return of the dismissal made
+   * from visit `from` would restore the selection `fallback` had over it.
+   * Keep it for that matching return only, never for later navigation. */
+  const keepTabForReturn = (
+    from: string,
+    fallback: OpenTarget,
+    id: string,
+    pane: "main" | "side",
+    paneOpen: boolean,
+  ) => {
+    keptTabReturn.current = {
+      from,
+      target: targetKey(fallback),
+      id,
+      pane,
+      paneOpen,
+    };
+  };
   const dismissContent = (
     visits: readonly string[],
     fallback: OpenTarget,
@@ -1394,18 +1412,14 @@ function ChannelWorkspace({
       visits.includes(current.id) &&
       keptTab?.kind !== "thread" &&
       !(keptEntry && historyPanel(keptEntry))
-    ) {
-      // A local survivor has no routed address. Preserve it only for this
-      // dismissal's matching return, never for unrelated later navigation.
-      keptTabReturn.current = {
-        from: current.id,
-        target: targetKey(fallback),
-        id: keep,
+    )
+      keepTabForReturn(
+        current.id,
+        fallback,
+        keep,
         pane,
-        paneOpen:
-          !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
-      };
-    }
+        !!(keptTab || keptEntry || keep === "settings") || tabState.paneOpen,
+      );
     navigator.dismiss(visits, fallback);
     // A later close can retire more visits before the return lands, moving
     // where it lands.
@@ -1785,6 +1799,8 @@ function ChannelWorkspace({
         pendingReturn.current = undefined;
       // A layer over a thread tab names that tab as its view, so its visit
       // selects the tab, as a thread's own visit does, reopening it if gone.
+      // The visit's own thread or panel, if it names another, is applied
+      // first and keeps its tab.
       const layer =
         navigation.target.kind === "conversation" &&
         navigation.target.layer?.rootId !== navigation.target.inline
@@ -1804,13 +1820,22 @@ function ChannelWorkspace({
               rootId: layer.rootId,
             }
           : undefined;
+      const over =
+        host &&
+        !(
+          routedThread?.channelId === host.channelId &&
+          routedThread.rootId === host.rootId
+        )
+          ? host
+          : undefined;
       tabState.enterVisit(
         `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`,
-        detail && !detailReply ? undefined : (routedThread ?? host),
+        detail && !detailReply ? undefined : routedThread,
         !!detail,
         detail && currentId
           ? { channelId: currentId, target: detail.target }
           : undefined,
+        over,
       );
       // A re-render while the return is pending must not reapply the detail
       // that was just closed.
@@ -1824,6 +1849,8 @@ function ChannelWorkspace({
         if (entry && historyPanel(entry)) {
           open(entry, false, detailSource ? "side" : undefined);
           if (detailSource && !detailReply) tabState.selectMain(undefined);
+          // The panel's tab is open again; the layer's view stays in front.
+          if (over) tabState.selectThread(over.channelId, over.rootId);
         } else navigation.complete({ status: "failed", reason: "unavailable" });
       }
       // Reselect it over the restored selection and give it its own visit.
@@ -1894,6 +1921,7 @@ function ChannelWorkspace({
     detailReply,
     detailSource,
     tabState.enterVisit,
+    tabState.selectThread,
     tabState.select,
     tabState.selectMain,
     tabState.setPaneOpen,
@@ -2123,26 +2151,39 @@ function ChannelWorkspace({
       title: panel.title,
       content,
       openAsTab: () => {
-        const target = navigator?.snapshot().entry.target;
-        if (target?.kind !== "conversation") return;
-        // The tab's own address replaces the layer's, as Move to side panel
-        // does for a thread.
+        const entry = navigator?.snapshot().entry;
+        if (entry?.target.kind !== "conversation") return;
+        const target = entry.target;
         const { layer: _layer, ...under } = target;
-        dismissLayer(
-          historyPanel(opening)
-            ? {
-                version: 1,
-                kind: "conversation",
-                scope: target.scope,
-                channelId: opening.channelId,
-                detail: {
-                  target: opening.target,
-                  ...(opening.rootId ? { rootId: opening.rootId } : {}),
-                },
-              }
-            : under,
-        );
+        if (historyPanel(opening)) {
+          // The tab's own address replaces the layer's, as Move to side
+          // panel does for a thread.
+          dismissLayer({
+            version: 1,
+            kind: "conversation",
+            scope: target.scope,
+            channelId: opening.channelId,
+            detail: {
+              target: opening.target,
+              ...(opening.rootId ? { rootId: opening.rootId } : {}),
+            },
+          });
+          open(opening, true);
+          return;
+        }
+        // A panel with no address leaves the visit beneath the layer, whose
+        // return lands later and restores the tabs it had. The new tab is
+        // kept over them, in the pane it opened in.
         open(opening, true);
+        const id = panelTabId(opening);
+        keepTabForReturn(
+          entry.id,
+          under,
+          id,
+          tabState.getMainSelected() === id ? "main" : "side",
+          true,
+        );
+        dismissLayer(under);
       },
     };
   };

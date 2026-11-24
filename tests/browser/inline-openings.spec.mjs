@@ -139,14 +139,16 @@ test.describe("Inline", () => {
     app,
   }) => {
     await open(page, app);
-    const [root] = roots(app);
+    const [root, other] = roots(app);
     const [linked] = Array.from({ length: 30 }, () =>
       app.reply(root.id, false, false),
     );
+    // The link's thread hint names another thread. The reply's own thread
+    // opens, and the address names the root read from the reply.
     const message = app.append(
       "primary",
       "alpha",
-      `See <buzz://message?channel=alpha&id=${linked.id}&thread=${root.id}>`,
+      `See <buzz://message?channel=alpha&id=${linked.id}&thread=${other.id}>`,
     );
     await activate(
       page

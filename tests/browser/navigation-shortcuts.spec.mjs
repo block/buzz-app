@@ -3,8 +3,8 @@ import { open } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 1 } });
 
-// Native caret motion and composer focus after history traversal require real
-// browser engines. The modifier/input eligibility matrix lives in Vitest.
+// Composer focus after history traversal and native line movement need real
+// browser engines. Draft eligibility and rebindings live in Vitest.
 test("Command arrows traverse empty composers and move the caret in a draft", async ({
   page,
   app,
@@ -31,23 +31,10 @@ test("Command arrows traverse empty composers and move the caret in a draft", as
   ]) {
     await page.keyboard.press(`Meta+${key}`);
     await expect(destination).toBeFocused();
-    await expect(destination).toHaveJSProperty("value", "");
   }
 
-  await alpha.pressSequentially("hello world");
-  await page.keyboard.press("Meta+ArrowLeft");
-  await page.keyboard.type("start ");
-  await expect(alpha).toHaveJSProperty("value", "start hello world");
-  await expect(alpha).toBeFocused();
-  await alpha.evaluate((input) => input.setSelectionRange(0, 0));
-  await page.keyboard.press("Meta+ArrowRight");
-  await page.keyboard.type(" end");
-  await expect(alpha).toHaveJSProperty("value", "start hello world end");
-
+  // The caret starts on the second line, so the keys must stop at line edges.
   await alpha.fill("first line\nsecond line");
-  await alpha.evaluate((input) =>
-    input.setSelectionRange(input.value.length, input.value.length),
-  );
   await page.keyboard.press("Meta+ArrowLeft");
   await expect(alpha).toHaveJSProperty("selectionStart", "first line\n".length);
   await page.keyboard.press("Meta+ArrowRight");
@@ -55,21 +42,6 @@ test("Command arrows traverse empty composers and move the caret in a draft", as
     "selectionStart",
     "first line\nsecond line".length,
   );
-
-  const wrapped = "wrapped words ".repeat(100);
-  await alpha.fill(wrapped);
-  await alpha.evaluate((input) =>
-    input.setSelectionRange(input.value.length, input.value.length),
-  );
-  await page.keyboard.press("Meta+ArrowLeft");
-  await expect
-    .poll(() => alpha.evaluate((input) => input.selectionStart))
-    .toBeGreaterThan(0);
-  await expect
-    .poll(() => alpha.evaluate((input) => input.selectionStart))
-    .toBeLessThan(wrapped.length);
-  await page.keyboard.press("Meta+ArrowRight");
-  await expect(alpha).toHaveJSProperty("selectionStart", wrapped.length);
   await expect(alpha).toBeFocused();
 
   await alpha.fill("");

@@ -6,18 +6,23 @@ import type {
 } from "../../features/panels/service";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { useListedChannel } from "../../features/relay/listed-channel";
-import { diffPreview } from "../../features/relay/membership";
 import { PIN_KIND, pinLists } from "../../features/relay/pins";
 import { useRelayConnection, useRowProfiles } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { MessageTimestamp } from "../../features/messages/MessageTimestamp";
+import { MessageRow } from "../../features/messages/MessageRow";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import {
   usePinnedMessages,
   usePinnedRows,
 } from "../../features/messages/use-pins";
-import { PinIcon, PinOffIcon, XIcon } from "../../shared/design-system/icons";
+import {
+  ArrowRightIcon,
+  PinIcon,
+  PinOffIcon,
+  XIcon,
+} from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -66,19 +71,18 @@ function Launcher({
   );
 }
 
-const preview = (row: ChannelMessage) =>
-  row.diff
-    ? diffPreview(row.diff)
-    : row.content.trim() || (row.attachments.length ? "Attachment" : "");
-
 function PinnedList({
   session,
   channelId,
+  scope,
   open,
+  openLink,
 }: {
   session: RelaySession;
   channelId: string;
+  scope: string;
   open(row: ChannelMessage): void;
+  openLink(url: string): boolean;
 }) {
   const [attempt, setAttempt] = useState(0);
   const pins = usePinnedMessages(session, channelId);
@@ -142,43 +146,60 @@ function PinnedList({
       )}
       <ul className={styles.list} aria-label="Pinned messages">
         {pinned.rows.map((row) => {
+          const profile = profiles.get(row.authorId);
           const name = resolveName(
             row.authorId,
-            profiles.get(row.authorId)?.name ?? row.authorId.slice(0, 10),
+            profile?.name ?? row.authorId.slice(0, 10),
           );
           return (
-            <li key={row.id} className={styles.row}>
-              <button
-                type="button"
-                className={styles.open}
-                onClick={() => open(row)}
-              >
-                <span className={styles.byline}>
-                  <strong>{name}</strong>
-                  <MessageTimestamp createdAt={row.createdAt} />
-                </span>
-                <span className={styles.preview}>{preview(row)}</span>
-              </button>
-              {canUnpin && pinnable && (
-                <IconButton
-                  size="sm"
-                  aria-label={`Unpin message from ${name}`}
-                  title={dm ? "Unpin from DM" : "Unpin from channel"}
-                  icon={<PinOffIcon size={14} aria-hidden="true" />}
-                  onClick={() => {
-                    setError(undefined);
-                    try {
-                      session.messages.pin(channelId, row.id, false);
-                    } catch (cause) {
-                      setError(
-                        cause instanceof Error
-                          ? cause.message
-                          : "Could not unpin. Try again.",
-                      );
-                    }
-                  }}
-                />
-              )}
+            <li key={row.id}>
+              <MessageRow
+                row={row}
+                profile={{ ...profile, name }}
+                participantProfiles={profiles}
+                references={session}
+                scope={scope}
+                viewer={session.viewer}
+                media={session.media}
+                onOpenLink={openLink}
+                day={false}
+                retry={undefined}
+                layout="thread"
+                fullWidth
+                quickControls={
+                  <>
+                    <IconButton
+                      size="sm"
+                      hint="helpful"
+                      aria-label={`Go to message from ${name}`}
+                      title="Go to message"
+                      icon={<ArrowRightIcon />}
+                      onClick={() => open(row)}
+                    />
+                    {canUnpin && pinnable && (
+                      <IconButton
+                        size="sm"
+                        hint="helpful"
+                        aria-label={`Unpin message from ${name}`}
+                        title={dm ? "Unpin from DM" : "Unpin from channel"}
+                        icon={<PinOffIcon />}
+                        onClick={() => {
+                          setError(undefined);
+                          try {
+                            session.messages.pin(channelId, row.id, false);
+                          } catch (cause) {
+                            setError(
+                              cause instanceof Error
+                                ? cause.message
+                                : "Could not unpin. Try again.",
+                            );
+                          }
+                        }}
+                      />
+                    )}
+                  </>
+                }
+              />
             </li>
           );
         })}
@@ -213,6 +234,17 @@ export function registerPins(ctx: Context) {
               key={`${state.scope}:${state.generation}:${channelContext.channelId}`}
               session={state.session}
               channelId={channelContext.channelId}
+              scope={state.scope}
+              openLink={(url) => {
+                const target = buzzLinkTarget(url, {
+                  viewer: state.viewer ?? "",
+                  communityOrigin: state.origin ?? "",
+                });
+                if (!target) return false;
+                close();
+                void ctx.navigation.open(target);
+                return true;
+              }}
               open={(row) => {
                 // As a message link does: the message replaces the list.
                 close();

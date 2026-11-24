@@ -83,6 +83,7 @@ import {
 import { Missing, SignedIn, SignIn } from "./auth";
 import type { ClaudeModel } from "./claude";
 import type { ClaudeSetup } from "./setup";
+import { SIGN_IN_AGAIN } from "./sign-in";
 import type { ClaudeDefaults } from "./defaults";
 import {
   settingLabels,
@@ -847,10 +848,13 @@ export function createTabs({
   function ProviderDialogBody({ onClose }: { onClose(): void }) {
     const state = useSetupCatalog();
     const status = state.status;
+    const signedOut = status?.state === "signed-out";
     const ready = status?.state === "ready" && !state.checking;
+    const recoveryOnly =
+      state.signInRequired && !!setup.auth.signIn && !state.running;
     const signingIn =
       state.running === "sign-in" ||
-      (status?.state === "signed-out" && !state.running);
+      (signedOut && !state.running && !recoveryOnly);
     // Credentials pasted here, not an interactive sign-in.
     const keyEntry = !setup.auth.signIn;
     const line =
@@ -870,7 +874,7 @@ export function createTabs({
         ? ({ step: "install", label: "Install integration" } as const)
         : status?.state === "outdated"
           ? ({ step: "install", label: "Update Claude" } as const)
-          : status?.state === "signed-out" && setup.auth.signIn
+          : signedOut && setup.auth.signIn
             ? ({ step: "sign-in", label: "Sign in" } as const)
             : undefined;
     // Looks again for a setup made with the Claude CLI meanwhile.
@@ -899,7 +903,12 @@ export function createTabs({
             {state.notice}
           </p>
         )}
-        <div className="grid gap-2" hidden={ready}>
+        {state.signInRequired && state.running !== "sign-in" && (
+          <p role="status" className="m-0 text-body-sm text-secondary">
+            {SIGN_IN_AGAIN}
+          </p>
+        )}
+        <div className="grid gap-2" hidden={ready || recoveryOnly}>
           {/* A key's own form takes the dialog over: it says what is missing. */}
           {!state.running && !(keyEntry && status?.state === "signed-out") && (
             <p
@@ -951,7 +960,7 @@ export function createTabs({
         {/* Kept through a routine check, so a paste or save goes on. Saving
             the key closes the dialog while the key is all it edits; once it
             has other settings, saving should leave it open. */}
-        {status?.state === "ready" && (
+        {status?.state === "ready" && !recoveryOnly && (
           <SignedIn setup={setup} onSaved={onClose} />
         )}
         <ProviderDialogActions>
@@ -978,17 +987,21 @@ export function createTabs({
               state.running && !ready ? void setup.cancel() : onClose()
             }
           >
-            {ready ? "Done" : "Cancel"}
+            {ready || recoveryOnly ? "Done" : "Cancel"}
           </Button>
-          {!ready && action && !state.running && !state.checking && (
-            <Button
-              autoFocus
-              variant="prominent"
-              onClick={() => void setup.run(action.step)}
-            >
-              {action.label}
-            </Button>
-          )}
+          {!ready &&
+            !recoveryOnly &&
+            action &&
+            !state.running &&
+            !state.checking && (
+              <Button
+                autoFocus
+                variant="prominent"
+                onClick={() => void setup.run(action.step)}
+              >
+                {action.label}
+              </Button>
+            )}
         </ProviderDialogActions>
       </div>
     );

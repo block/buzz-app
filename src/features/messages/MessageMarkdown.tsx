@@ -582,7 +582,12 @@ function PreparedMessageMarkdown({
     prepared.content === sourceRow.content
       ? sourceRow
       : { ...sourceRow, content: prepared.content };
-  const renderLink = (url: string, label?: string, children?: ReactNode) => {
+  const renderLink = (
+    url: string,
+    label?: string,
+    children?: ReactNode,
+    settingsAction?: boolean,
+  ) => {
     const channel = channelForLink(url, directory.channels);
     return (
       <MessageLink
@@ -597,6 +602,7 @@ function PreparedMessageMarkdown({
         interactive={interactive}
         channelPrivate={!!channel?.private}
         channelSolo={channel?.channelType === "solo"}
+        settingsAction={settingsAction}
       >
         {children}
       </MessageLink>
@@ -685,13 +691,31 @@ function PreparedMessageMarkdown({
     );
   };
   const components: MessageComponents = {
-    p: ({ node: _node, ...props }) => (
-      <p
-        {...props}
-        className={largeEmoji ? styles.text : undefined}
-        data-single-emoji={largeEmoji || undefined}
-      />
-    ),
+    p: ({ node: _node, children, ...props }) => {
+      // Plugins can offer an action by putting a labelled Settings link on
+      // its own line. Links inside prose keep their inline presentation.
+      const link =
+        isValidElement<{ href?: string; children?: ReactNode }>(children) &&
+        children.type === markdownComponents.a
+          ? children.props
+          : undefined;
+      const href = link?.href;
+      const label = href && labelText(link?.children);
+      return (
+        <p
+          {...props}
+          className={largeEmoji ? styles.text : undefined}
+          data-single-emoji={largeEmoji || undefined}
+        >
+          {href &&
+          label &&
+          label !== href &&
+          parseBuzzLink(href)?.format === "settings"
+            ? renderLink(href, label, link?.children, true)
+            : children}
+        </p>
+      );
+    },
     a: ({ href: target, children }) => {
       const href =
         target &&

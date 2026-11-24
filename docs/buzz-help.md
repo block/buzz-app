@@ -277,7 +277,9 @@ mentions still work.
    avatar means it isn't. A message saying it couldn't finish gives the
    reason, and its **Activity** tab shows what happened.
 4. **Is the harness set up?** Check its sign-in or API key in **Harness
-   defaults**.
+   defaults**. If Claude reports that it couldn't refresh its sign-in,
+   choose **Open Claude settings**. Settings shows which credentials Claude
+   uses and tells you when to sign in again with Claude.
 5. **For a workflow or a watch**, the workflow's **Runs** tab or the agent's
    **Attention** tab shows what happened.
 6. **In a DM you're not in**, a desktop agent still answers mentions, but allow

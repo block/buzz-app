@@ -102,6 +102,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it("opens a standalone Settings action with the keyboard and keeps inline Settings links", async () => {
+  const user = userEvent.setup();
+  const target = "buzz://settings?section=example.agent%2Fcredentials";
+  const onOpenLink = vi.fn(() => true);
+  renderDom(
+    <MessageMarkdown
+      {...props(
+        `Sign-in expired.\n\n[Open agent settings](${target})\n\nSee [Settings](${target}) for details.`,
+        { onOpenLink },
+      )}
+    />,
+  );
+  const action = screen.getByRole("link", { name: "Open agent settings" });
+  expect(action).toHaveClass("buzz-button");
+  expect(screen.getByRole("link", { name: "Settings" })).not.toHaveClass(
+    "buzz-button",
+  );
+  await user.tab();
+  expect(action).toHaveFocus();
+  await user.keyboard("{Enter}");
+  expect(onOpenLink).toHaveBeenCalledExactlyOnceWith(target);
+});
+
 it("admits registered panel links from cached Markdown and rechecks activation", () => {
   const target = "example-plugin://task/123";
   let installed = false;

@@ -77,6 +77,10 @@ Each line is the main call. Read the types for every field.
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
 
+A labeled `buzz://settings` link in its own Markdown paragraph appears as a
+button in a conversation. An agent plugin can use one to point to its Settings
+destination when a user needs to take action.
+
 Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
 
 In a Solo region, check `ui.headerMenuActions === true` before passing

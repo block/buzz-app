@@ -2006,6 +2006,59 @@ it("signs in from the Settings row directly when the build has a sign-in", async
   }
 });
 
+it("shows a plain sign-in warning in provider settings after an expired session", async () => {
+  interactive.signIn = true;
+  try {
+    const checks = vi.spyOn(ClaudeSetup.prototype, "check");
+    const own = { status: { loggedIn: true } };
+    const { type } = installed({ keySaved: false, own });
+    const DialogBody = type.provider?.DialogBody;
+    if (!DialogBody) throw new Error("Missing provider settings");
+    const onClose = vi.fn();
+    render(<DialogBody onClose={onClose} />);
+    await screen.findByRole("button", { name: "Done" });
+    const setup = checks.mock.contexts.find(
+      (context): context is ClaudeSetup =>
+        context instanceof ClaudeSetup &&
+        context.providerSnapshot === type.provider?.snapshot,
+    );
+    if (!setup) throw new Error("Missing Claude setup");
+    await waitFor(() =>
+      expect(setup.snapshot()).toMatchObject({
+        checking: false,
+        running: undefined,
+        status: { state: "ready" },
+      }),
+    );
+    const warning =
+      "Sign in again with Claude to keep using your existing setup.";
+    await act(async () => {
+      setup.observeTurn(
+        Promise.resolve({
+          ok: false,
+          error:
+            "Failed to authenticate: OAuth session expired and could not be refreshed",
+        }),
+        true,
+      );
+    });
+    const checkRecovery = () => {
+      expect(screen.getByText(warning)).toBeVisible();
+      expect(screen.queryByRole("button", { name: /^sign in/i })).toBeNull();
+      expect(screen.queryByRole("link")).toBeNull();
+    };
+    checkRecovery();
+    own.status = { loggedIn: false };
+    await act(() => setup.check());
+    checkRecovery();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(onClose).toHaveBeenCalledOnce();
+  } finally {
+    interactive.signIn = false;
+  }
+});
+
 it("saves settings as one config", async () => {
   const Settings = tab(installed().type, 0);
   const save = vi.fn(async () => undefined);

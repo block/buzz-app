@@ -277,6 +277,12 @@ it.each([true, false])(
     expect(runtime?.explain("Invalid API key · Fix external API key")).toBe(
       `Anthropic rejected Claude's API key. It may have been revoked or run out of credit. Head to [Settings](${settings}) to replace it.\n\nClaude said:\n> Invalid API key · Fix external API key`,
     );
+    const expired =
+      "Failed to authenticate: OAuth session expired and could not be refreshed";
+    expect(runtime?.explain(expired)).toContain(
+      `\n\n[Open Claude settings](${settings})\n\n`,
+    );
+    expect(runtime?.explain(expired)).toContain(`\n> ${expired}`);
     expect(runtime?.explain("Error: overloaded")).toBe("Error: overloaded");
   },
 );

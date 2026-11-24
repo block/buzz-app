@@ -716,14 +716,50 @@ it("saves a replacement with Enter after composition ends", async () => {
   expect(input).toHaveAttribute("readonly");
 });
 
-it("asks for no key over the person's own setup, and never names it", async () => {
+it("shows the person's own setup and warns when Claude needs a new sign-in", async () => {
   native.saved = false;
   own.status = { loggedIn: true, apiProvider: "vertex" };
-  fixture();
+  const { setup } = fixture();
   expect(await screen.findByText("No key saved.")).toBeVisible();
+  const message =
+    "Sign in again with Claude to keep using your existing setup.";
   expect(
-    screen.getByText("Manage Claude’s credentials on this computer."),
+    screen.getByText("Buzz uses your existing Claude setup."),
   ).toBeVisible();
+  expect(screen.queryByText(message)).toBeNull();
+  let completeEarlierTurn!: (result: { ok: boolean }) => void;
+  const earlierTurn = new Promise<{ ok: boolean }>((resolve) => {
+    completeEarlierTurn = resolve;
+  });
+  setup.observeTurn(earlierTurn, true);
+  await act(async () => {
+    setup.observeTurn(
+      Promise.resolve({ ok: false, error: "MCP OAuth token has expired" }),
+      true,
+    );
+  });
+  expect(screen.queryByText(message)).toBeNull();
+  await act(async () => {
+    setup.observeTurn(
+      Promise.resolve({
+        ok: false,
+        error:
+          "Failed to authenticate: OAuth session expired and could not be refreshed",
+      }),
+      true,
+    );
+  });
+  expect(screen.getByText(message)).toBeVisible();
+  expect(screen.queryByRole("link")).toBeNull();
+  await act(async () => {
+    completeEarlierTurn({ ok: true });
+    setup.observeTurn(Promise.resolve({ ok: true }), false);
+  });
+  expect(screen.getByText(message)).toBeVisible();
+  await act(async () => {
+    setup.observeTurn(Promise.resolve({ ok: true }), true);
+  });
+  expect(screen.queryByText(message)).toBeNull();
   expect(screen.queryByText(CONNECT)).toBeNull();
   expect(screen.queryByText(/Vertex/)).toBeNull();
   await connectKey();

@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -10,6 +16,7 @@ import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SignIn } from "./auth";
 import { SavedApiKey } from "../../features/settings/SavedApiKey";
 import type { ClaudeSetup } from "./setup";
+import { SIGN_IN_AGAIN } from "./sign-in";
 
 export type ClaudeConnection = {
   open: boolean;
@@ -42,6 +49,10 @@ export function ClaudeSettings({
   clearKey(): Promise<void>;
   connection?: ClaudeConnection | undefined;
 }) {
+  const signInRequired = useSyncExternalStore(
+    setup.subscribe,
+    () => setup.snapshot().signInRequired,
+  );
   const [configured, setConfigured] = useState<boolean>();
   const [own, setOwn] = useState<Credentials["own"]>();
   const [checking, setChecking] = useState(true);
@@ -154,12 +165,23 @@ export function ClaudeSettings({
         id="claude-settings-title"
         title="Claude"
         subtitle={
-          configured === false && !own && !checking && !readError
-            ? connect
-            : "Manage Claude’s credentials on this computer."
+          checking || readError
+            ? "Manage Claude’s credentials on this computer."
+            : own && configured
+              ? "Buzz uses your existing Claude setup. Protected agents and security reviews use the saved API key."
+              : own
+                ? "Buzz uses your existing Claude setup."
+                : configured
+                  ? "Buzz uses the saved Anthropic API key."
+                  : connect
         }
       />
       <div className="mt-section-gap grid gap-section-gap">
+        {signInRequired && (
+          <p role="status" className="m-0 text-body-sm text-secondary">
+            {SIGN_IN_AGAIN}
+          </p>
+        )}
         <LoadingRegion
           pending={checking}
           label="Checking for a saved key…"

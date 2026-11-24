@@ -27,6 +27,7 @@ import {
 } from "../../shared/design-system/icons";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
+import { Button } from "../../shared/design-system/ui/Button";
 import type { RelaySession } from "../relay/session";
 import {
   fullSession,
@@ -98,6 +99,7 @@ export function MessageLink({
   interactive = true,
   channelPrivate = false,
   channelSolo = false,
+  settingsAction,
 }: {
   url: string;
   children?: ReactNode;
@@ -114,6 +116,7 @@ export function MessageLink({
   channelPrivate?: boolean;
   /** The joined list holds the destination as a Solo chat, confirmed or not. */
   channelSolo?: boolean;
+  settingsAction?: boolean | undefined;
 }) {
   const active = useConversationPresentation();
   const renderers = useSyncExternalStore(
@@ -337,7 +340,7 @@ export function MessageLink({
     const Content = entry?.component;
     const content = Content ? <Content url={url} /> : (shown ?? display ?? url);
     // Selection copy reads the authored label; empty marks a raw destination.
-    const element = interactive ? (
+    const anchor = (
       <a
         ref={trigger}
         href={url}
@@ -363,6 +366,15 @@ export function MessageLink({
       >
         {content}
       </a>
+    );
+    const element = interactive ? (
+      settingsAction && !entry ? (
+        <Button size="sm" nativeButton={false} role="link" render={anchor}>
+          {content}
+        </Button>
+      ) : (
+        anchor
+      )
     ) : (
       <span className={entry?.className} data-link-renderer={entry?.key}>
         {content}

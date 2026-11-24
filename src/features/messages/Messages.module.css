@@ -3210,7 +3210,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   margin: 0;
 }
 /* Links take the bubble's paired link ink; mentions keep their own tint. */
-.messageBubble .text a {
+.messageBubble .text a:not([data-buzz-ui]) {
   --link-text: var(--message-link);
   --link-hover: transparent;
   --link-focus: currentColor;

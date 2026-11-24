@@ -9,6 +9,7 @@ import { type ComponentType, createElement } from "react";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
 import { withProviderWords } from "../../features/agents/failure-words";
+import { expiredSignIn } from "./sign-in";
 import { refusedByBuzz } from "./auth";
 import type { PluginModule } from "../../plugins/api";
 import { ClaudeLogoIcon } from "../../shared/design-system/icons";
@@ -208,10 +209,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const settingsLink = `buzz://settings?${new URLSearchParams(destination)}`;
   const openSetup = () =>
     void ctx.navigation.open({ version: 1, kind: "settings", ...destination });
+  runtime.observeLocalTurn = (turn, ordinary) =>
+    setup.observeTurn(turn, ordinary);
   // Failed turns' reports link to the same place, then quote Claude. Buzz's
   // own refusal to start Claude isn't Claude's words, and the link says it.
   runtime.explain = (error) => {
-    const explained = setup.auth.explainTurn(error, settingsLink);
+    const explained = expiredSignIn(error)
+      ? `Claude needs you to sign in again.\n\n[Open Claude settings](${settingsLink})`
+      : setup.auth.explainTurn(error, settingsLink);
     return explained === error || refusedByBuzz(error)
       ? explained
       : withProviderWords(explained, "Claude", error);

@@ -10,8 +10,15 @@ import type {
   HostResponse,
 } from "../../features/host/service";
 import { ClaudeAuth } from "./auth";
-import { ClaudeProcess, ENV, type ClaudeModel, type Spawn } from "./claude";
+import {
+  ClaudeProcess,
+  ENV,
+  type ClaudeModel,
+  type Settled,
+  type Spawn,
+} from "./claude";
 import { PROCESS_LIMIT, withRoom } from "./sessions";
+import { expiredSignIn } from "./sign-in";
 import script from "./claude.sh?raw";
 import {
   PROTECTED_CLAUDE_ROOT,
@@ -247,6 +254,7 @@ export type SetupState = Readonly<{
   modelsChecking: boolean;
   modelsError: string;
   checking: boolean;
+  signInRequired: boolean;
   running: "install" | "sign-in" | undefined;
   /** The running or last step's output. */
   output: string;
@@ -263,6 +271,7 @@ export class ClaudeSetup {
     modelsChecking: false,
     modelsError: "",
     checking: false,
+    signInRequired: false,
     running: undefined,
     output: "",
     notice: undefined,
@@ -277,6 +286,7 @@ export class ClaudeSetup {
   private modelsLoadedAt: number | undefined;
   /** Cancel was asked for before the running step's process was returned. */
   private cancelled = false;
+  private signInFailure: symbol | undefined;
   /** Releases that failed their test, not downloaded again until restart. */
   private readonly refused = new Set<string>();
   /** Looking for Buzz's copy or downloading one, which deliveries wait for
@@ -327,6 +337,35 @@ export class ClaudeSetup {
   }
   private log(text: string) {
     this.set({ output: (this.state.output + text).slice(-OUTPUT_LIMIT) });
+  }
+
+  /** Local status only knows that credentials exist. A real turn can tell
+   * us their refresh failed. A later turn using the existing setup can
+   * confirm recovery, provided there has been no newer failure. */
+  observeTurn(turn: Promise<Settled>, ordinary: boolean) {
+    const failure = ordinary && this.auth.usesOwnSetup && this.signInFailure;
+    void turn.then(
+      (result) => {
+        if (!result.ok && expiredSignIn(result.error)) {
+          this.signInFailure = Symbol();
+          if (!this.state.signInRequired) this.set({ signInRequired: true });
+        } else if (
+          result.ok &&
+          !result.stopped &&
+          !result.undelivered &&
+          failure &&
+          this.signInFailure === failure
+        ) {
+          this.clearSignInFailure();
+        }
+      },
+      () => undefined,
+    );
+  }
+
+  private clearSignInFailure() {
+    this.signInFailure = undefined;
+    if (this.state.signInRequired) this.set({ signInRequired: false });
   }
 
   async check(refreshModels = false) {
@@ -546,10 +585,14 @@ export class ClaudeSetup {
     this.set({ running: step, ...(asked ? { output: "" } : {}) });
     try {
       if (step === "install") await this.install(spawn);
-      else
-        await this.auth.signIn?.((id, args, label) =>
+      else if (this.auth.signIn) {
+        const failure = this.signInFailure;
+        await this.auth.signIn((id, args, label) =>
           this.step(spawn, id, args, label),
         );
+        if (!this.cancelled && this.signInFailure === failure)
+          this.clearSignInFailure();
+      }
     } catch (error) {
       this.log(`\n${message(error)}`);
     } finally {

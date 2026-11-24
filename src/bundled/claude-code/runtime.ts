@@ -400,6 +400,7 @@ export class ClaudeRuntime {
   /** A failed turn's error as its report says it, such as where to fix
    * Claude's credentials. */
   explain: (error: string) => string = (error) => error;
+  observeLocalTurn?: (turn: Promise<Settled>, ordinary: boolean) => void;
   /** Whether the Usage plugin is on, asked as each one-off turn starts: only
    * then is the turn's key kept with its session, for Usage. */
   usageOn: () => boolean = () => false;
@@ -1640,6 +1641,7 @@ export class ClaudeRuntime {
             wake ? gatewayFallback?.notice : undefined,
           ),
         });
+        this.observeLocalTurn?.(delivered, !entry.protected);
         void delivered.then(
           (result) => {
             if (result.undelivered)

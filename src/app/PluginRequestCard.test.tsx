@@ -55,15 +55,16 @@ function messageFor(requestId: string, author = agentKey) {
   return row;
 }
 
-function harness() {
+function harness(plugins: Catalog["plugins"] = []) {
   const imports = {
     git: vi.fn(async () => preview()),
     checkGit: vi.fn(async () => preview()),
     discard: vi.fn(async () => {}),
   };
+  const currentCatalog: Catalog = { ...catalog, plugins };
   const listeners = new Set<() => void>();
   const snapshot = {
-    configuration: { status: "ready" as const, catalog },
+    configuration: { status: "ready" as const, catalog: currentCatalog },
     busy: false,
     error: null as string | null,
   };
@@ -77,7 +78,7 @@ function harness() {
       return () => listeners.delete(listener);
     },
     requests: createPluginRequests({
-      catalog: () => catalog,
+      catalog: () => currentCatalog,
       imports: imports as never,
       change: vi.fn(),
       error: () => null,
@@ -220,4 +221,33 @@ it("returns keyboard focus to the outcome once an approved review closes", async
   );
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   await waitFor(() => expect(screen.getByRole("status")).toHaveFocus());
+});
+
+it("warns in the in-chat Update review before reloading an enabled plugin", async () => {
+  const { asker, show } = harness([
+    {
+      manifest,
+      source: "external",
+      enabled: true,
+      revision: "old",
+      previous: null,
+      reloadable: false,
+      error: null,
+      updateSource: { repository: BROWSER, reference: "main", path: "." },
+    },
+  ]);
+  const { requestId } = await asker.request({
+    action: "update",
+    id: manifest.id,
+    reason,
+  });
+  show(requestId);
+  fireEvent.click(screen.getByRole("button", { name: "Review Browser" }));
+  const dialog = await screen.findByRole("dialog", { name: "Update Browser" });
+  await within(dialog).findByText(`Commit: ${commit}`);
+  expect(
+    within(dialog).getByText(
+      "Save unfinished forms and stop active plugin workers before you update. Updating an enabled plugin reloads it immediately.",
+    ),
+  ).toBeVisible();
 });

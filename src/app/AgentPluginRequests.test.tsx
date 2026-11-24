@@ -214,6 +214,11 @@ it("reviews a folder update from the plugin's saved folder", async () => {
   await within(dialog).findByText(
     "Edits to the plugin in this folder update live.",
   );
+  expect(
+    within(dialog).getByText(
+      "Save unfinished forms and stop active plugin workers before you update. Updating an enabled plugin reloads it immediately.",
+    ),
+  ).toBeVisible();
   expect(imports.previewFolder).toHaveBeenCalledExactlyOnceWith(
     "example.tasks",
   );
@@ -282,6 +287,11 @@ it("updates at the pinned commit and keeps the plugin's enabled state", async ()
     { commit, path: "tasks" },
   );
   expect(within(dialog).getByText(`Builder: ${reason}`)).toBeVisible();
+  expect(
+    within(dialog).queryByText(
+      /Updating an enabled plugin reloads it immediately/,
+    ),
+  ).toBeNull();
   fireEvent.click(within(dialog).getByRole("button", { name: "Update" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(manager.installImport).toHaveBeenCalledWith("preview", "tasks");

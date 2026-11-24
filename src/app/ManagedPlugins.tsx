@@ -18,7 +18,11 @@ import type {
 } from "../plugins/types";
 import { PluginAccessReview } from "./PluginAccessReview";
 import type { UrlPluginSource } from "../features/navigation/targets";
-import { importLocation, importRollbackWarning } from "./PluginImport";
+import {
+  PLUGIN_UPDATE_WARNING,
+  importLocation,
+  importRollbackWarning,
+} from "./PluginImport";
 import importStyles from "./PluginImport.module.css";
 import styles from "./Settings.module.css";
 
@@ -284,6 +288,24 @@ const entryKey = (entry: ReviewEntry) =>
       ? [entry.folder, entry.path]
       : [entry.repository, entry.reference, entry.commit, entry.path]
   ).join("\n");
+
+function managedReviewDescription(
+  input: Readonly<{
+    ready: boolean;
+    updating: boolean;
+    sameRevision: boolean;
+    bundled: boolean;
+    enabled: boolean;
+    source: string;
+    requestedBy?: Readonly<{ name: string }> | undefined;
+  }>,
+) {
+  if (!input.ready) return undefined;
+  if (!input.updating)
+    return `${input.requestedBy ? `Requested by ${input.requestedBy.name}` : `Recommended by ${input.source}`}. Only install code you trust.`;
+  if (input.bundled || input.sameRevision || !input.enabled) return undefined;
+  return PLUGIN_UPDATE_WARNING;
+}
 
 export function ManagedPluginReview({
   plugins,
@@ -578,11 +600,15 @@ export function ManagedPluginReview({
           `Review ${entry?.id ?? "plugin"}`
         )
       }
-      description={
-        ready && !updating
-          ? `${requestedBy ? `Requested by ${requestedBy.name}` : `Recommended by ${source}`}. Only install code you trust.`
-          : undefined
-      }
+      description={managedReviewDescription({
+        ready,
+        updating,
+        sameRevision,
+        bundled: existing?.source === "bundled",
+        enabled: existing?.enabled === true,
+        source,
+        requestedBy,
+      })}
       size={ready && updating ? "compact" : "wide"}
       preventClose={installing}
       dismissOnOutsideClick

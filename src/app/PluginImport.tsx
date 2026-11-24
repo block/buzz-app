@@ -111,6 +111,9 @@ export function importLocation(
   return `${source}${separator}${path.replaceAll("/", separator)}`;
 }
 
+export const PLUGIN_UPDATE_WARNING =
+  "Save unfinished forms and stop active plugin workers before you update. Updating an enabled plugin reloads it immediately.";
+
 export function importRollbackWarning(
   candidate: { publisher?: string | null; revision: string } | undefined,
   existing: PluginInfo | undefined,
@@ -1180,7 +1183,7 @@ export function PluginImport({
         }
         description={
           updateAction
-            ? "Save unfinished forms and stop active plugin workers before you update. Updating an enabled plugin reloads it immediately."
+            ? PLUGIN_UPDATE_WARNING
             : error || showUnchanged
               ? undefined
               : preview

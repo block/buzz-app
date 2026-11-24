@@ -44,6 +44,11 @@ import type {
 } from "../host/service";
 import { spawnAgentCommand } from "./command";
 import { bundledAttention } from "./attention-command";
+import { nativeToolAllowed } from "./tool-access";
+
+/** Command watches run a process, which only roles with Shell may. */
+export const ATTENTION_COMMAND_DISABLED =
+  "Shell is disabled by this agent's Tools setting, so it can't run Attention commands.";
 import {
   CHAT_KINDS,
   interestPaused,
@@ -4849,6 +4854,9 @@ export class AgentsService extends Service implements Agents {
                     : { root: options.root }),
               },
               message,
+              this.addedTools.snapshot(),
+              {},
+              this.agent(key)?.config,
             );
         },
         options.signal,
@@ -4874,6 +4882,9 @@ export class AgentsService extends Service implements Agents {
         throw new Error(
           "Protected agents cannot run external Attention commands until that execution path supports complete protection",
         );
+      const runsCommands = () =>
+        nativeToolAllowed("native:shell", this.agent(key)?.config);
+      if (!runsCommands()) throw new Error(ATTENTION_COMMAND_DISABLED);
       const connectionSource = ownerReads(this.relay(key), pubkeyOf(key));
       if (!connectionSource)
         throw new Error("The agent's community is not connected");
@@ -4909,6 +4920,7 @@ export class AgentsService extends Service implements Agents {
               throw new Error(
                 "This agent can no longer run the Attention command",
               );
+            if (!runsCommands()) throw new Error(ATTENTION_COMMAND_DISABLED);
             if (
               ownerReads(this.relay(key), pubkeyOf(key))?.connection !==
               connectionSource.connection

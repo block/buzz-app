@@ -178,8 +178,10 @@ export class AgentProcess {
    * agent's role once that role restricts any tool, failing its sessions
    * before another tool call; the next start refuses to run unisolated. */
   enforce() {
-    if (this.current && !this.current.isolated && this.access?.restricted())
-      this.stop();
+    if (!this.access?.restricted()) return;
+    for (const start of this.starts)
+      if (!start.isolated)
+        void start.ready.then((goose) => goose.kill()).catch(() => undefined);
   }
   /** Stops it, failing every session in it. */
   stop() {

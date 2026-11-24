@@ -2049,3 +2049,40 @@ describe("goose-root", () => {
     expect(existsSync(join(root, "config", "permission.yaml"))).toBe(false);
   });
 });
+
+describe("AgentProcess enforcement across workers", () => {
+  it("stops a replaced unisolated worker still serving a session once the role tightens", async () => {
+    const fake = fakeSpawn();
+    let restricted = false;
+    let rooted = false;
+    let limit = 1;
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => limit,
+      {
+        root: async () =>
+          rooted
+            ? { root: "/data/goose-agents/a", permissions: "/c/p.yaml" }
+            : undefined,
+        restricted: () => restricted,
+        permits: async () => true,
+      },
+    );
+    await process.get();
+    rooted = true;
+    limit = 2;
+    await process.get();
+    expect(fake.geese).toHaveLength(2);
+    expect(fake.geese[0]?.env.GOOSE_PATH_ROOT).toBeUndefined();
+    expect(fake.geese[1]?.env.GOOSE_PATH_ROOT).toBe("/data/goose-agents/a");
+    restricted = true;
+    process.enforce();
+    await flush(20);
+    expect(fake.geese[0]?.killed).toBe(true);
+    expect(fake.geese[1]?.killed).toBe(false);
+    await process.shutdown();
+  });
+});

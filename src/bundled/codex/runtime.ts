@@ -130,6 +130,10 @@ import {
   type ToolConfig,
   toolPolicyKey,
 } from "../../features/agents/tool-access";
+
+/** Why a restricted Codex agent doesn't run where its role can't be checked. */
+export const CODEX_UNENFORCEABLE =
+  "Codex's native hooks are off for this agent, so Buzz can't enforce its Tools role. Turn Codex hooks on, or choose the Coder role.";
 import { buzzHome } from "./setup";
 import {
   contextText,
@@ -569,6 +573,8 @@ export class CodexRuntime {
   private entries = new Map<AgentKey, Entry>();
   /** Each agent's tool access as the owner last saved it. */
   private access = new Map<AgentKey, ToolConfig>();
+  /** Agents with a thread that runs without the native role hook. */
+  private unhooked = new Set<AgentKey>();
   private actions = new Map<
     AgentKey,
     Set<{ abort: AbortController; done: Promise<void> }>
@@ -1390,6 +1396,18 @@ export class CodexRuntime {
     this.access = new Map(
       agents.map((agent) => [agent.key, pickToolConfig(agent.config)]),
     );
+    // A thread without the hook would keep the tools a tighter role removes.
+    for (const agent of this.unhooked)
+      if (toolPolicyKey(this.access.get(agent))) {
+        this.unhooked.delete(agent);
+        void this.retire(agent).catch((error) =>
+          console.error(
+            "Codex could not stop an unenforced agent",
+            agent,
+            error,
+          ),
+        );
+      }
     const present = new Set(agents.map((agent) => agent.key));
     const held = new Set([
       ...this.entries.keys(),
@@ -3987,6 +4005,12 @@ export class CodexRuntime {
         : undefined;
     const hookAdapter =
       !disabled && this.ordinary(rpc) ? this.hooks : undefined;
+    // Without the hook nothing checks native tool calls against the role.
+    if (!hookAdapter) {
+      if (toolPolicyKey(this.access.get(agent.key) ?? settings))
+        throw new Error(CODEX_UNENFORCEABLE);
+      this.unhooked.add(agent.key);
+    }
     const bridge = hookAdapter
       ? await openHookBridge(hookAdapter.serve, (session, event, input) =>
           hookAdapter.run(agent.key, session, event, input),

@@ -24692,6 +24692,29 @@ it("refuses external Attention commands for a protected agent before process or 
   expect(serveMcp).not.toHaveBeenCalled();
 });
 
+it("refuses Attention commands for a role without Shell before process or MCP launch", async () => {
+  const f = await setup({ identities: [echo] });
+  await vi.waitFor(() => expect(f.service.snapshot().running).toHaveLength(1));
+  await f.service.save(bot, { config: { toolPreset: "super-agent" } });
+  const spawn = vi.fn();
+  const serveMcp = vi.fn();
+  f.ctx.provide("host", {
+    spawn,
+    serveMcp,
+  } as unknown as import("../host/service").Host);
+  const consumer = f.ctx.extend({
+    pluginOwner: { id: "consumer", revision: "one" },
+  });
+  await expect(
+    sourceCommand(f.service, consumer, {
+      signal: new AbortController().signal,
+      channel,
+    }),
+  ).rejects.toThrow("Shell is disabled by this agent's Tools setting");
+  expect(spawn).not.toHaveBeenCalled();
+  expect(serveMcp).not.toHaveBeenCalled();
+});
+
 it("keeps owned protection settings visible while the selected community reconnects", async () => {
   const f = await setup({ protection: true });
   const protectionDefaults = vi.fn(async () => ({

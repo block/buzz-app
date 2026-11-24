@@ -2,6 +2,13 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { selectProfiles } from "../../features/relay/profile-selection";
+import {
+  conversationOthers,
+  conversationPeople,
+  identityProfileLimit,
+  isSoloConversation,
+  openToPosting,
+} from "../../features/relay/conversation-people";
 import { avatarMedia } from "../../shared/avatar-source";
 import {
   ChatCircleIcon,
@@ -14,16 +21,14 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import styles from "./Channels.module.css";
 
-type Presence = "online" | "away" | "offline" | undefined;
+export {
+  conversationOthers,
+  conversationPeople,
+  isSoloConversation,
+  openToPosting,
+};
 
-/** Everyone in a conversation besides you, agents included. */
-export function conversationOthers(
-  channel: Pick<ChannelSummary, "channelType" | "participants" | "members">,
-  viewer: string | undefined,
-): readonly string[] {
-  if (channel.channelType === "dm") return channel.participants ?? none;
-  return channel.members?.filter((key) => key !== viewer) ?? none;
-}
+type Presence = "online" | "away" | "offline" | undefined;
 
 /**
  * Who a conversation's icon shows: its people, the way the relay knows it.
@@ -36,47 +41,6 @@ export function identityMembers(
 ): readonly string[] {
   const people = others.filter((key) => !profiles.get(key)?.isAgent);
   return people.length ? people : others;
-}
-
-/** Past this many others, every member counts as a person; telling its
- * agents apart isn't worth loading every member's profile. */
-const identityProfileLimit = 32;
-
-/** The people in a conversation besides you: agents never count, and a
- * member whose profile hasn't loaded counts as a person. */
-export function conversationPeople(
-  others: readonly string[],
-  profiles: ReadonlyMap<string, Profile>,
-): readonly string[] {
-  return others.length <= identityProfileLimit
-    ? others.filter((key) => !profiles.get(key)?.isAgent)
-    : others;
-}
-
-/** Whether anyone in the community can join and post: Public, not View
- * only. The relay admits Members unless it says Guest. */
-export function openToPosting(
-  channel: Pick<ChannelSummary, "visibility" | "joinRole">,
-) {
-  return channel.visibility === "public" && channel.joinRole !== "guest";
-}
-
-/** A named conversation only you and your agents can post in: no people
- * besides you, and not Public. Without its roster, a Solo chat you started
- * counts. */
-export function isSoloConversation(
-  channel: ChannelSummary,
-  viewer: string | undefined,
-  profiles: ReadonlyMap<string, Profile>,
-) {
-  if (channel.channelType === "dm" || openToPosting(channel)) return false;
-  if (!channel.members?.length)
-    return channel.channelType === "solo" && channel.creator === viewer;
-  return (
-    !!viewer &&
-    channel.members.includes(viewer) &&
-    !conversationPeople(conversationOthers(channel, viewer), profiles).length
-  );
 }
 
 /** What a named conversation's icon says: whether anyone besides you (not
@@ -374,4 +338,3 @@ const noSelection = {
   snapshot: () => noProfiles,
   subscribe: () => () => {},
 };
-const none: readonly never[] = [];

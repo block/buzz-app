@@ -7397,7 +7397,7 @@ it.each(["plugin", "attention"] as const)(
     const input = JSON.stringify(f.starts()[0]?.params);
     if (type === "attention") {
       expect(input).not.toContain("<plugin-wake");
-      expect(input).not.toContain("continuous personal chat");
+      expect(input).not.toContain("Replies here stay at the channel top level");
       expect(input).toContain("unless the Interest instructions");
       expect(input).toContain("top-level");
       expect(input).not.toContain(WAKE_ID);

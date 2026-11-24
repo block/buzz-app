@@ -5,6 +5,7 @@ pub(crate) mod agent;
 pub(crate) mod assertion;
 pub(crate) mod config;
 mod customers;
+mod endings;
 pub(crate) mod protocol;
 pub(crate) mod socket;
 pub(crate) mod store;
@@ -77,6 +78,29 @@ pub(crate) struct Snapshot {
     /// clock, in seconds, when far enough off to suggest this clock is wrong
     /// (`protocol::clock_offset`). The refusal itself is reported unchanged.
     clock_offset: Option<i64>,
+    /// Why the latest sign-ins ended, and when, newest last (`endings.rs`).
+    endings: Vec<endings::Ending>,
+}
+
+impl Snapshot {
+    /// A saved sign-in this device could not check just now: the issuer,
+    /// the network, the clock or secure storage did not answer, and nothing
+    /// said the session ended. The next restore checks again, after a short
+    /// cooldown when the network failed.
+    fn unconfirmed(&self) -> bool {
+        self.status == Status::Unavailable
+            && !self.cleanup
+            && matches!(
+                self.failure,
+                Some(
+                    "network-unavailable"
+                        | "network-timeout"
+                        | "clock-unavailable"
+                        | "storage-unavailable"
+                        | "storage-busy"
+                )
+            )
+    }
 }
 
 // No Debug, no IPC serialization. Only the secure store serializes this record.
@@ -196,6 +220,9 @@ struct Inner {
     on_peer: Mutex<Vec<OnPeer>>,
     /// Where `State::force_login` is kept, so a restart still asks.
     signed_out: Option<std::path::PathBuf>,
+    /// Where `Snapshot::endings` is kept. Copies of this profile share it;
+    /// the latest to write it wins.
+    endings: Option<std::path::PathBuf>,
     /// Each detached logout `revoke` started, so tests can wait for it.
     #[cfg(test)]
     revocations: Mutex<Vec<tauri::async_runtime::JoinHandle<()>>>,
@@ -301,6 +328,10 @@ impl FederatedIdentity {
         signed_out: Option<std::path::PathBuf>,
     ) -> Self {
         let force_login = signed_out.as_deref().is_some_and(std::path::Path::exists);
+        // Beside the sign-out mark: `{account}.endings`.
+        let endings = signed_out
+            .as_deref()
+            .map(|path| path.with_extension("endings"));
         let snapshot = Snapshot {
             status: if config.is_some() {
                 Status::Restoring
@@ -323,6 +354,7 @@ impl FederatedIdentity {
             cleanup: false,
             renewing: false,
             clock_offset: None,
+            endings: endings::load(endings.as_deref()),
         };
         let (changes, _) = watch::channel(snapshot.clone());
         let (account_changes, _) = watch::channel(None);
@@ -360,6 +392,7 @@ impl FederatedIdentity {
             derived: Mutex::default(),
             on_peer: Mutex::default(),
             signed_out,
+            endings,
             #[cfg(test)]
             revocations: Mutex::default(),
             #[cfg(test)]
@@ -497,6 +530,25 @@ impl FederatedIdentity {
     }
     fn publish(&self, state: &State) {
         self.0.changes.send_replace(state.snapshot.clone());
+    }
+    /// Notes why the sign-in ended, in the state lock so copies' entries
+    /// keep their order. The caller publishes. Codes and a time only.
+    fn note_ending(
+        &self,
+        state: &mut State,
+        reason: endings::Reason,
+        failure: Option<&'static str>,
+    ) {
+        let Ok(at) = now() else {
+            return;
+        };
+        endings::push(
+            &mut state.snapshot.endings,
+            self.0.endings.as_deref(),
+            at,
+            reason,
+            failure,
+        );
     }
     /// Records the clock offset the latest refusal's response suggested, or
     /// clears it after an answer that suggested none.
@@ -852,6 +904,11 @@ impl FederatedIdentity {
                 return;
             }
             self.signal(SessionChange::Expired);
+            self.note_ending(
+                &mut state,
+                endings::Reason::EndedByServer,
+                Some(failure.code),
+            );
             self.retire_state(
                 &mut state,
                 Status::ReauthenticationRequired,
@@ -887,6 +944,7 @@ impl FederatedIdentity {
             });
             let session = if expired {
                 self.signal(SessionChange::Expired);
+                self.note_ending(&mut state, endings::Reason::Expired, None);
                 self.retire_state(
                     &mut state,
                     Status::ReauthenticationRequired,
@@ -915,6 +973,8 @@ impl FederatedIdentity {
             }
         }
         self.change_current(&revision, Status::Restoring, None);
+        // Why a stored session was not restored, for `Snapshot::endings`.
+        let mut ended = None;
         let result = async {
             let (raw, refusal) = self.storage(|store| store.load()).await?;
             let Some(raw) = raw else {
@@ -942,8 +1002,19 @@ impl FederatedIdentity {
             });
             if refused {
                 self.remove(session).await?;
+                ended = Some(endings::Reason::SignedOutElsewhere);
                 return Ok(None);
             }
+            ended = Some(
+                if matches!(
+                    (expiry(&session.record.expires_at), now()),
+                    (Ok(expiry), Ok(now)) if expiry <= now
+                ) {
+                    endings::Reason::Expired
+                } else {
+                    endings::Reason::EndedByServer
+                },
+            );
             let checked = self.verify(&session.record).await;
             match checked {
                 Ok(email) => {
@@ -994,10 +1065,20 @@ impl FederatedIdentity {
                 self.install_session(&mut state, session);
                 self.reread_signed_out(&mut state);
             }
-            Ok(None) => state.snapshot.status = Status::SignedOut,
+            Ok(None) => {
+                if ended == Some(endings::Reason::SignedOutElsewhere) {
+                    self.note_ending(&mut state, endings::Reason::SignedOutElsewhere, None);
+                }
+                state.snapshot.status = Status::SignedOut;
+            }
             Err(failure) => {
                 if failure.session_denied {
                     self.signal(SessionChange::Expired);
+                    if let Some(reason) = ended {
+                        let code =
+                            (reason == endings::Reason::EndedByServer).then_some(failure.code);
+                        self.note_ending(&mut state, reason, code);
+                    }
                 }
                 state.snapshot.status = if failure.session_denied {
                     Status::ReauthenticationRequired
@@ -1005,6 +1086,13 @@ impl FederatedIdentity {
                     Status::Unavailable
                 };
                 state.snapshot.failure = Some(failure.code);
+                if state.snapshot.unconfirmed() {
+                    self.note_ending(
+                        &mut state,
+                        endings::Reason::NotConfirmed,
+                        Some(failure.code),
+                    );
+                }
                 // A failed read or check is not permission to overwrite unknown state.
                 state.restored = failure.session_denied;
             }
@@ -1387,6 +1475,9 @@ impl FederatedIdentity {
             let mut state = self.state();
             if expected.is_some_and(|expected| state.snapshot.revision != expected) {
                 return None;
+            }
+            if state.session.is_some() {
+                self.note_ending(&mut state, endings::Reason::SignedOut, None);
             }
             let session = self.retire_state(&mut state, Status::SignedOut, None);
             // In the retirement's lock: no restore can take the new revision

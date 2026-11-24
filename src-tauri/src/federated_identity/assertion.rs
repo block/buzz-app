@@ -119,6 +119,10 @@ pub(crate) struct Assertion {
 /// The sign-in reason a request carries when this device has no sign-in for a
 /// community that needs one; relay.rs reports it as that community's refusal.
 pub(crate) const SIGNED_OUT: &str = "Federated sign-in is required";
+/// A request's failure while this device holds a saved sign-in it could not
+/// check just now (`Snapshot::unconfirmed`). `errors.ts` retries it; the
+/// relay never sees the request, so it is not a community refusal.
+pub(crate) const UNCONFIRMED: &str = "Saved sign-in could not be confirmed";
 #[derive(Clone)]
 pub(crate) struct Authorization {
     pub(crate) assertion: Option<Assertion>,
@@ -515,6 +519,13 @@ impl FederatedIdentity {
                 })
         };
         let Some((revision, session, cancel)) = signed_in else {
+            // A saved sign-in that this device could not check just now is
+            // not a sign-out: sending without a token would only earn the
+            // relay's sign-in refusal and blank the community. Fail the
+            // request as retryable instead; the next try checks again.
+            if self.state().snapshot.unconfirmed() {
+                return Err(UNCONFIRMED.into());
+            }
             authorization.unsigned = Some(SIGNED_OUT);
             return Ok(authorization);
         };
@@ -598,6 +609,11 @@ impl FederatedIdentity {
                     if !state.closed && state.snapshot.revision == revision {
                         if failure.session_denied {
                             self.signal(super::SessionChange::Expired);
+                            self.note_ending(
+                                &mut state,
+                                super::endings::Reason::EndedByServer,
+                                Some(failure.code),
+                            );
                             let retired = self.retire_state(
                                 &mut state,
                                 Status::ReauthenticationRequired,
@@ -2316,5 +2332,105 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(dispatched.load(Ordering::SeqCst), 1);
+    }
+    /// A saved sign-in the issuer could not be asked about is not a
+    /// sign-out: the request fails as retryable, never goes without a token
+    /// (which the relay would refuse and the window would show as signed
+    /// out), and a later restore signs in without the browser.
+    #[tokio::test]
+    async fn a_saved_sign_in_that_could_not_be_checked_holds_the_request_then_recovers() {
+        use super::super::endings::Reason;
+        use super::super::tests::{adapter_with_status, at_adapter, record, Memory};
+        let store = Arc::new(Memory::default());
+        let session = record();
+        *store.raw.lock().unwrap() = Some(session.raw.clone());
+        let mut replies = vec![(503, serde_json::json!({"error": "unavailable"})); 3];
+        replies.push((
+            200,
+            serde_json::json!({"expires_at": "2099-01-01T00:00:00Z", "email": null}),
+        ));
+        let (base, server) = adapter_with_status(replies).await;
+        let host = at_adapter(store.clone(), base);
+        host.discovered("wss://relay.example", true);
+        let identity = IdentityHost::fixture();
+        let url = Url::parse("https://relay.example/events").unwrap();
+        let held = host.assertion_for_relay(&identity, &url).await;
+        assert_eq!(held.err().as_deref(), Some(UNCONFIRMED));
+        let snapshot = host.snapshot();
+        assert!(snapshot.status == Status::Unavailable);
+        assert_eq!(snapshot.failure, Some("network-unavailable"));
+        let ending = snapshot.endings.last().unwrap();
+        assert_eq!(ending.reason, Reason::NotConfirmed);
+        assert_eq!(ending.failure.as_deref(), Some("network-unavailable"));
+        // The saved session stays; nothing asked to sign in again.
+        assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*session.raw));
+        // Within the restore cooldown the next request is held as well.
+        assert_eq!(
+            host.assertion_for_relay(&identity, &url)
+                .await
+                .err()
+                .as_deref(),
+            Some(UNCONFIRMED)
+        );
+        host.state().restore_retry_at = None;
+        let restored = host.restore().await;
+        assert!(restored.status == Status::SignedIn);
+        assert_eq!(restored.revision, session.record.revision);
+        assert_eq!(restored.endings.len(), 1);
+        server.await.unwrap();
+    }
+    /// A session past its fixed lifetime still signs out: the request goes
+    /// unsigned, so the relay's refusal reads as sign-in required.
+    #[tokio::test]
+    async fn an_expired_session_still_signs_out_and_says_why() {
+        use super::super::endings::Reason;
+        use super::super::tests::{host, record, Memory};
+        let store = Arc::new(Memory::default());
+        let mut expired = record();
+        let session = Arc::get_mut(&mut expired).unwrap();
+        session.record.expires_at = "2000-01-01T00:00:00Z".into();
+        session.raw = zeroize::Zeroizing::new(serde_json::to_vec(&session.record).unwrap());
+        *store.raw.lock().unwrap() = Some(session.raw.clone());
+        let host = host(store.clone());
+        {
+            let mut state = host.state();
+            state.session = Some(expired);
+            state.snapshot.status = Status::SignedIn;
+            state.restored = true;
+        }
+        host.discovered("wss://relay.example", true);
+        let identity = IdentityHost::fixture();
+        let url = Url::parse("https://relay.example/events").unwrap();
+        let unsigned = host.assertion_for_relay(&identity, &url).await.unwrap();
+        assert!(unsigned.assertion.is_none());
+        assert_eq!(unsigned.refusal(401), Some(SIGNED_OUT));
+        let snapshot = host.snapshot();
+        assert!(snapshot.status == Status::ReauthenticationRequired);
+        assert_eq!(snapshot.endings.last().unwrap().reason, Reason::Expired);
+        assert!(store.raw.lock().unwrap().is_none());
+    }
+    /// The issuer ending the session still signs out, whatever this device
+    /// last saw, and the ending names the server.
+    #[tokio::test]
+    async fn a_session_the_server_ended_still_signs_out_and_says_why() {
+        use super::super::endings::Reason;
+        use super::super::tests::{adapter_with_status, at_adapter, record, Memory};
+        let store = Arc::new(Memory::default());
+        *store.raw.lock().unwrap() = Some(record().raw.clone());
+        let (base, server) =
+            adapter_with_status(vec![(401, serde_json::json!({"error": "session_expired"}))]).await;
+        let host = at_adapter(store.clone(), base);
+        host.discovered("wss://relay.example", true);
+        let identity = IdentityHost::fixture();
+        let url = Url::parse("https://relay.example/events").unwrap();
+        let unsigned = host.assertion_for_relay(&identity, &url).await.unwrap();
+        assert_eq!(unsigned.refusal(401), Some(SIGNED_OUT));
+        let snapshot = host.snapshot();
+        assert!(snapshot.status == Status::ReauthenticationRequired);
+        let ending = snapshot.endings.last().unwrap();
+        assert_eq!(ending.reason, Reason::EndedByServer);
+        assert_eq!(ending.failure.as_deref(), Some("reauthentication-required"));
+        assert!(store.raw.lock().unwrap().is_none());
+        server.await.unwrap();
     }
 }

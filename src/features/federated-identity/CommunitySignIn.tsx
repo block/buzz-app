@@ -491,6 +491,31 @@ function SwitchProgress({
 }
 
 const noSubscription = () => () => {};
+/** The communities and sessions where Sign in again already checked the
+ * saved sign-in once, per server's session (`checkSavedSignIn`). */
+const checkedAgain = new WeakMap<FederatedIdentity, Set<string>>();
+/** A sign-in refusal while Buzz still holds a saved sign-in can come from a
+ * request Buzz sent without it, as when the sign-in server was briefly out of
+ * reach. The first Sign in again for that community and session asks the
+ * server once more and retries, without the browser: the server still decides,
+ * and a session that ended is signed out. True when it checked; after that,
+ * Sign in again signs out and opens the browser. */
+function checkSavedSignIn(
+  identity: FederatedIdentity,
+  revision: string,
+  relay: string | undefined,
+  retry: () => void,
+) {
+  const key = `${relay ?? ""} ${revision}`;
+  const checked = checkedAgain.get(identity) ?? new Set<string>();
+  checkedAgain.set(identity, checked);
+  if (checked.has(key)) return false;
+  checked.add(key);
+  void Promise.resolve(relay ? identity.askAgain?.(relay) : undefined)
+    .catch(() => {})
+    .then(retry);
+  return true;
+}
 const NO_ACCESS = "You don’t have access to this community";
 const SIGN_IN = "Sign in to open this community";
 /** What a page that the refusal left empty says; its notice says what fixes it. */
@@ -573,11 +598,16 @@ export function CommunityRefusalNotice({
         />
       )}
       <Button
-        onClick={() =>
+        onClick={() => {
+          if (
+            refusal === "sign-in" &&
+            checkSavedSignIn(identity, state.revision, relay, retry)
+          )
+            return;
           setSwitching(
             runSwitch(identity, authority, "sign-out", setSwitching, retry),
-          )
-        }
+          );
+        }}
       >
         {refusal === "sign-in" ? "Sign in again" : "Switch account"}
       </Button>

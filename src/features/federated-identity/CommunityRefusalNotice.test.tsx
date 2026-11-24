@@ -71,18 +71,26 @@ it("asks an expired sign-in the same way, and a sign-in in progress can be cance
 
 // The relay rejected evidence from a session Buzz still holds: signing in
 // again means signing out of that server first, whatever its status says.
-it("signs in again when the refused session still looks signed in", async () => {
+it("checks a saved sign-in once before signing in again", async () => {
   const h = federatedFixture();
   h.publish({ status: "signed-in", email: "a@example.com" });
   const retry = mount("sign-in", h.service);
   const dialog = await notice("Sign in to open this community");
   expect(buttons(dialog)).toEqual(["Sign in again"]);
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Sign in again" }));
+  const user = userEvent.setup();
+  // The refusal may be a request sent without the saved sign-in: ask the
+  // server again and retry, without signing out or opening the browser.
+  await user.click(screen.getByRole("button", { name: "Sign in again" }));
   await waitFor(() => expect(retry).toHaveBeenCalledOnce());
+  expect(h.service.askAgain).toHaveBeenCalledWith("wss://relay.example");
+  expect(h.service.signOut).not.toHaveBeenCalled();
+  expect(h.service.signIn).not.toHaveBeenCalled();
+  // Refused again with the same session: now it signs out and in.
+  await user.click(screen.getByRole("button", { name: "Sign in again" }));
+  await waitFor(() => expect(retry).toHaveBeenCalledTimes(2));
   expect(h.service.signOut).toHaveBeenCalledOnce();
   expect(h.service.signIn).toHaveBeenCalledOnce();
+  expect(h.service.askAgain).toHaveBeenCalledOnce();
 });
 
 it("says plainly when this device has no sign-in for the community", async () => {

@@ -26,6 +26,7 @@ import {
   signInServers,
   type FederatedIdentity,
   type SessionSnapshot,
+  type SignInEnding,
 } from "../features/federated-identity/service";
 import type { Membership } from "../features/communities/service";
 import {
@@ -659,6 +660,47 @@ function needsRenewal(state: SessionSnapshot) {
   );
 }
 
+const ENDING_REASONS: Record<SignInEnding["reason"], string> = {
+  expired: "The sign-in expired",
+  "ended-by-server": "The sign-in server ended it",
+  "signed-out": "You signed out",
+  "signed-out-elsewhere": "Signed out in another copy of Buzz",
+  "not-confirmed": "Couldn’t check the saved sign-in, so Buzz kept it",
+};
+
+/** Why this host's latest sign-ins ended, newest first, so a sign-in
+ * prompt has a visible cause. */
+function SignInEndings({
+  endings = [],
+}: {
+  endings?: readonly SignInEnding[] | undefined;
+}) {
+  if (endings.length === 0) return null;
+  return (
+    <section aria-label="Recent sign-in endings" className="grid gap-1">
+      <p className="m-0 text-caption text-secondary">
+        Why recent sign-ins ended
+      </p>
+      <ul className="m-0 grid gap-0.5 p-0 list-none">
+        {[...endings].reverse().map((ending) => (
+          <li
+            key={`${ending.at} ${ending.reason}`}
+            className="text-caption text-subtle"
+          >
+            {new Date(ending.at).toLocaleString(undefined, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
+            {": "}
+            {ENDING_REASONS[ending.reason] ?? ending.reason}
+            {ending.failure && ` (${ending.failure})`}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** One host and its current sign-in, with its actions and endnote below. */
 function AccountCard({
   state,
@@ -750,6 +792,7 @@ function AccountCard({
             })}
           </p>
         )}
+        <SignInEndings endings={state.endings} />
         {communities.length > 0 && (
           <section
             aria-label="Saved communities for this host"

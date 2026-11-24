@@ -45,6 +45,7 @@ const NATIVE_TRANSIENT = new Set([
   "Relay request could not be confirmed",
   "Relay response was interrupted",
   "Community discovery failed",
+  "Saved sign-in could not be confirmed",
   "network-unavailable",
   "network-timeout",
 ]);

@@ -280,6 +280,34 @@ it("shows the organization account and signs out of it once", async () => {
   expect(await screen.findByRole("button", { name: "Sign in" })).toBeVisible();
 });
 
+it("says why recent sign-ins ended, newest first", () => {
+  const h = federatedFixture();
+  h.publish({
+    status: "reauthentication-required",
+    failure: "reauthentication-required",
+    endings: [
+      {
+        at: "2026-01-02T08:00:00Z",
+        reason: "not-confirmed",
+        failure: "network-timeout",
+      },
+      { at: "2026-01-03T09:00:00Z", reason: "expired", failure: null },
+    ],
+  });
+  render(<IdentitySettings viewer={viewer} federatedIdentity={h.service} />, {
+    wrapper: ToastProvider,
+  });
+  const endings = within(
+    screen.getByRole("region", { name: "Recent sign-in endings" }),
+  ).getAllByRole("listitem");
+  expect(endings.map((ending) => ending.textContent)).toEqual([
+    expect.stringMatching(/: The sign-in expired$/),
+    expect.stringMatching(
+      /: Couldn’t check the saved sign-in, so Buzz kept it \(network-timeout\)$/,
+    ),
+  ]);
+});
+
 it("only shows renewal and expiry within seven days, with the default caret and guarded sign-out", async () => {
   const h = federatedFixture();
   const now = Date.now();

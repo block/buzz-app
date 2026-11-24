@@ -152,5 +152,5 @@
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
   font-weight: var(--type-weight-normal);
-  color: var(--text-metadata);
+  color: var(--text-quiet-control);
 }

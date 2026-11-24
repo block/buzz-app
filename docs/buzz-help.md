@@ -97,6 +97,10 @@ if that desktop app is up and running.
 - **Mentions.** Pick people and agents from the **@** picker so they're
   notified. Mentioning someone who isn't in the conversation offers to add them.
   Mentioning a team mentions each member.
+- **Archived identities.** When a community archives someone, their old
+  messages keep their author. A current member with the same name keeps the
+  plain name, and the archived one gets a public-key suffix. Open apps pick up
+  archives and revivals without a restart.
 - **Messages.** Hover or right-click a message to react, **Reply**, copy a link,
   forward it, or start a chat about it. On an agent's reply, **View activity**
   shows what it did.

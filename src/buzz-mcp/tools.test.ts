@@ -584,6 +584,125 @@ it("refuses to post a name it cannot resolve unless told who it means", async ()
   expect(published[0]?.tags).toContainEqual(["p", bob]);
 });
 
+it("skips known-archived namesakes for @Name; explicit archived keys are refused", async () => {
+  const relay = keypair();
+  const retired = "d".repeat(64);
+  const archives = (at: number, keys: readonly string[]) =>
+    eventDto(
+      signed(relay, {
+        kind: 13535,
+        content: "",
+        created_at: at,
+        tags: [["-"], ...keys.map((key) => ["p", key])],
+      }),
+    );
+  const channel = event({
+    kind: 39002,
+    tags: [...members.tags, ["p", retired, "", "member"]],
+  });
+  const { client, published } = fake([
+    channel,
+    profile(alice, "Alice Smith"),
+    profile(bob, "Bob"),
+    profile(retired, "Alice Smith"),
+    profile(me, "Alice"),
+    event({ id: root }),
+    // The latest snapshot decides; a forged one from another key does not.
+    archives(1, []),
+    archives(2, [retired, me]),
+    eventDto(
+      signed(keypair(), {
+        kind: 13535,
+        content: "",
+        created_at: 3,
+        tags: [["-"], ["p", alice]],
+      }),
+    ),
+  ]);
+  const context = { channel: "chan", root };
+  const tagged = { ...client, signingAuthority: relay.pubkey };
+  await callTool(tagged, context, "send", {
+    audience: "everyone",
+    text: "@Alice Smith see this",
+  });
+  expect(published.at(-1)?.tags).toContainEqual(["p", alice]);
+  expect(published.at(-1)?.tags).not.toContainEqual(["p", retired]);
+  // This agent's own name still resolves even if the snapshot lists it, so it
+  // reaches the self-mention refusal rather than being hidden as archived.
+  await expect(
+    callTool(tagged, context, "send", {
+      audience: "everyone",
+      text: "@Alice hi",
+    }),
+  ).rejects.toThrow("Self-mentions do not wake your other sessions");
+  // Exact keys and npub links still resolve to an archived member, and the
+  // archive check then refuses the whole post.
+  const before = published.length;
+  await expect(
+    callTool(tagged, context, "send", {
+      audience: "everyone",
+      text: `hello nostr:${npubEncode(retired)}`,
+      mentions: [retired],
+    }),
+  ).rejects.toThrow(
+    `Alice Smith (${retired}) is archived. Nothing was posted.`,
+  );
+  expect(published).toHaveLength(before);
+  // Without a trusted relay key, archive state is unknown and hides no one.
+  await expect(
+    callTool(client, context, "send", {
+      audience: "everyone",
+      text: "@Alice Smith see this",
+    }),
+  ).rejects.toThrow("No single channel member is @alice smith (ambiguous)");
+});
+
+it("never redirects an archived member's longer name to a live shorter one", async () => {
+  const relay = keypair();
+  const retired = "d".repeat(64);
+  const channel = event({
+    kind: 39002,
+    tags: [...members.tags, ["p", retired, "", "member"]],
+  });
+  const { client, published } = fake([
+    channel,
+    profile(alice, "Alex"),
+    profile(bob, "Bob"),
+    profile(retired, "Alex Smith"),
+    profile(me, "Me"),
+    event({ id: root }),
+    eventDto(
+      signed(relay, {
+        kind: 13535,
+        content: "",
+        created_at: 1,
+        tags: [["-"], ["p", retired]],
+      }),
+    ),
+  ]);
+  const context = { channel: "chan", root };
+  const tagged = { ...client, signingAuthority: relay.pubkey };
+  // The archived holder of the longest match is refused, not read as "@Alex",
+  // even beside an explicit recipient.
+  for (const mentions of [undefined, [bob]])
+    await expect(
+      callTool(tagged, context, "send", {
+        audience: "everyone",
+        text: "@Alex Smith hi",
+        ...(mentions ? { mentions } : {}),
+      }),
+    ).rejects.toThrow(
+      `Alex Smith (${retired}) is archived. Nothing was posted.`,
+    );
+  expect(published).toHaveLength(0);
+  // The live short name still resolves.
+  await callTool(tagged, context, "send", {
+    audience: "everyone",
+    text: "@Alex hi",
+  });
+  expect(published.at(-1)?.tags).toContainEqual(["p", alice]);
+});
+
 it("tags a member by the names the relay verified, ahead of names people gave themselves", async () => {
   const relay = keypair();
   // Signed and admitted, as a connection's query returns them.

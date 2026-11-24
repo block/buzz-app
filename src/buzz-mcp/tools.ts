@@ -2951,7 +2951,12 @@ class Tools {
   }
 
   /** Who `content` notifies: `mentions`, `nostr:npub…` links, and `@Name`
-   * for a channel member, as the CLI resolves them. Each must be a member. */
+   * for a channel member, as the CLI resolves them. Each must be a member.
+   * `@Name` skips known-archived members (never this agent itself), so an
+   * archived namesake cannot make a live name ambiguous. A name only archived
+   * members hold, an explicit key or a `nostr:npub…` still resolves to them
+   * here, and `unarchived` then refuses the post. An unreadable archive list
+   * hides no one. */
   async mentions(
     channel: string,
     content: string,
@@ -2966,7 +2971,24 @@ class Tools {
     if (!prose.includes("@") && !keys.size) return [];
     const members = await this.members(channel);
     if (prose.includes("@")) {
-      const byName = await this.aliases(members.map((member) => member.pubkey));
+      const [archived, byName] = await Promise.all([
+        this.archivedIdentities(archiveDeadline()).then(
+          (archived) => archived ?? new Set<string>(),
+        ),
+        this.aliases(members.map((member) => member.pubkey)),
+      ]);
+      // Match the longest name among all holders first, so an archived
+      // "Alex Smith" is never read as a live "Alex" followed by " Smith".
+      // A live holder wins over archived namesakes; a name only archived
+      // members hold resolves to them, so `unarchived` refuses it by name.
+      const live = (holders: ReadonlyMap<string, number> | undefined) => {
+        const kept = new Map(
+          [...(holders ?? [])].filter(
+            ([key]) => key === this.client.pubkey || !archived.has(key),
+          ),
+        );
+        return kept.size ? kept : holders;
+      };
       const longest = [...byName.keys()].sort((a, b) => b.length - a.length);
       const unknown: string[] = [];
       for (const match of prose.matchAll(/(^|\s)@/g)) {
@@ -2978,7 +3000,8 @@ class Tools {
             rest.startsWith(candidate) &&
             /^($|[\s,;.!?:)\]}])/.test(rest.slice(candidate.length)),
         );
-        const found = name ? bestNamed(byName.get(name)) : [];
+        const holders = name ? live(byName.get(name)) : undefined;
+        const found = bestNamed(holders);
         if (found.length === 1) keys.add(found[0] as string);
         else {
           const token = name ?? rest.match(/^[a-z0-9._-]+/)?.[0];

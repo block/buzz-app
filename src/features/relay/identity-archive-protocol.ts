@@ -1,4 +1,6 @@
 import type { EventTemplate } from "nostr-tools";
+import { byteSize } from "./budget.ts";
+import type { RelayEvent } from "./events.ts";
 
 export type IdentityArchiveAction = "archive" | "unarchive";
 const PUBKEY = /^[0-9a-f]{64}$/;
@@ -45,4 +47,29 @@ export function validateArchiveRequestTemplate(event: EventTemplate): void {
         !SIG.test(auth[3] ?? "")))
   )
     throw new Error("Invalid identity archive request");
+}
+
+const MAX_BYTES = 2 * 1024 * 1024;
+/** The archive list of a relay-signed 13535 snapshot, or undefined when the
+ * event is not a valid snapshot from `authority`. */
+export function snapshotArchives(event: RelayEvent, authority: string) {
+  const markers = event.tags.filter(([name]) => name === "-");
+  if (
+    event.kind !== 13535 ||
+    event.pubkey !== authority ||
+    event.content !== "" ||
+    markers.length !== 1 ||
+    markers[0]?.length !== 1 ||
+    byteSize(event) > MAX_BYTES
+  )
+    return undefined;
+  return Object.freeze(
+    [
+      ...new Set(
+        event.tags.flatMap(([name, key]) =>
+          name === "p" && key && PUBKEY.test(key) ? [key] : [],
+        ),
+      ),
+    ].sort(),
+  );
 }

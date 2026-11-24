@@ -1409,3 +1409,38 @@ it.each([
     }
   },
 );
+
+it("saves and runs a caret key WebKit reports as a control character, including an override saved raw", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const user = userEvent.setup();
+  const h = await harness();
+  const webkit = {
+    key: "\u001c",
+    code: "ArrowLeft",
+    keyCode: 37,
+    metaKey: true,
+    shiftKey: true,
+  };
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    await user.click(change("Open Settings"));
+    fireEvent.keyDown(capture("Open Settings"), webkit);
+    expect(h.bindings.resolve("settings")).toEqual([
+      { key: "ArrowLeft", mod: true, shift: true },
+    ]);
+    act(() =>
+      h.bindings.set("settings", { key: "\u001c", mod: true, shift: true }),
+    );
+    expect(fireEvent.keyDown(document.body, webkit)).toBe(false);
+    expect(h.runs.settings).toHaveBeenCalledOnce();
+  } finally {
+    await h.dispose();
+  }
+});

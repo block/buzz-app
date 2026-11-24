@@ -2606,8 +2606,24 @@ export function EditableInput({
               !composing.current &&
               event.keyCode !== 229 &&
               isEmptyForShortcuts()
-            )
+            ) {
+              // History can decline the key: nothing that way, or Back or
+              // Forward rebound. Then a caret key that WebKit reported as a
+              // control character still moves the caret instead of typing it.
+              const named = keyboardKey(event);
+              if (named !== event.key)
+                editor.dom.ownerDocument.defaultView?.addEventListener(
+                  "keydown",
+                  (late) => {
+                    if (late !== event || event.defaultPrevented) return;
+                    event.preventDefault();
+                    syncNativeSelection();
+                    moveCaret(named, event);
+                  },
+                  { once: true },
+                );
               return true;
+            }
             return (
               (event.key === "Enter" || event.key === "Escape") &&
               !event.isComposing &&

@@ -54,6 +54,22 @@ export function keyboardKey(
     CARET_KEYS.get(event.code) ?? CARET_KEYS.get(event.keyCode) ?? event.key
   );
 }
+/** The control character each caret key can be reported as, by that key. */
+const CONTROL_KEYS = new Map<string, string>([
+  ["\u001c", "ArrowLeft"],
+  ["\u001d", "ArrowRight"],
+  ["\u001e", "ArrowUp"],
+  ["\u001f", "ArrowDown"],
+  ["\u0001", "Home"],
+  ["\u0004", "End"],
+  ["\u000b", "PageUp"],
+  ["\u000c", "PageDown"],
+]);
+/** The key a saved binding names. One captured before capture used
+ * `keyboardKey` can hold the control character instead of the caret key. */
+export function bindingKey(key: string) {
+  return CONTROL_KEYS.get(key) ?? key;
+}
 /** Command-Left or Command-Right with no other modifier: the line-edge keys
  * that an empty message composer lends to Back and Forward on macOS. */
 export function isPlainCommandArrow(

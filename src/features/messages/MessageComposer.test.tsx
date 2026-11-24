@@ -19752,3 +19752,21 @@ it("goes back on the control character WebKit can report for Command-Left", asyn
   expect(history.press(h.input(), { key: "\u001c", keyCode: 37 })).toBe(false);
   await history.wentBack();
 });
+
+it.each(["no history that way", "a rebound Back"])(
+  "moves the caret, not history, on a control-character Command arrow with %s",
+  async (reason) => {
+    const history = await composerHistory();
+    const h = mount({ defaultMention: second });
+    const arrow =
+      reason === "a rebound Back"
+        ? { key: "\u001c", keyCode: 37 }
+        : { key: "\u001d", code: "ArrowRight", keyCode: 39 };
+    if (reason === "a rebound Back")
+      history.bindings.set("navigation-back", { key: "u", mod: true });
+    // Taken by the caret handler rather than typed as the control character.
+    expect(history.press(h.input(), arrow)).toBe(false);
+    await history.stayed();
+    expect(h.input()).toHaveValue(`@${second.name} `);
+  },
+);

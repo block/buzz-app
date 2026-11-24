@@ -286,8 +286,8 @@ test("adds relay hits to the index on close, keeps public previews out, and drop
   } finally {
     release();
   }
-  // Older hits (past the live stream's 90 days) wait for the close.
-  expect(corpus.search("draft").total).toBe(0);
+  // The app received these hits, so even one older than 90 days is in.
+  expect(corpus.search("draft").total).toBe(1);
   view.rerender(<Finder open={false} />);
   expect(corpus.search("API").hits[0]?.doc.threadRootId).toBe(root.id);
   expect(corpus.search("").hits.map(({ doc }) => doc.channelId)).toEqual([

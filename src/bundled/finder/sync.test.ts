@@ -444,6 +444,78 @@ test("a reconnect keeps the index and reads only what is newer, then the pages i
   expect(corpus.size).toBe(1201);
 });
 
+test("a reconnect catches read-ahead channels up on what was posted while away", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const events = [
+    ...discovery,
+    ...Array.from({ length: 600 }, (_, n) =>
+      message(author, "crew", `Crew note ${n}`, now - 3600 - n),
+    ),
+  ];
+  const reads: { since?: number; before_id?: string }[] = [];
+  const connect = async () => {
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      async query(filters) {
+        for (const filter of filters)
+          if (filter["#h"]?.[0] === "crew" && filter.kinds?.includes(9))
+            reads.push(filter);
+        return queryEvents(events, filters);
+      },
+    });
+    dispose.push(owner.dispose);
+    await owner.session.channels.ensureList();
+    return owner;
+  };
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const corpus = createCorpus();
+  const state = createFinderState();
+  const run = async () => {
+    const owner = await connect();
+    const sync = startFinderSync({
+      session: owner.session,
+      corpus,
+      state,
+      changed() {},
+      warm: () => ["crew"],
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    sync.dispose();
+    owner.dispose();
+  };
+  await run();
+  expect(reads).toHaveLength(1);
+  expect(corpus.search("away", 50, "crew").total).toBe(0);
+  // This fixture has no live replay, so only Finder's own read finds them.
+  events.push(
+    ...Array.from({ length: 3 }, (_, n) =>
+      message(author, "crew", `Posted while away ${n}`, now + 60),
+    ),
+  );
+  reads.length = 0;
+  await run();
+  expect(reads).toHaveLength(1);
+  expect(reads[0]?.since).toBeGreaterThanOrEqual(now - 300);
+  expect(reads[0]?.before_id).toBeUndefined();
+  expect(corpus.search("away", 50, "crew").total).toBe(3);
+});
+
+test("keeps old messages the app receives; the fill reads only 90 days", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const old = message(author, "crew", "Old quartz", now - 120 * 86_400);
+  const mine = message(viewer, "crew", "My old quartz", now - 120 * 86_400);
+  const { corpus, owner } = await fixture([old, mine]);
+  expect(corpus.search("quartz").total).toBe(0);
+  await owner.session.read([{ ids: [old.id], limit: 1 }]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(corpus.search("quartz").hits.map(({ doc }) => doc.text)).toEqual([
+    "Old quartz",
+  ]);
+});
+
 test("paces every history read, across filters and after a reconnect", async () => {
   // Three chunks of direct messages, each one short page.
   const dms = Array.from({ length: 120 }, (_, n) => `dm${n}`).flatMap((id) => [

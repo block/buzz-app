@@ -45,6 +45,8 @@ export type ChannelSearchStatus = Readonly<{
 
 type ChannelCursor = { until: number; before_id: string };
 type ChannelProgress = {
+  /** When the read of the channel's newest page started. */
+  top?: number;
   cursor?: ChannelCursor;
   complete: boolean;
   opening?: object;
@@ -154,6 +156,13 @@ export function startFinderSync({
   const { signal } = controller;
   const since = Math.floor(Date.now() / 1000) - DAYS * 86_400;
   const { docs, signed, tombstones, cursors, fills, roots, revoked } = state;
+  /** Channels whose newest page an earlier session read: the read-ahead
+   * catches them up from there. */
+  const resumable = new Set(
+    [...cursors].flatMap(([id, progress]) =>
+      progress.top === undefined ? [] : [id],
+    ),
+  );
   const progressOf = (channelId: string) => {
     let progress = cursors.get(channelId);
     if (!progress) {
@@ -260,6 +269,7 @@ export function startFinderSync({
       .catch(() => {})
       .then(async () => {
         if (progress.complete) return;
+        const top = progress.cursor ? undefined : Math.floor(Date.now() / 1000);
         const page = await session.readRemote(
           [
             {
@@ -279,6 +289,7 @@ export function startFinderSync({
         if (oldest)
           progress.cursor = { until: oldest.created_at, before_id: oldest.id };
         progress.complete = page.length < PAGE;
+        if (top !== undefined) progress.top = top;
         take(page, true);
       });
     progress.reading = read;
@@ -467,6 +478,16 @@ export function startFinderSync({
     );
     for (const id of wanted.slice(0, WARM_CHANNELS)) {
       const progress = progressOf(id);
+      // Messages posted while disconnected, beyond what live replay brings.
+      if (resumable.has(id) && progress.top !== undefined) {
+        const started = Math.floor(Date.now() / 1000);
+        await readPages(
+          { kinds: KINDS, "#h": [id] },
+          Math.max(since, progress.top - RESUME_SLACK_S),
+        );
+        progress.top = started;
+        continue;
+      }
       // Read ahead before this reconnect; This channel reads deeper.
       if (progress.cursor) continue;
       for (let n = 0; n < WARM_PAGES && !progress.complete; n++) {
@@ -507,7 +528,8 @@ export function startFinderSync({
       corpus.remove((doc) => gone.has(doc.id));
       publish({});
     }
-    take(events);
+    // The horizon bounds what Finder reads, not what the app delivers.
+    take(events, true);
   };
   const stopLive = live.subscribe(observed);
 

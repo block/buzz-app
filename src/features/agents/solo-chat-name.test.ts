@@ -428,38 +428,108 @@ it("an agent tag without a caption retains the session-card starting title", asy
   ).toBe("Session: Fix");
 });
 
-it("names a chat that still has the title its media-only first message gave it", async () => {
-  const url = `https://relay.example/media/${"d".repeat(64)}.mp4`;
-  const sent = {
-    ...event,
-    content: `@Agent\n\n![video](${url})`,
+// A stored name is its message's source from its start, cut at 80 characters.
+const media = (file: string) =>
+  `https://relay.example/media/${"d".repeat(60)}${file}`;
+const imeta = (file: string, type: string, filename?: string) => [
+  "imeta",
+  `url ${media(file)}`,
+  `m ${type}`,
+  ...(filename ? [`filename ${filename}`] : []),
+];
+const video = media("1.mp4");
+const notes = media("2.txt");
+const voice = media("3.mp4");
+
+it.each([
+  {
+    sent: "a desktop video",
+    content: `@Agent\n\n![video](<${video}>)`,
+    tags: [imeta("1.mp4", "video/mp4")],
+    // This build's title, then an earlier desktop's.
+    names: ["Video", "Chat"],
+  },
+  // The mobile app sends no agent tag in its text, and a line per attachment.
+  {
+    sent: "a mobile video",
+    content: `\n![video](${video})`,
+    tags: [imeta("1.mp4", "video/mp4")],
+    names: ["Video", `![video](${video})`],
+  },
+  {
+    sent: "a mobile file",
+    content: `\n[notes.txt](${notes})`,
+    tags: [imeta("2.txt", "text/plain", "notes.txt")],
+    names: ["Attachment", `[notes.txt](${notes})`],
+  },
+  {
+    sent: "several mobile attachments",
+    content: `\n![image](${media("4.png")})\n![video](${video})\n[notes.txt](${notes})`,
     tags: [
-      ["h", "chat"],
-      ["p", first],
-      ["imeta", `url ${url}`, "m video/mp4"],
+      imeta("4.png", "image/png"),
+      imeta("1.mp4", "video/mp4"),
+      imeta("2.txt", "text/plain", "notes.txt"),
     ],
-  } as unknown as RelayEvent;
-  // This client's title, an earlier one's, and one stored as the source.
-  for (const starting of ["Video", "Chat", `![video](${url})`.slice(0, 80)]) {
-    let name = starting;
-    const relay = connection(() => ({
-      status: "ready",
-      viewer: owner,
-      session: {
-        channels: soloChannels,
-        read: async () => [sent],
-        profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
-        agentChoices: { snapshot: () => ({ identities: [] }) },
-        channelDetails: {
-          available: true,
-          load: async () => ({ name, canEdit: true }),
-          save: async (_base: unknown, draft: { name: string }) => {
-            name = draft.name;
+    names: ["3 attachments", `![image](${media("4.png")}) ![video](${video})`],
+  },
+  {
+    sent: "mobile images",
+    content: `\n![image](${media("4.png")})\n![image](${media("5.jpg")})`,
+    tags: [imeta("4.png", "image/png"), imeta("5.jpg", "image/jpeg")],
+    names: ["2 images"],
+  },
+  {
+    // Packaged as a video file, and named as the voice note it is.
+    sent: "a mobile voice note",
+    content: `\n[voice-note-7.mp4](${voice})`,
+    tags: [imeta("3.mp4", "video/mp4", "voice-note-7.mp4")],
+    names: ["Attachment", `[voice-note-7.mp4](${voice})`],
+  },
+  {
+    sent: "mobile audio",
+    content: `\n![audio](${media("6.m4a")})`,
+    tags: [imeta("6.m4a", "audio/mp4")],
+    names: ["Attachment", `![audio](${media("6.m4a")})`],
+  },
+  {
+    sent: "a link",
+    content: `https://www.example.com/${"x".repeat(90)}`,
+    tags: [],
+    names: ["Link to example.com", `https://www.example.com/${"x".repeat(90)}`],
+  },
+])(
+  "names a chat that still has the title $sent alone gave it",
+  async ({ content, tags, names }) => {
+    const sent = {
+      ...event,
+      content,
+      tags: [["h", "chat"], ["p", first], ...tags],
+    } as unknown as RelayEvent;
+    // A name the owner chose is kept; "Image" is no title for any of these.
+    for (const [stored, renamed] of [
+      ...names.map((name) => [[...name].slice(0, 80).join(""), true] as const),
+      ["Image", false] as const,
+    ]) {
+      let name: string = stored;
+      const relay = connection(() => ({
+        status: "ready",
+        viewer: owner,
+        session: {
+          channels: soloChannels,
+          read: async () => [sent],
+          profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
+          agentChoices: { snapshot: () => ({ identities: [] }) },
+          channelDetails: {
+            available: true,
+            load: async () => ({ name, canEdit: true }),
+            save: async (_base: unknown, draft: { name: string }) => {
+              name = draft.name;
+            },
           },
         },
-      },
-    }));
-    await nameSoloChat(relay, owner, first, sent, "Review the clip");
-    expect(name, starting).toBe("Review the clip");
-  }
-});
+      }));
+      await nameSoloChat(relay, owner, first, sent, "Review the clip");
+      expect(name, stored).toBe(renamed ? "Review the clip" : stored);
+    }
+  },
+);

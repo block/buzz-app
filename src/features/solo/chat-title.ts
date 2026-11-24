@@ -12,7 +12,6 @@ import {
   markdownImageKind,
 } from "../relay/attachment-summary";
 import type { Attachment } from "../relay/contracts";
-import { linkTitle } from "./shown-title";
 
 /** What a first message attaches. An address finds its link in sent text. */
 export type TitleAttachment = Readonly<{
@@ -114,6 +113,25 @@ function chatTitle(
           ])),
     ) || "Chat"
   );
+}
+
+/** A title for text that is only web links, which read as noise: the site of
+ * one, or how many. Undefined when the text says anything else. */
+function linkTitle(text: string): string | undefined {
+  const links = text.split(/\s+/).filter(Boolean);
+  const sites: string[] = [];
+  for (const link of links) {
+    const url = /^<?(https?:\/\/[^\s<>]+)>?$/i.exec(link)?.[1];
+    if (!url) return undefined;
+    try {
+      sites.push(new URL(url).hostname.replace(/^www\./, ""));
+    } catch {
+      sites.push("");
+    }
+  }
+  if (!links.length) return undefined;
+  if (links.length > 1) return `${links.length} links`;
+  return sites[0] ? `Link to ${sites[0]}` : "Link";
 }
 
 /** Project link labels only; code and unrelated authored source remain literal. */

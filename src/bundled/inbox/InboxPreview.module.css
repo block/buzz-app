@@ -62,6 +62,8 @@
   margin: 0;
   padding: 0;
   --radius-row: var(--floating-inner-radius);
+  /* Compact feeds keep every row to two lines: name and place, then message. */
+  --message-list-row-preview-lines: 1;
 }
 
 /* A row keeps its hover fill while the pointer is on its Mark as read. */

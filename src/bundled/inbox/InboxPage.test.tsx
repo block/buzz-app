@@ -2337,7 +2337,7 @@ it("puts the actual channel or DM source below the sender without category tags"
   const dmSource = dmRow.querySelector("[data-inbox-source]");
   const channelSource = mentionRow.querySelector("[data-inbox-source]");
   expect(dmSource).toHaveTextContent(/^DM$/);
-  expect(channelSource).toHaveTextContent("#Design");
+  expect(channelSource).toHaveTextContent(/^Design$/);
   expect(
     within(dmRow).getByText("Alice", { selector: "strong" }),
   ).toBeInTheDocument();
@@ -5375,7 +5375,7 @@ it("names all three reactors instead of saying one others", async () => {
 });
 
 it.each(["solo", "dm", "thread"] as const)(
-  "opens a reaction in its existing %s context and places context after the preview",
+  "opens a reaction in its existing %s context and places context before the preview",
   async (kind) => {
     const h = fixture({
       soloChannel: kind === "solo",
@@ -5406,13 +5406,11 @@ it.each(["solo", "dm", "thread"] as const)(
     const row = await screen.findByRole("button", {
       name: /Alice reacted with heart/,
     });
-    const context = within(row).getByText(
-      kind === "dm" ? "in DM" : kind === "solo" ? "in Design" : "in #Design",
-    );
+    const context = within(row).getByText(kind === "dm" ? "DM" : "Design");
     const preview = within(row).getByText("My acknowledged message");
     expect(
       preview.compareDocumentPosition(context) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
+        Node.DOCUMENT_POSITION_PRECEDING,
     ).toBeTruthy();
     fireEvent.click(row);
     const detail = await findReader();

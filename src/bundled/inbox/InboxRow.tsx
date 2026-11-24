@@ -6,7 +6,7 @@ import { useReactionName } from "../../features/messages/use-reaction-name";
 import { isReactionShortcode } from "../../features/relay/emoji";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type { ComponentProps, ReactNode } from "react";
-import { channelText } from "../../features/channels/channel-icon";
+import { channelIcon, channelText } from "../../features/channels/channel-icon";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import { hasUnread, type InboxItem } from "../../features/relay/inbox";
 import type { InboxFeedSnapshot } from "../../features/relay/inbox-feed";
@@ -15,13 +15,16 @@ import { workflowLabel } from "../../features/relay/workflow-attribution";
 import { messagePreview } from "../../features/notifications/content";
 import { ByteLru } from "../../features/relay/budget";
 import { avatarMedia } from "../../shared/avatar-source";
-import { LightningIcon, SmileyIcon } from "../../shared/design-system/icons";
+import {
+  CornerDownRightIcon,
+  LightningIcon,
+  SmileyIcon,
+} from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import type { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
-import rowStyles from "../../features/messages/MessageListRow.module.css";
 import { MessageListRow } from "../../features/messages/MessageListRow";
 import { PreviewText } from "../../features/messages/PreviewText";
 import type { OwnActivity } from "./own-activity";
@@ -104,7 +107,7 @@ export function rowIdentity(
       : channel
         ? channelText(channel)
         : "Conversation";
-  return { sender, context, profile };
+  return { sender, context, profile, channel };
 }
 
 /** Profiles a row names: its sender or workflow owner and up to three DM participants. */
@@ -117,6 +120,29 @@ export const rowProfileIds = (
     ? (channel.participants?.slice(0, 3) ?? [])
     : []),
 ];
+
+/** Where a row's message is, led by the icon its conversation has in the
+ * sidebar: a thread's reply arrow, else the channel's own icon. The icon
+ * replaces the text "#", so names read the same for every kind. */
+export function RowPlace({
+  channel,
+  context,
+  thread,
+}: {
+  channel: ChannelSummary | undefined;
+  context: string;
+  thread: boolean;
+}) {
+  const Icon = thread ? CornerDownRightIcon : channelIcon(channel);
+  return (
+    <span className={styles.place}>
+      <Icon size={12} aria-hidden="true" className={styles.placeIcon} />
+      <span className={styles.placeName}>
+        {channel && channel.channelType !== "dm" ? channel.name : context}
+      </span>
+    </span>
+  );
+}
 
 /** Who a row of your own message names: you, where you wrote it, and your
  * profile for the avatar. */
@@ -132,7 +158,7 @@ export function ownIdentity(
       : channel
         ? channelText(channel)
         : "Conversation";
-  return { sender: "You", context, profile: profiles.get(viewer) };
+  return { sender: "You", context, profile: profiles.get(viewer), channel };
 }
 
 /** One Inbox conversation row's button: avatar, sender, source, time, preview
@@ -141,7 +167,7 @@ export function ownIdentity(
 export function InboxRowButton({
   item,
   own,
-  identity: { sender, context, profile },
+  identity: { sender, context, profile, channel },
   session,
   feed,
   time,
@@ -183,7 +209,13 @@ export function InboxRowButton({
         />
       }
       sender={sender}
-      source={context}
+      source={
+        <RowPlace
+          channel={channel}
+          context={context}
+          thread={!!(own ? own.rootId : item?.thread || item?.rootId)}
+        />
+      }
       time={
         <time dateTime={new Date(createdAt * 1000).toISOString()}>{time}</time>
       }
@@ -277,76 +309,60 @@ export function ReactionRowButton({
     )
     .join(", ");
   return (
-    <NavigationItem
+    <MessageListRow
       {...props}
       aria-labelledby={`${nameId} ${previewId}`}
-      icon={
+      avatar={
         <Avatar
-          size="default"
+          size="fill"
           alt=""
           fallback={sender}
           src={avatarMedia(profile?.picture, session.media)}
           shape={profile?.isAgent ? "squircle" : "circle"}
         />
       }
-      trailing={<span className={rowStyles.unreadSlot} aria-hidden="true" />}
-      label={
-        <span className={rowStyles.content}>
+      sender={
+        <>
           <span id={nameId} hidden>
             {`${sender} reacted with ${emojiNames} to your message:`}
           </span>
-          <span className={rowStyles.heading}>
-            <span className={rowStyles.identity}>
-              <span className={styles.reactionHeading}>
-                <strong
-                  className={`text-label-sm text-standard ${rowStyles.sender}`}
-                >
-                  {sender}
-                </strong>
-                <span
-                  className={`text-body-sm text-standard ${styles.reactionTail}`}
-                >
-                  {"\u00a0reacted "}
-                  {reactions.map((reaction) => (
-                    <ActivityReactionGlyph
-                      key={JSON.stringify([
-                        reaction.content,
-                        reaction.emoji?.url,
-                      ])}
-                      reaction={reaction}
-                      session={session}
-                    />
-                  ))}
-                </span>
-              </span>
-            </span>
-            <time
-              data-inbox-date=""
-              className={`text-caption text-subtle ${rowStyles.rowDate}`}
-              dateTime={new Date(item.createdAt * 1000).toISOString()}
-            >
-              {time}
-            </time>
-          </span>
-          <span
-            id={previewId}
-            className={`text-body text-subtle ${styles.reactionPreview}`}
-          >
-            <PreviewText
-              text={preview}
-              mentions={item.message}
+          {sender}
+        </>
+      }
+      source={
+        <RowPlace
+          channel={channel}
+          context={context}
+          thread={!!item.message.threadRootId}
+        />
+      }
+      time={
+        <time dateTime={new Date(item.createdAt * 1000).toISOString()}>
+          {time}
+        </time>
+      }
+      previewId={previewId}
+      preview={
+        <>
+          {reactions.map((reaction) => (
+            <ActivityReactionGlyph
+              key={JSON.stringify([reaction.content, reaction.emoji?.url])}
+              reaction={reaction}
               session={session}
-              channelId={item.message.channelId}
             />
-          </span>
-          <span className={`text-caption ${rowStyles.source}`}>
-            in {context}
-          </span>
-        </span>
+          ))}{" "}
+          <PreviewText
+            text={preview}
+            mentions={item.message}
+            session={session}
+            channelId={item.message.channelId}
+          />
+        </>
       }
     />
   );
 }
+
 function ActivityReactionGlyph({
   reaction,
   session,

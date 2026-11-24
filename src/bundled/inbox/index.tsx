@@ -105,7 +105,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
           version: 1,
           id: "activity",
           title: "Activity",
-          icon: <BellIcon size={16} />,
           rows: noRows,
           select: () => inboxRouteTarget({}),
           body: (props: SidebarSectionBodyProps) => (

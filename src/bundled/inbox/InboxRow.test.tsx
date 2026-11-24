@@ -34,7 +34,12 @@ it("parses a row preview's Markdown once across renders", () => {
   const row = (time: string) => (
     <InboxRowButton
       item={item}
-      identity={{ sender: "Sender", context: "Channel", profile: undefined }}
+      identity={{
+        sender: "Sender",
+        context: "Channel",
+        profile: undefined,
+        channel: undefined,
+      }}
       session={{} as unknown as RelaySession}
       feed={{ incomplete: [] } as unknown as InboxFeedSnapshot}
       time={time}
@@ -65,7 +70,12 @@ it("shows a preview's resolved mentions as chips", () => {
   const view = render(
     <InboxRowButton
       item={item}
-      identity={{ sender: "Sender", context: "Channel", profile: undefined }}
+      identity={{
+        sender: "Sender",
+        context: "Channel",
+        profile: undefined,
+        channel: undefined,
+      }}
       session={
         {
           profiles: { subscribe: () => () => {}, snapshot: () => profiles },
@@ -158,11 +168,11 @@ it.each([
 );
 
 it.each([
-  { place: "a one-to-one DM", channel: dm(alice), context: "in DM" },
+  { place: "a one-to-one DM", channel: dm(alice), context: "DM" },
   {
     place: "a group DM",
     channel: dm(alice, bob),
-    context: "in DM with Alice, Bob",
+    context: "DM with Alice, Bob",
   },
 ])(
   "places a reaction from a member of $place $context",

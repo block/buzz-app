@@ -42,7 +42,8 @@ export type SidebarSectionContribution = Readonly<{
   version: 1;
   id: string;
   title: string;
-  icon: ReactNode;
+  /** Optional: a card's title can stand alone, as the built-in cards' do. */
+  icon?: ReactNode;
   rows: Readonly<{
     snapshot: () => readonly SidebarSectionRow[];
     subscribe: (listener: () => void) => () => void;
@@ -160,7 +161,6 @@ export class SidebarSectionsService extends Service implements SidebarSections {
       !idPattern.test(section.id) ||
       typeof section.title !== "string" ||
       !section.title.trim() ||
-      section.icon == null ||
       (section.body !== undefined && !isComponent(section.body)) ||
       !section.rows ||
       typeof section.rows.snapshot !== "function" ||

@@ -144,18 +144,22 @@
   color: var(--text-subtle);
 }
 
-.reactionHeading {
-  display: flex;
+/* A row's place: its conversation's icon, then its name, on one line. */
+.place {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
-  align-items: baseline;
-}
-.reactionTail {
-  flex-shrink: 0;
-  white-space: nowrap;
+  max-inline-size: 100%;
+  vertical-align: bottom;
 }
 
-.reactionPreview {
-  max-inline-size: 64ch;
+.placeIcon {
+  flex: none;
+}
+
+.placeName {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

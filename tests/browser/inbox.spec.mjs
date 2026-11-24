@@ -163,7 +163,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   const mentionRow = rows.filter({ hasText: "Unread reply 1" });
   await expect(rows.filter({ hasText: "Broadcast descendant" })).toHaveCount(1);
   const source = mentionRow.locator("[data-inbox-source]");
-  await expect(source).toHaveText("#Alpha");
+  await expect(source).toHaveText("Alpha");
   expect(
     await source.evaluate((element) => ({
       background: getComputedStyle(element).backgroundColor,

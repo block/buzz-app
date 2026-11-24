@@ -504,6 +504,10 @@ export type PageTabTarget = {
   messageId?: string;
   unreadSince?: number;
 };
+/** Optional `ConversationWorkspaceProps` a workspace provider renders. */
+export type WorkspaceSlots = Readonly<{
+  headerActions?: true;
+}>;
 /** A page-owned conversation with the host's reader, composer, and side pane. */
 export type ConversationWorkspaceProps = {
   id: string;

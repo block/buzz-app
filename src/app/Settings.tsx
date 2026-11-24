@@ -64,6 +64,11 @@ import {
   UrlPluginInstallReview,
   UrlPluginDetails,
 } from "./ManagedPlugins";
+import {
+  accessMessage,
+  isRequiredPlugin,
+  restrictedPlugin,
+} from "../plugins/toggle-access";
 import { managedBy, managedLabel, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
 import {
@@ -138,10 +143,6 @@ function isCorePlugin(plugin: PluginInfo) {
     ) ??
       false)
   );
-}
-
-function isRequiredPlugin(plugin: PluginInfo) {
-  return plugin.manifest.id === "buzz.channels";
 }
 
 function isEssentialPlugin(plugin: PluginInfo) {
@@ -280,38 +281,11 @@ const noDecisionProviders = () => noProviders;
 /** The plugin whose details a Manage plugins visit shows, for Back/Forward. */
 const PLUGIN_DETAILS = "settings.pluginDetails";
 
-function restrictedPlugin(plugin: PluginInfo) {
-  return (
-    plugin.source === "bundled" &&
-    (plugin.manifest.id === "buzz.moderation" ||
-      plugin.manifest.id === "buzz.relay-staff")
-  );
-}
-
 function pluginActionLabel(plugin: PluginInfo, access: AdminAccessState) {
   if (plugin.enabled) return "Disable";
   if (restrictedPlugin(plugin) && access !== "allowed")
     return access === "checking" ? "Enable" : "Unavailable";
   return "Enable";
-}
-
-function accessMessage(plugin: PluginInfo, state: AdminAccessState) {
-  switch (state) {
-    case "allowed":
-      return null;
-    case "checking":
-      return "Checking access…";
-    case "no-community":
-      return "Select a community to check access.";
-    case "error":
-      return "Could not check access. Open details to try again.";
-    case "unavailable":
-      return "Access is unavailable in this build or on this relay.";
-    case "denied":
-      return plugin.manifest.id === "buzz.moderation"
-        ? "Select a community where you’re an owner or admin."
-        : "Select a community on a relay where you have staff access.";
-  }
 }
 
 /** Narrow containers cover the catalog with details (Settings.module.css). */
@@ -475,7 +449,7 @@ function PluginDetails({
         <div className={styles.pluginPrimaryActions}>
           <div className={styles.pluginPrimaryAction}>
             {/* Channels is required and has no enable/disable control. */}
-            {plugin.manifest.id === "buzz.channels" ? (
+            {isRequiredPlugin(plugin) ? (
               <Button variant="outline" size="sm" disabled>
                 Required
               </Button>
@@ -948,6 +922,7 @@ export function Settings({
       : null;
   const togglePlugin = (plugin: PluginInfo) => {
     if (
+      isRequiredPlugin(plugin) ||
       busy ||
       (!plugin.enabled &&
         restrictedPlugin(plugin) &&

@@ -242,6 +242,25 @@ function hostDeclarations(
           },
         ]
       : []),
+    ...(manifest.host?.pluginInventory
+      ? [
+          {
+            key: "pluginInventory",
+            signature:
+              "Plugin inventory: view installed plugins and change whether they’re on",
+            title: "Installed plugins:",
+            label: "View and turn installed plugins on or off",
+            hint: "Can see the plugins on this device and turn eligible plugins on or off.",
+            icon: PlugIcon,
+            details: (
+              <p className="m-0">
+                Can read plugin names, IDs, sources, and enabled status.
+                Required plugins and access checks still apply.
+              </p>
+            ),
+          },
+        ]
+      : []),
     ...(manifest.host?.managedFiles
       ? [
           {

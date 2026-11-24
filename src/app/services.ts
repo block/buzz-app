@@ -81,6 +81,8 @@ import { nativeBuilderlab } from "../bundled/builderlab/session";
 import { builderlabPhone } from "../features/identity/builderlab-account";
 import { conversationFeatures } from "./conversation-features";
 import { PluginDevelopmentService } from "../features/plugin-development/service";
+import { providePluginInventory } from "../plugins/inventory";
+import { desktop } from "../plugins/storage";
 import { createPluginManager } from "../plugins/manager";
 import {
   createPluginInstallCore,
@@ -179,6 +181,7 @@ export function createServices() {
   );
   const adminAccess = createAdminAccess(relay, communities, nativeRelayStaff());
   ctx.provide("adminAccess", adminAccess);
+  if (desktop) providePluginInventory(ctx, plugins, adminAccess);
   ctx.effect(() => () => adminAccess.dispose());
   const agents = new AgentsService(
     ctx,

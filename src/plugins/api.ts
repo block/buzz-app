@@ -74,6 +74,8 @@ export type PluginManifest = Readonly<{
     /** The plugin may read files with `host.readFile` and resolve directories
      * with `host.resolveDirectory`, with the user's own access. */
     files?: boolean;
+    /** Read installed plugins and turn eligible plugins on or off. */
+    pluginInventory?: boolean;
     /** Pathless temporary saves in host-selected private storage; no read access. */
     managedFiles?: boolean;
     /** `host.requestBytes` may also read raster images from any public HTTPS

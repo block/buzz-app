@@ -105,6 +105,16 @@ it.each([
   },
 );
 
+it("treats installed plugin management as an access increase", () => {
+  const before = manifest(false);
+  const after = { ...before, host: { pluginInventory: true } };
+  expect(pluginAccessIncreases(after, before)).toBe(true);
+  render(<PluginAccessReview manifest={after} previousManifest={before} />);
+  expect(
+    screen.getByRole("button", { name: /View and turn installed plugins/ }),
+  ).toBeVisible();
+});
+
 const replaces = (...agentPromptSections: string[]): PluginManifest => ({
   id: "example.worktrees",
   name: "Worktrees",

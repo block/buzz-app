@@ -50,7 +50,7 @@ export function apply(ctx) {
 - **Plugin id:** lowercase letters, digits, `.` and `-`, starting with a letter, at most 80 bytes, no empty segments, no underscores. Bundled plugins' ids are reserved. Updates match on `id`.
 - **Contribution ids** (pages, panels, shortcuts and so on) match `/^[a-z0-9][a-z0-9._-]*$/` and are unique within the plugin.
 - **No work at module top level.** Do everything in `apply`. Enabled plugins activate even when their page is never opened.
-- **Declare every service in `inject`.** `apply` runs only once all are available, so a missing one means it never runs; check `plugin_status` after installing. Optional services (`sidebarSections`, `subjectLift`, `notices`, `pluginInstaller`, `seen`, `ui`, `communityJoin`) aren't listed in `inject`: read them with `ctx.reflect.get("name")`, which returns `undefined` on hosts without them.
+- **Declare every service in `inject`.** `apply` runs only once all are available, so a missing one means it never runs; check `plugin_status` after installing. Optional services (`sidebarSections`, `subjectLift`, `notices`, `pluginInstaller`, `pluginInventory`, `seen`, `ui`, `communityJoin`) aren't listed in `inject`: read them with `ctx.reflect.get("name")`, which returns `undefined` on hosts without them.
 - **Own everything you start** with `ctx.effect(() => { start(); return () => stop(); })`. Everything you register through `ctx` is removed when the plugin is disabled or replaced.
 - **State:** React state resets on reload. The module is evaluated once per revision per app session. Use the `seen` service to remember a one-time experience.
 - **Errors:** an invalid `register` call fails activation, and the error shows in Settings and `plugin_status`. Pages and panels render in error boundaries, but loops and global side effects aren't contained.
@@ -103,6 +103,14 @@ workspace with `registerWorkspace(component, { slots })` names the optional
 props its component renders.
 
 For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
+
+## Installed plugin inventory
+
+On a desktop host that supports inventory, declare `"host": { "pluginInventory": true }` in the manifest. Buzz shows this access in its install and update reviews. Use `ctx.reflect.get("pluginInventory")` so the code can detect whether the host offers the service. Older hosts reject the new manifest field and require an update before installation.
+
+Call `snapshot()` for the installed device catalog. Ready snapshots contain immutable rows with `id`, `name`, `source` (`"built-in"` or `"add-on"`), `enabled`, and an optional host-provided `blockedReason` for the next action. The snapshot stays stable until the rows change. Use `subscribe(listener)` to observe changes from this page or elsewhere, and release the subscription when the page unmounts.
+
+Call `await setEnabled(id, enabled)` from a user action. The host rechecks eligibility before using the existing plugin lifecycle. Success means the saved setting is visible in a new snapshot. A rejection leaves the current catalog available for the page to read. The service grants no access to code, install sources, or install and removal operations.
 
 ## Migration writes
 

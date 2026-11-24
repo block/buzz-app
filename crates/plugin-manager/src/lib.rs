@@ -105,6 +105,9 @@ pub struct HostGrants {
     /// access, without starting a program for it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub files: bool,
+    /// Read installed plugins and turn eligible plugins on or off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plugin_inventory: bool,
     /// Pathless temporary saves in host-selected private storage; no read access.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub managed_files: bool,
@@ -2687,6 +2690,16 @@ mod tests {
             None
         );
         assert_eq!(serde_json::to_value(&old).unwrap(), manifest);
+        assert!(!old.host.as_ref().unwrap().plugin_inventory);
+        let mut inventory = manifest.clone();
+        inventory["host"]["pluginInventory"] = serde_json::json!(true);
+        let parsed: Manifest = serde_json::from_value(inventory.clone()).unwrap();
+        assert!(parsed.host.as_ref().unwrap().plugin_inventory);
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), inventory);
+        assert_ne!(
+            artifact_from_text(&manifest.to_string(), "export const x = 1".into()).unwrap(),
+            artifact_from_text(&inventory.to_string(), "export const x = 1".into()).unwrap()
+        );
         assert!(!old.host.as_ref().unwrap().managed_files);
         let mut managed = manifest.clone();
         managed["host"]["managedFiles"] = serde_json::json!(false);

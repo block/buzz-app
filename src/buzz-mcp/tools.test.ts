@@ -526,7 +526,7 @@ it("tags details for people to open, as written", async () => {
   expect(published[0]?.tags.at(-1)).toEqual(["audience", "details"]);
 });
 
-it("refuses an everyone message over 128 words, or a brief over 50", async () => {
+it("refuses an everyone message over 128 words, or a brief over 50, on send but not on edit", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };
   const long = Array.from({ length: 51 }, () => "word").join(" ");
@@ -558,6 +558,13 @@ it("refuses an everyone message over 128 words, or a brief over 50", async () =>
   });
   await callTool(client, context, "send", { text: long, audience: "agents" });
   expect(published).toHaveLength(2);
+  // An edit keeps the message's audience, and a message sent before the limits
+  // can already be over them, so correcting it must not fail.
+  await callTool(client, context, "edit", {
+    id: root,
+    text: Array.from({ length: 200 }, () => "word").join(" "),
+  });
+  expect(published).toHaveLength(3);
 });
 
 it("refuses to post a name it cannot resolve unless told who it means", async () => {

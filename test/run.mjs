@@ -80,6 +80,10 @@ try {
   // One view, one tab, named after it; nothing but the view's own row below.
   assert.deepEqual(await ada.getByRole("tab").allTextContents(), ["Browser"]);
   assert.equal(await ada.getByRole("tablist").count(), 1);
+  // The "+" sits in the tab strip, just past the last tab.
+  const plusBox = await ada.getByRole("button", { name: "Views" }).boundingBox();
+  const tabBox = await ada.getByRole("tab", { name: "Browser" }).boundingBox();
+  assert.ok(plusBox.x >= tabBox.x + tabBox.width && plusBox.y < tabBox.y + tabBox.height, "the + is beside the tabs");
 
   await assert.rejects(agent("canvas_open", { type: "map", state: { center: [0, 0], zoom: 2 } }), /Someone else is driving/);
   await agent("canvas_drive", { drive: true });

@@ -22,6 +22,10 @@
   border-radius: var(--radius-control);
   background: var(--surface-panel);
 }
+.plus {
+  z-index: 2;
+  display: flex;
+}
 .quiet {
   position: absolute;
   width: 1px;

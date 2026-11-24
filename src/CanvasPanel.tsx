@@ -214,6 +214,45 @@ export function CanvasPanel({
     return () => observer.disconnect();
   }, []);
 
+  // The "+" belongs beside the tabs, in the host's strip above this panel. A
+  // plugin has no place of its own there, so the button is laid over the
+  // strip, just past the last tab. Without a strip it stays in the view's row.
+  const plus = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const element = plus.current;
+    const canvas = root.current;
+    if (!element || !canvas || !shown) return;
+    let strip: Element | null = null;
+    for (let up = canvas.parentElement; up && !strip; up = up.parentElement)
+      strip = up.querySelector('[role="tablist"]');
+    if (!strip) return;
+    const place = () => {
+      const last = strip.lastElementChild ?? strip;
+      const end = last.getBoundingClientRect();
+      const row = strip.getBoundingClientRect();
+      element.style.position = "fixed";
+      element.style.left = `${end.right + 4}px`;
+      element.style.top = `${row.top + (row.height - element.offsetHeight) / 2}px`;
+    };
+    place();
+    const resized = new ResizeObserver(place);
+    resized.observe(strip);
+    resized.observe(document.body);
+    const changed = new MutationObserver(place);
+    changed.observe(strip, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+    window.addEventListener("resize", place);
+    return () => {
+      resized.disconnect();
+      changed.disconnect();
+      window.removeEventListener("resize", place);
+      element.removeAttribute("style");
+    };
+  }, [shown]);
+
   const takeControl = () => {
     // Followers are taken to the view this viewer is looking at.
     const edits = [
@@ -287,7 +326,11 @@ export function CanvasPanel({
       </p>
       {TabTitle && item && <TabTitle label={titleOf(item)} />}
       <div ref={buttons} className={styles.buttons}>
-        {menu.length > 0 && <AddMenu label="Views" items={menu} />}
+        {shown && menu.length > 0 && (
+          <span ref={plus} className={styles.plus}>
+            <AddMenu label="Views" items={menu} />
+          </span>
+        )}
         {led && (
           <Button
             variant={following ? "outline" : "ghost"}

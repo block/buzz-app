@@ -478,8 +478,13 @@ it.each([
     expect(days()).toEqual(openDays);
   },
 );
-it("targets a child, cancels on repeated Reply, resets after send and reveals the own branch", () => {
+it("targets a child, cancels on repeated Reply and reveals a send through folded activity", () => {
   const h = setup();
+  const parent = { ...row("parent", "root"), audience: "agents" as const };
+  h.update([parent, row("child", "parent")]);
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Show activity history:/ }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
   const composer = screen.getByLabelText("Composer");
   expect(composer).toHaveAttribute("data-parent", "parent");
@@ -489,8 +494,11 @@ it("targets a child, cancels on repeated Reply, resets after send and reveals th
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
   expect(composer).not.toHaveAttribute("data-parent");
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Collapse activity history:/ }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
-  h.update([row("parent", "root"), row("new", "parent")]);
+  h.update([parent, row("new", "parent")]);
   expect(screen.getByText("new")).toBeVisible();
   expect(composer).not.toHaveAttribute("data-parent");
   expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
@@ -526,15 +534,26 @@ it("continues a branch when replying to a nested reply", () => {
     screen.queryByRole("button", { name: /^View \d+ repl/ }),
   ).not.toBeInTheDocument();
 });
-it("keeps a reply target chosen while a background send is still publishing", () => {
-  setup();
+it("keeps a new reply target while a background send reveals its captured history", () => {
+  const h = setup();
+  const parent = { ...row("parent", "root"), audience: "agents" as const };
+  const child = row("child", "parent");
+  h.update([parent, child, row("grandchild", "child")]);
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Show activity history:/ }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
   fireEvent.click(screen.getByRole("button", { name: "Send fixture upload" }));
   fireEvent.click(screen.getByRole("button", { name: "Reply to child" }));
   const composer = screen.getByLabelText("Composer");
   expect(composer).toHaveAttribute("data-parent", "child");
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Collapse activity history:/ }),
+  );
   act(() => heldSend?.("new"));
+  h.update([parent, child, row("grandchild", "child"), row("new", "parent")]);
+  expect(screen.getByText("new")).toBeVisible();
   expect(composer).toHaveAttribute("data-parent", "child");
 });
 it("says an earlier reply is unavailable only once no history that could hold it is left to read", () => {

@@ -764,6 +764,24 @@ function ThreadMessages({
       setExpandedActivity((current) => new Set([...current, ...ids]));
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const revealBranches = useCallback(
+    (ids: readonly string[]) => {
+      if (!ids.length) return;
+      setExpanded((current) =>
+        ids.every((id) => current.has(id))
+          ? current
+          : new Set([...current, ...ids]),
+      );
+      const groups = ids.flatMap((id) => foldedGroupOf(tree, id) ?? []);
+      if (groups.length)
+        setExpandedActivity((current) =>
+          groups.every((id) => current.has(id))
+            ? current
+            : new Set([...current, ...groups]),
+        );
+    },
+    [tree],
+  );
   // The reply this thread's draft is aimed at is kept with that draft, under
   // the key the reply box saves it by, so it follows the thread from an
   // inline sheet to its tab and through a close and reopen.
@@ -990,16 +1008,8 @@ function ThreadMessages({
       (row) => tree.parents.get(row.id) ?? [],
     );
     shownTree.current = tree;
-    if (added.length) {
-      setExpanded((current) => {
-        if (added.every((id) => current.has(id))) return current;
-        return new Set([...current, ...added]);
-      });
-      const groups = added.flatMap((id) => foldedGroupOf(tree, id) ?? []);
-      if (groups.length)
-        setExpandedActivity((current) => new Set([...current, ...groups]));
-    }
-  }, [tree]);
+    revealBranches(added);
+  }, [tree, revealBranches]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
@@ -1015,16 +1025,8 @@ function ThreadMessages({
       .ancestors(messageId)
       .filter((id) => !revealedAncestors.current.ids.has(id));
     for (const id of ancestors) revealedAncestors.current.ids.add(id);
-    if (ancestors.length) {
-      setExpanded((current) => {
-        if (ancestors.every((id) => current.has(id))) return current;
-        return new Set([...current, ...ancestors]);
-      });
-      const groups = ancestors.flatMap((id) => foldedGroupOf(tree, id) ?? []);
-      if (groups.length)
-        setExpandedActivity((current) => new Set([...current, ...groups]));
-    }
-  }, [tree, messageId, navigation, revealRequest]);
+    revealBranches(ancestors);
+  }, [tree, messageId, navigation, revealRequest, revealBranches]);
   const rootTarget =
     navigation?.target.kind === "conversation" &&
     navigation.target.threadRootId === messageId;
@@ -1876,7 +1878,13 @@ function ThreadMessages({
       captureResizePosition();
       setSent(undefined);
     }
-  }, [sent, snapshot.replies, expanded, captureResizePosition]);
+  }, [
+    sent,
+    snapshot.replies,
+    expanded,
+    expandedActivity,
+    captureResizePosition,
+  ]);
   // Parent commits already position history, exact targets and own sends. Save
   // their result; only child-only reflow and viewport resizing need correction.
   useLayoutEffect(() => {
@@ -2173,14 +2181,16 @@ function ThreadMessages({
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
-          {!parent && row.id === lineRow && (
-            <div className={styles.newMessages} data-new-messages-boundary>
-              <hr className="sr-only select-none" aria-label="New messages" />
-              <span className="select-none" aria-hidden="true">
-                New messages
-              </span>
-            </div>
-          )}
+          {!parent &&
+            !!lineRow &&
+            (row.id === lineRow || group?.ids.includes(lineRow)) && (
+              <div className={styles.newMessages} data-new-messages-boundary>
+                <hr className="sr-only select-none" aria-label="New messages" />
+                <span className="select-none" aria-hidden="true">
+                  New messages
+                </span>
+              </div>
+            )}
           {/* Not while the root, or history that may hold the parent, loads. */}
           {!parent &&
             rootId &&
@@ -2694,14 +2704,10 @@ function ThreadMessages({
             // Never count this composer's own send as a new arrival.
             previousReplies.current.ids.add(id);
             if (selectedParent)
-              setExpanded(
-                (current) =>
-                  new Set([
-                    ...current,
-                    selectedParent.id,
-                    ...tree.ancestors(selectedParent.id),
-                  ]),
-              );
+              revealBranches([
+                selectedParent.id,
+                ...tree.ancestors(selectedParent.id),
+              ]);
             // A background send may publish after the user picked a new target.
             if (targetKey)
               retireReplyTarget(session, scope, targetKey, replyParent);

@@ -923,6 +923,32 @@ it("opens at the first unread reply behind a line that reading keeps, paging pas
     line,
   ]);
 });
+it("opens at the unread boundary when a later grouped update has an unread reply", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread, read } = unreadReplies(h);
+  const first = { ...reply("read update", 2), audience: "agents" as const };
+  const parent = { ...reply("unread branch", 3), audience: "agents" as const };
+  const child = { ...reply("unread reply", 4), replyParentId: parent.id };
+  unread.add(child.id);
+  read.through = 3;
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [first, parent, child];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(line).toBeVisible();
+  expect(h.element.scrollTop).toBe(300);
+  fireEvent.click(
+    screen.getByRole("button", { name: /^Show activity history:/ }),
+  );
+  expect(line).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /^View 1 reply/ }));
+  expect(screen.getByText(child.content)).toBeVisible();
+  unread.clear();
+  h.render();
+  expect(screen.getAllByRole("separator", { name: "New messages" })).toEqual([
+    line,
+  ]);
+});
 it("shows the loaded page while the read for the first unread reply waits on recovery, and places the line once it recovers", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread, read: thread } = unreadReplies(h);

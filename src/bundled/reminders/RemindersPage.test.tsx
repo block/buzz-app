@@ -12,9 +12,10 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../../features/relay/events";
 import {
   createReminders,
@@ -291,9 +292,14 @@ it("shows a note-only reminder without an open action", () => {
     },
   ]);
   const row = screen.getByRole("listitem");
+  // Written reminders are named after their text, with no stand-in avatar.
   expect(
-    within(row).getByRole("button", { name: "More actions: Reminder" }),
+    within(row).getByRole("checkbox", { name: "Mark done: stand-up" }),
   ).toBeVisible();
+  expect(
+    within(row).getByRole("button", { name: "More actions: stand-up" }),
+  ).toBeVisible();
+  expect(within(row).queryByRole("img")).toBeNull();
   expect(within(row).getByText("stand-up")).toBeVisible();
   expect(
     within(row).queryByRole("button", { name: /^Open message/ }),
@@ -307,7 +313,91 @@ it("shows a note-only reminder without an open action", () => {
     within(done)
       .getAllByRole("button")
       .map((button) => button.getAttribute("aria-label")),
-  ).toEqual(["Remind me again: Reminder"]);
+  ).toEqual(["Remind me again: retro"]);
+});
+
+it("names a long written reminder after its shortened first line", () => {
+  page([
+    {
+      id: "long",
+      eventId: "long-event",
+      createdAt: 1,
+      status: "pending",
+      notBefore: now + 600,
+      note: `${"Renew the insurance policy ".repeat(4)}\nsecond line`,
+    },
+  ]);
+  const [label] = screen
+    .getAllByRole("button", { name: /^Snooze: / })
+    .map((button) => button.getAttribute("aria-label"));
+  expect(label).toMatch(/^Snooze: Renew the insurance policy .+…$/);
+  expect(label).not.toContain("second line");
+  expect(label?.length).toBeLessThanOrEqual("Snooze: ".length + 60);
+});
+
+it("edits a written reminder's text and keeps it required", async () => {
+  const user = userEvent.setup();
+  const state = {
+    status: "ready" as const,
+    reminders: [
+      {
+        id: "note",
+        eventId: "note-event",
+        createdAt: 1,
+        status: "pending" as const,
+        notBefore: now + 600,
+        note: "stand-up",
+      },
+    ],
+  };
+  const reminders = {
+    snapshot: () => state,
+    subscribe: () => () => {},
+    edit: vi
+      .fn(() => Promise.resolve())
+      .mockRejectedValueOnce(new Error("offline")),
+  } as unknown as Reminders;
+  page(reminders);
+  await user.click(
+    screen.getByRole("button", { name: "More actions: stand-up" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Edit reminder" }));
+  const text = dialog.getByRole("textbox", { name: "Reminder text" });
+  const save = dialog.getByRole("button", { name: "Save" });
+  expect(text).toHaveValue("stand-up");
+  await waitFor(() => expect(text).toHaveFocus());
+  await user.clear(text);
+  expect(save).toBeDisabled();
+  await user.type(text, "Retro{Enter}bring notes");
+  await user.click(save);
+  expect(await dialog.findByRole("alert")).toHaveTextContent(
+    "could not be saved",
+  );
+  expect(text).toHaveValue("Retro\nbring notes");
+  await user.click(save);
+  expect(reminders.edit).toHaveBeenLastCalledWith("note", "Retro\nbring notes");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+it("lets a message reminder's note be cleared", async () => {
+  const user = userEvent.setup();
+  const state = {
+    status: "ready" as const,
+    reminders: [{ ...reminder("msg", "pending", 1, now + 600), note: "ask" }],
+  };
+  const reminders = {
+    snapshot: () => state,
+    subscribe: () => () => {},
+    edit: vi.fn(() => Promise.resolve()),
+  } as unknown as Reminders;
+  page(reminders);
+  await user.click(screen.getByRole("button", { name: "More actions: Ada" }));
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Edit reminder" }));
+  await user.clear(dialog.getByRole("textbox", { name: "Note (optional)" }));
+  await user.click(dialog.getByRole("button", { name: "Save" }));
+  expect(reminders.edit).toHaveBeenCalledWith("msg", "");
 });
 
 it("recovers a failed first history read through Retry, then notifies", async () => {
@@ -521,7 +611,7 @@ it("adds custom text from the empty page and lists it without a message link", a
     publish,
   });
   const navigator = page(capability);
-  const trigger = screen.getByRole("button", { name: "New reminder" });
+  const trigger = headerNewReminder();
   expect(screen.getByText("Loading reminders…")).toBeVisible();
   await act(async () => recover());
   expect(screen.getByText("No reminders yet")).toBeVisible();
@@ -559,7 +649,7 @@ it("adds custom text from the empty page and lists it without a message link", a
 it("restores an unsaved draft through Back and Forward but retires explicitly closed visits", async () => {
   const user = userEvent.setup();
   const navigator = page([]);
-  await user.click(screen.getByRole("button", { name: "New reminder" }));
+  await user.click(headerNewReminder());
   await user.type(
     screen.getByRole("textbox", { name: "Reminder text" }),
     "Keep this draft",
@@ -580,7 +670,7 @@ it("restores an unsaved draft through Back and Forward but retires explicitly cl
     act(() => navigator.back());
     act(() => navigator.forward());
     expect(screen.queryByRole("dialog")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "New reminder" }));
+    await user.click(headerNewReminder());
     expect(
       await screen.findByRole("textbox", { name: "Reminder text" }),
     ).toHaveValue("");
@@ -607,7 +697,7 @@ it.each(["Cancel", "Set reminder"])(
         },
       },
     );
-    await user.click(screen.getByRole("button", { name: "New reminder" }));
+    await user.click(headerNewReminder());
     await user.type(
       screen.getByRole("textbox", { name: "Reminder text" }),
       "Finish this draft",
@@ -615,7 +705,7 @@ it.each(["Cancel", "Set reminder"])(
     await user.click(screen.getByRole("button", { name: action }));
     expect(screen.queryByRole("dialog")).toBeNull();
     act(() => finishDismiss());
-    await user.click(screen.getByRole("button", { name: "New reminder" }));
+    await user.click(headerNewReminder());
     expect(screen.getByRole("textbox", { name: "Reminder text" })).toHaveValue(
       "",
     );
@@ -645,7 +735,7 @@ it("keeps a pending save alive through page traversal and retires it on completi
       },
     },
   );
-  await user.click(screen.getByRole("button", { name: "New reminder" }));
+  await user.click(headerNewReminder());
   await user.type(
     screen.getByRole("textbox", { name: "Reminder text" }),
     "Save once",
@@ -727,8 +817,7 @@ it("retires the draft on session replacement and ignores the old save's completi
     );
   };
   const { rerender } = render(mount(undefined));
-  const open = () =>
-    user.click(screen.getByRole("button", { name: "New reminder" }));
+  const open = () => user.click(headerNewReminder());
   expect(screen.queryByRole("button", { name: "New reminder" })).toBeNull();
   rerender(mount(firstCreate));
   await open();
@@ -769,8 +858,14 @@ it("renders a reminder due past JavaScript's Date range without its due label", 
   ).toHaveAccessibleDescription("far future");
 });
 
-const hint =
-  "Choose New reminder to write your own, or choose Remind me from a message's menu.";
+/** The page header's action; an empty page repeats it in its empty state. */
+function headerNewReminder() {
+  const [header] = screen.getAllByRole("button", { name: "New reminder" });
+  assert(header);
+  return header;
+}
+
+const hint = "Write your own, or choose Remind me from a message's menu.";
 
 it("says the list is caught up when only Done reminders exist", () => {
   page([reminder("finished", "done", 1)]);
@@ -783,6 +878,16 @@ it("explains how to add a reminder on an empty page", () => {
   expect(screen.getByText("No reminders yet")).toBeVisible();
   expect(screen.getByText(hint)).toBeVisible();
   expect(screen.queryByRole("region", { name: "Done" })).toBeNull();
+});
+
+it("opens a new reminder from the empty state's action", async () => {
+  const user = userEvent.setup();
+  page([reminder("cancelled", "cancelled", 1)]);
+  const [, empty] = screen.getAllByRole("button", { name: "New reminder" });
+  assert(empty);
+  expect(empty).toHaveTextContent("New reminder");
+  await user.click(empty);
+  expect(screen.getByRole("dialog", { name: "New reminder" })).toBeVisible();
 });
 
 it.each([

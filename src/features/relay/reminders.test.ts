@@ -192,11 +192,21 @@ describe("reminder writes and reconciliation", () => {
     expect(model.capability.snapshot().reminders).toEqual([
       { ...reminder, eventId: "e2", createdAt: 101, notBefore: 700 },
     ]);
+    await expect(model.capability.edit(reminder.id, "  ")).rejects.toThrow(
+      "Reminder text is required",
+    );
+    await model.capability.edit(reminder.id, "  Renew insurance\nMonday ");
+    expect(signed.at(-1)).toMatchObject({
+      d: reminder.id,
+      notBefore: 700,
+      content: { note: "Renew insurance\nMonday", status: "pending" },
+    });
+    expect(signed.at(-1)?.content).not.toHaveProperty("target");
     await model.capability.complete(reminder.id);
     const [finished] = model.capability.snapshot().reminders;
     expect(finished).toMatchObject({
       id: reminder.id,
-      note: reminder.note,
+      note: "Renew insurance\nMonday",
       status: "done",
     });
     expect(finished).not.toHaveProperty("notBefore");
@@ -227,6 +237,27 @@ describe("reminder writes and reconciliation", () => {
     h.setHistory([wire("0000", 50, "pending")]);
     await h.model.capability.refresh();
     expect(h.head()).toMatchObject({ eventId: "0000", status: "pending" });
+  });
+
+  it("edits a message reminder's note, keeping its target, and refuses finished ones", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: 100_000 });
+    const h = harness([wire("e0", 90, "pending")]);
+    await h.model.capability.refresh();
+    await h.model.capability.edit("r1", " ask about launch ");
+    expect(h.signed.at(-1)?.content).toStrictEqual({
+      target,
+      note: "ask about launch",
+      status: "pending",
+    });
+    await h.model.capability.edit("r1", "");
+    expect(h.signed.at(-1)?.content).toStrictEqual({
+      target,
+      status: "pending",
+    });
+    await h.model.capability.complete("r1");
+    await expect(h.model.capability.edit("r1", "late")).rejects.toThrow(
+      "Only pending reminders can be edited",
+    );
   });
 
   it("runs overlapping Done and Snooze one after the other", async () => {

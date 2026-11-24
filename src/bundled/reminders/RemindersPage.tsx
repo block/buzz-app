@@ -36,6 +36,7 @@ import {
   ArrowSquareOutIcon,
   CheckIcon,
   DotsThreeIcon,
+  PencilSimpleIcon,
   PlusIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
@@ -75,6 +76,7 @@ import {
 } from "./model";
 import { scopeOf, useReminders } from "./react";
 import styles from "./Reminders.module.css";
+import { EditReminderDialog } from "./RemindDialog";
 import { avatarMedia } from "../../shared/avatar-source";
 import { channelText } from "../../features/channels/channel-icon";
 
@@ -164,6 +166,18 @@ export function RemindersPage({
     retryFocus.current = false;
     if (document.activeElement === document.body) page.current?.focus();
   }, [showRetry]);
+  const create =
+    reminders && scope
+      ? () =>
+          void navigator.open({
+            version: 1,
+            kind: "page",
+            pluginId: "buzz.reminders",
+            pageId: "reminders",
+            scope,
+            route: { version: 1, params: "new" },
+          })
+      : undefined;
   return (
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Reminders">
@@ -176,23 +190,14 @@ export function RemindersPage({
               />
             }
             actions={
-              reminders && scope ? (
+              create ? (
                 <IconButton
                   size="sm"
                   variant="ghost"
                   aria-label="New reminder"
                   title="New reminder"
                   icon={<PlusIcon size="1rem" />}
-                  onClick={() =>
-                    void navigator.open({
-                      version: 1,
-                      kind: "page",
-                      pluginId: "buzz.reminders",
-                      pageId: "reminders",
-                      scope,
-                      route: { version: 1, params: "new" },
-                    })
-                  }
+                  onClick={create}
                 />
               ) : undefined
             }
@@ -227,6 +232,7 @@ export function RemindersPage({
               done={done?.reminders}
               now={now}
               open={scope ? open : undefined}
+              create={create}
               run={run}
             />
           )}
@@ -243,6 +249,7 @@ function ReminderSections({
   done,
   now,
   open,
+  create,
   run,
 }: {
   session: RelaySession;
@@ -251,6 +258,7 @@ function ReminderSections({
   done: readonly Reminder[] | undefined;
   now: number;
   open: ((reminder: Reminder, conversation?: boolean) => void) | undefined;
+  create: (() => void) | undefined;
   run(action: Promise<unknown>): void;
 }) {
   const reducedMotion = useReducedMotion();
@@ -328,7 +336,7 @@ function ReminderSections({
           profile?.name ?? formatPublicKey(author) ?? "Unknown sender",
           channel?.members,
         )
-      : "Reminder";
+      : undefined;
     const context =
       channel?.channelType === "dm"
         ? "Direct message"
@@ -344,7 +352,7 @@ function ReminderSections({
         sender={sender}
         context={context}
         avatar={
-          author ? (
+          author && sender ? (
             <Avatar
               size="small"
               alt=""
@@ -352,15 +360,7 @@ function ReminderSections({
               src={avatarMedia(profile?.picture, session.media)}
               shape={profile?.isAgent ? "squircle" : "circle"}
             />
-          ) : (
-            <Avatar
-              size="small"
-              alt=""
-              fallback="Reminder"
-              fallbackContent={<AlarmIcon size={18} />}
-              shape="squircle"
-            />
-          )
+          ) : undefined
         }
         open={
           open && navigableTarget(reminder) ? () => open(reminder) : undefined
@@ -430,7 +430,14 @@ function ReminderSections({
                 <EmptyState
                   icon={<AlarmIcon size={24} />}
                   title={done ? "You're all caught up" : "No reminders yet"}
-                  description="Choose New reminder to write your own, or choose Remind me from a message's menu."
+                  description="Write your own, or choose Remind me from a message's menu."
+                  action={
+                    create && (
+                      <Button variant="subtle" onClick={create}>
+                        New reminder
+                      </Button>
+                    )
+                  }
                 />
               </motion.div>
             )}
@@ -509,9 +516,9 @@ function ReminderRow({
   reminder: Reminder;
   reminders: Reminders;
   now: number;
-  sender: string;
+  sender: string | undefined;
   context: string | undefined;
-  avatar: ReactElement;
+  avatar: ReactElement | undefined;
   open: (() => void) | undefined;
   openConversation: (() => void) | undefined;
   run(action: Promise<unknown>): void;
@@ -537,6 +544,9 @@ function ReminderRow({
     ? messagePreview(reminder.target.preview, { storedPreview: true })
     : reminder.note;
   const note = reminder.target?.preview ? reminder.note : undefined;
+  // Controls are named after who sent the message, or the reminder's own text.
+  const name = sender ?? accessibleName(reminder.note);
+  const [editing, setEditing] = useState(false);
   const fullDue =
     pending &&
     reminder.notBefore !== undefined &&
@@ -612,7 +622,7 @@ function ReminderRow({
         <span className={styles.completion}>
           {pending ? (
             <Checkbox
-              label={<span className="sr-only">Mark done: {sender}</span>}
+              label={<span className="sr-only">Mark done: {name}</span>}
               checked={completing}
               disabled={busy}
               onCheckedChange={() => {
@@ -652,7 +662,7 @@ function ReminderRow({
                   size="sm"
                   variant={overdue ? "attention" : "ghost"}
                   disabled={busy}
-                  aria-label={`${pending ? "Snooze" : "Remind me again"}: ${sender}`}
+                  aria-label={`${pending ? "Snooze" : "Remind me again"}: ${name}`}
                   title={pending ? "Snooze" : "Remind me again"}
                 >
                   {due ?? <AlarmIcon size={16} aria-hidden="true" />}
@@ -668,7 +678,7 @@ function ReminderRow({
               {snoozeItems}
             </MenuPopup>
           </MenuRoot>
-          {openConversation ? (
+          {openConversation && avatar ? (
             <IconButton
               variant="avatar"
               aria-label={`Open conversation: ${context ?? sender}`}
@@ -676,12 +686,15 @@ function ReminderRow({
               icon={avatar}
               onClick={openConversation}
             />
-          ) : (
+          ) : avatar && sender ? (
             <Tooltip content={[sender, context].filter(Boolean).join(" · ")}>
               <span className={styles.avatar} role="img" aria-label={sender}>
                 {avatar}
               </span>
             </Tooltip>
+          ) : (
+            // An empty slot keeps the snooze and More columns aligned.
+            <span className={styles.avatar} aria-hidden="true" />
           )}
           {(open || pending) && (
             <MenuRoot>
@@ -690,16 +703,18 @@ function ReminderRow({
                   <IconButton
                     hint="familiar"
                     disabled={busy}
-                    aria-label={`More actions: ${sender}`}
+                    aria-label={`More actions: ${name}`}
                     title="More actions"
                     icon={<DotsThreeIcon size={16} />}
                   />
                 }
               />
               <MenuPopup align="end">
-                <MenuNote>
-                  {[sender, context].filter(Boolean).join(" · ")}
-                </MenuNote>
+                {sender && (
+                  <MenuNote>
+                    {[sender, context].filter(Boolean).join(" · ")}
+                  </MenuNote>
+                )}
                 {open && (
                   <MenuItem onClick={open}>
                     <MenuIcon>
@@ -708,7 +723,15 @@ function ReminderRow({
                     Open message
                   </MenuItem>
                 )}
-                {open && pending && <MenuSeparator />}
+                {pending && (
+                  <MenuItem disabled={busy} onClick={() => setEditing(true)}>
+                    <MenuIcon>
+                      <PencilSimpleIcon size={16} />
+                    </MenuIcon>
+                    Edit
+                  </MenuItem>
+                )}
+                {pending && <MenuSeparator />}
                 {pending && (
                   <MenuItem
                     tone="danger"
@@ -726,6 +749,20 @@ function ReminderRow({
           )}
         </span>
       </div>
+      {editing && (
+        <EditReminderDialog
+          reminder={reminder}
+          reminders={reminders}
+          close={() => setEditing(false)}
+        />
+      )}
     </motion.li>
   );
+}
+
+/** A written reminder's first line, short enough to name its controls. */
+function accessibleName(note: string | undefined) {
+  const line = note?.trim().split("\n", 1)[0]?.trim() ?? "";
+  if (!line) return "Reminder";
+  return line.length > 60 ? `${line.slice(0, 59).trimEnd()}…` : line;
 }

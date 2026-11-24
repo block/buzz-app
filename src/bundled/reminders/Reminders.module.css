@@ -80,9 +80,12 @@
   gap: var(--space-1);
 }
 
+/* Sized to the avatar button so every row's actions share one column. */
 .avatar {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: var(--size-control-sm);
 }
 
 /* Keep the actions from consuming the label in a narrow pane. */

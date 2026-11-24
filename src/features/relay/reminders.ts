@@ -61,6 +61,8 @@ export type Reminders = Readonly<{
     note?: string,
   ): Promise<void>;
   snooze(id: string, notBefore: number): Promise<void>;
+  /** Replace a pending reminder's note; a reminder without a message needs one. */
+  edit(id: string, note: string): Promise<void>;
   complete(id: string): Promise<void>;
   cancel(id: string): Promise<void>;
 }>;
@@ -361,6 +363,24 @@ export function createReminders(options: {
         notBefore,
         content: content(current, "pending"),
       })),
+    edit: (id, note) =>
+      replace(id, (current) => {
+        const text = note.trim();
+        if (current.status !== "pending")
+          throw new Error("Only pending reminders can be edited");
+        if (!current.target && !text)
+          throw new Error("Reminder text is required");
+        return {
+          ...(current.notBefore !== undefined
+            ? { notBefore: current.notBefore }
+            : {}),
+          content: {
+            ...(current.target ? { target: current.target } : {}),
+            ...(text ? { note: text } : {}),
+            status: "pending",
+          },
+        };
+      }),
     complete: (id) =>
       replace(id, (current) => ({
         expiration: expiration(),

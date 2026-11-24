@@ -15,6 +15,7 @@ import type { RelayData } from "../../features/relay/service";
 import { scopeOf } from "./react";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
+import type { Reminder, Reminders } from "../../features/relay/reminders";
 import { messagePreview } from "../../features/notifications/content";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -264,6 +265,87 @@ export function RemindDialog({
           </>
         )}
         {message && noteField}
+        {error && (
+          <p role="alert" className="text-body text-subtle">
+            {error}
+          </p>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+/** Edit a pending reminder's text; its time changes through Snooze. */
+export function EditReminderDialog({
+  reminder,
+  reminders,
+  close,
+}: {
+  reminder: Reminder;
+  reminders: Reminders;
+  close(): void;
+}) {
+  const input = useRef<HTMLTextAreaElement>(null);
+  const saving = useRef(false);
+  const [note, setNote] = useState(reminder.note ?? "");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const written = !reminder.target;
+  const unchanged = note.trim() === (reminder.note ?? "").trim();
+  const valid = !written || !!note.trim();
+  const save = async () => {
+    if (saving.current || !valid) return;
+    if (unchanged) return close();
+    saving.current = true;
+    setPending(true);
+    setError(undefined);
+    try {
+      await reminders.edit(reminder.id, note);
+      close();
+    } catch {
+      setError("The reminder could not be saved. Try again.");
+      saving.current = false;
+      setPending(false);
+    }
+  };
+  return (
+    <Dialog
+      size="compact"
+      open
+      dismissOnOutsideClick={false}
+      onOpenChange={(open) => !open && close()}
+      preventClose={pending}
+      initialFocus={() => input.current}
+      title="Edit reminder"
+      actions={
+        <>
+          <Button disabled={pending} onClick={close}>
+            Cancel
+          </Button>
+          <Button
+            variant="prominent"
+            loading={pending}
+            disabled={pending || !valid}
+            onClick={() => void save()}
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className={styles.form}>
+        <Field label={written ? "Reminder text" : "Note (optional)"}>
+          <Textarea
+            ref={input}
+            placeholder="What do you want to follow up on?"
+            rows={2}
+            maxLength={MAX_NOTE_LENGTH}
+            required={written}
+            value={note}
+            disabled={pending}
+            onChange={(event) => setNote(event.target.value)}
+          />
+        </Field>
         {error && (
           <p role="alert" className="text-body text-subtle">
             {error}

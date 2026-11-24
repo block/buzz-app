@@ -168,6 +168,7 @@ const reminders: Reminders = {
   },
   complete: async (id) => update(id, { status: "done", notBefore: undefined }),
   snooze: async (id, notBefore) => update(id, { status: "pending", notBefore }),
+  edit: async (id, note) => update(id, { note: note.trim() || undefined }),
   cancel: async (id) =>
     update(id, { status: "cancelled", notBefore: undefined }),
 };

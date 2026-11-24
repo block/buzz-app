@@ -1013,6 +1013,9 @@ Quitting Buzz also turns it off.
   instead, open its menu and choose **Remind me**. Back hides a new reminder's
   editor without losing its draft, and Forward restores it. Cancel, Close, or
   saving ends that draft. Drafts are kept only in memory for the current session.
+- **Edit a reminder's text** from its **More actions** menu while it's pending.
+  A reminder you wrote needs text; a message reminder's note can be cleared.
+  Use **Snooze** to change its time.
 - **Spoilers** stay hidden in reminder previews and notifications as `[Spoiler]`.
   Open the original message to reveal them.
 - **Reminder notifications** open **Reminders** for reminders you wrote, or

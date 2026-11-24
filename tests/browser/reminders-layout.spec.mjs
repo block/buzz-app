@@ -109,9 +109,7 @@ for (const width of [480, 390]) {
     });
     // Keyboard highlight uses the same danger fill as pointer highlight.
     // Base UI ignores WebKit's zero-delta synthetic hover events.
-    await page
-      .getByRole("menuitem", { name: "Open message", exact: true })
-      .focus();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).focus();
     await page.keyboard.press("ArrowDown");
     await expect(cancel).toHaveAttribute("data-highlighted", "");
     const danger = await cancel.evaluate((el) => ({
@@ -237,7 +235,8 @@ test("native history restores the reminder draft, explicit dismissal retires it,
   page,
 }) => {
   await page.goto(`${url}?width=900&demo`);
-  const open = page.getByRole("button", { name: "New reminder" });
+  // The header action; an empty page repeats it in its empty state.
+  const open = page.getByRole("button", { name: "New reminder" }).first();
   const dialog = page.getByRole("dialog", { name: "New reminder" });
   const note = dialog.getByRole("textbox", { name: "Reminder text" });
   await open.click();

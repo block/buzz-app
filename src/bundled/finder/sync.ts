@@ -13,7 +13,8 @@ import type { FinderCorpus, FinderDoc } from "./corpus.ts";
 const KINDS = [9, 40002];
 const DAYS = 90;
 const PAGE = 500;
-/** Pause between pages, so a first fill never floods the relay. */
+/** Least time between history reads, so a first fill or a reconnect never
+ * floods the relay. */
 const PACE_MS = 300;
 const BACKOFF_MS = 2_000;
 const BACKOFF_CAP_MS = 60_000;
@@ -350,6 +351,9 @@ export function startFinderSync({
     };
   };
 
+  /** When the last history read finished; every read waits `PACE_MS` after
+   * it, across filters as well as pages. */
+  let lastRead = -Infinity;
   /** Pages of `filter` newest first, from `cursor` back to `from`. */
   async function readPages(
     filter: Omit<ReadFilter, "limit">,
@@ -360,6 +364,8 @@ export function startFinderSync({
     let delay = BACKOFF_MS;
     for (;;) {
       let page: readonly RelayEvent[];
+      const wait = lastRead + PACE_MS - Date.now();
+      if (wait > 0) await sleep(wait, signal);
       try {
         page = await session.readRemote(
           [{ ...filter, since: from, limit: PAGE, ...cursor }],
@@ -371,6 +377,7 @@ export function startFinderSync({
         delay = Math.min(delay * 2, BACKOFF_CAP_MS);
         continue;
       }
+      lastRead = Date.now();
       delay = BACKOFF_MS;
       take(page);
       const oldest = [...page].sort(
@@ -379,7 +386,6 @@ export function startFinderSync({
       if (!oldest || page.length < PAGE) return;
       cursor = { until: oldest.created_at, before_id: oldest.id };
       reached(cursor);
-      await sleep(PACE_MS, signal);
     }
   }
 

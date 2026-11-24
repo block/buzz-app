@@ -230,7 +230,7 @@ test("reads ahead the newest pages of wanted channels and shares the cursor with
   );
   const of = (id: string) => channelReads.filter((f) => f["#h"]?.[0] === id);
   // The fill is done and the first read-ahead page is waiting on its pace.
-  await vi.advanceTimersByTimeAsync(0);
+  await vi.advanceTimersByTimeAsync(300);
   expect(sync.status().phase).toBe("ready");
   expect(channelReads).toHaveLength(0);
   // Slow pages keep This channel's first read open while the read-ahead
@@ -442,6 +442,58 @@ test("a reconnect keeps the index and reads only what is newer, then the pages i
   await vi.advanceTimersByTimeAsync(5000);
   expect(reads).toHaveLength(1);
   expect(corpus.size).toBe(1201);
+});
+
+test("paces every history read, across filters and after a reconnect", async () => {
+  // Three chunks of direct messages, each one short page.
+  const dms = Array.from({ length: 120 }, (_, n) => `dm${n}`).flatMap((id) => [
+    metadata(relay, id, "", 1_700_000_000, [["t", "dm"]]),
+    roster(relay, id, [viewer.pubkey, author.pubkey]),
+  ]);
+  const times: number[] = [];
+  const connect = async () => {
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      async query(filters) {
+        if (filters.some((filter) => filter.kinds?.includes(9)))
+          times.push(Date.now());
+        return queryEvents([...discovery, ...dms], filters);
+      },
+    });
+    dispose.push(owner.dispose);
+    await owner.session.channels.ensureList();
+    return owner;
+  };
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const corpus = createCorpus();
+  const state = createFinderState();
+  const run = async () => {
+    times.length = 0;
+    const owner = await connect();
+    const sync = startFinderSync({
+      session: owner.session,
+      corpus,
+      state,
+      changed() {},
+    });
+    dispose.push(sync.dispose);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sync.status().phase).toBe("ready");
+    sync.dispose();
+    owner.dispose();
+    // Your messages, mentions and three chunks of direct messages.
+    expect(times).toHaveLength(5);
+    for (let n = 1; n < times.length; n++)
+      expect(
+        (times[n] as number) - (times[n - 1] as number),
+      ).toBeGreaterThanOrEqual(300);
+  };
+  await run();
+  // A reconnect resumes every filter.
+  await run();
 });
 
 test.each([

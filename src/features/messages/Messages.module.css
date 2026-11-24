@@ -300,6 +300,9 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   composes: document message from "../markdown/Markdown.module.css";
   white-space: pre-wrap;
 }
+html:not([data-wrap-message-tables="false"]) .message .text table {
+  white-space: pre-wrap;
+}
 .codeBlock {
   composes: codeFrame from "../markdown/Markdown.module.css";
 }

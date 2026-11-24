@@ -484,6 +484,9 @@ function useMessageComponents() {
   if (!components) throw new Error("Missing message rendering context");
   return components;
 }
+function observeMessageTableOverflow(table: HTMLTableElement | null) {
+  return observeTableOverflow(table, "data-wrap-message-tables");
+}
 // Keep component types stable: profile/directory updates must not remount a
 // focused link or discard its pending preview timer.
 const markdownComponents: Components = {
@@ -493,7 +496,7 @@ const markdownComponents: Components = {
   span: (props) => useMessageComponents().span(props),
   pre: (props) => useMessageComponents().pre(props),
   table: ({ node: _node, ...props }) => (
-    <table ref={observeTableOverflow} {...props} />
+    <table ref={observeMessageTableOverflow} {...props} />
   ),
 };
 

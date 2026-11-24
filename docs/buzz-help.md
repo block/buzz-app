@@ -74,6 +74,8 @@ if that desktop app is up and running.
   - **Buzz**: **Identity**, **Security** (desktop only), **Appearance**,
     **Notifications**, **Shortcuts**, **Agent setup**, **Decisions API**,
     **External apps** and **Software updates**.
+    Message tables wrap text by default. Wide tables still scroll sideways.
+    Turn wrapping off under **Appearance → Conversations**.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
 

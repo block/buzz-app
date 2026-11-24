@@ -1,6 +1,7 @@
 import {
   chooseColorMode,
   closeSettings,
+  openPage,
   openSettings,
   selectSettingsSection,
   settingsDialog,
@@ -9,7 +10,14 @@ import {
 } from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { stopRoutes } from "./playwright-test.mjs";
-import { open, anchor, expectAnchor, upper, settle } from "./timeline.mjs";
+import {
+  open,
+  anchor,
+  expectAnchor,
+  upper,
+  settle,
+  virtuaIdle,
+} from "./timeline.mjs";
 import { wcagRatio } from "../../scripts/design-system/apca.mjs";
 
 test.use({ historyCounts: { alpha: 20, beta: 1 }, launchAnimation: true });
@@ -657,6 +665,115 @@ test("Message width defaults to Narrow, widens the conversation by 50%, and rest
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
     .toBeLessThanOrEqual(480);
+});
+
+// Browser-only: actual table overflow can change even when its box stays fixed.
+test("message table wrapping updates scrollability and survives reload", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await openPage(page, "Messages");
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha" }),
+  ).toBeVisible();
+  const command = "scan  --all";
+  const prose =
+    "Check the release notes before moving to the next step. ".repeat(6);
+  const message = app.append(
+    "primary",
+    "alpha",
+    [
+      "| Step | Notes |",
+      "| --- | --- |",
+      `| \`${command}\` | ${prose.trim()} |`,
+    ].join("\n"),
+  );
+  const description = page
+    .locator(`[data-message-id="${message.id}"]`)
+    .getByRole("table");
+  const notes = description.getByRole("cell").last();
+  const notesWrap = () =>
+    notes.evaluate((cell) => {
+      const range = document.createRange();
+      range.selectNodeContents(cell);
+      const lines = new Set(
+        Array.from(range.getClientRects(), ({ top }) => top),
+      );
+      return lines.size > 1;
+    });
+  await expect.poll(notesWrap).toBe(true);
+  const code = description.locator("code");
+  expect(await code.innerText()).toBe(command);
+
+  // Keep both dimensions fixed so a resize notification cannot mask a stale flag.
+  await description.evaluate((table) => {
+    const { width, height } = table.getBoundingClientRect();
+    table.style.width = `${width}px`;
+    table.style.height = `${height}px`;
+  });
+  await settings(page);
+  const wrap = settingsDialog(page).getByRole("switch", {
+    name: "Wrap text in message tables",
+    exact: true,
+  });
+  await expect(wrap).toBeChecked();
+  await wrap.focus();
+  await page.keyboard.press("Space");
+  await expect(wrap).not.toBeChecked();
+  await closeSettings(page);
+  await expect.poll(notesWrap).toBe(false);
+  // A horizontal gesture must work immediately. Assigning scrollLeft in JS
+  // can move content that is still clipped for pointer users.
+  await description.getByRole("columnheader", { name: "Step" }).hover();
+  await page.mouse.wheel(2000, 0);
+  await expect
+    .poll(() => description.evaluate((table) => table.scrollLeft))
+    .toBeGreaterThan(0);
+
+  await page.reload();
+  await expect.poll(notesWrap).toBe(false);
+  await settings(page);
+  await expect(wrap).not.toBeChecked();
+  await wrap.click();
+  await expect(wrap).toBeChecked();
+  await chooseColorMode(page, "Dark");
+  const increase = button(settingsDialog(page), "Increase interface size");
+  for (let step = 0; step < 5; step += 1) await increase.click();
+  await closeSettings(page);
+  await page.setViewportSize({ width: 960, height: 950 });
+  await expect.poll(notesWrap).toBe(true);
+
+  // Give the wide table its own row in the narrow pane. Resizing the long
+  // prose message can move the timeline's scroll target during pointer input.
+  const columns = Array.from({ length: 12 }, (_, i) => `Component-${i + 1}`);
+  const path =
+    "fixtures/releases/configuration/weekly/checks/latest-manifest.json";
+  const values = [
+    `\`${path}\``,
+    "A-01",
+    ...columns.slice(2, -1).map(() => "Ready"),
+    "[Release notes](https://example.com/releases)",
+  ];
+  const wideMessage = app.append(
+    "primary",
+    "alpha",
+    [
+      `| ${columns.join(" | ")} |`,
+      `| ${columns.map(() => "---").join(" | ")} |`,
+      `| ${values.join(" | ")} |`,
+    ].join("\n"),
+  );
+  const wide = page
+    .locator(`[data-message-id="${wideMessage.id}"]`)
+    .getByRole("table");
+  const releaseNotes = wide.getByRole("link", { name: "Release notes" });
+  await wide.scrollIntoViewIfNeeded();
+  await virtuaIdle(page);
+  await expect(releaseNotes).not.toBeInViewport();
+  await wide.hover({ position: { x: 16, y: 16 } });
+  await page.mouse.wheel(2000, 0);
+  await expect(releaseNotes).toBeInViewport({ ratio: 1 });
 });
 
 test.describe("message width reading position", () => {

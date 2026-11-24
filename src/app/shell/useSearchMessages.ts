@@ -17,6 +17,7 @@ import { threadReference } from "../../features/relay/thread-reference";
 import { imetaAttachmentUrls } from "../../features/relay/fold";
 import { projectMarkdownAttachments } from "../../features/relay/message-content";
 import type { PreviewMentions } from "../../features/messages/PreviewText";
+import { emojiTags } from "../../features/relay/emoji";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
 import { ReadError } from "../../features/relay/errors";
@@ -104,6 +105,8 @@ export function searchText(event: { kind: number; content: string }) {
  * patch shows as raw text, so it binds no one. */
 export function eventMentions(event: IndexedEvent): PreviewMentions {
   if (event.kind === 40008) return { content: eventText(event), mentions: [] };
+  const tagged = emojiTags(event);
+  const emoji = tagged.length ? { emoji: tagged } : {};
   const keys = (pick: (tag: readonly string[]) => boolean) => [
     ...new Set(
       event.tags.flatMap((tag) =>
@@ -116,13 +119,14 @@ export function eventMentions(event: IndexedEvent): PreviewMentions {
     (tag) => tag.length === 2 && tag[0] === "mention",
   );
   if (!mentions.length && !mentionReferences.length)
-    return { content: eventText(event), mentions };
+    return { content: eventText(event), mentions, ...emoji };
   const { content, seams } = eventBody(event);
   return {
     content,
     mentions,
     mentionReferences,
     ...(seams.length ? { attachmentSeams: seams } : {}),
+    ...emoji,
   };
 }
 type Result = {

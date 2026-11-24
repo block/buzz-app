@@ -5,6 +5,7 @@ import type { RelaySession } from "../../features/relay/session";
 import type { PreviewMentions } from "../../features/messages/PreviewText";
 import { sentEntries, type ReadEvent } from "../../features/drafts-sent/model";
 import { useSent } from "../../features/drafts-sent/views";
+import { emojiTags } from "../../features/relay/emoji";
 
 /** Your newest message in one Activity conversation. */
 export type OwnActivity = Readonly<{
@@ -16,6 +17,12 @@ export type OwnActivity = Readonly<{
   createdAt: number;
   preview: PreviewMentions;
 }>;
+
+/** A preview's custom emoji, from its message's own tags. */
+const emojiOf = (tags: readonly (readonly string[])[] | undefined) => {
+  const emoji = emojiTags({ tags: tags ?? [] });
+  return emoji.length ? { emoji } : {};
+};
 
 /**
  * The Activity conversation a message of yours belongs to, by the rule Activity
@@ -67,6 +74,7 @@ export function ownActivity(
         mentions: (tags.get(entry.id) ?? []).flatMap(([name, value]) =>
           name === "p" && value ? [value] : [],
         ),
+        ...emojiOf(tags.get(entry.id)),
       },
     });
   }

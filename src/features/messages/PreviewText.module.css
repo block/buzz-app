@@ -1,0 +1,8 @@
+/* A custom emoji in a one-line preview: text size, on the text's line. */
+.emoji {
+  display: inline-block;
+  width: 1.125em;
+  height: 1.125em;
+  object-fit: contain;
+  vertical-align: -0.125em;
+}

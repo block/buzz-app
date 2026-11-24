@@ -4,6 +4,7 @@ import { spoilerText } from "../notifications/content";
 import { profileKey } from "../profiles/target";
 import { PROFILE_CACHE_BASE } from "../relay/budget";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import { type CustomEmoji, emojiMatches } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
 import { preparedMarkdown, recentResults } from "./markdown-preparation";
@@ -11,12 +12,18 @@ import { placeholderPattern, protectInlineContent } from "./MessageMarkdown";
 import type { AgentLibrary } from "../agents/library";
 import { profileMentionNames } from "./profile-mentions";
 import { ProfileMention, useReferenceDirectory } from "./ReferenceText";
+import styles from "./PreviewText.module.css";
 
 /** A message as its previews bind it: its body as its conversation shows
  * it, attachments already projected out, and its signed identities. */
 export type PreviewMentions = Pick<
   ChannelMessage,
-  "content" | "mentions" | "mentionReferences" | "edited" | "attachmentSeams"
+  | "content"
+  | "mentions"
+  | "mentionReferences"
+  | "edited"
+  | "attachmentSeams"
+  | "emoji"
 >;
 
 type Part = { text: string; target?: string | undefined };
@@ -243,8 +250,15 @@ export function PreviewText({
       ?.filter((at) => at >= start && at < start + length)
       .map((at) => at - start);
     if (!part.target || !profileKey(part.target))
-      return (
+      return positions?.length || !mentions.emoji?.length ? (
         <MatchedLabel key={start} label={part.text} positions={positions} />
+      ) : (
+        <EmojiText
+          key={start}
+          text={part.text}
+          emoji={mentions.emoji}
+          session={session}
+        />
       );
     const chip = (
       <ProfileMention
@@ -266,6 +280,55 @@ export function PreviewText({
     );
   });
   return <span ref={shown.ref}>{shownParts}</span>;
+}
+
+/** Plain preview text with the message's own custom emoji drawn inline at
+ * text size; a shortcode without an image, or whose image fails, stays text. */
+function EmojiText({
+  text,
+  emoji,
+  session,
+}: {
+  text: string;
+  emoji: readonly CustomEmoji[];
+  session: RelaySession | undefined;
+}) {
+  const nodes = [];
+  let offset = 0;
+  for (const match of emojiMatches(text, emoji)) {
+    nodes.push(text.slice(offset, match.start));
+    nodes.push(
+      <PreviewEmoji
+        key={match.start}
+        literal={text.slice(match.start, match.end)}
+        source={session?.media(match.emoji.url)}
+      />,
+    );
+    offset = match.end;
+  }
+  nodes.push(text.slice(offset));
+  return <>{nodes}</>;
+}
+
+function PreviewEmoji({
+  literal,
+  source,
+}: {
+  literal: string;
+  source: string | undefined;
+}) {
+  const [failed, setFailed] = useState<string>();
+  if (!source || source === failed) return literal;
+  return (
+    <img
+      src={source}
+      className={styles.emoji}
+      alt={literal}
+      title={literal}
+      draggable={false}
+      onError={() => setFailed(source)}
+    />
+  );
 }
 
 // Recent previews' parts, so a row shown again does not bind again.

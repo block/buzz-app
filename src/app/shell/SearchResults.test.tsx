@@ -40,23 +40,12 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { LiveCallbacks } from "../../features/relay/live";
-import type { ReadStateSigning } from "../../features/relay/read-state-host";
-import {
-  decodeReadState,
-  signReadState,
-  // @ts-expect-error Test the production Node codec with disposable identities.
-} from "../../../browser-host/read-state.mjs";
-import {
-  readJournal,
-  type ReadJournal,
-} from "../../features/relay/read-state-storage";
 import type { AppServices } from "../services";
 import type {
   DecisionRequest,
   Decisions,
 } from "../../features/decisions/service";
 import type { SearchGroup } from "./SearchChoices";
-import { setUnreadFirstPreference } from "../../features/search/unread-first-preference";
 import { messageSortPreference } from "../../features/search/message-sort-preference";
 import { SearchResults } from "./SearchResults";
 import { useSearchMessages } from "./useSearchMessages";
@@ -102,7 +91,7 @@ async function expectHint(target: HTMLElement, hint: string) {
   expect(await screen.findByRole("tooltip")).toHaveTextContent(hint);
 }
 
-it("keeps a joined private Guest channel in recents without calling it public or unjoined", async () => {
+it("lists a joined private Guest channel without calling it public or unjoined", async () => {
   const relay = keypair(),
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -135,7 +124,7 @@ it("keeps a joined private Guest channel in recents without calling it public or
   try {
     const mounted = render(<SearchResults {...props} query="" />);
     const recent = await screen.findByRole("group", {
-      name: "Recents",
+      name: "Channels",
     });
     expect(
       within(recent).getByRole("option", { name: /Private updates/ }),
@@ -158,18 +147,24 @@ it("keeps a joined private Guest channel in recents without calling it public or
   }
 });
 
-it("opens on recent channels in activity order, hinting the chord that searches this conversation", async () => {
+it("opens on every joined channel, one line each, by latest activity or by name, hinting the chord that searches this conversation", async () => {
   const relay = keypair();
   const viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const discovery = [
-    metadata(relay, "older", "older", 1700000000),
-    roster(relay, "older", [viewer.pubkey]),
-    metadata(relay, "latest", "latest", 1700000100),
-    roster(relay, "latest", [viewer.pubkey]),
+    metadata(relay, "a", "zulu"),
+    roster(relay, "a", [viewer.pubkey]),
+    metadata(relay, "b", "alpha"),
+    roster(relay, "b", [viewer.pubkey]),
   ];
+  // Search asks for activity itself: no sidebar sort has read it.
+  const activity = vi.fn(async () => [
+    message(viewer, "a", "newer", 1700000100),
+    message(viewer, "b", "older", 1700000000),
+  ]);
   const owner = createRelaySession({
     ...wire.transport,
+    channelActivity: activity,
     query(filters) {
       return Promise.resolve(
         discovery.filter((event) =>
@@ -186,24 +181,48 @@ it("opens on recent channels in activity order, hinting the chord that searches 
         onQueryChange={() => {}}
         input={createRef()}
         pages={[]}
-        currentChannelId="older"
+        usageScope="browse-sort-test"
+        currentChannelId="b"
         conversationBinding={{ key: "f", mod: true }}
         onScopeChange={() => {}}
         openNewMessage={() => {}}
         openConversation={() => {}}
       />,
     );
-    const recent = within(
-      await screen.findByRole("group", { name: "Recents" }),
+    const channels = () =>
+      within(screen.getByRole("group", { name: "Channels" })).getAllByRole(
+        "option",
+      );
+    await screen.findByRole("group", { name: "Channels" });
+    await waitFor(() =>
+      expect(channels().map((row) => row.textContent)).toEqual([
+        "zulu",
+        "alpha",
+      ]),
     );
+    expect(activity).toHaveBeenCalled();
     // The conversation's own search is a chord, not a row.
     expect(screen.queryByRole("option", { name: /Search in/ })).toBeNull();
     expect(screen.getByText("This conversation")).toHaveTextContent(
       "Ctrl+F This conversation",
     );
-    const [first, second] = recent.getAllByRole("option");
-    expect(first).toHaveTextContent("latest");
-    expect(second).toHaveTextContent("older");
+    // The first row is chosen for Enter, with no detail under any name.
+    expect(screen.getByRole("combobox")).toHaveAttribute(
+      "aria-activedescendant",
+      channels()[0]?.id,
+    );
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Sort conversations: Latest activity",
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitemradio", { name: "Name" }),
+    );
+    expect(channels().map((row) => row.textContent)).toEqual(["alpha", "zulu"]);
+    expect(
+      screen.getByRole("button", { name: "Sort conversations: Name" }),
+    ).toBeVisible();
     expect(screen.queryByText("from: person")).toBeNull();
     expect(screen.queryByText("in: channel")).toBeNull();
     expect(screen.queryByText("during: date")).toBeNull();
@@ -213,692 +232,7 @@ it("opens on recent channels in activity order, hinting the chord that searches 
   } finally {
     cleanup();
     owner.dispose();
-  }
-});
-
-it("leads an empty search with other unmuted unread channels and DMs, selecting the first for Enter", async () => {
-  const relay = keypair();
-  const viewer = keypair();
-  const friend = keypair();
-  let journal: ReadJournal | undefined;
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const discovery = ["alpha", "dm", "muted", "other", "quiet", "read"].flatMap(
-    (id) => [
-      metadata(relay, id, id, undefined, id === "dm" ? [["t", "dm"]] : []),
-      roster(
-        relay,
-        id,
-        id === "dm" ? [viewer.pubkey, friend.pubkey] : [viewer.pubkey],
-      ),
-    ],
-  );
-  const owner = createRelaySession(
-    {
-      ...wire.transport,
-      query(filters) {
-        return Promise.resolve(
-          discovery.filter((event) =>
-            filters.some((filter) => filter.kinds?.includes(event.kind)),
-          ),
-        );
-      },
-      decodeSidebarPreferences: async () => ({
-        sections: [],
-        assignments: {},
-        starred: [],
-        muted: ["muted"],
-      }),
-    },
-    {
-      readStateFloor: () => 0,
-      readPublisherLock: async (_signal, work) => work(),
-      readStateStorage: {
-        capture: async () => structuredClone(journal),
-        close() {},
-        async update(change) {
-          journal = readJournal(change(journal), viewer.pubkey);
-          return journal;
-        },
-      },
-    },
-  );
-  const open = vi.fn();
-  const props = {
-    session: owner.session,
-    onQueryChange() {},
-    input: createRef<HTMLInputElement>(),
-    pages: [],
-    currentChannelId: "read",
-    onScopeChange() {},
-    openNewMessage: () => {},
-    openConversation: open,
-  };
-  const markUnread = (channelId: string) =>
-    act(async () => {
-      await owner.session.unread.markUnreadLocal({
-        kind: "channel",
-        channelId,
-      });
-    });
-  const rowsOf = (group: string) =>
-    within(screen.getByRole("group", { name: group })).getAllByRole("option");
-  try {
-    await owner.session.sidebarPreferences.refresh();
-    const first = render(<SearchResults {...props} query="" />);
-    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(4));
-    // Nothing unread: the suggestions are unchanged and Enter opens nothing.
-    const idle = screen.getByRole("combobox", { name: "Search Buzz" });
-    expect(screen.queryByRole("group", { name: "Unread" })).toBeNull();
-    expect(idle).not.toHaveAttribute("aria-activedescendant");
-    fireEvent.keyDown(idle, { key: "Enter" });
-    expect(open).not.toHaveBeenCalled();
-    first.unmount();
-    // The conversation already open is not somewhere to jump to.
-    for (const id of ["other", "muted", "dm", "read"]) await markUnread(id);
-    const mounted = render(<SearchResults {...props} query="" />);
-    const input = screen.getByRole("combobox", { name: "Search Buzz" });
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(2));
-    const rows = rowsOf("Unread");
-    expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringMatching(/DM$/),
-      expect.stringMatching(/^other/),
-    ]);
-    // Search opens on Unread alone.
-    expect(
-      within(screen.getByRole("listbox"))
-        .getAllByRole("group")
-        .map((group) => group.getAttribute("aria-label")),
-    ).toEqual(["Unread"]);
-    expect(input).toHaveAttribute("aria-activedescendant", rows[0]?.id);
-    // Once the highlight is moved, an unread arriving above does not
-    // redirect Enter.
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    expect(input).toHaveAttribute("aria-activedescendant", rows[1]?.id);
-    // A DM still leads; alpha is newer than other.
-    await markUnread("alpha");
-    expect(rowsOf("Unread")[1]).toHaveTextContent(/^alpha/);
-    expect(input).toHaveAttribute("aria-activedescendant", rows[1]?.id);
-    fireEvent.keyDown(input, { key: "Enter" });
-    expect(open).toHaveBeenCalledExactlyOnceWith("other");
-    // Typed text searches as before, without an Unread group.
-    mounted.rerender(<SearchResults {...props} query="other" />);
-    await screen.findByRole("group", { name: "Channels" });
-    expect(screen.queryByRole("group", { name: "Unread" })).toBeNull();
-    // Turned off in Settings, an empty search is unread-blind again.
-    act(() => setUnreadFirstPreference(false));
-    mounted.rerender(<SearchResults {...props} query="" />);
-    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(4));
-    expect(screen.queryByRole("group", { name: "Unread" })).toBeNull();
-    expect(input).not.toHaveAttribute("aria-activedescendant");
-  } finally {
-    setUnreadFirstPreference(true);
-    cleanup();
-    owner.dispose();
-  }
-});
-
-it("opens on every unread conversation, with recents a Tab away", async () => {
-  const relay = keypair();
-  const viewer = keypair();
-  let journal: ReadJournal | undefined;
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
-  const ids = [
-    ...Array.from({ length: 8 }, (_, index) => `unread-${index}`),
-    "read",
-  ];
-  const discovery = ids.flatMap((id) => [
-    metadata(relay, id, id),
-    roster(relay, id, [viewer.pubkey]),
-  ]);
-  const owner = createRelaySession(
-    {
-      ...wire.transport,
-      query(filters) {
-        return Promise.resolve(
-          discovery.filter((event) =>
-            filters.some((filter) => filter.kinds?.includes(event.kind)),
-          ),
-        );
-      },
-    },
-    {
-      readStateFloor: () => 0,
-      readPublisherLock: async (_signal, work) => work(),
-      readStateStorage: {
-        capture: async () => structuredClone(journal),
-        close() {},
-        async update(change) {
-          journal = readJournal(change(journal), viewer.pubkey);
-          return journal;
-        },
-      },
-    },
-  );
-  const rowsOf = (group: string) =>
-    within(screen.getByRole("group", { name: group })).getAllByRole("option");
-  try {
-    owner.session.channels.ensureList();
-    await waitFor(() =>
-      expect(owner.session.channels.list().channels).toHaveLength(9),
-    );
-    for (const id of ids.slice(0, 8))
-      await owner.session.unread.markUnreadLocal({
-        kind: "channel",
-        channelId: id,
-      });
-    render(
-      <SearchResults
-        session={owner.session}
-        query=""
-        onQueryChange={() => {}}
-        input={createRef()}
-        pages={[]}
-        openNewMessage={() => {}}
-        openConversation={() => {}}
-      />,
-    );
-    // Search opens on Unread, whole, with its first row chosen.
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(8));
-    const rows = rowsOf("Unread");
-    expect(rows[0]).toHaveTextContent(/^unread-0/);
-    const field = screen.getByRole("combobox", { name: "Search Buzz" });
-    expect(field).toHaveAttribute("aria-activedescendant", rows[0]?.id);
-    expect(
-      screen
-        .getAllByRole("button", { pressed: true })
-        .map((chip) => chip.textContent),
-    ).toEqual([expect.stringMatching(/^Unread/)]);
-    expect(screen.queryByRole("button", { name: /Jump back in/ })).toBeNull();
-    // Tab shows Recents, without the unread rows; Escape comes back.
-    fireEvent.keyDown(field, { key: "Tab" });
-    expect(rowsOf("Recents").map((row) => row.textContent)).toEqual([
-      expect.stringMatching(/^read/),
-    ]);
-    fireEvent.keyDown(field, { key: "Escape" });
-    expect(rowsOf("Unread")).toHaveLength(8);
-    // With every conversation unread, Recents does not claim none.
-    await owner.session.unread.markUnreadLocal({
-      kind: "channel",
-      channelId: "read",
-    });
-    await waitFor(() =>
-      expect(screen.queryByRole("group", { name: "Recents" })).toBeNull(),
-    );
-    expect(screen.queryByText("No recent activity yet.")).toBeNull();
-  } finally {
-    cleanup();
-    owner.dispose();
-  }
-});
-
-it("previews the newest unread reply of a channel unread only through threads and opens its thread", async () => {
-  const relay = keypair(),
-    viewer = keypair(),
-    larry = keypair(),
-    moe = keypair();
-  const discovery = [
-    profile(larry, { name: "Larry" }),
-    profile(moe, { name: "Moe" }),
-    ...["team", "blank", "mixed", "marked"].flatMap((id) => [
-      metadata(relay, id, id),
-      roster(relay, id, [viewer.pubkey, larry.pubkey]),
-    ]),
-    ...(
-      [
-        ["solo", larry],
-        ["pair", moe],
-      ] as const
-    ).flatMap(([id, friend]) => [
-      metadata(relay, id, id, undefined, [["t", "dm"]]),
-      roster(relay, id, [viewer.pubkey, friend.pubkey]),
-    ]),
-  ];
-  let live: LiveCallbacks | undefined;
-  let journal: ReadJournal | undefined;
-  const owner = createRelaySession(
-    {
-      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
-      readState: {
-        decode: async (events) => decodeReadState(events, viewer.secret),
-        sign: async (intent: ReadStateSigning) =>
-          signReadState(intent, viewer.secret),
-        publish: async () => {},
-      },
-      async query(filters) {
-        return discovery.filter((event) =>
-          filters.some((filter) => matchFilter(filter as Filter, event)),
-        );
-      },
-      subscribe(callbacks) {
-        live = callbacks;
-        return { update() {}, retry() {}, dispose() {} };
-      },
-    },
-    {
-      readStateFloor: () => 0,
-      readPublisherLock: async (_signal, work) => work(),
-      readStateStorage: {
-        capture: async () => structuredClone(journal),
-        close() {},
-        async update(change) {
-          journal = readJournal(change(journal), viewer.pubkey);
-          return journal;
-        },
-      },
-    },
-  );
-  const reply = (
-    root: RelayEvent,
-    content: string,
-    time: number,
-    author = larry,
-  ) =>
-    message(
-      author,
-      root.tags.find(([tag]) => tag === "h")?.[1] ?? "",
-      content,
-      time,
-      [["e", root.id, "", "reply"]],
-    );
-  const root = message(
-    viewer,
-    "team",
-    "so uh how do I get that audio to stop",
-    10,
-  );
-  const blankRoot = message(viewer, "blank", "attachment thread", 10);
-  const mixedRoot = message(viewer, "mixed", "mixed thread", 10);
-  const markedRoot = message(viewer, "marked", "marked thread", 10);
-  const newerRoot = message(viewer, "team", "newer thread", 15);
-  const oldest = reply(root, "Draft PR is up", 11);
-  const older = reply(root, "CI is green now", 12);
-  const newest = reply(newerRoot, "Newest thread reply", 16);
-  const soloRoot = message(viewer, "solo", "solo thread", 10);
-  const soloReply = reply(soloRoot, "Only DM thread reply", 11);
-  const pairRoots = [
-    message(viewer, "pair", "first DM thread", 10),
-    message(viewer, "pair", "second DM thread", 10),
-  ] as const;
-  const open = vi.fn();
-  const rowsOf = (group: string) =>
-    within(screen.getByRole("group", { name: group })).getAllByRole("option");
-  const row = (name: string) =>
-    rowsOf("Unread").find((option) => option.textContent?.startsWith(name));
-  try {
-    render(
-      <SearchResults
-        session={owner.session}
-        query=""
-        onQueryChange={() => {}}
-        input={createRef()}
-        pages={[]}
-        openNewMessage={() => {}}
-        openConversation={open}
-      />,
-    );
-    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(4));
-    assert(live);
-    const callbacks = live;
-    act(() =>
-      callbacks.receive([
-        root,
-        oldest,
-        older,
-        newerRoot,
-        newest,
-        blankRoot,
-        reply(blankRoot, "", 13),
-        mixedRoot,
-        reply(mixedRoot, "mixed reply", 14),
-        message(larry, "mixed", "new top-level message", 15),
-        markedRoot,
-        reply(markedRoot, "marked reply", 17),
-        soloRoot,
-        soloReply,
-        ...pairRoots,
-        reply(pairRoots[0], "First DM reply", 11, moe),
-        reply(pairRoots[1], "Second DM reply", 12, moe),
-      ]),
-    );
-    await act(async () => {
-      await owner.session.unread.markUnreadLocal({
-        kind: "channel",
-        channelId: "marked",
-      });
-    });
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(6));
-    // DMs lead, then channels with threads you're in, each tagged with why.
-    expect(
-      rowsOf("Unread").map(
-        (option) => option.textContent?.match(/(DM|Thread)$/)?.[0],
-      ),
-    ).toEqual(["DM", "DM", "Thread", "Thread", "Thread", "Thread"]);
-    expect(
-      rowsOf("Unread")
-        .slice(0, 2)
-        .map((option) => option.textContent?.match(/^(Larry|Moe)/)?.[0])
-        .sort(),
-    ).toEqual(["Larry", "Moe"]);
-    // The newest unread reply of the newest thread, by its author, not a root.
-    await waitFor(() =>
-      expect(row("team")).toHaveTextContent(
-        "Thread reply, Larry: Newest thread reply",
-      ),
-    );
-    expect(row("blank")).toHaveTextContent("Larry replied in a thread");
-    // Unread channel messages keep the channel's destination, but the row
-    // still shows the reply that earned its Thread tag.
-    expect(row("mixed")).toHaveTextContent("Thread reply, Larry: mixed reply");
-    fireEvent.click(row("mixed") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("mixed");
-    // So does a channel marked unread, whatever its threads hold.
-    expect(row("marked")).toHaveTextContent(
-      "Thread reply, Larry: marked reply",
-    );
-    fireEvent.click(row("marked") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("marked");
-    // A DM shares one read marker, so only a single unread thread leads it.
-    expect(row("Larry")).toHaveTextContent(
-      "Thread reply, Larry: Only DM thread reply",
-    );
-    fireEvent.click(row("Larry") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("solo", soloRoot.id, soloRoot.id);
-    expect(row("Moe")).not.toHaveTextContent("Thread reply,");
-    fireEvent.click(row("Moe") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("pair");
-    // The row opens the thread it previews, which starts at its first unread reply.
-    fireEvent.click(row("team") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("team", newerRoot.id, newerRoot.id);
-    // Reading that thread previews the other one's newest reply.
-    const read = (rootId: string, messageId: string) =>
-      act(async () => {
-        await owner.session.unread.markThrough(
-          { kind: "thread", channelId: "team", rootId },
-          messageId,
-        );
-      });
-    await read(newerRoot.id, newest.id);
-    await waitFor(() =>
-      expect(row("team")).toHaveTextContent("Larry: CI is green now"),
-    );
-    expect(row("team")).not.toHaveTextContent("audio");
-    fireEvent.click(row("team") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("team", root.id, root.id);
-    // Reading every thread takes the channel out of Unread.
-    await read(root.id, older.id);
-    await waitFor(() => expect(row("team")).toBeUndefined());
-  } finally {
-    cleanup();
-    owner.dispose();
-  }
-});
-
-it("leads with DMs, then mentions of you, then threads, then the rest, showing a muted channel only for a mention", async () => {
-  const relay = keypair(),
-    viewer = keypair(),
-    larry = keypair();
-  const discovery = [
-    profile(larry, { name: "Larry" }),
-    ...["chatter", "thread", "ping", "quiet-ping", "quiet"].flatMap((id) => [
-      metadata(relay, id, id),
-      roster(relay, id, [viewer.pubkey, larry.pubkey]),
-    ]),
-    metadata(relay, "solo", "solo", undefined, [["t", "dm"]]),
-    roster(relay, "solo", [viewer.pubkey, larry.pubkey]),
-  ];
-  let live: LiveCallbacks | undefined;
-  let journal: ReadJournal | undefined;
-  const owner = createRelaySession(
-    {
-      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
-      readState: {
-        decode: async (events) => decodeReadState(events, viewer.secret),
-        sign: async (intent: ReadStateSigning) =>
-          signReadState(intent, viewer.secret),
-        publish: async () => {},
-      },
-      async query(filters) {
-        return discovery.filter((event) =>
-          filters.some((filter) => matchFilter(filter as Filter, event)),
-        );
-      },
-      subscribe(callbacks) {
-        live = callbacks;
-        return { update() {}, retry() {}, dispose() {} };
-      },
-      decodeSidebarPreferences: async () => ({
-        sections: [],
-        assignments: {},
-        starred: [],
-        muted: ["quiet-ping", "quiet"],
-      }),
-    },
-    {
-      readStateFloor: () => 0,
-      readPublisherLock: async (_signal, work) => work(),
-      readStateStorage: {
-        capture: async () => structuredClone(journal),
-        close() {},
-        async update(change) {
-          journal = readJournal(change(journal), viewer.pubkey);
-          return journal;
-        },
-      },
-    },
-  );
-  const mention = [["p", viewer.pubkey]];
-  const threadRoot = message(viewer, "thread", "thread root", 10);
-  const rowsOf = (group: string) =>
-    within(screen.getByRole("group", { name: group })).getAllByRole("option");
-  try {
-    await owner.session.sidebarPreferences.refresh();
-    render(
-      <SearchResults
-        session={owner.session}
-        query=""
-        onQueryChange={() => {}}
-        input={createRef()}
-        pages={[]}
-        openNewMessage={() => {}}
-        openConversation={() => {}}
-      />,
-    );
-    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(4));
-    assert(live);
-    const callbacks = live;
-    act(() =>
-      callbacks.receive([
-        message(larry, "chatter", "just chatting", 11),
-        threadRoot,
-        message(larry, "thread", "a reply", 12, [
-          ["e", threadRoot.id, "", "reply"],
-        ]),
-        message(larry, "ping", "can you look at this", 13, mention),
-        message(larry, "quiet-ping", "you too", 14, mention),
-        message(larry, "quiet", "muted chatter", 15),
-        message(larry, "solo", "hey there", 16),
-      ]),
-    );
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(5));
-    const rows = rowsOf("Unread").map((row) => row.textContent ?? "");
-    expect(rows[0]).toMatch(/^Larry.*DM$/);
-    expect(rows.slice(1, 3).sort()).toEqual([
-      expect.stringMatching(
-        /^ping.*Mention, Larry: can you look at this.*Mentioned$/,
-      ),
-      expect.stringMatching(/^quiet-ping.*Larry: you too.*Mentioned$/),
-    ]);
-    expect(rows[3]).toMatch(/^thread.*Thread$/);
-    expect(rows[4]).toMatch(/^chatter/);
-    expect(rows[4]).not.toMatch(/(DM|Mentioned|Thread)$/);
-    // A DM shows its newest unread message; a channel with only its own
-    // messages unread keeps naming what it is.
-    expect(rows[0]).toMatch(/^Larry.*hey there.*DM$/);
-    expect(rows[0]).not.toMatch(/Direct message/);
-    expect(rows[4]).toMatch(/Conversation/);
-    // Muted without a mention stays quiet.
-    expect(rows.some((row) => row.startsWith("quiet "))).toBe(false);
-    expect(rows.filter((row) => row.startsWith("quiet"))).toHaveLength(1);
-  } finally {
-    cleanup();
-    owner.dispose();
-  }
-});
-
-it("counts a reply that mentions you, even muted, tiers Thread only for threads you're in, and opens the thread a row shows", async () => {
-  const relay = keypair(),
-    viewer = keypair(),
-    larry = keypair();
-  const discovery = [
-    profile(larry, { name: "Larry" }),
-    ...["muted-reply", "aside", "mixed", "two-threads", "picked"].flatMap(
-      (id) => [
-        metadata(relay, id, id),
-        roster(relay, id, [viewer.pubkey, larry.pubkey]),
-      ],
-    ),
-  ];
-  let live: LiveCallbacks | undefined;
-  let journal: ReadJournal | undefined;
-  const owner = createRelaySession(
-    {
-      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
-      readState: {
-        decode: async (events) => decodeReadState(events, viewer.secret),
-        sign: async (intent: ReadStateSigning) =>
-          signReadState(intent, viewer.secret),
-        publish: async () => {},
-      },
-      async query(filters) {
-        return discovery.filter((event) =>
-          filters.some((filter) => matchFilter(filter as Filter, event)),
-        );
-      },
-      subscribe(callbacks) {
-        live = callbacks;
-        return { update() {}, retry() {}, dispose() {} };
-      },
-      decodeSidebarPreferences: async () => ({
-        sections: [],
-        assignments: {},
-        starred: [],
-        muted: ["muted-reply"],
-      }),
-    },
-    {
-      readStateFloor: () => 0,
-      readPublisherLock: async (_signal, work) => work(),
-      readStateStorage: {
-        capture: async () => structuredClone(journal),
-        close() {},
-        async update(change) {
-          journal = readJournal(change(journal), viewer.pubkey);
-          return journal;
-        },
-      },
-    },
-  );
-  const mention = [["p", viewer.pubkey]];
-  const reply = (root: { id: string }) => ["e", root.id, "", "reply"];
-  const mutedRoot = message(larry, "muted-reply", "muted root", 10);
-  const asideRoot = message(larry, "aside", "aside root", 10);
-  const mixedRoot = message(viewer, "mixed", "my root", 10);
-  // A mention in one thread, then a newer reply in another you're in.
-  const mentionRoot = message(viewer, "two-threads", "my root", 10);
-  const ownRoot = message(viewer, "two-threads", "my other root", 10);
-  // No mention: an older reply in your thread, then a newer broadcast in a
-  // thread you're not in, whose root you've read.
-  const pickedRoot = message(viewer, "picked", "my picked root", 10);
-  const otherRoot = message(larry, "picked", "their picked root", 11);
-  const open = vi.fn();
-  const rowsOf = (group: string) =>
-    within(screen.getByRole("group", { name: group })).getAllByRole("option");
-  try {
-    await owner.session.sidebarPreferences.refresh();
-    render(
-      <SearchResults
-        session={owner.session}
-        query=""
-        onQueryChange={() => {}}
-        input={createRef()}
-        pages={[]}
-        openNewMessage={() => {}}
-        openConversation={open}
-      />,
-    );
-    // Recents shows four conversations at most.
-    await waitFor(() => expect(rowsOf("Recents")).toHaveLength(4));
-    assert(live);
-    const callbacks = live;
-    act(() => callbacks.receive([pickedRoot, otherRoot]));
-    await act(async () => {
-      await owner.session.unread.markThrough(
-        { kind: "channel", channelId: "picked" },
-        otherRoot.id,
-      );
-    });
-    act(() =>
-      callbacks.receive([
-        message(larry, "picked", "in your thread", 12, [reply(pickedRoot)]),
-        message(larry, "picked", "for everyone", 18, [
-          reply(otherRoot),
-          ["broadcast", "1"],
-        ]),
-        mutedRoot,
-        asideRoot,
-        mixedRoot,
-        mentionRoot,
-        ownRoot,
-        message(larry, "muted-reply", "are you around", 12, [
-          reply(mutedRoot),
-          ...mention,
-        ]),
-        message(larry, "aside", "for everyone", 13, [
-          reply(asideRoot),
-          ["broadcast", "1"],
-        ]),
-        message(larry, "mixed", "top-level news", 14),
-        message(larry, "mixed", "answering you", 15, [reply(mixedRoot)]),
-        message(larry, "two-threads", "need you here", 16, [
-          reply(mentionRoot),
-          ...mention,
-        ]),
-        message(larry, "two-threads", "newer, in yours", 17, [reply(ownRoot)]),
-      ]),
-    );
-    await waitFor(() => expect(rowsOf("Unread")).toHaveLength(5));
-    const rows = rowsOf("Unread");
-    const text = rows.map((row) => row.textContent ?? "");
-    expect(text.slice(0, 2).sort()).toEqual([
-      expect.stringMatching(/^muted-reply.*Larry: are you around.*Mentioned$/),
-      expect.stringMatching(/^two-threads.*Larry: need you here.*Mentioned$/),
-    ]);
-    expect(text.slice(2, 4).sort()).toEqual([
-      expect.stringMatching(/^mixed.*Larry: answering you.*Thread$/),
-      expect.stringMatching(/^picked.*Larry: in your thread.*Thread$/),
-    ]);
-    expect(text[4]).toMatch(/^aside/);
-    expect(text[4]).not.toMatch(/(Mentioned|Thread)$/);
-    // A thread-only row opens the thread its mention is in, not the newest.
-    const row = (name: string) =>
-      rows.find((option) => option.textContent?.startsWith(name));
-    fireEvent.click(row("two-threads") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith(
-      "two-threads",
-      mentionRoot.id,
-      mentionRoot.id,
-    );
-    // With no mention, it previews your thread, but a broadcast in a thread
-    // you're not in is ordinary channel unread, like a top-level post, so the
-    // row opens its conversation.
-    fireEvent.click(row("picked") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("picked");
-    // A mixed row still opens its conversation.
-    fireEvent.click(row("mixed") as HTMLElement);
-    expect(open).toHaveBeenLastCalledWith("mixed");
-  } finally {
-    cleanup();
-    owner.dispose();
+    clearViewScope("browse-sort-test");
   }
 });
 
@@ -2284,9 +1618,9 @@ it.each(["", "Crew"])(
         expect(screen.queryByRole("option", { name: /Settings/ })).toBeNull();
       if (query) {
         expect(screen.getByText("Loading joined conversations…")).toBeVisible();
-        expect(screen.queryByText("Loading recent conversations…")).toBeNull();
+        expect(screen.queryByText("Loading conversations…")).toBeNull();
       } else {
-        expect(screen.getByText("Loading recent conversations…")).toBeVisible();
+        expect(screen.getByText("Loading conversations…")).toBeVisible();
         expect(screen.queryByText("Loading joined conversations…")).toBeNull();
       }
       await act(async () => pending.respond(discovery));
@@ -11531,58 +10865,6 @@ it("restores only dates the parser reads as chips, so literal text before ask: s
   } finally {
     cleanup();
     owner.dispose();
-  }
-});
-
-it("shows a recent search's filters by name, and searches again with them as chips", async () => {
-  const relay = keypair(),
-    viewer = keypair();
-  const { owner } = operatorSession(viewer, relay, [
-    metadata(relay, "bugs", "buzz-bugs"),
-    roster(relay, "bugs", [viewer.pubkey]),
-  ]);
-  const usageScope = `recent-chips:${viewer.pubkey}`;
-  writeView(usageScope, "search-recent", ["in:bugs deploy"]);
-  const input = createRef<HTMLInputElement>();
-  function Host() {
-    const [query, setQuery] = useState("");
-    return (
-      <SearchResults
-        session={owner.session}
-        query={query}
-        onQueryChange={setQuery}
-        input={input}
-        pages={[]}
-        openNewMessage={vi.fn()}
-        openConversation={vi.fn()}
-        usageScope={usageScope}
-      />
-    );
-  }
-  try {
-    render(<Host />);
-    const recents = await screen.findByRole("group", { name: "Recents" });
-    const search = await within(recents).findByRole("option", {
-      name: /in:#buzz-bugs deploy/,
-    });
-    // Recent conversations come first, then recent searches.
-    expect(
-      within(recents)
-        .getAllByRole("option")
-        .map((option) => option.textContent),
-    ).toEqual([
-      expect.stringMatching(/^buzz-bugs/),
-      expect.stringMatching(/in:#buzz-bugs deploy/),
-    ]);
-    fireEvent.click(search);
-    expect(
-      await screen.findByRole("button", { name: "Remove channel buzz-bugs" }),
-    ).toBeInTheDocument();
-    expect(input.current).toHaveValue("deploy");
-  } finally {
-    cleanup();
-    owner.dispose();
-    clearViewScope(usageScope);
   }
 });
 

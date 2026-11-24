@@ -68,7 +68,7 @@ test("a focused result-group filter keeps its whole focus ring inside the worksp
   }
 });
 
-test("search arrows traverse the conversation action and recent activity, Enter opens and Escape restores focus", async ({
+test("search arrows traverse every conversation, Enter opens and Escape restores focus", async ({
   page,
   app,
 }) => {
@@ -82,16 +82,17 @@ test("search arrows traverse the conversation action and recent activity, Enter 
   await expect(input).toHaveAttribute("autocapitalize", "off");
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(input).toBeFocused();
-  const recents = dialog
+  const conversations = dialog
     .locator(
-      '[role="group"][aria-label="Recents"], [role="rowgroup"][aria-label="Recents"]',
+      '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
     )
     .locator("[data-search-result]");
-  const first = recents.first();
-  const second = recents.nth(1);
+  const first = conversations.first();
+  const second = conversations.nth(1);
   await expect(second).toBeVisible();
+  // The first conversation is chosen on opening.
+  await expect(first).toHaveAttribute("aria-selected", "true");
   for (const [key, result] of [
-    ["ArrowDown", first],
     ["ArrowDown", second],
     ["ArrowUp", first],
     ["ArrowUp", first],
@@ -603,7 +604,7 @@ test("a resting pointer does not steal the typed selection when results move und
   // Measure where the row stays: after the entrance and recent activity load.
   const row = dialog
     .locator(
-      '[role="group"][aria-label="Recents"], [role="rowgroup"][aria-label="Recents"]',
+      '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
     )
     .locator("[data-search-result]")
     .filter({ hasText: /Beta/ });
@@ -817,17 +818,20 @@ test("search result keys follow a saved rebind alongside the arrows and update t
     apple ? "⌃K" : `Ctrl+${previousKey.toUpperCase()}`,
   );
   await expect(hints.nth(1)).toHaveText(apple ? "⌃J" : "Ctrl+J");
-  const recents = dialog
+  const conversations = dialog
     .locator(
-      '[role="group"][aria-label="Recents"], [role="rowgroup"][aria-label="Recents"]',
+      '[role="group"][aria-label="Channels"], [role="rowgroup"][aria-label="Channels"]',
     )
     .locator("[data-search-result]");
-  const first = recents.first();
-  const second = recents.nth(1);
+  const first = conversations.first();
+  const second = conversations.nth(1);
   await expect(second).toBeVisible();
+  await expect(input).toHaveAttribute(
+    "aria-activedescendant",
+    await first.getAttribute("id"),
+  );
   // Up and Down still move, as a combobox's arrows do.
   for (const [chord, result] of [
-    ["Control+j", first],
     ["Control+j", second],
     [`Control+${previousKey}`, first],
     ["ArrowDown", second],

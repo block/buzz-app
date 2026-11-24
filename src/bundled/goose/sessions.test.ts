@@ -1,4 +1,17 @@
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import manifest from "./manifest.json";
 import {
   type Choice,
   REQUEST_TIMEOUT_MS,
@@ -1965,5 +1978,74 @@ describe("AgentProcess tool access", () => {
     restricted = true;
     await expect(process.get()).rejects.toThrow(UNENFORCEABLE);
     await process.shutdown();
+  });
+
+  it("stops a running unisolated turn as soon as the role tightens, before another tool call", async () => {
+    const fake = fakeSpawn({ hold: true });
+    let restricted = false;
+    const process = new AgentProcess(
+      fake,
+      fake.serve,
+      undefined,
+      () => undefined,
+      () => undefined,
+      access(undefined, () => restricted),
+    );
+    const sessions = new AgentSessions({
+      resolveDirectory: fake.resolveDirectory,
+      tools,
+      process,
+      pool: new ServerPool(),
+      launch: async () => ({ workspace: "/w", systemPrompt: "" }),
+      choice: () => ({ provider: "", model: "" }),
+      fingerprint: () => "",
+    });
+    const turn = sessions.deliver("a", "one", 1);
+    await flush(30);
+    expect(fake.geese[0]?.turns).toHaveLength(1);
+    process.enforce();
+    expect(fake.geese[0]?.killed).toBe(false);
+    restricted = true;
+    process.enforce();
+    await expect(turn).resolves.toMatchObject({ ok: false });
+    expect(fake.geese[0]?.killed).toBe(true);
+    await expect(sessions.deliver("a", "two", 2)).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("saved tool permissions"),
+    });
+    sessions.dispose();
+  });
+});
+
+describe("goose-root", () => {
+  const script = manifest.host.processes.find(
+    (item) => item.id === "goose-root",
+  )?.args?.[1] as string;
+  const run = (env: Record<string, string>) =>
+    execFileSync("/bin/sh", ["-c", script, "buzz-goose-root", "agent-a"], {
+      env: { ...globalThis.process.env, ...env },
+      encoding: "utf8",
+    }).split("\n")[0] as string;
+
+  it("shares the owner's data and state across restarts, even before goose made them", () => {
+    const base = mkdtempSync(join(tmpdir(), "buzz-goose-root-"));
+    const owner = join(base, "owner");
+    mkdirSync(join(owner, "config"), { recursive: true });
+    writeFileSync(join(owner, "config", "config.yaml"), "{}\n");
+    const env = { GOOSE_PATH_ROOT: owner, XDG_DATA_HOME: base };
+    const root = run(env);
+    writeFileSync(join(root, "data", "sessions.db"), "saved");
+    expect(run(env)).toBe(root);
+    expect(readFileSync(join(owner, "data", "sessions.db"), "utf8")).toBe(
+      "saved",
+    );
+    expect(lstatSync(join(root, "state")).isSymbolicLink()).toBe(true);
+
+    // A root an earlier start left with its own directory links it again.
+    rmSync(join(root, "data"));
+    mkdirSync(join(root, "data"));
+    expect(run(env)).toBe(root);
+    expect(lstatSync(join(root, "data")).isSymbolicLink()).toBe(true);
+    expect(existsSync(join(root, "config", "permission.yaml"))).toBe(false);
   });
 });

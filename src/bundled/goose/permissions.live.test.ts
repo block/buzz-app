@@ -140,7 +140,6 @@ describe.skipIf(!BIN)("goose-acp with saved permissions", () => {
 
   beforeAll(async () => {
     mkdirSync(join(owner, "config"), { recursive: true });
-    mkdirSync(join(owner, "data"), { recursive: true });
     mkdirSync(work, { recursive: true });
     writeFileSync(
       join(owner, "config", "config.yaml"),

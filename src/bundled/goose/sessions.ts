@@ -170,6 +170,13 @@ export class AgentProcess {
     this.current = start;
     return start.ready;
   }
+  /** Stops a goose that can't keep saved permissions from overriding the
+   * agent's role once that role restricts any tool, failing its sessions
+   * before another tool call; the next start refuses to run unisolated. */
+  enforce() {
+    if (this.current && !this.current.isolated && this.access?.restricted())
+      this.stop();
+  }
   /** Stops it, failing every session in it. */
   stop() {
     void this.shutdown().catch(() => undefined);

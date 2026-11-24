@@ -509,6 +509,8 @@ export class GooseRuntime {
       ) {
         entry.config = next;
         entry.name = agent.name;
+        entry.goose.enforce();
+        entry.worker?.enforce();
         entry.sessions.reconfigure();
       }
     }

@@ -59,9 +59,10 @@ if that desktop app is up and running.
   the bottom, and your profile picture below them opens **Settings**.
 - **Threads and tabs**: threads, profiles and link panels open by default as a
   sheet over the conversation's message box; Back or **X** closes it. **Move to
-  side panel** on the sheet moves that thread into a tab. To open them as tabs
-  instead, set **Settings → Appearance → Open threads in** to **Side pane** or
-  **Main pane**. Calls, canvases and apps always open as tabs on the right.
+  side panel** on the sheet moves that thread into a tab. A thread link chosen
+  in a side-pane tab opens as a tab beside it, not as a sheet. To open them as
+  tabs instead, set **Settings → Appearance → Open threads in** to **Side pane**
+  or **Main pane**. Calls, canvases and apps always open as tabs on the right.
 - **Left Sidebar**: **Activity** and other pinned pages at the top, then workspaces
   which organize groups of channels/chats/dms. It includes "new" buttons for creating
   more of the same.

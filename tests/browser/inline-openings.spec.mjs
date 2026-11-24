@@ -178,6 +178,68 @@ test.describe("Inline", () => {
     expect(await address(page)).not.toHaveProperty("inlineMessage");
   });
 
+  test("a thread link in a side-pane thread opens beside it; the same link in the conversation opens inline", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root, other] = roots(app);
+    const tab = (row) =>
+      side(page).locator(
+        `[role="tab"][data-tab-value="thread:alpha:${row.id}"]`,
+      );
+    // A thread in the side pane, with the conversation still in the main one.
+    await clickRow(page, viewThread(page, root));
+    await thread(page)
+      .getByRole("button", { name: "Move to side panel", exact: true })
+      .click();
+    await expect(tab(root)).toHaveAttribute("aria-selected", "true");
+    await expect(thread(page)).toHaveCount(0);
+    const linked = app.append(
+      "primary",
+      "alpha",
+      "Linked reply",
+      true,
+      false,
+      other.id,
+    );
+    const link = `See <buzz://message?channel=alpha&id=${linked.id}&thread=${other.id}>`;
+    const inChannel = app.append("primary", "alpha", link);
+    const inThread = app.append("primary", "alpha", link, true, false, root.id);
+    const linkIn = (scope, message) =>
+      scope
+        .locator(`[data-message-id="${message.id}"]`)
+        .getByRole("link", { name: /Alpha$/ });
+    // From the conversation, the link's thread still opens over the composer,
+    // with a thread open beside it.
+    await activate(linkIn(page.locator("[data-channel-timeline]"), inChannel));
+    await expect(thread(page).getByText("Linked reply")).toBeVisible();
+    await expect
+      .poll(() => address(page))
+      .toMatchObject({ channelId: "alpha", inline: other.id });
+    await expect(side(page).getByRole("tab")).toHaveCount(1);
+    await close(thread(page)).click();
+    await expect(thread(page)).toHaveCount(0);
+    // From the side-pane thread, it opens as a tab beside that thread: the
+    // conversation takes no sheet, and the address names the thread's tab.
+    await activate(linkIn(side(page), inThread));
+    await expect(tab(other)).toHaveAttribute("aria-selected", "true");
+    await expect(side(page).getByText("Linked reply")).toBeVisible();
+    await expect(thread(page)).toHaveCount(0);
+    await expect(side(page).getByRole("tab")).toHaveCount(2);
+    await expect
+      .poll(() => address(page))
+      .toMatchObject({ channelId: "alpha", threadRootId: other.id });
+    expect(await address(page)).not.toHaveProperty("inline");
+    // Back and Forward switch the pane's tabs, as for any thread tab.
+    await page.goBack();
+    await expect(tab(root)).toHaveAttribute("aria-selected", "true");
+    await expect(thread(page)).toHaveCount(0);
+    await page.goForward();
+    await expect(tab(other)).toHaveAttribute("aria-selected", "true");
+    await expect(thread(page)).toHaveCount(0);
+  });
+
   test.describe("Activity", () => {
     test.use({
       threadUnreadMentions: true,

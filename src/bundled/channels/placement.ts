@@ -1,6 +1,8 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import type { Panel } from "../../features/panels/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
+import type { Navigation } from "../../features/navigation/controller";
+import { targetKey, type OpenTarget } from "../../features/navigation/targets";
 
 /** What the viewer opened from a view: a thread, a panel (a profile, a pull
  * request, a diff, a plugin's link panel), media, or a link to a Solo chat. */
@@ -70,13 +72,18 @@ export type InlineHost = Readonly<{
 export type InlineView = Readonly<{
   channelId: string;
   rootId?: string | undefined;
+  /** It was opened from a tab in the side pane, not from the conversation. */
+  fromSide?: boolean | undefined;
 }>;
 
 /** Whether `host` can hold `opening` read from `view`: the one answer for
  * `placeOpening`'s `canHold`. A thread needs the conversation it belongs to,
- * on screen with its composer. A panel needs a view of this page: the
- * conversation on screen, or a thread view; without a composer it reads as
- * a centered dialog. A link to a Solo chat goes to the chat itself. */
+ * on screen with its composer, and to be opened from outside the side pane:
+ * one opened from a tab there opens beside that tab, where the viewer is
+ * reading, not over a conversation they didn't touch. A panel needs a view
+ * of this page: the conversation on screen, or a thread view; without a
+ * composer it reads as a centered dialog. A link to a Solo chat goes to the
+ * chat itself. */
 export function canHoldInline(
   opening: Opening,
   host: InlineHost,
@@ -86,7 +93,10 @@ export function canHoldInline(
   if (!host.addressed || !host.channelId) return false;
   if (opening.kind === "thread")
     return (
-      host.composes && !host.threadsInPane && view.channelId === host.channelId
+      host.composes &&
+      !host.threadsInPane &&
+      !view.fromSide &&
+      view.channelId === host.channelId
     );
   if (opening.kind === "panel")
     return view.rootId !== undefined || view.channelId === host.channelId;
@@ -104,3 +114,28 @@ export const placeIn = (
     hasTab,
     canHold: canHoldInline(opening, host, view),
   });
+
+// The visit each navigator last opened from a side-pane tab. A visit's id is
+// never reused, so one left here places no other visit.
+const sideVisits = new WeakMap<Navigation, string>();
+
+/** Opens `target` for a link chosen in a tab of `pane`. A side-pane tab's
+ * visit is remembered, so the page that applies it knows where it began. */
+export function openFromTab(
+  navigator: Navigation,
+  target: OpenTarget,
+  pane: "main" | "side" | undefined,
+) {
+  void navigator.open(target);
+  // The attempt is the opening's unless something held it, as a prompt to
+  // keep unsaved work does; that visit then opens as any other.
+  const { entry } = navigator.snapshot().attempt;
+  if (pane === "side" && targetKey(entry.target) === targetKey(target))
+    sideVisits.set(navigator, entry.id);
+}
+
+/** Whether visit `entryId` was opened from a side-pane tab. */
+export const openedFromSide = (
+  navigator: Navigation | undefined,
+  entryId: string,
+) => !!navigator && sideVisits.get(navigator) === entryId;

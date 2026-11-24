@@ -16,7 +16,7 @@ import { UnreadOptions } from "../channels/UnreadBadge";
 import { diagnosticsAvailable } from "../../features/developer/mode";
 import { ChannelBody } from "../channels/ChannelBody";
 import { InlineThreadSheet } from "../channels/InlineThreadSheet";
-import { composesIn, placeOpening } from "../channels/placement";
+import { composesIn, openFromTab, placeOpening } from "../channels/placement";
 import {
   historyPanel,
   useConversationTabs,
@@ -303,14 +303,14 @@ export function BestieConversation({
       }),
     );
   };
-  const openLink = (url: string) => {
+  const openLink = (url: string, pane?: "main" | "side") => {
     if (!session.viewer) return false;
     const target = buzzLinkTarget(url, {
       viewer: session.viewer,
       communityOrigin: scope.slice(0, -65),
     });
     if (!target || !ownsCurrentVisit()) return false;
-    void navigator.open(target);
+    openFromTab(navigator, target, pane);
     return true;
   };
   const secondary = useConversationTabs({

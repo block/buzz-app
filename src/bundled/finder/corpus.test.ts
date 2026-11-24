@@ -183,3 +183,54 @@ test("underlines matched letters of the text by code point", () => {
       .join(""),
   ).toBe("ship");
 });
+
+/** Totals and hit ids for each prefix of `query` typed in turn on one
+ * corpus, and for each prefix searched fresh. */
+const typedAndFresh = (texts: readonly string[], query: string) => {
+  const docs = texts.map((text) => doc(text));
+  const typed = createCorpus();
+  typed.add(docs);
+  const result = (corpus: ReturnType<typeof createCorpus>, prefix: string) => {
+    const { total, hits } = corpus.search(prefix);
+    return { total, ids: hits.map((hit) => hit.doc.id) };
+  };
+  return [...query].map((_, n) => {
+    const prefix = query.slice(0, n + 1);
+    const fresh = createCorpus();
+    fresh.add(docs);
+    return { typed: result(typed, prefix), fresh: result(fresh, prefix) };
+  });
+};
+
+test.each([
+  ["azzzzzzzzzbcde", "abcde"],
+  ["the documentation is out of date", "dtion"],
+  ["performance regression in search", "pnce"],
+])("typing %j letter by letter finds what pasting %j does", (text, query) => {
+  const steps = typedAndFresh([text], query);
+  for (const { typed, fresh } of steps) expect(typed).toEqual(fresh);
+  expect(steps.at(-1)?.typed.total).toBe(1);
+});
+
+test("typed and pasted queries agree on hits and order", () => {
+  const texts = [
+    "the documentation is out of date",
+    "performance regression in search",
+    "we should deploy the rollback today",
+    "setting up the action items for the meeting",
+    "azzzzzzzzzbcde and a connection error",
+    "a deployment of the docs went out",
+  ];
+  for (const query of [
+    "dtion",
+    "pnce",
+    "tting",
+    "ction",
+    "dplyrlbk",
+    "the dtion",
+    "'out dat",
+    "deploy !docs",
+  ])
+    for (const { typed, fresh } of typedAndFresh(texts, query))
+      expect(typed).toEqual(fresh);
+});

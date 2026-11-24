@@ -267,6 +267,51 @@ export function termsMatch(
   return true;
 }
 
+/** Whether each term's letters appear in order within two neighboring
+ * words, as `termsMatch` needs, but without its window: typing more of a term
+ * can only shrink what passes, while the window widens as a term grows.
+ * Negated terms are not checked. */
+export function termsInOrder(
+  terms: readonly Term[],
+  text: string,
+  lower: string,
+) {
+  for (const term of terms) {
+    if (term.negate) continue;
+    const haystack = term.caseSensitive ? text : lower;
+    if (
+      !(term.exact
+        ? haystack.includes(term.text)
+        : inOrder(haystack, term.text))
+    )
+      return false;
+  }
+  return true;
+}
+
+/** `pattern`'s letters in order from some start, spanning at most one space
+ * (each start takes the earliest letters, as `fuzzyMatch` does). */
+function inOrder(text: string, pattern: string) {
+  const head = pattern[0] as string;
+  for (
+    let first = text.indexOf(head);
+    first >= 0;
+    first = text.indexOf(head, first + 1)
+  ) {
+    const space = text.indexOf(" ", first);
+    const second = space < 0 ? -1 : text.indexOf(" ", space + 1);
+    let at = first;
+    for (let p = 1; p < pattern.length && at >= 0; p++) {
+      at = text.indexOf(pattern[p] as string, at + 1);
+      if (second >= 0 && at > second) break;
+    }
+    // No later start can finish if this one ran out of text.
+    if (at < 0) return false;
+    if (second < 0 || at < second) return true;
+  }
+  return false;
+}
+
 /** Two or more words typed together, as they would appear in a message. */
 function phraseOf(terms: readonly Term[]) {
   const words = terms.filter((term) => !term.negate);

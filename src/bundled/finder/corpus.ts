@@ -3,6 +3,7 @@ import {
   charMask,
   matchTerms,
   parseQuery,
+  termsInOrder,
   termsMatch,
 } from "./match.ts";
 
@@ -60,7 +61,7 @@ type Entry = {
 };
 
 /** The messages the finder searches, held in memory, and the search over
- * them. Typing more of the same query only rescans what still matched. */
+ * them. Typing more of the same query only rescans what could still match. */
 export function createCorpus() {
   const entries: Entry[] = [];
   const byId = new Map<string, number>();
@@ -72,7 +73,7 @@ export function createCorpus() {
         query: string;
         channelId: string | undefined;
         version: number;
-        matched: number[];
+        candidates: number[];
       }
     | undefined;
 
@@ -182,17 +183,20 @@ export function createCorpus() {
       let mask = 0;
       for (const term of terms) if (!term.negate) mask |= charMask(term.text);
       const best = bestScore(terms);
-      // A longer query matches a subset of what the shorter one did, unless
-      // it lengthens an exclusion.
+      // A longer query keeps only entries whose letters are still in order,
+      // unless it lengthens an exclusion. In-order letters is monotone; the
+      // window is not (it widens as a term grows), so each candidate is
+      // matched again in full.
       const narrowed =
         last &&
         last.version === version &&
         last.channelId === channelId &&
         query.startsWith(last.query) &&
         !query.includes("!")
-          ? last.matched
+          ? last.candidates
           : undefined;
-      const matched: number[] = [];
+      const candidates: number[] = [];
+      let total = 0;
       // Best `limit` hits, worst last. Entries are met newest first, so an
       // equal score never displaces one already held.
       const top: { at: number; score: number }[] = [];
@@ -202,10 +206,12 @@ export function createCorpus() {
           !entry.live ||
           (channelId !== undefined && entry.doc.channelId !== channelId) ||
           (entry.mask & mask) !== mask ||
-          !termsMatch(terms, entry.haystack, entry.lower)
+          !termsInOrder(terms, entry.haystack, entry.lower)
         )
           return;
-        matched.push(at);
+        candidates.push(at);
+        if (!termsMatch(terms, entry.haystack, entry.lower)) return;
+        total++;
         const full = top.length === limit;
         if (full && (top[limit - 1] as { score: number }).score >= best) return;
         const score = matchTerms(terms, entry.haystack, entry.lower) as number;
@@ -219,9 +225,9 @@ export function createCorpus() {
       };
       if (narrowed) for (const at of narrowed) consider(at);
       else for (let at = entries.length - 1; at >= 0; at--) consider(at);
-      last = { query, channelId, version, matched };
+      last = { query, channelId, version, candidates };
       return {
-        total: matched.length,
+        total,
         hits: top.map(({ at, score }) => {
           const entry = entries[at] as Entry;
           const positions: number[] = [];

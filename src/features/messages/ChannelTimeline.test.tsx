@@ -341,6 +341,7 @@ function setup({
         ...(hasNewer ? { hasNewer } : {}),
         loadingOlder,
         historyLimited,
+        ...(transient ? { transient: true as const } : {}),
       },
       onOpenLink: () => false,
       revealMessageId,

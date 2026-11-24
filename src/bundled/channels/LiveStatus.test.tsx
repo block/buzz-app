@@ -35,6 +35,7 @@ function recoveryIn(state: "idle" | "shown") {
     subscribe: () => () => {},
     retryNow: vi.fn(),
     retryAll: vi.fn(),
+    register: () => () => {},
     dispose() {},
   };
 }

@@ -1,4 +1,4 @@
-import { isTransientFailure } from "./errors";
+import { isTransientFailure, ReadError, transientStatus } from "./errors";
 import type { RelayEvent } from "./events";
 
 export const CHANNEL_ACTIVITY_KINDS = [9, 40002, 40008, 45001, 45003] as const;
@@ -112,7 +112,12 @@ export function createChannelActivity(
         // Batches that landed before the failure still apply.
         values = merge(ids.slice(0, offset));
         status = "error";
-        transient = isTransientFailure(error);
+        // The relay's own refusal (400, 404, 422) is "unavailable" too, but the
+        // same read fails the same way, so recovery must not retry it forever.
+        transient =
+          error instanceof ReadError && error.status !== undefined
+            ? transientStatus(error.status)
+            : isTransientFailure(error);
         publish();
         throw error;
       } finally {

@@ -27,6 +27,7 @@ import { StatusEditor } from "../../features/user-status/StatusEditor";
 import { useStatusEditor } from "../../features/user-status/useStatusEditor";
 import { useUserStatus } from "../../features/user-status/useUserStatus";
 import { useRecoverableRead } from "../../features/relay/RecoveryNotice";
+import { isConnectivityFailure } from "../../features/relay/recoverable-read";
 import {
   ProfileCopyField,
   ProfilePublicMetadata,
@@ -537,6 +538,13 @@ function ProfileDetails({
       },
       (error: unknown) => {
         if (!active) return;
+        // A connectivity failure hides Retry while recovery retries the read;
+        // hand its focus to the stable region first, as success does.
+        if (
+          document.activeElement === retryButton.current &&
+          isConnectivityFailure({ error })
+        )
+          region.current?.focus();
         setFailure(error);
         setStatus("error");
         setRetrying(false);
@@ -587,12 +595,19 @@ function ProfileDetails({
   // the two alerts is ever announced, and never beside "Loading profile…".
   // A pending retry states no reason.
   const ownerUnconfirmed =
-    ownership.failed && !ownerRead.quiet && !readPending && !readFailed && !retrying;
+    ownership.failed &&
+    !ownerRead.quiet &&
+    !readPending &&
+    !readFailed &&
+    !retrying;
   // The owner check rereads on its own, as after a reconnect, and an explicit
   // retry rereads it too. A focused Retry stays mounted and busy until that
   // read settles, so the reread cannot take its focus away.
   const ownerRechecking =
-    retryFocused && !readFailed && !ownerRead.quiet && ownership.status === "loading";
+    retryFocused &&
+    !readFailed &&
+    !ownerRead.quiet &&
+    ownership.status === "loading";
   const offerRetry =
     readFailed || retrying || ownerUnconfirmed || ownerRechecking;
   // Retry unmounts once nothing is left to retry; hand its focus to the

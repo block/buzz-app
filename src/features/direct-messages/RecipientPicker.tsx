@@ -110,9 +110,10 @@ export function RecipientPicker({
   const id = useId();
   const errorId = useId();
   const directory = usePeople(session, query);
-  // The people list is a passive load: a connectivity failure is the recovery
-  // notice's to report. The list hides its error and Retry, and reads again
-  // when the relay answers.
+  // The listing the picker loads by itself is a passive load: a connectivity
+  // failure is the recovery notice's to report. The list hides its error and
+  // Retry, and reads again when the relay answers. Typed text is the person's
+  // own search, so its failure keeps its error and Retry.
   const peopleRead = useRecoverableRead(
     session.recovery,
     {
@@ -121,7 +122,7 @@ export function RecipientPicker({
         : directory.loading
           ? "loading"
           : "ready",
-      error: directory.error || undefined,
+      error: query.trim() ? undefined : directory.error || undefined,
       transient: directory.transient,
     },
     directory.loadMore,

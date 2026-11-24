@@ -1838,6 +1838,35 @@ it("preserves the preview on background failure and retries the same page withou
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
+it("leaves the listing's connectivity failure to recovery and keeps a typed search's error and Retry", async () => {
+  const t = setup();
+  t.directMessages.people.mockRejectedValue(new TypeError("Load failed"));
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  t.mount();
+  await waitFor(() => expect(t.directMessages.people).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("status", { name: "Loading people" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry loading people" }),
+  ).not.toBeInTheDocument();
+  // Typed text is the person's own search: nothing else reports its failure.
+  await t.user.type(recipient(), "Person");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Could not load people.",
+  );
+  t.directMessages.people.mockResolvedValue({ people, hasMore: false });
+  await t.user.click(
+    screen.getByRole("button", { name: "Retry loading people" }),
+  );
+  await screen.findByRole("option", { name: "Person 1" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  warning.mockRestore();
+});
+
 it("cancels opening on page exit and does not send after a late response", async () => {
   const t = setup();
   let release: (id: string) => void = () => {};

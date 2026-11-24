@@ -76,7 +76,11 @@ export function ActivityDisclosure({
             </button>
           </div>
         </div>
-        {actions && <div hidden={!expanded}>{actions}</div>}
+        {actions && (
+          <div className={styles.activityGroupActions} hidden={!expanded}>
+            {actions}
+          </div>
+        )}
       </div>
       {expanded && (
         <div

@@ -591,18 +591,41 @@ appTest.describe("contained reply branches", () => {
   appTest(
     "nested replies collapse with the pointer and restore keyboard focus",
     async ({ page, app }) => {
-      const key = Uint8Array.from({ length: 32 }, (_, i) =>
-        i === 31 ? 10 : 0,
+      const names = [
+        "Builder",
+        "Reviewer",
+        "Researcher",
+        "Writer",
+        "Planner",
+        "Tester",
+        "Reader",
+        "Helper",
+      ];
+      const keys = names.map((_, index) =>
+        Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 10 + index : 0)),
       );
-      const agent = getPublicKey(key);
-      app.serveProfile(key, { name: "Builder", is_agent: true });
+      const agents = keys.map(getPublicKey);
+      keys.forEach((key, index) => {
+        app.serveProfile(key, { name: names[index], is_agent: true });
+      });
+      await page.route("**/agent-library", (route) =>
+        route.fulfill({
+          json: {
+            definitions: [],
+            identities: agents.map((pubkey, index) => ({
+              pubkey,
+              name: names[index],
+            })),
+          },
+        }),
+      );
       const root = app.sign({
         kind: 9,
         created_at: 1700000100,
         content: "A result with contained activity replies",
         tags: [["h", "alpha"]],
       });
-      const step = (content, created_at) =>
+      const step = (content, created_at, index = 0) =>
         finalizeEvent(
           {
             kind: 9,
@@ -612,10 +635,10 @@ appTest.describe("contained reply branches", () => {
               ["h", "alpha"],
               ["e", root.id, "", "reply"],
               ["audience", "agents"],
-              ["p", app.viewer],
+              ["p", agents[(index + 1) % agents.length]],
             ],
           },
-          key,
+          keys[index],
         );
       const first = step("Inspect the original source", 1700000101);
       const nested = app.sign({
@@ -635,11 +658,19 @@ appTest.describe("contained reply branches", () => {
         root,
         first,
         nested,
-        step("Findings are ready", 1700000103),
+        ...agents
+          .slice(1)
+          .map((_, index) =>
+            step(
+              `Findings from ${names[index + 1]}`,
+              1700000103 + index,
+              index + 1,
+            ),
+          ),
       );
       await page.setViewportSize({ width: 860, height: 950 });
       await open(page, app);
-      app.threadSummary(root.id, [agent, app.viewer], 3);
+      app.threadSummary(root.id, [...agents, app.viewer], 9);
       await page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
         .getByRole("button", { name: /^View thread:/ })
@@ -665,14 +696,19 @@ appTest.describe("contained reply branches", () => {
           .click();
         await expect(reply).toBeHidden();
         await expect(summary).toBeFocused();
+        // Every participant adds a transcript action. Pointer collapse must
+        // remain usable even when those actions need to wrap in a Side pane.
+        await thread
+          .getByRole("button", { name: /^Collapse activity history:/ })
+          .click();
+        const showHistory = thread.getByRole("button", {
+          name: /^Show activity history:/,
+        });
+        await expect(showHistory).toBeFocused();
+        await expect(summary).toBeHidden();
+        await showHistory.click();
+        await expect(summary).toBeVisible();
       }
-      await thread
-        .getByRole("button", { name: /^Collapse activity history:/ })
-        .click();
-      await expect(
-        thread.getByRole("button", { name: /^Show activity history:/ }),
-      ).toBeFocused();
-      await expect(summary).toBeHidden();
     },
   );
 });

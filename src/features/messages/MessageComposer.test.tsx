@@ -19646,7 +19646,7 @@ it("returns focus to the composer when a focused accessory control goes away", (
   expect(h.input()).toHaveFocus();
 });
 
-/** Mac Command-arrow history whose Back and Forward stay available. */
+/** Mac history at home, with Back to settings and then home again. */
 async function composerHistory() {
   const platform = vi
     .spyOn(navigator, "platform", "get")
@@ -19660,20 +19660,21 @@ async function composerHistory() {
   const shortcuts = new ShortcutsService(ctx, window, bindings);
   const controller = createNavigationController(createMemoryHistory());
   const navigation = controller.navigation;
-  void navigation.open({ version: 1, kind: "home" });
-  void navigation.open({ version: 1, kind: "settings" });
-  await vi.waitFor(() => expect(navigation.snapshot().canGoBack).toBe(true));
-  const back = vi.fn();
-  const remove = registerNavigationShortcuts(shortcuts, {
-    ...navigation,
-    back,
-  });
+  const remove = registerNavigationShortcuts(shortcuts, navigation);
   onTestFinished(async () => {
     remove();
     controller.dispose();
     bindings.dispose();
     await ctx.fiber.dispose();
     platform.mockRestore();
+  });
+  const at = () => navigation.snapshot().attempt.entry.target.kind;
+  void navigation.open({ version: 1, kind: "home" });
+  void navigation.open({ version: 1, kind: "settings" });
+  void navigation.open({ version: 1, kind: "home" });
+  await vi.waitFor(() => {
+    expect(navigation.snapshot().canGoBack).toBe(true);
+    expect(at()).toBe("home");
   });
   /** False when the press was taken from the caret. */
   const press = (input: HTMLElement, init: KeyboardEventInit = {}) =>
@@ -19683,7 +19684,17 @@ async function composerHistory() {
       metaKey: true,
       ...init,
     });
-  return { back, bindings, press };
+  return {
+    bindings,
+    press,
+    async wentBack() {
+      await vi.waitFor(() => expect(at()).toBe("settings"));
+    },
+    async stayed(kind = "home") {
+      await act(async () => {});
+      expect(at()).toBe(kind);
+    },
+  };
 }
 
 it("counts the automatic mention as empty for Command-arrow history until the user edits", async () => {
@@ -19691,10 +19702,10 @@ it("counts the automatic mention as empty for Command-arrow history until the us
   const h = mount({ defaultMention: second });
   expect(h.input()).toHaveValue(`@${second.name} `);
   expect(history.press(h.input())).toBe(false);
-  expect(history.back).toHaveBeenCalledOnce();
+  await history.wentBack();
   h.fill("my own draft");
   expect(history.press(h.input())).toBe(true);
-  expect(history.back).toHaveBeenCalledOnce();
+  await history.stayed("settings");
 });
 
 it.each(["text", "a GIF"])(
@@ -19710,7 +19721,7 @@ it.each(["text", "a GIF"])(
     const h = mount({}, undefined, first.pubkey);
     if (content === "text") h.fill("draft");
     expect(history.press(h.input())).toBe(true);
-    expect(history.back).not.toHaveBeenCalled();
+    await history.stayed();
   },
 );
 
@@ -19719,7 +19730,7 @@ it("keeps Command arrows for the caret in other empty inputs", async () => {
   const input = document.body.appendChild(document.createElement("input"));
   onTestFinished(() => input.remove());
   expect(history.press(input)).toBe(true);
-  expect(history.back).not.toHaveBeenCalled();
+  await history.stayed();
 });
 
 it("runs a modified-arrow Back rebinding from a composer with text", async () => {
@@ -19732,12 +19743,12 @@ it("runs a modified-arrow Back rebinding from a composer with text", async () =>
     shift: true,
   });
   expect(history.press(h.input(), { shiftKey: true })).toBe(false);
-  expect(history.back).toHaveBeenCalledOnce();
+  await history.wentBack();
 });
 
 it("goes back on the control character WebKit can report for Command-Left", async () => {
   const history = await composerHistory();
   const h = mount();
   expect(history.press(h.input(), { key: "\u001c", keyCode: 37 })).toBe(false);
-  expect(history.back).toHaveBeenCalledOnce();
+  await history.wentBack();
 });

@@ -109,6 +109,10 @@ export interface Outbox {
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
+  /** `send` that removes these failed or unconfirmed entries in the same
+   * journal write, resolving once that write is durable. They do not count
+   * toward its admission. */
+  replace?(input: OutboxInput, retired: readonly string[]): Promise<string>;
   /** Establish durable recovery, then synchronously consume its source while
    * holding the receipt's shared dismissal lock. */
   recover(
@@ -148,9 +152,11 @@ export interface OutboxStorage {
   load(options?: {
     readOnly?: boolean;
   }): readonly OutgoingEvent[] | Promise<readonly OutgoingEvent[]>;
+  /** Deletes `retired` rows, or rejects without writing if one is gone, has
+   * recovery attached, or is being published in another window. */
   save(
     operations: readonly OutgoingEvent[],
-    options?: { force?: string },
+    options?: { force?: string; retired?: readonly string[] },
   ): void | Promise<void>;
 }
 export class PublishRejected extends Error {
@@ -169,6 +175,10 @@ export class PublishRejected extends Error {
 export class PublishNotSent extends PublishRejected {}
 
 export { browserOutboxStorage } from "./outbox-storage";
+/** The desktop host's answer to a retry the relay would refuse as too old,
+ * when the event cannot be read back. */
+export const OLD_EVENT_NOT_FOUND =
+  "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.";
 /** Why a held entry restored after reload cannot take a plain retry. */
 export const HELD_RETRY_REFUSED = "Retry this from the plugin that sent it.";
 const abortError = () => new DOMException("Relay session closed", "AbortError");
@@ -196,6 +206,12 @@ const SAVED_BYTES =
   MAX_CONFIRMED +
   PENDING_MESSAGE_BYTES +
   PENDING_CANVAS_BYTES;
+
+// Canvas and recipe saves, which a later save of the same document can retire.
+const RETIRABLE_KINDS = new Set([40100, 30078]);
+
+const EARLIER_SAVE_SENDING =
+  "An earlier save is still sending. Try again in a moment.";
 
 /** One journal owns pending delivery and bounded confirmed retention. Views receive one change stream. */
 export function createOutbox(
@@ -295,6 +311,10 @@ export function createOutbox(
     held?: true;
   };
   const attempts = new Map<string, Attempt>();
+  /** Each entry a pending replacement will retire, mapped to that replacement.
+   * Other admissions count a replacement beside its predecessors, so neither
+   * outcome of its write can exceed an allowance. */
+  const swaps = new Map<string, OutgoingEvent>();
   const dismissing = new Map<string, Promise<void>>();
   const lifetime = new AbortController();
   const sendListeners = new Set<SendObserver>();
@@ -382,10 +402,34 @@ export function createOutbox(
     for (const listener of localListeners) notifyListener(listener);
     for (const listener of listeners) notifyListener(listener);
   };
+  /** Remove an entry whose removal is durable. */
+  const drop = (id: string) => {
+    const dismissed = snapshot.find((item) => item.event.id === id);
+    deliveryWork.delete(id);
+    completed.delete(id);
+    snapshot = Object.freeze(snapshot.filter((item) => item.event.id !== id));
+    notify();
+    if (dismissed)
+      for (const listener of dismissListeners)
+        notifyListener(() => listener(dismissed));
+  };
+  /** Drop entries another window already removed, so a retry stops naming them. */
+  const forgetRemoved = async (ids: ReadonlySet<string>) => {
+    const present = new Set(
+      (await storage.load({ readOnly: true })).map((item) => item.event.id),
+    );
+    for (const id of ids)
+      if (find(id) && !present.has(id)) {
+        storage.forget?.(id);
+        restoredReceipts.delete(id);
+        drop(id);
+      }
+  };
   const persist = (
     id: string,
     action?: "acknowledge" | "dismiss" | "recover",
     addition?: OutgoingEvent,
+    retired?: ReadonlySet<string>,
   ) => {
     const queued = profiling.start("outbox.queue", id);
     const work = durable
@@ -397,6 +441,8 @@ export function createOutbox(
           throw new Error(storageError);
         }
         queued();
+        for (const old of retired ?? [])
+          if (attempts.has(old)) throw new Error(EARLIER_SAVE_SENDING);
         // Hydration may have added restored intent while this commit waited.
         // Commit current state so no intermediate transaction erases that intent.
         const records = [
@@ -414,26 +460,28 @@ export function createOutbox(
                 )
               : visible),
           ...(addition ? [addition] : []),
-        ];
+        ].filter(({ event }) => !retired?.has(event.id));
         return profiling.measureAsync("outbox.persist", id, async () => {
-          if (action === "recover") await storage.save(records, { force: id });
-          else await storage.save(records);
+          try {
+            if (action === "recover")
+              await storage.save(records, { force: id });
+            else if (retired?.size)
+              await storage.save(records, { retired: [...retired] });
+            else await storage.save(records);
+          } catch (error) {
+            if (retired?.size) await forgetRemoved(retired).catch(() => {});
+            throw error;
+          }
           // The replacement joins visible intent only with durable retirement.
           // Other queued saves must never observe two unresolved recovery keys.
           if (addition) snapshot = Object.freeze([...snapshot, addition]);
-          if (action === "dismiss") {
-            // Commit removal inside the serialized write, before a later save
-            // can capture state. Failed storage never exposes a temporary absence.
-            const dismissed = snapshot.find((item) => item.event.id === id);
-            deliveryWork.delete(id);
-            completed.delete(id);
-            snapshot = Object.freeze(
-              snapshot.filter((item) => item.event.id !== id),
-            );
-            notify();
-            if (dismissed)
-              for (const listener of dismissListeners)
-                notifyListener(() => listener(dismissed));
+          // Commit removal inside the serialized write, before a later save
+          // can capture state. Failed storage never exposes a temporary absence.
+          if (action === "dismiss") drop(id);
+          for (const old of retired ?? []) {
+            drop(old);
+            admissionGates.delete(old);
+            sendHolds.delete(old);
           }
           // Release recovery only after its removal is durable, before the next
           // queued save can run. Preserve delivery evidence received during I/O.
@@ -697,12 +745,22 @@ export function createOutbox(
       // transport publisher crosses that boundary, including for signed retries.
       if (closed || !find(id)) return;
       signal.throwIfAborted();
-      const receipt = await profiling.measureAsync("send.publish", id, () => {
-        check?.();
-        checkAdmission(id);
-        publishing = true;
-        return Promise.race([writer.publish(signed, signal), aborted]);
-      });
+      const publish = () =>
+        profiling.measureAsync("send.publish", id, () => {
+          check?.();
+          checkAdmission(id);
+          publishing = true;
+          return Promise.race([writer.publish(signed, signal), aborted]);
+        });
+      const receipt = await (storage.lock && RETIRABLE_KINDS.has(signed.kind)
+        ? storage.lock(id, async () => {
+            // Another window may have replaced this save before it took the lock.
+            await forgetRemoved(new Set([id]));
+            if (closed || !find(id)) throw abortError();
+            signal.throwIfAborted();
+            return publish();
+          })
+        : publish());
       if (closed || signal.aborted) return;
       if (awaitsReceipt(signed))
         onReceipt(signed, typeof receipt === "string" ? receipt : undefined);
@@ -710,8 +768,13 @@ export function createOutbox(
       if (latest)
         saveStatus({
           ...latest,
+          // NIP-PM commands are never echoed: the relay's acceptance is their
+          // outcome, and its signed pin list reports the result.
           delivery:
-            latest.delivery === "seen" || attempt.previousDelivery === "seen"
+            latest.delivery === "seen" ||
+            attempt.previousDelivery === "seen" ||
+            signed.kind === 40010 ||
+            signed.kind === 40011
               ? "seen"
               : "accepted",
           error: undefined,
@@ -810,9 +873,33 @@ export function createOutbox(
     { supersedes, ...input }: OutboxInput,
     recovery?: OutboxRecovery,
     active?: () => boolean,
-    replacing?: string,
-    hold?: (id: string) => Promise<void>,
+    {
+      replacing,
+      hold,
+      retiring = [],
+    }: {
+      replacing?: string;
+      hold?: (id: string) => Promise<void>;
+      retiring?: readonly string[];
+    } = {},
   ) {
+    const retired = new Set(retiring);
+    for (const id of retired) {
+      const item = find(id);
+      if (
+        !item ||
+        swaps.has(id) ||
+        attempts.has(id) ||
+        dismissing.has(id) ||
+        item.recovery ||
+        (item.delivery !== "failed" && item.delivery !== "unknown")
+      )
+        throw new Error(EARLIER_SAVE_SENDING);
+    }
+    const kept = [
+      ...snapshot.filter((item) => !retired.has(item.event.id)),
+      ...new Set(swaps.values()),
+    ];
     if (active && !active())
       throw new DOMException("Channel addition cancelled", "AbortError");
     if (closed) throw abortError();
@@ -849,7 +936,7 @@ export function createOutbox(
           : byteSize(input) > OUTBOX_INPUT_MAX_BYTES)
     )
       throw new Error("Message is empty or too large");
-    if (snapshot.length >= MAX_PENDING)
+    if (kept.length >= MAX_PENDING)
       throw new Error(
         "Too many outstanding operations; resolve a pending operation",
       );
@@ -926,11 +1013,15 @@ export function createOutbox(
       ...(active ? { guarded: true } : {}),
       ...(hold ? { held: true as const } : {}),
     });
-    admit([...snapshot, operation], event.kind);
+    admit([...kept, operation], event.kind);
     if (active) admissionGates.set(event.id, active);
     if (hold) sendHolds.set(event.id, hold);
     captureSend(event);
-    if (!replacing)
+    // A replacement joins the snapshot only in the write that retires its
+    // predecessors, so no save ever holds both.
+    const deferred = !!replacing || retired.size > 0;
+    for (const id of retired) swaps.set(id, operation);
+    if (!deferred)
       profiling.measure("send.local", event.id, () => {
         snapshot = Object.freeze([...snapshot, operation]);
         notify();
@@ -940,13 +1031,19 @@ export function createOutbox(
       return persist(
         replacing ?? event.id,
         replacing ? "acknowledge" : undefined,
-        replacing ? operation : undefined,
+        deferred ? operation : undefined,
+        retired,
       );
     });
     void intent.catch(() => {
-      if (replacing) deliveryWork.delete(event.id);
+      if (deferred) deliveryWork.delete(event.id);
     });
-    if (replacing)
+    // Committed into the snapshot, or failed and released.
+    const release = () => {
+      for (const id of retired) swaps.delete(id);
+    };
+    void intent.then(release, release);
+    if (deferred)
       void intent.then(
         () => schedule(event.id),
         () => {},
@@ -1193,7 +1290,9 @@ export function createOutbox(
             );
           const input = replacement?.input();
           if (input) {
-            const next = enqueue(input, item.recovery, undefined, id);
+            const next = enqueue(input, item.recovery, undefined, {
+              replacing: id,
+            });
             await next.persisted;
             replacement?.queued(next.id);
           } else await persist(id, "acknowledge");
@@ -1228,7 +1327,12 @@ export function createOutbox(
       hold: (id: string) => Promise<void>,
       recovery?: OutboxRecovery,
       active?: () => boolean,
-    ) => enqueue(input, recovery, active, undefined, hold).id,
+    ) => enqueue(input, recovery, active, { hold }).id,
+    async replace(input: OutboxInput, retired: readonly string[]) {
+      const next = enqueue(input, undefined, undefined, { retiring: retired });
+      await next.persisted;
+      return next.id;
+    },
     retry(
       id: string,
       active?: () => boolean,

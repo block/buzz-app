@@ -125,6 +125,7 @@ async function page(
   appComponent?: RegisteredPanel["component"],
   sidebarPreferences?: RelaySession["sidebarPreferences"],
   uploadAttachment?: (file: File) => Promise<never>,
+  linkedPanel?: Partial<RegisteredPanel>,
 ) {
   const viewer = keypair(),
     authority = keypair();
@@ -226,6 +227,7 @@ async function page(
     keepOpen: true,
     matches: (target) => target === "https://app.example/",
     component: appComponent ?? (() => <p>App content</p>),
+    ...linkedPanel,
   };
   const available = [panel, app];
   let handleOpen: ((request: PanelOpenRequest) => boolean) | undefined;
@@ -305,6 +307,8 @@ async function page(
 }
 
 it("passes only the visible side thread's root to the timeline and clears it when hidden or moved", async () => {
+  // A routed thread opens inline under the default; this is about its tab.
+  setThreadPlacementPreference("side");
   const h = await page("stream", undefined, true);
   await screen.findByRole("tab", { name: "Initiating thread" });
   const tabs = renderHook(() => useChannelTabState(h.session, "alpha"));
@@ -338,6 +342,49 @@ it("passes only the visible side thread's root to the timeline and clears it whe
 });
 
 it.each([
+  { owner: "example.documents", addressable: true, panel: true },
+  { owner: "example.documents", addressable: undefined, panel: false },
+  { owner: "another.plugin", addressable: true, panel: false },
+])(
+  "keeps a plugin page beside the conversation only for its addressable owner: %o",
+  async ({ owner, addressable, panel }) => {
+    const host = createNavigationController(createMemoryHistory());
+    const url =
+      "buzz://plugin?id=example.documents&page=documents&route.id=plan";
+    const open = vi.fn(host.navigation.open);
+    const h = await page(
+      "stream",
+      { ...host.navigation, open },
+      false,
+      undefined,
+      undefined,
+      undefined,
+      {
+        pluginId: owner,
+        ...(addressable ? { addressable: true as const } : {}),
+        matches: (target) => target === url,
+      },
+    );
+    act(() => {
+      expect(h.panels.requestOpen({ channelId: "alpha", target: url })).toBe(
+        true,
+      );
+    });
+    if (panel) {
+      expect(screen.getByText("App content")).toBeVisible();
+      expect(open).not.toHaveBeenCalled();
+    } else {
+      expect(open.mock.calls.at(-1)?.[0]).toMatchObject({
+        kind: "plugin",
+        pluginId: "example.documents",
+        pageId: "documents",
+      });
+      expect(screen.queryByText("App content")).not.toBeInTheDocument();
+    }
+  },
+);
+
+it.each([
   { link: "channel", direction: "Back" },
   { link: "message", direction: "Back" },
   { link: "channel", direction: "Forward" },
@@ -345,6 +392,7 @@ it.each([
 ])(
   "$direction preserves the selected thread after following a $link link to another channel",
   async ({ link, direction }) => {
+    setThreadPlacementPreference("side");
     const host = createNavigationController(createMemoryHistory());
     const h = await page("stream", host.navigation, true);
     if (!h.navigation || !h.root) throw new Error("Thread visit unavailable");
@@ -1346,6 +1394,51 @@ it("keeps a newer header move recoverable after an earlier one succeeds", async 
   });
   expect(await screen.findByText("Chat wasn’t moved")).toBeVisible();
   expect(screen.getByRole("button", { name: "Retry move" })).toBeVisible();
+});
+
+// Sidebar visibility is not access: an archived channel leaves the sidebar
+// but stays joined, so the tabs opened for it still resolve it.
+it("keeps another channel's tabs resolved after that channel is archived", async () => {
+  const viewer = keypair(),
+    authority = keypair();
+  const beta = (at: number, extra: string[][] = []) =>
+    metadata(authority, "beta", "Beta", at, [["t", "stream"], ...extra]);
+  const events = [
+    roster(authority, "alpha", [viewer.pubkey]),
+    metadata(authority, "alpha", "Alpha", undefined, [["t", "stream"]]),
+    roster(authority, "beta", [viewer.pubkey]),
+    beta(1_700_000_000),
+  ];
+  const { owner } = workspace(events, viewer, authority);
+  await screen.findByRole("textbox", { name: "Message #Alpha" });
+  const tabs = renderHook(() => useChannelTabState(owner.session, "alpha"));
+  const root = "d".repeat(64);
+  act(() => {
+    tabs.result.current.setTabs((items) => [
+      ...items,
+      { id: "conversation:beta", kind: "conversation", channelId: "beta" },
+    ]);
+    tabs.result.current.openThreadTab("beta", root, root, undefined, "side");
+  });
+  await screen.findByRole("tab", { name: "Thread · Beta" });
+  await screen.findByRole("tab", { name: "Beta" });
+
+  events.push(beta(1_700_000_100, [["archived", "true"]]));
+  act(() => owner.session.channels.refreshList?.());
+  // Its composer cannot post there now, and the tab says why.
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole("tab", { name: "Unavailable conversation" }),
+    );
+  expect(
+    await screen.findByText("This conversation is archived."),
+  ).toBeVisible();
+  // The thread is still read, under its channel's name.
+  expect(screen.getByRole("tab", { name: "Thread · Beta" })).toBeVisible();
+  expect(
+    screen.queryByText("This conversation is no longer available."),
+  ).not.toBeInTheDocument();
 });
 
 it("opens another conversation's tab in its channel, but not the current channel's threads", async () => {

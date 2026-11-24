@@ -28,7 +28,7 @@ it("offers appearance and the message and agent preferences, and nothing else", 
     { key: "appearance.vibe", value: "low", saved: true },
     { key: "conversations.message_alignment", value: "top", saved: true },
     { key: "conversations.message_density", value: "default", saved: true },
-    { key: "conversations.thread_placement", value: "side", saved: true },
+    { key: "conversations.thread_placement", value: "inline", saved: true },
     {
       key: "conversations.follow_up_behavior",
       value: "immediate",
@@ -132,8 +132,8 @@ it("moves new threads, saved and announced to open settings screens", () => {
   expect(set(settings, "conversations.thread_placement", "main")).toEqual({
     key: "conversations.thread_placement",
     description: expect.any(String),
-    schema: { type: "string", enum: ["side", "main"] },
-    applies: expect.stringMatching(/New thread tabs only/),
+    schema: { type: "string", enum: ["side", "main", "inline"] },
+    applies: expect.stringMatching(/New openings only/),
     value: "main",
     saved: true,
   });

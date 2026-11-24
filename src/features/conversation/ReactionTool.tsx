@@ -38,6 +38,7 @@ export function ReactionTool({
   messageId: string;
   disabled: boolean;
   select?: (emoji: string) => boolean;
+  reacted?: (emoji: string) => boolean;
   showDelivery?: boolean;
 }) {
   const tools = useSyncExternalStore(
@@ -72,6 +73,7 @@ function OwnedReactionTool({
   messageId,
   disabled,
   select,
+  reacted,
   showDelivery = true,
 }: {
   registry: ContributionReader<ComposerTool>;
@@ -81,6 +83,7 @@ function OwnedReactionTool({
   messageId: string;
   disabled: boolean;
   select?: (emoji: string) => boolean;
+  reacted?: (emoji: string) => boolean;
   showDelivery?: boolean;
 }) {
   const [error, setError] = useState<string>();
@@ -102,6 +105,7 @@ function OwnedReactionTool({
         session={session}
         scope={scope}
         disabled={disabled}
+        {...(reacted ? { reacted } : {})}
         select={(emoji) => {
           if (
             !alive.current ||

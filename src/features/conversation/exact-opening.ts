@@ -1,8 +1,9 @@
 import type { ChannelWindow } from "../relay/contracts";
 
-/** Where an exact message open shows its message. Only a top-level message
- * with no replies, found in a fresh window, stays in the channel timeline; a
- * root with replies opens its thread, whichever link form addressed it. A root
+/** Where an exact message open with a thread hint shows its message. Only a
+ * top-level message with no replies, found in a fresh window, stays in the
+ * channel timeline; a root with replies opens its thread. A bare message,
+ * with no hint, seeks instead: see `useMessageOpening`. A root
  * found in the window is its own thread root, so a link's `thread` hint cannot
  * select a different one. */
 export function placeExactOpening(

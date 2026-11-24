@@ -178,7 +178,7 @@ it("reconciles an active read completed during an outage on reconnect", async ()
   expect(h.archives.state(target.pubkey)).toBe("not-archived");
   expect(h.query).toHaveBeenCalledTimes(2);
 });
-it("rereads once after an in-flight read is released across reconnect", async () => {
+it("retires an in-flight read released across reconnect and rereads once", async () => {
   const h = harness();
   h.live.state({ status: "connected", routes: [] });
   const first = h.archives.ensure({ background: true });
@@ -188,7 +188,12 @@ it("rereads once after an in-flight read is released across reconnect", async ()
   expect(h.archives.snapshot().status).toBe("loading");
   held.respond([snapshot()]);
   await first;
-  expect(h.archives.state(target.pubkey)).toBe("archived");
+  // Visibility keeps the old list; no consumer may treat it as current.
+  expect(h.archives.snapshot()).toMatchObject({
+    status: "idle",
+    archived: [target.pubkey],
+  });
+  expect(h.archives.state(target.pubkey)).toBe("unknown");
   expect(h.query).toHaveBeenCalledTimes(1);
   const reconciled = h.archives.ensure({ background: true });
   h.wire.next().respond([snapshot(2, [])]);
@@ -266,6 +271,35 @@ it.each(["startup", "reconnect"] as const)(
     retry.respond([snapshot()]);
     await h.archives.ensure();
     expect(h.archives.snapshot().status).toBe("ready");
+  },
+);
+it.each(["background", "active"] as const)(
+  "keeps a fresh admission deadline when a read held across reconnect fails (%s ensure)",
+  async (demand) => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.live.state({ status: "connected", routes: [] });
+    const first = h.archives.ensure({ background: true });
+    const held = h.wire.next();
+    h.live.state({ status: "retrying", routes: [] });
+    h.live.state({ status: "connected", routes: [] });
+    held.fail(new ReadError("unavailable", "quota", 429, 60_000));
+    await first;
+    const deadline = Date.now() + 60_000;
+    expect(h.archives.snapshot()).toMatchObject({
+      status: "error",
+      transient: true,
+      retryAt: deadline,
+    });
+    await h.archives.ensure({ background: demand === "background" });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(h.query).toHaveBeenCalledTimes(1);
+    for (let tick = 0; tick < 10 && !h.wire.pending.length; tick++)
+      await vi.advanceTimersToNextTimerAsync();
+    expect(Date.now()).toBeGreaterThanOrEqual(deadline);
+    h.wire.next().respond([snapshot()]);
+    await h.archives.ensure();
+    expect(h.archives.state(target.pubkey)).toBe("archived");
   },
 );
 it.each([null, "invalid"])(
@@ -595,6 +629,7 @@ it.each(
     }
     expect(await outcome).toBeUndefined();
     expect(fixture.published).toHaveLength(1);
+    await owner.session.archives.ensure();
     expect(owner.session.archives.state(target.pubkey)).toBe(
       action === "archive" ? "archived" : "not-archived",
     );
@@ -611,8 +646,16 @@ it("an active ensure reads healthy HTTP while the socket is down", async () => {
   expect(req.signal?.aborted).toBe(false);
   req.respond([snapshot()]);
   await active;
+  // The reconnect landed mid-read, so the consumer's next demand rereads.
+  expect(h.archives.snapshot()).toMatchObject({
+    status: "idle",
+    archived: [target.pubkey],
+  });
+  const reread = h.archives.ensure();
+  h.wire.next().respond([snapshot()]);
+  await reread;
   expect(h.archives.state(target.pubkey)).toBe("archived");
-  expect(h.query).toHaveBeenCalledTimes(1);
+  expect(h.query).toHaveBeenCalledTimes(2);
 });
 
 it("channel-only revocation preserves the pending relay-wide archive read", async () => {

@@ -81,8 +81,10 @@ export function createIdentityArchives(
   let closed = false;
   // Recovery may defer sidebar work; active consumers can claim the same read.
   let backgroundRead = false;
-  // A read that crossed a reconnect may predate a change; ensure rereads once.
-  let owed = false;
+  // A read in flight across a reconnect may predate a change; retire its result.
+  let retire = false;
+  // The current read's result even when retired; only confirmation uses it.
+  let lastRead: readonly string[] | undefined;
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
   // Keep only the ordering fence across cache clears; never revive old contents.
@@ -96,12 +98,25 @@ export function createIdentityArchives(
     snapshot = Object.freeze(next);
     for (const listener of listeners) notify(listener);
   }
+  /** Settled evidence the next demand rereads; visibility is retained. */
+  function retired(from: IdentityArchiveSnapshot): IdentityArchiveSnapshot {
+    const { error: _, transient: __, retryAt: ___, ...known } = from;
+    return { ...known, status: closed || !available ? "unavailable" : "idle" };
+  }
+  /** A transient failure keeps its recovery deadline even when retired. */
+  function settle(next: IdentityArchiveSnapshot) {
+    const stale = retire && !next.transient;
+    retire = false;
+    if (next.status === "ready") lastRead = next.archived;
+    publish(stale ? retired(next) : next);
+  }
   function refresh(background = false): Promise<void> {
     if (closed || !available || !authority) return Promise.resolve();
     // An active consumer also claims recovery of an already failed read.
     if (!background) backgroundRead = false;
     if (pending) return pending;
-    owed = false;
+    retire = false;
+    lastRead = undefined;
     backgroundRead = background;
     const owned = new AbortController();
     controller = owned;
@@ -130,7 +145,7 @@ export function createIdentityArchives(
         // The relay publishes its first snapshot with its first archive, so
         // none means no one is archived, unless this session read one.
         if (!events.length && !head) {
-          publish({ status: "ready", archived: empty, readAt: Date.now() });
+          settle({ status: "ready", archived: empty, readAt: Date.now() });
           return;
         }
         const event = events[0];
@@ -162,7 +177,7 @@ export function createIdentityArchives(
           ),
         ].sort();
         head = { id: event.id, created_at: event.created_at };
-        publish({
+        settle({
           status: "ready",
           archived: Object.freeze(archived),
           eventId: event.id,
@@ -171,7 +186,7 @@ export function createIdentityArchives(
         });
       } catch (error) {
         if (!closed && !owned.signal.aborted)
-          publish({
+          settle({
             ...snapshot,
             status: "error",
             error:
@@ -317,8 +332,8 @@ export function createIdentityArchives(
     await pending;
     await refresh();
     if (closed) throw new Error("Archive request was interrupted");
-    const expected = action === "archive" ? "archived" : "not-archived";
-    if (state(target) !== expected)
+    // This read's result, even if a reconnect retired it for other consumers.
+    if (lastRead?.includes(target) !== (action === "archive"))
       throw (
         uncertain ?? new Error("The relay did not confirm the change. Retry.")
       );
@@ -335,7 +350,8 @@ export function createIdentityArchives(
     return closed || !available ? "unavailable" : "idle";
   }
   function stopRead() {
-    owed = false;
+    retire = false;
+    lastRead = undefined;
     controller?.abort();
     controller = undefined;
     pending = undefined;
@@ -345,19 +361,14 @@ export function createIdentityArchives(
     publish({ status: stop(), archived: empty });
   }
   /** Reconnect retires settled evidence, retaining visibility. A finite HTTP
-   * read already in flight may finish; the next ensure() then rereads once.
+   * read already in flight may finish and is retired when it settles.
    * Failures retain their recovery deadline. */
   function stale() {
     if (pending) {
-      owed = true;
+      retire = true;
       return;
     }
-    if (snapshot.transient) return;
-    const { error: _, transient: __, retryAt: ___, ...known } = snapshot;
-    publish({
-      ...known,
-      status: closed || !available ? "unavailable" : "idle",
-    });
+    if (!snapshot.transient) publish(retired(snapshot));
   }
   return {
     queries: Object.freeze({
@@ -373,7 +384,7 @@ export function createIdentityArchives(
       ensure: ({ background = false }: { background?: boolean } = {}) => {
         if (!background) backgroundRead = false;
         if (pending) return pending;
-        if (snapshot.status !== "idle" && !owed) return Promise.resolve();
+        if (snapshot.status !== "idle") return Promise.resolve();
         return refresh(background);
       },
       refresh: () => refresh(),

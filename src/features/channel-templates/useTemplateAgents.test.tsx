@@ -7,6 +7,7 @@ import type { LiveCallbacks } from "../relay/live";
 import { localAgentsFixture } from "../agents/local-testing";
 import { useMentionArchives } from "../messages/use-mention-archives";
 import { useTemplateAgents } from "./useTemplateAgents";
+import { useAgentChoices } from "../agents/use-choices";
 import { ReadError } from "../relay/errors";
 
 afterEach(cleanup);
@@ -220,3 +221,100 @@ it.each(["mention", "template"] as const)(
     }
   },
 );
+
+it("keeps template selection pending until a read held across reconnect is reread", async () => {
+  const viewer = keypair(),
+    relay = keypair(),
+    agent = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const isArchiveRead = (filters: readonly { kinds?: readonly number[] }[]) =>
+    filters.some((filter) => filter.kinds?.includes(13535));
+  // Only archive reads are scripted; other inventory settles empty at once.
+  const query = vi.fn<typeof wire.transport.query>((filters, signal) =>
+    isArchiveRead(filters)
+      ? wire.transport.query(filters, signal)
+      : Promise.resolve([]),
+  );
+  const archiveReads = () =>
+    query.mock.calls.filter(([filters]) => isArchiveRead(filters)).length;
+  let live!: LiveCallbacks;
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      query,
+      scope: "https://relay.example.test",
+      archiveAuthority: relay.pubkey,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      agentChoices: localAgentsFixture([
+        {
+          pubkey: agent.pubkey,
+          name: "Template agent",
+          relayUrl: "wss://relay.example.test",
+          owner: viewer.pubkey,
+        },
+      ]),
+    },
+  );
+  try {
+    live.state({ status: "connected", routes: [] });
+    // No sidebar demand. An ordinary mention consumer settles inventory, so
+    // only archive evidence can keep a New Workspace save waiting.
+    const { result } = renderHook(() => {
+      useAgentChoices(owner.session);
+      return useTemplateAgents(owner.session, {
+        id: "template",
+        name: "Template",
+        agents: [agent.pubkey],
+        teams: [],
+        canvas: "",
+      });
+    });
+    await waitFor(() => expect(wire.pending).toHaveLength(1));
+    await waitFor(() =>
+      expect(owner.session.agentChoices.snapshot().pending).toBe(false),
+    );
+    const held = wire.next();
+    act(() => {
+      live.state({ status: "retrying", routes: [] });
+      live.state({ status: "connected", routes: [] });
+    });
+    // Inventory demand rereads after reconnect; let it settle first.
+    await waitFor(() =>
+      expect(owner.session.agentChoices.snapshot().pending).toBe(false),
+    );
+    // The held response predates an unarchive the socket did not deliver.
+    await act(async () => {
+      held.respond([
+        signed(relay, {
+          kind: 13535,
+          content: "",
+          tags: [["-"], ["p", agent.pubkey]],
+          created_at: 1,
+        }),
+      ]);
+    });
+    expect(result.current.pending).toBe(true);
+    await waitFor(() => expect(wire.pending).toHaveLength(1));
+    await act(async () => {
+      wire.next().respond([
+        signed(relay, {
+          kind: 13535,
+          content: "",
+          tags: [["-"]],
+          created_at: 2,
+        }),
+      ]);
+    });
+    await waitFor(() => expect(result.current.pending).toBe(false));
+    expect(result.current.agents).toEqual([agent.pubkey]);
+    expect(archiveReads()).toBe(2);
+  } finally {
+    cleanup();
+    act(() => owner.dispose());
+  }
+});

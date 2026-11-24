@@ -200,6 +200,9 @@
     "allow-app-agent-state-load",
     "allow-app-agent-state-set",
     "allow-decide",
+    "allow-voice-search-available",
+    "allow-voice-search-prepare",
+    "allow-voice-search-connect",
 
     "allow-title-bar-double-click",
     "allow-notification-show",

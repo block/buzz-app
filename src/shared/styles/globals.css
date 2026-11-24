@@ -230,16 +230,27 @@
     scrollbar-width: none;
   }
   .shell-menu-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
     width: 100%;
     max-width: 32rem;
     min-width: calc(2 * var(--space-6));
     justify-self: center;
     container-type: inline-size;
   }
-  .shell-background .shell-menu-search > .buzz-button {
+  /* The Search capsule fills the row; voice jump's microphone beside it
+     keeps IconButton's square size. */
+  .shell-background
+    .shell-menu-search
+    > .buzz-button:not([data-shell-voice-jump]) {
     width: 100%;
+    min-width: 0;
   }
-  .shell-background .shell-menu-search .buzz-button-label {
+  .shell-background
+    .shell-menu-search
+    > .buzz-button:not([data-shell-voice-jump])
+    .buzz-button-label {
     width: 100%;
     justify-content: flex-start;
   }

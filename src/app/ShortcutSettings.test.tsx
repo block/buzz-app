@@ -917,7 +917,43 @@ it("stores Option and Shift chords as the composed key on Apple platforms (known
   }
 });
 
-it("refuses close and quit chords only in the desktop build", async () => {
+it("keeps the Mac menu's ⌘, beside a saved Open Settings override", async () => {
+  const h = await harness();
+  try {
+    // Saved before ⌘, became the menu's: Open Settings moved off it, Search took it.
+    h.bindings.set("settings", { key: ";", mod: true });
+    h.bindings.set("global-search", { key: ",", mod: true });
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+        desktop
+      />,
+    );
+    const settings = within(row("Open Settings"));
+    expect(settings.getByText("Reserved by Buzz")).toBeVisible();
+    expect(settings.getByText("Modified")).toBeVisible();
+    expect(settings.getByText("Command ,")).toBeInTheDocument();
+    expect(settings.getByText("Command ;")).toBeInTheDocument();
+    expect(
+      settings.getByText("Also used by Search Buzz (Buzz)"),
+    ).toBeInTheDocument();
+    expect(
+      settings.getByRole("button", {
+        name: "Reset shortcut for Open Settings",
+      }),
+    ).toBeVisible();
+    expect(
+      within(row("Search Buzz")).getByText("Also used by Open Settings (Buzz)"),
+    ).toBeInTheDocument();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("refuses close, quit and Mac Settings chords only in the desktop build", async () => {
   const user = userEvent.setup();
   const h = await harness();
   try {
@@ -930,14 +966,21 @@ it("refuses close and quit chords only in the desktop build", async () => {
         desktop
       />,
     );
-    const title = "Open Settings";
+    const settings = within(row("Open Settings"));
+    expect(settings.getByText("Reserved by Buzz")).toBeVisible();
+    expect(settings.queryByRole("button")).not.toBeInTheDocument();
+    const title = "Search Buzz";
     await user.click(change(title));
     for (const key of ["q", "w"]) {
       fireEvent.keyDown(capture(title), { key, metaKey: true });
       expect(screen.getByRole("alert")).toHaveTextContent(
-        `⌘${key.toUpperCase()} is reserved for switching or closing tabs and quitting Buzz. Try another.`,
+        `⌘${key.toUpperCase()} is reserved by Buzz. Try another.`,
       );
     }
+    fireEvent.keyDown(capture(title), { key: ",", metaKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "⌘, is reserved by Buzz. Try another.",
+    );
     expect(h.bindings.snapshot().overrides).toEqual({});
     desktop.unmount();
     // A browser tab handles these before the page sees them, so nothing is lost.
@@ -1366,3 +1409,38 @@ it.each([
     }
   },
 );
+
+it("saves and runs a caret key WebKit reports as a control character, including an override saved raw", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const user = userEvent.setup();
+  const h = await harness();
+  const webkit = {
+    key: "\u001c",
+    code: "ArrowLeft",
+    keyCode: 37,
+    metaKey: true,
+    shiftKey: true,
+  };
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    await user.click(change("Open Settings"));
+    fireEvent.keyDown(capture("Open Settings"), webkit);
+    expect(h.bindings.resolve("settings")).toEqual([
+      { key: "ArrowLeft", mod: true, shift: true },
+    ]);
+    act(() =>
+      h.bindings.set("settings", { key: "\u001c", mod: true, shift: true }),
+    );
+    expect(fireEvent.keyDown(document.body, webkit)).toBe(false);
+    expect(h.runs.settings).toHaveBeenCalledOnce();
+  } finally {
+    await h.dispose();
+  }
+});

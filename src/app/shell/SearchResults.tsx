@@ -145,7 +145,10 @@ import {
   useNamePreference,
   verifiedLabel,
 } from "../../features/profiles/name-preference";
-import { sortParticipantNames } from "../../features/identity-names/participant-order";
+import {
+  dmNamedParticipants,
+  sortParticipantNames,
+} from "../../features/identity-names/participant-order";
 import {
   directMessageWith,
   messagePerson,
@@ -160,7 +163,7 @@ function conversationName(
     return channel.name;
   return (
     sortParticipantNames(
-      channel.participants.map((id) =>
+      dmNamedParticipants(channel.participants, profiles).map((id) =>
         resolveName(
           id,
           profiles.get(id)?.name ?? id.slice(0, 10),

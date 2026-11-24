@@ -1,4 +1,9 @@
 // @vitest-environment jsdom
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
+import { createShortcutBindings } from "../shortcuts/preferences";
+import { ShortcutsService } from "../shortcuts/service";
+import { registerNavigationShortcuts } from "../../app/shortcuts";
 import { MESSAGE_TOKENS_TAG, signedMessageTokenTags } from "./message-tokens";
 import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
@@ -117,6 +122,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import { setRememberAgentsPreference } from "./mention-preferences";
 import * as modelStorage from "./solo-model-picks-storage";
 import { setSendWithModEnterPreference } from "./send-key-preference";
+import { setMarkdownAsTypedPreference } from "./markdown-input-preference";
 import { setDefaultAgent } from "../solo/default-agent";
 import { ResourcePicker } from "../../bundled/repos/ResourcePicker";
 import { entityHref } from "../repos/routes";
@@ -749,6 +755,22 @@ it("publishes typing for text edits but not caret-driven token expansion", () =>
   expect(send).not.toHaveBeenCalled();
   h.fill(`${text}x`);
   expect(send).toHaveBeenCalledTimes(1);
+});
+
+it("hides the formatting toggle while this device keeps Markdown as typed, live", () => {
+  try {
+    mount();
+    const toggle = () =>
+      screen.queryByRole("button", { name: "Toggle formatting" });
+    expect(toggle()).toBeVisible();
+    act(() => setMarkdownAsTypedPreference(true));
+    expect(toggle()).toBeNull();
+    act(() => setMarkdownAsTypedPreference(false));
+    expect(toggle()).toBeVisible();
+  } finally {
+    act(() => setMarkdownAsTypedPreference(false));
+    localStorage.removeItem("buzz-message-markdown-as-typed.v1");
+  }
 });
 
 it("types into a long chip-heavy draft without redrawing its link chips", async () => {
@@ -19707,3 +19729,128 @@ it("returns focus to the composer when a focused accessory control goes away", (
   expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
   expect(h.input()).toHaveFocus();
 });
+
+/** Mac history at home, with Back to settings and then home again. */
+async function composerHistory() {
+  const platform = vi
+    .spyOn(navigator, "platform", "get")
+    .mockReturnValue("MacIntel");
+  const ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(ctx, window, bindings);
+  const controller = createNavigationController(createMemoryHistory());
+  const navigation = controller.navigation;
+  const remove = registerNavigationShortcuts(shortcuts, navigation);
+  onTestFinished(async () => {
+    remove();
+    controller.dispose();
+    bindings.dispose();
+    await ctx.fiber.dispose();
+    platform.mockRestore();
+  });
+  const at = () => navigation.snapshot().attempt.entry.target.kind;
+  void navigation.open({ version: 1, kind: "home" });
+  void navigation.open({ version: 1, kind: "settings" });
+  void navigation.open({ version: 1, kind: "home" });
+  await vi.waitFor(() => {
+    expect(navigation.snapshot().canGoBack).toBe(true);
+    expect(at()).toBe("home");
+  });
+  /** False when the press was taken from the caret. */
+  const press = (input: HTMLElement, init: KeyboardEventInit = {}) =>
+    fireEvent.keyDown(input, {
+      key: "ArrowLeft",
+      code: "ArrowLeft",
+      metaKey: true,
+      ...init,
+    });
+  return {
+    bindings,
+    press,
+    async wentBack() {
+      await vi.waitFor(() => expect(at()).toBe("settings"));
+    },
+    async stayed(kind = "home") {
+      await act(async () => {});
+      expect(at()).toBe(kind);
+    },
+  };
+}
+
+it("counts the automatic mention as empty for Command-arrow history until the user edits", async () => {
+  const history = await composerHistory();
+  const h = mount({ defaultMention: second });
+  expect(h.input()).toHaveValue(`@${second.name} `);
+  expect(history.press(h.input())).toBe(false);
+  await history.wentBack();
+  h.fill("my own draft");
+  expect(history.press(h.input())).toBe(true);
+  await history.stayed("settings");
+});
+
+it.each(["text", "a GIF"])(
+  "keeps Command arrows for the caret in a composer with %s",
+  async (content) => {
+    const history = await composerHistory();
+    if (content === "a GIF")
+      writeView("scope", "draft:channel", {
+        text: "",
+        recipients: [],
+        gifs: ["![Party](https://example.org/party.gif)"],
+      });
+    const h = mount({}, undefined, first.pubkey);
+    if (content === "text") h.fill("draft");
+    expect(history.press(h.input())).toBe(true);
+    await history.stayed();
+  },
+);
+
+it("keeps Command arrows for the caret in other empty inputs", async () => {
+  const history = await composerHistory();
+  const input = document.body.appendChild(document.createElement("input"));
+  onTestFinished(() => input.remove());
+  expect(history.press(input)).toBe(true);
+  await history.stayed();
+});
+
+it("runs a modified-arrow Back rebinding from a composer with text", async () => {
+  const history = await composerHistory();
+  const h = mount();
+  h.fill("draft");
+  history.bindings.set("navigation-back", {
+    key: "ArrowLeft",
+    mod: true,
+    shift: true,
+  });
+  expect(history.press(h.input(), { shiftKey: true })).toBe(false);
+  await history.wentBack();
+});
+
+it("goes back on the control character WebKit can report for Command-Left", async () => {
+  const history = await composerHistory();
+  const h = mount();
+  expect(history.press(h.input(), { key: "\u001c", keyCode: 37 })).toBe(false);
+  await history.wentBack();
+});
+
+it.each(["no history that way", "a rebound Back"])(
+  "moves the caret, not history, on a control-character Command arrow with %s",
+  async (reason) => {
+    const history = await composerHistory();
+    const h = mount({ defaultMention: second });
+    const arrow =
+      reason === "a rebound Back"
+        ? { key: "\u001c", keyCode: 37 }
+        : { key: "\u001d", code: "ArrowRight", keyCode: 39 };
+    if (reason === "a rebound Back")
+      history.bindings.set("navigation-back", { key: "u", mod: true });
+    // Taken by the caret handler rather than typed as the control character.
+    expect(history.press(h.input(), arrow)).toBe(false);
+    await history.stayed();
+    expect(h.input()).toHaveValue(`@${second.name} `);
+  },
+);

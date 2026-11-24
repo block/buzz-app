@@ -4,6 +4,7 @@ import { AcpProcess } from "../agent-harness/acp/process";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
 import { bundledOwner } from "../../plugins/provenance";
+import type { ModelRouteRequest } from "./model-routes";
 import { UnattestedProfile } from "../relay/identity-archives";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
 import type {
@@ -108,6 +109,7 @@ import { typesafeProvider } from "../../bundled/typesafe";
 import {
   CATCH_UP_PREFIX,
   MENTIONS,
+  PRIVATE_MENTIONS,
   readCheckpoints,
   streamKey,
   writeCheckpoints,
@@ -4272,6 +4274,281 @@ it("passes the model and effort its owner asked for, and no other", async () => 
     { model: "deep", effort: undefined },
     { model: undefined, effort: "low" },
   ]);
+});
+
+it("lets the harness ask a model route as its turn starts, once", async () => {
+  const { service, run, emit, ctx } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  const select = vi.fn(async () => ({
+    model: "deep",
+    effort: "max",
+    rationale: "Hard task",
+  }));
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select,
+    });
+  const asked = (id: string, pubkey: string) =>
+    event(id, {
+      pubkey,
+      tags: [
+        ["h", channel],
+        ["p", bot],
+        ["model", bot, "route:auto"],
+      ],
+    });
+  emit({ events: [asked("1d1e", viewer)] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  const delivery = run.mock.calls[0]?.[0];
+  // Nothing is chosen until the harness starts a turn: a steer never asks.
+  expect(delivery?.model).toBeUndefined();
+  expect(delivery?.effort).toBeUndefined();
+  expect(select).not.toHaveBeenCalled();
+  await expect(delivery?.route?.()).resolves.toEqual({
+    model: "deep",
+    effort: "max",
+  });
+  await expect(delivery?.route?.()).resolves.toEqual({
+    model: "deep",
+    effort: "max",
+  });
+  expect(select).toHaveBeenCalledTimes(1);
+  expect(select).toHaveBeenCalledWith(
+    expect.objectContaining({
+      harness: "echo",
+      route: "auto",
+      models: [
+        expect.objectContaining({ id: "fast" }),
+        expect.objectContaining({ id: "deep" }),
+      ],
+    }),
+  );
+  // Anyone else's mention never reaches the router.
+  emit({ events: [asked("57ee", "f".repeat(64))] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  expect(run.mock.calls[1]?.[0]?.route).toBeUndefined();
+});
+
+it("lets the owner stop a model route while it chooses, running nothing", async () => {
+  const { service, run, emit, ctx, activity } = await setup();
+  await service.create({ type: "example/echo", name: "Echo" });
+  let asked: AbortSignal | undefined;
+  const select = vi.fn(
+    ({ signal }: { signal: AbortSignal }) =>
+      new Promise<undefined>((_, reject) => {
+        asked = signal;
+        signal.addEventListener("abort", () => reject(signal.reason));
+      }),
+  );
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select,
+    });
+  // As a harness does, it asks the route as its turn starts.
+  let choosing: Promise<unknown> | undefined;
+  run.mockImplementationOnce(async ({ route }) => {
+    choosing = route?.();
+    await choosing;
+  });
+  emit({
+    events: [
+      event("1d1e", {
+        pubkey: viewer,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["model", bot, "route:auto"],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(select).toHaveBeenCalled());
+  const work = activity.reader.work()[0];
+  if (!work) throw new Error("no work");
+  expect(work.stoppable).toBe(true);
+  await activity.reader.interrupt?.(work);
+  await expect(choosing).resolves.toBeUndefined();
+  expect(asked?.aborted).toBe(true);
+});
+
+it("gives a model route the turn's context and its conversation's last routed turn", async () => {
+  const earlier = (
+    id: string,
+    at: number,
+    pubkey: string,
+    tags: string[][] = [["h", dm]],
+  ) => event(id, { pubkey, created_at: at, tags });
+  const thread = "a1".padEnd(64, "0");
+  const { service, run, emit, ctx, session } = await setup({
+    history: [earlier("e1", 50, viewer), earlier("e2", 60, bot)],
+  });
+  await service.create({ type: "example/echo", name: "Echo" });
+  const seen: unknown[] = [];
+  const select = vi.fn(async (request: ModelRouteRequest) => {
+    seen.push({
+      context: await request.context(),
+      history: await request.history(),
+    });
+    return { model: "deep", effort: "max" };
+  });
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select,
+    });
+  const asked = (id: string, at: number, tags: string[][] = []) =>
+    event(id, {
+      pubkey: viewer,
+      created_at: at,
+      tags: [["h", dm], ["p", bot], ["model", bot, "route:auto"], ...tags],
+    });
+  emit({
+    events: [
+      asked("1d1e", 70, [
+        [
+          "imeta",
+          "url https://x.test/a.png",
+          "m image/png",
+          "size 12",
+          "filename a.png",
+        ],
+      ]),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  await run.mock.calls[0]?.[0]?.route?.();
+  // A DM's top-level message reads the DM's earlier messages.
+  expect(seen[0]).toEqual({
+    context: {
+      trigger: "mention",
+      conversation: "dm",
+      channelHistory: true,
+      skills: [],
+      attachments: [{ name: "a.png", type: "image/png", size: 12 }],
+    },
+    history: [
+      { pubkey: viewer, content: "hello e1", createdAt: 50 },
+      { pubkey: bot, content: "hello e2", createdAt: 60 },
+    ],
+  });
+  // The next turn in the DM knows what the route chose last, and when.
+  emit({ events: [asked("2d2e", 80)] });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+  await run.mock.calls[1]?.[0]?.route?.();
+  expect(seen[1]).toMatchObject({
+    context: {
+      attachments: [],
+      previous: {
+        route: "auto",
+        model: "deep",
+        effort: "max",
+        chosenAt: expect.any(Number),
+        endedAt: expect.any(Number),
+      },
+    },
+  });
+  // A reply in a thread reads the thread up to its own message.
+  emit({
+    events: [
+      event("3d3e", {
+        pubkey: viewer,
+        created_at: 90,
+        tags: [
+          ["h", channel],
+          ["p", bot],
+          ["e", thread, "", "reply"],
+          ["model", bot, "route:auto"],
+        ],
+      }),
+    ],
+  });
+  await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+  const reply = (id: string, at: number) =>
+    earlier(id, at, bot, [
+      ["h", channel],
+      ["e", thread, "", "reply"],
+    ]);
+  // The thread as the relay has it now: a reply came after the message.
+  vi.mocked(session.read).mockResolvedValueOnce([
+    earlier("a1", 50, viewer, [["h", channel]]),
+    reply("a2", 85),
+    reply("a3", 95),
+  ]);
+  await run.mock.calls[2]?.[0]?.route?.();
+  expect(seen[2]).toMatchObject({
+    context: { thread: true },
+    history: [
+      { pubkey: viewer, content: "hello a1", createdAt: 50 },
+      { pubkey: bot, content: "hello a2", createdAt: 85 },
+    ],
+  });
+});
+
+it("offers model routes only to agents whose turns can run on them", async () => {
+  const { service, ctx } = await setup();
+  const agent = await service.create({ type: "example/echo", name: "Echo" });
+  ctx
+    .extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "org.example", revision: "bundled" }),
+      ),
+    })
+    .agents.registerModelRouter({
+      id: "router",
+      routes: (harness) =>
+        harness === "echo"
+          ? { routes: [{ id: "auto", label: "Auto" }] }
+          : undefined,
+      select: async () => undefined,
+    });
+  const type = service.types().find((item) => item.key === "example/echo");
+  const ids = async (listed: Agent) =>
+    (await type?.models?.(listed))?.models.map(({ id }) => id);
+  expect(await ids(agent)).toContain("route:auto");
+  // On another execution target it runs on that one's models.
+  expect(
+    await ids({ ...agent, executionBinding: { provider: "example.vm" } }),
+  ).not.toContain("route:auto");
+});
+
+it("lists model routes only from bundled plugins", async () => {
+  const { plugin } = await setup();
+  expect(() =>
+    plugin.agents.registerModelRouter({
+      id: "router",
+      routes: () => undefined,
+      select: async () => undefined,
+    }),
+  ).toThrow();
 });
 
 it("ignores the model and effort asked of an agent on Automatic", async () => {
@@ -11009,7 +11286,12 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 /** The saved checkpoints of watch streams, without the mention streams'. */
 const watchCheckpoints = (storage: Parameters<typeof readCheckpoints>[0]) =>
   Object.entries(readCheckpoints(storage))
-    .filter(([key]) => (JSON.parse(key) as unknown[])[1] !== MENTIONS)
+    .filter(
+      ([key]) =>
+        ![MENTIONS, PRIVATE_MENTIONS].includes(
+          (JSON.parse(key) as unknown[])[1] as string,
+        ),
+    )
     .map(([, checkpoint]) => checkpoint);
 
 it.each([false, true])(
@@ -11546,6 +11828,43 @@ describe("a turn closing or reloading the app stopped", () => {
         [bot]: { [asked.id]: channel },
       });
       second.recover();
+      await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+      expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("is read again at once by a replacement session after a failed read", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const read = vi.mocked(second.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failed = false;
+    read.mockImplementation(async (filters, options) => {
+      if (!filters[0]?.ids || failed) return original(filters, options);
+      failed = true;
+      throw new Error("relay down");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      second.service.resumeInterrupted();
+      await vi.waitFor(() => expect(failed).toBe(true));
+      await settle();
+      expect(second.run).not.toHaveBeenCalled();
+      expect(readInterrupted(second.storage)).toEqual({
+        [bot]: { [asked.id]: channel },
+      });
+      second.connect(false);
+      second.connect(true);
       await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
       expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
     } finally {

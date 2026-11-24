@@ -16,6 +16,7 @@ import {
 } from "../../features/agent-harness/session-scope";
 import { protectionTranscript } from "./protection-transcript";
 import { compactAt } from "../../features/agents/compact-at";
+import { launchModel, routeOf } from "../../features/agents/model-routes";
 import type { PRESET } from "../../features/agents/recommended";
 import { fileStore } from "../../features/agents/state";
 import type { AgentExecution } from "../../features/agents/execution";
@@ -51,6 +52,11 @@ import {
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
+import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import {
   agentFolders,
@@ -201,9 +207,9 @@ export type SavedConversation = Conversation &
  * process. */
 const STOP_WAIT_MS = 5_000;
 /** An agent's own `claude`, and the check of which custom headers it starts
- * with, ask for the environment variables saved for that agent; its pinned
- * protected copy and other setup steps never do. A spare, started for no
- * agent yet, asks with none named and gets none. */
+ * with, ask for the device's environment variables and that agent's; its
+ * pinned protected copy and other setup steps never do. A spare, started for
+ * no agent yet, asks with none named and gets the device's alone. */
 const agentEnv = (
   id: string,
   options: Parameters<Spawn>[1],
@@ -266,9 +272,11 @@ type Entry = {
  * compaction. */
 const where = ({ workspace, model, effort, ...config }: Config) => {
   const tokens = compactAt(config.compactAt);
+  // A saved model route picks per turn; the process starts on the default.
+  const launch = launchModel(model.trim());
   return {
     cwd: workspace,
-    ...(model.trim() ? { model: model.trim() } : {}),
+    ...(launch ? { model: launch } : {}),
     ...(effort ? { effort } : {}),
     ...(tokens ? { compactAt: tokens } : {}),
   };
@@ -756,7 +764,8 @@ export class ClaudeRuntime {
   /** `models`, saying whether Claude itself lists the current model. */
   private async catalog(agent: AgentKey) {
     const entry = this.agents.get(agent);
-    const configured = entry?.config.model.trim();
+    const saved = entry?.config.model.trim();
+    const configured = saved && launchModel(saved);
     const {
       models: listed,
       model: reported,
@@ -776,6 +785,9 @@ export class ClaudeRuntime {
         ...resting(offeredEfforts),
       };
     });
+    // A saved route is the current choice; the agents service lists it.
+    if (saved && routeOf(saved))
+      return { current: saved, models, listed: true };
     const current =
       offered.find(
         (model) => own === model.value || own === model.resolvedModel,
@@ -814,7 +826,12 @@ export class ClaudeRuntime {
     }
     return view;
   }
-  /** The agent's saved sessions, most recently used first. */
+  /** The agent's saved sessions its owner may see, for display. */
+  ownerConversations(agent: AgentKey): SavedConversation[] {
+    return ownerRows(this.conversations(agent), this.reads(agent));
+  }
+  /** The agent's saved sessions, most recently used first, including those in
+   * channels only the agent can read; show them through `ownerConversations`. */
   conversations(agent: AgentKey): SavedConversation[] {
     const reads = this.reads(agent);
     const saved =
@@ -850,7 +867,7 @@ export class ClaudeRuntime {
         ...location,
         channelId,
         ...(root ? { root } : {}),
-        ...reads?.channelLabel(channelId),
+        ...ownerLabel(reads, channelId),
         at: saved.at,
       };
     });
@@ -939,7 +956,13 @@ export class ClaudeRuntime {
         transcript && {
           ...transcript,
           turns: withNotices(
-            prompts.shown(transcript.turns),
+            prompts.shown(
+              ownerTurns(
+                transcript.turns,
+                this.reads(conversation.agent),
+                conversation,
+              ),
+            ),
             this.notices.get(conversation.agent) ?? new Map(),
           ),
         },
@@ -986,11 +1009,16 @@ export class ClaudeRuntime {
       poll,
     );
     if (!read) return undefined;
+    const readable = ownerTurns(
+      read,
+      this.reads(conversation.agent),
+      conversation,
+    );
     // Turns older than all `held` keeps are left.
     const ids = new Set(held.map((turn) => turn.turnId));
-    const turns = read.slice(
+    const turns = readable.slice(
       Math.max(
-        read.findIndex((turn) => ids.has(turn.turnId)),
+        readable.findIndex((turn) => ids.has(turn.turnId)),
         0,
       ),
     );
@@ -1061,7 +1089,7 @@ export class ClaudeRuntime {
   /** The community's current name and kind for a channel, if it lists it;
    * `useOpenedSession` gives them to a session `find` returned. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return this.reads(agent)?.channelLabel(channelId);
+    return ownerLabel(this.reads(agent), channelId);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);
@@ -1256,6 +1284,7 @@ export class ClaudeRuntime {
       channelId,
       model,
       effort,
+      route: chooseModel,
       synced,
       team,
       workingUntil,
@@ -1611,6 +1640,7 @@ export class ClaudeRuntime {
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
           },
+          ...(chooseModel ? { route: chooseModel } : {}),
           admit,
           // Mentions already show the host's fallback under the request.
           ...this.turnAttribution(
@@ -1965,6 +1995,8 @@ export class ClaudeRuntime {
   private async refusal(agent: AgentKey, kept: string | undefined) {
     if (!kept) return undefined;
     const { current, models, listed } = await this.catalog(agent);
+    // A route picks its own effort each turn.
+    if (routeOf(current)) return undefined;
     const own = models.find((model) => model.id === current);
     // A model Claude doesn't list has no levels to check the effort against.
     if (!listed || !own)

@@ -3181,6 +3181,36 @@ it("starts a turn on the model its owner picked, at an effort that model support
     { model: "test-model", effort: "low" },
   ]);
 });
+it("starts a routed turn on its route's choice, and nothing when it was stopped", async () => {
+  const f = fixture();
+  const route = vi.fn(async () => ({ model: "deep-model", effort: "xhigh" }));
+  await f.runtime.run({ ...f.delivery("@Codex", "a".repeat(64)), route });
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  expect(route).toHaveBeenCalledTimes(1);
+  expect(f.starts()[0]?.params).toMatchObject({
+    model: "deep-model",
+    effort: "xhigh",
+  });
+  const stopped = vi.fn(async () => undefined);
+  await f.runtime.run({
+    ...f.delivery("@Codex", "b".repeat(64)),
+    route: stopped,
+  });
+  await vi.waitFor(() => expect(stopped).toHaveBeenCalled());
+  await f.runtime.run(f.delivery("@Codex next", "c".repeat(64)));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  // The next turn Codex starts is the plain one.
+  expect(JSON.stringify(f.starts()[1]?.params)).toContain("@Codex next");
+});
+it("shows a saved route no router offers as Codex's default", async () => {
+  const f = fixture();
+  const agent = {
+    key: pubkey,
+    pubkey,
+    config: { workspace: "/tmp/codex-test", model: "route:gone" },
+  } as Agent;
+  expect((await f.runtime.preview(agent)).current).toBe("test-model");
+});
 it("runs a mid-turn pick that differs from the running turn as the next turn instead of steering", async () => {
   const f = fixture();
   const settings = (wire: Wire) => {
@@ -5937,7 +5967,7 @@ it.each([false, true])(
   },
 );
 
-it("lists saved conversations newest first from storage, and moves a started one to the front", async () => {
+it("lists readable saved conversations newest first from storage, and moves a started one to the front", async () => {
   const f = fixture();
   const thread = JSON.stringify(["channel", root]);
   const channel = JSON.stringify(["channel", "channel"]);
@@ -5952,13 +5982,6 @@ it("lists saved conversations newest first from storage, and moves a started one
     }),
   );
   expect(f.runtime.conversations(pubkey)).toEqual([
-    {
-      key: elsewhere,
-      channelId: "unlisted",
-      root,
-      threadId: "newer",
-      at: 2,
-    },
     {
       key: thread,
       channelId: "channel",
@@ -9643,6 +9666,28 @@ describe("a thread that keeps the base sections it started with", () => {
     );
     return f;
   };
+
+  it("reports whether saved local conversations may restart for custom instructions", () => {
+    const empty = fixture();
+    const key = empty.delivery("check").agent.key;
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+    expect(resumed().runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    expect(
+      resumed({
+        layout: 1,
+        parts: current.parts,
+      }).runtime.mayRestartForBaseInstructions(key, scope),
+    ).toBe(false);
+    const reconnecting = resumed();
+    reconnecting.snapshot.status = "connecting";
+    expect(reconnecting.runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    empty.snapshot.status = "connecting";
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+  });
 
   it("saves them with a new thread and sends no update while they are current", async () => {
     const f = fixture();

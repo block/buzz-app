@@ -4,7 +4,10 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { selectProfiles } from "../../features/relay/profile-selection";
-import { sortParticipantNames } from "../../features/identity-names/participant-order";
+import {
+  dmNamedParticipants,
+  sortParticipantNames,
+} from "../../features/identity-names/participant-order";
 
 /** What a channel list shows. Not access: an archived or hidden channel is
  * still joined. */
@@ -82,7 +85,7 @@ export function useChannelLabels(
           return previous.channel;
         const name = channel.participants.length
           ? sortParticipantNames(
-              channel.participants.map((id) =>
+              dmNamedParticipants(channel.participants, profiles).map((id) =>
                 resolveName(
                   id,
                   profiles.get(id)?.name ?? id.slice(0, 10),

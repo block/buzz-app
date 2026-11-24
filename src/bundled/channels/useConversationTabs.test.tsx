@@ -2290,6 +2290,9 @@ const rosterRead = (state: string, recovering = false, transient?: true) => {
   };
 };
 
+// The message placeholders a body shows while it waits for its channel.
+const waiting = () => document.querySelector('[aria-busy="true"]');
+
 it.each([
   // The reported cold start: the open channel's saved membership on a
   // connected session, before its live roster arrives.
@@ -2639,11 +2642,15 @@ it.each([
     // No thread is mounted, so nothing is read for an unusable channel.
     expect(workspace.hosts).toHaveLength(0);
     expect(workspace.items).toHaveLength(1);
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
     render(workspace.items[0]?.content);
-    const status = screen.getByRole("status");
-    expect(status).toHaveTextContent(loading ?? text ?? "");
-    // Only a wait shows the placeholder; a settled reason is plain text.
-    expect(!!status.querySelector("img")).toBe(!!loading);
+    // Only a wait shows the placeholders, which name it after a quiet delay;
+    // a settled reason is plain text, stated at once.
+    expect(!!waiting()).toBe(!!loading);
+    expect(!!screen.queryByRole("status")).toBe(!loading);
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(screen.getByRole("status")).toHaveTextContent(loading ?? text ?? "");
   },
 );
 
@@ -2695,14 +2702,15 @@ it("a thread tab hosts its thread once the relay confirms saved membership", () 
   });
   act(() => h.result.current.state.openThreadTab("target", "root", "root"));
   expect(h.result.current.workspace.hosts).toHaveLength(0);
-  const waiting = render(h.result.current.workspace.items[0]?.content);
-  expect(screen.getByRole("status")).toHaveTextContent("Loading thread…");
-  waiting.unmount();
+  const body = render(h.result.current.workspace.items[0]?.content);
+  expect(waiting()).not.toBeNull();
+  body.unmount();
 
   current = { id: "target", name: "Target" };
   h.rerender();
   expect(h.result.current.workspace.hosts).toHaveLength(1);
   render(h.result.current.workspace.items[0]?.content);
+  expect(waiting()).toBeNull();
   expect(screen.queryByRole("status")).toBeNull();
 });
 
@@ -2756,7 +2764,7 @@ it("a tab body follows the list and the roster read without its host", () => {
   });
   act(() => h.result.current.state.openThreadTab("target", "root", "root"));
   render(h.result.current.workspace.items[0]?.content);
-  expect(screen.getByRole("status")).toHaveTextContent("Loading thread…");
+  expect(waiting()).not.toBeNull();
 
   // The relay answers with a complete roster that omits the channel.
   act(() => {

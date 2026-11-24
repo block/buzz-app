@@ -16,6 +16,7 @@ import {
   type TimerWatch,
 } from "./attention";
 import { AGENT_KEY, type AgentKey } from "./membership";
+import { loadedRoute, savedRoute } from "./synced-route";
 
 /** Agent state as every program that runs this machine's agents shares it.
  * Reads are synchronous, from this program's copy. Each write changes the
@@ -312,7 +313,10 @@ function readRecord(
     pubkey: key,
     attention,
     skipped,
-    config: record.config,
+    config: loadedRoute(
+      (record as { modelRoute?: unknown }).modelRoute,
+      record.config,
+    ),
     ...(record.publicInstructions &&
     typeof record.publicInstructions.community === "string" &&
     /^https?:\/\//.test(record.publicInstructions.community) &&
@@ -426,8 +430,12 @@ export function recordText({ skipped, ...record }: AgentRecord) {
       )
       .map(({ slug }) => slug),
   );
+  // A route leaves `config.model`, which an older reader would run.
+  const { config, modelRoute } = savedRoute(record.config);
   return JSON.stringify({
     ...record,
+    config,
+    ...(modelRoute && { modelRoute }),
     ...(record.attentionHistory && {
       attentionHistory: Object.fromEntries(
         Object.entries(record.attentionHistory).filter(

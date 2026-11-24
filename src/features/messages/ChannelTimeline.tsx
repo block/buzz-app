@@ -1,5 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
+import { useComposerScope } from "./composer-overlay";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityGroupPreview } from "./ActivityGroupPreview";
 import { RelayedRunPreview } from "./RelayedRunPreview";
@@ -21,7 +22,10 @@ import {
   useStableRowActivity,
 } from "./activity-presentation";
 import { DayDivider } from "./MessageTimestamp";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ConversationExtensions,
+  ConversationWorkspaceProps,
+} from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import type { MessageAttention } from "../relay/unread";
 import {
@@ -63,6 +67,7 @@ import {
   readingPositioned,
   useReading,
 } from "./use-reading";
+import { useTrailingSheet } from "./use-trailing-sheet";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -241,6 +246,8 @@ export type ChannelTimelineProps = {
   window: ChannelWindow;
   /** Local presentation at the known history start, outside message semantics. */
   intro?: ReactNode;
+  /** A card over the end of the history, in its own scroll layer. */
+  trailing?: ConversationWorkspaceProps["trailing"];
   launchPending?: boolean | undefined;
   /** Solo chats page history on scroll; retain an explicit button for errors. */
   historyControl?: "button" | "scroll";
@@ -300,6 +307,7 @@ function Timeline({
   window,
   launchPending,
   intro,
+  trailing,
   historyControl = "button",
   onOpenLink,
   canOpenLink,
@@ -315,6 +323,21 @@ function Timeline({
   chatPresentation = false,
   startsThreads = true,
 }: ChannelTimelineProps) {
+  // Links outside a message row, such as profiles in a membership notice or an
+  // activity preview, open over this conversation's view, as a row's do.
+  const composerView = useComposerScope();
+  const inView = !!composerView;
+  const viewRoot = composerView?.rootId;
+  const openViewLink = useCallback(
+    (url: string, rootId: string | undefined) =>
+      onOpenLink(
+        url,
+        rootId
+          ? { rootId, ...(inView && { view: { rootId: viewRoot } }) }
+          : undefined,
+      ),
+    [onOpenLink, inView, viewRoot],
+  );
   useMessageSelectionCopy();
   const shownIntro =
     !window.hasMore && !window.historyLimited ? intro : undefined;
@@ -940,6 +963,20 @@ function Timeline({
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
   const activityTail = useRef<HTMLDivElement>(null);
+  // The trailing card scrolls in its own sheet over the history's end; rows
+  // it stops covering can be read.
+  const {
+    restBox: trailingBox,
+    rest: restSheet,
+    restSpaceHeight,
+    restSpace,
+    sheet,
+    revealFocus,
+    coveredFrom,
+  } = useTrailingSheet(trailing, scroller, () =>
+    readingPositioned(scroller.current),
+  );
+  const hasTrailing = !!trailing;
   useLayoutEffect(() => {
     const tail = activityTail.current;
     const element = scroller.current;
@@ -951,8 +988,11 @@ function Timeline({
       }
     });
     observer.observe(tail);
+    // A new rest height moves the latest message's place.
+    if (hasTrailing && trailingBox.current)
+      observer.observe(trailingBox.current);
     return () => observer.disconnect();
-  }, []);
+  }, [hasTrailing, trailingBox]);
   useMessageSelection(scroller, rows, queries, channelId);
   // While the connection recovers, its notice is the one report, so the
   // history edge does not repeat the reason. Recovery does not retry older
@@ -1146,13 +1186,22 @@ function Timeline({
     setShowJumpToLatest(false);
     setNewMessageCount(0);
     layoutCorrection.current = true;
+    restSheet();
     const tailHeight =
-      activityTail.current?.getBoundingClientRect().height ?? 0;
+      (activityTail.current?.getBoundingClientRect().height ?? 0) +
+      restSpaceHeight();
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
       ...(tailHeight ? { offset: tailHeight } : {}),
     });
-  }, [rows.length, window.hasNewer, queries, channelId]);
+  }, [
+    rows.length,
+    window.hasNewer,
+    queries,
+    channelId,
+    restSheet,
+    restSpaceHeight,
+  ]);
   const inlineSignal = inlineTarget?.signal;
   const targetIndex = rows.findIndex(
     (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
@@ -1386,6 +1435,8 @@ function Timeline({
       !boundaryCandidate.awaitingPage &&
       !boundaryCandidate.awaitingRepair &&
       !(awayPending && !boundaryPending),
+    // Rows under the trailing card aren't shown.
+    trailing: coveredFrom,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
@@ -1843,6 +1894,7 @@ function Timeline({
     if (revealIndex >= 0 && revealMessageId) {
       intent.current++;
       pendingReveal.current = { id: revealMessageId, intent: intent.current };
+      restSheet();
       follow.current = true;
       restoredAnchor.current = undefined;
       savedPosition.current = { bottom: true };
@@ -1926,7 +1978,8 @@ function Timeline({
         layoutCorrection.current = true;
         const tailHeight =
           endIndex === rows.length - 1
-            ? (activityTail.current?.getBoundingClientRect().height ?? 0)
+            ? (activityTail.current?.getBoundingClientRect().height ?? 0) +
+              restSpaceHeight()
             : 0;
         handle.current.scrollToIndex(endIndex, {
           align: "end",
@@ -1947,6 +2000,7 @@ function Timeline({
           latest.intent === scheduledIntent
         ) {
           scheduledIntent = ++intent.current;
+          restSheet();
           endIndex = rows.length - 1;
           restore = null;
           pendingRestore.current = undefined;
@@ -2046,6 +2100,8 @@ function Timeline({
     latestRequest,
     containedOwners,
     newMessageBoundaryId,
+    restSheet,
+    restSpaceHeight,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
@@ -2283,6 +2339,7 @@ function Timeline({
       data-activity-history-scope=""
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
       data-jump-visible={jumpVisible || undefined}
+      data-trailing={trailing ? "" : undefined}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
@@ -2346,6 +2403,7 @@ function Timeline({
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
             .messageId,
         );
+        revealFocus(event.target);
       }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
@@ -2577,13 +2635,17 @@ function Timeline({
                         onToggle={toggleDisclosure}
                         extensions={extensions}
                         scope={scope}
-                        onOpenLink={onOpenLink}
+                        onOpenLink={(url) =>
+                          openViewLink(url, disclosure.ids[0])
+                        }
                       />
                     ) : (
                       <ActivityGroupPreview
                         session={queries}
                         group={disclosure}
-                        openActivity={onOpenLink}
+                        openActivity={(url) =>
+                          openViewLink(url, disclosure.ids[0])
+                        }
                         canOpenActivity={canOpenLink}
                         renderHistory={(entry) => renderMessage(entry, true)}
                         profiles={profiles}
@@ -2611,7 +2673,7 @@ function Timeline({
                       media={queries.media}
                       agentPubkeys={agentPubkeys}
                       day={day}
-                      onOpenLink={onOpenLink}
+                      onOpenLink={(url) => openViewLink(url, row.id)}
                       canOpenLink={canOpenLink}
                     />
                   ) : (
@@ -2661,7 +2723,15 @@ function Timeline({
         />
         <div className={styles.timelineEnd} aria-hidden="true" />
       </div>
+      {restSpace}
     </section>
   );
-  return <MessageContextMenus>{feed}</MessageContextMenus>;
+  return (
+    <>
+      <MessageContextMenus>{feed}</MessageContextMenus>
+      {/* After the history, so keyboard order follows the card's place
+          between the history and the composer. */}
+      {sheet}
+    </>
+  );
 }

@@ -37,9 +37,7 @@ export function MessageListRow({
           <span className={styles.lines}>
             <span className={styles.heading}>
               <span className={styles.identity}>
-                <strong
-                  className={`text-label-sm text-standard ${styles.sender}`}
-                >
+                <strong className={`text-label-sm ${styles.sender}`}>
                   {sender}
                 </strong>
                 <span
@@ -60,7 +58,7 @@ export function MessageListRow({
             </span>
             <span
               id={previewId}
-              className={`text-body ${unread ? "text-standard" : "text-subtle"} ${styles.preview}`}
+              className={`text-body ${unread ? "" : "text-subtle"} ${styles.preview}`}
             >
               {preview}
             </span>

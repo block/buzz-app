@@ -178,14 +178,22 @@
   }
 }
 
-/* A list that marks unread by weight alone: unread rows are medium on the
+/* A list that marks unread by weight alone: unread rows are semibold on the
    name and the message, never the place, and read rows are normal throughout. The dot stays
    for assistive technology and as Mark as read's place, but is not drawn. */
 [data-unread-emphasis="weight"] .sender {
   font-weight: var(--type-weight-normal);
 }
+/* Unread ink and weight match the sidebar's unread rows. */
 [data-unread-emphasis="weight"] .content[data-unread] :is(.sender, .preview) {
-  font-weight: var(--type-weight-medium);
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+[data-unread-emphasis="weight"]
+  [data-selected]
+  .content[data-unread]
+  :is(.sender, .preview) {
+  color: var(--text-row-selected);
 }
 [data-unread-emphasis="weight"] .unreadDot {
   opacity: 0;

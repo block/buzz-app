@@ -238,6 +238,125 @@ test.describe("Inline", () => {
     await page.goForward();
     await expect(tab(other)).toHaveAttribute("aria-selected", "true");
     await expect(thread(page)).toHaveCount(0);
+    // The thread has its tab now. Its link in the conversation names the
+    // visit already on screen, and leaves that tab showing.
+    await activate(linkIn(page.locator("[data-channel-timeline]"), inChannel));
+    await expect(composer(page)).toBeVisible();
+    await expect(tab(other)).toHaveAttribute("aria-selected", "true");
+    await expect(thread(page)).toHaveCount(0);
+    // And from another tab, the same link brings it back.
+    await tab(root).click();
+    await expect(tab(root)).toHaveAttribute("aria-selected", "true");
+    await activate(linkIn(page.locator("[data-channel-timeline]"), inChannel));
+    await expect(tab(other)).toHaveAttribute("aria-selected", "true");
+    await expect(thread(page)).toHaveCount(0);
+  });
+
+  test("a thread link in a side-pane thread leaves the thread open over the conversation as it is", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root, other] = roots(app);
+    const tab = (row) =>
+      side(page).locator(
+        `[role="tab"][data-tab-value="thread:alpha:${row.id}"]`,
+      );
+    await clickRow(page, viewThread(page, root));
+    await thread(page)
+      .getByRole("button", { name: "Move to side panel", exact: true })
+      .click();
+    await expect(tab(root)).toHaveAttribute("aria-selected", "true");
+    // A third thread, linked from the thread in the side pane.
+    const third = app.append("primary", "alpha", "Third root");
+    const linked = app.append(
+      "primary",
+      "alpha",
+      "Linked reply",
+      true,
+      false,
+      third.id,
+    );
+    const inThread = app.append(
+      "primary",
+      "alpha",
+      `See <buzz://message?channel=alpha&id=${linked.id}&thread=${third.id}>`,
+      true,
+      false,
+      root.id,
+    );
+    // The conversation has its own thread open over the composer.
+    await clickRow(page, viewThread(page, other));
+    await expect(thread(page)).toBeVisible();
+    // The side link opens its tab, and the sheet stays where it was.
+    await activate(
+      side(page)
+        .locator(`[data-message-id="${inThread.id}"]`)
+        .getByRole("link", { name: /Alpha$/ }),
+    );
+    await expect(tab(third)).toHaveAttribute("aria-selected", "true");
+    await expect(side(page).getByText("Linked reply")).toBeVisible();
+    await expect(thread(page)).toBeVisible();
+    await expect
+      .poll(() => address(page))
+      .toMatchObject({ threadRootId: third.id, inline: other.id });
+    // Closing that tab is the side pane's business too.
+    await tab(third).hover();
+    await side(page)
+      .getByRole("button", { name: /^Close .*tab/ })
+      .last()
+      .click();
+    await expect(tab(third)).toHaveCount(0);
+    await expect(thread(page)).toBeVisible();
+    // The sheet still closes on its own, leaving the side pane's tab.
+    await close(thread(page)).click();
+    await expect(thread(page)).toHaveCount(0);
+    await expect(tab(root)).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("a pinned reply opens its thread as a tab from the Pinned panel", async ({
+    page,
+    app,
+  }) => {
+    // The relay's pin list names a reply from the seeded history.
+    const reply = () =>
+      app.histories
+        .get("primary/alpha")
+        .find((row) => row.content === "Broadcast reply");
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (!filters.every((filter) => filter.kinds?.includes(30623)))
+        return route.continue();
+      return route.fulfill({
+        json: [
+          app.signRelay({
+            kind: 30623,
+            content: "",
+            tags: [
+              ["d", "alpha"],
+              ["h", "alpha"],
+              ["e", reply().id],
+            ],
+            created_at: Math.floor(Date.now() / 1000),
+          }),
+        ],
+      });
+    });
+    await open(page, app);
+    await page
+      .getByRole("button", { name: "Pinned messages", exact: true })
+      .click();
+    // The panel sits in the side pane, so the thread opens there.
+    await page
+      .getByRole("list", { name: "Pinned messages" })
+      .getByRole("button")
+      .first()
+      .click();
+    await expect(
+      side(page).getByRole("tab", { selected: true }),
+    ).toHaveAttribute("data-tab-value", /^thread:alpha:/);
+    await expect(side(page).getByText("Broadcast reply")).toBeVisible();
+    await expect(sheets(page)).toHaveCount(0);
   });
 
   test.describe("Activity", () => {
@@ -457,8 +576,33 @@ test.describe("Inline, live panels", () => {
     channelWriteKinds: [9, 9007, 40100],
   });
 
-  test("Canvas still opens as a tab", async ({ page, app }) => {
+  test("Canvas still opens as a tab, and a thread link in it opens a tab beside it", async ({
+    page,
+    app,
+  }) => {
+    let canvas;
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (!filters.every((filter) => filter.kinds?.includes(40100)))
+        return route.continue();
+      return route.fulfill({ json: [canvas] });
+    });
     await open(page, app);
+    const [root] = roots(app);
+    const reply = app.append(
+      "primary",
+      "alpha",
+      "Linked reply",
+      true,
+      false,
+      root.id,
+    );
+    canvas = app.sign({
+      kind: 40100,
+      content: `[The thread](buzz://message?channel=alpha&id=${reply.id}&thread=${root.id})`,
+      tags: [["h", "alpha"]],
+      created_at: 1700000000,
+    });
     await page
       .getByRole("button", { name: "Channel actions", exact: true })
       .click();
@@ -468,6 +612,19 @@ test.describe("Inline, live panels", () => {
     await expect(
       side(page).getByRole("region", { name: "Channel Canvas", exact: true }),
     ).toBeVisible();
+    await expect(side(page).getByRole("tab", { name: "Canvas" })).toBeVisible();
+    await expect(sheets(page)).toHaveCount(0);
+    // The Canvas sits in the side pane, so its thread link opens there.
+    await side(page)
+      .getByRole("region", { name: "Channel Canvas", exact: true })
+      .getByRole("link")
+      .click();
+    await expect(
+      side(page).locator(
+        `[role="tab"][data-tab-value="thread:alpha:${root.id}"]`,
+      ),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(side(page).getByText("Linked reply")).toBeVisible();
     await expect(side(page).getByRole("tab", { name: "Canvas" })).toBeVisible();
     await expect(sheets(page)).toHaveCount(0);
   });

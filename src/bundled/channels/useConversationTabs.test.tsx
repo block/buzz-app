@@ -2205,12 +2205,11 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
   const latest = vi.fn(() => true);
   view.rerender(<Harness list={channels} openLink={latest} />);
   expect(rowRenders).toEqual([]);
-  // The retained row's stable opener still reaches the page's latest handler,
-  // which learns the link was chosen in a side-pane tab.
+  // The retained row's stable opener still reaches the page's latest handler.
   expect(rowOpeners.get(`${roots.r1}:reply`)?.("https://example.com/")).toBe(
     true,
   );
-  expect(latest).toHaveBeenCalledWith("https://example.com/", "side");
+  expect(latest).toHaveBeenCalled();
   expect(first).not.toHaveBeenCalled();
   // Rows decide which links are openable while rendering, so new panels reach them.
   available = [{ key: "app", title: "App" } as RegisteredPanel];

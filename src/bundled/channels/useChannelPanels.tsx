@@ -5,6 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { PanelPane } from "../../features/panels/opening-pane";
 import type {
   ChannelPanelContext,
   PanelContext,
@@ -220,13 +221,16 @@ export function useChannelPanels(
           }
         }}
       >
-        <PanelView
-          panel={selected.panel}
-          target={selected.target}
-          channelContext={context}
-          context={openingContext(selected)}
-          close={() => hide(selected)}
-        />
+        {/* It sits in the side pane, so its links open there. */}
+        <PanelPane.Provider value="side">
+          <PanelView
+            panel={selected.panel}
+            target={selected.target}
+            channelContext={context}
+            context={openingContext(selected)}
+            close={() => hide(selected)}
+          />
+        </PanelPane.Provider>
       </Panel>
     ),
     content: (

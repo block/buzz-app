@@ -1,6 +1,7 @@
 import {
   type ReactNode,
   useCallback,
+  useContext,
   useId,
   useState,
   useSyncExternalStore,
@@ -38,6 +39,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { openFromPanel, PanelPane } from "../../features/panels/opening-pane";
 import styles from "./PinsPanel.module.css";
 
 function Launcher({
@@ -289,6 +291,7 @@ function PinnedList({
 export function registerPins(ctx: Context) {
   function Panel({ channelContext, close }: PanelProps) {
     const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
+    const pane = useContext(PanelPane);
     const ready =
       !!channelContext &&
       state.status === "ready" &&
@@ -326,19 +329,23 @@ export function registerPins(ctx: Context) {
               open={(row) => {
                 // As a message link does: the message replaces the list.
                 close();
-                void ctx.navigation.open({
-                  version: 1,
-                  kind: "conversation",
-                  scope: {
-                    viewer: state.viewer ?? "",
-                    communityOrigin: state.origin ?? "",
+                openFromPanel(
+                  ctx.navigation,
+                  {
+                    version: 1,
+                    kind: "conversation",
+                    scope: {
+                      viewer: state.viewer ?? "",
+                      communityOrigin: state.origin ?? "",
+                    },
+                    channelId: row.channelId,
+                    messageId: row.id,
+                    ...(row.threadRootId
+                      ? { threadRootId: row.threadRootId }
+                      : {}),
                   },
-                  channelId: row.channelId,
-                  messageId: row.id,
-                  ...(row.threadRootId
-                    ? { threadRootId: row.threadRootId }
-                    : {}),
-                });
+                  pane,
+                );
               }}
             />
           ) : (

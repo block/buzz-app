@@ -16,7 +16,8 @@ import { UnreadOptions } from "../channels/UnreadBadge";
 import { diagnosticsAvailable } from "../../features/developer/mode";
 import { ChannelBody } from "../channels/ChannelBody";
 import { InlineThreadSheet } from "../channels/InlineThreadSheet";
-import { composesIn, openFromTab, placeOpening } from "../channels/placement";
+import { composesIn, placeOpening } from "../channels/placement";
+import { openFromTab } from "../../features/panels/opening-pane";
 import {
   historyPanel,
   useConversationTabs,

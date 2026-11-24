@@ -45,7 +45,7 @@ import {
   type ConversationTab,
 } from "./useChannelTabState";
 import { useConversationTabs } from "./useConversationTabs";
-import { openFromTab } from "./placement";
+import { openFromTab } from "../../features/panels/opening-pane";
 import { ConversationTab as ConversationReader } from "./ConversationTab";
 import { panelOpening } from "../../features/panels/service";
 import { coveringDock, useCoveredByDock } from "./useCoveredByDock";

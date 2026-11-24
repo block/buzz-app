@@ -953,6 +953,7 @@ export function useConversationTabs({
             isActive={() =>
               panelActive(entry) && (inMain(entry) || tabState.paneOpen)
             }
+            pane={main ? "main" : "side"}
             panel={entry.panel}
             contentKey={panelContentTarget(entry)}
             target={entry.target}

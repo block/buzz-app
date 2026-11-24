@@ -49,13 +49,12 @@ import {
   setReplyTarget,
   threadDraftKey,
 } from "../../features/messages/reply-target";
+import { composesIn, type InlineHost, placeIn } from "./placement";
 import {
-  composesIn,
-  type InlineHost,
   openedFromSide,
   openFromTab,
-  placeIn,
-} from "./placement";
+  repeatedOpening,
+} from "../../features/panels/opening-pane";
 import type { Seen } from "../../features/seen/service";
 import {
   type ConversationTab,
@@ -1344,9 +1343,20 @@ function ChannelWorkspace({
   const closeTarget = (
     pane: "main" | "side",
     entries = tabState.entries,
+    closing: readonly ConversationTab[] = [],
   ): OpenTarget | undefined => {
     const target = navigator?.snapshot().entry.target;
     if (target?.kind !== "conversation") return;
+    // A tab's visit can hold the thread read inline over the conversation.
+    // Closing the tab leaves that thread open, unless it is the one closing.
+    const inline =
+      target.channelId === currentId &&
+      target.inline &&
+      !closing.some(
+        (tab) => tab.kind === "thread" && rootOfTab(tab) === target.inline,
+      )
+        ? target.inline
+        : undefined;
     const selected =
       pane === "main" ? tabState.getMainSelected() : tabState.getSelected();
     const detail = entries.find(
@@ -1379,6 +1389,17 @@ function ChannelWorkspace({
               threadRootId: rootOfTab(thread),
             }
           : {}),
+      ...(inline &&
+      !detail &&
+      (thread?.kind !== "thread" ||
+        (thread.channelId === currentId && rootOfTab(thread) !== inline))
+        ? {
+            inline,
+            ...(target.inlineMessage
+              ? { inlineMessage: target.inlineMessage }
+              : {}),
+          }
+        : {}),
     };
   };
   const keptTabReturn = useRef<{
@@ -1571,7 +1592,7 @@ function ChannelWorkspace({
           : tabState.sidePanel
             ? "side"
             : "main";
-      const fallback = closeTarget(pane, remaining);
+      const fallback = closeTarget(pane, remaining, tabs);
       if (!navigator || !fallback) return;
       const visits = threadDismissal(
         tabs,
@@ -1603,7 +1624,7 @@ function ChannelWorkspace({
     onCloseThread: (tab, active, last) => {
       // X is explicit dismissal; Back/Forward never comes through this path.
       // Retire this tab's addressed visits, including ones behind the cursor.
-      const fallback = closeTarget(tabPane(tab));
+      const fallback = closeTarget(tabPane(tab), undefined, [tab]);
       if (navigator && fallback) {
         dismissContent(threadDismissal([tab]), fallback, tabPane(tab));
       }
@@ -1759,6 +1780,8 @@ function ChannelWorkspace({
     composes: !!composes && current?.channelType !== "solo",
     threadsInPane: !!threadPane,
   };
+  // The repeated opening whose thread was last reselected: once each.
+  const reselected = useRef<string>(undefined);
   // Read as a visit is applied, so tab changes don't reapply it.
   const routingTabs = useRef(tabState.tabs);
   routingTabs.current = tabState.tabs;
@@ -1871,6 +1894,14 @@ function ChannelWorkspace({
           : undefined,
         over,
       );
+      // A link to the visit on screen restarts it, and a visit is applied
+      // once. The link asked for its thread, so that thread's tab takes the
+      // selection back from whatever was chosen since.
+      const repeated = repeatedOpening(navigator);
+      if (routedThread && repeated && repeated !== reselected.current) {
+        reselected.current = repeated;
+        tabState.selectThread(routedThread.channelId, routedThread.rootId);
+      }
       // A re-render while the return is pending must not reapply the detail
       // that was just closed.
       if (detail && currentId && navigation.entryId !== returned?.from) {

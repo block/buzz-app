@@ -1,8 +1,6 @@
 import { threadPlacementPreference } from "../../features/messages/thread-preferences";
 import type { Panel } from "../../features/panels/service";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import type { Navigation } from "../../features/navigation/controller";
-import { targetKey, type OpenTarget } from "../../features/navigation/targets";
 
 /** What the viewer opened from a view: a thread, a panel (a profile, a pull
  * request, a diff, a plugin's link panel), media, or a link to a Solo chat. */
@@ -114,28 +112,3 @@ export const placeIn = (
     hasTab,
     canHold: canHoldInline(opening, host, view),
   });
-
-// The visit each navigator last opened from a side-pane tab. A visit's id is
-// never reused, so one left here places no other visit.
-const sideVisits = new WeakMap<Navigation, string>();
-
-/** Opens `target` for a link chosen in a tab of `pane`. A side-pane tab's
- * visit is remembered, so the page that applies it knows where it began. */
-export function openFromTab(
-  navigator: Navigation,
-  target: OpenTarget,
-  pane: "main" | "side" | undefined,
-) {
-  void navigator.open(target);
-  // The attempt is the opening's unless something held it, as a prompt to
-  // keep unsaved work does; that visit then opens as any other.
-  const { entry } = navigator.snapshot().attempt;
-  if (pane === "side" && targetKey(entry.target) === targetKey(target))
-    sideVisits.set(navigator, entry.id);
-}
-
-/** Whether visit `entryId` was opened from a side-pane tab. */
-export const openedFromSide = (
-  navigator: Navigation | undefined,
-  entryId: string,
-) => !!navigator && sideVisits.get(navigator) === entryId;

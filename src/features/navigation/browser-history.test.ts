@@ -591,6 +591,8 @@ it("visits an older build saved without targets stay retained and reachable", ()
   const storage = fixture.host.sessionStorage;
   const key = `buzz-navigation-identities:${fixture.host.history.state.buzzNavigationV1.chain}`;
   const saved: [number, string][] = JSON.parse(storage.getItem(key) ?? "[]");
+  // A key the driver does not use reads back empty, and the rewrite would do nothing.
+  expect(saved).toHaveLength(6);
   storage.setItem(key, JSON.stringify(saved.map(([index, id]) => [index, id])));
   const driver = createBrowserHistory(fixture.host);
   expect(driver.snapshot().retainedVisits).toHaveLength(6);

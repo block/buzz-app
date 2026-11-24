@@ -4087,3 +4087,42 @@ describe("saved expiring unread journal", () => {
     expect(journal.state).toEqual({ frontiers: { room: 5 }, overrides: {} });
   });
 });
+
+it.each([
+  ["an older envelope with a smaller read", 800, 70],
+  ["the same envelope again", 900, 80],
+  ["a newer envelope repeating the same read", 1000, 80],
+])(
+  "a peer read that is not a new advance keeps a local reminder: %s",
+  async (_, createdAt, receipt) => {
+    const f = fixture(1000);
+    f.setJournal({ ...newReadJournal(), floor: 100 });
+    const peer = (at: number, room: number) =>
+      signReadState(
+        {
+          slot: "a".repeat(32),
+          createdAt: at,
+          blob: { v: 1, client_id: "peer", contexts: { room } },
+        },
+        f.key.secret,
+        at,
+      );
+    const owner = f.make();
+    await owner.ready;
+    const first = await peer(900, 80);
+    owner.accept([first]);
+    await owner.refresh();
+    // Retention dropped the admitted read below the floor.
+    expect(owner.state().frontiers.room).toBeUndefined();
+    const key = `msg:${"a".repeat(64)}`;
+    await owner.markLocalUnread(key, () => true, undefined, {
+      channelId: "room",
+    });
+    expect(f.journal()?.localCovers?.[key]?.[1]).toBeLessThan(70);
+    // The live path queues ingestion; the awaited refresh behind it is the
+    // completion point.
+    owner.accept([createdAt === 900 ? first : await peer(createdAt, receipt)]);
+    await owner.refresh();
+    expect(f.journal()?.localUnread[key]).toBeDefined();
+  },
+);

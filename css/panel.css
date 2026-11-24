@@ -42,10 +42,6 @@
   min-width: 0;
   overflow: auto;
 }
-/* A follower watches; only the driver's copy takes input. */
-.view[inert] {
-  cursor: default;
-}
 .empty {
   flex: 1;
   display: grid;

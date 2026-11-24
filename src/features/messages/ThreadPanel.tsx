@@ -2310,6 +2310,20 @@ function ThreadMessages({
       (snapshot.root?.id === messageId && snapshot.targetStatus === "ready"))
       ? snapshot.root
       : undefined;
+  // Layers over this thread wait for its reply box only while one is coming:
+  // it shows, or may once the thread's read settles. A preview, a Solo
+  // thread or a settled read without a root has none.
+  const composerExpected =
+    !!composerRoot ||
+    (!preview &&
+      !soloConversation &&
+      (snapshot.status === "idle" ||
+        snapshot.status === "loading" ||
+        snapshot.targetStatus === "loading"));
+  const composerHandle = composerView?.handle;
+  useLayoutEffect(() => {
+    composerHandle?.expect(composerExpected);
+  }, [composerHandle, composerExpected]);
   const sourceRootId = subthreadId ? composerRoot?.threadRootId : undefined;
   const retryThread = () => {
     if (showOlderPageStatus) {

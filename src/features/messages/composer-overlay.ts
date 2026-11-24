@@ -19,10 +19,17 @@ export type ComposerHandle = Readonly<{
   dock(): HTMLElement | null;
   /** Mounts `dock` as this view's composer dock; returns its release. */
   attach(dock: HTMLElement): () => void;
+  /** Whether the view will show a composer that isn't there yet, such as a
+   * thread's reply box while its root reads. */
+  expected(): boolean;
+  /** The view says whether its composer is on its way. */
+  expect(expected: boolean): void;
   subscribe(listener: () => void): () => void;
 }>;
-export function createComposerHandle(): ComposerHandle {
+/** `expected` is what the handle assumes until its view says otherwise. */
+export function createComposerHandle(expected = false): ComposerHandle {
   let current: HTMLElement | null = null;
+  let coming = expected;
   const listeners = new Set<() => void>();
   const changed = () => {
     for (const listener of listeners) listener();
@@ -37,6 +44,12 @@ export function createComposerHandle(): ComposerHandle {
         current = null;
         changed();
       };
+    },
+    expected: () => coming,
+    expect: (next) => {
+      if (next === coming) return;
+      coming = next;
+      changed();
     },
     subscribe: (listener) => {
       listeners.add(listener);
@@ -73,7 +86,8 @@ export function ComposerScopeProvider({
   local?: boolean | undefined;
   children: ReactNode;
 }) {
-  const [handle] = useState(createComposerHandle);
+  // A thread's reply box comes with its root, unless its thread says it won't.
+  const [handle] = useState(() => createComposerHandle(rootId !== undefined));
   const value = useMemo(
     () => ({ handle, rootId, shown, local }),
     [handle, rootId, shown, local],
@@ -113,6 +127,15 @@ export function useComposerDock(handle: ComposerHandle | undefined) {
     handle?.subscribe ?? noSubscription,
     () => handle?.dock() ?? null,
     () => handle?.dock() ?? null,
+  );
+}
+
+/** Whether `handle`'s view will show a composer that isn't there yet. */
+export function useComposerExpected(handle: ComposerHandle | undefined) {
+  return useSyncExternalStore(
+    handle?.subscribe ?? noSubscription,
+    () => handle?.expected() ?? false,
+    () => handle?.expected() ?? false,
   );
 }
 

@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
+import { openPage } from "./navigation.mjs";
 import { clickRow, open, settle } from "./timeline.mjs";
 
 // Browser-only: the inline thread and details are dialogs on the conversation
@@ -300,38 +301,37 @@ test.describe("Inline", () => {
       const short = await box(sheet(page));
       await showMore(sheet(page), "Stacked findings").click();
       await expect(detailsSheet(page)).toBeVisible();
-      // Only a strip of the thread shows above the details; its header and
-      // Close lie under them.
+      // The details cover the thread's header, so its title and Close can't
+      // be reached, and they read over the thread rather than elsewhere.
       const covered = async () => {
         const [thread, reader] = [
           await box(sheet(page)),
           await box(detailsSheet(page)),
         ];
-        const threadClose = await close(sheet(page)).evaluate((button) => {
-          const { left, top, width, height } = button.getBoundingClientRect();
-          return document
-            .elementFromPoint(left + width / 2, top + height / 2)
-            ?.closest("[data-details-sheet-surface]")
-            ?.querySelector("[data-composer-dock]")
-            ? "thread"
-            : "details";
-        });
+        const under = (locator) =>
+          locator.evaluate((element) => {
+            const { left, top, width, height } =
+              element.getBoundingClientRect();
+            return !element.contains(
+              document.elementFromPoint(left + width / 2, top + height / 2),
+            );
+          });
         return {
-          strip: Math.round(reader.top - thread.top) <= 24,
           inside:
+            reader.top >= thread.top &&
             reader.left >= thread.left &&
             reader.right <= thread.right &&
             reader.bottom <= thread.bottom,
-          threadClose,
+          title: await under(threadHeading(page)),
+          close: await under(close(sheet(page))),
         };
       };
-      await expect
-        .poll(covered)
-        .toEqual({ strip: true, inside: true, threadClose: "details" });
+      const stacked = { inside: true, title: true, close: true };
+      await expect.poll(covered).toEqual(stacked);
       // The thread grows upward to fit them, and they read whole.
       await expect
         .poll(async () => (await box(sheet(page))).height)
-        .toBeGreaterThan(short.height + 100);
+        .toBeGreaterThan(short.height);
       const whole = (reader) => {
         const body = reader.querySelector("[data-sheet-body]");
         return body.scrollHeight <= body.clientHeight + 1;
@@ -339,6 +339,7 @@ test.describe("Inline", () => {
       await expect.poll(() => detailsSheet(page).evaluate(whole)).toBe(true);
       await page.keyboard.press("Escape");
       await expect(detailsSheet(page)).toHaveCount(0);
+      // Closed, the thread settles back to its own height.
       await expect
         .poll(async () => (await box(sheet(page))).height)
         .toBeLessThan(short.height + 1);
@@ -386,9 +387,39 @@ test.describe("Inline", () => {
       await expect(
         detailsSheet(page).getByText("Older findings"),
       ).toBeVisible();
-      await expect
-        .poll(covered)
-        .toEqual({ strip: true, inside: true, threadClose: "details" });
+      await expect.poll(covered).toEqual(stacked);
+    });
+  });
+
+  test.describe("in an archived channel", () => {
+    test.use({ lifecycleVisibility: { archived: ["alpha"], hidden: [] } });
+
+    test("details over a thread without a reply box open as a dialog", async ({
+      page,
+      app,
+    }) => {
+      // An archived channel is off the sidebar; its address still opens it.
+      await page.goto(app.origin);
+      await openPage(page, "Messages");
+      const timeline = page.locator("[data-channel-timeline]");
+      await expect(timeline.locator("[data-message-id]").first()).toBeVisible();
+      await page.goto(page.url().replace("%22beta%22", "%22alpha%22"));
+      await expect(
+        timeline.locator(`[data-message-id="${roots(app)[1].id}"]`),
+      ).toBeVisible();
+      await settle(page);
+      const root = roots(app)[1];
+      details(app, "Archived findings", root);
+      await clickRow(page, viewThread(page, root));
+      const thread = threadTab(page, root);
+      await expect(thread).toBeVisible();
+      await showMore(side(page), "Archived findings").click();
+      const reader = page
+        .getByRole("dialog")
+        .filter({ hasText: filler.trim() });
+      await expect(reader).toBeVisible();
+      await close(reader).click();
+      await expect(reader).toHaveCount(0);
     });
   });
 

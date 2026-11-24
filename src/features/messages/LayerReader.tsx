@@ -1,7 +1,10 @@
 import { useContext, useRef } from "react";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { useConversation } from "../conversation/Conversation";
-import { useComposerHost, useComposerScope } from "./composer-overlay";
+import {
+  useComposerExpected,
+  useComposerHost,
+  useComposerScope,
+} from "./composer-overlay";
 import { DetailsReader } from "./DetailsReader";
 import { ComposerSheet } from "./ComposerSheet";
 import { LayerAddressContext, type OpenLayer, layerInView } from "./view-layer";
@@ -10,8 +13,8 @@ import { LayerAddressContext, type OpenLayer, layerInView } from "./view-layer";
  * details message, read from its id so it opens whether or not its row is on
  * screen, or a panel. It is a sheet over that view's composer (a panel's at
  * full height), or a centered dialog when the view has no composer on screen.
- * A thread's reply box arrives with its root, so a layer over a thread waits
- * for it rather than opening elsewhere first. The address owns whether it is
+ * A thread's reply box arrives with its root, so a layer over a thread that
+ * will show one waits for it rather than opening elsewhere first. The address owns whether it is
  * open. */
 export function LayerReader({ channelId }: { channelId: string }) {
   const view = useComposerScope();
@@ -27,8 +30,8 @@ function Layer({ open }: { open: OpenLayer }) {
   const view = useComposerScope();
   const address = useContext(LayerAddressContext);
   const host = useComposerHost(view?.handle);
-  // Solo threads are read-only: they never bring a reply box.
-  const { soloConversation } = useConversation();
+  // A thread's reply box on its way: the thread says whether one is coming.
+  const expected = useComposerExpected(view?.handle);
   // Close hands focus back to what opened the layer, when it is still there.
   const opener = useRef(
     document.activeElement instanceof HTMLElement
@@ -37,7 +40,7 @@ function Layer({ open }: { open: OpenLayer }) {
   );
   if (!address || !view) return null;
   // The layer reads at once, and draws once its thread's reply box is there.
-  const waiting = !host && view.rootId !== undefined && !soloConversation;
+  const waiting = !host && expected;
   const onOpenChange = (next: boolean) => {
     if (!next) address.dismiss(open);
   };

@@ -3,6 +3,7 @@ import {
   type ChannelDetailsDraft,
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
+import { saveWithFreeName } from "../relay/free-name";
 import { canAddMembers, canShareSoloChat } from "../channel-members/members";
 import type { ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
@@ -125,7 +126,8 @@ export async function shareSoloChatAccess(
     throw new Error(
       "The chat is now Private. Close this dialog and share again to confirm the access change.",
     );
-  const saving = details.save(
+  const saving = saveWithFreeName(
+    details,
     confirmed,
     {
       ...confirmed,

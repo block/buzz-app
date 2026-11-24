@@ -2,6 +2,7 @@ import type { RelayData } from "../relay/service";
 import type { RelayEvent } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
+import { saveWithFreeName } from "../relay/free-name";
 import { profileMentionParts } from "../messages/profile-mentions";
 import { profileKey } from "../profiles/target";
 import type { DraftRecipient } from "../messages/mention-draft";
@@ -132,7 +133,8 @@ export async function nameSoloChat(
     !isStartingChatTitle(base.name, { text: original.content, recipients })
   )
     return skip("chat already renamed");
-  await details.save(base, { ...base, name });
+  // An open conversation's name must be free; a taken one gets a number.
+  await saveWithFreeName(details, base, { ...base, name });
 }
 
 /** Buzz's chat-name format: lowercase words joined by hyphens, like a Slack

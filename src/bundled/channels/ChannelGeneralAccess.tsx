@@ -5,6 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { saveWithFreeName } from "../../features/relay/free-name";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayRecovery } from "../../features/relay/recovery";
@@ -263,11 +264,25 @@ function ChannelGeneralAccessEditor({
     origin.current = section.current;
     setChoice(undefined);
     try {
+      let renamed: string | undefined;
       if (check) await capability.check(channelId, controller.signal);
-      else if (base && choice)
-        await capability.save(base, choice, controller.signal);
+      else if (base && choice) {
+        // Opening it needs a name no open conversation has; a taken one gets
+        // a number, and the status says so.
+        const saved = await saveWithFreeName(
+          capability,
+          base,
+          choice,
+          controller.signal,
+        );
+        if (saved !== choice.name) renamed = saved;
+      }
       if (!controller.signal.aborted) {
-        setStatus("Access updated");
+        setStatus(
+          renamed
+            ? `Access updated. Renamed to ${renamed}, since that name was taken.`
+            : "Access updated",
+        );
         await load(controller.signal);
       }
     } catch (reason) {

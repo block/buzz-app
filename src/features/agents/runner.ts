@@ -116,9 +116,14 @@ import {
   type Stream,
 } from "./catch-up";
 import {
+  drainUnavailableAction,
   interruptedChannels,
+  preservesInterruptedTurn,
+  reconcileAbortReason,
+  recordInterruptedTurn,
   type Interrupted,
   type InterruptedTurns,
+  type RunnerAbortReason,
 } from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
 import {
@@ -326,6 +331,7 @@ type Runner = {
   readonly member: Membership;
   /** The partition its community's activity is kept under. */
   readonly scope: string;
+  typeKey: string;
   /** The registration whose `run` it calls; a new one aborts the in-flight run. */
   type: RegisteredAgentType | undefined;
   protectionRevision: number;
@@ -835,9 +841,8 @@ export class AgentRunners {
     AgentKey,
     { delay: number; at: number; connection: Connection; epoch: number }
   >();
-  /** The turns the app left working last time, as this page started: only
-   * Resume gives them again, never a replay or live delivery. */
-  private readonly stopped: Interrupted;
+  private stopped: Interrupted;
+  private readonly abortReasons = new WeakMap<AbortSignal, RunnerAbortReason>();
   /** The agents whose `left` the owner chose to resume. */
   private resuming = new Set<string>();
   private workingNow = false;
@@ -921,16 +926,23 @@ export class AgentRunners {
         this.dropWatchWork(runner);
       }
       if (!runner) this.runners.set(identity.key, this.runner(identity, type));
-      else if (
-        runner.type !== type ||
-        runner.protectionRevision !== (identity.protectionRevision ?? 0)
-      ) {
-        runner.protectionRevision = identity.protectionRevision ?? 0;
-        if (!this.host.ready(identity.key)) runner.changed = true;
-        runner.controller.abort();
-        runner.controller = new AbortController();
-        runner.type = type;
-        void this.drain(runner);
+      else {
+        const nextProtection = identity.protectionRevision ?? 0;
+        const reason = reconcileAbortReason({
+          previousTypeKey: runner.typeKey,
+          nextTypeKey: identity.type,
+          sameTypeInstance: runner.type === type,
+          sameProtection: runner.protectionRevision === nextProtection,
+        });
+        runner.typeKey = identity.type;
+        if (reason) {
+          runner.protectionRevision = nextProtection;
+          if (!this.host.ready(identity.key)) runner.changed = true;
+          this.abortRunner(runner, reason);
+          runner.controller = new AbortController();
+          runner.type = type;
+          void this.drain(runner);
+        }
       }
     }
   }
@@ -953,7 +965,7 @@ export class AgentRunners {
       else if (!live && this.reloads.has(runner.key)) {
         // A reload that settles without its community ends the turns it kept
         // before custody goes, so no other copy takes over one still running.
-        runner.controller.abort();
+        this.abortRunner(runner, "reload-lost");
         runner.controller = new AbortController();
       }
       if (
@@ -965,6 +977,10 @@ export class AgentRunners {
     }
     this.connected = connected;
     this.reloads = reloads;
+  }
+  private abortRunner(runner: Runner, reason: RunnerAbortReason) {
+    this.abortReasons.set(runner.controller.signal, reason);
+    runner.controller.abort();
   }
   /** Whether a reload in place holds the runner's custody: only while its
    * type and protection are those it had when its community was last ready. */
@@ -1353,13 +1369,21 @@ export class AgentRunners {
   }
 
   private runner(
-    { key, pubkey, relay, scope, protectionRevision }: RunnerMember,
+    {
+      key,
+      pubkey,
+      relay,
+      scope,
+      type: typeKey,
+      protectionRevision,
+    }: RunnerMember,
     type: RegisteredAgentType | undefined,
   ): Runner {
     return {
       key,
       member: { pubkey, relay },
       scope,
+      typeKey,
       type,
       protectionRevision: protectionRevision ?? 0,
       controller: new AbortController(),
@@ -1405,7 +1429,7 @@ export class AgentRunners {
     this.dropWatchWork(runner);
     runner.held.clear();
     runner.backlog.length = 0;
-    runner.controller.abort();
+    this.abortRunner(runner, "retire");
   }
   /** The runner's event watches for the agent's current attention. */
   private watches(runner: Runner, agent: Agent) {
@@ -3237,14 +3261,25 @@ export class AgentRunners {
       if (agent) delete runner.changed;
       const type = runner.type;
       const run = type?.run;
-      // A reload pauses new starts; custody and queued work wait for it.
-      if (!agent && type && run && this.retained(runner)) break;
       // An agent this copy cannot run is left to another copy of the app.
       if (!agent || !type || !run) {
+        const action = drainUnavailableAction({
+          agentReady: !!agent,
+          hasType: !!type,
+          canRun: !!run,
+          retained: this.retained(runner),
+        });
+        if (action === "retain") break;
         if (agent) {
           this.host.activity.clear(runner.scope, runner.member.pubkey);
-          this.dropMentions(runner);
-          runner.queues.watch.length = 0;
+          runner.activityClaimed = false;
+          if (action === "drop") {
+            this.dropMentions(runner);
+            runner.queues.watch.length = 0;
+          } else {
+            for (const queued of runner.queues.mention) delete queued.work;
+            for (const queued of runner.queues.watch) delete queued.work;
+          }
         }
         await this.release(runner);
         // It may have come back into view, or gained its type, meanwhile.
@@ -4126,7 +4161,7 @@ export class AgentRunners {
     });
     runner.working++;
     this.noteWorking();
-    const stop = () => {
+    const stop = (abortReason?: RunnerAbortReason) => {
       if (holds < 0) return;
       holds = -1;
       stopped();
@@ -4134,11 +4169,34 @@ export class AgentRunners {
       runner.working--;
       this.noteWorking();
       typing?.();
-      if (resumable) this.unmark(runner.key, [resumable]);
+      if (!resumable) return;
+      if (preservesInterruptedTurn(abortReason, true)) {
+        const entry =
+          this.turns[runner.key]?.[resumable] ??
+          (nativePlacement
+            ? (channel ?? "")
+            : { channel: channel ?? "", placement: "pending" as const });
+        this.left = recordInterruptedTurn(
+          this.left,
+          runner.key,
+          resumable,
+          entry,
+        );
+        this.stopped = recordInterruptedTurn(
+          this.stopped,
+          runner.key,
+          resumable,
+          entry,
+        );
+        this.resuming.delete(runner.key);
+        this.resumeRetries.delete(runner.key);
+        return;
+      }
+      this.unmark(runner.key, [resumable]);
     };
     const abort = () => {
       work?.remove();
-      stop();
+      stop(this.abortReasons.get(lifetime));
     };
     lifetime.addEventListener("abort", abort, { once: true });
     const release = (result?: unknown) => {

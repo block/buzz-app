@@ -11765,6 +11765,202 @@ describe("a turn closing or reloading the app stopped", () => {
     await settle();
     expect(readInterrupted(storage)).toEqual({});
   });
+
+  it("keeps a resumable turn for Resume and preserves queued mentions and watches across a plugin type reload", async () => {
+    const first = mention();
+    const queuedMention = eventDto(
+      message(author, channel, "Echo, second ask", nowSeconds() + 1, [
+        ["p", bot],
+      ]),
+    );
+    const firstWatch = eventDto(
+      message(author, channel, "Deploy one", nowSeconds() + 2, [
+        ["t", "deploy"],
+      ]),
+    );
+    const queuedWatch = eventDto(
+      message(author, channel, "Deploy two", nowSeconds() + 3, [
+        ["t", "deploy"],
+      ]),
+    );
+    const app = await setup({
+      identities: [echo],
+      resumes: true,
+      history: [first],
+    });
+    await app.service.save(bot, { attentionEnabled: true });
+    const mentionGate = runnerGate();
+    const watchGate = runnerGate();
+    const v1Started = runnerGate();
+    const v1Seen: Delivery<Config>[] = [];
+    const v1Run = async (delivery: Delivery<Config>) => {
+      v1Seen.push(delivery);
+      if (v1Seen.length === 2) v1Started.resolve();
+      if (delivery.trigger.type === "mention") {
+        await delivery.routeConversation?.(placementFor(first));
+        delivery.workingUntil(working());
+        await mentionGate.promise;
+        return;
+      }
+      if (delivery.trigger.type === "watch") {
+        delivery.workingUntil(working());
+        await watchGate.promise;
+      }
+    };
+    const v1Owner = Object.freeze({ id: "reloadable", revision: "v1" });
+    app.owners.set(v1Owner.id, v1Owner);
+    const v1 = app.ctx.extend({ pluginOwner: v1Owner }).plugin((plugin) => {
+      plugin.agents.register({
+        ...app.type,
+        id: "echo",
+        resumes: true,
+        run: v1Run,
+      });
+    });
+    await v1.await();
+    await app.service.retype(bot, "reloadable/echo");
+    await settle();
+
+    app.emit({ events: [first, firstWatch], channelId: channel });
+    await v1Started.promise;
+    app.emit({ events: [queuedMention, queuedWatch], channelId: channel });
+    await settle();
+    expect(readInterrupted(app.storage)).toEqual({
+      [bot]: { [first.id]: channel },
+    });
+
+    await v1.dispose();
+    mentionGate.resolve();
+    watchGate.resolve();
+    await settle();
+    expect(app.service.snapshot().interrupted).toEqual([]);
+    expect(readInterrupted(app.storage)).toEqual({
+      [bot]: { [first.id]: channel },
+    });
+
+    const v2Queued = runnerGate();
+    const v2Resumed = runnerGate();
+    const v2Seen: string[] = [];
+    const describeDelivery = (delivery: Delivery<Config>) =>
+      delivery.trigger.type === "mention"
+        ? `${delivery.trigger.event.content}${delivery.trigger.resumed ? " (resumed)" : ""}`
+        : delivery.trigger.type;
+    const v2Run = async (delivery: Delivery<Config>) => {
+      v2Seen.push(describeDelivery(delivery));
+      if (v2Seen.length === 2) v2Queued.resolve();
+      if (delivery.trigger.type === "mention" && delivery.trigger.resumed) {
+        delivery.workingUntil(working());
+        v2Resumed.resolve();
+      }
+    };
+    const v2Owner = Object.freeze({ id: "reloadable", revision: "v2" });
+    app.owners.set(v2Owner.id, v2Owner);
+    const v2 = app.ctx.extend({ pluginOwner: v2Owner }).plugin((plugin) => {
+      plugin.agents.register({
+        ...app.type,
+        id: "echo",
+        resumes: true,
+        run: v2Run,
+      });
+    });
+    await v2.await();
+
+    await vi.waitFor(() =>
+      expect(names(app.service.snapshot().interrupted)).toEqual(["Echo"]),
+    );
+    await v2Queued.promise;
+    expect([...v2Seen].sort()).toEqual(["Echo, second ask", "watch"]);
+    app.emit({ replay: true, events: [first], channelId: channel });
+    app.emit({ events: [first], channelId: channel });
+    await settle();
+    expect(v2Seen).toHaveLength(2);
+
+    app.service.resumeInterrupted();
+    expect(app.service.snapshot().interrupted).toEqual([]);
+    await v2Resumed.promise;
+    expect(v2Seen).toContain("Echo, go on (resumed)");
+
+    await v2.dispose();
+    await settle();
+    expect(app.service.snapshot().interrupted).toEqual([]);
+    const v3Seen: string[] = [];
+    const v3Owner = Object.freeze({ id: "reloadable", revision: "v3" });
+    app.owners.set(v3Owner.id, v3Owner);
+    const v3 = app.ctx.extend({ pluginOwner: v3Owner }).plugin((plugin) => {
+      plugin.agents.register({
+        ...app.type,
+        id: "echo",
+        resumes: true,
+        run: async (delivery) => {
+          v3Seen.push(describeDelivery(delivery));
+        },
+      });
+    });
+    await v3.await();
+    await vi.waitFor(() =>
+      expect(names(app.service.snapshot().interrupted)).toEqual(["Echo"]),
+    );
+    await settle();
+    expect(v3Seen).toEqual([]);
+
+    app.service.dismissInterrupted();
+    expect(app.service.snapshot().interrupted).toEqual([]);
+    expect(readInterrupted(app.storage)).toEqual({});
+    app.emit({ replay: true, events: [first], channelId: channel });
+    await settle();
+    expect(v3Seen).toEqual([]);
+  });
+
+  it("does not keep an interrupted turn when a non-resumable plugin reloads or an agent is deleted", async () => {
+    const first = mention();
+    const app = await setup({ identities: [echo], resumes: true });
+    const nonResumableOwner = Object.freeze({ id: "noreload", revision: "v1" });
+    app.owners.set(nonResumableOwner.id, nonResumableOwner);
+    const nrStarted = runnerGate();
+    const nr = app.ctx
+      .extend({ pluginOwner: nonResumableOwner })
+      .plugin((plugin) => {
+        plugin.agents.register({
+          ...app.type,
+          id: "plain",
+          resumes: false,
+          run: ({ workingUntil }) => {
+            workingUntil(working());
+            nrStarted.resolve();
+          },
+        });
+      });
+    await nr.await();
+    await app.service.retype(bot, "noreload/plain");
+    app.emit({ events: [first], channelId: channel });
+    await nrStarted.promise;
+    await nr.dispose();
+    await settle();
+    expect(readInterrupted(app.storage)).toEqual({});
+    expect(app.service.snapshot().interrupted).toEqual([]);
+
+    const second = eventDto(
+      message(author, channel, "Echo, delete mid-turn", nowSeconds() + 5, [
+        ["p", bot],
+      ]),
+    );
+    const delStarted = runnerGate();
+    const delApp = await setup({
+      identities: [echo],
+      resumes: true,
+      answer: ({ workingUntil }) => {
+        workingUntil(working());
+        delStarted.resolve();
+      },
+    });
+    delApp.emit({ events: [second], channelId: channel });
+    await delStarted.promise;
+    expect(readInterrupted(delApp.storage)).toHaveProperty(bot);
+    await delApp.service.remove(bot);
+    await settle();
+    expect(readInterrupted(delApp.storage)).toEqual({});
+    expect(delApp.service.snapshot().interrupted).toEqual([]);
+  });
 });
 
 it("bounds a catch-up turn by its messages' size, and sends a larger one alone", async () => {

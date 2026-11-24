@@ -5,7 +5,12 @@ import {
   CapturedReadWouldWidenError,
   createReadState,
 } from "./read-state";
-import { effectiveFrontier, READ_RETENTION_SECONDS } from "./read-state-model";
+import {
+  effectiveFrontier,
+  overrideActive,
+  READ_RETENTION_SECONDS,
+  type ReadState,
+} from "./read-state-model";
 import {
   newReadJournal,
   READ_LOCAL_UNREAD_KEYS,
@@ -139,7 +144,9 @@ function peerUnreadMarker(
     clear = 0,
     slot = "b".repeat(32),
     clientId = "peer",
+    frontier = 0,
   }: {
+    frontier?: number;
     createdAt?: number;
     set?: number;
     clear?: number;
@@ -155,7 +162,7 @@ function peerUnreadMarker(
         v: 2,
         client_id: clientId,
         contexts: {
-          [key]: 0,
+          [key]: frontier,
           [`ov_s:${key}`]: set,
           [`ov_c:${key}`]: clear,
           [`ov_b:${key}`]: baseline,
@@ -3344,6 +3351,74 @@ describe("expiring unread (version 2)", () => {
   };
   const held = (f: ReturnType<typeof fixture>) =>
     f.journal()?.unread?.held ?? {};
+
+  describe("does not resurrect a delayed channel unread after its earlier peer read was compacted into the local floor", () => {
+    const B = "bee";
+    // Peer B=200 already compacted into floor 200: B's own read is gone.
+    const compacted = (overrides: ReadState["overrides"]): ReadJournal => ({
+      ...newReadJournal(),
+      floor: 200,
+      state: { frontiers: {}, overrides },
+    });
+    const unrelated = { other: { set: T - 20, clear: 0, baseline: 50 } };
+    const deliver = async (
+      f: ReturnType<typeof fixture>,
+      baseline: number,
+      set = T - 5,
+    ) => {
+      f.addRemote(
+        await peerUnreadMarker(f, B, baseline, {
+          createdAt: T,
+          set,
+          frontier: 100,
+        }),
+      );
+      return started(f);
+    };
+    const live = (owner: ReturnType<typeof createReadState>) =>
+      overrideActive(owner.state().overrides[B], owner.state().frontiers[B]);
+
+    it.each([
+      ["with an unrelated channel override", unrelated],
+      ["without one", {}],
+    ])("%s", async (_, overrides) => {
+      const f = fixture(T);
+      f.setJournal(compacted(overrides));
+      const owner = await deliver(f, 100);
+      expect(live(owner)).toBe(false);
+      expect(owner.state().frontiers[B]).toBe(100);
+      owner.dispose();
+      const restarted = await started(f);
+      expect(live(restarted)).toBe(false);
+    });
+    it("when the group is released from being held back", async () => {
+      const f = fixture(T);
+      f.setJournal(compacted(unrelated));
+      const owner = await deliver(f, 100, T + 700);
+      expect(held(f)[B]).toHaveLength(1);
+      f.setNow(T + 700);
+      await owner.upkeep();
+      expect(held(f)).toEqual({});
+      expect(live(owner)).toBe(false);
+    });
+    it("keeps an accepted below-floor mark active on redelivery", async () => {
+      const f = fixture(T);
+      f.setJournal(
+        compacted({
+          ...unrelated,
+          [B]: { set: T - 5, clear: 0, baseline: 100 },
+        }),
+      );
+      const owner = await deliver(f, 100);
+      expect(live(owner)).toBe(true);
+    });
+    it("still activates a group whose baseline is at or above the floor", async () => {
+      const f = fixture(T);
+      f.setJournal(compacted(unrelated));
+      const owner = await deliver(f, 200);
+      expect(live(owner)).toBe(true);
+    });
+  });
 
   it("stamps a mark with now, publishes it in its own record, and expires it one second past the lifetime", async () => {
     const f = fixture(T);

@@ -8989,3 +8989,68 @@ it("an advance's projected clear keeps a reminder another window marked again me
     a.unread.dispose();
   }
 });
+
+it.each([
+  ["with an unrelated channel override", true],
+  ["without one", false],
+])(
+  "a peer read below the local floor clears a local reminder, %s",
+  async (_, overridden) => {
+    const h = setup();
+    h.grant("room");
+    const top = message(h.alice, "room", "top", 60);
+    h.emit([top]);
+    const key = `msg:${top.id}`;
+    await h.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: top.id,
+    });
+    const saved = h.journal();
+    const cover = saved?.localCovers?.[key];
+    if (!saved || !cover) throw new Error("Missing saved reminder");
+    h.dispose();
+    const now = Math.floor(Date.now() / 1000);
+    const seeded: ReadJournal = {
+      ...saved,
+      floor: 100,
+      localCovers: { [key]: [cover[0], 50, cover[2], cover[3]] },
+      state: {
+        ...saved.state,
+        overrides: overridden
+          ? { other: { set: now, clear: 0, baseline: 50 } }
+          : {},
+      },
+    };
+    const r = setup({}, true, () => seeded);
+    r.grant("room");
+    r.emit([top]);
+    await vi.waitFor(() =>
+      expect(r.session.unread.attention("room", top.id).unread).toBe(true),
+    );
+    r.emit([
+      await signReadState(
+        {
+          slot: "a".repeat(32),
+          createdAt: now,
+          blob: { v: 1, client_id: "peer", contexts: { room: 80 } },
+        },
+        r.viewer.secret,
+        now,
+      ),
+    ]);
+    await vi.waitFor(() =>
+      expect(r.journal()?.localUnread[key]).toBeUndefined(),
+    );
+    expect(r.session.unread.attention("room", top.id).unread).toBe(false);
+    const journal = r.journal();
+    r.dispose();
+    const again = setup({}, true, () => journal ?? newReadJournal());
+    again.grant("room");
+    again.emit([top]);
+    await vi.waitFor(() =>
+      expect(again.session.unread.attention("room", top.id).unread).toBe(false),
+    );
+    expect(again.journal()?.localUnread[key]).toBeUndefined();
+  },
+);

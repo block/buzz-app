@@ -187,20 +187,23 @@ Each search scans every indexed message. Three things keep that fast:
    score, no older message can beat them, so the rest only get a quick yes/no
    check (for the match count).
 3. **Typing more searches less.** When the new query is the old one plus more
-   letters, only the messages that matched before are checked again.
+   letters, only messages whose letters were still in order, within two
+   neighboring words, are checked again. A message that missed only because its
+   letters were too far apart stays in that list, since a longer query allows
+   them to spread further, so typing and pasting find the same messages.
 
 Timings for one keystroke, typed one letter at a time, on synthetic history
 (`bin/node scripts/perf/finder/bench.ts <messages>`). The synthetic history uses
 a small vocabulary, so far more messages match each word than in real
 conversations. Treat these as worst cases.
 
-| Messages | Memory | Typical key | Slowest query, cold |
+| Messages | Memory | Typed key, median by query | Slowest query, cold (median) |
 | --- | --- | --- | --- |
-| 25,000 | 10 MB | 1–3 ms | 9 ms |
-| 50,000 | 20 MB | 1–7 ms | 16 ms |
-| 200,000 | 81 MB | 4–55 ms | 81 ms |
+| 25,000 | 10 MB | 1–4 ms | 5 ms |
+| 50,000 | 20 MB | 2–10 ms | 11 ms |
+| 200,000 | 81 MB | 8–44 ms | 56 ms |
 
-Measured on an Apple laptop and a Linux workstation, with similar results.
+Measured on a Linux workstation.
 A screen frame is 16 ms, so up to about 50,000 messages it keeps up with typing.
 Next steps for larger histories are searching in a background worker (so typing
 never waits) and splitting the search across several workers.

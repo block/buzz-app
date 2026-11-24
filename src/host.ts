@@ -67,6 +67,7 @@ export type PanelProps = {
 
 export type PluginContext = {
   react: unknown;
+  browser: Browser;
   panels: {
     register(panel: object): void;
     requestOpen(request: {

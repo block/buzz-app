@@ -55,6 +55,7 @@ function host(viewer) {
   const snapshot = { status: "ready", viewer, scope: "test", generation: 1, session };
   plugin.apply({
     react: React,
+    browser: { available: false, View: () => null },
     panels: { register: (panel) => (seat.panel = panel), requestOpen: () => true },
     relay: { subscribe: () => () => {}, snapshot: () => snapshot },
     agents: { addTool: (tool) => seat.tools.push(tool), addInstructions() {} },

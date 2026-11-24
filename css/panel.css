@@ -1,7 +1,9 @@
 @reference "../../shared/styles/globals.css";
 
+/* Fills its panel whether the host lays that out as a flex column or a grid. */
 .canvas {
   display: flex;
+  flex: 1;
   flex-direction: column;
   height: 100%;
   min-height: 0;
@@ -33,7 +35,9 @@
   flex-direction: column;
 }
 .view {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow: auto;

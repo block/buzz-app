@@ -5,7 +5,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { CanvasPanel } from "./CanvasPanel";
-import type { Browser, PanelProps, PluginContext, Session } from "./host";
+import type { PanelProps, PluginContext, Session } from "./host";
 import { useHostUi } from "./kit";
 import { useHost } from "./react";
 import { createCanvasChannel } from "./store";
@@ -20,7 +20,7 @@ import { videoView } from "./views/video";
 const CANVAS_TARGET = "buzz-canvas:";
 const still = () => () => {};
 
-export const inject = ["react", "panels", "relay", "agents"];
+export const inject = ["react", "panels", "relay", "agents", "browser"];
 export function apply(ctx: PluginContext) {
   useHost(ctx.react);
   // Optional on older hosts; the kit falls back to plain elements.
@@ -36,8 +36,8 @@ export function apply(ctx: PluginContext) {
   const views = createCanvasViews();
   // The layer under the canvas: another plugin injects this to add a view type.
   ctx.provide?.("canvasViews", views);
-  // macOS only today; elsewhere a page falls back to a frame.
-  views.register(browserView(ctx.reflect.get("browser") as Browser | undefined));
+  // Shows pages natively on macOS; elsewhere a page falls back to a frame.
+  views.register(browserView(ctx.browser));
   views.register(webView);
   views.register(mapView());
   views.register(videoView);

@@ -227,11 +227,9 @@ export function PanelWorkspace({
     return [
       {
         ...item,
-        ...title,
+        label: title?.label ?? item.label,
         icon: title?.icon ?? item.icon ?? <BrowserIcon size="1rem" />,
-        actions: title?.actions
-          ? [...title.actions, ...(item.actions ?? [])]
-          : item.actions,
+        contributedActions: title?.actions,
       },
       ...owned
         .filter((tab) => tab.owner === item.id)
@@ -484,6 +482,10 @@ export function PanelWorkspace({
                 onMove: "move" in tab ? tab.move : undefined,
                 onRename: "rename" in tab ? tab.rename : undefined,
                 actions: "actions" in tab ? tab.actions : undefined,
+                contributedActions:
+                  "contributedActions" in tab
+                    ? tab.contributedActions
+                    : undefined,
                 draggable: !!drag && "move" in tab && !!tab.move,
                 onClose: tab.close
                   ? () => {

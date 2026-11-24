@@ -1,4 +1,10 @@
-import { useState, useSyncExternalStore } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useId,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Context } from "@deepseek-ai/cordis";
 import type {
   ChannelLauncherProps,
@@ -6,12 +12,17 @@ import type {
 } from "../../features/panels/service";
 import type { ChannelMessage } from "../../features/relay/contracts";
 import { useListedChannel } from "../../features/relay/listed-channel";
+import { diffPreview } from "../../features/relay/membership";
 import { PIN_KIND, pinLists } from "../../features/relay/pins";
 import { useRelayConnection, useRowProfiles } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { MessageRow } from "../../features/messages/MessageRow";
+import { MessageMarkdown } from "../../features/messages/MessageMarkdown";
+import { MessageTimestamp } from "../../features/messages/MessageTimestamp";
+import { useReferenceDirectory } from "../../features/messages/ReferenceText";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../shared/avatar-source";
 import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import {
   usePinnedMessages,
@@ -71,6 +82,54 @@ function Launcher({
   );
 }
 
+/** A pin's body at one height, as a forward collapses, until opened. */
+function PinBody({ children }: { children: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const contentId = useId();
+  const measure = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    const update = () =>
+      setOverflows(node.scrollHeight > node.clientHeight + 1);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const toggles = overflows || expanded;
+  return (
+    <>
+      <div
+        id={contentId}
+        ref={measure}
+        className={styles.pinBody}
+        data-expanded={expanded || undefined}
+        data-overflows={overflows || undefined}
+        onFocusCapture={() => setExpanded(true)}
+      >
+        {children}
+      </div>
+      {/* Keeps its room when hidden, so every card is the same size. */}
+      <span
+        className={styles.toggle}
+        data-hidden={!toggles || undefined}
+        aria-hidden={!toggles || undefined}
+      >
+        <Button
+          size="inline"
+          variant="subtle"
+          disabled={!toggles}
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "Show less" : "Show full message"}
+        </Button>
+      </span>
+    </>
+  );
+}
+
 function PinnedList({
   session,
   channelId,
@@ -106,6 +165,7 @@ function PinnedList({
       ? pinLists(session).retry(channelId)
       : setAttempt((value) => value + 1);
   const pinnable = !!session.outbox?.supports(PIN_KIND);
+  const directory = useReferenceDirectory(session, profiles);
   if (
     pins.status === "error" ||
     (pinned.status === "error" && !pinned.rows.length)
@@ -151,55 +211,73 @@ function PinnedList({
             row.authorId,
             profile?.name ?? row.authorId.slice(0, 10),
           );
+          const attachments = row.attachments.length;
           return (
-            <li key={row.id}>
-              <MessageRow
-                row={row}
-                profile={{ ...profile, name }}
-                participantProfiles={profiles}
-                references={session}
-                scope={scope}
-                viewer={session.viewer}
-                media={session.media}
-                onOpenLink={openLink}
-                day={false}
-                retry={undefined}
-                layout="thread"
-                fullWidth
-                quickControls={
-                  <>
-                    <IconButton
-                      size="sm"
-                      hint="helpful"
-                      aria-label={`Go to message from ${name}`}
-                      title="Go to message"
-                      icon={<ArrowRightIcon />}
-                      onClick={() => open(row)}
-                    />
-                    {canUnpin && pinnable && (
-                      <IconButton
-                        size="sm"
-                        hint="helpful"
-                        aria-label={`Unpin message from ${name}`}
-                        title={dm ? "Unpin from DM" : "Unpin from channel"}
-                        icon={<PinOffIcon />}
-                        onClick={() => {
-                          setError(undefined);
-                          try {
-                            session.messages.pin(channelId, row.id, false);
-                          } catch (cause) {
-                            setError(
-                              cause instanceof Error
-                                ? cause.message
-                                : "Could not unpin. Try again.",
-                            );
-                          }
-                        }}
-                      />
-                    )}
-                  </>
-                }
-              />
+            <li key={row.id} className={styles.card}>
+              <div className={styles.head}>
+                <Avatar
+                  alt=""
+                  fallback={name}
+                  src={avatarMedia(profile?.picture, session.media)}
+                  size="small"
+                  shape={profile?.isAgent ? "squircle" : "circle"}
+                />
+                <span className={styles.byline}>
+                  <strong className="text-label-sm">{name}</strong>
+                  <MessageTimestamp createdAt={row.createdAt} />
+                </span>
+                <IconButton
+                  size="sm"
+                  hint="helpful"
+                  aria-label={`Go to message from ${name}`}
+                  title="Go to message"
+                  icon={<ArrowRightIcon />}
+                  onClick={() => open(row)}
+                />
+                {canUnpin && pinnable && (
+                  <IconButton
+                    size="sm"
+                    hint="helpful"
+                    aria-label={`Unpin message from ${name}`}
+                    title={dm ? "Unpin from DM" : "Unpin from channel"}
+                    icon={<PinOffIcon />}
+                    onClick={() => {
+                      setError(undefined);
+                      try {
+                        session.messages.pin(channelId, row.id, false);
+                      } catch (cause) {
+                        setError(
+                          cause instanceof Error
+                            ? cause.message
+                            : "Could not unpin. Try again.",
+                        );
+                      }
+                    }}
+                  />
+                )}
+              </div>
+              <PinBody>
+                {row.diff ? (
+                  <p>{diffPreview(row.diff)}</p>
+                ) : (
+                  <MessageMarkdown
+                    row={row}
+                    directory={directory}
+                    session={session}
+                    scope={scope}
+                    media={session.media}
+                    onOpenLink={openLink}
+                    participantProfiles={profiles}
+                  />
+                )}
+                {attachments > 0 && (
+                  <p className="text-body-sm text-subtle">
+                    {attachments === 1
+                      ? "1 attachment"
+                      : `${attachments} attachments`}
+                  </p>
+                )}
+              </PinBody>
             </li>
           );
         })}

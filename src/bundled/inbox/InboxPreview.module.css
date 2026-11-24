@@ -142,3 +142,13 @@
   padding-top: var(--space-1);
   border-top: 1px solid var(--border-standard);
 }
+
+/* The place reads at the name's size, lighter than everything else, and is
+   never bold, unread or not. */
+.list [data-inbox-source] {
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  letter-spacing: var(--text-body--letter-spacing);
+  font-weight: var(--type-weight-normal);
+  color: var(--text-metadata);
+}

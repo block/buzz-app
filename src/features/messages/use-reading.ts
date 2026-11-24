@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, type RefObject } from "react";
+import { useEffect, useEffectEvent, useRef, type RefObject } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ReadingHandle } from "../relay/unread";
 import { useMessageEditScope } from "./MessageEditScope";
@@ -36,6 +36,12 @@ type Reading = {
   /** The newest row catch-up may read through, when it is not the bottom
    * row (a channel's newest top-level post). Defaults to the bottom row. */
   catchUpMessageId?: string | undefined;
+  /** True while the list leaves unread rows out of what it shows: it reads
+   * only the rows shown, and never catches up. */
+  partial?: boolean | undefined;
+  /** The list's reader bar: using its controls is reading the list, as
+   * typing in its composer is. */
+  controls?: RefObject<HTMLElement | null> | undefined;
   /** The thread this list shows: its bottom catches up that thread, and its
    * DM reads stop before unread messages it does not show. */
   rootId?: string | undefined;
@@ -63,6 +69,8 @@ export function useReading({
   channelId,
   latestMessageId,
   catchUpMessageId,
+  partial = false,
+  controls,
   rootId,
   scroller,
   settled,
@@ -74,6 +82,8 @@ export function useReading({
   // already remeasures in the next frame, so it must not restart observation.
   const latestId = useEffectEvent(() => latestMessageId);
   const catchUpId = useEffectEvent(() => catchUpMessageId ?? latestMessageId);
+  const isPartial = useEffectEvent(() => partial);
+  const onPartial = useRef<((next: boolean) => void) | undefined>(undefined);
   useEffect(() => {
     if (!enabled || !scroller.current) return;
     const element: HTMLElement = scroller.current;
@@ -88,6 +98,7 @@ export function useReading({
     // or the reader departs. Returning is a new visit.
     let visit = {};
     let visited = false;
+    let leased = isPartial();
     // Whether the visit's last completed measurement showed any row.
     let showing = false;
     function depart() {
@@ -141,7 +152,8 @@ export function useReading({
           ?.closest("[data-panel-workspace]")
           ?.closest("[data-reading-thread]")
           ?.contains(node) ||
-        !!composer?.current?.contains(node));
+        !!composer?.current?.contains(node) ||
+        !!controls?.current?.contains(node));
     // Everything but geometry, so an event can check it without a layout.
     const ready = () =>
       !stopped &&
@@ -270,7 +282,7 @@ export function useReading({
     }
     function acquire() {
       try {
-        const lease = session.unread.reading(channelId, rootId, visit);
+        const lease = session.unread.reading(channelId, rootId, visit, leased);
         visited = true;
         return lease;
       } catch {
@@ -332,7 +344,7 @@ export function useReading({
           // A view-only lease keeps that evidence until the next cancellation.
           observed.view([], () => false, false);
           try {
-            handle = session.unread.reading(channelId, rootId, visit);
+            handle = session.unread.reading(channelId, rootId, visit, leased);
             handle.view([...visible], viewing);
             showing = !!visible.size;
           } catch {
@@ -412,6 +424,12 @@ export function useReading({
     });
     const resize = new ResizeObserver(reflow);
     resize.observe(element);
+    onPartial.current = (next) => {
+      if (next === leased) return;
+      leased = next;
+      stop();
+      schedule();
+    };
     present();
     schedule();
     return () => {
@@ -440,6 +458,8 @@ export function useReading({
     settled,
     restoring,
     composer,
+    controls,
     enabled,
   ]);
+  useEffect(() => onPartial.current?.(partial), [partial]);
 }

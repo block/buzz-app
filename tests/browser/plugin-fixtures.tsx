@@ -3,13 +3,24 @@ import { soloRegionFixture } from "./solo-region-fixture";
 import { companionPlugins } from "./companion-fixture";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { flushSync } from "react-dom";
 import type { BundledPlugin } from "../../src/plugins/manager";
 import type { Navigation } from "../../src/features/navigation/controller";
 import type { PageProps } from "../../src/features/pages/service";
 import type { PageNavigation } from "../../src/features/navigation/service";
-import type { PageTabTarget } from "../../src/features/conversation/contracts";
+import type {
+  ComposerAccessoryProps,
+  PageTabTarget,
+} from "../../src/features/conversation/contracts";
+import { eventsDto, type RelayEvent } from "../../src/features/relay/events";
 import type { RelayData } from "../../src/features/relay/service";
 import { PanelSubview } from "../../src/features/panels/PanelSubview";
 import { FolderOpenIcon } from "../../src/shared/design-system/icons";
@@ -69,6 +80,8 @@ declare global {
     fixtureRelay?: RelayData;
     revocationProbe?: "complete" | "resolve";
     revocationAccepted?: boolean;
+    fixtureArrangement?: FixtureArrangement;
+    fixtureArrangementBeforePresent?: () => Promise<void>;
   }
 }
 declare module "@deepseek-ai/cordis" {
@@ -138,7 +151,153 @@ const fill = (background: string, zIndex?: number) => () => (
   <div style={{ position: "absolute", inset: 0, background, zIndex }} />
 );
 
+type FixtureArrangement = {
+  events: RelayEvent[];
+  ids?: string[];
+  place?: "start" | "keep" | { id: string };
+  rememberTopId?: string;
+  onWithdraw?: FixtureArrangement;
+};
+
+const threadArrangementMemory = new Map<string, FixtureArrangement>();
+
+function ThreadArrangementBar(props: ComposerAccessoryProps) {
+  const {
+    channelId,
+    threadRootId,
+    linkedMessageId,
+    session,
+    present,
+    presentation,
+  } = props;
+  const key = `${channelId}:${threadRootId ?? ""}`;
+  const [status, setStatus] = useState("");
+  const active = useRef<FixtureArrangement | undefined>(undefined);
+  const wasPresentation = useRef(presentation);
+  const presentRef = useRef(present);
+  presentRef.current = present;
+  const linkedRef = useRef(linkedMessageId);
+  linkedRef.current = linkedMessageId;
+
+  const apply = useCallback(
+    (
+      next: FixtureArrangement,
+      place: "start" | "keep" | { id: string } = next.place ?? "start",
+    ) => {
+      const proven = eventsDto(next.events);
+      const ids = next.ids ?? proven.map((event) => event.id);
+      active.current = { ...next, events: proven, ids };
+      const result = presentRef.current?.({
+        ids,
+        events: proven,
+        complete: true,
+        place,
+      });
+      if (result === "shown") setStatus(`Arranged: ${ids.length}`);
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    const previous = wasPresentation.current;
+    wasPresentation.current = presentation;
+    if (previous === "shown" && presentation === "none") {
+      const followup = active.current?.onWithdraw;
+      active.current = undefined;
+      threadArrangementMemory.delete(key);
+      setStatus("Showing the linked reply in Buzz order");
+      if (followup) apply(followup, followup.place ?? "start");
+    }
+  }, [apply, key, presentation]);
+
+  useEffect(() => {
+    if (!threadRootId || !present) return;
+    const saved = threadArrangementMemory.get(key);
+    if (!saved) return;
+    let cancelled = false;
+    void (async () => {
+      const gate = window.fixtureArrangementBeforePresent;
+      if (gate) await gate();
+      if (cancelled) return;
+      const ids = saved.ids ?? saved.events.map((event) => event.id);
+      const linked = linkedRef.current;
+      const place = linked
+        ? ids.includes(linked)
+          ? { id: linked }
+          : "start"
+        : saved.rememberTopId
+          ? { id: saved.rememberTopId }
+          : "start";
+      apply(saved, place);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [apply, key, present, threadRootId]);
+
+  useEffect(() => {
+    if (!threadRootId) return;
+    return session.subscribeLive(({ events }) => {
+      const current = active.current;
+      if (!current) return;
+      const deleted = new Set<string>();
+      for (const event of events) {
+        if (event.kind !== 5) continue;
+        for (const [name, target] of event.tags)
+          if (name === "e" && target) deleted.add(target);
+      }
+      if (!deleted.size) return;
+      const remaining = current.events.filter(
+        (event) => !deleted.has(event.id),
+      );
+      if (remaining.length === current.events.length) return;
+      const ids = current.ids?.filter((id) => !deleted.has(id));
+      apply({ ...current, events: remaining, ids }, "keep");
+    });
+  }, [apply, session, threadRootId]);
+
+  if (!threadRootId || !present) return null;
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          const next = window.fixtureArrangement;
+          if (!next) return;
+          if (next.rememberTopId !== undefined)
+            threadArrangementMemory.set(key, next);
+          apply(next, next.place ?? "start");
+        }}
+      >
+        Present rows
+      </button>
+      <span role="status" aria-label="Arrangement status">
+        {status}
+      </span>
+    </div>
+  );
+}
+
 export const fixturePlugins: readonly BundledPlugin[] = [
+  {
+    manifest: {
+      id: "fixture.thread-arrangement",
+      name: "Thread arrangement fixture",
+      apiVersion: 1,
+    },
+    enabledByDefault: false,
+    module: {
+      inject: ["conversation"],
+      apply(ctx) {
+        ctx.conversation.registerAccessory({
+          id: "arrange",
+          title: "Thread arrangement",
+          placement: "reader",
+          component: ThreadArrangementBar,
+        });
+      },
+    },
+  },
   soloRegionFixture,
   {
     manifest: {

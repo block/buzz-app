@@ -261,6 +261,13 @@ const publicRank = (name: string, needle: string, exact?: boolean) =>
     : matchRank(name, needle);
 /** How long a completed read answers a repeated trigger without asking again. */
 export const FRESH_FOR = 60_000;
+/** The most a channel's retained history holds. The store counts rows and bytes,
+ * not events. */
+export const CHANNEL_LIMITS = Object.freeze({
+  rows: 2400,
+  events: Number.POSITIVE_INFINITY,
+  bytes: 8 * 1024 * 1024,
+});
 /** Pages a reconnect catch-up reads back from the head before it gives up on
  * reaching the rows the reader kept across the disconnect. */
 const CATCH_UP_PAGES = 5;
@@ -395,8 +402,8 @@ export function createChannelStore(
     persistence,
     maxHeadBytes = 4 * 1024 * 1024,
     maxHeads = 64,
-    maxHistoryRows = 2400,
-    maxHistoryBytes = 8 * 1024 * 1024,
+    maxHistoryRows = CHANNEL_LIMITS.rows,
+    maxHistoryBytes = CHANNEL_LIMITS.bytes,
     maxPublicDirectory = PUBLIC_CHANNEL_DIRECTORY,
     publicDirectoryPage = PUBLIC_CHANNEL_PAGE,
     now = Date.now,

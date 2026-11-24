@@ -3,7 +3,13 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import type { ComponentProps, ReactElement } from "react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import type {
+  ComposerAccessory,
+  ComposerAccessoryProps,
+  ConversationExtensions,
+} from "../../features/conversation/contracts";
 import { composerDOMFixture } from "../../features/messages/composer-testing";
+import type { Contribution } from "../../plugins/contributions";
 import { createNavigationController } from "../../features/navigation/controller";
 import { createMemoryHistory } from "../../features/navigation/history";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -137,7 +143,15 @@ function page(filter: ReadFilter, history: readonly RelayEvent[]) {
  * `root: false`, absent from its history. Alpha's older pages wait for
  * `release()`. A `cached` session has only alpha's saved head until
  * `connect()`. */
-async function channelsPage({ root = true, cached = false } = {}) {
+async function channelsPage({
+  root = true,
+  cached = false,
+  extensions,
+}: {
+  root?: boolean;
+  cached?: boolean;
+  extensions?: ConversationExtensions;
+} = {}) {
   const { viewer, authority, reply, newer, channels } = fixture;
   const alpha = [...(root ? [fixture.root] : []), reply, ...newer];
   const held: ((error?: Error) => void)[] = [];
@@ -274,6 +288,7 @@ async function channelsPage({ root = true, cached = false } = {}) {
         panels={panels}
         navigator={navigator}
         navigation={navigation}
+        extensions={extensions}
       />
     </ToastProvider>
   );
@@ -336,7 +351,29 @@ const timeline = (channelId: string) =>
   document.querySelector(`[data-channel-timeline="${channelId}"]`);
 
 it("holds the list from the visit's start, then reveals the root beside the thread", async () => {
-  const h = await channelsPage();
+  const readerProps: ComposerAccessoryProps[] = [];
+  const entries: readonly Contribution<ComposerAccessory>[] = [
+    {
+      id: "arranger",
+      key: "test:arranger",
+      pluginId: "test",
+      revision: "one",
+      title: "Arranger",
+      placement: "reader",
+      component(props) {
+        readerProps.push(props);
+        return null;
+      },
+    },
+  ];
+  const none: readonly never[] = [];
+  const empty = { snapshot: () => none, subscribe: () => () => {} };
+  const extensions: ConversationExtensions = {
+    accessories: { snapshot: () => entries, subscribe: () => () => {} },
+    tools: empty,
+    inline: empty,
+  };
+  const h = await channelsPage({ extensions });
   const first = h.visit(h.inChannel(), "visit");
   h.go(first);
   await vi.waitFor(() => expect(h.held).toHaveLength(1));
@@ -359,6 +396,11 @@ it("holds the list from the visit's start, then reveals the root beside the thre
       },
     }),
   );
+  const channelProps = readerProps.filter((props) => !props.threadRootId);
+  expect(channelProps.length).toBeGreaterThan(0);
+  expect(
+    channelProps.every((props) => props.linkedMessageId === undefined),
+  ).toBe(true);
 });
 
 it("opens the timeline at its usual place when the root is not in its history", async () => {

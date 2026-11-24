@@ -71,6 +71,24 @@ export function ReplyBranch({
       ]);
     };
   }, []);
+  const summaryRef = useCallback((button: HTMLButtonElement | null) => {
+    summaryButton.current = button;
+    if (!button) return;
+    return () => {
+      if (summaryButton.current === button) summaryButton.current = null;
+      if (document.activeElement !== button) return;
+      const branch = button.closest<HTMLElement>("[data-depth]");
+      recoverFocus(button, [
+        messageBox(branch?.querySelector<HTMLElement>("[data-message-id]")),
+        messageBox(
+          branch?.parentElement
+            ?.closest("[data-depth]")
+            ?.querySelector<HTMLElement>("[data-message-id]"),
+        ),
+        threadHistory(button),
+      ]);
+    };
+  }, []);
   // The thread line vanishes when live updates remove its replies or branch.
   const collapseRef = useCallback((button: HTMLButtonElement | null) => {
     if (!button) return;
@@ -99,7 +117,7 @@ export function ReplyBranch({
       {hasReplies && !open && (
         <div className={styles.replyBranchSummary}>
           <Button
-            ref={summaryButton}
+            ref={summaryRef}
             variant="link"
             size="sm"
             data-thread-summary=""
@@ -145,6 +163,10 @@ function threadHistory(element: HTMLElement) {
   return element.closest<HTMLElement>('[aria-label="Thread messages"]');
 }
 
+function messageBox(row: HTMLElement | null | undefined) {
+  return row?.querySelector<HTMLElement>(":scope > [data-layout]") ?? row;
+}
+
 /** Moves focus lost with a removed element to the first surviving target. */
 function recoverFocus(
   removed: HTMLElement,
@@ -153,7 +175,13 @@ function recoverFocus(
   queueMicrotask(() => {
     // Exact-link reparenting and explicit collapse restore focus during layout;
     // never override them or a user who has deliberately moved elsewhere.
-    if (removed.isConnected || document.activeElement !== document.body) return;
+    const active = document.activeElement;
+    const dropped =
+      !active ||
+      active === document.body ||
+      active === document.documentElement ||
+      !active.isConnected;
+    if (removed.isConnected || !dropped) return;
     const target = targets.find((element) => element?.isConnected);
     if (!target || target.closest("[inert]")) return;
     if (!target.hasAttribute("tabindex")) target.tabIndex = -1;

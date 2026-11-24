@@ -24,6 +24,13 @@ import { useMessageSelectionCopy } from "./selection-copy";
 import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
+import {
+  readerMode,
+  useArrangement,
+  usePlace,
+  usePresentedFocusRecovery,
+} from "./arrangement";
+import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -47,6 +54,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import { compareMessages } from "../relay/message-order";
 import type { RelaySession } from "../relay/session";
 import {
+  THREAD_LIMITS,
   threadFailure,
   type ThreadRetarget,
   type ThreadView,
@@ -259,6 +267,22 @@ type ThreadPlace = {
   anchor?: { id: string; top: number; ancestors: readonly string[] };
 };
 const THREAD_PLACE = "thread";
+function anchorAt(element: HTMLElement | null) {
+  if (!element) return undefined;
+  const top = element.getBoundingClientRect().top;
+  const rows = [
+    ...element.querySelectorAll<HTMLElement>("ol [data-message-id]"),
+  ];
+  const row = rows.find((row) => row.getBoundingClientRect().bottom > top);
+  const id = row?.dataset.messageId;
+  return row && id
+    ? {
+        id,
+        top: row.getBoundingClientRect().top - top,
+        order: rows.flatMap((row) => row.dataset.messageId ?? []),
+      }
+    : undefined;
+}
 /** Reader lifetime follows the open thread; navigation owns only a reveal request. */
 function RetainedThreadPanel(props: ThreadPanelProps) {
   type Opening = {
@@ -702,13 +726,64 @@ function ThreadMessages({
     const current = view.snapshot();
     return current.status === "ready" ? current.root : undefined;
   }, [view]);
-  const tree = useMemo(
+  const [lostPlace, setLostPlace] = useState<AbortSignal>();
+  const returning =
+    !!navigation?.traversal &&
+    lostPlace !== navigation.signal &&
+    navigation.position(THREAD_PLACE) !== undefined;
+  const rootTarget =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.threadRootId === messageId;
+  const positionedVisit = rootTarget || returning;
+  const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each reveal request needs its own signal.
+  useEffect(() => {
+    if (!revealSelected) return;
+    const request = new AbortController();
+    setInlineReveal(request.signal);
+    return () => request.abort();
+  }, [revealSelected, revealRequest]);
+  const [revealedSignal, setRevealedSignal] = useState<AbortSignal>();
+  const [withdrawnSignal, setWithdrawnSignal] = useState<AbortSignal>();
+  const requested =
+    inlineReveal ?? (positionedVisit ? undefined : navigation?.signal);
+  const [arrangement, presented] = useArrangement({
+    session,
+    channelId,
+    rootId: subthreadId ? undefined : resolvedRoot,
+    limits: THREAD_LIMITS,
+  });
+  const targetHidden =
+    !!presented &&
+    messageId !== resolvedRoot &&
+    !presented.rows.some((row) => row.id === messageId);
+  const exactPending =
+    active && !!requested && !requested.aborted && revealedSignal !== requested;
+  const willWithdraw =
+    targetHidden && exactPending && withdrawnSignal !== requested;
+  const display = willWithdraw ? undefined : presented;
+  const mode = readerMode(display);
+  const modeNow = useRef(mode);
+  modeNow.current = mode;
+  const shownReplies = display?.rows ?? snapshot.replies;
+  const hostTree = useMemo(
     () => replyTree(snapshot.replies, snapshot.root?.id),
     [snapshot.replies, snapshot.root?.id],
   );
+  const tree = useMemo(
+    () =>
+      display
+        ? replyTree(
+            display.rows,
+            resolvedRoot,
+            display.parents && ((id) => display.parents?.get(id)),
+          )
+        : hostTree,
+    [display, hostTree, resolvedRoot],
+  );
   const branchReplies = useMemo(() => {
     const branches = new Map<string, ChannelMessage[]>();
-    for (const reply of snapshot.replies) {
+    for (const reply of shownReplies) {
       for (const ancestor of tree.ancestors(reply.id)) {
         const replies = branches.get(ancestor) ?? [];
         replies.push(reply);
@@ -716,7 +791,7 @@ function ThreadMessages({
       }
     }
     return branches;
-  }, [tree, snapshot.replies]);
+  }, [tree, shownReplies]);
   const subscribeUnread = useCallback(
     (listener: () => void) =>
       session.unread.subscribe(
@@ -771,6 +846,26 @@ function ThreadMessages({
       )
     : undefined;
   const replyParent = useReplyTarget(session, scope, targetKey);
+  const listedOpen = useRef<ReadonlySet<string>>(new Set());
+  const open = display?.open;
+  useLayoutEffect(() => {
+    const fresh = (open ?? []).filter((id) => !listedOpen.current.has(id));
+    listedOpen.current = new Set(open);
+    if (fresh.length) setExpanded((current) => new Set([...current, ...fresh]));
+  }, [open]);
+  const endRow = useMemo(() => {
+    let end: string | undefined;
+    for (let level = tree.children.get(undefined); level?.length; ) {
+      end = level.at(-1)?.id;
+      level = end && expanded.has(end) ? tree.children.get(end) : undefined;
+    }
+    return end;
+  }, [tree, expanded]);
+  const collapsed =
+    mode.presented &&
+    [...tree.children.keys()].some(
+      (id) => id !== undefined && !expanded.has(id),
+    );
   const resolveName = useChannelIdentityNames(session, channelId);
   const senderName = (row: ChannelMessage) => {
     const id = row.workflowOwnerId ?? row.authorId;
@@ -785,19 +880,30 @@ function ThreadMessages({
     (root.workflowOwnerId ?? root.authorId) === session.viewer
       ? "Reply in thread"
       : `Reply in thread to ${senderName(root)}`;
-  const rows = useMemo(
+  const hostRows = useMemo(
     () =>
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
+  const rows = useMemo(
+    () =>
+      display && snapshot.root ? [snapshot.root, ...display.rows] : hostRows,
+    [display, snapshot.root, hostRows],
+  );
+  const editRows = useMemo(() => {
+    if (!display) return hostRows;
+    const byId = new Map(hostRows.map((row) => [row.id, row]));
+    for (const row of display.rows) byId.set(row.id, row);
+    return [...byId.values()].sort(compareMessages);
+  }, [display, hostRows]);
   // Remembered agents follow the viewer's latest message here, not the root.
   // Undefined until the first page lands: the seeded root is not yet the thread.
   const threadSeed = useMemo(
     () =>
       snapshot.status === "ready"
-        ? rows.filter((row) => row.authorId === session.viewer).at(-1)
+        ? hostRows.filter((row) => row.authorId === session.viewer).at(-1)
         : undefined,
-    [snapshot.status, rows, session.viewer],
+    [snapshot.status, hostRows, session.viewer],
   );
   const authors = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   const profileGeneration = useProfileGeneration(session.profiles);
@@ -811,6 +917,7 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  const readerBar = useRef<HTMLDivElement>(null);
   const positioned = useRef(false);
   const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
   const shown = useRef(active);
@@ -879,11 +986,6 @@ function ThreadMessages({
   );
   // Back/Forward to a visit with a recorded place returns there instead of
   // replaying its opening, unless that place can no longer be shown.
-  const [lostPlace, setLostPlace] = useState<AbortSignal>();
-  const returning =
-    !!navigation?.traversal &&
-    lostPlace !== navigation.signal &&
-    navigation.position(THREAD_PLACE) !== undefined;
   const restoredVisit = useRef<AbortSignal | undefined>(undefined);
   // The row Back/Forward restored. If it joins a folded group later, as a
   // relay does once its owner verifies, that group opens once to keep it shown;
@@ -965,10 +1067,14 @@ function ThreadMessages({
           container.scrollTop
       : undefined;
   }, [selectedRow]);
+  const revealSignal = targetHidden ? undefined : requested;
+  const revealSignalRef = useRef(revealSignal);
+  revealSignalRef.current = revealSignal;
   const completeTarget = useCallback(() => {
     // Exact lookup can finish before context. Preserve this row's reading
     // position through prepended history without refocusing it after opening.
     targetAnchor.current = selectedOffset();
+    if (revealSignalRef.current) setRevealedSignal(revealSignalRef.current);
     setInitialPositioned(true);
     captureResizePosition();
     readingSettled.current = true;
@@ -1019,11 +1125,6 @@ function ThreadMessages({
         return new Set([...current, ...ancestors]);
       });
   }, [tree, messageId, navigation, revealRequest]);
-  const rootTarget =
-    navigation?.target.kind === "conversation" &&
-    navigation.target.threadRootId === messageId;
-  // Ordinary opens are positioned, not revealed; so is a return to a saved place.
-  const positionedVisit = rootTarget || returning;
   // Reopening an already-shown thread selects nothing new, so its reader needs
   // a focus handoff to start reading. First positioning leaves the opening's
   // tab/composer focus handoff alone.
@@ -1140,7 +1241,9 @@ function ThreadMessages({
       snapshot.readKind === "older" ||
       (!(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
-          (snapshot.direction !== "older" && snapshot.canLoadMore)))
+          (mode.hostNavigation &&
+            snapshot.direction !== "older" &&
+            snapshot.canLoadMore)))
     )
       return;
     // An inactive reader reads nothing. Shown, it is a preview and gets no
@@ -1162,14 +1265,14 @@ function ThreadMessages({
       return (
         attention.unread ||
         attention.forced ||
-        (tree.children.get(row.id) ?? []).some(unread)
+        (hostTree.children.get(row.id) ?? []).some(unread)
       );
     };
-    const first = (tree.children.get(undefined) ?? []).find(unread);
+    const first = (hostTree.children.get(undefined) ?? []).find(unread);
     // A requested read time follows a read of the whole thread, so a nested
     // unread reply shows no new count: reveal it, as a reply target is.
     const nested = (row: ChannelMessage): ChannelMessage | undefined => {
-      for (const child of tree.children.get(row.id) ?? []) {
+      for (const child of hostTree.children.get(row.id) ?? []) {
         const attention = session.unread.attention(channelId, child.id, since);
         if (attention.unread || attention.forced) return child;
         const found = nested(child);
@@ -1204,16 +1307,17 @@ function ThreadMessages({
     ) {
       // Page to the frontier in one read, not one page per decision. Read
       // per page: a read synced mid-load can move it.
-      if (snapshot.canLoadMore)
+      if (snapshot.canLoadMore && mode.hostNavigation)
         void view.loadMore(
           () => since ?? session.unread.threadReadThrough(channelId, messageId),
         );
-      // Past the page limit the first unread reply stays unknown.
+      // Past the page limit, or while a presentation shows, the first unread
+      // reply stays unknown.
       else setBoundary({ ...boundary, id: null });
       return;
     }
     if (revealed) {
-      const ancestors = tree.ancestors(revealed.id);
+      const ancestors = hostTree.ancestors(revealed.id);
       setExpanded((current) =>
         ancestors.every((id) => current.has(id))
           ? current
@@ -1232,34 +1336,21 @@ function ThreadMessages({
     rootTarget,
     snapshot,
     messageId,
-    tree,
+    hostTree,
+    mode.hostNavigation,
     session.unread,
     channelId,
     view,
     threadUnread,
   ]);
-  const [inlineReveal, setInlineReveal] = useState<AbortSignal>();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each reveal request needs its own signal.
-  useEffect(() => {
-    if (!revealSelected) return;
-    const request = new AbortController();
-    setInlineReveal(request.signal);
-    return () => request.abort();
-  }, [revealSelected, revealRequest]);
-  const revealSignal =
-    inlineReveal ?? (positionedVisit ? undefined : navigation?.signal);
+  const withdrawnFor = useRef<AbortSignal>(undefined);
+  const membersVisit =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.panel === "members";
   const revealed = useMessageReveal({
     scroller,
-    focus:
-      revealFocus !== false &&
-      !(
-        navigation?.target.kind === "conversation" &&
-        navigation.target.panel === "members"
-      ),
-    mark: !(
-      navigation?.target.kind === "conversation" &&
-      navigation.target.panel === "members"
-    ),
+    focus: revealFocus !== false && !membersVisit,
+    mark: !membersVisit,
     settled: positioned,
     messageId,
     signal: active ? revealSignal : undefined,
@@ -1292,7 +1383,7 @@ function ThreadMessages({
       if (!presented) return;
       const record = () => {
         const reading = resizePosition.current;
-        if (!reading) return;
+        if (!reading || !modeNow.current.hostNavigation) return;
         const id = reading.anchor?.element.dataset.messageId;
         navigation.savePosition(
           THREAD_PLACE,
@@ -1384,26 +1475,29 @@ function ThreadMessages({
   // branches do not mount their rows.
   // Each displayed level is projected alone, but a signed claim may name a
   // request loaded at another level.
-  const loadedRows = useMemo(
-    () =>
-      snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
-    [snapshot.root, snapshot.replies],
-  );
   const rootReplies = useMemo(
     () =>
       activityPresentation(
-        tree.children.get(undefined) ?? [],
+        mode.chronologicalChrome ? (tree.children.get(undefined) ?? []) : [],
         activitySnapshot,
         agentPubkeys,
         rootId,
         undefined,
-        loadedRows,
+        hostRows,
       ),
-    [tree, activitySnapshot, agentPubkeys, rootId, loadedRows],
+    [
+      tree,
+      mode.chronologicalChrome,
+      activitySnapshot,
+      agentPubkeys,
+      rootId,
+      hostRows,
+    ],
   );
   const liveAgents = useLiveConversationAgents(session, channelId, rootId);
   const lastMessage = publicMessageNeighbor(rows, rows.length, -1);
   const joinsLive =
+    mode.chronologicalChrome &&
     !!lastMessage &&
     !lastMessage.membership &&
     lastMessage.audience !== "agents" &&
@@ -1483,12 +1577,13 @@ function ThreadMessages({
   // Only legacy traversal is eager. Strict windows open at the newest page.
   useEffect(() => {
     if (
+      mode.hostNavigation &&
       snapshot.direction !== "older" &&
       snapshot.status === "ready" &&
       snapshot.canLoadMore
     )
       void view.loadMore();
-  }, [view, snapshot]);
+  }, [view, snapshot, mode.hostNavigation]);
   useLayoutEffect(() => {
     const previous = previousReplies.current;
     const complete = snapshot.status === "ready" && !snapshot.canLoadMore;
@@ -1512,7 +1607,7 @@ function ThreadMessages({
         ),
         complete: true,
       };
-    if (arrivals > 0 && !follow.current)
+    if (modeNow.current.hostNavigation && arrivals > 0 && !follow.current)
       setNewMessageCount((count) => count + arrivals);
   }, [snapshot.status, snapshot.canLoadMore, snapshot.replies]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
@@ -1529,6 +1624,27 @@ function ThreadMessages({
       revealed.current !== navigation.signal
     ) {
       revealed.current = navigation.signal;
+      setRevealedSignal(navigation.signal);
+      navigation.complete({ status: "opened" });
+    }
+    if (
+      targetHidden &&
+      active &&
+      requested &&
+      !requested.aborted &&
+      revealed.current !== requested &&
+      withdrawnFor.current !== requested
+    ) {
+      withdrawnFor.current = requested;
+      setWithdrawnSignal(requested);
+      arrangement?.withdraw();
+    } else if (
+      navigation &&
+      targetHidden &&
+      revealed.current !== navigation.signal
+    ) {
+      revealed.current = navigation.signal;
+      setRevealedSignal(navigation.signal);
       navigation.complete({ status: "opened" });
     }
     // A mounted ordinary thread acknowledges the visit before slow history can
@@ -1556,7 +1672,9 @@ function ThreadMessages({
       (!positioned.current &&
         !(snapshot.root && snapshot.direction) &&
         (snapshot.status !== "ready" ||
-          (snapshot.direction !== "older" && snapshot.canLoadMore))) ||
+          (!mode.presented &&
+            snapshot.direction !== "older" &&
+            snapshot.canLoadMore))) ||
       (!positioned.current && unreadBoundary === undefined && !openLatest)
     )
       return;
@@ -1618,6 +1736,7 @@ function ThreadMessages({
           .find((row) => row);
       if (anchor && !row) {
         revealed.current = undefined;
+        setRevealedSignal(undefined);
         setLostPlace(navigation.signal);
         return;
       }
@@ -1803,6 +1922,10 @@ function ThreadMessages({
     expanded,
     expandedActivity,
     boundary,
+    targetHidden,
+    requested,
+    arrangement,
+    mode.presented,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
   // shrinks this viewport, late media grows rows and a join error grows the end
@@ -1836,7 +1959,9 @@ function ThreadMessages({
       return;
     if (
       snapshot.status === "ready" &&
-      (snapshot.direction === "older" || !snapshot.canLoadMore)
+      (mode.presented ||
+        snapshot.direction === "older" ||
+        !snapshot.canLoadMore)
     ) {
       readingSettled.current = true;
       readingPositioned(scroller.current);
@@ -1849,6 +1974,8 @@ function ThreadMessages({
     revealed,
     snapshot,
     unreadBoundary,
+    targetHidden,
+    mode.presented,
   ]);
   // An own send can land in the middle of a branch, not at the list bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retry DOM lookup after history or branch visibility changes.
@@ -1907,6 +2034,46 @@ function ThreadMessages({
     observer.observe(end);
     return () => observer.disconnect();
   }, [active, initialPositioned, captureResizePosition, selectedOffset]);
+  const place = usePlace(arrangement, () => anchorAt(scroller.current));
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (arrangement?.snapshot() !== display) return;
+    const shown = new Set(shownReplies.map((reply) => reply.id));
+    const at = place.take((id) => shown.has(id), display ? "start" : "end");
+    if (!element || !at) return;
+    if (typeof at === "object") {
+      const closed = tree.ancestors(at.id).filter((id) => !expanded.has(id));
+      if (closed.length) {
+        setExpanded((current) => new Set([...current, ...closed]));
+        return;
+      }
+      const row = element.querySelector<HTMLElement>(
+        `[data-message-id="${at.id}"]`,
+      );
+      if (row)
+        correctScrollTop(
+          element,
+          readingDrift(element, { element: row, top: at.top }),
+        );
+    } else element.scrollTop = at === "start" ? 0 : element.scrollHeight;
+    follow.current = at === "end";
+    place.done();
+    captureResizePosition();
+  }, [
+    arrangement,
+    display,
+    shownReplies,
+    tree,
+    expanded,
+    place,
+    captureResizePosition,
+  ]);
+  usePresentedFocusRecovery(
+    scroller,
+    arrangement !== undefined,
+    display,
+    shownReplies,
+  );
   const jumpToLatest = () => {
     const element = scroller.current;
     if (!element) return;
@@ -1929,6 +2096,7 @@ function ThreadMessages({
     }, 1000);
   };
   const keepReadingPosition = () => {
+    place.cancel();
     jumpingToLatest.current = false;
     remounted.current = undefined;
     if (jumpTimer.current !== undefined) {
@@ -1958,18 +2126,19 @@ function ThreadMessages({
     );
     if (parent === undefined && snapshot.root)
       requestRows.set(snapshot.root.id, snapshot.root);
+    const foldable = mode.chronologicalChrome ? chronologicalSiblings : [];
     const presentation = activityPresentation(
-      chronologicalSiblings,
+      foldable,
       activitySnapshot,
       agentPubkeys,
       parent ?? rootId,
       // A failure with replies needs its own visible branch controls.
       (failure) => !tree.children.get(failure.id)?.length,
-      loadedRows,
+      hostRows,
     );
     const groups = [
       ...presentation.groups,
-      ...relayedRuns(chronologicalSiblings, lineRow ?? undefined),
+      ...relayedRuns(foldable, lineRow ?? undefined),
     ].filter((group) =>
       group.ids.every((id) => !tree.children.get(id)?.length),
     );
@@ -1992,6 +2161,7 @@ function ThreadMessages({
           : publicMessageNeighbor(siblings, index, 1);
       const children = tree.children.get(row.id);
       const continuation =
+        mode.chronologicalChrome &&
         !!previousReply &&
         previousReply !== snapshot.root &&
         previousParent === parent &&
@@ -2003,7 +2173,7 @@ function ThreadMessages({
         );
       // A collapsed branch breaks bubble grouping, not calendar continuity.
       const currentDay = new Date(row.createdAt * 1000).toDateString();
-      const day = previousDay !== currentDay;
+      const day = mode.chronologicalChrome && previousDay !== currentDay;
       previousDay = currentDay;
       previousReply =
         children?.length && !expanded.has(row.id) ? undefined : row;
@@ -2053,7 +2223,8 @@ function ThreadMessages({
               inside ||
               presentation.bubbleAnchors.has(row.id) ||
               (joinsLive && row.id === lastMessage?.id) ||
-              (!!nextRow &&
+              (mode.chronologicalChrome &&
+                !!nextRow &&
                 continuesMessageGroup(row, nextRow) &&
                 !children?.length)
             }
@@ -2113,7 +2284,7 @@ function ThreadMessages({
           className={styles.replyItem}
           data-layout={continuation ? "continuation" : "thread"}
         >
-          {!parent && row.id === lineRow && (
+          {mode.chronologicalChrome && !parent && row.id === lineRow && (
             <div className={styles.newMessages} data-new-messages-boundary>
               <hr className="sr-only select-none" aria-label="New messages" />
               <span className="select-none" aria-hidden="true">
@@ -2122,7 +2293,8 @@ function ThreadMessages({
             </div>
           )}
           {/* Not while the root, or history that may hold the parent, loads. */}
-          {!parent &&
+          {mode.chronologicalChrome &&
+            !parent &&
             rootId &&
             !snapshot.seeking &&
             row.replyParentId &&
@@ -2218,7 +2390,9 @@ function ThreadMessages({
       );
     });
   }
-  const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  const selectedParent =
+    snapshot.replies.find((row) => row.id === replyParent) ??
+    display?.rows.find((row) => row.id === replyParent);
   // A target kept from an earlier reader is judged once this one has read the
   // thread. Until then the reply box waits: it neither says the target is
   // gone nor sends to it.
@@ -2274,6 +2448,7 @@ function ThreadMessages({
     const element = scroller.current;
     if (
       !element ||
+      !mode.hostNavigation ||
       !olderDemand.current ||
       snapshot.direction !== "older" ||
       snapshot.status !== "ready" ||
@@ -2289,12 +2464,14 @@ function ThreadMessages({
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
   const showOlderPageStatus =
+    mode.chronologicalChrome &&
     snapshot.direction === "older" &&
     snapshot.readKind === "older" &&
     !!snapshot.root;
   const targetUnavailable =
     snapshot.targetStatus === "unavailable" && !selectionNotice;
-  const historyError = !!snapshot.error && !showOlderPageStatus;
+  const historyError =
+    mode.chronologicalChrome && !!snapshot.error && !showOlderPageStatus;
   const focusArchivedHistory = useCallback(() => {
     const history = scroller.current;
     if (
@@ -2340,6 +2517,11 @@ function ThreadMessages({
       void view.loadMore();
     } else void view.refresh();
   };
+  const newestReply = shownReplies.reduce<ChannelMessage | undefined>(
+    (latest, row) =>
+      !latest || compareMessages(row, latest) > 0 ? row : latest,
+    undefined,
+  )?.id;
   return (
     <MessageEditScope>
       <Reading
@@ -2355,19 +2537,44 @@ function ThreadMessages({
         // For a full thread, use display order to break same-second ties.
         latestMessageId={
           snapshot.root && !subthreadId
-            ? snapshot.replies.reduce<ChannelMessage | undefined>(
-                (latest, row) =>
-                  !latest || compareMessages(row, latest) > 0 ? row : latest,
-                undefined,
-              )?.id
+            ? mode.presented
+              ? endRow
+              : newestReply
             : undefined
         }
+        catchUpMessageId={mode.presented ? newestReply : undefined}
+        partial={mode.partialReading || collapsed}
+        controls={readerBar}
       />
+      {arrangement && extensions?.accessories && (
+        <div ref={readerBar} className={styles.readerBar}>
+          <ComposerAccessories
+            registry={extensions.accessories}
+            placement="reader"
+            arrangement={arrangement}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            threadRootId={resolvedRoot}
+            linkedMessageId={
+              messageId !== resolvedRoot &&
+              !membersVisit &&
+              (revealSelected || (!!navigation && !positionedVisit))
+                ? messageId
+                : undefined
+            }
+            canOpen={(target) => canOpenLink?.(target) ?? false}
+            open={openViewLink}
+          />
+        </div>
+      )}
       {/* The reader's scrollport, with its edge material for a sheet. */}
       <div
         className={styles.threadHistoryFrame}
         data-thread-history-frame=""
-        data-jump-visible={showJumpToLatest || undefined}
+        data-jump-visible={
+          (mode.chronologicalChrome && showJumpToLatest) || undefined
+        }
       >
         <section
           ref={scroller}
@@ -2383,7 +2590,9 @@ function ThreadMessages({
           aria-label="Thread messages"
           aria-busy={positioning}
           data-positioning={positioning || undefined}
-          data-jump-visible={showJumpToLatest || undefined}
+          data-jump-visible={
+            (mode.chronologicalChrome && showJumpToLatest) || undefined
+          }
           onScroll={(event) => {
             if (!positioned.current) return;
             const element = event.currentTarget;
@@ -2451,7 +2660,7 @@ function ThreadMessages({
           tabIndex={0}
         >
           <JumpToLatestButton
-            visible={showJumpToLatest}
+            visible={mode.chronologicalChrome && showJumpToLatest}
             newMessageCount={newMessageCount}
             onClick={jumpToLatest}
           />
@@ -2570,7 +2779,7 @@ function ThreadMessages({
                 : "Couldn’t open that message."}
             </p>
           )}
-          {snapshot.limited && !snapshot.error && (
+          {mode.chronologicalChrome && snapshot.limited && !snapshot.error && (
             <p className={styles.threadNote}>Thread history limit reached.</p>
           )}
           {(historyError || (targetUnavailable && snapshot.root)) && (
@@ -2687,7 +2896,7 @@ function ThreadMessages({
               )
             )
           }
-          editMessages={rows}
+          editMessages={editRows}
           focusRequest={pendingReplyFocus ?? 0}
           autoFocus={autoFocus ?? false}
           onOpenLink={onOpenLink}

@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
-import { clickRow, open, settle } from "./timeline.mjs";
+import { activate, clickRow, open, settle } from "./timeline.mjs";
 
 // Browser-only: the inline thread and details are dialogs on the conversation
 // visit. Only real history events, layout around a composer and the composer's
@@ -418,4 +418,367 @@ test.describe("Sending", () => {
     await page.goForward();
     await expect(detailsSheet(page)).toHaveCount(0);
   });
+});
+
+const presentedTest = test.extend({
+  pluginFixtures: true,
+  threadPlacement: "inline",
+  enabledPlugins: ["fixture.thread-arrangement"],
+});
+
+presentedTest.describe("Presented focus", () => {
+  const threadHistory = (scope) =>
+    scope.getByRole("region", { name: "Thread messages", exact: true });
+  const arrangementStatus = (scope) =>
+    scope.getByRole("status", { name: "Arrangement status", exact: true });
+  const rowInReader = (history, id) =>
+    history.evaluate((section, messageId) => {
+      const row = section.querySelector(`[data-message-id="${messageId}"]`);
+      const s = section.getBoundingClientRect();
+      const r = row?.getBoundingClientRect();
+      return !!r && r.bottom > s.top && r.top < s.bottom;
+    }, id);
+
+  const presentRows = (scope) =>
+    scope.getByRole("button", { name: "Present rows", exact: true });
+
+  presentedTest(
+    "deleting a focused presented reply in an inline thread keeps the surviving focused row in view",
+    async ({ page, app }) => {
+      const [root] = roots(app);
+      const replies = [];
+      for (let index = 0; index < 80; index++) {
+        const content =
+          index === 79
+            ? `Jump to <buzz://message?channel=alpha&id=${replies[40].id}&thread=${root.id}>`
+            : `Presented reply ${index}: ${"Synthetic history line. ".repeat(3)}`;
+        replies.push(
+          app.append(
+            "primary",
+            "alpha",
+            content,
+            false,
+            true,
+            root.id,
+            undefined,
+            [],
+            root.created_at + index + 10,
+          ),
+        );
+      }
+      const target = replies[40];
+      const survivor = replies[41];
+      const linkReply = replies[79];
+      app.append("primary", "alpha", "Channel tail", false, true);
+
+      await open(page, app);
+      await clickRow(page, viewThread(page, root));
+      await expect(sheet(page)).toBeVisible();
+      await page.evaluate(
+        ({ events, rememberTopId }) => {
+          window.fixtureArrangement = { events, rememberTopId };
+        },
+        { events: replies, rememberTopId: linkReply.id },
+      );
+      await presentRows(sheet(page)).click();
+      await expect(arrangementStatus(sheet(page))).toHaveText("Arranged: 80");
+
+      const history = threadHistory(sheet(page));
+      const linkRow = history.locator(`[data-message-id="${linkReply.id}"]`);
+      await linkRow.scrollIntoViewIfNeeded();
+      await page.evaluate(() => {
+        let release;
+        const gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        let armed = true;
+        window.__releaseRemembered = () => release();
+        window.fixtureArrangementBeforePresent = () => {
+          if (!armed) return Promise.resolve();
+          armed = false;
+          return gate;
+        };
+      });
+      await activate(linkRow.getByRole("link"));
+      await expect(sheet(page)).toBeVisible();
+      const reopenedHistory = threadHistory(sheet(page));
+      const targetRow = reopenedHistory.locator(
+        `[data-message-id="${target.id}"]`,
+      );
+      await expect(
+        targetRow.locator(
+          '[data-highlight-surface][class*="messageHighlight"]',
+        ),
+      ).toBeVisible();
+      await expect(targetRow).toBeFocused();
+      await page.evaluate(() => window.__releaseRemembered?.());
+      await expect(arrangementStatus(sheet(page))).toHaveText("Arranged: 80");
+      expect(await rowInReader(reopenedHistory, target.id)).toBe(true);
+      await expect(targetRow).toBeInViewport();
+      await settle(page, reopenedHistory);
+      expect(await rowInReader(reopenedHistory, target.id)).toBe(true);
+      await expect(targetRow).toBeInViewport();
+
+      app.deleteTarget(target);
+      await expect(targetRow).toHaveCount(0);
+      const survivorRow = reopenedHistory.locator(
+        `[data-message-id="${survivor.id}"]`,
+      );
+      await expect(survivorRow.locator(":scope > [data-layout]")).toBeFocused();
+      await settle(page, reopenedHistory);
+
+      expect(await rowInReader(reopenedHistory, survivor.id)).toBe(true);
+      await expect(survivorRow).toBeInViewport();
+
+      const scrolledAway = reopenedHistory.locator(
+        `[data-message-id="${replies[75].id}"]`,
+      );
+      await scrolledAway.scrollIntoViewIfNeeded();
+      await settle(page, reopenedHistory);
+      expect(await rowInReader(reopenedHistory, survivor.id)).toBe(false);
+      expect(await rowInReader(reopenedHistory, replies[75].id)).toBe(true);
+      const pluginTarget = replies[5];
+      await page.evaluate(
+        ({ events, placeId }) => {
+          window.fixtureArrangement = {
+            events,
+            place: { id: placeId },
+          };
+        },
+        {
+          events: replies.filter((row) => row.id !== target.id),
+          placeId: pluginTarget.id,
+        },
+      );
+      await presentRows(sheet(page)).click();
+      await expect(arrangementStatus(sheet(page))).toHaveText("Arranged: 79");
+      await settle(page, reopenedHistory);
+      expect(await rowInReader(reopenedHistory, pluginTarget.id)).toBe(true);
+      await expect(
+        reopenedHistory.locator(`[data-message-id="${pluginTarget.id}"]`),
+      ).toBeInViewport();
+    },
+  );
+
+  presentedTest(
+    "following a link to a reply hidden by a remembered presentation keeps focus on the linked reply after withdrawal",
+    async ({ page, app }) => {
+      const [root] = roots(app);
+      const replies = Array.from({ length: 80 }, (_, index) =>
+        app.append(
+          "primary",
+          "alpha",
+          `Filtered reply ${index}`,
+          false,
+          true,
+          root.id,
+          undefined,
+          [],
+          root.created_at + index + 10,
+        ),
+      );
+      const target = replies[2];
+      const filtered = replies.filter((row) => row.id !== target.id);
+      const linkMessage = app.append(
+        "primary",
+        "alpha",
+        `Jump to <buzz://message?channel=alpha&id=${target.id}&thread=${root.id}>`,
+        false,
+        true,
+      );
+      await open(page, app);
+      await clickRow(page, viewThread(page, root));
+      await expect(sheet(page)).toBeVisible();
+      await page.evaluate(
+        ({ events, rememberTopId }) => {
+          window.fixtureArrangement = { events, rememberTopId };
+        },
+        { events: filtered, rememberTopId: replies[70].id },
+      );
+      await presentRows(sheet(page)).click();
+      await expect(arrangementStatus(sheet(page))).toHaveText("Arranged: 79");
+      await expect(
+        threadHistory(sheet(page)).locator(`[data-message-id="${target.id}"]`),
+      ).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(sheet(page)).toHaveCount(0);
+
+      await page.evaluate((targetId) => {
+        let release;
+        const gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        let armed = true;
+        window.fixtureArrangementBeforePresent = () => {
+          if (!armed) return Promise.resolve();
+          armed = false;
+          return gate;
+        };
+        const onFocusIn = (event) => {
+          const node = event.target instanceof Element ? event.target : null;
+          const row = node?.closest?.("[data-message-id]");
+          if (row?.getAttribute("data-message-id") === targetId) {
+            document.removeEventListener("focusin", onFocusIn, true);
+            release();
+          }
+        };
+        document.addEventListener("focusin", onFocusIn, true);
+      }, target.id);
+
+      await activate(
+        page
+          .locator(
+            `[data-channel-timeline] [data-message-id="${linkMessage.id}"]`,
+          )
+          .getByRole("link"),
+      );
+      await expect(sheet(page)).toBeVisible();
+      const history = threadHistory(sheet(page));
+      const targetRow = history.locator(`[data-message-id="${target.id}"]`);
+      await expect(arrangementStatus(sheet(page))).toHaveText(
+        "Showing the linked reply in Buzz order",
+      );
+      await expect(
+        targetRow.locator(
+          '[data-highlight-surface][class*="messageHighlight"]',
+        ),
+      ).toBeVisible();
+      await expect(targetRow).toBeInViewport();
+      await expect(targetRow).toBeFocused();
+    },
+  );
+
+  presentedTest(
+    "plugin placement applies after a second hiding presentation in an inline sheet and after a failed exact lookup",
+    async ({ page, app }) => {
+      const [root] = roots(app);
+      const replies = Array.from({ length: 80 }, (_, index) =>
+        app.append(
+          "primary",
+          "alpha",
+          `Placement reply ${index}: ${"Synthetic history line. ".repeat(3)}`,
+          false,
+          true,
+          root.id,
+          undefined,
+          [],
+          root.created_at + index + 10,
+        ),
+      );
+      const target = replies[2];
+      const deletedTarget = replies[40];
+      const secondPlace = replies[65];
+      const failedPlace = replies[60];
+      const filtered = replies.filter((row) => row.id !== target.id);
+      const linkHidden = app.append(
+        "primary",
+        "alpha",
+        `Hidden link <buzz://message?channel=alpha&id=${target.id}&thread=${root.id}>`,
+        false,
+        true,
+      );
+      const linkDeleted = app.append(
+        "primary",
+        "alpha",
+        `Missing link <buzz://message?channel=alpha&id=${deletedTarget.id}&thread=${root.id}>`,
+        false,
+        true,
+      );
+
+      await open(page, app);
+      await clickRow(page, viewThread(page, root));
+      await expect(sheet(page)).toBeVisible();
+      await page.evaluate(
+        ({ events, rememberTopId, placeId }) => {
+          window.fixtureArrangement = {
+            events,
+            rememberTopId,
+            onWithdraw: { events, place: { id: placeId } },
+          };
+        },
+        {
+          events: filtered,
+          rememberTopId: replies[70].id,
+          placeId: secondPlace.id,
+        },
+      );
+      await presentRows(sheet(page)).click();
+      await expect(arrangementStatus(sheet(page))).toHaveText("Arranged: 79");
+      await page.keyboard.press("Escape");
+      await expect(sheet(page)).toHaveCount(0);
+
+      await page.evaluate((targetId) => {
+        let release;
+        const gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        let armed = true;
+        window.fixtureArrangementBeforePresent = () => {
+          if (!armed) return Promise.resolve();
+          armed = false;
+          return gate;
+        };
+        const onFocusIn = (event) => {
+          const node = event.target instanceof Element ? event.target : null;
+          const row = node?.closest?.("[data-message-id]");
+          if (row?.getAttribute("data-message-id") === targetId) {
+            document.removeEventListener("focusin", onFocusIn, true);
+            release();
+          }
+        };
+        document.addEventListener("focusin", onFocusIn, true);
+      }, target.id);
+
+      await activate(
+        page
+          .locator(
+            `[data-channel-timeline] [data-message-id="${linkHidden.id}"]`,
+          )
+          .getByRole("link"),
+      );
+      await expect(sheet(page)).toBeVisible();
+      await expect(arrangementStatus(sheet(page))).toHaveText("Arranged: 79");
+      const secondHistory = threadHistory(sheet(page));
+      await settle(page, secondHistory);
+      expect(await rowInReader(secondHistory, secondPlace.id)).toBe(true);
+      await expect(
+        secondHistory.locator(`[data-message-id="${secondPlace.id}"]`),
+      ).toBeInViewport();
+
+      await page.keyboard.press("Escape");
+      await expect(sheet(page)).toHaveCount(0);
+
+      app.deleteTarget(deletedTarget);
+      await activate(
+        page
+          .locator(
+            `[data-channel-timeline] [data-message-id="${linkDeleted.id}"]`,
+          )
+          .getByRole("link"),
+      );
+      await expect(sheet(page)).toBeVisible();
+      await expect(
+        sheet(page).getByText("Selected message unavailable.", { exact: true }),
+      ).toBeVisible();
+      const remaining = replies.filter((row) => row.id !== deletedTarget.id);
+      await page.evaluate(
+        ({ events, placeId }) => {
+          window.fixtureArrangement = {
+            events,
+            place: { id: placeId },
+            onWithdraw: { events, place: { id: placeId } },
+          };
+        },
+        { events: remaining, placeId: failedPlace.id },
+      );
+      await presentRows(sheet(page)).click();
+      await expect(arrangementStatus(sheet(page))).toHaveText("Arranged: 79");
+      const failedHistory = threadHistory(sheet(page));
+      await settle(page, failedHistory);
+      expect(await rowInReader(failedHistory, failedPlace.id)).toBe(true);
+      await expect(
+        failedHistory.locator(`[data-message-id="${failedPlace.id}"]`),
+      ).toBeInViewport();
+    },
+  );
 });

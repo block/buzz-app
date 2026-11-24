@@ -2438,7 +2438,15 @@ function ThreadMessages({
             if (element.scrollTop !== lineTop.current) {
               // A reader waiting on older replies they asked for is not at
               // the latest one, however short the loaded history leaves them
-              // of it.
+              // of it, until they scroll all the way back to it.
+              if (
+                olderAnchor.current &&
+                element.scrollHeight -
+                  element.clientHeight -
+                  element.scrollTop <
+                  1
+              )
+                olderAnchor.current.following = true;
               follow.current =
                 bottom &&
                 (!olderAnchor.current || olderAnchor.current.following);

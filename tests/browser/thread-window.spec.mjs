@@ -228,9 +228,8 @@ test("older-page loading adds no row or layout shift while the request is held, 
   });
   await server.listen();
   try {
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
-    );
+    const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`;
+    await page.goto(url);
     const history = page.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
     await expect(replies).toHaveCount(10);
@@ -281,6 +280,39 @@ test("older-page loading adds no row or layout shift while the request is held, 
         ),
       )
       .toBeLessThan(2);
+    // A reader who asked for a page and scrolls back to the latest reply
+    // before it lands follows a live reply, and still follows after it lands.
+    await page.goto(url);
+    await expect(replies).toHaveCount(10);
+    await reopen(page, 40);
+    await expect(replies).toHaveCount(10);
+    const gap = () =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      );
+    await expect.poll(gap).toBeLessThan(2);
+    await page.evaluate(() => window.messagesFixture.holdOlderPage());
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(2);
+    await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(0);
+    await history.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await expect.poll(gap).toBeLessThan(1);
+    await settled(page);
+    await page.evaluate(() => window.messagesFixture.live());
+    await expect(replies).toHaveCount(11);
+    await expect.poll(gap).toBeLessThan(2);
+    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
+    await expect(replies).toHaveCount(61);
+    await settled(page);
+    await expect.poll(gap).toBeLessThan(2);
   } finally {
     await page
       .evaluate(() => window.messagesFixture.releaseOlderPage())

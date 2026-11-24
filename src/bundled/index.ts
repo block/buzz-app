@@ -52,6 +52,8 @@ import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
+import jevClockManifest from "./jev-clock/manifest.json";
+import * as jevClock from "./jev-clock";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
@@ -213,6 +215,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...jevClockManifest, apiVersion: 1 },
+    module: jevClock,
+    // A prototype: opt-in.
     enabledByDefault: false,
   },
   {

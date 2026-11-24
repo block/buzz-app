@@ -453,7 +453,9 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
           }
         />
       ) : (
-        !error && <MessageLoading label="Loading thread…" />
+        !error && (
+          <MessageLoading label="Loading thread…" placeholders={false} />
+        )
       )}
     </>
   );
@@ -580,7 +582,7 @@ function OwnedThreadPanel({
       canOpenLink={canOpenLink}
     />
   ) : (
-    <MessageLoading label="Loading thread…" />
+    <MessageLoading label="Loading thread…" placeholders={false} />
   );
 }
 function ThreadMessages({
@@ -2534,7 +2536,7 @@ function ThreadMessages({
               </p>
             )}
           {positioning || (snapshot.status === "loading" && !rows.length) ? (
-            <MessageLoading label="Loading thread…" />
+            <MessageLoading label="Loading thread…" placeholders={false} />
           ) : null}
           {selectionNotice && (
             <p role="alert">

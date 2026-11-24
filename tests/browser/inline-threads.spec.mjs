@@ -408,11 +408,17 @@ test.describe("Inline", () => {
       // on it would be refused at once, so settled geometry is past that.
       await expect(sheet(page)).toBeVisible();
       await settle(page);
-      await expect(sheet(page).locator("[data-message-loading]")).toBeVisible();
+      await expect(sheet(page).locator("[data-message-waiting]")).toHaveCount(
+        1,
+      );
+      // The waiting sheet draws no placeholders.
+      await expect(sheet(page).locator("[data-message-loading]")).toHaveCount(
+        0,
+      );
       await expect(sheet(page).getByRole("alert")).toHaveCount(0);
       release();
       await expect(sheet(page).getByText("Unread reply 0")).toBeVisible();
-      await expect(sheet(page).locator("[data-message-loading]")).toHaveCount(
+      await expect(sheet(page).locator("[data-message-waiting]")).toHaveCount(
         0,
       );
     } finally {

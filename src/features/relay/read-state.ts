@@ -293,30 +293,6 @@ const localState = (journal: ReadJournal, now: number): ReadState => {
     ),
   });
 };
-/** Saved marks that a peer read advancing past their cover ends, judged on
- * the incoming reads before retention can drop them below the floor. */
-function peerCleared(
-  journal: ReadJournal,
-  advances: readonly ReadState[],
-): ReadJournal["localUnread"] {
-  let localUnread: Record<string, number> | undefined;
-  for (const key of Object.keys(journal.localUnread)) {
-    const cover = coverOf(journal, key);
-    if (!cover) continue;
-    const [, base, channel, root] = cover;
-    const thread = root && root !== UNRESOLVED_ROOT ? root : undefined;
-    if (
-      advances.some(
-        (state) =>
-          (effectiveFrontier(state, key, channel, thread) ?? -1) > base,
-      )
-    ) {
-      localUnread ??= { ...journal.localUnread };
-      delete localUnread[key];
-    }
-  }
-  return localUnread ?? journal.localUnread;
-}
 const heldCount = (journal: ReadJournal | undefined) =>
   Object.keys(journal?.unread?.held ?? {}).length;
 /** Every save: resolve held groups the clock has reached (incoming cutoff
@@ -1095,36 +1071,27 @@ export function createReadState({
         current,
         committed.map(({ parsed }) => parsed.state),
       );
-      // Re-reading an admitted envelope, or an older one, is bookkeeping, not
-      // a later read intent.
-      const admitted = committed.flatMap(({ event, parsed }) => {
-        if (parsed.clientId === current.clientId) return [];
-        const previous = slots.get(readCoordinate(event) ?? "");
-        if (previous && newer(previous.event, event).id === previous.event.id)
-          return [];
-        return [{ parsed, prior: previous?.parsed.state.frontiers }];
-      });
       const capturedUndoVersions = invalidateCapturedUndoVersions(
         current.capturedUndoVersions,
-        admitted.flatMap(({ parsed, prior }) =>
-          Object.entries(parsed.state.frontiers)
-            .filter(
-              ([key, value]) =>
-                key.startsWith("msg:") && prior?.[key] !== value,
-            )
-            .map(([key]) => key),
-        ),
-      );
-      const localUnread = peerCleared(
-        current,
-        admitted.map(({ parsed, prior }) => ({
-          frontiers: Object.fromEntries(
-            Object.entries(parsed.state.frontiers).filter(
-              ([key, value]) => value > (prior?.[key] ?? -1),
-            ),
-          ),
-          overrides: {},
-        })),
+        committed
+          .filter(({ event, parsed }) => {
+            if (parsed.clientId === current.clientId) return false;
+            const previous = slots.get(readCoordinate(event) ?? "");
+            // Re-reading an admitted envelope is bookkeeping, not a later read intent.
+            return (
+              !previous || newer(previous.event, event).id !== previous.event.id
+            );
+          })
+          .flatMap(({ event, parsed }) => {
+            const previous = slots.get(readCoordinate(event) ?? "");
+            return Object.entries(parsed.state.frontiers)
+              .filter(
+                ([key, value]) =>
+                  key.startsWith("msg:") &&
+                  previous?.parsed.state.frontiers[key] !== value,
+              )
+              .map(([key]) => key);
+          }),
       );
       return {
         ...current,
@@ -1134,8 +1101,6 @@ export function createReadState({
           current.recent ?? {},
         ),
         capturedUndoVersions,
-        localUnread,
-        localCovers: keptCovers(current.localCovers ?? {}, localUnread),
         ...(own && { own }),
         unread: { ...(current.unread ?? newUnreadJournal()), held },
       };

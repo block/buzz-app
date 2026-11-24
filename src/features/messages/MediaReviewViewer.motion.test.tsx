@@ -235,7 +235,12 @@ it.each(["escape", "backdrop"])(
       if (method === "escape") fireEvent.keyDown(document, { key: "Escape" });
       else
         fireEvent.mouseDown(dialog.parentElement as HTMLElement, { button: 0 });
-      expect(pause).toHaveBeenCalled();
+      expect(pause).toHaveBeenCalledOnce();
+      if (method === "backdrop") {
+        // A native play request can settle while the pointer exit runs.
+        fireEvent.play(video);
+        expect(pause).toHaveBeenCalledTimes(2);
+      }
     } finally {
       release();
     }

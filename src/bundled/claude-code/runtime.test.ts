@@ -6232,6 +6232,54 @@ it("reaps an unresponsive Claude community wake after its deadline", async () =>
   }
 });
 
+it.each(["thread", "channel", "community"] as const)(
+  "keeps queued Claude work separate from compaction cancellation (%s)",
+  async (scope) => {
+    const f = setup([], { hold: true });
+    const root = message("1", "first");
+    const config = { ...DEFAULT_CONFIG, scope };
+    const agent = { ...f.agent, config } as unknown as Agent;
+    const place = { channelId: channel, root: root.id };
+    const held: PromiseLike<unknown>[] = [];
+    try {
+      await f.deliver({ type: "mention", event: root }, { config });
+      await vi.waitFor(() => expect(f.claudes()[0]?.prompts).toHaveLength(1));
+      const worker = f.claudes()[0];
+      if (!worker) throw new Error("Expected harness process");
+      worker.finish();
+      await vi.waitFor(() =>
+        expect(f.runtime.sessionState(agent, place)).toBe("idle"),
+      );
+      const compacted = f.runtime
+        .session(agent, place, "compact")
+        .catch((error) => error);
+      await vi.waitFor(() => expect(worker.prompts[1]).toBe("/compact"));
+      const reply = message("2", "queued after cancelled compaction", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+        ],
+      });
+      await f.deliver(
+        { type: "mention", event: reply },
+        { config, workingUntil: (done) => held.push(done) },
+      );
+      await f.runtime.session(agent, place, "interrupt");
+      worker.finish();
+      await compacted;
+      await vi.waitFor(() =>
+        expect(worker.prompts[2]).toContain(
+          "queued after cancelled compaction",
+        ),
+      );
+      worker.finish();
+      await Promise.all(held);
+    } finally {
+      f.runtime.dispose();
+    }
+  },
+);
+
 it.each([
   ["has its own list", true],
   ["can't say whether it has one", undefined],

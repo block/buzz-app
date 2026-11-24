@@ -1675,6 +1675,29 @@ describe("GooseRuntime", () => {
       expect(published).toEqual([]);
     });
 
+    it("reads a file a tool names from the folder, also while Buzz reconnects", async () => {
+      const { agentStore, deliver, goose, readFile, offline } = setup({
+        hold: true,
+      });
+      readFile.mockResolvedValue(new TextEncoder().encode("From a file"));
+      await assign(agentStore);
+      await deliver(root);
+      await flush(100);
+      const process = goose();
+      const send = () =>
+        process?.mcp(process.turns[0]?.sessionId ?? "", "tools/call", {
+          name: "send",
+          arguments: { audience: "everyone", path: "notes.md" },
+        });
+      await send();
+      offline();
+      await send();
+      expect(readFile.mock.calls).toEqual([
+        ["notes.md", { cwd: "/repos/worktree" }],
+        ["notes.md", { cwd: "/repos/worktree" }],
+      ]);
+    });
+
     it("starts a turn while Buzz reconnects in its folder, and routes one that comes then once it is back", async () => {
       const {
         agentStore,

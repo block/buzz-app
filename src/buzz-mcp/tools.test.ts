@@ -2698,7 +2698,7 @@ function channelListing(count: number, joined: boolean) {
   return { client, metadata, memberships };
 }
 
-it.each([10_001])(
+it.each([10_000, 10_001])(
   "searches %i metadata events without an oversized reply or hard failure",
   async (count) => {
     const { client } = channelListing(count, false);
@@ -2715,7 +2715,7 @@ it.each([10_001])(
   },
 );
 
-it.each([10_001])(
+it.each([10_000, 10_001])(
   "searches %i memberships within joined scope and reports incomplete scans",
   async (count) => {
     const { client, metadata } = channelListing(count, true);
@@ -2770,7 +2770,7 @@ it("keeps transport failures as errors instead of treating them as partial scans
   ).rejects.toThrow("relay unavailable");
 });
 
-it.each([501])(
+it.each([500, 501])(
   "bounds a %i-row listing and labels partial output",
   async (count) => {
     const { client } = channelListing(count, false);

@@ -24,6 +24,7 @@ import { keypair, metadata, roster, signed } from "../relay/testing";
 import { huddleDescription } from "../huddle/lifecycle";
 import { createRelaySession } from "../relay/session";
 import { createChannelLifecycle } from "../relay/channel-lifecycle";
+import { createIdentityArchives } from "../relay/identity-archives";
 import { ReadError } from "../relay/errors";
 import { createRecovery, RECOVERY_NOTICE_DELAY_MS } from "../relay/recovery";
 import { createSidebarPreferencesStore } from "../relay/sidebar-preferences-store";
@@ -125,7 +126,7 @@ beforeEach(() => {
     },
   );
 });
-const owners: ReturnType<typeof createRelaySession>[] = [];
+const owners: { dispose(): void }[] = [];
 afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
@@ -164,7 +165,7 @@ function fixture(
     })),
   };
   const listeners = new Set<() => void>();
-  const live = {
+  const live: ReturnType<typeof owner.session.live.snapshot> = {
     ...owner.session.live.snapshot(),
     roster: { state: "verified" as const },
   };
@@ -294,6 +295,532 @@ function fixture(
     },
   };
 }
+
+function archivedDmFixture(initiallyArchived = false) {
+  const authority = keypair();
+  const retired = keypair().pubkey;
+  const active = keypair().pubkey;
+  const f = fixture(undefined, "ready", [
+    {
+      id: "retired",
+      name: "Retired",
+      channelType: "dm",
+      participants: [retired],
+    },
+    { id: "active", name: "Active", channelType: "dm", participants: [active] },
+    {
+      id: "group",
+      name: "Group",
+      channelType: "dm",
+      participants: [retired, active],
+    },
+    { id: "unknown", name: "Unknown", channelType: "dm" },
+    { id: "self", name: "Self", channelType: "dm", participants: [] },
+    {
+      id: "channel",
+      name: "Channel",
+      channelType: "stream",
+      participants: [retired],
+    },
+  ]);
+  let archived = initiallyArchived;
+  let time = 0;
+  const snapshot = () =>
+    signed(authority, {
+      kind: 13535,
+      created_at: ++time,
+      content: "",
+      tags: [["-"], ...(archived ? [["p", retired]] : [])],
+    });
+  const read = vi.fn(async () => [snapshot()]);
+  const owner = createIdentityArchives({ read }, authority.pubkey);
+  owners.push(owner);
+  f.session.archives = owner.queries;
+  const live = f.session.live;
+  const connected = { ...live.snapshot(), status: "connected" as const };
+  f.session.live = {
+    ...live,
+    snapshot: () => connected,
+  };
+  return {
+    ...f,
+    read,
+    owner,
+    retired,
+    authority,
+    archiveSnapshot: snapshot,
+    setArchived(value: boolean) {
+      archived = value;
+    },
+    async archive(value: boolean) {
+      archived = value;
+      await act(() => owner.queries.refresh());
+    },
+    row: (id: string) =>
+      document.querySelector<HTMLElement>(`[data-channel-id="${id}"]`),
+  };
+}
+
+function transportArchivedDmFixture(initiallyArchived = false) {
+  const f = archivedDmFixture(initiallyArchived);
+  let live!: LiveCallbacks;
+  const signals: (AbortSignal | undefined)[] = [];
+  const transportOwner = createRelaySession({
+    viewer: f.session.viewer,
+    relayAuthor: f.authority.pubkey,
+    archiveAuthority: f.authority.pubkey,
+    media: () => undefined,
+    query: async (filters, signal) => {
+      if (!filters.some((filter) => filter.kinds?.includes(13535))) return [];
+      signals.push(signal);
+      return f.read();
+    },
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  owners.push(transportOwner);
+  f.session.archives = transportOwner.session.archives;
+  let view = f.session.live.snapshot();
+  f.session.live = {
+    ...f.session.live,
+    subscribe: transportOwner.session.live.subscribe,
+    snapshot() {
+      const status = transportOwner.session.live.snapshot().status;
+      if (view.status !== status) view = { ...view, status };
+      return view;
+    },
+  };
+  return {
+    ...f,
+    signals,
+    setChannels(channels: ChannelList["channels"]) {
+      f.roster({ channels });
+    },
+    state(status: Parameters<LiveCallbacks["state"]>[0]["status"]) {
+      act(() => live.state({ status, routes: [] }));
+    },
+    roster(members: string[], time: number) {
+      act(() => live.receive([roster(f.authority, "beta", members, time)]));
+    },
+  };
+}
+
+it.each(["empty", "channels", "groups", "self", "unknown"])(
+  "does not demand archive evidence for a %s roster; reads when its first eligible DM appears",
+  async (kind) => {
+    const f = transportArchivedDmFixture(true);
+    const channels = f.list.channels
+      .filter((channel) =>
+        kind === "channels"
+          ? channel.channelType === "stream"
+          : kind === "groups"
+            ? channel.id === "group"
+            : kind === "self"
+              ? channel.id === "self"
+              : kind === "unknown"
+                ? channel.id === "unknown"
+                : false,
+      )
+      .map((channel) =>
+        kind === "self"
+          ? { ...channel, participants: [f.session.viewer] }
+          : channel,
+      );
+    f.setChannels(channels);
+    f.state("connected");
+    render(f.view("channel"));
+    await act(async () => {});
+    expect(f.read).not.toHaveBeenCalled();
+    f.state("retrying");
+    f.state("connected");
+    await act(async () => {});
+    expect(f.read).not.toHaveBeenCalled();
+    const firstDm = f.list.channels.find((channel) => channel.id === "retired");
+    assert(firstDm);
+    f.setChannels([...channels, firstDm]);
+    await waitFor(() =>
+      expect(f.session.archives.snapshot().status).toBe("ready"),
+    );
+    expect(f.read).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(f.row("retired")).toBeNull());
+  },
+);
+
+it.each([false, true])(
+  "keeps one explicit startup archive read across the first connection (pending %s)",
+  async (pending) => {
+    const f = transportArchivedDmFixture(true);
+    let finish!: (events: ReturnType<typeof f.archiveSnapshot>[]) => void;
+    if (pending)
+      f.read.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    void f.session.archives.ensure();
+    render(f.view("active"));
+    await waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
+    if (!pending)
+      await waitFor(() =>
+        expect(f.session.archives.snapshot().status).toBe("ready"),
+      );
+    const signal = f.signals[0];
+    f.state("connected");
+    if (pending) {
+      expect(signal?.aborted).toBe(false);
+      await act(async () => finish([f.archiveSnapshot()]));
+    }
+    await waitFor(() =>
+      expect(f.session.archives.snapshot().status).toBe("ready"),
+    );
+    expect(f.read).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(f.row("retired")).toBeNull());
+  },
+);
+
+it("demands one archive read per reconnect and none while disconnected", async () => {
+  const f = transportArchivedDmFixture(true);
+  f.state("connected");
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  expect(f.read).toHaveBeenCalledTimes(1);
+  f.state("retrying");
+  expect(f.session.archives.snapshot().status).toBe("ready");
+  await act(async () => {});
+  expect(f.read).toHaveBeenCalledTimes(1);
+  f.state("connected");
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  expect(f.read).toHaveBeenCalledTimes(2);
+  f.state("connected");
+  expect(f.read).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])(
+  "recovers archive visibility through the transport after an exhausted outage (%s)",
+  async (initial) => {
+    const f = transportArchivedDmFixture(initial);
+    f.state("connected");
+    render(f.view("active"));
+    await waitFor(() =>
+      expect(f.session.archives.snapshot().status).toBe("ready"),
+    );
+    await waitFor(() => expect(!!f.row("retired")).toBe(!initial));
+    const before = f.read.mock.calls.length;
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      f.read.mockRejectedValue(new ReadError("unavailable", "offline", 503));
+      f.state("retrying");
+      await act(() => vi.advanceTimersByTimeAsync(3_500));
+      expect(f.session.archives.snapshot().status).toBe("ready");
+      expect(f.read).toHaveBeenCalledTimes(before);
+      f.state("connected");
+      await act(() => vi.advanceTimersByTimeAsync(3_500));
+      expect(f.session.archives.snapshot().status).toBe("error");
+      expect(f.read).toHaveBeenCalledTimes(before + 4);
+      expect(!!f.row("retired")).toBe(!initial);
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+    f.setArchived(!initial);
+    f.read.mockImplementation(async () => [f.archiveSnapshot()]);
+    f.state("retrying");
+    f.state("connected");
+    await waitFor(() =>
+      expect(f.session.archives.snapshot().status).toBe("ready"),
+    );
+    await waitFor(() => expect(!!f.row("retired")).toBe(initial));
+    const recovered = f.read.mock.calls.length;
+    f.state("connected");
+    expect(f.read).toHaveBeenCalledTimes(recovered);
+  },
+);
+
+it("waits for the first live connection before demanding sidebar archive evidence", async () => {
+  const f = transportArchivedDmFixture(true);
+  f.state("retrying");
+  f.read.mockRejectedValue(new ReadError("unavailable", "offline", 503));
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    render(f.view("active"));
+    await act(() => vi.advanceTimersByTimeAsync(3_500));
+    expect(f.session.archives.snapshot().status).toBe("idle");
+    expect(f.read).not.toHaveBeenCalled();
+    expect(f.row("retired")).not.toBeNull();
+  } finally {
+    random.mockRestore();
+    vi.useRealTimers();
+  }
+  f.read.mockImplementation(async () => [f.archiveSnapshot()]);
+  f.state("connected");
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+});
+
+it("recovers exhausted HTTP archive reads while the transport remains connected", async () => {
+  const f = transportArchivedDmFixture(true);
+  f.state("connected");
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    f.read.mockRejectedValue(new ReadError("unavailable", "offline", 503));
+    f.state("retrying");
+    f.state("connected");
+    await act(() => vi.advanceTimersByTimeAsync(3_500));
+    expect(f.session.archives.snapshot()).toMatchObject({
+      status: "error",
+      transient: true,
+    });
+    f.setArchived(false);
+    f.read.mockImplementation(async () => [f.archiveSnapshot()]);
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(f.session.archives.snapshot().status).toBe("ready");
+    expect(f.session.archives.snapshot().archived).toEqual([]);
+  } finally {
+    random.mockRestore();
+    vi.useRealTimers();
+  }
+  await waitFor(() => expect(f.row("retired")).not.toBeNull());
+});
+
+it("lets an in-flight sidebar read finish during an outage and reconciles on reconnect", async () => {
+  const f = transportArchivedDmFixture(true);
+  f.state("connected");
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+  const stale = f.archiveSnapshot();
+  let finish!: (events: (typeof stale)[]) => void;
+  f.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  f.state("retrying");
+  f.state("connected");
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("loading"),
+  );
+  const signal = f.signals.at(-1);
+  f.state("retrying");
+  expect(signal?.aborted).toBe(false);
+  expect(f.session.archives.snapshot().status).toBe("loading");
+  await act(async () => finish([stale]));
+  expect(f.session.archives.snapshot().status).toBe("ready");
+  f.setArchived(false);
+  f.state("connected");
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  await waitFor(() => expect(f.row("retired")).not.toBeNull());
+  expect(f.session.archives.snapshot().archived).toEqual([]);
+});
+
+it("rereads after an old sidebar response is released across reconnect", async () => {
+  const f = transportArchivedDmFixture(true);
+  f.state("connected");
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+  const old = f.archiveSnapshot();
+  let finish!: (events: (typeof old)[]) => void;
+  f.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  f.state("retrying");
+  f.state("connected");
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("loading"),
+  );
+  const before = f.read.mock.calls.length;
+  f.state("retrying");
+  f.state("connected");
+  f.setArchived(false);
+  await act(async () => finish([old]));
+  await waitFor(() => expect(f.row("retired")).not.toBeNull());
+  expect(f.read).toHaveBeenCalledTimes(before + 1);
+  expect(f.session.archives.snapshot().archived).toEqual([]);
+});
+
+it("keeps the pending reconnect archive read through an unrelated roster revocation", async () => {
+  const f = transportArchivedDmFixture(true);
+  f.state("connected");
+  f.roster([f.session.viewer], 1);
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+  let finish!: (events: ReturnType<typeof f.archiveSnapshot>[]) => void;
+  f.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const before = f.read.mock.calls.length;
+  f.state("retrying");
+  f.state("connected");
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("loading"),
+  );
+  const signal = f.signals.at(-1);
+  f.roster([], 2);
+  expect(signal?.aborted).toBe(false);
+  expect(f.read).toHaveBeenCalledTimes(before + 1);
+  expect(f.session.archives.snapshot().archived).toEqual([f.retired]);
+  expect(f.row("retired")).toBeNull();
+  await act(async () => finish([f.archiveSnapshot()]));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  expect(f.row("retired")).toBeNull();
+  expect(f.read).toHaveBeenCalledTimes(before + 1);
+});
+
+it.each([false, true])(
+  "hides only archived one-to-one DMs, including startup (%s)",
+  async (initial) => {
+    const f = archivedDmFixture(initial);
+    render(f.view("retired"));
+    await waitFor(() =>
+      expect(f.session.archives.snapshot().status).toBe("ready"),
+    );
+    if (!initial) {
+      expect(f.row("retired")).not.toBeNull();
+      await f.archive(true);
+    }
+    await waitFor(() => expect(f.row("retired")).toBeNull());
+    for (const id of ["active", "group", "unknown", "self", "channel"])
+      expect(f.row(id)).not.toBeNull();
+    expect(f.session.channels.list().channels).toHaveLength(6);
+    expect(f.navigator.open).not.toHaveBeenCalled();
+    expect(f.read).toHaveBeenCalledWith(
+      [{ kinds: [13535], authors: [expect.any(String)], limit: 1 }],
+      expect.objectContaining({ priority: "background", fresh: true }),
+    );
+    await f.archive(false);
+    await waitFor(() => expect(f.row("retired")).not.toBeNull());
+  },
+);
+
+it("keeps archive filtering independent from manual hiding", async () => {
+  const f = archivedDmFixture();
+  render(f.view("active"));
+  await waitFor(() => expect(f.row("retired")).not.toBeNull());
+  const row = f.row("retired");
+  assert(row);
+  fireEvent.keyDown(row, { key: "ContextMenu" });
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Close conversation" }),
+  );
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+  await f.archive(true);
+  await f.archive(false);
+  expect(f.row("retired")).toBeNull();
+});
+
+it("shows an archived DM while its conversation is unread and hides it when read", async () => {
+  const f = archivedDmFixture(true);
+  const original = f.session.unread;
+  const target = { kind: "channel" as const, channelId: "retired" };
+  let state: UnreadSnapshot = {
+    ...original.snapshot(target),
+    observedCount: 1,
+    attentionCount: 1,
+    coverage: "observed",
+    freshness: "observed",
+  };
+  const listeners = new Set<() => void>();
+  f.session.unread = {
+    ...original,
+    snapshot: (value) =>
+      value.kind === "channel" && value.channelId === "retired"
+        ? state
+        : original.snapshot(value),
+    subscribe(value, listener) {
+      if (value.kind !== "channel" || value.channelId !== "retired")
+        return original.subscribe(value, listener);
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  expect(f.row("retired")).not.toBeNull();
+  const update = (next: Partial<UnreadSnapshot>) =>
+    act(() => {
+      state = { ...state, ...next };
+      for (const listener of listeners) listener();
+    });
+  // Opening the DM quiets its row; leaving before read dwell keeps it unread.
+  update({ row: { observedCount: 0, attentionCount: 0, threadCount: 0 } });
+  expect(f.row("retired")).not.toBeNull();
+  update({ observedCount: 0, attentionCount: 0 });
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+  update({ observedCount: 1, attentionCount: 1 });
+  await waitFor(() => expect(f.row("retired")).not.toBeNull());
+});
+
+it("retains known archive evidence through read errors and reloads idle evidence", async () => {
+  const f = archivedDmFixture(true);
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  await waitFor(() => expect(f.row("retired")).toBeNull());
+  f.read.mockRejectedValueOnce(new Error("invalid archive snapshot"));
+  await act(() => f.session.archives.refresh());
+  expect(f.session.archives.snapshot().status).toBe("error");
+  expect(f.row("retired")).toBeNull();
+  act(() => {
+    f.owner.stale();
+  });
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("ready"),
+  );
+  expect(f.read).toHaveBeenCalledTimes(3);
+  expect(f.row("retired")).toBeNull();
+});
+
+it("keeps DMs visible when the initial archive read fails", async () => {
+  const f = archivedDmFixture(true);
+  f.read.mockRejectedValue(new Error("invalid archive snapshot"));
+  render(f.view("active"));
+  await waitFor(() =>
+    expect(f.session.archives.snapshot().status).toBe("error"),
+  );
+  expect(f.row("retired")).not.toBeNull();
+  expect(f.read).toHaveBeenCalledTimes(1);
+});
 
 function visibilityFixture() {
   const f = fixture();

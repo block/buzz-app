@@ -60,7 +60,6 @@ const role = (page, name) =>
 const ROLES = {
   message: ["heading", "body-lg", "label"],
   canvas: ["title", "heading", "body-lg"],
-  notes: ["title", "heading", "body-lg"],
   repo: ["title", "heading", "body-lg"],
   github: ["title", "heading", "body-lg"],
   memory: ["heading", "body-lg", "label"],
@@ -73,7 +72,6 @@ const ROLES = {
 const COPY = [
   "message",
   "canvas",
-  "notes",
   "repo",
   "memory",
   "transcript",
@@ -125,7 +123,6 @@ test("document screens keep their roles, elements and code actions in their host
   page,
   browserName,
 }) => {
-  test.skip(browserName !== "chromium", "Screenshots are Chromium's.");
   const errors = watchPageErrors(page);
   await page.addInitScript(() => {
     window.copied = [];
@@ -204,15 +201,16 @@ test("document screens keep their roles, elements and code actions in their host
           expect(read.chip, where).not.toBe("rgba(0, 0, 0, 0)");
           expect(read.header, where).not.toBe("rgba(0, 0, 0, 0)");
           if (screen === "attention") expect(read.display, where).toBe("grid");
-          if (["canvas", "notes", "repo", "github"].includes(screen))
+          if (["canvas", "repo", "github"].includes(screen))
             expect(read.nested, where).toBe("circle");
         }
         // Screenshots come before any copy, so no notification covers them.
         await expect(page.locator(".buzz-toast")).toHaveCount(0);
-        for (const screen of Object.keys(ROLES))
-          await page.locator(`[data-screen="${screen}"]`).screenshot({
-            path: `${SHOTS}${screen}-${mode}-${width}-${scale}.png`,
-          });
+        if (browserName === "chromium")
+          for (const screen of Object.keys(ROLES))
+            await page.locator(`[data-screen="${screen}"]`).screenshot({
+              path: `${SHOTS}${screen}-${mode}-${width}-${scale}.png`,
+            });
         // Copy: the actions show on hover and on keyboard focus, and both a
         // click and the keyboard copy the code exactly.
         for (const screen of COPY) {

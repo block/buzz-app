@@ -182,7 +182,7 @@ function validProfilePicture(value) {
 
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
-  MAX_INFLIGHT = 6,
+  MAX_INFLIGHT = 10,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 

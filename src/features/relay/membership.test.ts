@@ -364,8 +364,10 @@ it("live activity obeys the same retained row budget as messages", async () => {
       addition(pinky.pubkey, 2),
       addition(brain.pubkey, 3),
     ]);
+    // The oldest goes, and an older page can read it again.
     expect(owner.session.channels.window("a")).toMatchObject({
-      historyLimited: true,
+      historyLimited: false,
+      hasMore: true,
     });
     expect(
       owner.session.channels.window("a").rows.map((r) => r.createdAt),

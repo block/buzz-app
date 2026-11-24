@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { PageNavigation } from "../features/navigation/service";
 import type { Agents } from "../features/agents/service";
 import { AgentDefaults } from "../bundled/agents/AgentDefaults";
@@ -36,6 +36,7 @@ const delayLabel = (minutes: number) =>
   minutes < 60
     ? `${minutes} minutes`
     : `${minutes / 60} hour${minutes === 60 ? "" : "s"}`;
+const noSubscribe = () => () => {};
 
 export function AgentSettings({
   agents,
@@ -54,6 +55,21 @@ export function AgentSettings({
   /** Only the macOS app can keep the computer awake. */
   keepAwakeAvailable?: boolean;
 }) {
+  const activeAgents = active ? agents : undefined;
+  const mayRestart = useSyncExternalStore(
+    activeAgents?.subscribe ?? noSubscribe,
+    () => {
+      if (!activeAgents) return false;
+      const types = activeAgents.types();
+      return activeAgents
+        .snapshot()
+        .running.some((agent) =>
+          types
+            .find((type) => type.key === agent.type)
+            ?.mayRestartForBaseInstructions?.(agent),
+        );
+    },
+  );
   const rememberAgents = useRememberAgentsPreference();
   const keepAwake = useKeepAwakePreference();
   const keepAwakeApplyError = useKeepAwakeApplyError();
@@ -129,7 +145,11 @@ export function AgentSettings({
         </SettingsGroup>
       </div>
       {agents && (
-        <BaseInstructions store={agents.storage} replacedBy={sectionPlugins} />
+        <BaseInstructions
+          store={agents.storage}
+          replacedBy={sectionPlugins}
+          mayRestart={mayRestart}
+        />
       )}
       {active && mentionError && (
         <ToastNotice

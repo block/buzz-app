@@ -51,6 +51,11 @@ import {
   type TranscriptTurn,
 } from "../../features/agents/activity-transcript";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
+import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
 import { localStore, type AgentStore } from "../../features/agents/store";
 import {
   agentFolders,
@@ -814,7 +819,12 @@ export class ClaudeRuntime {
     }
     return view;
   }
-  /** The agent's saved sessions, most recently used first. */
+  /** The agent's saved sessions its owner may see, for display. */
+  ownerConversations(agent: AgentKey): SavedConversation[] {
+    return ownerRows(this.conversations(agent), this.reads(agent));
+  }
+  /** The agent's saved sessions, most recently used first, including those in
+   * channels only the agent can read; show them through `ownerConversations`. */
   conversations(agent: AgentKey): SavedConversation[] {
     const reads = this.reads(agent);
     const saved =
@@ -850,7 +860,7 @@ export class ClaudeRuntime {
         ...location,
         channelId,
         ...(root ? { root } : {}),
-        ...reads?.channelLabel(channelId),
+        ...ownerLabel(reads, channelId),
         at: saved.at,
       };
     });
@@ -939,7 +949,13 @@ export class ClaudeRuntime {
         transcript && {
           ...transcript,
           turns: withNotices(
-            prompts.shown(transcript.turns),
+            prompts.shown(
+              ownerTurns(
+                transcript.turns,
+                this.reads(conversation.agent),
+                conversation,
+              ),
+            ),
             this.notices.get(conversation.agent) ?? new Map(),
           ),
         },
@@ -986,11 +1002,16 @@ export class ClaudeRuntime {
       poll,
     );
     if (!read) return undefined;
+    const readable = ownerTurns(
+      read,
+      this.reads(conversation.agent),
+      conversation,
+    );
     // Turns older than all `held` keeps are left.
     const ids = new Set(held.map((turn) => turn.turnId));
-    const turns = read.slice(
+    const turns = readable.slice(
       Math.max(
-        read.findIndex((turn) => ids.has(turn.turnId)),
+        readable.findIndex((turn) => ids.has(turn.turnId)),
         0,
       ),
     );
@@ -1061,7 +1082,7 @@ export class ClaudeRuntime {
   /** The community's current name and kind for a channel, if it lists it;
    * `useOpenedSession` gives them to a session `find` returned. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return this.reads(agent)?.channelLabel(channelId);
+    return ownerLabel(this.reads(agent), channelId);
   }
   subscribe(listener: () => void) {
     this.listeners.add(listener);

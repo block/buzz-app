@@ -330,7 +330,7 @@ pub(crate) async fn relay_direct_message(
     let viewer = host.viewer().await?;
     let tags = direct_message_tags(&viewer, pubkeys, channel, history.as_deref())?;
     let adding = tags[0][0] == "h";
-    let failed = direct_message_refusal(adding, None);
+    let failed = || direct_message_refusal(adding, None);
     let event = host
         .sign(EventTemplate {
             kind: if adding { 41011 } else { 41010 },
@@ -357,19 +357,19 @@ pub(crate) async fn relay_direct_message(
         let reason = serde_json::from_str::<Value>(&response.body)
             .ok()
             .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
-        return Err(direct_message_refusal(adding, reason.as_deref()).into());
+        return Err(direct_message_refusal(adding, reason.as_deref()));
     }
-    let receipt: Value = serde_json::from_str(&response.body).map_err(|_| failed)?;
+    let receipt: Value = serde_json::from_str(&response.body).map_err(|_| failed())?;
     if receipt.get("event_id") != event.get("id")
         || receipt.get("accepted") != Some(&Value::Bool(true))
     {
-        return Err(failed.into());
+        return Err(failed());
     }
     let payload = receipt
         .get("message")
         .and_then(Value::as_str)
         .and_then(|m| m.strip_prefix("response:"))
-        .ok_or(failed)?;
+        .ok_or_else(failed)?;
     let result: Value = serde_json::from_str(payload)
         .map_err(|_| "The relay returned an invalid direct message.")?;
     let id = result
@@ -384,8 +384,13 @@ pub(crate) async fn relay_direct_message(
 
 /// What to show for the relay's refusal of a DM command, from its exact
 /// reason, as `directMessageRefusal` in `direct-message-policy.ts` words it.
-/// A relay from before `ask` refuses the tag itself, which asks too.
-fn direct_message_refusal(adding: bool, reason: Option<&str>) -> &'static str {
+/// A relay from before `ask` refuses the tag itself, which asks too. An
+/// agent's add-policy refusal passes on as `policy:<policy> (agent <pubkey>)`,
+/// for the app to name the agent.
+fn direct_message_refusal(adding: bool, reason: Option<&str>) -> String {
+    if let Some((policy, agent)) = reason.and_then(agent_policy_refusal) {
+        return format!("policy:{policy} (agent {agent})");
+    }
     match reason {
         Some("needs-choice: history" | r#"invalid: history must be "include", got "ask""#)
             if adding =>
@@ -402,6 +407,26 @@ fn direct_message_refusal(adding: bool, reason: Option<&str>) -> &'static str {
         _ if adding => "Couldn’t add them. Try again.",
         _ => "The direct message could not be opened. Try again.",
     }
+    .into()
+}
+
+/// The policy and agent of the relay's refusal of a DM command by an agent's
+/// add policy, as `agentPolicyRefusal` reads it: the relay names the agent
+/// after its policy code.
+fn agent_policy_refusal(reason: &str) -> Option<(&str, &str)> {
+    let rest = reason.strip_prefix("forbidden: ").unwrap_or(reason);
+    let rest = rest.strip_prefix("policy:")?;
+    let policy = ["owner_only", "nobody"].into_iter().find(|policy| {
+        rest.strip_prefix(policy).is_some_and(|after| {
+            after.is_empty() || !after.starts_with(|c: char| c.is_alphanumeric() || c == '_')
+        })
+    })?;
+    let agent = rest.strip_suffix(')')?.rsplit_once("(agent ")?.1;
+    (agent.len() == 64
+        && agent
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    .then_some((policy, agent))
 }
 
 /// The most people and agents one addition to a DM names, as
@@ -1222,6 +1247,45 @@ mod direct_message_tests {
             direct_message_refusal(false, Some("needs-choice: history")),
             "The direct message could not be opened. Try again."
         );
+    }
+
+    #[test]
+    fn an_agents_add_policy_refusal_names_the_agent() {
+        let agent = key('d');
+        for (adding, reason, policy) in [
+            (
+                false,
+                format!(
+                    "forbidden: policy:owner_only — only the agent owner can add this agent (agent {agent})"
+                ),
+                "owner_only",
+            ),
+            (
+                true,
+                format!(
+                    "forbidden: policy:nobody — this agent has disabled external channel additions (agent {agent})"
+                ),
+                "nobody",
+            ),
+        ] {
+            let shown = direct_message_refusal(adding, Some(&reason));
+            assert_eq!(shown, format!("policy:{policy} (agent {agent})"));
+            // The browser host maps a refusal again on its way out.
+            assert_eq!(direct_message_refusal(adding, Some(&shown)), shown);
+        }
+        // Without a whole agent key, or from a relay that names none, it is
+        // an ordinary refusal.
+        for reason in [
+            "forbidden: policy:owner_only — only the agent owner can add this agent".to_owned(),
+            format!("forbidden: policy:owner_only (agent {})", &agent[1..]),
+            format!("forbidden: policy:owner_onlyx (agent {agent})"),
+            format!("forbidden: policy:anyone (agent {agent})"),
+        ] {
+            assert_eq!(
+                direct_message_refusal(true, Some(&reason)),
+                "Couldn’t add them. Try again."
+            );
+        }
     }
 
     #[test]

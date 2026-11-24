@@ -52,10 +52,16 @@ export type Parity = Readonly<{
   onState?(state: OptionState): void;
 }>;
 
-/** One turn's extra inputs on a pinned session. */
+/** Chooses a turn's model and effort as it starts (`Delivery.route`);
+ * undefined sends nothing. */
+export type TurnRoute = () => Promise<
+  Readonly<{ model?: string; effort?: string }> | undefined
+>;
+/** One turn's extra inputs: on a pinned session, and its model route. */
 export type Turn = Readonly<{
   build?: BuildPrompt<never>;
   source?: Source;
+  route?: TurnRoute;
 }>;
 
 /** One conversation's ACP session. Messages sent while a turn runs are
@@ -440,7 +446,7 @@ export class AcpSession {
           waiter,
           ...(model ? { model } : {}),
           ...(effort ? { effort } : {}),
-          // As a turn of its own, it is checked like any other.
+          // As a turn of its own, it is checked and routed like any other.
           ...(kept ? { kept } : {}),
         });
         this.acknowledge(activity, waiter, true);
@@ -507,6 +513,7 @@ export class AcpSession {
           accepted,
           build,
           source = {},
+          route,
         } = this.queue.shift() ?? { text: "" };
         // Built from what the harness has, so a failed turn's messages go again.
         const from = this.covered;
@@ -514,7 +521,18 @@ export class AcpSession {
         let prompted = false;
         try {
           if (this.beforeTurn) await this.beforeTurn();
-          await this.select(model, effort);
+          // A model route chooses as its turn starts.
+          const chosen = route ? await route() : { model, effort };
+          if (!chosen) {
+            if (waiter) this.discard(waiter);
+            continue;
+          }
+          // A level can't be cleared in place, so a routed turn that names
+          // none runs on, and records, the one the session has.
+          await this.select(
+            chosen.model,
+            chosen.effort || (route ? this.level || undefined : undefined),
+          );
           // A harness may ignore a level its model lacks, and keep one across
           // a model switch without its being set again.
           if (kept && !this.offered.includes(kept))

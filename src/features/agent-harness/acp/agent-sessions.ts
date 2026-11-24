@@ -11,7 +11,7 @@ import { absoluteWorkspace } from "../../../bundled/codex/config";
 import type { SessionAction } from "../../agents/service";
 import { offers } from "./options";
 import type { AcpProcess } from "./process";
-import type { AcpSession, Parity, Turn } from "./session";
+import type { AcpSession, Parity, Turn, TurnRoute } from "./session";
 import {
   AUTH_REQUIRED,
   authMethodsOf,
@@ -484,7 +484,9 @@ export class AgentSessions<S = unknown> {
    * takes that name;
    * `model`, one of the agent's
    * provider's, and `effort`, one of its thinking levels, are what its turn
-   * runs on, and `kept`, a synced level, one it must run on. Once `signal` aborts, it stops
+   * runs on, and `kept`, a synced level, one it must run on; `route`
+   * chooses them instead for a turn it starts (`Delivery.route`). Once
+   * `signal` aborts, it stops
    * waiting for a session to open, which is then kept for the next message,
    * and sends nothing. */
   async deliver(
@@ -501,6 +503,7 @@ export class AgentSessions<S = unknown> {
       effort,
       kept,
       build,
+      route,
       ...activity
     }: Readonly<{
       /** With `pin`: builds the turn's prompt when it is sent, from the
@@ -514,6 +517,7 @@ export class AgentSessions<S = unknown> {
       model?: string;
       effort?: string;
       kept?: string;
+      route?: TurnRoute;
     }> &
       ActivityReceipt = {},
   ): Promise<Settled> {
@@ -576,7 +580,19 @@ export class AgentSessions<S = unknown> {
           this.retire(key);
           break;
         }
-        const turn = this.turn(live.claim, model, effort, build);
+        // A turn on an idle session is chosen now, so its level is checked as
+        // a picked one is; a busy session's queue asks once the turn starts.
+        // Its place in line keeps a message that comes meanwhile behind it.
+        if (route && live.session.open && !live.session.busy) {
+          place ??= this.join(key);
+          const chosen = await route();
+          if (place.stop.aborted) return { ok: true, stopped: true };
+          if (!chosen) return { ok: true, undelivered: true };
+          ({ model, effort } = chosen);
+          route = undefined;
+          continue;
+        }
+        const turn = this.turn(live.claim, model, effort, build, route);
         // A turn on a harness default runs only on a session Buzz never moved
         // off it, which a turn still ahead of it may yet do: decide when it can
         // run.
@@ -647,7 +663,7 @@ export class AgentSessions<S = unknown> {
     const claim = pinned && { epoch: ++this.epochs, pinned };
     if (claim) this.claims.set(key, claim);
     const lease = pinned && this.options.process.hold?.(pinned.generation);
-    const turn = this.turn(claim, model, effort, build);
+    const turn = this.turn(claim, model, effort, build, route);
     // Reserved before anything is awaited, so a message that comes meanwhile
     // waits for this session instead of opening another.
     const starting = (async () => {
@@ -1093,7 +1109,7 @@ export class AgentSessions<S = unknown> {
     // Pinned like a conversation's, but never an owner: it saves nothing.
     const pinned = this.options.pin?.();
     const claim = pinned && { epoch: 0, pinned };
-    const turn = this.turn(claim, undefined, undefined, undefined);
+    const turn = this.turn(claim, undefined, undefined, undefined, undefined);
     const lease = pinned && this.options.process.hold?.(pinned.generation);
     const opening = this.open(
       key,
@@ -1281,6 +1297,7 @@ export class AgentSessions<S = unknown> {
     model: string | undefined,
     effort: string | undefined,
     build: BuildPrompt<S> | undefined,
+    route: TurnRoute | undefined,
   ): Turn & Pick {
     const own = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
     const { pickFor } = this.options;
@@ -1292,6 +1309,7 @@ export class AgentSessions<S = unknown> {
       ...picked.pick,
       source: picked.source,
       ...(build ? { build: build as BuildPrompt<never> } : {}),
+      ...(route ? { route } : {}),
     };
   }
   /** Whether a session can take a turn on `pick`, with `configOptions`: only

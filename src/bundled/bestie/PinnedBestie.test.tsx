@@ -38,6 +38,7 @@ import {
 } from "../../features/relay/testing";
 import type { RelayEvent } from "../../features/relay/events";
 import { setDefaultAgent } from "../../features/solo/default-agent";
+import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { readView, writeView } from "../../shared/view-state";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { rememberFirstAgent } from "./FirstAgentWelcome";
@@ -747,6 +748,7 @@ async function threadHistoryFixture() {
 }
 
 it("restores Bestie threads with Back and Forward and retires every explicitly closed visit", async () => {
+  setThreadPlacementPreference("side");
   const f = await threadHistoryFixture();
   const { navigator, rerender, bestie } = f;
   await userEvent.click(
@@ -804,6 +806,7 @@ it("restores Bestie threads with Back and Forward and retires every explicitly c
 });
 
 it("retires an old Bestie's thread visits instead of reading them in the replacement DM", async () => {
+  setThreadPlacementPreference("side");
   const f = await threadHistoryFixture();
   const { navigator, rerender, bestie, previous } = f;
   await userEvent.click(
@@ -971,6 +974,8 @@ it("rechecks eligibility before retrying a failed DM open", async () => {
   expect(f.open).toHaveBeenCalledTimes(attempts);
 });
 
+// Mounted without a page visit, which an inline thread needs: the thread
+// opens as a tab under the default inline placement too.
 it("keeps the welcome, DM and draft mounted beside a thread and retains the reply draft while collapsing its pane", async () => {
   const f = await fixture({ existing: true, withReply: true });
   rememberFirstAgent(f.scope, pollen);

@@ -25,6 +25,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.mentions": false,
           "buzz.reminders": false,
           "buzz.workflows": false,
+          "buzz.relay-notes": true,
         },
       }),
     ],
@@ -91,6 +92,29 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const { pluginCategoryDefinitions } = await vite.ssrLoadModule(
       "/src/app/plugin-categories.ts",
     );
+    // A previously enabled reader is retired; its built-in agent tools survive.
+    assert.equal(
+      services.plugins
+        .snapshot()
+        .configuration.catalog.plugins.some(
+          (plugin) => plugin.manifest.id === "buzz.relay-notes",
+        ),
+      false,
+    );
+    assert.equal(
+      services.pages
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.relay-notes"),
+      false,
+    );
+    const { sessionTools } = await vite.ssrLoadModule(
+      "/src/buzz-mcp/session-tools.ts",
+    );
+    const toolNames = sessionTools(services.agents.tools()).map(
+      (tool) => tool.name,
+    );
+    for (const name of ["notes_get", "notes_set", "notes_rm"])
+      assert.ok(toolNames.includes(name), name);
     const categories = new Set(pluginCategoryDefinitions.map(({ id }) => id));
     for (const plugin of bundledPlugins) {
       assert.ok(
@@ -113,11 +137,11 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "com.squareup.docs",
           "buzz.pi",
           "buzz.usage",
-          "buzz.relay-notes",
           "buzz.reminders",
           "buzz.workflows",
           "buzz.mesh-compute",
           "buzz.focus",
+          "buzz.finder",
           "buzz.charts",
           "buzz.drafts-and-sent",
           "buzz.changesets",

@@ -508,6 +508,11 @@ export type PageTabTarget = {
   messageId?: string;
   unreadSince?: number;
 };
+/** Optional `ConversationWorkspaceProps` a workspace provider renders. */
+export type WorkspaceSlots = Readonly<{
+  headerActions?: true;
+  trailing?: true;
+}>;
 /** A page-owned conversation with the host's reader, composer, and side pane. */
 export type ConversationWorkspaceProps = {
   id: string;
@@ -521,6 +526,17 @@ export type ConversationWorkspaceProps = {
   label: string;
   /** Content at the start of history. It scrolls with the messages. */
   intro?: ReactNode;
+  /** Controls in the main tab's toolbar, before the actions menu. */
+  headerActions?: ReactNode;
+  /** A card over the bottom of the channel timeline; a thread ignores it.
+   * At rest its first `restHeight` pixels show below the latest message.
+   * Scrolling over the card grows it, then slides it up; `expanded` is true
+   * once it has grown. `toggle()` grows it to near the view's top, or back.
+   * Render the whole card at rest too: growing scrolls it into view. */
+  trailing?: {
+    restHeight: number;
+    content(state: { expanded: boolean; toggle(): void }): ReactNode;
+  };
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

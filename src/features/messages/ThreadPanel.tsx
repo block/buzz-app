@@ -37,7 +37,9 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   type ReactNode,
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -166,6 +168,11 @@ function foldedGroupOf(tree: ReturnType<typeof replyTree>, id: string) {
     .find((group) => group.some((row) => row.id === id))
     ?.map((row) => row.id);
 }
+
+/** Details stacked over an inline thread hide its history: it takes no focus
+ * and, being inert, reads nothing until they close. The reply box stays
+ * usable. */
+export const ThreadHistoryCoveredContext = createContext(false);
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
@@ -816,6 +823,7 @@ function ThreadMessages({
   const profiles = useRowProfiles(session.profiles, rows);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
+  const covered = useContext(ThreadHistoryCoveredContext);
   const positioned = useRef(false);
   const positionedLatestRequest = useRef<AbortSignal | undefined>(undefined);
   const shown = useRef(active);
@@ -2369,6 +2377,7 @@ function ThreadMessages({
         className={styles.threadHistoryFrame}
         data-thread-history-frame=""
         data-jump-visible={showJumpToLatest || undefined}
+        inert={covered}
       >
         <section
           ref={scroller}

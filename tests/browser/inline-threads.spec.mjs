@@ -338,38 +338,47 @@ test.describe("Inline", () => {
       };
       await expect.poll(() => detailsSheet(page).evaluate(whole)).toBe(true);
       // Nor can the keyboard reach the covered header's controls, whose Close
-      // would dismiss both; Tab still reaches the thread's reply box.
+      // would dismiss both, or the covered history; Tab still reaches the
+      // thread's reply box.
       const header = threadHeading(page).locator("xpath=ancestor::header[1]");
+      const history = sheet(page).locator("[data-thread-history-frame]");
       const targets = [
         await sheet(page).elementHandle(),
         await header.elementHandle(),
         await reply(sheet(page)).elementHandle(),
+        await history.elementHandle(),
       ];
-      const stops = { header: 0, reply: 0 };
+      const stops = { header: 0, reply: 0, history: 0 };
       // Back from the details through the thread, until focus leaves it.
       await detailsSheet(page).getByText("Stacked findings").click();
       for (let step = 0; step < 60; step++) {
         await page.keyboard.press("Shift+Tab");
-        const [inThread, onHeader, onReply] = await page.evaluate(
-          ([thread, covered, box]) => [
+        const [inThread, onHeader, onReply, onHistory] = await page.evaluate(
+          ([thread, covered, box, rows]) => [
             thread.contains(document.activeElement),
             covered.contains(document.activeElement),
             box === document.activeElement,
+            rows.contains(document.activeElement),
           ],
           targets,
         );
         if (!inThread) break;
         if (onHeader) stops.header++;
         if (onReply) stops.reply++;
+        if (onHistory) stops.history++;
       }
       expect(stops.header).toBe(0);
+      expect(stops.history).toBe(0);
+      // Hidden, the history reads nothing: an inert ancestor pauses reading.
+      expect(await history.evaluate((element) => element.inert)).toBe(true);
       expect(stops.reply).toBeGreaterThan(0);
       await detailsSheet(page).getByText("Stacked findings").click();
       await page.keyboard.press("Escape");
       await expect(detailsSheet(page)).toHaveCount(0);
-      // Closed, the header is reachable again.
+      // Closed, the header and the history are reachable again.
       await close(sheet(page)).focus();
       await expect(close(sheet(page))).toBeFocused();
+      expect(await history.evaluate((element) => element.inert)).toBe(false);
       // Closed, the thread settles back to its own height.
       await expect
         .poll(async () => (await box(sheet(page))).height)

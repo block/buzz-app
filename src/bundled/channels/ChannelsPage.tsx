@@ -2215,6 +2215,11 @@ function ChannelWorkspace({
   const renderLayerRef = useRef(renderLayer);
   renderLayerRef.current = renderLayer;
   const layerTarget = addressed?.layer;
+  // A layer over the inline thread grows the thread to fit it.
+  const overInline =
+    !!layerTarget &&
+    layerTarget.rootId === inlineThread &&
+    !layerTarget.channelId;
   const layerChannel = addressed?.channelId;
   const layerAddress = useMemo<LayerAddress | undefined>(() => {
     if (!navigator || !layerChannel) return undefined;
@@ -2964,12 +2969,8 @@ function ChannelWorkspace({
           channel={current}
           rootId={inlineThread}
           messageId={addressed?.inlineMessage}
-          // A layer over the thread grows the thread to fit it.
-          tall={
-            !!layerTarget &&
-            layerTarget.rootId === inlineThread &&
-            !layerTarget.channelId
-          }
+          tall={overInline}
+          detailsOver={overInline && layerTarget?.messageId !== undefined}
           seen={seen}
           close={() => closeInline(inlineThread)}
           moveToTab={() => moveInlineToTab(inlineThread)}

@@ -15,6 +15,7 @@ import {
   introducesInlineThreads,
 } from "../../features/messages/InlineThreadIntro";
 import { LayerReader } from "../../features/messages/LayerReader";
+import { ThreadHistoryCoveredContext } from "../../features/messages/ThreadPanel";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { Seen } from "../../features/seen/service";
@@ -30,6 +31,7 @@ export function InlineThreadSheet({
   rootId,
   messageId,
   tall,
+  detailsOver,
   seen,
   close,
   moveToTab,
@@ -43,6 +45,8 @@ export function InlineThreadSheet({
   messageId?: string | undefined;
   /** A layer sits over it: it grows to fit that layer until it closes. */
   tall: boolean;
+  /** The layer over it is details, which hide its history. */
+  detailsOver: boolean;
   /** Records that the viewer has been shown the intro. */
   seen?: Seen | undefined;
   /** Explicit close: ✕, Escape or the scrim. */
@@ -89,12 +93,14 @@ export function InlineThreadSheet({
           {(confirmed) => (
             // The thread's own view, for the details and panels its rows open.
             <ComposerScopeProvider rootId={rootId}>
-              <ConversationThread
-                messageId={messageId ?? rootId}
-                revealSelected={messageId !== undefined}
-                focusRequest={1}
-                onResolvedRoot={onResolvedRoot}
-              />
+              <ThreadHistoryCoveredContext value={detailsOver}>
+                <ConversationThread
+                  messageId={messageId ?? rootId}
+                  revealSelected={messageId !== undefined}
+                  focusRequest={1}
+                  onResolvedRoot={onResolvedRoot}
+                />
+              </ThreadHistoryCoveredContext>
               <LayerReader channelId={confirmed.id} />
             </ComposerScopeProvider>
           )}

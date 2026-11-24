@@ -49,6 +49,7 @@ import { ConversationTab as ConversationReader } from "./ConversationTab";
 import { panelOpening } from "../../features/panels/service";
 import { coveringDock, useCoveredByDock } from "./useCoveredByDock";
 import styles from "./Channels.module.css";
+import { BOARD_MAIN_MIN_REM } from "./panel-split";
 
 export type { PageTabOptions, PageTabsProps, PageTabTarget };
 
@@ -373,7 +374,14 @@ export function PageTabs({
       fallbackFocus.current
     )?.focus({ preventScroll: true });
   });
-  const split = usePanelSplit(scope, `page:${id}`);
+  const split = usePanelSplit(
+    scope,
+    `page:${id}`,
+    undefined,
+    undefined,
+    undefined,
+    BOARD_MAIN_MIN_REM,
+  );
   const hasTabs = secondary.items.length > 0;
   const showingPanel = tabState.paneOpen && hasTabs;
   const covered = useCoveredByDock(split.ref, fallbackFocus, showingPanel);
@@ -507,32 +515,41 @@ export function PageTabs({
                   id: "conversation",
                   label,
                   icon,
-                  toolbar: !!workspace?.actions?.length && (
-                    <MenuRoot>
-                      <MenuTrigger
-                        render={
-                          <IconButton
-                            hint="familiar"
-                            size="sm"
-                            aria-label="Conversation actions"
-                            title="Conversation actions"
-                            icon={
-                              <DotsThreeIcon size="1rem" aria-hidden="true" />
+                  toolbar: (workspace?.headerActions ||
+                    !!workspace?.actions?.length) && (
+                    <>
+                      {workspace?.headerActions}
+                      {!!workspace?.actions?.length && (
+                        <MenuRoot>
+                          <MenuTrigger
+                            render={
+                              <IconButton
+                                hint="familiar"
+                                size="sm"
+                                aria-label="Conversation actions"
+                                title="Conversation actions"
+                                icon={
+                                  <DotsThreeIcon
+                                    size="1rem"
+                                    aria-hidden="true"
+                                  />
+                                }
+                              />
                             }
                           />
-                        }
-                      />
-                      <MenuPopup align="end">
-                        {workspace.actions.map((action) => (
-                          <MenuItem
-                            key={action.label}
-                            onClick={() => action.run()}
-                          >
-                            {action.label}
-                          </MenuItem>
-                        ))}
-                      </MenuPopup>
-                    </MenuRoot>
+                          <MenuPopup align="end">
+                            {workspace.actions.map((action) => (
+                              <MenuItem
+                                key={action.label}
+                                onClick={() => action.run()}
+                              >
+                                {action.label}
+                              </MenuItem>
+                            ))}
+                          </MenuPopup>
+                        </MenuRoot>
+                      )}
+                    </>
                   ),
                   actions: workspace?.actions,
                   content: workspace ? (

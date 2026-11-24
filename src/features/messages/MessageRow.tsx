@@ -109,6 +109,12 @@ import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
+import { DetailsMessage } from "./DetailsMessage";
+import {
+  composerHost,
+  type MediaReviewOrigin,
+  useComposerScope,
+} from "./composer-overlay";
 import {
   safeMessageUrl,
   projectMarkdownAttachments,
@@ -145,7 +151,12 @@ import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useThreadDraft } from "./draft-places";
 
-export type MessageLinkOrigin = Readonly<{ rootId: string }>;
+export type MessageLinkOrigin = Readonly<{
+  rootId: string;
+  /** The view the row reads in, when it reads in one: the conversation, or
+   * the thread with this root. An opening can become a dialog on it. */
+  view?: Readonly<{ rootId?: string | undefined }> | undefined;
+}>;
 export type MessageRowProps = {
   row: ChannelMessage;
   /** Read-only presentations can retain their own prose highlighting. */
@@ -203,6 +214,7 @@ export type MessageRowProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
+    opening?: MediaReviewOrigin,
   ) => void;
 };
 
@@ -333,9 +345,21 @@ function MessageRowContent({
     row.channelId,
     rootId,
   );
+  const composerView = useComposerScope();
+  const inView = !!composerView;
+  const viewRoot = composerView?.rootId;
+  // Media opens over the view this row reads in, while its composer shows.
+  const mediaOpening = () => {
+    const host = composerHost(composerView?.handle);
+    return host ? { host, rootId } : undefined;
+  };
   const openLink = useCallback(
-    (url: string) => onOpenLink(url, { rootId }),
-    [onOpenLink, rootId],
+    (url: string) =>
+      onOpenLink(url, {
+        rootId,
+        ...(inView && { view: { rootId: viewRoot } }),
+      }),
+    [onOpenLink, rootId, inView, viewRoot],
   );
   const springLoadedThread = useSpringLoaded(
     () => onOpenThread?.(row.id, rootId),
@@ -915,6 +939,7 @@ function MessageRowContent({
                                 (!!row.threadRootId &&
                                   row.threadRootId !== row.id),
                               row.attachments,
+                              mediaOpening(),
                             ),
                         }
                       : {})}
@@ -969,6 +994,7 @@ function MessageRowContent({
                               (!!row.threadRootId &&
                                 row.threadRootId !== row.id),
                             row.attachments,
+                            mediaOpening(),
                           ),
                       }
                     : {})}
@@ -1081,6 +1107,41 @@ function MessageRowContent({
           </p>
         )}
       </div>
+    ) : row.audience === "details" ? (
+      // Details read as their brief, which opens into their own reader.
+      <DetailsMessage
+        messageId={row.id}
+        channelId={row.channelId}
+        author={name}
+        createdAt={row.createdAt}
+        keepMounted={keepMounted}
+        preview={
+          <MessageMarkdown
+            directory={directory}
+            session={references}
+            scope={scope}
+            row={displayRow}
+            extensions={extensions}
+            media={media}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
+            edited={editedInBody && displayRow.edited}
+          />
+        }
+      >
+        <MessageMarkdown
+          directory={directory}
+          session={references}
+          scope={scope}
+          row={displayRow}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+        />
+      </DetailsMessage>
     ) : (
       <MessageMarkdown
         directory={directory}
@@ -1842,11 +1903,17 @@ export const MessageRow = memo(function AudienceMessageRow(
 ) {
   const { onOpenLink, canOpenLink, row } = props;
   const rootId = row.threadRootId ?? row.id;
+  const view = useComposerScope();
   // Plugin content in this row opens targets as the row's own links do.
   return (
     <TargetOpenerProvider
       canOpen={(target) => canOpenLink?.(target) ?? false}
-      open={(target) => onOpenLink(target, { rootId })}
+      open={(target) =>
+        onOpenLink(target, {
+          rootId,
+          ...(view && { view: { rootId: view.rootId } }),
+        })
+      }
     >
       {row.notice === "execution-failure" &&
       !row.edited &&

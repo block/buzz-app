@@ -47,6 +47,12 @@ import { pubkeyOf, type AgentKey } from "../../features/agents/membership";
 import { hasOwnEnv } from "../agents/agent-env";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
 import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
+import {
   EACH_TURN,
   sessionPrompts,
 } from "../../features/agents/session-prompts";
@@ -574,6 +580,10 @@ export class CodexRuntime {
     Map<AgentExecution, { done: Promise<void>; failed: boolean }>
   >();
   private views = new Map<AgentKey, readonly SessionView[]>();
+  /** The channels each live session has taken requests from, by
+   * `agent\nkey`: a community session's details show only while its owner
+   * can read every one. */
+  private sources = new Map<string, Set<string>>();
   private inventories = new Map<AgentKey, SavedConversation[] | null>();
   private inventoryReads = new Map<AgentKey, object>();
   private inventoryVersions = new Map<AgentKey, number>();
@@ -1209,8 +1219,17 @@ export class CodexRuntime {
     ]);
     for (const listener of this.listeners) listener();
   }
+  private source(agent: AgentKey, key: string, request: Request) {
+    // A standalone wake has no channel to authorize.
+    if (request.conversation.channelId === COMMUNITY_SESSION) return;
+    const id = `${agent}\n${key}`;
+    const sources = this.sources.get(id) ?? new Set<string>();
+    sources.add(request.conversation.channelId);
+    this.sources.set(id, sources);
+  }
   /** Stops listing `key`'s session. */
   private forget(agent: AgentKey, key: string) {
+    this.sources.delete(`${agent}\n${key}`);
     const views = this.sessions(agent);
     if (!views.some((view) => view.key === key)) return;
     this.views.set(
@@ -1804,7 +1823,7 @@ export class CodexRuntime {
   }
   private savedConversations(agent: AgentKey, saved: Record<string, Saved>) {
     const reads = this.reads(agent);
-    return Object.entries(saved)
+    const rows = Object.entries(saved)
       .reverse()
       .flatMap(([key, { threadId, at }]) => {
         try {
@@ -1823,7 +1842,7 @@ export class CodexRuntime {
               key,
               channelId,
               ...(community ? { community: true as const } : {}),
-              ...reads?.channelLabel(channelId),
+              ...ownerLabel(reads, channelId),
               ...(root === "channel" ? {} : { root }),
               threadId,
               ...(at === undefined ? {} : { at }),
@@ -1834,6 +1853,7 @@ export class CodexRuntime {
         }
       })
       .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+    return ownerRows(rows, reads);
   }
   /** A display name for a pubkey in the agent's community, if known. */
   name(agent: AgentKey, pubkey: string) {
@@ -1875,7 +1895,45 @@ export class CodexRuntime {
   /** The community's current name and kind for a channel, if it lists it;
    * `useOpenedSession` gives them to a thread `find` returned. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return this.reads(agent)?.channelLabel(channelId);
+    return ownerLabel(this.reads(agent), channelId);
+  }
+  /** Whether the live session `key` is of a conversation its owner can read. */
+  readableSession(agent: AgentKey, key: string) {
+    // A standalone watch or timer run, keyed `type/id`, is the owner's own.
+    if (!key.startsWith("[")) return true;
+    try {
+      const [channelId] = JSON.parse(key) as unknown[];
+      return (
+        channelId === COMMUNITY_SESSION ||
+        (typeof channelId === "string" &&
+          this.reads(agent)?.ownerReadable(channelId) === true)
+      );
+    } catch {
+      return false;
+    }
+  }
+  /** Whether the live session `key`'s details came only from requests in
+   * channels its owner can read. */
+  readableDetail(agent: AgentKey, key: string): boolean {
+    // An execution target's sessions are its own runtime's to authorize.
+    const remote = [...this.remote.values()].find(
+      (entry) =>
+        entry.agent === agent &&
+        entry.runtime.sessions(agent).some((view) => view.key === key),
+    );
+    if (remote) return remote.runtime.readableDetail(agent, key);
+    const reads = this.reads(agent);
+    return [...(this.sources.get(`${agent}\n${key}`) ?? [])].every(
+      (channelId) => reads?.ownerReadable(channelId) === true,
+    );
+  }
+  /** The turns of `conversation` its owner can read. */
+  readable(
+    agent: AgentKey,
+    conversation: Readonly<{ channelId: string; community?: true }>,
+    turns: readonly TranscriptTurn[],
+  ) {
+    return ownerTurns(turns, this.reads(agent), conversation);
   }
   /** What each of the agent's threads started with. */
   prompts(agent: AgentKey) {
@@ -2642,6 +2700,7 @@ export class CodexRuntime {
         (request.model && request.model !== targetModel) ||
         (request.effort && request.effort !== targetEffort));
     entry.waiting.add(request);
+    this.source(agent.key, key, request);
     delivery.interruptible?.(() =>
       this.interrupt(entry, key, request, reserved),
     );
@@ -2944,6 +3003,7 @@ export class CodexRuntime {
         },
       };
       entry.waiting.add(request);
+      this.source(agent.key, key, request);
       try {
         const handoff = this.controls.deliver(
           `${agent.key}/${key}`,

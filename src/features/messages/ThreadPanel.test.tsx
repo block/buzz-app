@@ -502,11 +502,17 @@ it("starts a single older page after scrolling through 80% of loaded history", (
   expect(h.view.loadMore).toHaveBeenCalledOnce();
 });
 it("keeps initial thread loading until available content has been positioned", () => {
+  vi.useFakeTimers();
   const h = messagesHarness();
   h.snapshot.status = "loading";
   h.snapshot.root = undefined;
   const section = h.render();
-  expect(within(section).getByText("Loading thread…")).toBeVisible();
+  // The placeholders show at once; the label is announced after a delay.
+  expect(within(section).queryByRole("status")).toBeNull();
+  act(() => vi.advanceTimersByTime(1000));
+  expect(within(section).getByRole("status")).toHaveTextContent(
+    "Loading thread…",
+  );
   expect(
     within(section).queryByText("Original message unavailable."),
   ).toBeNull();
@@ -1783,6 +1789,7 @@ it("routes media in replies through the resolved root review workspace", () => {
     attachment,
     0,
     true,
+    undefined,
     undefined,
   );
 });

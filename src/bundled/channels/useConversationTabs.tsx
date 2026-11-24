@@ -20,10 +20,14 @@ import {
 } from "../../features/panels/service";
 import { useTabDrag } from "../../features/panels/useTabDrag";
 import { PanelMediaCard } from "./PanelMediaCard";
+import { PanelSubviewHost } from "../../features/panels/PanelSubview";
+import { PanelView } from "../../features/panels/PanelView";
+import panelStyles from "../../features/panels/Panels.module.css";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
-import { ThreadLoading } from "../../features/messages/ThreadLoading";
-import { useRecoveryOwns } from "../../features/relay/RecoveryNotice";
-import { rosterRecovering } from "../../features/relay/live-recovery";
+import {
+  ConfirmedChannel,
+  confirmedChannel,
+} from "../../features/conversation/ConfirmedChannel";
 import {
   BrowserIcon,
   ThreadIcon,
@@ -51,7 +55,6 @@ import {
   type TabPane,
   type useChannelTabState,
 } from "./useChannelTabState";
-import styles from "./Channels.module.css";
 import tabStyles from "./ChannelTabs.module.css";
 
 /** The content-tab families whose visits follow explicit dismissal. */
@@ -60,87 +63,6 @@ export const historyPanel = (entry: PanelOpening) =>
   (entry.panel.addressable === true ||
     profileContentPanel(entry) ||
     entry.panel.key === "buzz.github/object");
-
-const DID_NOT_LOAD = "This conversation didn’t load.";
-
-/** The body of a tab that has no usable channel: the thread placeholder while
- * the roster read is still expected to settle the channel, else the most
- * specific reason known. It reads the list and the roster read itself, so
- * the states of a missing channel stay current under a host that follows
- * neither. The host still resolves `target`, and decides when the thread
- * replaces this body, so a listed channel is only as current as its host.
- *
- * A channel the relay has confirmed states why a conversation tab cannot show
- * it; a thread tab shows such a channel with its notice and never gets here.
- * Otherwise the channel is missing, or listed from saved membership:
- *
- * - The relay's own answer for the channel settles it at once: a denied read
- *   of it, or a roster that dropped the viewer, takes it off the list before
- *   any roster read completes.
- * - Without a connection nothing is read, so absence proves nothing.
- * - Only a complete roster read proves a missing channel gone. A `ready` list
- *   may be restored from saved events or hold one page of a longer read.
- * - `rosterAsOf` is set once this session has completed such a read, and
- *   kept through later refreshes, whose pages, failures and retries revoke
- *   nothing by omission. A missing channel stays gone throughout.
- * - A failed or interrupted read keeps the placeholder while recovery retries
- *   it, the recovery notice being the one report, as in the sidebar.
- * - A read that settled without deciding the channel (its cap was hit) is
- *   stated, so the placeholder ends once the read does. */
-function UnavailableChannel({
-  session,
-  channelId,
-  target,
-  label,
-}: {
-  session: Pick<RelaySession, "recovery" | "live" | "channels">;
-  channelId: string;
-  target: ChannelSummary | undefined;
-  label: string | undefined;
-}) {
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-    session.channels.list,
-  );
-  const readRoster = () => session.live.snapshot().roster.state;
-  const roster = useSyncExternalStore(
-    session.live.subscribe,
-    readRoster,
-    readRoster,
-  );
-  const retrying = useRecoveryOwns(session, (live) =>
-    rosterRecovering(live.roster),
-  );
-  const reason = () => {
-    if (target && !target.cached) {
-      if (target.archived) return "This conversation is archived.";
-      if (target.readOnly)
-        return "You have read-only access to this conversation.";
-      return "This conversation is no longer available.";
-    }
-    if (!target && session.channels.revoked?.(channelId))
-      return "This conversation is no longer available.";
-    if (session.channels.cachedOnly)
-      return target
-        ? "This conversation will appear once Buzz reconnects."
-        : "This conversation may appear once Buzz reconnects.";
-    if (list.status === "unavailable") return DID_NOT_LOAD;
-    if (!target && list.rosterAsOf !== undefined)
-      return "This conversation is no longer available.";
-    if (list.status === "error" || roster === "error" || roster === "deferred")
-      return retrying ? undefined : DID_NOT_LOAD;
-    return roster === "verified" ? DID_NOT_LOAD : undefined;
-  };
-  const text = reason();
-  return text ? (
-    <p role="status" className={styles.empty}>
-      {text}
-    </p>
-  ) : (
-    <ThreadLoading {...(label && { label })} />
-  );
-}
 
 /** Shared secondary workspace. Pages retain their main reader and route semantics. */
 export function useConversationTabs({
@@ -177,6 +99,7 @@ export function useConversationTabs({
   onVisitPanel,
   onClosePanel,
   onCloseTabs,
+  openInView,
 }: {
   state: ReturnType<typeof useChannelTabState>;
   relay: RelayData;
@@ -201,6 +124,14 @@ export function useConversationTabs({
   navigationSignal?: AbortSignal | undefined;
   isLive(): boolean;
   openLink(url: string): boolean;
+  /** Opens a panel as a dialog on the view its link was in, when its
+   * placement says so; false when it opens as a tab instead. */
+  openInView?:
+    | ((
+        opening: PanelOpening,
+        view: Readonly<{ channelId: string; rootId?: string | undefined }>,
+      ) => boolean)
+    | undefined;
   fallbackFocus?: RefObject<HTMLElement | null>;
   eligible?(entry: PanelOpening): boolean;
   threadId?: string | undefined;
@@ -782,6 +713,12 @@ export function useConversationTabs({
     )
       return openLink(url);
     const next = panelOpening(panels, channelId, url, origin?.rootId);
+    if (
+      next &&
+      origin?.view &&
+      openInView?.(next, { channelId, rootId: origin.view.rootId })
+    )
+      return true;
     if (next) {
       panelTrigger.current =
         document.activeElement instanceof HTMLElement
@@ -815,44 +752,16 @@ export function useConversationTabs({
     if (!openIds.has(id)) visitTab.entered.delete(id);
   for (const id of visitTab.shown)
     if (!openIds.has(id)) visitTab.shown.delete(id);
-  function usableChannel(target: ChannelSummary) {
-    return (
-      !target.readOnly &&
-      !target.archived &&
-      !target.cached &&
-      (target.channelType !== "solo" ||
-        !!target.members?.includes(queries.viewer ?? ""))
-    );
+  // The channel a tab is a view of. The currently resolved channel can be a
+  // verified public/archived preview absent from the joined sidebar list.
+  function listedChannel(tab: Pick<Tab, "kind" | "channelId">) {
+    return tab.kind === "thread" && current?.id === tab.channelId
+      ? current
+      : channels.find((item) => item.id === tab.channelId);
   }
-  // The currently resolved channel can be a verified public/archived preview
-  // absent from the joined sidebar list. Reading its thread is not write access.
-  // Another listed channel's thread is read the same way: the thread panel
-  // replaces the composer of an archived or guest channel with its notice.
-  // Only a conversation tab, whose body always mounts a composer, needs a
-  // channel the viewer can post in. A thread tab relies on the joined list
-  // holding only channels whose roster names the viewer (DiscoveryState
-  // .readable), so a confirmed listing is one the viewer may read.
+  // The same channel once its tab can show it, as the tab's body decides.
   function tabChannel(tab: Pick<Tab, "kind" | "channelId">) {
-    if (tab.kind === "thread" && current?.id === tab.channelId)
-      return current.cached ? undefined : current;
-    const target = channels.find((item) => item.id === tab.channelId);
-    if (!target || target.cached) return undefined;
-    return tab.kind === "thread" || usableChannel(target) ? target : undefined;
-  }
-  // What a tab without a usable channel shows.
-  function unavailable(tab: Pick<Tab, "kind" | "channelId">) {
-    return (
-      <UnavailableChannel
-        session={queries}
-        channelId={tab.channelId}
-        target={
-          tab.kind === "thread" && current?.id === tab.channelId
-            ? current
-            : channels.find((item) => item.id === tab.channelId)
-        }
-        label={tab.kind === "thread" ? undefined : "Loading conversation…"}
-      />
-    );
+    return confirmedChannel(tab.kind, listedChannel(tab), queries.viewer);
   }
   // Message rows are memoized: links read one stable opener that consults the
   // live workspace when chosen. Only current-channel threads use the main pane.
@@ -937,7 +846,6 @@ export function useConversationTabs({
   }
   function tabItem(tab: Tab) {
     const target = tabChannel(tab);
-    const usable = !!target;
     const openChannel = openInChannel(tab, target);
     return {
       id: tab.id,
@@ -964,32 +872,40 @@ export function useConversationTabs({
       ...(openChannel && {
         actions: [{ label: "Open in channel", run: openChannel }],
       }),
-      content:
-        !usable || !target ? (
-          unavailable(tab)
-        ) : tab.kind === "thread" && nodes.get(tab.id) ? (
-          <TabSlot node={nodes.get(tab.id) as HTMLDivElement} />
-        ) : (
-          <ConversationTab
-            focusOnMount={continuingVisit}
-            active={tabState.paneOpen && selectedTab === tab.id}
-            visit={visits}
-            tab={tab}
-            channel={target}
-            session={queries}
-            scope={scope}
-            extensions={extensions}
-            openLink={(url, origin) =>
-              openConversationLink(target.id, url, origin)
-            }
-            canOpenLink={canOpenLink}
-            openThread={(id, root, intent) =>
-              openConversationThread(target.id, id, root, intent)
-            }
-            close={() => closeConversationTab(tab.id)}
-            parent={parentOf(tab, target)}
-          />
-        ),
+      content: (
+        <ConfirmedChannel
+          session={queries}
+          view={tab.kind}
+          channelId={tab.channelId}
+          channel={listedChannel(tab)}
+        >
+          {(channel) =>
+            tab.kind === "thread" && nodes.get(tab.id) ? (
+              <TabSlot node={nodes.get(tab.id) as HTMLDivElement} />
+            ) : (
+              <ConversationTab
+                focusOnMount={continuingVisit}
+                active={tabState.paneOpen && selectedTab === tab.id}
+                visit={visits}
+                tab={tab}
+                channel={channel}
+                session={queries}
+                scope={scope}
+                extensions={extensions}
+                openLink={(url, origin) =>
+                  openConversationLink(channel.id, url, origin)
+                }
+                canOpenLink={canOpenLink}
+                openThread={(id, root, intent) =>
+                  openConversationThread(channel.id, id, root, intent)
+                }
+                close={() => closeConversationTab(tab.id)}
+                parent={parentOf(tab, channel)}
+              />
+            )
+          }
+        </ConfirmedChannel>
+      ),
     };
   }
 
@@ -1093,7 +1009,42 @@ export function useConversationTabs({
     return true;
   };
 
+  /** Whether a tab already shows `entry`'s target. */
+  const hasPanelTab = (entry: Opening) =>
+    entryList.current.some(
+      (item) => item.panel === entry.panel && item.target === entry.target,
+    );
+  /** A panel read as a dialog over a view. Its own `open` and `push` go
+   * through `navigate`, which replaces the dialog with a visit of its own. */
+  const renderLayerPanel = (
+    entry: Opening,
+    { navigate, close }: { navigate(target: string): boolean; close(): void },
+  ) =>
+    available.includes(entry.panel) ? (
+      <PanelSubviewHost close={close}>
+        {/* The card bounds the content so it scrolls, as in a panel tab. */}
+        <div className={panelStyles.card}>
+          <div className={panelStyles.content}>
+            <PanelView
+              panel={entry.panel}
+              target={entry.target}
+              context={{
+                channelId: entry.channelId,
+                ...(entry.rootId && { rootId: entry.rootId }),
+                canOpen: canOpenLink,
+                open: (target: string) => active() && navigate(target),
+                push: (target: string) => active() && navigate(target),
+              }}
+              close={close}
+            />
+          </div>
+        </div>
+      </PanelSubviewHost>
+    ) : undefined;
+
   return {
+    hasPanelTab,
+    renderLayerPanel,
     open,
     opened,
     panel,

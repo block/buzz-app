@@ -387,6 +387,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
         },
         true,
         () => services.communities.reload(),
+        services.shortcutBindings,
       ),
     [services],
   );

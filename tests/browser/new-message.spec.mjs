@@ -818,10 +818,8 @@ test("profile Message drafts a new DM and restores a hidden one", async ({
       .locator("[data-message-id]", { hasText: "Hello from Avery" })
       .getByRole("button", { name: "View Avery Chen profile" })
       .click();
-    const profile = page.getByRole("complementary", {
-      name: "Profile",
-      exact: true,
-    });
+    // Inline, the default, opens the profile as a sheet over the channel.
+    const profile = page.getByRole("dialog", { name: "Profile", exact: true });
     await profile.getByRole("button", { name: "Message", exact: true }).click();
   };
   await expect(sidebarDm).toHaveCount(0);

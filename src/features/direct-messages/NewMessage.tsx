@@ -170,7 +170,13 @@ export function NewMessage({
 }: {
   /** A new Solo chat, shown while no person is picked: with the agent picked
    * in To, or the default one, and the page's title as its name. */
-  solo?: ((start: { agent?: string; name: string }) => ReactNode) | undefined;
+  solo?:
+    | ((start: {
+        agent?: string;
+        name: string;
+        focusRequest: number;
+      }) => ReactNode)
+    | undefined;
   /** Open one of the picked group's named conversations instead. */
   onOpenChat?: ((channelId: string) => void) | undefined;
   session: RelaySession;
@@ -264,13 +270,15 @@ export function NewMessage({
   const [ready, setReady] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
-  // A draft opened from a person starts in the message, so To keeps its list
-  // closed rather than open it only to lose focus.
-  const [addressing] = useState(() => untaken(scope, intent));
   const [composerFocus, setComposerFocus] = useState(0);
   const focusComposer = useCallback(() => {
     setComposerFocus((request) => request + 1);
   }, []);
+  // New message starts in the message, so clicking + and typing reaches an
+  // agent. To stays closed until it's clicked or typed in.
+  useEffect(() => {
+    if (ready && !document.activeElement?.closest("input")) focusComposer();
+  }, [ready, focusComposer]);
   const retiring = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState<"uploading" | "sending" | undefined>();
   const [error, setError] = useState("");
@@ -705,7 +713,7 @@ export function NewMessage({
         labels={named}
         disabled={locked}
         onChange={change}
-        initiallyOpen={!addressing}
+        initiallyOpen={false}
         // After a pick, the group's conversations show; typing brings the
         // people list back for the next name.
         searchOnly={recipients.length > 0}
@@ -726,6 +734,7 @@ export function NewMessage({
         {solo({
           ...(recipients[0] ? { agent: recipients[0].pubkey } : {}),
           name: title,
+          focusRequest: composerFocus,
         })}
       </section>
     );

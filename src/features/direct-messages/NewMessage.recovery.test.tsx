@@ -60,6 +60,16 @@ import { readView, writeView } from "../../shared/view-state";
 
 composerDOMFixture();
 
+/** New message opens with To closed; click into it, then find Avery. */
+async function option(name: string) {
+  const to = await screen.findByRole("combobox", {
+    name: "Message recipients",
+  });
+  await waitFor(() => expect(to).not.toBeDisabled());
+  if (!screen.queryByRole("listbox")) act(() => to.focus());
+  return screen.findByRole("option", { name });
+}
+
 const viewer = keypair(),
   other = keypair(),
   another = keypair(),
@@ -326,7 +336,7 @@ function setup(
     );
   const user = userEvent.setup();
   const compose = async () => {
-    await user.click(await screen.findByRole("option", { name: "Avery" }));
+    await user.click(await option("Avery"));
     await user.type(composer(), "Durable first message");
   };
   return {
@@ -373,7 +383,7 @@ it("restores a bounded recipient and draft when unused profile metadata exceeds 
   });
   const owner = t.create();
   const page = t.mount(owner);
-  await t.user.click(await screen.findByRole("option", { name }));
+  await t.user.click(await option(name));
   await t.user.type(composer(), "Saved before sending");
   expect(readView(scope, "direct-message:recipients", [])).toEqual([
     { pubkey: other.pubkey, name: name.slice(0, 500) },
@@ -441,13 +451,14 @@ it("locks recipient edits until outbox hydration finishes, then accepts them", a
     });
   }
   await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
-  expect(screen.getByRole("combobox")).toHaveFocus();
+  // To unlocks closed; the caret stays out of it.
+  expect(screen.getByRole("combobox")).not.toHaveFocus();
   await t.user.click(screen.getByRole("button", { name: "Remove Avery" }));
   expect(
     screen.queryByRole("button", { name: "Remove Avery" }),
   ).not.toBeInTheDocument();
   expect(play).toHaveBeenCalledOnce();
-  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  await t.user.click(await option("Zoe"));
   expect(screen.getByRole("button", { name: "Remove Zoe" })).toBeEnabled();
   expect(t.openDirectMessage).not.toHaveBeenCalled();
   expect(t.publish).not.toHaveBeenCalled();
@@ -580,8 +591,7 @@ it.each([false, true])(
     await t.user.clear(composer());
     if (!empty) await t.user.type(composer(), "Corrected message");
     await t.user.click(screen.getByRole("button", { name: "Remove Avery" }));
-    if (!empty)
-      await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+    if (!empty) await t.user.click(await option("Zoe"));
     page.unmount();
     owner.dispose();
     const restored = t.create();
@@ -725,12 +735,12 @@ it.each(["picker", "completion"])(
     const t = setup();
     const owner = t.create();
     t.mount(owner, extensions);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     await t.user.type(
       screen.getByRole("combobox", { name: "Message recipients" }),
       "Zoe",
     );
-    await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+    await t.user.click(await option("Zoe"));
     const composer = () =>
       screen.getByRole<ComposerInputElement>("textbox", {
         name: "Start a new conversation",
@@ -822,7 +832,7 @@ it.each(["", "Please review these fixes"])(
     t.publish.mockRejectedValueOnce(new Error("Receipt lost"));
     const first = t.create();
     const page = t.mount(first);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     await waitFor(() => expect(send()).toBeEnabled());
     await t.user.click(send());
     await waitFor(() => expect(t.publish).toHaveBeenCalledOnce());
@@ -906,7 +916,7 @@ it("lists the DM of these people as a row, without its history, and keeps the dr
   );
   const owner = t.create();
   t.mount(owner);
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.click(await option("Avery"));
   await knowsDm();
   expect(
     screen.queryByRole("region", { name: "Channel message history" }),
@@ -957,7 +967,7 @@ it("starts a conversation by default, even when these people have a DM, and neve
 it("names the started conversation by the typed title", async () => {
   const t = setup();
   t.mount(t.create());
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.click(await option("Avery"));
   await t.user.type(screen.getByRole("textbox", { name: "Name" }), "Offsite");
   await t.user.type(composer(), "Where to?");
   await t.user.click(send());
@@ -971,7 +981,7 @@ it("sends in the DM, which the relay opens by its people, once Direct message is
   const t = setup();
   t.mount(t.create());
   // Zoe has no DM with the viewer.
-  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  await t.user.click(await option("Zoe"));
   await knowsNoDm();
   await t.user.click(directRow());
   expect(directRow()).toHaveAttribute("aria-pressed", "true");
@@ -1015,7 +1025,7 @@ describe("the relay picks the DM, and the list is only a hint", () => {
     const owner = t.create();
     t.mount(owner);
     await owner.session.profiles.ensure([third.pubkey]);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     await knowsDm();
     await t.user.click(directRow());
     expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith(mallorys);
@@ -1028,7 +1038,7 @@ describe("the relay picks the DM, and the list is only a hint", () => {
     withMallory(t);
     const owner = t.create();
     t.mount(owner, undefined, undefined, []);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     await knowsNoDm();
     await t.user.click(directRow());
     await t.user.type(composer(), "Just us");
@@ -1066,7 +1076,7 @@ describe("the relay picks the DM, and the list is only a hint", () => {
     const t = setup();
     withAgentJoined(t);
     t.mount(t.create());
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     await addRecipient(t, "Zoe, Agent");
     await knowsDm();
     await t.user.click(directRow());
@@ -1079,7 +1089,7 @@ describe("the relay picks the DM, and the list is only a hint", () => {
     const t = setup();
     withAgentJoined(t);
     t.mount(t.create(), undefined, undefined, []);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     await addRecipient(t, "Zoe, Agent");
     await knowsNoDm();
     await t.user.click(directRow());
@@ -1123,7 +1133,7 @@ async function addRecipient(t: ReturnType<typeof setup>, name: string) {
   await t.user.click(field);
   // With people already picked the list closes; typing brings it back.
   await t.user.type(field, name.split(",")[0] ?? name);
-  await t.user.click(await screen.findByRole("option", { name }));
+  await t.user.click(await option(name));
 }
 
 it("offers locally and relay-hidden DMs as rows without restoring them, and a default send leaves them hidden", async () => {
@@ -1165,7 +1175,7 @@ it("offers locally and relay-hidden DMs as rows without restoring them, and a de
     ]),
   );
   t.mount(owner);
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.click(await option("Avery"));
   await knowsDm();
   await t.user.click(directRow());
   expect(t.onOpenChat).toHaveBeenLastCalledWith(channel);
@@ -1203,7 +1213,7 @@ it("offers only the DM whose participants exactly match, in any order", async ()
     return t.onOpenChat.mock.lastCall?.[0];
   };
   // Zoe alone is a subset of the group and has no 1:1 DM.
-  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  await t.user.click(await option("Zoe"));
   await waitFor(() =>
     expect(owner.session.channels.list().status).toBe("ready"),
   );
@@ -1247,7 +1257,7 @@ it("offers a group DM of the same people even when it also holds an agent", asyn
   const owner = t.create();
   t.mount(owner);
   await owner.session.profiles.ensure([bot.pubkey]);
-  await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+  await t.user.click(await option("Zoe"));
   await addRecipient(t, "Avery");
   await knowsDm();
   await t.user.click(directRow());
@@ -1280,7 +1290,7 @@ it("matches the recipients chosen by the time the DM roster loads", async () => 
   const owner = t.create();
   t.mount(owner);
   try {
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     await addRecipient(t, "Zoe");
     await waitFor(() => expect(started).toBe(true));
     expect(owner.session.channels.list().status).not.toBe("ready");
@@ -1315,7 +1325,7 @@ it("still opens an existing DM, and starts conversations, when this connection c
     },
   };
   t.mount(owner);
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.click(await option("Avery"));
   await knowsDm();
   await t.user.click(directRow());
   expect(t.onOpenChat).toHaveBeenCalledExactlyOnceWith(channel);
@@ -1390,7 +1400,7 @@ it.each(["", "See attached"])(
   async (caption) => {
     const t = setup();
     const f = attachable(t);
-    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(await option("Avery"));
     if (caption) await t.user.type(composer(), caption);
     await f.attach();
     await waitFor(() => expect(f.files.snapshot()[0]?.status).toBe("ready"));
@@ -1425,7 +1435,7 @@ it("waits for uploads before opening a DM and reports failure only on the chip",
         rejectUpload = reject;
       }),
   );
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.click(await option("Avery"));
   await f.attach();
   await waitFor(() => expect(f.uploadForNewChat).toHaveBeenCalledOnce());
   try {
@@ -1545,7 +1555,7 @@ it("confirms a photo-only uncertain send after session restart without files or 
   const t = setup();
   t.publish.mockRejectedValueOnce(new Error("Receipt lost"));
   const f = attachable(t);
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.click(await option("Avery"));
   await f.attach();
   await t.user.click(send());
   await screen.findByRole("alert");
@@ -1565,7 +1575,7 @@ it("confirms a photo-only uncertain send after session restart without files or 
 it("drops files on the recipient header into the new DM composer", async () => {
   const t = setup();
   const f = attachable(t);
-  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await t.user.click(await option("Avery"));
   const header = screen.getByRole("combobox");
   const dataTransfer = {
     types: ["Files"],

@@ -289,6 +289,16 @@ function setup({ archived = [] as string[] } = {}) {
       onOpenChat={onOpenChat}
     />
   );
+  // New message opens in the composer with To closed; most tests start where
+  // the user has clicked into To. `mountClosed` keeps the opening state.
+  const mountClosed = (visit?: PageNavigation, to?: string, at?: number) => {
+    const view = render(page(visit, to, at));
+    return {
+      ...view,
+      readdress: (next: string, nextAt: number) =>
+        view.rerender(page(visit, next, nextAt)),
+    };
+  };
   const mount = (
     visit?: PageNavigation,
     to?: string,
@@ -296,6 +306,11 @@ function setup({ archived = [] as string[] } = {}) {
     starred?: boolean,
   ) => {
     const view = render(page(visit, to, at, starred));
+    // To unlocks once the draft is restored; then the user clicks into it.
+    if (!to)
+      void waitFor(() => expect(recipient()).not.toBeDisabled())
+        .then(() => act(() => recipient().focus()))
+        .catch(() => {});
     return {
       ...view,
       readdress: (next: string, nextAt: number) =>
@@ -315,6 +330,7 @@ function setup({ archived = [] as string[] } = {}) {
     onStarted,
     onOpenChat,
     mount,
+    mountClosed,
     control,
     setArchived(keys: readonly string[]) {
       archiveSnapshot = Object.freeze({
@@ -1211,7 +1227,26 @@ it("leaves Back history once its written message is sent", async () => {
   expect(passes?.()).toBe(true);
 });
 
-it("opens blank and focused, adds multiple recipients, deduplicates, and enforces eight", async () => {
+it("opens in the message with To blank and closed until it is clicked", async () => {
+  const t = setup();
+  t.mountClosed();
+  await waitFor(() => expect(composer()).toHaveFocus());
+  expect(recipient()).toHaveValue("");
+  expect(recipient()).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  await t.user.click(recipient());
+  expect(await screen.findByRole("option", { name: "Person 1" })).toBeVisible();
+});
+
+it("opens from a person with them in To and the caret in the message", async () => {
+  const t = setup();
+  t.mountClosed(undefined, "b".repeat(64));
+  await screen.findByRole("button", { name: /^Remove / });
+  await waitFor(() => expect(composer()).toHaveFocus());
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+});
+
+it("adds multiple recipients, deduplicates, and enforces eight", async () => {
   const t = setup();
   t.directMessages.people.mockResolvedValue({
     people: [
@@ -2298,7 +2333,9 @@ it("surfaces exhausted directory cancellation without a UI retry loop", async ()
   vi.useFakeTimers();
   const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {
-    t.mount();
+    t.mountClosed();
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    act(() => recipient().focus());
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Could not load people.",

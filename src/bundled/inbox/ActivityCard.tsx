@@ -32,6 +32,7 @@ export function ActivityCard({
       navigator={navigator}
       isOpen={isOpen}
       unreadFirst
+      showTime={false}
     />
   );
 }

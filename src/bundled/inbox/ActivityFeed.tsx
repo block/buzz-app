@@ -78,6 +78,7 @@ export function ActivityFeed({
   isOpen,
   onOpen,
   unreadFirst = false,
+  showTime = true,
 }: {
   session: RelaySession;
   scope: NavigationScope;
@@ -93,6 +94,8 @@ export function ActivityFeed({
   onOpen?: () => void;
   /** Unread conversations lead, each part newest first. */
   unreadFirst?: boolean;
+  /** Whether rows show when their latest message was sent. */
+  showTime?: boolean;
 }) {
   const list = useChannelList(session.channels);
   const muted = useActivityMutes(session);
@@ -382,7 +385,12 @@ export function ActivityFeed({
         </div>
       )}
       {rows.length ? (
-        <ul ref={listRef} className={styles.list} aria-label="Recent activity">
+        <ul
+          ref={listRef}
+          className={styles.list}
+          aria-label="Recent activity"
+          data-unread-emphasis="weight"
+        >
           {rows.map((row) => {
             const selected = isOpen?.(destination(row)) ?? false;
             if (row.kind === "reaction")
@@ -398,7 +406,9 @@ export function ActivityFeed({
                     profiles={profiles}
                     name={name}
                     channel={channelOf(row.item.channelId)}
-                    time={shortRelativeTimestamp(row.createdAt)}
+                    time={
+                      showTime ? shortRelativeTimestamp(row.createdAt) : null
+                    }
                     selected={selected}
                     onClick={() => open(row)}
                   />
@@ -421,7 +431,9 @@ export function ActivityFeed({
                     )}
                     session={session}
                     feed={feed}
-                    time={shortRelativeTimestamp(row.createdAt)}
+                    time={
+                      showTime ? shortRelativeTimestamp(row.createdAt) : null
+                    }
                     selected={selected}
                     onClick={() => open(row)}
                   />
@@ -444,7 +456,7 @@ export function ActivityFeed({
                   identity={identity}
                   session={session}
                   feed={feed}
-                  time={shortRelativeTimestamp(row.createdAt)}
+                  time={showTime ? shortRelativeTimestamp(row.createdAt) : null}
                   selected={selected}
                   onClick={() => open(row)}
                 />

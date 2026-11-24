@@ -217,7 +217,11 @@ export function InboxRowButton({
         />
       }
       time={
-        <time dateTime={new Date(createdAt * 1000).toISOString()}>{time}</time>
+        time === null ? null : (
+          <time dateTime={new Date(createdAt * 1000).toISOString()}>
+            {time}
+          </time>
+        )
       }
       unread={unread}
       previewId={previewId}
@@ -337,9 +341,11 @@ export function ReactionRowButton({
         />
       }
       time={
-        <time dateTime={new Date(item.createdAt * 1000).toISOString()}>
-          {time}
-        </time>
+        time === null ? null : (
+          <time dateTime={new Date(item.createdAt * 1000).toISOString()}>
+            {time}
+          </time>
+        )
       }
       previewId={previewId}
       preview={

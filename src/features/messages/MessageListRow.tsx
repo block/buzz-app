@@ -17,6 +17,7 @@ export function MessageListRow({
   avatar: ReactNode;
   sender: ReactNode;
   source: ReactNode;
+  /** `null` leaves the time out, as the sidebar's Activity card does. */
   time: ReactNode;
   preview: ReactNode;
   previewId?: string | undefined;
@@ -32,7 +33,7 @@ export function MessageListRow({
       {...props}
       icon={<span className={styles.rowAvatar}>{avatar}</span>}
       label={
-        <span className={styles.content}>
+        <span className={styles.content} data-unread={unread || undefined}>
           <span className={styles.lines}>
             <span className={styles.heading}>
               <span className={styles.identity}>
@@ -48,12 +49,14 @@ export function MessageListRow({
                   {source}
                 </span>
               </span>
-              <span
-                className={`text-caption text-subtle ${styles.rowDate}`}
-                data-inbox-date=""
-              >
-                {time}
-              </span>
+              {time !== null && (
+                <span
+                  className={`text-caption text-subtle ${styles.rowDate}`}
+                  data-inbox-date=""
+                >
+                  {time}
+                </span>
+              )}
             </span>
             <span
               id={previewId}

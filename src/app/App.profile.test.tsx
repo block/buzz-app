@@ -753,6 +753,12 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   if (!newMessage) throw new Error("Missing New message");
   await user.click(newMessage);
   const composing = await screen.findByRole("region", { name: "New message" });
+  // To starts closed; clicking into it lists people.
+  const to = await within(composing).findByRole("combobox", {
+    name: "Message recipients",
+  });
+  await waitFor(() => expect(to).toBeEnabled());
+  await user.click(to);
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),
   );
@@ -833,6 +839,12 @@ it("returns keyboard-opened Settings to the same focused draft", async () => {
   if (!newMessage) throw new Error("Missing New message");
   await user.click(newMessage);
   const composing = await screen.findByRole("region", { name: "New message" });
+  // To starts closed; clicking into it lists people.
+  const to = await within(composing).findByRole("combobox", {
+    name: "Message recipients",
+  });
+  await waitFor(() => expect(to).toBeEnabled());
+  await user.click(to);
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),
   );

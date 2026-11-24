@@ -14,6 +14,14 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Button } from "../../shared/design-system/ui/Button";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+} from "../../shared/design-system/ui/Menu";
 import { PlusIcon } from "../../shared/design-system/icons";
 import styles from "./NewMenu.module.css";
 
@@ -70,38 +78,87 @@ function ReadyNewMenu({
     latest.current();
   }, [open, onOpenChange]);
   const drag = useDraggable();
+  const [look, setLook] = useState(savedLook);
+  const chooseLook = (next: unknown) => {
+    if (next !== "icon" && next !== "text") return;
+    setLook(next);
+    try {
+      localStorage.setItem(lookKey, next);
+    } catch {
+      /* The choice still applies until the app restarts. */
+    }
+  };
+  const icon = <PlusIcon strokeWidth={2.5} size={16} />;
   const button = (
-    // biome-ignore lint/a11y/noStaticElementInteractions: Moves the + by pointer; the button inside stays the control.
-    <div
-      className={drag.position ? styles.floating : styles.docked}
-      style={
-        drag.position
-          ? { left: drag.position.x, top: drag.position.y }
-          : undefined
-      }
-      onPointerDown={drag.onPointerDown}
-      onPointerMove={drag.onPointerMove}
-      onPointerUp={drag.onPointerUp}
-      onPointerCancel={drag.onPointerUp}
-      onClickCapture={drag.onClickCapture}
-      onDoubleClick={drag.reset}
-    >
-      <IconButton
-        disabled={!enabled}
-        aria-label="New message"
-        title="New message"
-        variant="solid"
-        shape="round"
-        size="md"
-        icon={<PlusIcon strokeWidth={2.5} size={18} />}
-        onClick={start}
-      />
-    </div>
+    <ContextMenuRoot>
+      <ContextMenuTrigger
+        render={
+          // biome-ignore lint/a11y/noStaticElementInteractions: Moves the + by pointer; the button inside stays the control.
+          <div
+            className={drag.position ? styles.floating : styles.docked}
+            style={
+              drag.position
+                ? { left: drag.position.x, top: drag.position.y }
+                : undefined
+            }
+            onPointerDown={drag.onPointerDown}
+            onPointerMove={drag.onPointerMove}
+            onPointerUp={drag.onPointerUp}
+            onPointerCancel={drag.onPointerUp}
+            onClickCapture={drag.onClickCapture}
+            onDoubleClick={drag.reset}
+          />
+        }
+      >
+        {look === "text" ? (
+          <Button
+            disabled={!enabled}
+            variant="prominent"
+            size="sm"
+            onClick={start}
+          >
+            {icon}
+            New message
+          </Button>
+        ) : (
+          <IconButton
+            disabled={!enabled}
+            aria-label="New message"
+            title="New message"
+            variant="solid"
+            shape="round"
+            size="sm"
+            icon={icon}
+            onClick={start}
+          />
+        )}
+      </ContextMenuTrigger>
+      <MenuPopup aria-label="New message button" size="compact">
+        <MenuRadioGroup value={look} onValueChange={chooseLook}>
+          <MenuRadioItem value="icon" selection="highlight">
+            Icon
+          </MenuRadioItem>
+          <MenuRadioItem value="text" selection="highlight">
+            Full text
+          </MenuRadioItem>
+        </MenuRadioGroup>
+      </MenuPopup>
+    </ContextMenuRoot>
   );
   if (triggerContainer === undefined) return button;
   // Moved, it floats over the whole app; otherwise it sits in the sidebar.
   if (drag.position) return createPortal(button, document.body);
   return triggerContainer && createPortal(button, triggerContainer);
+}
+
+type Look = "icon" | "text";
+const lookKey = "buzz:new-message-button:look";
+function savedLook(): Look {
+  try {
+    return localStorage.getItem(lookKey) === "text" ? "text" : "icon";
+  } catch {
+    return "icon";
+  }
 }
 
 type Point = { x: number; y: number };

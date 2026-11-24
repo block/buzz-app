@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useId,
-  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -12,6 +11,7 @@ import {
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
+  type MediaSeek,
   mediaCollapsed,
   setMediaCollapsed,
   subscribeCollapsedMedia,
@@ -24,7 +24,7 @@ export function CollapsibleMediaGroup({
   label,
   imageList,
   grid,
-  seekRequest,
+  seek,
   openOnSeek,
   children,
 }: {
@@ -33,7 +33,7 @@ export function CollapsibleMediaGroup({
   label: string;
   imageList: boolean;
   grid: boolean;
-  seekRequest: number | undefined;
+  seek: MediaSeek | undefined;
   openOnSeek: boolean;
   children: (allowSeek: boolean) => ReactNode;
 }) {
@@ -47,15 +47,11 @@ export function CollapsibleMediaGroup({
     () => mediaCollapsed(scope, groupKey),
     () => false,
   );
-  // All shown players receive the row's timecode. Hiding the group retires
-  // that request before its players can mount again.
-  const [activeSeek, setActiveSeek] = useState<number>();
-  if (collapsed && activeSeek !== undefined) setActiveSeek(undefined);
   useEffect(() => {
-    if (seekRequest === undefined) return;
+    if (!seek || seek.retiredGroups.has(groupKey)) return;
     if (openOnSeek) setMediaCollapsed(scope, groupKey, false);
-    if (!mediaCollapsed(scope, groupKey)) setActiveSeek(seekRequest);
-  }, [scope, groupKey, seekRequest, openOnSeek]);
+    else if (mediaCollapsed(scope, groupKey)) seek.retiredGroups.add(groupKey);
+  }, [scope, groupKey, seek, openOnSeek]);
   const groupLabel = label === "Image" ? "1 image" : label;
   const Caret = collapsed ? CaretRightIcon : CaretDownIcon;
   return (
@@ -70,7 +66,10 @@ export function CollapsibleMediaGroup({
           data-highlight-expanded="false"
           aria-expanded={!collapsed}
           aria-controls={id}
-          onClick={() => setMediaCollapsed(scope, groupKey, !collapsed)}
+          onClick={() => {
+            seek?.retiredGroups.add(groupKey);
+            setMediaCollapsed(scope, groupKey, !collapsed);
+          }}
         >
           <Caret size={14} aria-hidden="true" />
           {collapsed && <span className="truncate">{label}</span>}
@@ -91,8 +90,7 @@ export function CollapsibleMediaGroup({
         data-image-grid={(grid && !collapsed) || undefined}
         hidden={collapsed}
       >
-        {!collapsed &&
-          children(seekRequest === undefined || activeSeek === seekRequest)}
+        {!collapsed && children(!seek?.retiredGroups.has(groupKey))}
       </div>
     </div>
   );

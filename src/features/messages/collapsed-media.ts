@@ -1,3 +1,4 @@
+import type { ChannelMessage } from "../relay/contracts";
 import {
   readView,
   subscribeView,
@@ -97,3 +98,36 @@ export function subscribeCollapsedMedia(
     pageChanges.removeEventListener(pageEvent(scope), listener);
   };
 }
+
+export function mediaGroupKey(messageId: string, url: string) {
+  return JSON.stringify([messageId, url]);
+}
+
+// The thread owns each request, including which groups the reader has hidden
+// since selecting the timecode. A new thread can safely reuse a request number.
+export function createMediaSeek(
+  scope: string | undefined,
+  row: ChannelMessage,
+  seconds: number,
+  request: number,
+) {
+  const keys = row.attachments.map(({ url }) => mediaGroupKey(row.id, url));
+  const retiredGroups = new Set<string>();
+  return {
+    seconds,
+    request,
+    retiredGroups,
+    // Another view can hide the same group while this row is unmounted.
+    observeHides() {
+      let previous = new Set(groups(scope));
+      return subscribeCollapsedMedia(scope, () => {
+        const current = new Set(groups(scope));
+        for (const key of keys) {
+          if (current.has(key) && !previous.has(key)) retiredGroups.add(key);
+        }
+        previous = current;
+      });
+    },
+  };
+}
+export type MediaSeek = ReturnType<typeof createMediaSeek>;

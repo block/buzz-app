@@ -50,6 +50,7 @@ import {
 } from "../relay/testing";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
+import { createMediaSeek } from "./collapsed-media";
 import { MessageRow } from "./MessageRow";
 import { MessageContextMenus } from "./MessageActionBar";
 import { ReplySummary } from "./ReplySummary";
@@ -5922,7 +5923,10 @@ it("a timecode opens only its video group and saves that choice", () => {
     fireEvent.click(toggle("Image"));
     fireEvent.click(toggle("Video"));
     view.rerender(
-      <MessageRow {...props} mediaSeekTo={5} mediaSeekRequest={1} />,
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 1)}
+      />,
     );
     expect(toggle("Video")).toHaveAttribute("aria-expanded", "true");
     expect(toggle("Image")).toHaveAttribute("aria-expanded", "false");
@@ -5942,7 +5946,10 @@ it("a timecode opens only its video group and saves that choice", () => {
     expect(play).toHaveBeenCalledTimes(1);
 
     view.rerender(
-      <MessageRow {...props} mediaSeekTo={5} mediaSeekRequest={2} />,
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 2)}
+      />,
     );
     fireEvent.loadedMetadata(video());
     expect(video().currentTime).toBe(5);
@@ -5955,6 +5962,85 @@ it("a timecode opens only its video group and saves that choice", () => {
     cleanup();
   }
 });
+
+it.each(["enclosing message", "row"] as const)(
+  "keeps a retired seek from reopening the video when the %s remounts",
+  async (remount) => {
+    const props = {
+      row: {
+        ...row,
+        ...(remount === "enclosing message"
+          ? { audience: "agents" as const }
+          : {}),
+        attachments: [
+          { kind: "video" as const, url: "https://relay.test/media/clip.mp4" },
+        ],
+      },
+      profile: { name: "Agent" },
+      scope: `seek-remount-${remount}`,
+      media: (url: string) => `/api/relay/media?url=${encodeURIComponent(url)}`,
+      onOpenLink: () => false,
+      day: false,
+      retry: undefined,
+    };
+    const seek = (request: number) => (
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, request)}
+      />
+    );
+    const first = seek(1);
+    const toggle = () => screen.getByRole("button", { name: "Video" });
+    const fold = () =>
+      fireEvent.click(screen.getByRole("button", { name: "Agent: Root" }));
+    const foldAndUnmount = async () => {
+      fold();
+      await waitFor(() =>
+        expect(
+          view.container.querySelector('button[aria-label="Video"]'),
+        ).toBeNull(),
+      );
+    };
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue();
+    const view = renderDom(first);
+    const playAtTimecode = (count: number) => {
+      const video = view.container.querySelector("video");
+      if (!video) throw new Error("Expected a visible video");
+      fireEvent.loadedMetadata(video);
+      expect(video.currentTime).toBe(5);
+      expect(play).toHaveBeenCalledTimes(count);
+    };
+    try {
+      if (remount === "enclosing message") fold();
+      playAtTimecode(1);
+      fireEvent.click(toggle());
+      if (remount === "enclosing message") {
+        await foldAndUnmount();
+        fold();
+      } else {
+        view.rerender(null);
+        view.rerender(first);
+      }
+      expect(toggle()).toHaveAttribute("aria-expanded", "false");
+      expect(view.container.querySelector("video")).toBeNull();
+      expect(play).toHaveBeenCalledTimes(1);
+      view.rerender(seek(2));
+      playAtTimecode(2);
+      if (remount === "enclosing message") {
+        fireEvent.click(toggle());
+        await foldAndUnmount();
+        view.rerender(seek(3));
+        fold();
+        playAtTimecode(3);
+      }
+    } finally {
+      cleanup();
+      play.mockRestore();
+    }
+  },
+);
 
 it("seeks each shown video once and ignores old seeks when a group reopens", () => {
   const props = {
@@ -5979,7 +6065,10 @@ it("seeks each shown video once and ignores old seeks when a group reopens", () 
     const [first, , third] = screen.getAllByRole("button", { name: "Video" });
     if (!first || !third) throw new Error("Expected three video disclosures");
     view.rerender(
-      <MessageRow {...props} mediaSeekTo={5} mediaSeekRequest={1} />,
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 1)}
+      />,
     );
     for (const video of players().reverse()) fireEvent.loadedMetadata(video);
     expect(players().map((video) => video.currentTime)).toEqual([5, 5, 5]);
@@ -5988,7 +6077,10 @@ it("seeks each shown video once and ignores old seeks when a group reopens", () 
     fireEvent.click(first);
     fireEvent.click(third);
     view.rerender(
-      <MessageRow {...props} mediaSeekTo={5} mediaSeekRequest={2} />,
+      <MessageRow
+        {...props}
+        mediaSeek={createMediaSeek(props.scope, props.row, 5, 2)}
+      />,
     );
     expect(first).toHaveAttribute("aria-expanded", "true");
     expect(third).toHaveAttribute("aria-expanded", "false");

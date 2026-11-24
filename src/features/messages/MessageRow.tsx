@@ -94,6 +94,7 @@ import {
   contributionKey,
 } from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import { mediaGroupKey, type MediaSeek } from "./collapsed-media";
 import { CollapsibleMediaGroup } from "./CollapsibleMediaGroup";
 import { AttachmentImage } from "./AttachmentImage";
 import { AgentDeclineNotes } from "./AgentDeclineNotes";
@@ -199,8 +200,7 @@ export type MessageRowProps = {
   alignViewer?: boolean;
 
   mediaMode?: "inline" | "thread";
-  mediaSeekTo?: number;
-  mediaSeekRequest?: number;
+  mediaSeek?: MediaSeek | undefined;
   onMediaPlayback?: (playback: MediaPlayback) => void;
   onMediaTime?: (seconds: number) => void;
   onOpenMediaReview?: (
@@ -310,8 +310,7 @@ function MessageRowContent({
   alignViewer = true,
 
   mediaMode = "inline",
-  mediaSeekTo,
-  mediaSeekRequest,
+  mediaSeek,
   onMediaPlayback,
   onMediaTime,
   onOpenMediaReview,
@@ -799,7 +798,7 @@ function MessageRowContent({
   const attachmentMedia = (url: string, size?: "small") =>
     media(url, size, row.channelId);
   const seekTarget =
-    mediaSeekRequest === undefined
+    mediaSeek === undefined
       ? undefined
       : row.attachments.find((item) => item.kind === "video");
   const attachmentContent = (copied = false) =>
@@ -977,13 +976,11 @@ function MessageRowContent({
                   }
                   mode={mediaMode}
                   {...(attachment.kind === "video" &&
-                  mediaSeekTo !== undefined &&
+                  mediaSeek !== undefined &&
                   allowSeek
                     ? {
-                        seekTo: mediaSeekTo,
-                        ...(mediaSeekRequest !== undefined
-                          ? { seekRequest: mediaSeekRequest }
-                          : {}),
+                        seekTo: mediaSeek.seconds,
+                        seekRequest: mediaSeek.request,
                       }
                     : {})}
                   {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
@@ -1013,12 +1010,12 @@ function MessageRowContent({
               return (
                 <CollapsibleMediaGroup
                   key={first.url}
-                  groupKey={JSON.stringify([row.id, first.url])}
+                  groupKey={mediaGroupKey(row.id, first.url)}
                   scope={scope}
                   label={mediaLabel}
                   imageList={imageOnly || group.length >= 4}
                   grid={group.length >= 4}
-                  seekRequest={mediaSeekRequest}
+                  seek={mediaSeek}
                   openOnSeek={!!seekTarget && group.includes(seekTarget)}
                 >
                   {renderItems}

@@ -585,15 +585,20 @@ it("an explicit close after reload retires every retained visit it covers", () =
   driver.dispose();
 });
 
-it("visits an older build saved without targets stay retained and reachable", () => {
-  const fixture = browser();
-  visitThreadTwice(fixture);
+/** Rewrites the saved window as an older build saved it, with ids and no targets. */
+function dropSavedTargets(fixture: ReturnType<typeof browser>, visits: number) {
   const storage = fixture.host.sessionStorage;
   const key = `buzz-navigation-identities:${fixture.host.history.state.buzzNavigationV1.chain}`;
   const saved: [number, string][] = JSON.parse(storage.getItem(key) ?? "[]");
   // A key the driver does not use reads back empty, and the rewrite would do nothing.
-  expect(saved).toHaveLength(6);
+  expect(saved).toHaveLength(visits);
   storage.setItem(key, JSON.stringify(saved.map(([index, id]) => [index, id])));
+}
+
+it("visits an older build saved without targets stay retained and reachable", () => {
+  const fixture = browser();
+  visitThreadTwice(fixture);
+  dropSavedTargets(fixture, 6);
   const driver = createBrowserHistory(fixture.host);
   expect(driver.snapshot().retainedVisits).toHaveLength(6);
   driver.dismiss(closesThread, alpha);
@@ -633,5 +638,26 @@ it("a close after reload spares a visit that replaced the closed view", () => {
   // Beta's own history state still names the thread as its opener.
   driver.dismiss(closesThread, alpha);
   expect(walkBack(driver)).toEqual([alpha, homeTarget]);
+  driver.dispose();
+});
+
+it("a reload never saves a copied opener over the visit that replaced it", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  for (const target of [alphaThread, beta, alphaThread]) first.push(target);
+  first.back();
+  first.back();
+  first.replace(alpha);
+  first.forward();
+  first.dispose();
+  dropSavedTargets(fixture, 4);
+  // Beta's own history state still names the thread as its opener.
+  const second = createBrowserHistory(fixture.host);
+  second.forward();
+  second.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  driver.dismiss(closesThread, alpha);
+  expect(driver.snapshot().current.target).toEqual(alpha);
+  expect(walkBack(driver)).toEqual([beta, alpha, homeTarget]);
   driver.dispose();
 });

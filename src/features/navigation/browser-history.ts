@@ -86,13 +86,27 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   // Every retained visit whose target this document knows. A reload restores
   // them from the saved window, so a dismissal still matches each one.
   const known = new Map<number, NavigationEntry>();
+  // Known visits copied from a visit's history state rather than observed.
+  // Their native entries may since have been replaced, or resolved in place
+  // under the same ID, so they are never saved as targets.
+  const copied = new Set<number>();
   function knowStamp() {
     known.set(stamp.index, stamp.entry);
+    copied.delete(stamp.index);
     // Keep the immediate opener across reload so dismissing a restored dialog
     // can return to it without leaving an identical-looking history stop. The
-    // window is saved after every change, so it is newer than this copy.
-    if (stamp.index > 0 && stamp.previous && !known.has(stamp.index - 1))
-      known.set(stamp.index - 1, stamp.previous);
+    // window is saved after every change, so a saved ID there is newer than
+    // this copy, and a copy naming another visit is out of date.
+    const opener = stamp.index - 1;
+    if (
+      opener >= 0 &&
+      stamp.previous &&
+      !known.has(opener) &&
+      (identities.get(opener) ?? stamp.previous.id) === stamp.previous.id
+    ) {
+      known.set(opener, stamp.previous);
+      copied.add(opener);
+    }
   }
   const dismissedKey = () => `buzz-navigation-dismissed:${stamp.chain}`;
   function readDismissed() {
@@ -176,7 +190,8 @@ export function createBrowserHistory(host: Window): NavigationHistory {
         identitiesKey(),
         JSON.stringify(
           [...identities].map(([index, id]) => {
-            const entry = targets ? known.get(index) : undefined;
+            const entry =
+              targets && !copied.has(index) ? known.get(index) : undefined;
             return entry ? [index, id, entry.target] : [index, id];
           }),
         ),
@@ -263,6 +278,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     );
     stamp = next;
     known.set(stamp.index, entry);
+    copied.delete(stamp.index);
     dismissed.delete(stamp.index);
     if (!replace) {
       end = stamp.index;
@@ -360,6 +376,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     returning = undefined;
     if (newChain) {
       known.clear();
+      copied.clear();
       dismissed = readDismissed();
       floor = Math.max(0, end - HISTORY_CAPACITY + 1);
       readWindow();

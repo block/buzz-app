@@ -70,7 +70,7 @@ Each line is the main call. Read the types for every field.
 | `agents` | Agent tools and instructions | `ctx.agents.addTool({ name, description, inputSchema, call })`; `addInstructions({ id, text })`; `wake`; hooks need `host.agentHooks` |
 | `shortcuts` | Key bindings | `ctx.shortcuts.register({ id, title, binding, run })` |
 | `navigation` | Open a destination | `await ctx.navigation.open({ version: 1, kind: "plugin", pluginId, pageId? })` |
-| `notifications` | OS notifications | `ctx.notifications.register({ id, label }).submit({ sourceKey, target, title?, body? })`. The title shows even when the OS hides previews, so keep private text in `body`. |
+| `notifications` | OS notifications | `ctx.notifications.register({ id, label }).submit({ sourceKey, target, title?, body? })`. On macOS the title still shows when previews are hidden, so keep private text in `body`. |
 | `decisions` | Typed judgments about text | `await ctx.decisions.decide({ state, questions, community })`. It never rejects. |
 | `browser` | An embedded website (macOS) | `ctx.browser.View` inside a panel |
 | `notices` (optional) | A notice on any page, with up to three buttons | `await ctx.reflect.get("notices")?.show({ title, description?, actions? }, { signal? })` resolves with the picked action's `id`, or `undefined` if dismissed or aborted. Proceed only on an allow `id`. Pass a tool call's `client.signal` to ask the owner before it runs. |

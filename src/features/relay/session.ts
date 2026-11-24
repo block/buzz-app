@@ -138,6 +138,7 @@ import {
   type OutgoingEvent,
 } from "./outbox";
 import { relayPartition, transportPartition } from "./partition";
+import { communityGifs } from "./gifs";
 import { createThreadFollowSync } from "./follow-manager";
 import {
   browserThreadFollows,
@@ -2819,6 +2820,7 @@ export function createRelaySession(
     authorizeAgentLog: transport?.authorizeAgentLog,
     authorizeGit: transport?.authorizeGit,
     scope: readScope,
+    gifs: transport ? communityGifs(readScope) : undefined,
     ownerMentions:
       writes &&
       ownerMentionStore?.bind(

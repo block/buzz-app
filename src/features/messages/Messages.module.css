@@ -99,7 +99,7 @@
   --history-bottom-inset: 0px;
   scroll-padding-bottom: var(--timeline-trailing-rest, 0px);
 }
-/* ChannelTimeline places the sheet over the history's scrollport with the
+/* useTrailingSheet places the sheet over the history's scrollport with the
    history's inline padding and measure. Only the card takes pointer input, so
    the history scrolls under the sheet's empty top. Scrolling the card grows
    it, then slides it up; it never scrolls the history. */

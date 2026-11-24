@@ -37,7 +37,6 @@ import {
   useState,
   useSyncExternalStore,
   Fragment,
-  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -68,6 +67,7 @@ import {
   readingPositioned,
   useReading,
 } from "./use-reading";
+import { useTrailingSheet } from "./use-trailing-sheet";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
@@ -193,23 +193,6 @@ function contentInset(row: Element) {
     row: content - row.getBoundingClientRect().top,
     item: content - (row.closest("li") ?? row).getBoundingClientRect().top,
   };
-}
-/** History left above a trailing card that its toggle grows it to. */
-const TRAILING_TOP_GAP = 60;
-/** Where a trailing sheet's toggle grows its card to. */
-function sheetFull(sheet: HTMLElement) {
-  const spacer = sheet.firstElementChild?.getBoundingClientRect().height ?? 0;
-  return Math.min(
-    Math.max(0, spacer - TRAILING_TOP_GAP),
-    sheet.scrollHeight - sheet.clientHeight,
-  );
-}
-/** How far a trailing sheet has grown its card past the rest height. */
-function sheetGrowth(sheet: HTMLElement | null) {
-  const spacer = sheet?.firstElementChild;
-  return sheet && spacer
-    ? Math.min(sheet.scrollTop, spacer.getBoundingClientRect().height)
-    : 0;
 }
 function positionAt(
   element: HTMLElement,
@@ -981,8 +964,19 @@ function Timeline({
   const scroller = useRef<HTMLElement>(null);
   const edge = useRef<HTMLDivElement>(null);
   const activityTail = useRef<HTMLDivElement>(null);
-  // Space for the trailing card's rest height below the latest message.
-  const trailingBox = useRef<HTMLDivElement>(null);
+  // The trailing card scrolls in its own sheet over the history's end; rows
+  // it stops covering can be read.
+  const {
+    restBox: trailingBox,
+    rest: restSheet,
+    restSpaceHeight,
+    restSpace,
+    sheet,
+    revealFocus,
+    coveredFrom,
+  } = useTrailingSheet(trailing, scroller, () =>
+    readingPositioned(scroller.current),
+  );
   const hasTrailing = !!trailing;
   useLayoutEffect(() => {
     const tail = activityTail.current;
@@ -999,7 +993,7 @@ function Timeline({
     if (hasTrailing && trailingBox.current)
       observer.observe(trailingBox.current);
     return () => observer.disconnect();
-  }, [hasTrailing]);
+  }, [hasTrailing, trailingBox]);
   useMessageSelection(scroller, rows, queries, channelId);
   // While the connection recovers, its notice is the one report, so the
   // history edge does not repeat the reason. Recovery does not retry older
@@ -1089,98 +1083,6 @@ function Timeline({
   // bottom a reader follows, until the head read that replaces it.
   const detached = useRef(false);
   detached.current = !!window.hasNewer && !window.refreshing;
-  // The trailing card scrolls in its own sheet over the history's end. At
-  // scrollTop 0 it shows its rest height; scrolling the sheet grows the card,
-  // then slides it up. Where the toggle's smooth scroll is going, until it
-  // arrives or the reader takes over.
-  const sheet = useRef<HTMLDivElement>(null);
-  const sheetTarget = useRef<number>(undefined);
-  const sheetPointer = useRef("");
-  const [trailingExpanded, setTrailingExpanded] = useState(false);
-  const restHeight = trailing?.restHeight;
-  // Jump to latest stays above the card's visible top.
-  const placeJumpToLatest = useCallback(() => {
-    if (restHeight !== undefined)
-      scroller.current?.style.setProperty(
-        "--timeline-trailing-rest",
-        `${restHeight + sheetGrowth(sheet.current)}px`,
-      );
-  }, [restHeight]);
-  useLayoutEffect(() => {
-    const element = scroller.current;
-    if (restHeight === undefined || !element) return;
-    placeJumpToLatest();
-    return () => {
-      element.style.removeProperty("--timeline-trailing-rest");
-    };
-  }, [restHeight, placeJumpToLatest]);
-  // The sheet covers the history's scrollport, with its inline padding, so
-  // the card lines up with the history's rows.
-  useLayoutEffect(() => {
-    const element = scroller.current;
-    const panel = sheet.current;
-    const frame = element?.offsetParent;
-    if (!hasTrailing || !element || !panel || !(frame instanceof HTMLElement))
-      return;
-    if (typeof ResizeObserver === "undefined") return;
-    const place = () => {
-      const style = getComputedStyle(element);
-      const top = element.offsetTop;
-      panel.style.top = `${top}px`;
-      panel.style.left = `${element.offsetLeft}px`;
-      panel.style.right = `${frame.clientWidth - element.offsetLeft - element.offsetWidth}px`;
-      panel.style.bottom = `${frame.clientHeight - top - element.offsetHeight}px`;
-      panel.style.paddingInline = `${style.paddingInlineStart} ${style.paddingInlineEnd}`;
-      // The layout can still settle while a toggle grows the card.
-      const target = sheetTarget.current;
-      if (!target) return;
-      const full = sheetFull(panel);
-      if (Math.abs(full - target) < 1) return;
-      sheetTarget.current = full;
-      panel.scrollTo({ top: full, behavior: "smooth" });
-    };
-    const resize = new ResizeObserver(place);
-    resize.observe(element);
-    resize.observe(frame);
-    if (panel.lastElementChild) resize.observe(panel.lastElementChild);
-    place();
-    return () => {
-      resize.disconnect();
-      sheetTarget.current = undefined;
-      setTrailingExpanded(false);
-    };
-  }, [hasTrailing]);
-  const toggleTrailing = useCallback(() => {
-    const element = sheet.current;
-    if (!element) return;
-    const expand = (sheetTarget.current ?? element.scrollTop) < 1;
-    const top = expand ? sheetFull(element) : 0;
-    // Already there and still, as a card too short to grow is: no scroll will
-    // settle it. A toggle in flight scrolls back, which stops it.
-    if (
-      sheetTarget.current === undefined &&
-      Math.abs(top - element.scrollTop) < 1
-    ) {
-      setTrailingExpanded(top >= 1);
-      return;
-    }
-    setTrailingExpanded(expand);
-    const reduced = element.ownerDocument.defaultView?.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    sheetTarget.current = reduced ? undefined : top;
-    element.scrollTo({ top, behavior: reduced ? "instant" : "smooth" });
-  }, []);
-  // Jump to latest and a send return the card to its rest height.
-  const restSheet = useCallback(() => {
-    sheetTarget.current = undefined;
-    if (sheet.current) sheet.current.scrollTop = 0;
-    setTrailingExpanded(false);
-  }, []);
-  const trailingState = useMemo(
-    () => ({ expanded: trailingExpanded, toggle: toggleTrailing }),
-    [trailingExpanded, toggleTrailing],
-  );
   const recordPosition = useCallback(
     (element: HTMLElement, layoutOwned = false) => {
       // A delayed membership event can replace a group's rendered representative.
@@ -1288,12 +1190,19 @@ function Timeline({
     restSheet();
     const tailHeight =
       (activityTail.current?.getBoundingClientRect().height ?? 0) +
-      (trailingBox.current?.getBoundingClientRect().height ?? 0);
+      restSpaceHeight();
     handle.current.scrollToIndex(rows.length - 1, {
       align: "end",
       ...(tailHeight ? { offset: tailHeight } : {}),
     });
-  }, [rows.length, window.hasNewer, queries, channelId, restSheet]);
+  }, [
+    rows.length,
+    window.hasNewer,
+    queries,
+    channelId,
+    restSheet,
+    restSpaceHeight,
+  ]);
   const inlineSignal = inlineTarget?.signal;
   const targetIndex = rows.findIndex(
     (row) => row.id === (containedOwners.get(targetId ?? "") ?? targetId),
@@ -1528,8 +1437,7 @@ function Timeline({
       !boundaryCandidate.awaitingRepair &&
       !(awayPending && !boundaryPending),
     // Rows under the trailing card aren't shown.
-    trailing: () =>
-      sheet.current?.lastElementChild?.getBoundingClientRect().top,
+    trailing: coveredFrom,
   });
   // Shift keeps the distance from the end, so it holds the reader only while
   // the rows from their first visible item to the end are kept. Relay pages
@@ -2072,7 +1980,7 @@ function Timeline({
         const tailHeight =
           endIndex === rows.length - 1
             ? (activityTail.current?.getBoundingClientRect().height ?? 0) +
-              (trailingBox.current?.getBoundingClientRect().height ?? 0)
+              restSpaceHeight()
             : 0;
         handle.current.scrollToIndex(endIndex, {
           align: "end",
@@ -2194,6 +2102,7 @@ function Timeline({
     containedOwners,
     newMessageBoundaryId,
     restSheet,
+    restSpaceHeight,
   ]);
   // After positioning reads it: a load that ends without rows lands no page.
   useLayoutEffect(() => {
@@ -2495,30 +2404,7 @@ function Timeline({
           event.target.closest<HTMLElement>("[data-message-id]")?.dataset
             .messageId,
         );
-        // The scroll padding keeps keyboard focus in the history above the
-        // card's visible top. When the history can't scroll it clear of a grown
-        // card, the card returns to Rest. This runs after the focus's own scroll
-        // into view; a click never needs it, since the card takes the pointer.
-        const focused = event.target;
-        if (
-          !sheet.current?.scrollTop ||
-          focused === event.currentTarget ||
-          !(focused instanceof HTMLElement) ||
-          !focused.matches(":focus-visible")
-        )
-          return;
-        queueMicrotask(() => {
-          const cardTop =
-            sheet.current?.firstElementChild?.getBoundingClientRect().bottom;
-          if (
-            cardTop === undefined ||
-            focused.getBoundingClientRect().bottom <= cardTop + 1
-          )
-            return;
-          restSheet();
-          placeJumpToLatest();
-          focused.scrollIntoView({ block: "nearest" });
-        });
+        revealFocus(event.target);
       }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) {
@@ -2838,13 +2724,7 @@ function Timeline({
         />
         <div className={styles.timelineEnd} aria-hidden="true" />
       </div>
-      {trailing && (
-        <div
-          ref={trailingBox}
-          aria-hidden="true"
-          style={{ height: trailing.restHeight }}
-        />
-      )}
+      {restSpace}
     </section>
   );
   return (
@@ -2852,54 +2732,7 @@ function Timeline({
       <MessageContextMenus>{feed}</MessageContextMenus>
       {/* After the history, so keyboard order follows the card's place
           between the history and the composer. */}
-      {trailing && (
-        <div
-          ref={sheet}
-          className={styles.trailingSheet}
-          style={
-            { "--trailing-rest": `${trailing.restHeight}px` } as CSSProperties
-          }
-          // The pointer over the card holds the sheet: it then takes input
-          // across its empty top too, so a gesture keeps scrolling it as the
-          // card slides out from under the pointer, and WebKit's scrolling
-          // finds it. Moving the pointer over the empty top lets go; the card
-          // sliding under a still pointer leaves its position unchanged.
-          onPointerOver={(event) => {
-            if (event.target !== event.currentTarget.firstElementChild)
-              event.currentTarget.toggleAttribute("data-held", true);
-          }}
-          onWheel={() => (sheetTarget.current = undefined)}
-          onPointerMove={(event) => {
-            // WebKit reports no movementX/Y here, so compare positions.
-            const at = `${event.clientX},${event.clientY}`;
-            const moved = at !== sheetPointer.current;
-            sheetPointer.current = at;
-            if (moved && event.target === event.currentTarget.firstElementChild)
-              event.currentTarget.toggleAttribute("data-held", false);
-          }}
-          onPointerLeave={(event) =>
-            event.currentTarget.toggleAttribute("data-held", false)
-          }
-          onTouchStart={() => (sheetTarget.current = undefined)}
-          onScroll={(event) => {
-            placeJumpToLatest();
-            // Rows the card stops covering can be read.
-            readingPositioned(scroller.current);
-            const top = event.currentTarget.scrollTop;
-            const target = sheetTarget.current;
-            if (target !== undefined) {
-              if (Math.abs(top - target) >= 1) return;
-              sheetTarget.current = undefined;
-            }
-            setTrailingExpanded(top >= 1);
-          }}
-        >
-          <div className={styles.trailingSpacer} />
-          <div className={styles.trailingCard}>
-            {trailing.content(trailingState)}
-          </div>
-        </div>
-      )}
+      {sheet}
     </>
   );
 }

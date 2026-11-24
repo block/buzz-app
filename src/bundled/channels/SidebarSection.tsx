@@ -79,6 +79,7 @@ export function SidebarSection({
   channelCount,
   removalFocus,
   heightScope,
+  resizeScope = heightScope,
   iconView = false,
   layout,
   rename,
@@ -105,6 +106,9 @@ export function SidebarSection({
   removalFocus?: (() => HTMLElement | null | undefined) | undefined;
   /** Where a card remembers the height its grip was left at; omit to fit. */
   heightScope?: string | undefined;
+  /** Where the height alone is kept, for a card with no other saved view
+   * choices; defaults to `heightScope`. */
+  resizeScope?: string | undefined;
   /** Offer showing the card's rows as identity tiles instead of names. */
   iconView?: boolean;
   /** The card's own layouts, offered in its menu; see SidebarViewMenuItems. */
@@ -479,9 +483,9 @@ export function SidebarSection({
             // Tiles keep the list's size, rounded up to fill their last row.
             <div className={styles.cardTiles} data-card-display="icons">
               <SidebarCardDisplayContext.Provider value="icons">
-                {heightScope ? (
+                {resizeScope ? (
                   <ResizableRows
-                    scope={heightScope}
+                    scope={resizeScope}
                     card={sectionKey}
                     label={title}
                   >
@@ -492,8 +496,8 @@ export function SidebarSection({
                 )}
               </SidebarCardDisplayContext.Provider>
             </div>
-          ) : heightScope ? (
-            <ResizableRows scope={heightScope} card={sectionKey} label={title}>
+          ) : resizeScope ? (
+            <ResizableRows scope={resizeScope} card={sectionKey} label={title}>
               {children}
             </ResizableRows>
           ) : (

@@ -2402,6 +2402,7 @@ export function ChannelInventory({
                     groupIndex={index}
                     reorderable={reorderable}
                     onRowsCommitted={sidebar.retryReveal}
+                    resizeScope={scope}
                     move={
                       reorderable
                         ? {

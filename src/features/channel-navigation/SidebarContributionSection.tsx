@@ -64,6 +64,7 @@ export function SidebarContributionSection({
   reorderable,
   move,
   onRowsCommitted,
+  resizeScope,
 }: {
   entry: RegisteredSidebarSection;
   registry: SidebarSections;
@@ -75,6 +76,8 @@ export function SidebarContributionSection({
   reorderable: boolean;
   move: { up?: () => void; down?: () => void } | undefined;
   onRowsCommitted?: () => void;
+  /** Where its height is kept, as the sidebar's other cards keep theirs. */
+  resizeScope?: string | undefined;
 }) {
   // A failed section stops observing its rows; Retry renders it again.
   const [attempt, setAttempt] = useState(0);
@@ -134,6 +137,7 @@ export function SidebarContributionSection({
           reorderable={reorderable}
           move={move}
           onRowsCommitted={onRowsCommitted}
+          resizeScope={resizeScope}
         />
       )}
     </OwnedContribution>
@@ -151,6 +155,7 @@ function SectionContents({
   reorderable,
   move,
   onRowsCommitted,
+  resizeScope,
 }: {
   entry: RegisteredSidebarSection;
   active: () => boolean;
@@ -162,6 +167,7 @@ function SectionContents({
   reorderable: boolean;
   move: { up?: () => void; down?: () => void } | undefined;
   onRowsCommitted: (() => void) | undefined;
+  resizeScope: string | undefined;
 }) {
   const subscribe = useCallback(
     (listener: () => void) => entry.rows.subscribe(listener),
@@ -250,6 +256,7 @@ function SectionContents({
       hideMoreActions={!reorderable}
       headerActions={actions}
       layout={layout}
+      resizeScope={resizeScope}
       headerNotice={
         actionError && (
           <p className={styles.contributionFeedback} role="alert">

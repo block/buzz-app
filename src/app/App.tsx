@@ -128,6 +128,17 @@ export function App({ services }: { services: AppServices }) {
   );
 }
 
+/** Settings sections open in the selected community's scope, as the sidebar does. */
+function selectedSettingsScope(services: AppServices) {
+  const client = services.communities.snapshot();
+  return client.viewer && client.selected
+    ? {
+        viewer: client.viewer,
+        communityOrigin: communityDestination(client.selected).url,
+      }
+    : null;
+}
+
 function ConnectedApp({ services }: { services: AppServices }) {
   return (
     <ToastProvider
@@ -407,12 +418,18 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           behindActiveOverlay(modal))
       )
         return;
-      void services.navigation.open({
-        version: 1,
-        kind: "settings",
-        section: "updates",
-      });
-      void services.updates.checkForUpdate();
+      // A departure guard can keep the current page; then nothing is checked.
+      void services.navigation
+        .open({
+          version: 1,
+          kind: "settings",
+          section: "updates",
+          scope: selectedSettingsScope(services),
+        })
+        .then((result) => {
+          if (result.status === "opened")
+            void services.updates.checkForUpdate();
+        });
     };
     window.addEventListener("buzz:check-for-updates", check);
     return () => window.removeEventListener("buzz:check-for-updates", check);
@@ -589,20 +606,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       />
     );
   const openSettingsSection = (section: string, pluginId?: string) => {
-    const client = services.communities.snapshot();
     void services.navigation.open({
       version: 1,
       kind: "settings",
       section,
       ...(pluginId ? { pluginId } : {}),
-      ...(client.viewer && client.selected
-        ? {
-            scope: {
-              viewer: client.viewer,
-              communityOrigin: communityDestination(client.selected).url,
-            },
-          }
-        : { scope: null }),
+      scope: selectedSettingsScope(services),
     });
   };
   // As for pages, a timed-out reopen of the shown section keeps its editor.

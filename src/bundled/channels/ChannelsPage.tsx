@@ -19,6 +19,7 @@ import {
 } from "../../features/profiles/target";
 import type { Agents } from "../../features/agents/service";
 import { SoloDraft } from "../../features/solo/SoloDraft";
+import { ConversationRowIdentity } from "./ConversationIdentity";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
 import { historyPanel, useConversationTabs } from "./useConversationTabs";
@@ -380,7 +381,21 @@ function LiveNewMessage(
   props: Omit<React.ComponentProps<typeof NewMessage>, "channels">,
 ) {
   const { channels } = useChannelList(props.session.channels);
-  return <NewMessage {...props} channels={channels} />;
+  return (
+    <NewMessage
+      {...props}
+      channels={channels}
+      // The DM row wears the sidebar's identity so the two can't drift.
+      dmIdentity={({ members, profiles, fallback }) => (
+        <ConversationRowIdentity
+          members={members}
+          profiles={profiles}
+          fallback={fallback}
+          session={props.session}
+        />
+      )}
+    />
+  );
 }
 
 function ChannelWorkspace({

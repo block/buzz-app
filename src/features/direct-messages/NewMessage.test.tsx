@@ -402,7 +402,9 @@ it("lists a Direct message row, then the group's named conversations, whatever a
   t.mount();
   await pick(t, one.name, three.name);
   const list = (
-    await screen.findByRole("heading", { name: "With Person 1 and Person 3" })
+    await screen.findByRole("button", {
+      name: "Direct message with Person 1 and Person 3",
+    })
   ).closest("section") as HTMLElement;
   expect(
     within(list)
@@ -2700,7 +2702,7 @@ it.each([
     change(undefined);
     const name = browsed ? "jack" : abbreviatedPublicKey(aleksandr.pubkey);
     await screen.findByRole("button", { name: `Remove ${name}` });
-    screen.getByRole("heading", { name: `With ${name}` });
+    screen.getByRole("button", { name: `Direct message with ${name}` });
     shared = new Map([[aleksandr.pubkey, { name: "Jack Editable" }]]);
     change(undefined);
     await screen.findByRole("button", { name: "Remove Jack Editable" });
@@ -2733,5 +2735,5 @@ it("searches and labels by profile names on a relay without verified identity", 
   await t.user.click(
     screen.getByRole("option", { name: `jack ${labels.get(imitator.pubkey)}` }),
   );
-  screen.getByRole("heading", { name: "With jack" });
+  screen.getByRole("button", { name: "Direct message with jack" });
 });

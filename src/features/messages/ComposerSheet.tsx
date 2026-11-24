@@ -258,10 +258,17 @@ function useQuickHandoff(
         source.dataset.threadPlaceholder = "";
       }
       if (!sheet.hasAttribute("data-opened")) return;
-      const ready = sheet.querySelector(
-        "[data-message-scroller]:is([data-thread-drawable=read]:not([data-positioning]), [data-thread-drawable=empty])",
-      );
-      if (!ready || !sheet.querySelector("[data-message-composer]")) return;
+      const body = sheet.querySelector("[data-sheet-body]");
+      const scroller = body?.querySelector("[data-message-scroller]");
+      const ready = scroller
+        ? scroller.matches(
+            ":is([data-thread-drawable=read]:not([data-positioning]), [data-thread-drawable=empty])",
+          ) &&
+          (!scroller.hasAttribute("data-composer-expected") ||
+            !!sheet.querySelector("[data-message-composer]"))
+        : // Nothing to read into: a notice, or a failure with its retry.
+          !!body?.querySelector("[role=status], [role=alert]");
+      if (!ready) return;
       revealed = true;
       // One frame: the rows and reply box show, the view's composer hides.
       sheet.dataset.revealed = "";
@@ -278,6 +285,7 @@ function useQuickHandoff(
         "data-opened",
         "data-thread-drawable",
         "data-positioning",
+        "data-composer-expected",
       ],
     });
     check();

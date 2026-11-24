@@ -2422,6 +2422,9 @@ function ThreadMessages({
                 ? "empty"
                 : undefined
           }
+          // A thread with no reply box coming (Solo, read-only, no root)
+          // draws without waiting for one.
+          data-composer-expected={composerExpected || undefined}
           data-jump-visible={showJumpToLatest || undefined}
           onScroll={(event) => {
             if (!positioned.current) return;

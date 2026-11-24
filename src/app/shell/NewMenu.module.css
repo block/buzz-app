@@ -1,0 +1,14 @@
+/* The sidebar slot already places the button. */
+.docked {
+  display: flex;
+  touch-action: none;
+}
+/* Dropped elsewhere, it floats over the app, below dialogs and menus. */
+.floating {
+  position: fixed;
+  z-index: var(--layer-floating-action);
+  display: flex;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-sm);
+  touch-action: none;
+}

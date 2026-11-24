@@ -4530,6 +4530,15 @@ html[data-keyboard-navigation]
   display: none;
 }
 
+/* In a dialog the reader scrolls below the header and above the bottom inset,
+   so its scrollbar stays off the dialog's rounded corners. */
+[class~="buzz-dialog-body"] > .detailsReader {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin-inline: calc(-1 * var(--dialog-padding));
+  padding-inline: var(--dialog-padding);
+}
 /* The details reader's sections sit below its dialog title in hierarchy. */
 .detailsReader .text :is(h1, h2) {
   font-size: var(--text-label);

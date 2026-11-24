@@ -127,6 +127,7 @@ export function DetailsMessage({
           }}
           title={author}
           description={time}
+          bodyLayout="flex"
           finalFocus={trigger}
         >
           {reader}

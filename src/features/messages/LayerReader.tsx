@@ -61,6 +61,7 @@ function Layer({ open }: { open: OpenLayer }) {
               onOpenChange={onOpenChange}
               title={title}
               description={time}
+              bodyLayout="flex"
               visit
               finalFocus={opener}
             >

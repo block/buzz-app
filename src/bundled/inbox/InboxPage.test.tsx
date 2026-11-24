@@ -1438,7 +1438,13 @@ function fixture(
   const open = vi.fn<Navigation["open"]>(async () => ({ status: "opened" }));
   const host = {
     relay,
-    navigation: { open },
+    navigation: {
+      open,
+      snapshot: () => ({
+        entry: { id: "home", target: { version: 1, kind: "home" } },
+      }),
+      subscribe: () => () => {},
+    },
     panels: {
       subscribe: () => () => {},
       snapshot: () => emptyPanels,

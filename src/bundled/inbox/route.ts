@@ -1,4 +1,5 @@
 import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
+import { pageTabRoute } from "../channels/page-tab-route";
 import type { ActivityFilter, SenderFilter } from "./InboxFilters";
 
 /** Activity's page address; the route contract below applies only to it. */
@@ -64,7 +65,10 @@ function inboxRoute(params: JsonValue | undefined): InboxRoute | undefined {
   ) as InboxRoute;
 }
 
-export const isInboxRoute = (params: JsonValue) => !!inboxRoute(params);
+// A visit to a conversation or detail tab the page opened, which Back and
+// Forward return to; it applies no filters.
+export const isInboxRoute = (params: JsonValue) =>
+  !!inboxRoute(params) || !!pageTabRoute(params);
 
 /** The route a visit carries, if any; a plain Activity open has none. */
 export function routeOf(target: OpenTarget | undefined) {

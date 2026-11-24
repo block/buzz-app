@@ -17,6 +17,14 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import { LinkThreadTabContext } from "../../features/conversation/LinkLabelContext";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import type { RelaySession } from "../../features/relay/session";
+import { createNavigationController } from "../../features/navigation/controller";
+import { createBrowserHistory } from "../../features/navigation/browser-history";
+import {
+  createMemoryHistory,
+  type NavigationHistory,
+} from "../../features/navigation/history";
+import type { JsonValue, OpenTarget } from "../../features/navigation/targets";
+import { pageTabRoute } from "./page-tab-route";
 import type { ConversationTab as Tab } from "./useChannelTabState";
 import {
   ConversationWorkspace,
@@ -34,8 +42,10 @@ vi.mock("./ConversationTab", () => ({
     onResolvedRoot,
     parent,
     intro,
+    openLink,
   }: {
     intro?: import("react").ReactNode;
+    openLink?: (url: string, origin?: { rootId?: string }) => boolean;
     tab: Tab;
     channel: { name: string };
     visit: boolean;
@@ -63,6 +73,19 @@ vi.mock("./ConversationTab", () => ({
           {parent.label}
         </button>
       )}
+      {openLink && (
+        <button
+          type="button"
+          onClick={() =>
+            openLink(
+              "https://github.com/block/buzz/pull/1",
+              tab.kind === "thread" ? { rootId: "root" } : undefined,
+            )
+          }
+        >
+          Open pull request
+        </button>
+      )}
     </p>
   ),
 }));
@@ -82,7 +105,19 @@ afterEach(() => {
   localStorage.clear();
 });
 
-function fixture(visits?: boolean) {
+const switchboard: OpenTarget = {
+  version: 1,
+  kind: "page",
+  pluginId: "buzz.test",
+  pageId: "switchboard",
+};
+
+function fixture(
+  visits?: boolean,
+  history?: "tabs",
+  initial: OpenTarget = switchboard,
+  driver: NavigationHistory = createMemoryHistory(initial),
+) {
   const channels = [
     { id: "alpha", name: "alpha" },
     { id: "beta", name: "beta" },
@@ -105,7 +140,14 @@ function fixture(visits?: boolean) {
     ["b".repeat(64), { name: "Bob" }],
     ["z".repeat(64), { name: "Zed" }],
   ]);
-  const available: never[] = [];
+  const github = {
+    key: "buzz.github/object",
+    id: "object",
+    title: "GitHub",
+    matches: (target: string) => target.startsWith("https://github.com/"),
+    component: () => <p>Pull request</p>,
+  };
+  const available = history ? [github] : [];
   const session = {
     viewer: "viewer",
     channels: {
@@ -126,10 +168,31 @@ function fixture(visits?: boolean) {
     panels: {
       snapshot: () => available,
       subscribe: () => () => {},
-      resolve: () => undefined,
+      resolve: (target: string) =>
+        available.find((panel) => panel.matches(target)),
       handleOpenRequests: () => () => {},
     },
-    navigation: { open: vi.fn() },
+    navigation: history
+      ? createNavigationController(driver).navigation
+      : {
+          open: vi.fn(),
+          snapshot: () => ({
+            entry: { id: "home", target: { version: 1, kind: "home" } },
+          }),
+          subscribe: () => () => {},
+        },
+    pages: {
+      snapshot: () => [
+        {
+          key: "buzz.test/switchboard",
+          route: {
+            version: 1,
+            validate: (params: JsonValue) => !!pageTabRoute(params),
+          },
+        },
+      ],
+      subscribe: () => () => {},
+    },
   } as unknown as ConversationHostServices;
   let open: (target: PageTabTarget, options?: PageTabOptions) => boolean = () =>
     false;
@@ -551,3 +614,325 @@ it.each([false, true])(
     else expect(reader).toHaveAttribute("data-focus", "1");
   },
 );
+
+const traverse = (page: ReturnType<typeof fixture>, step: "back" | "forward") =>
+  act(() => {
+    page.navigation[step]();
+  });
+const paneShown = () =>
+  screen
+    .getAllByRole("button", { name: "Toggle tab pane" })
+    .some((button) => button.getAttribute("aria-expanded") === "true");
+
+it("returns with Back from a link's detail to the thread, then to the page as it was", async () => {
+  const user = userEvent.setup();
+  const page = fixture(undefined, "tabs");
+  expect(page.open({ channelId: "alpha", threadId: "root" })).toBe(true);
+  await user.click(screen.getByRole("button", { name: "Open pull request" }));
+  expect(screen.getByRole("tab", { name: /GitHub/, selected: true })).toBe(
+    screen.getByRole("tab", { name: /GitHub/ }),
+  );
+  traverse(page, "back");
+  expect(screen.getByRole("tab", { name: /Root text/, selected: true })).toBe(
+    screen.getByRole("tab", { name: /Root text/ }),
+  );
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "thread:alpha:root" } },
+  });
+  traverse(page, "back");
+  // The page before any tab opened, its tabs still open beside it.
+  expect(page.navigation.snapshot().entry.target).toEqual(switchboard);
+  expect(paneShown()).toBe(false);
+  expect(screen.getByRole("button", { name: "Toggle tab pane" })).toBeVisible();
+  traverse(page, "forward");
+  expect(paneShown()).toBe(true);
+  expect(screen.getByRole("tab", { name: /Root text/, selected: true })).toBe(
+    screen.getByRole("tab", { name: /Root text/ }),
+  );
+  traverse(page, "forward");
+  expect(screen.getByRole("tab", { name: /GitHub/, selected: true })).toBe(
+    screen.getByRole("tab", { name: /GitHub/ }),
+  );
+});
+
+it("reopens with Back a tab a later open replaced, closing none", () => {
+  const page = fixture(undefined, "tabs");
+  page.open({ channelId: "alpha", messageId: "a".repeat(64) });
+  page.open({ channelId: "beta" });
+  expect(side()).toEqual(["beta"]);
+  traverse(page, "back");
+  expect(side()).toEqual(["beta", "alpha"]);
+  const alpha = screen.getByText("conversation in alpha");
+  expect(alpha).toBeVisible();
+  // Reopened where the visit opened it.
+  expect(alpha).toHaveAttribute("data-message", "a".repeat(64));
+  traverse(page, "forward");
+  expect(side()).toEqual(["beta", "alpha"]);
+  expect(screen.getByText("conversation in beta")).toBeVisible();
+  // Reopening took no visit of its own.
+  traverse(page, "back");
+  traverse(page, "back");
+  expect(page.navigation.snapshot().entry.target).toEqual(switchboard);
+});
+
+it("retires a closed tab's visits, keeping the tab it leaves selected", async () => {
+  const user = userEvent.setup();
+  const page = fixture(undefined, "tabs");
+  page.open({ channelId: "alpha", threadId: "root" });
+  await user.click(screen.getByRole("button", { name: "Open pull request" }));
+  await user.click(screen.getByRole("button", { name: /Close GitHub/ }));
+  expect(screen.getByRole("tab", { name: /Root text/, selected: true })).toBe(
+    screen.getByRole("tab", { name: /Root text/ }),
+  );
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "thread:alpha:root" } },
+  });
+  expect(page.navigation.snapshot().canGoForward).toBe(false);
+  // The page's own close retires its tab's visits too.
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.navigation.snapshot().entry.target).toEqual(switchboard);
+  expect(page.navigation.snapshot().canGoForward).toBe(false);
+});
+
+it("takes no visits for a page whose route does not name its tabs", () => {
+  const page = fixture();
+  page.open({ channelId: "alpha", threadId: "root" });
+  page.open({ channelId: "beta" });
+  expect(page.navigation.open).not.toHaveBeenCalled();
+});
+
+it("keeps an opening's choices while it takes its visit", () => {
+  const page = fixture(undefined, "tabs");
+  page.open({ channelId: "beta" }, { keep: true, markRead: false });
+  page.open({ channelId: "alpha" });
+  expect(side()).toEqual(["beta", "alpha"]);
+  page.open({ channelId: "beta" }, { markRead: false });
+  const beta = screen.getByText("conversation in beta");
+  expect(beta).toHaveAttribute("data-mark-read", "false");
+  expect(beta).toHaveAttribute("data-focus", "2");
+});
+
+it("returns a close that leaves no tab to the page's visit as it opened", () => {
+  const filtered: OpenTarget = {
+    ...switchboard,
+    route: { version: 1, params: { activity: "dms" } },
+  };
+  const page = fixture(undefined, "tabs", filtered);
+  expect(page.open({ channelId: "alpha" })).toBe(true);
+  expect(page.close({ channelId: "alpha" })).toBe(true);
+  expect(page.navigation.snapshot().entry.target).toEqual(filtered);
+  expect(page.navigation.snapshot().canGoBack).toBe(false);
+  expect(page.navigation.snapshot().canGoForward).toBe(false);
+});
+
+it("keeps the selection a close leaves when it returns to an earlier visit", async () => {
+  const user = userEvent.setup();
+  const page = fixture(undefined, "tabs");
+  page.open({ channelId: "alpha", threadId: "root" });
+  page.open({ channelId: "beta" }, { keep: true });
+  // A click selects without the pointer drag jsdom cannot capture.
+  fireEvent.click(screen.getByRole("tab", { name: /Root text/ }));
+  await user.click(screen.getByRole("button", { name: "Open pull request" }));
+  fireEvent.click(screen.getByRole("tab", { name: /beta/ }));
+  await user.click(screen.getByRole("button", { name: /Close GitHub/ }));
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "conversation:beta" } },
+  });
+  expect(screen.getByRole("tab", { name: /beta/, selected: true })).toBe(
+    screen.getByRole("tab", { name: /beta/ }),
+  );
+});
+
+it("names the tab a page's own close leaves shown", () => {
+  const page = fixture(undefined, "tabs");
+  page.open({ channelId: "alpha" }, { keep: true });
+  page.open({ channelId: "alpha", threadId: "root" }, { keep: true });
+  page.open({ channelId: "beta" }, { keep: true });
+  expect(page.close({ channelId: "beta" })).toBe(true);
+  expect(screen.getByText("conversation in alpha")).toBeVisible();
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "conversation:alpha" } },
+  });
+  traverse(page, "back");
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "thread:alpha:root" } },
+  });
+});
+
+const hidePane = () => {
+  for (const button of screen.getAllByRole("button", {
+    name: "Toggle tab pane",
+  }))
+    if (button.getAttribute("aria-expanded") === "true")
+      fireEvent.click(button);
+};
+// The production browser driver over a window whose traversals land when
+// the test lets them, as a native history.go() lands a task later.
+function deferredReturns() {
+  const events = new EventTarget();
+  const pending: number[] = [];
+  const start = `#buzz=${encodeURIComponent(JSON.stringify(switchboard))}`;
+  const location = { pathname: "/", search: "", hash: start };
+  let entries = [{ state: null as unknown, hash: start }];
+  let index = 0;
+  const storage = new Map<string, string>();
+  const traverse = (delta: number) => {
+    if (!entries[index + delta]) return;
+    index += delta;
+    location.hash = entries[index]?.hash ?? "";
+    events.dispatchEvent(new Event("popstate"));
+    events.dispatchEvent(new Event("hashchange"));
+  };
+  const host = {
+    location,
+    history: {
+      get state() {
+        return entries[index]?.state;
+      },
+      replaceState(state: unknown, _title: string, url?: string) {
+        if (url) location.hash = new URL(url, "https://app.example").hash;
+        entries[index] = { state, hash: location.hash };
+      },
+      pushState(state: unknown, _title: string, url: string) {
+        entries = entries.slice(0, index + 1);
+        location.hash = new URL(url, "https://app.example").hash;
+        entries.push({ state, hash: location.hash });
+        index++;
+      },
+      back: () => pending.push(-1),
+      forward: () => pending.push(1),
+      go: (delta: number) => pending.push(delta),
+    },
+    sessionStorage: {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    },
+    addEventListener: events.addEventListener.bind(events),
+    removeEventListener: events.removeEventListener.bind(events),
+  } as unknown as Window;
+  // Land every traversal, including any a landing starts.
+  const land = () =>
+    act(async () => {
+      for (let turn = 0; pending.length && turn < 10; turn++) {
+        for (const delta of pending.splice(0)) traverse(delta);
+        await Promise.resolve();
+      }
+    });
+  return { driver: createBrowserHistory(host), pending, land };
+}
+
+it("gives an opening made before a close's return lands its visit after it", async () => {
+  const returns = deferredReturns();
+  const page = fixture(undefined, "tabs", switchboard, returns.driver);
+  page.open({ channelId: "alpha", threadId: "root" });
+  page.open({ channelId: "beta" }, { keep: true });
+  const closing = page.navigation.snapshot().entry;
+  page.close({ channelId: "beta" });
+  page.open({ channelId: "dm" }, { keep: true });
+  page.close({ channelId: "alpha", threadId: "root" });
+  // The opening, and the second close, wait for the return in flight.
+  expect(returns.pending).toHaveLength(1);
+  expect(page.navigation.snapshot().entry).toBe(closing);
+  await returns.land();
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "conversation:dm" } },
+  });
+  expect(screen.getByText("conversation in Alice")).toBeVisible();
+  act(() => page.navigation.back());
+  await returns.land();
+  expect(page.navigation.snapshot().entry.target).toEqual(switchboard);
+});
+
+it("visits an opening made while a close returns once the return lands", async () => {
+  const returns = deferredReturns();
+  const page = fixture(undefined, "tabs", switchboard, returns.driver);
+  page.open({ channelId: "alpha", threadId: "root" });
+  page.open({ channelId: "beta" }, { keep: true });
+  page.close({ channelId: "beta" });
+  page.open({ channelId: "dm" }, { keep: true });
+  await returns.land();
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "conversation:dm" } },
+  });
+  expect(screen.getByText("conversation in Alice")).toBeVisible();
+  act(() => page.navigation.back());
+  await returns.land();
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "thread:alpha:root" } },
+  });
+});
+
+it("lands a return as the last close before it leaves the page", async () => {
+  const returns = deferredReturns();
+  const page = fixture(undefined, "tabs", switchboard, returns.driver);
+  page.open({ channelId: "alpha" }, { keep: true });
+  page.open({ channelId: "alpha", threadId: "root" }, { keep: true });
+  page.open({ channelId: "beta" }, { keep: true });
+  page.close({ channelId: "beta" });
+  hidePane();
+  page.close({ channelId: "alpha", threadId: "root" });
+  await returns.land();
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "conversation:alpha" } },
+  });
+  expect(paneShown()).toBe(false);
+});
+
+it("leaves a hidden tab pane hidden when a close's return lands", async () => {
+  const returns = deferredReturns();
+  const page = fixture(undefined, "tabs", switchboard, returns.driver);
+  page.open({ channelId: "alpha" }, { keep: true });
+  page.open({ channelId: "beta" }, { keep: true });
+  hidePane();
+  expect(paneShown()).toBe(false);
+  page.close({ channelId: "beta" });
+  await returns.land();
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...switchboard,
+    route: { version: 1, params: { tab: "conversation:alpha" } },
+  });
+  expect(paneShown()).toBe(false);
+});
+
+it("retires a closed tab's visits only in the scope that closed it", () => {
+  const scoped = (communityOrigin: string): OpenTarget => ({
+    ...switchboard,
+    scope: { viewer: "a".repeat(64), communityOrigin },
+  });
+  const page = fixture(undefined, "tabs", scoped("https://a.example"));
+  page.open({ channelId: "alpha", threadId: "root" });
+  act(() => {
+    void page.navigation.open(scoped("https://b.example"));
+  });
+  page.open({ channelId: "alpha", threadId: "root" });
+  expect(page.close({ channelId: "alpha", threadId: "root" })).toBe(true);
+  expect(page.navigation.snapshot().entry.target).toEqual(
+    scoped("https://b.example"),
+  );
+  traverse(page, "back");
+  expect(page.navigation.snapshot().entry.target).toEqual({
+    ...scoped("https://a.example"),
+    route: { version: 1, params: { tab: "thread:alpha:root" } },
+  });
+});
+
+it("reopens a tab with Back without taking focus to its composer", () => {
+  const page = fixture(undefined, "tabs");
+  page.open({ channelId: "alpha" });
+  page.open({ channelId: "beta" });
+  traverse(page, "back");
+  // A falsy request asks for no focus.
+  expect(screen.getByText("conversation in alpha")).toHaveAttribute(
+    "data-focus",
+    "0",
+  );
+});

@@ -776,6 +776,7 @@ function ReviewComments({
               className={styles.mediaReviewComment}
             >
               <MessageRow
+                collapseDetails
                 row={row}
                 recordedActivity={stableActivity.activity(
                   row.id,

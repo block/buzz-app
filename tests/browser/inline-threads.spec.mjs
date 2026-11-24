@@ -1,12 +1,9 @@
 import { test, expect } from "./fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
-import { openPage } from "./navigation.mjs";
 import { clickRow, open, settle } from "./timeline.mjs";
 
-// Browser-only: the inline thread and details are dialogs on the conversation
-// visit. Only real history events, layout around a composer and the composer's
-// draft storage across a remount prove them. Address parsing and the setting
-// are covered by their unit tests.
+// Browser-only: real history events, clipping of Details, layout around a
+// composer, and draft storage across a remount.
 test.use({
   productionBroker: true,
   readState: true,
@@ -28,34 +25,30 @@ const sheet = (page) =>
   page
     .locator("[data-details-sheet-surface]")
     .filter({ has: threadHeading(page) });
-// A details sheet holds no thread of its own.
-const detailsSheet = (page) =>
-  page
-    .locator("[data-details-sheet-surface]")
-    .filter({ hasNot: threadHeading(page) });
 const threadTab = (page, root) =>
   page.locator(`[role="tab"][data-tab-value="thread:alpha:${root.id}"]`);
 const reply = (scope) =>
   scope.getByRole("textbox", { name: "Reply to thread", exact: true });
 const side = (page) => page.locator("[data-panel-workspace]");
-const filler = "More of it follows here. ".repeat(30);
+const fullDetails = "The full findings end here.";
 /** A peer's details message: in `root`'s thread, or the channel's own. */
-const details = (app, text, root) =>
+const details = (app, text, root, body = "More findings follow.") =>
   app.append(
     "primary",
     "alpha",
-    `${text}\n\n${filler}`,
+    `${text}\n\n${body}\n\n${fullDetails}`,
     true,
     false,
     root?.id,
     undefined,
     [["audience", "details"]],
   );
-const showMore = (scope, text) =>
-  scope
-    .locator("[data-message-id]")
-    .filter({ hasText: text })
-    .getByRole("button", { name: "Show more", exact: true });
+const message = (scope, event) =>
+  scope.locator(`[data-message-id="${event.id}"]`);
+const showMore = (row) =>
+  row.getByRole("button", { name: "Show more", exact: true });
+const showLess = (row) =>
+  row.getByRole("button", { name: "Show less", exact: true });
 const close = (scope) =>
   scope.getByRole("button", { name: "Close", exact: true }).first();
 
@@ -64,88 +57,42 @@ test.describe("Side panel", () => {
 
   test("a thread still opens in its tab", async ({ page, app }) => {
     await open(page, app);
-    const [root] = roots(app);
+    const root = details(app, "Channel findings");
+    const response = app.append(
+      "primary",
+      "alpha",
+      "A reply to the findings",
+      true,
+      false,
+      root.id,
+    );
+    app.threadSummary(root.id, [response.pubkey], 1);
+    const row = message(page.locator("[data-channel-timeline]"), root);
+    await expect(row.getByText(fullDetails, { exact: true })).toBeVisible();
+    await expect(showMore(row)).toHaveCount(0);
     await clickRow(page, viewThread(page, root));
     await expect(threadTab(page, root)).toBeVisible();
     await expect(reply(side(page))).toBeFocused();
     await expect(sheet(page)).toHaveCount(0);
   });
 
-  test("details in a thread tab read over that tab's reply box", async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    const [root, other] = roots(app);
-    await clickRow(page, viewThread(page, root));
-    await expect(threadTab(page, root)).toBeVisible();
-    details(app, "Tab findings", root);
-    await showMore(side(page), "Tab findings").click();
-    const reader = detailsSheet(page);
-    await expect(reader).toBeVisible();
-    await expect(reader.getByText(filler.trim())).toBeVisible();
-    // It is the tab's dialog: drawn inside the side pane, around its composer.
-    await expect(
-      side(page).locator("[data-details-sheet-surface]"),
-    ).toHaveCount(1);
-    const [outer, inner] = [
-      await reader.boundingBox(),
-      await reply(side(page)).locator("xpath=ancestor::form[1]").boundingBox(),
-    ];
-    expect(outer.x).toBeLessThan(inner.x);
-    expect(outer.y + outer.height).toBeGreaterThan(inner.y + inner.height);
-    await page.goBack();
-    await expect(reader).toHaveCount(0);
-    await expect(threadTab(page, root)).toBeVisible();
-    await page.goForward();
-    await expect(detailsSheet(page)).toBeVisible();
-    await close(detailsSheet(page)).click();
-    await expect(detailsSheet(page)).toHaveCount(0);
-    await expect(threadTab(page, root)).toBeVisible();
-    // The visit now names another thread, and the first tab is chosen
-    // again without a visit. Its details still read over it.
-    const selected = (tab) =>
-      expect(tab).toHaveAttribute("aria-selected", "true");
-    await clickRow(page, viewThread(page, other));
-    await selected(threadTab(page, other));
-    await threadTab(page, root).click();
-    await showMore(side(page), "Tab findings").click();
-    await expect(detailsSheet(page)).toBeVisible();
-    await selected(threadTab(page, root));
-    await page.reload();
-    await expect(detailsSheet(page)).toBeVisible();
-    await selected(threadTab(page, root));
-    await expect(threadTab(page, other)).toBeVisible();
-  });
-});
-
-test.describe("Main pane", () => {
-  test.use({ threadPlacement: "main" });
-
-  test("details from a thread tab chosen in a plain visit read over that tab", async ({
+  test("Details expand inside a side-pane thread tab", async ({
     page,
     app,
   }) => {
     await open(page, app);
     const [root] = roots(app);
     await clickRow(page, viewThread(page, root));
-    // Back to the plain channel visit, then choose the tab there.
-    await page.goBack();
-    await threadTab(page, root).click();
-    details(app, "Main findings", root);
-    const main = page.locator("[data-main-workspace]");
-    await showMore(main, "Main findings").click();
-    await expect(detailsSheet(page)).toBeVisible();
-    await expect(threadTab(page, root)).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await page.reload();
-    await expect(detailsSheet(page)).toBeVisible();
-    await expect(threadTab(page, root)).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    await expect(threadTab(page, root)).toBeVisible();
+
+    const row = message(side(page), details(app, "Tab findings", root));
+    const full = row.getByText(fullDetails, { exact: true });
+    await expect(showMore(row)).toBeVisible();
+    await expect(full).toBeHidden();
+    await showMore(row).click();
+    await expect(full).toBeVisible();
+    await expect(reply(side(page))).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 });
 
@@ -225,7 +172,7 @@ test.describe("Inline", () => {
     await expect.poll(() => display(conversationJump)).not.toBe("none");
   });
 
-  test("details nest over the inline thread: Back closes them first", async ({
+  test("Details expand and collapse in an inline thread without navigating", async ({
     page,
     app,
   }) => {
@@ -233,248 +180,39 @@ test.describe("Inline", () => {
     const [root] = roots(app);
     await clickRow(page, viewThread(page, root));
     await expect(sheet(page)).toBeVisible();
-    details(app, "Nested findings", root);
-    await showMore(sheet(page), "Nested findings").click();
-    await expect(detailsSheet(page)).toBeVisible();
-    await expect(detailsSheet(page).getByText(filler.trim())).toBeVisible();
-    await page.goBack();
-    await expect(detailsSheet(page)).toHaveCount(0);
-    await expect(sheet(page)).toBeVisible();
-    await page.goBack();
-    await expect(sheet(page)).toHaveCount(0);
-    await page.goForward();
-    await expect(sheet(page)).toBeVisible();
-    await expect(detailsSheet(page)).toHaveCount(0);
-    await page.goForward();
-    await expect(detailsSheet(page)).toBeVisible();
-    // Reload restores the thread and the details over it.
-    await page.reload();
-    await expect(sheet(page)).toBeVisible();
-    await expect(detailsSheet(page)).toBeVisible();
-    // Escape closes only the details, which cover the thread's header; then
-    // X on the thread closes it for good.
-    await page.keyboard.press("Escape");
-    await expect(detailsSheet(page)).toHaveCount(0);
-    await expect(sheet(page)).toBeVisible();
-    await close(sheet(page)).click();
-    await expect(sheet(page)).toHaveCount(0);
-    await page.goForward();
-    await expect(sheet(page)).toHaveCount(0);
-    await expect(detailsSheet(page)).toHaveCount(0);
-  });
 
-  test.describe("over a short thread", () => {
-    // Enough history that an older thread's root is outside the timeline.
-    test.use({ historyCounts: { alpha: 400, beta: 1 } });
+    const row = message(sheet(page), details(app, "Thread findings", root));
+    const full = row.getByText(fullDetails, { exact: true });
+    await expect(showMore(row)).toBeVisible();
+    await expect(full).toBeHidden();
 
-    test("details stack over it as a panel does, grow it to fit and wait for its reply box", async ({
-      page,
+    const visit = page.url();
+    await showMore(row).press("Enter");
+    await expect(full).toBeVisible();
+    await expect(showLess(row)).toBeFocused();
+    await expect(showLess(row)).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await reply(sheet(page)).fill("Thanks for the findings");
+    await expect(reply(sheet(page))).toHaveText("Thanks for the findings");
+    await expect(full).toBeVisible();
+
+    await showLess(row).press("Enter");
+    await expect(full).toBeHidden();
+    await expect(showMore(row)).toBeFocused();
+
+    const long = details(
       app,
-    }) => {
-      let gate;
-      await page.route("**/api/relay/primary/query", async (route) => {
-        if (gate && route.request().postData()?.includes(gate.root))
-          await gate.held;
-        await route.fallback();
-      });
-      await open(page, app);
-      const root = roots(app)[1];
-      const long = `${filler}\n\n`.repeat(3);
-      const findings = app.append(
-        "primary",
-        "alpha",
-        `Stacked findings\n\n${long}`,
-        true,
-        false,
-        root.id,
-        undefined,
-        [["audience", "details"]],
-      );
-      await clickRow(page, viewThread(page, root));
-      await expect(sheet(page).getByText("Unread reply 1")).toBeVisible();
-      const box = (locator) =>
-        locator.evaluate((element) => {
-          const { top, bottom, left, right, height } =
-            element.getBoundingClientRect();
-          return { top, bottom, left, right, height };
-        });
-      const short = await box(sheet(page));
-      await showMore(sheet(page), "Stacked findings").click();
-      await expect(detailsSheet(page)).toBeVisible();
-      // The details cover the thread's header, so its title and Close can't
-      // be reached, and they read over the thread rather than elsewhere.
-      const covered = async () => {
-        const [thread, reader] = [
-          await box(sheet(page)),
-          await box(detailsSheet(page)),
-        ];
-        const under = (locator) =>
-          locator.evaluate((element) => {
-            const { left, top, width, height } =
-              element.getBoundingClientRect();
-            return !element.contains(
-              document.elementFromPoint(left + width / 2, top + height / 2),
-            );
-          });
-        return {
-          inside:
-            reader.top >= thread.top &&
-            reader.left >= thread.left &&
-            reader.right <= thread.right &&
-            reader.bottom <= thread.bottom,
-          title: await under(threadHeading(page)),
-          close: await under(close(sheet(page))),
-        };
-      };
-      const stacked = { inside: true, title: true, close: true };
-      await expect.poll(covered).toEqual(stacked);
-      // The thread grows upward to fit them, and they read whole.
-      await expect
-        .poll(async () => (await box(sheet(page))).height)
-        .toBeGreaterThan(short.height);
-      const whole = (reader) => {
-        const body = reader.querySelector("[data-sheet-body]");
-        return body.scrollHeight <= body.clientHeight + 1;
-      };
-      await expect.poll(() => detailsSheet(page).evaluate(whole)).toBe(true);
-      // Nor can the keyboard reach the covered header's controls, whose Close
-      // would dismiss both; Tab still reaches the thread's reply box.
-      const header = threadHeading(page).locator("xpath=ancestor::header[1]");
-      const targets = [
-        await sheet(page).elementHandle(),
-        await header.elementHandle(),
-        await reply(sheet(page)).elementHandle(),
-      ];
-      const stops = { header: 0, reply: 0 };
-      // Back from the details through the thread, until focus leaves it.
-      await detailsSheet(page).getByText("Stacked findings").click();
-      for (let step = 0; step < 60; step++) {
-        await page.keyboard.press("Shift+Tab");
-        const [inThread, onHeader, onReply] = await page.evaluate(
-          ([thread, covered, box]) => [
-            thread.contains(document.activeElement),
-            covered.contains(document.activeElement),
-            box === document.activeElement,
-          ],
-          targets,
-        );
-        if (!inThread) break;
-        if (onHeader) stops.header++;
-        if (onReply) stops.reply++;
-      }
-      expect(stops.header).toBe(0);
-      expect(stops.reply).toBeGreaterThan(0);
-      await detailsSheet(page).getByText("Stacked findings").click();
-      await page.keyboard.press("Escape");
-      await expect(detailsSheet(page)).toHaveCount(0);
-      // Closed, the header is reachable again.
-      await close(sheet(page)).focus();
-      await expect(close(sheet(page))).toBeFocused();
-      // Closed, the thread settles back to its own height.
-      await expect
-        .poll(async () => (await box(sheet(page))).height)
-        .toBeLessThan(short.height + 1);
+      "Long findings",
+      root,
+      Array(6).fill("More of it follows here. ".repeat(30).trim()).join("\n\n"),
+    );
+    const longRow = message(sheet(page), long);
+    await showMore(longRow).click();
+    await expect(longRow.getByText("Long findings")).toBeInViewport();
 
-      // The same address over an older thread, whose root is read rather
-      // than found in the timeline: the details wait for its reply box
-      // instead of opening over the window first.
-      await showMore(sheet(page), "Stacked findings").click();
-      await expect(detailsSheet(page)).toBeVisible();
-      const older = app.histories.get("primary/alpha")[3];
-      const olderFindings = app.append(
-        "primary",
-        "alpha",
-        `Older findings\n\n${long}`,
-        true,
-        false,
-        older.id,
-        undefined,
-        [["audience", "details"]],
-      );
-      const address = page
-        .url()
-        .replaceAll(root.id, older.id)
-        .replaceAll(findings.id, olderFindings.id);
-      expect(address).not.toEqual(page.url());
-      let release;
-      gate = { root: older.id, held: new Promise((done) => (release = done)) };
-      const detailsRead = page.waitForResponse(
-        (response) =>
-          response.url().endsWith("/api/relay/primary/query") &&
-          !!response.request().postData()?.includes(olderFindings.id) &&
-          !response.request().postData()?.includes(older.id),
-      );
-      await page.goto(address);
-      await detailsRead;
-      await page.evaluate(
-        () =>
-          new Promise((done) =>
-            requestAnimationFrame(() => requestAnimationFrame(done)),
-          ),
-      );
-      await expect(sheet(page)).toBeVisible();
-      await expect(page.getByRole("dialog")).toHaveCount(1);
-      release();
-      await expect(
-        detailsSheet(page).getByText("Older findings"),
-      ).toBeVisible();
-      await expect.poll(covered).toEqual(stacked);
-    });
-  });
-
-  test.describe("on a connection that can only read", () => {
-    test.use({ productionBroker: false, channelWriteKinds: [30315] });
-
-    test("details over its thread open as a dialog", async ({ page, app }) => {
-      await page.goto(app.origin);
-      await openPage(page, "Messages");
-      const root = roots(app)[1];
-      await expect(viewThread(page, root)).toBeVisible();
-      await settle(page);
-      details(app, "Read-only findings", root);
-      await clickRow(page, viewThread(page, root));
-      await expect(threadTab(page, root)).toBeVisible();
-      await expect(side(page)).toContainText("supports reading only");
-      await showMore(side(page), "Read-only findings").click();
-      const reader = page
-        .getByRole("dialog")
-        .filter({ hasText: filler.trim() });
-      await expect(reader).toBeVisible();
-      await close(reader).click();
-      await expect(reader).toHaveCount(0);
-    });
-  });
-
-  test.describe("in an archived channel", () => {
-    test.use({ lifecycleVisibility: { archived: ["alpha"], hidden: [] } });
-
-    test("details over a thread without a reply box open as a dialog", async ({
-      page,
-      app,
-    }) => {
-      // An archived channel is off the sidebar; its address still opens it.
-      await page.goto(app.origin);
-      await openPage(page, "Messages");
-      const timeline = page.locator("[data-channel-timeline]");
-      await expect(timeline.locator("[data-message-id]").first()).toBeVisible();
-      await page.goto(page.url().replace("%22beta%22", "%22alpha%22"));
-      await expect(
-        timeline.locator(`[data-message-id="${roots(app)[1].id}"]`),
-      ).toBeVisible();
-      await settle(page);
-      const root = roots(app)[1];
-      details(app, "Archived findings", root);
-      await clickRow(page, viewThread(page, root));
-      const thread = threadTab(page, root);
-      await expect(thread).toBeVisible();
-      await showMore(side(page), "Archived findings").click();
-      const reader = page
-        .getByRole("dialog")
-        .filter({ hasText: filler.trim() });
-      await expect(reader).toBeVisible();
-      await close(reader).click();
-      await expect(reader).toHaveCount(0);
-    });
+    await expect(page).toHaveURL(visit);
+    await page.goBack();
+    await expect(sheet(page)).toHaveCount(0);
   });
 
   test("a thread sheet fits its content, starts at its header's edge and fades into its own surface", async ({
@@ -528,33 +266,49 @@ test.describe("Inline", () => {
     ).toBe("none");
   });
 
-  test("details in the conversation read over its composer", async ({
+  test("top-level Details read in full in the channel timeline", async ({
     page,
     app,
   }) => {
     await open(page, app);
-    details(app, "Channel findings");
-    const timeline = page.locator("[data-channel-timeline]");
-    await showMore(timeline, "Channel findings").click();
-    const reader = detailsSheet(page);
-    await expect(reader).toBeVisible();
-    await expect(reader).toBeFocused();
-    // The composer stays usable above the reader.
-    const composer = page.getByRole("textbox", { name: "Message #Alpha" });
-    await composer.click();
-    await composer.pressSequentially("Thanks");
-    await expect(reader).toBeVisible();
-    await page.goBack();
+    const event = details(app, "Channel findings");
+    const response = app.append(
+      "primary",
+      "alpha",
+      "A reply to the findings",
+      true,
+      false,
+      event.id,
+    );
+    app.threadSummary(event.id, [response.pubkey], 1);
+    const row = message(page.locator("[data-channel-timeline]"), event);
+    await expect(row.getByText(fullDetails, { exact: true })).toBeVisible();
+    await expect(showMore(row)).toHaveCount(0);
+    await clickRow(page, viewThread(page, event));
+    await expect(
+      sheet(page).getByText("A reply to the findings"),
+    ).toBeVisible();
+  });
+
+  test("a saved Details reader address still opens", async ({ page, app }) => {
+    await open(page, app);
+    const event = details(app, "Saved findings");
+    const row = message(page.locator("[data-channel-timeline]"), event);
+    await expect(row).toBeVisible();
+
+    const url = new URL(page.url());
+    const target = JSON.parse(
+      decodeURIComponent(url.hash.slice("#buzz=".length)),
+    );
+    url.hash = `buzz=${encodeURIComponent(
+      JSON.stringify({ ...target, layer: { messageId: event.id } }),
+    )}`;
+    await page.goto(url.href);
+    const reader = page.getByRole("dialog").filter({ hasText: fullDetails });
+    await expect(reader.getByText(fullDetails, { exact: true })).toBeVisible();
+    await close(reader).click();
     await expect(reader).toHaveCount(0);
-    await page.goForward();
-    await expect(detailsSheet(page)).toBeVisible();
-    await page.reload();
-    await expect(detailsSheet(page)).toBeVisible();
-    await detailsSheet(page).focus();
-    await page.keyboard.press("Escape");
-    await expect(detailsSheet(page)).toHaveCount(0);
-    await page.goForward();
-    await expect(detailsSheet(page)).toHaveCount(0);
+    await expect(row.getByText(fullDetails, { exact: true })).toBeVisible();
   });
 
   test("Move to side panel hands the thread, its draft and the reply it answers to a tab", async ({
@@ -658,33 +412,5 @@ test.describe("Inline", () => {
     } finally {
       release();
     }
-  });
-});
-
-test.describe("Sending", () => {
-  test.use({ productionBroker: false, sendChannels: ["alpha"] });
-
-  test("a send from the composer closes the details read over it", async ({
-    page,
-    app,
-  }) => {
-    await open(page, app);
-    details(app, "Channel findings");
-    await showMore(
-      page.locator("[data-channel-timeline]"),
-      "Channel findings",
-    ).click();
-    await expect(detailsSheet(page)).toBeVisible();
-    const composer = page.getByRole("textbox", { name: "Message #Alpha" });
-    await composer.click();
-    await composer.pressSequentially("Thanks, merging");
-    await composer.press("Enter");
-    await expect(detailsSheet(page)).toHaveCount(0);
-    await expect(
-      page.locator("[data-channel-timeline]").getByText("Thanks, merging"),
-    ).toBeVisible();
-    // Like ✕, the send retired the visit: Forward does not reopen it.
-    await page.goForward();
-    await expect(detailsSheet(page)).toHaveCount(0);
   });
 });

@@ -4551,14 +4551,12 @@ html[data-keyboard-navigation]
   letter-spacing: var(--text-label-sm--letter-spacing);
 }
 
-/* A details message reads in the chat as its opening brief, at full contrast,
-   then the first line of what follows fading out. The rest waits for the
-   reader; a long brief ends in an ellipsis. */
+/* A collapsed details message in a thread shows its opening brief and fades
+   the first line of what follows. */
 .detailsPreview {
   --details-lines: 4;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   min-width: 0;
 }
 .detailsClip {
@@ -4613,6 +4611,7 @@ html[data-keyboard-navigation]
   display: none;
 }
 .detailsMore {
+  align-self: flex-start;
   display: flex;
   margin-top: var(--space-1);
 }

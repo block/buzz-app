@@ -157,6 +157,9 @@ export type MessageRowProps = {
   row: ChannelMessage;
   /** Read-only presentations can retain their own prose highlighting. */
   bodyContent?: ReactNode;
+  /** Start Details messages collapsed in a thread. */
+  collapseDetails?: boolean;
+  onDetailsToggle?: (() => void) | undefined;
   /** Narrow previews use the available width without opposite-avatar clearance. */
   fullWidth?: boolean;
   recordedActivity?: ActivityRowPresentation | undefined;
@@ -271,6 +274,8 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 function MessageRowContent({
   row,
   bodyContent,
+  collapseDetails = false,
+  onDetailsToggle,
   fullWidth = false,
   shownRow,
   withoutReactions = false,
@@ -1033,6 +1038,22 @@ function MessageRowContent({
   );
   const { edited: _forwardEdited, ...forwardDisplayRow } = displayRow;
   const forwardNote = timeReply?.content ?? row.forward?.note;
+  const hasDetailsDisclosure = collapseDetails && row.audience === "details";
+  const messageMarkdown = (
+    <MessageMarkdown
+      directory={directory}
+      session={references}
+      scope={scope}
+      row={displayRow}
+      extensions={extensions}
+      media={media}
+      onOpenLink={openLink}
+      canOpenLink={canOpenLink}
+      participantProfiles={participantProfiles}
+      largeEmoji={!hasDetailsDisclosure && emojiOnly}
+      edited={editedInBody && displayRow.edited}
+    />
+  );
   const body =
     bodyContent ??
     (row.forward ? (
@@ -1103,55 +1124,12 @@ function MessageRowContent({
           </p>
         )}
       </div>
-    ) : row.audience === "details" ? (
-      // Details read as their brief, which opens into their own reader.
-      <DetailsMessage
-        messageId={row.id}
-        channelId={row.channelId}
-        author={name}
-        createdAt={row.createdAt}
-        keepMounted={keepMounted}
-        preview={
-          <MessageMarkdown
-            directory={directory}
-            session={references}
-            scope={scope}
-            row={displayRow}
-            extensions={extensions}
-            media={media}
-            onOpenLink={openLink}
-            canOpenLink={canOpenLink}
-            participantProfiles={participantProfiles}
-            edited={editedInBody && displayRow.edited}
-          />
-        }
-      >
-        <MessageMarkdown
-          directory={directory}
-          session={references}
-          scope={scope}
-          row={displayRow}
-          extensions={extensions}
-          media={media}
-          onOpenLink={openLink}
-          canOpenLink={canOpenLink}
-          participantProfiles={participantProfiles}
-        />
+    ) : hasDetailsDisclosure ? (
+      <DetailsMessage onToggle={onDetailsToggle}>
+        {messageMarkdown}
       </DetailsMessage>
     ) : (
-      <MessageMarkdown
-        directory={directory}
-        session={references}
-        scope={scope}
-        row={displayRow}
-        extensions={extensions}
-        media={media}
-        onOpenLink={openLink}
-        canOpenLink={canOpenLink}
-        participantProfiles={participantProfiles}
-        largeEmoji={emojiOnly}
-        edited={editedInBody && displayRow.edited}
-      />
+      messageMarkdown
     ));
   const avatarSize = compactAvatar && !flat ? "small" : "default";
   const authorName = (

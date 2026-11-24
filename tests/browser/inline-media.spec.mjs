@@ -37,7 +37,16 @@ test("media opens in a sheet over its view without a history step", async ({
     undefined,
     photo,
   );
-  app.append("primary", "alpha", "Media comment", false, true, event.id);
+  app.append(
+    "primary",
+    "alpha",
+    "Media comment\n\nMore findings follow.\n\nThe full comment ends here.",
+    false,
+    true,
+    event.id,
+    undefined,
+    [["audience", "details"]],
+  );
   const row = page
     .getByRole("region", { name: "Channel message history" })
     .locator(`[data-message-id="${event.id}"]`);
@@ -52,11 +61,22 @@ test("media opens in a sheet over its view without a history step", async ({
   await expect(
     comments.getByText("Media comment", { exact: true }),
   ).toBeVisible();
+  const full = comments.getByText("The full comment ends here.", {
+    exact: true,
+  });
+  await expect(full).toBeHidden();
+  await comments
+    .getByRole("button", { name: "Show more", exact: true })
+    .click();
+  await expect(full).toBeVisible();
   await expect(
     comments.getByRole("textbox", { name: "Reply to thread" }),
   ).toBeVisible();
-  // It covers the conversation's composer, which stays mounted beneath it.
-  const composer = page.getByRole("form", { name: /^Send a message to/ });
+  // The composer stays mounted and inert beneath the viewer.
+  const composer = page.getByRole("form", {
+    name: /^Send a message to/,
+    includeHidden: true,
+  });
   const [outer, inner] = [
     await sheet.boundingBox(),
     await composer.boundingBox(),

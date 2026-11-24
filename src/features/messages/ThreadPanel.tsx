@@ -912,6 +912,12 @@ function ThreadMessages({
   // The reading anchor's id while its row is detached, until it remounts.
   const remounted = useRef<{ id: string; top: number } | undefined>(undefined);
   const targetAnchor = useRef<number | undefined>(undefined);
+  const keepDetailsStartInView = useCallback(() => {
+    // Treat disclosure like opening a reply branch. Let the reader stay at
+    // the start of the message when its expanded text grows past the viewport.
+    follow.current = false;
+    targetAnchor.current = undefined;
+  }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
     targetAnchor.current = undefined;
@@ -2027,6 +2033,8 @@ function ThreadMessages({
         const requestId = presentation.replyRequests.get(row.id);
         return (
           <MessageRow
+            collapseDetails
+            onDetailsToggle={keepDetailsStartInView}
             representedAgents={stableActivity.agents(
               row.id,
               presentation.representedAgents.get(row.id),
@@ -2465,6 +2473,8 @@ function ThreadMessages({
               {snapshot.root && intro}
               {snapshot.root ? (
                 <MessageRow
+                  collapseDetails
+                  onDetailsToggle={keepDetailsStartInView}
                   viewer={session.viewer}
                   extensions={extensions}
                   session={session}

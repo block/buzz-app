@@ -45,6 +45,7 @@ function Layer({ open }: { open: OpenLayer }) {
   const onOpenChange = (next: boolean) => {
     if (!next) address.dismiss(open);
   };
+  // Details disclosures now expand in their row. Saved reader visits still open here.
   if (open.target === undefined)
     return (
       <DetailsReader channelId={open.channelId} messageId={open.messageId}>

@@ -1,17 +1,12 @@
 import {
   type ReactNode,
-  useContext,
-  useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
 } from "react";
-import { formatItemTimestamp } from "../../shared/datetime";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { useComposerScope } from "./composer-overlay";
 import styles from "./Messages.module.css";
-import { LayerAddressContext } from "./view-layer";
 
 const HEADING = /^H[1-6]$/;
 
@@ -31,49 +26,22 @@ function holdsBack(clip: HTMLElement) {
   );
 }
 
-/** A details message reads in the chat as its opening brief, and opens whole.
- * On a page that addresses its views' layers, the view's `LayerReader` draws
- * it from its id, over the view's composer; elsewhere, as in Bestie, this row
- * opens it in a dialog. */
+/** A Details message opens in its own row when read in a thread. */
 export function DetailsMessage({
-  messageId,
-  channelId,
-  author,
-  createdAt,
-  preview,
-  keepMounted,
   children,
+  onToggle,
 }: {
-  messageId: string;
-  channelId: string;
-  author: string;
-  createdAt: number;
-  /** The whole message as the chat renders it; only its brief shows. */
-  preview: ReactNode;
-  /** Pins the row in a virtualized list while it draws the reader. */
-  keepMounted?: ((messageId: string) => () => void) | undefined;
-  /** The reader's body. */
   children: ReactNode;
+  onToggle?: (() => void) | undefined;
 }) {
-  const view = useComposerScope();
-  const address = useContext(LayerAddressContext);
-  const [local, setLocal] = useState(false);
-  const addressed = !!address && !!view && !view.local;
-  const show = () =>
-    addressed
-      ? address.show({ messageId, channelId, rootId: view.rootId })
-      : setLocal(true);
-  const close = () => setLocal(false);
-  useEffect(
-    () => (local ? keepMounted?.(messageId) : undefined),
-    [local, keepMounted, messageId],
-  );
-  const trigger = useRef<HTMLButtonElement>(null);
+  const contentId = useId();
   const clip = useRef<HTMLDivElement>(null);
   const [clipped, setClipped] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: An edit can change what is clipped without resizing the row.
   useLayoutEffect(() => {
     const element = clip.current;
-    if (!element) return;
+    if (!element || expanded) return;
     const measure = () => setClipped(holdsBack(element));
     measure();
     const observer =
@@ -82,63 +50,49 @@ export function DetailsMessage({
         : new ResizeObserver(measure);
     observer?.observe(element);
     return () => observer?.disconnect();
-  }, []);
-  const time = formatItemTimestamp(createdAt, { withTime: true });
-  const reader = <div className={styles.detailsReader}>{children}</div>;
+  }, [children, expanded]);
+  const toggle = () => {
+    onToggle?.();
+    setExpanded(!expanded);
+  };
   return (
-    <div className={styles.detailsPreview} data-clipped={clipped || undefined}>
+    <div
+      className={styles.detailsPreview}
+      data-clipped={(clipped && !expanded) || undefined}
+    >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: Show more is the keyboard path; this only widens the pointer target. */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: Show more is the keyboard path; this only widens the pointer target. */}
       <div
+        id={contentId}
         ref={clip}
-        className={styles.detailsClip}
+        className={expanded ? undefined : styles.detailsClip}
         onClick={(event) => {
           // Links, mentions and selected text keep their own meaning.
           if (
             !clipped ||
+            expanded ||
             (event.target instanceof Element &&
               event.target.closest("a, button, [role=button]")) ||
             !getSelection()?.isCollapsed
           )
             return;
-          show();
+          toggle();
         }}
       >
-        {preview}
+        {children}
       </div>
-      {clipped && (
+      {(clipped || expanded) && (
         <span className={styles.detailsMore}>
           <Button
-            ref={trigger}
             variant="link"
             size="inline"
-            aria-haspopup="dialog"
-            onClick={show}
+            aria-expanded={expanded}
+            aria-controls={contentId}
+            onClick={toggle}
           >
-            Show more
+            {expanded ? "Show less" : "Show more"}
           </Button>
         </span>
-      )}
-      {local && (
-        <Dialog
-          open
-          onOpenChange={(next) => {
-            if (!next) close();
-          }}
-          title={author}
-          description={time}
-          bodyLayout="flex"
-          finalFocus={trigger}
-        >
-          <section
-            className={styles.detailsDialogScroll}
-            aria-label="Message"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll owner must support keyboard scrolling.
-            tabIndex={0}
-          >
-            {reader}
-          </section>
-        </Dialog>
       )}
     </div>
   );

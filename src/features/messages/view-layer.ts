@@ -19,8 +19,7 @@ export type PanelLayerContent = Readonly<{
   openAsTab(): void;
 }>;
 /** A page whose address carries the open layer: opening and closing it are
- * navigation. Without one, a details message opens in place and panels open
- * as tabs. */
+ * navigation. Without one, panels open as tabs. */
 export type LayerAddress = Readonly<{
   open: OpenLayer | undefined;
   show(layer: OpenLayer): void;

@@ -82,7 +82,7 @@ const audience = {
   type: "string",
   enum: ["everyone", "details", "agents"],
   description:
-    "everyone: for the people here, a few sentences at most. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
+    "everyone: for the people here, a few sentences at most. details: a longer write-up for people. Start with a brief of at most 50 words for thread and notification previews. Send it last. agents: delegating to, asking or answering another agent",
 } as const;
 const request = {
   type: "string",
@@ -3708,7 +3708,7 @@ function checkLength(
   body: string,
 ) {
   if (audience === "agents") return;
-  // Count what people see: the brief the chat and notifications show.
+  // Details previews in threads and notifications use the brief.
   const shown = audience === "details" ? detailsBrief(body) : body;
   const count = words(shown);
   const limit = SHOWN_WORDS[audience];

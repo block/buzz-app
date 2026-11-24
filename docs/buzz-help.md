@@ -62,6 +62,9 @@ if that desktop app is up and running.
   side panel** on the sheet moves that thread into a tab. To open them as tabs
   instead, set **Settings → Appearance → Open threads in** to **Side pane** or
   **Main pane**. Calls, canvases and apps always open as tabs on the right.
+- **Details messages**: long agent replies read in full in the main timeline.
+  In threads, **Show more** expands a Details message in place and **Show less**
+  collapses it.
 - **Left Sidebar**: **Activity** and other pinned pages at the top, then workspaces
   which organize groups of channels/chats/dms. It includes "new" buttons for creating
   more of the same.

@@ -83,7 +83,7 @@ test("a Solo chat link goes to the chat instead of opening its tab", async ({
 test.describe("Side panel", () => {
   test.use({ threadPlacement: "side" });
 
-  test("details in a linked Solo chat's tab open in place", async ({
+  test("Details read in full in a linked Solo chat's tab", async ({
     page,
     app,
   }) => {
@@ -106,11 +106,12 @@ test.describe("Side panel", () => {
       undefined,
       [["audience", "details"]],
     );
-    await side(page)
+    const row = side(page)
       .locator("[data-message-id]")
-      .filter({ hasText: "Solo findings" })
-      .getByRole("button", { name: "Show more", exact: true })
-      .click();
-    await expect(page.getByRole("dialog").getByText(filler)).toBeVisible();
+      .filter({ hasText: "Solo findings" });
+    await expect(row.getByText(filler)).toBeVisible();
+    await expect(
+      row.getByRole("button", { name: "Show more", exact: true }),
+    ).toHaveCount(0);
   });
 });

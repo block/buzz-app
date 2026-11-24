@@ -1,6 +1,7 @@
 // Model routes: choices such as "Auto Balanced" that a bundled plugin adds to
 // a harness's Model menu (`Agents.registerModelRouter`). An agent saves a
-// route as its model, `route:<id>`. Each turn it starts asks the plugin's
+// route as its model, `route:<id>`; its synced settings keep the route beside
+// the model (`synced-route.ts`). Each turn it starts asks the plugin's
 // router which of the harness's own models and effort levels to run it on:
 // the harness calls `Delivery.route` where a delivery starts a turn, and runs
 // that turn on its answer as on a per-message pick. A message that steers a

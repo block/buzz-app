@@ -161,7 +161,10 @@ seconds for it, then falls back to `BUZZ_RECOMMENDED_AGENT`, so set both.
 
 A bundled plugin can also add **model routes**, such as "Auto Balanced", to the
 Claude Code, Codex and Goose Model menus with `ctx.agents.registerModelRouter(router)`.
-An agent on a route saves `route:<id>` as its model. Before each turn it starts
+An agent on a route saves `route:<id>` as its model. Its synced settings
+revision keeps the route beside `settings`, as `"modelRoute": "<id>"`, with an
+empty `model`, so older versions run the harness's default. A model saved by an
+older version takes the agent off the route. Before each turn it starts
 while idle in a conversation, Buzz asks `router.select` for one of the
 harness's models and a thinking level. A turn that steers a running one keeps
 its pick, and a failure or no answer within 30 seconds uses the route's

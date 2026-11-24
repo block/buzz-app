@@ -1111,3 +1111,45 @@ it.each(["Close", "Back"] as const)(
   },
   15_000,
 );
+
+it("opens Software updates and checks from the macOS menu request, not behind a modal", async () => {
+  await setup();
+  if (!services) throw new Error("Missing services");
+  const updates = services.updates;
+  const request = () =>
+    act(() => {
+      window.dispatchEvent(new Event("buzz:check-for-updates"));
+    });
+  const confirmation = document.createElement("div");
+  confirmation.setAttribute("role", "alertdialog");
+  confirmation.setAttribute("aria-modal", "true");
+  document.body.append(confirmation);
+  try {
+    request();
+    await act(async () => {});
+    expect(screen.queryByRole("dialog", { name: "Settings" })).toBeNull();
+    expect(updates.snapshot().state).toBe("idle");
+  } finally {
+    confirmation.remove();
+  }
+  request();
+  const settings = await screen.findByRole("dialog", { name: "Settings" });
+  expect(
+    await within(settings).findByRole("heading", { name: "Software updates" }),
+  ).toBeVisible();
+  await waitFor(() => expect(updates.snapshot().state).not.toBe("idle"));
+  // Settings is itself a modal; the request still moves it to Software updates.
+  const current = services;
+  await act(async () => {
+    void current.navigation.open({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+    });
+  });
+  await within(settings).findByRole("heading", { name: "Appearance" });
+  request();
+  expect(
+    await within(settings).findByRole("heading", { name: "Software updates" }),
+  ).toBeVisible();
+});

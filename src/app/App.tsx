@@ -75,6 +75,10 @@ import {
   type JoinForm,
 } from "../features/communities/invite-intent";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
+import {
+  activeModal,
+  behindActiveOverlay,
+} from "../shared/design-system/overlayLayer";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
 import {
   LaunchSignIn,
@@ -391,6 +395,28 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       ),
     [services],
   );
+  // macOS Buzz → Check for Updates… checks and shows the result in Settings.
+  // Behind a modal it does nothing, unless that modal is a navigation visit
+  // such as Settings itself.
+  useEffect(() => {
+    const check = () => {
+      const modal = activeModal(document);
+      if (
+        modal &&
+        (!modal.matches("[data-navigation-visit]") ||
+          behindActiveOverlay(modal))
+      )
+        return;
+      void services.navigation.open({
+        version: 1,
+        kind: "settings",
+        section: "updates",
+      });
+      void services.updates.checkForUpdate();
+    };
+    window.addEventListener("buzz:check-for-updates", check);
+    return () => window.removeEventListener("buzz:check-for-updates", check);
+  }, [services]);
   useEffect(
     () => registerNavigationShortcuts(services.shortcuts, services.navigation),
     [services],

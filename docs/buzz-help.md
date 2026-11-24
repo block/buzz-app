@@ -73,7 +73,8 @@ if that desktop app is up and running.
   - **Community admin**: **Membership** for owners and admins.
   - **Buzz**: **Identity**, **Security** (desktop only), **Appearance**,
     **Notifications**, **Shortcuts**, **Agent setup**, **Decisions API**,
-    **External apps** and **Software updates**.
+    **External apps** and **Software updates**. In the Mac app, **Buzz →
+    Check for Updates…** opens **Software updates** and checks.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
 

@@ -68,6 +68,15 @@
   --message-list-row-preview-lines: 1;
 }
 
+/* A light rule between rows, inset to the rows' padding, for scanning. */
+.list > li + li::before {
+  content: "";
+  display: block;
+  height: 1px;
+  margin-inline: var(--space-2);
+  background: var(--border-standard);
+}
+
 /* A DM row's sender already names it, so a compact feed leaves out the place. */
 .list [data-named-by-sender] {
   display: none;
@@ -152,5 +161,5 @@
   line-height: var(--text-body--line-height);
   letter-spacing: var(--text-body--letter-spacing);
   font-weight: var(--type-weight-normal);
-  color: var(--text-quiet-control);
+  color: var(--text-metadata);
 }

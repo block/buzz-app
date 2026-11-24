@@ -198,10 +198,6 @@
 [data-unread-emphasis="weight"] .unreadDot {
   opacity: 0;
 }
-/* Three inks, darkest first: the name, the message, then the place. */
-[data-unread-emphasis="weight"] .content:not([data-unread]) .preview {
-  color: var(--text-metadata);
-}
 /* No drawn dot, so no trailing slot: the message runs to the row's edge.
    The slot stays for assistive technology, and Mark as read appears over the
    message's end on its own fill. */

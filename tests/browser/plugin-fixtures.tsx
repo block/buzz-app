@@ -1,9 +1,10 @@
 // Installed fixture code only; app composition, manager, contributions and UI remain production.
 import { soloRegionFixture } from "./solo-region-fixture";
 import { companionPlugins } from "./companion-fixture";
+import { trailingBrief, trailingCard } from "./trailing-fixture";
 import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import type { BundledPlugin } from "../../src/plugins/manager";
 import type { Navigation } from "../../src/features/navigation/controller";
@@ -495,15 +496,35 @@ export const fixturePlugins: readonly BundledPlugin[] = [
           const Workspace = ctx.conversation.ui.Workspace;
           const route = navigation?.target;
           const opening = navigation?.signal;
-          const target =
+          const params =
             route?.kind === "page"
-              ? (route.route?.params as PageTabTarget)
+              ? (route.route?.params as PageTabTarget & {
+                  trailing?: "none" | "short" | "long";
+                })
               : undefined;
+          const trailing = params?.trailing;
+          // The route's own target, kept stable across renders.
+          const target = useMemo(() => {
+            if (!params) return undefined;
+            const { trailing: _, ...target } = params;
+            return target;
+          }, [params]);
+          // Approving removes the card in place, as a plugin's decision does.
+          const [approved, setApproved] = useState<string>();
+          const card = useMemo(
+            () =>
+              trailing &&
+              trailing !== approved &&
+              trailingCard(trailingBrief(trailing), () =>
+                setApproved(trailing),
+              ),
+            [trailing, approved],
+          );
           useEffect(() => {
-            if (connection.status === "ready" && Workspace && target)
+            if (connection.status === "ready" && Workspace && params)
               navigation?.complete({ status: "opened" });
-          }, [connection.status, Workspace, target, navigation]);
-          if (connection.status !== "ready" || !Workspace || !target)
+          }, [connection.status, Workspace, params, navigation]);
+          if (connection.status !== "ready" || !Workspace || !params)
             return null;
           return (
             <div
@@ -532,7 +553,8 @@ export const fixturePlugins: readonly BundledPlugin[] = [
                   session={connection.session}
                   scope={connection.scope}
                   label="Transcript fixture"
-                  target={target}
+                  target={target as PageTabTarget}
+                  {...(card ? { trailing: card } : {})}
                   latestRequest={
                     request && request.opening === opening
                       ? request.signal

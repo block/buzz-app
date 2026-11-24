@@ -32,6 +32,7 @@ import {
   withNotices,
   type WorkingPoll,
 } from "./transcript";
+import type { AgentReads } from "../../features/agents/reads";
 
 const root = "c".repeat(64);
 const homes: string[] = [];
@@ -371,6 +372,12 @@ function host(files: Record<string, string>) {
 
 const savedPath = "./-Users-me--buzz/session-1.jsonl";
 
+const ownerReads = {
+  ownerReadable: () => true,
+  channelLabel: () => undefined,
+  name: () => undefined,
+} as unknown as AgentReads;
+
 function previewHost(
   files: Record<string, string>,
   remote?: "bound" | "inspected",
@@ -385,7 +392,7 @@ function previewHost(
   });
   const runtime = new ClaudeRuntime(
     { spawn },
-    () => undefined,
+    () => ownerReads,
     async () => null,
     storage,
     undefined,
@@ -1623,7 +1630,7 @@ it("shows a session's prompt once over the latest turns it swaps in", async () =
     ClaudeRuntime.prototype.latestTurns.call(
       {
         spawn,
-        reads: () => undefined,
+        reads: () => ({ ownerReadable: () => true, name: () => undefined }),
         prompts: () => prompts,
         notices: new Map(),
         place: (_agent: string, _key: string, workspace: string) => workspace,

@@ -96,6 +96,8 @@ export type ComposerLinkEdit = {
  * translates them into document positions; callers never manipulate its DOM. */
 export type ComposerInputElement = HTMLDivElement & {
   value: string;
+  /** Includes automatic prefill, staged content and the host's editing/sending state. */
+  isEmptyForShortcuts(): boolean;
   selectionStart: number;
   selectionEnd: number;
   selectionDirection: "forward" | "backward" | "none";

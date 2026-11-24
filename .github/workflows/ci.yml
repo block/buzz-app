@@ -166,13 +166,15 @@ jobs:
         run: ./bin/cargo fmt --all --check
       - name: Rust lint
         run: ./bin/cargo clippy --workspace --locked --all-targets -- -D warnings
-      # Stage resources and build the workspace tests once, before running them
-      # and before FI variants change build inputs.
-      - name: Bundled buzz CLI
-        run: ./bin/node scripts/test-buzz-cli.mjs
+      # Stage resources before Cargo; verify the executable that the full test
+      # run builds, before FI variants change its configuration.
+      - name: Stage bundled buzz CLI
+        run: ./bin/node scripts/build-buzz-cli.mjs --dev
       # --workspace includes Tauri, unlike the default Cargo member selection.
       - name: All Rust tests and doctests
         run: ./bin/cargo test --workspace --locked
+      - name: Bundled buzz CLI
+        run: ./bin/node scripts/test-buzz-cli.mjs --prebuilt
       - name: FI Builderlab build and grant tests
         env:
           # Fixture authority only; never use a release's real configuration.

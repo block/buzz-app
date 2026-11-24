@@ -35,6 +35,7 @@ import {
   wakeLands,
 } from "../../features/agent-harness/plugin-wake";
 import { compactAt } from "../../features/agents/compact-at";
+import { routeFor } from "../../features/agents/model-routes";
 import {
   composeBase,
   sectionsKey,
@@ -46,6 +47,12 @@ import { type Facts, LAYOUT } from "../../features/agent-harness/sections";
 import { pubkeyOf, type AgentKey } from "../../features/agents/membership";
 import { hasOwnEnv } from "../agents/agent-env";
 import { type AgentReads, workflowMarked } from "../../features/agents/reads";
+import {
+  ownerLabel,
+  ownerRows,
+  ownerTurns,
+} from "../../features/agents/owner-view";
+import type { TranscriptTurn } from "../../features/agents/activity-transcript";
 import {
   EACH_TURN,
   sessionPrompts,
@@ -204,6 +211,9 @@ type Request = {
   /** The model and effort the owner picked for this turn. */
   model?: string;
   effort?: string;
+  /** Chooses them as the turn this request starts begins
+   * (`Delivery.route`); one that steers asks nothing. */
+  route?: Delivery["route"];
   /** The synced settings in `settings`. */
   synced?: Delivery["synced"];
   /** Called once a final send answers this request, or one steered after it
@@ -586,6 +596,10 @@ export class CodexRuntime {
     Map<AgentExecution, { done: Promise<void>; failed: boolean }>
   >();
   private views = new Map<AgentKey, readonly SessionView[]>();
+  /** The channels each live session has taken requests from, by
+   * `agent\nkey`: a community session's details show only while its owner
+   * can read every one. */
+  private sources = new Map<string, Set<string>>();
   private inventories = new Map<AgentKey, SavedConversation[] | null>();
   private inventoryReads = new Map<AgentKey, object>();
   private inventoryVersions = new Map<AgentKey, number>();
@@ -1111,10 +1125,13 @@ export class CodexRuntime {
       throw new Error("The protected agent has no live policy binding");
     handle?.protection?.assertAvailable();
     const settings = this.resolveConfig(agent.config);
+    // A saved route is current only while a router offers it.
+    const routed = routeFor("codex", settings.model) !== undefined;
     const key = JSON.stringify([
       settings.model,
       settings.effort,
       handle?.protection?.key,
+      routed,
     ]);
     const existing = this.previews.get(agent.key);
     if (existing?.key === key) return existing.ready;
@@ -1159,6 +1176,10 @@ export class CodexRuntime {
       });
       // A configured model this Codex does not list still leaves the
       // listed ones to pick, so the picker stays.
+      // A saved route is the current choice; the agents service lists it.
+      // One no router offers runs on Codex's default, which is current.
+      if (routed)
+        return { current: settings.model, models: offered, sendDefaults: true };
       return !model || models.some((row) => row.model === model)
         ? { current: model ?? "", models: offered, sendDefaults: true }
         : {
@@ -1224,8 +1245,17 @@ export class CodexRuntime {
     ]);
     for (const listener of this.listeners) listener();
   }
+  private source(agent: AgentKey, key: string, request: Request) {
+    // A standalone wake has no channel to authorize.
+    if (request.conversation.channelId === COMMUNITY_SESSION) return;
+    const id = `${agent}\n${key}`;
+    const sources = this.sources.get(id) ?? new Set<string>();
+    sources.add(request.conversation.channelId);
+    this.sources.set(id, sources);
+  }
   /** Stops listing `key`'s session. */
   private forget(agent: AgentKey, key: string) {
+    this.sources.delete(`${agent}\n${key}`);
     const views = this.sessions(agent);
     if (!views.some((view) => view.key === key)) return;
     this.views.set(
@@ -1810,16 +1840,24 @@ export class CodexRuntime {
       ...new Map([...saved, ...held].map((row) => [row.key, row])).values(),
     ].sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
   }
-  private localConversations(agent: AgentKey) {
-    const reads = this.reads(agent);
-    const saved =
+  mayRestartForBaseInstructions(agent: AgentKey, scope: string) {
+    return Object.values(this.localBindings(agent, scope)).some(
+      ({ sections }) =>
+        !this.keepsSections(sections, { custom: true, plugin: false }),
+    );
+  }
+  private localBindings(agent: AgentKey, scope = this.reads(agent)?.scope) {
+    return (
       this.entries.get(agent)?.saved ??
-      (reads ? this.load(this.storageKey(reads.scope, agent)) : {});
-    return this.savedConversations(agent, saved);
+      (scope === undefined ? {} : this.load(this.storageKey(scope, agent)))
+    );
+  }
+  private localConversations(agent: AgentKey) {
+    return this.savedConversations(agent, this.localBindings(agent));
   }
   private savedConversations(agent: AgentKey, saved: Record<string, Saved>) {
     const reads = this.reads(agent);
-    return Object.entries(saved)
+    const rows = Object.entries(saved)
       .reverse()
       .flatMap(([key, { threadId, at }]) => {
         try {
@@ -1838,7 +1876,7 @@ export class CodexRuntime {
               key,
               channelId,
               ...(community ? { community: true as const } : {}),
-              ...reads?.channelLabel(channelId),
+              ...ownerLabel(reads, channelId),
               ...(root === "channel" ? {} : { root }),
               threadId,
               ...(at === undefined ? {} : { at }),
@@ -1849,6 +1887,7 @@ export class CodexRuntime {
         }
       })
       .sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
+    return ownerRows(rows, reads);
   }
   /** A display name for a pubkey in the agent's community, if known. */
   name(agent: AgentKey, pubkey: string) {
@@ -1890,7 +1929,45 @@ export class CodexRuntime {
   /** The community's current name and kind for a channel, if it lists it;
    * `useOpenedSession` gives them to a thread `find` returned. */
   channelLabel(agent: AgentKey, channelId: string) {
-    return this.reads(agent)?.channelLabel(channelId);
+    return ownerLabel(this.reads(agent), channelId);
+  }
+  /** Whether the live session `key` is of a conversation its owner can read. */
+  readableSession(agent: AgentKey, key: string) {
+    // A standalone watch or timer run, keyed `type/id`, is the owner's own.
+    if (!key.startsWith("[")) return true;
+    try {
+      const [channelId] = JSON.parse(key) as unknown[];
+      return (
+        channelId === COMMUNITY_SESSION ||
+        (typeof channelId === "string" &&
+          this.reads(agent)?.ownerReadable(channelId) === true)
+      );
+    } catch {
+      return false;
+    }
+  }
+  /** Whether the live session `key`'s details came only from requests in
+   * channels its owner can read. */
+  readableDetail(agent: AgentKey, key: string): boolean {
+    // An execution target's sessions are its own runtime's to authorize.
+    const remote = [...this.remote.values()].find(
+      (entry) =>
+        entry.agent === agent &&
+        entry.runtime.sessions(agent).some((view) => view.key === key),
+    );
+    if (remote) return remote.runtime.readableDetail(agent, key);
+    const reads = this.reads(agent);
+    return [...(this.sources.get(`${agent}\n${key}`) ?? [])].every(
+      (channelId) => reads?.ownerReadable(channelId) === true,
+    );
+  }
+  /** The turns of `conversation` its owner can read. */
+  readable(
+    agent: AgentKey,
+    conversation: Readonly<{ channelId: string; community?: true }>,
+    turns: readonly TranscriptTurn[],
+  ) {
+    return ownerTurns(turns, this.reads(agent), conversation);
   }
   /** What each of the agent's threads started with. */
   prompts(agent: AgentKey) {
@@ -2593,6 +2670,7 @@ export class CodexRuntime {
       ...(toolRoot ? { toolRoot } : {}),
       ...(delivery.model ? { model: delivery.model } : {}),
       ...(delivery.effort ? { effort: delivery.effort } : {}),
+      ...(delivery.route ? { route: delivery.route } : {}),
       ...(delivery.synced ? { synced: delivery.synced } : {}),
       activityScope: topLevel
         ? channelId
@@ -2673,6 +2751,7 @@ export class CodexRuntime {
         (request.model && request.model !== targetModel) ||
         (request.effort && request.effort !== targetEffort));
     entry.waiting.add(request);
+    this.source(agent.key, key, request);
     delivery.interruptible?.(() =>
       this.interrupt(entry, key, request, reserved),
     );
@@ -2975,6 +3054,7 @@ export class CodexRuntime {
         },
       };
       entry.waiting.add(request);
+      this.source(agent.key, key, request);
       try {
         const handoff = this.controls.deliver(
           `${agent.key}/${key}`,
@@ -3427,6 +3507,31 @@ export class CodexRuntime {
         if (request.current && !request.current()) {
           for (const pending of requests) pending.answered();
           return;
+        }
+        // Its model route chooses as the turn begins; messages behind it
+        // steer in on that choice.
+        if (request.route) {
+          let chosen: Awaited<ReturnType<NonNullable<Delivery["route"]>>>;
+          try {
+            chosen = await request.route();
+          } finally {
+            delete request.route;
+          }
+          if (!chosen) {
+            for (const pending of requests) pending.answered(true);
+            return;
+          }
+          if (chosen.model) request.model = chosen.model;
+          if (chosen.effort) request.effort = chosen.effort;
+          if (entry.abort.signal.aborted) {
+            for (const pending of requests)
+              pending.failActivity("Codex was stopped");
+            return;
+          }
+          if (request.current && !request.current()) {
+            for (const pending of requests) pending.answered();
+            return;
+          }
         }
         await entry.after;
         // A rerun waits for the retired Huddle seat to let go of the lane.

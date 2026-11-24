@@ -2657,6 +2657,32 @@ test("an addition can ask the relay first, and its refusal reaches the app as wo
   }
 });
 
+test("direct-message passes on which agent's add policy refused it", async () => {
+  const agent = "d".repeat(64);
+  const reasons = [
+    `forbidden: policy:owner_only — only the agent owner can add this agent (agent ${agent})`,
+    `forbidden: policy:nobody — this agent has disabled external channel additions (agent ${agent})`,
+  ];
+  const h = await harness(() =>
+    Response.json({ error: reasons.shift() }, { status: 400 }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const person = "a".repeat(64);
+    await expect(
+      transport.openDirectMessage([person], new AbortController().signal),
+    ).rejects.toThrow(`policy:owner_only (agent ${agent})`);
+    await expect(
+      transport.openDirectMessage([person], new AbortController().signal, {
+        channelId: "11111111-1111-4111-8111-111111111111",
+        includeHistory: "ask",
+      }),
+    ).rejects.toThrow(`policy:nobody (agent ${agent})`);
+  } finally {
+    await h.close();
+  }
+});
+
 test.each([
   {
     accepted: false,

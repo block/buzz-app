@@ -1211,7 +1211,8 @@ export function EditableInput({
           .length > current.current.maxLength
       ) {
         onTooLong?.();
-        return !!terminator; // The typed colon landed even if conversion cannot.
+        // The typed colon landed even if conversion cannot.
+        return terminator ? "typed" : false;
       }
       // Only pastes report overlong text. Pasted identity links become
       // recipients at once, so they need their chips in this transaction.

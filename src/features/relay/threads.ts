@@ -145,6 +145,7 @@ export function createThreadView({
   visible,
   notify,
   exact = false,
+  openedRoot,
   subthread = false,
   priority = "foreground",
   admit = (events) => events,
@@ -172,6 +173,10 @@ export function createThreadView({
   visible(events: readonly RelayEvent[]): readonly RelayEvent[];
   notify(listener: () => void): void;
   exact?: boolean;
+  /** The root the opening named for this thread, a hint only. When it names
+   * the opened message itself, an exact read answered without that message
+   * confirms the root missing. It never shows two messages share a thread. */
+  openedRoot?: string | undefined;
   /** Project the branch anchored by the opening message. */
   subthread?: boolean;
   /** Admission for every read this view makes. A passive reader, one that
@@ -897,6 +902,15 @@ export function createThreadView({
         );
         if (!active()) return;
         if (anchorResult !== "selected" && revision === selectionRevision) {
+          // The relay answered without a message opened as its own thread's
+          // root, so that root is missing. A selected reply's absence says
+          // nothing about its root, and a failed read throws before this.
+          if (
+            anchorResult === "unavailable" &&
+            !subthreadId &&
+            openedRoot === selectedId
+          )
+            missing = true;
           targetStatus = "unavailable";
           publish({ status: "ready", canLoadMore: false });
           return;

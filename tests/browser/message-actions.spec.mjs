@@ -512,6 +512,43 @@ test("message actions reveal, copy, restore focus and reply across responsive la
       )
       .click();
   await expect(panel).toHaveCount(0);
+
+  // The same, when the deleted original is first opened from the copy's
+  // Sent from link: that read, too, confirms it missing, so Reply on the copy
+  // reaches the copy's own thread instead of the unavailable original.
+  const linked = app.append(
+    "primary",
+    "alpha",
+    "Copy linked to a deleted thread",
+    true,
+    true,
+    undefined,
+    undefined,
+    [["buzz:sent-from-thread", "e".repeat(64), "Linked deleted original"]],
+  );
+  const linkedRow = page.locator(
+    `[data-channel-timeline] [data-message-id="${linked.id}"]`,
+  );
+  await expect(page.locator("[data-panel-dock][data-closing]")).toHaveCount(0);
+  await linkedRow
+    .getByRole("link", { name: /Linked deleted original/ })
+    .click({ button: "right" });
+  await page
+    .getByRole("menu")
+    .getByRole("menuitem", { name: "Open link", exact: true })
+    .click();
+  await expect(panel.getByText("This message isn’t available.")).toBeVisible();
+  await hoverMessage(linkedRow);
+  await linkedRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await expect(panel.locator(`[data-message-id="${linked.id}"]`)).toBeVisible();
+  await expect(replyBox).toBeFocused();
+  for (let tabs = 0; tabs < 2; tabs++)
+    await page
+      .locator(
+        '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button:not([role="tab"]), button[aria-label="Close thread"]',
+      )
+      .click();
+  await expect(panel).toHaveCount(0);
   for (const width of [900, 603, 390]) {
     await page.setViewportSize({ width, height: 850 });
     await row.scrollIntoViewIfNeeded();

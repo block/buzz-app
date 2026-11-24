@@ -185,6 +185,7 @@ export function ConversationTab({
               messageId={tab.messageId}
               subthreadId={subthreadId}
               sourceThreadId={subthreadId ? tab.rootId : undefined}
+              threadRootId={rootOfTab(tab)}
               navigation={navigation}
               retainThread
               tabbed

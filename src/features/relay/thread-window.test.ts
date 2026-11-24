@@ -1139,6 +1139,47 @@ it("marks a legacy read missing when an old relay's fallback answers without the
   );
 });
 
+it.each([
+  ["a root the opening named, which the relay answers without", "root", true],
+  ["a reply whose root may still exist", "reply", undefined],
+] as const)(
+  "an exact read marks missing only %s",
+  async (_, opened, expected) => {
+    const h = await setup(() => []);
+    const id = "e".repeat(64);
+    const gone = h.session.thread(channel, id, {
+      exact: true,
+      openedRoot: opened === "root" ? id : root.id,
+    });
+    try {
+      await gone.refresh();
+      expect(gone.snapshot()).toMatchObject({
+        status: "ready",
+        targetStatus: "unavailable",
+      });
+      expect(gone.snapshot().missing).toBe(expected);
+    } finally {
+      gone.dispose();
+    }
+  },
+);
+
+it("an exact read never marks its named root missing when the read fails", async () => {
+  const h = await setup((filter) => {
+    if (filter.ids) throw new Error("relay down");
+    return [];
+  });
+  const id = "e".repeat(64);
+  const gone = h.session.thread(channel, id, { exact: true, openedRoot: id });
+  try {
+    await gone.refresh();
+    expect(gone.snapshot().targetStatus).not.toBe("ready");
+    expect(gone.snapshot().missing).toBeUndefined();
+  } finally {
+    gone.dispose();
+  }
+});
+
 it("never marks a thread missing when its read fails", async () => {
   const h = await setup((filter) => {
     if (filter.ids) throw new Error("relay down");

@@ -144,8 +144,7 @@ const tabTarget = (
   channel: { channelType?: string } | undefined,
 ): PageTabTarget =>
   ((item.target?.kind === "channel" || channel?.channelType === "dm") &&
-    !item.threadOnly) ||
-  (channel?.channelType === "solo" && !item.thread)
+    !item.threadOnly)
     ? { channelId: item.channelId }
     : {
         channelId: item.channelId,

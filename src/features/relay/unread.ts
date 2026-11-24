@@ -1,4 +1,5 @@
 import type { ProfileQueries } from "./profile-directory";
+import { isSoloConversation } from "./conversation-people";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience, detailsBrief, messageAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
@@ -1704,7 +1705,13 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        const session = channel.channelType === "solo";
+        // Only you and your agents post here: their top-level answers are
+        // yours to read, as in a DM.
+        const session = isSoloConversation(
+          channel,
+          viewer,
+          profiles?.snapshot?.() ?? new Map(),
+        );
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return (

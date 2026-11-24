@@ -21,7 +21,7 @@ import {
   SmileyIcon,
 } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import type { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
@@ -265,29 +265,13 @@ export function InboxRowButton({
 }
 
 /** Reaction activity is context, never an unread conversation or a read action. */
-export function ReactionRowButton({
-  item,
-  session,
-  profiles,
-  name,
-  channel,
-  time = relativeTimestamp(item.createdAt),
-  unread = false,
-  ...props
-}: {
-  item: InboxReaction;
-  time?: ReactNode;
-  /** The reaction stands for a conversation with someone's unread message. */
-  unread?: boolean;
-  session: RelaySession;
-  profiles: ReadonlyMap<string, Profile>;
-  name: ResolveName;
-  channel: ChannelSummary | undefined;
-} & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
-  const reactionName = useReactionName();
-  // Its name reads the preview as shown, with mention chips' labels.
-  const nameId = useId();
-  const previewId = `${nameId}-preview`;
+/** Who a reaction row names, where, and whose avatar it shows. */
+export function reactionIdentity(
+  item: InboxReaction,
+  channel: ChannelSummary | undefined,
+  profiles: ReadonlyMap<string, Profile>,
+  name: ResolveName,
+) {
   const authors = [...new Set(item.events.map((event) => event.pubkey))];
   const names = authors
     .slice(0, authors.length === 3 ? 3 : 2)
@@ -317,6 +301,78 @@ export function ReactionRowButton({
       : channel
         ? channelText(channel)
         : "Conversation";
+  return { sender, context, profile };
+}
+
+/** One conversation on one line, as the sidebar's other cards list theirs:
+ * the conversation, then who wrote last in lighter text. */
+export function CompactActivityRow({
+  channel,
+  context,
+  thread,
+  sender,
+  unread,
+  ...props
+}: {
+  channel: ChannelSummary | undefined;
+  context: string;
+  thread: boolean;
+  /** Omitted where the conversation's name already says who, as in a DM. */
+  sender?: string | undefined;
+  unread: boolean;
+} & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
+  const Icon = thread ? CornerDownRightIcon : channelIcon(channel);
+  const place =
+    channel && channel.channelType !== "dm" ? channel.name : context;
+  return (
+    <NavigationItem
+      {...props}
+      variant="row"
+      aria-label={sender ? `Open ${place}, from ${sender}` : `Open ${place}`}
+      icon={
+        <span className={styles.compactIcon}>
+          <Icon size={16} aria-hidden="true" />
+        </span>
+      }
+      label={
+        <span className={styles.compactLabel} data-unread={unread || undefined}>
+          <span className={styles.compactPlace}>{place}</span>
+          {sender && <span className={styles.compactSender}>{sender}</span>}
+        </span>
+      }
+    />
+  );
+}
+
+export function ReactionRowButton({
+  item,
+  session,
+  profiles,
+  name,
+  channel,
+  time = relativeTimestamp(item.createdAt),
+  unread = false,
+  ...props
+}: {
+  item: InboxReaction;
+  time?: ReactNode;
+  /** The reaction stands for a conversation with someone's unread message. */
+  unread?: boolean;
+  session: RelaySession;
+  profiles: ReadonlyMap<string, Profile>;
+  name: ResolveName;
+  channel: ChannelSummary | undefined;
+} & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
+  const reactionName = useReactionName();
+  // Its name reads the preview as shown, with mention chips' labels.
+  const nameId = useId();
+  const previewId = `${nameId}-preview`;
+  const { sender, context, profile } = reactionIdentity(
+    item,
+    channel,
+    profiles,
+    name,
+  );
   const reactions = groupReactions(item.events);
   const preview = rowPreview(item.message.content);
   const emojiNames = reactions

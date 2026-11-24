@@ -25,9 +25,11 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { shortRelativeTimestamp } from "../../shared/relative-timestamp";
 import {
+  CompactActivityRow,
   hasUnread,
   InboxRowButton,
   ownIdentity,
+  reactionIdentity,
   ReactionRowButton,
   rowIdentity,
   rowProfileIds,
@@ -79,6 +81,7 @@ export function ActivityFeed({
   onOpen,
   unreadFirst = false,
   showTime = true,
+  compact = false,
 }: {
   session: RelaySession;
   scope: NavigationScope;
@@ -96,6 +99,8 @@ export function ActivityFeed({
   unreadFirst?: boolean;
   /** Whether rows show when their latest message was sent. */
   showTime?: boolean;
+  /** One line per conversation, without the message. */
+  compact?: boolean;
 }) {
   const list = useChannelList(session.channels);
   const muted = useActivityMutes(session);
@@ -440,6 +445,7 @@ export function ActivityFeed({
           className={styles.list}
           aria-label="Recent activity"
           data-unread-emphasis="weight"
+          data-layout={compact ? "compact" : undefined}
         >
           {rows.map((row) => {
             const selected = isOpen?.(destination(row)) ?? false;
@@ -459,6 +465,43 @@ export function ActivityFeed({
                   />
                 </span>
               );
+            if (compact) {
+              const channelId =
+                row.kind === "own" ? row.own.channelId : row.item.channelId;
+              const channel = channelOf(channelId);
+              const identity =
+                row.kind === "reaction"
+                  ? reactionIdentity(row.item, channel, profiles, name)
+                  : row.kind === "own" || row.own
+                    ? ownIdentity(scope.viewer, channel, profiles, name)
+                    : rowIdentity(row.item, channel, profiles, name);
+              const own =
+                row.kind === "own" ||
+                (row.kind === "conversation" && !!row.own);
+              return (
+                <li
+                  key={row.id}
+                  className={listRowStyles.unreadActionHost}
+                  data-preview-row={row.id}
+                >
+                  <CompactActivityRow
+                    channel={channel}
+                    context={identity.context}
+                    thread={!!destination(row).rootId}
+                    // A DM's name already says who wrote, unless it was you.
+                    sender={
+                      channel?.channelType === "dm" && !own
+                        ? undefined
+                        : identity.sender
+                    }
+                    unread={unread}
+                    selected={selected}
+                    onClick={() => open(row)}
+                  />
+                  {readAction(`${identity.sender} in ${identity.context}`)}
+                </li>
+              );
+            }
             if (row.kind === "reaction")
               return (
                 <li

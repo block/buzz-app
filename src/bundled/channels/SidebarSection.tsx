@@ -10,6 +10,7 @@ import {
   useId,
   useRef,
   useState,
+  type ComponentProps,
   type DOMAttributes,
   type ReactNode,
   type Ref,
@@ -79,6 +80,7 @@ export function SidebarSection({
   removalFocus,
   heightScope,
   iconView = false,
+  layout,
   rename,
   children,
 }: {
@@ -105,6 +107,8 @@ export function SidebarSection({
   heightScope?: string | undefined;
   /** Offer showing the card's rows as identity tiles instead of names. */
   iconView?: boolean;
+  /** The card's own layouts, offered in its menu; see SidebarViewMenuItems. */
+  layout?: ComponentProps<typeof SidebarViewMenuItems>["layout"];
   createChannel?:
     | { available: boolean; open: (trigger: HTMLButtonElement) => void }
     | undefined;
@@ -167,7 +171,13 @@ export function SidebarSection({
   const displayChoice =
     iconView && heightScope ? { value: display, set: setDisplay } : undefined;
   // View choices stay reachable when the card's own actions are hidden.
-  const viewChoices = !!(sort || unreadsFirstChoice || filter || displayChoice);
+  const viewChoices = !!(
+    sort ||
+    unreadsFirstChoice ||
+    filter ||
+    displayChoice ||
+    layout
+  );
   const showMenu = !hideMoreActions || viewChoices;
   if (!showMenu && menuOpen) setMenuOpen(false);
   const [removeOpen, setRemoveOpen] = useState(false);
@@ -233,6 +243,7 @@ export function SidebarSection({
                         setCustomFilterOpen(true);
                       }}
                       display={displayChoice}
+                      layout={layout}
                     />
                     {viewChoices &&
                       !hideMoreActions &&

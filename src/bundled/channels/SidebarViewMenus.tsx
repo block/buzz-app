@@ -49,6 +49,7 @@ export function SidebarViewMenuItems({
   filter,
   customFilter,
   display,
+  layout,
 }: {
   title: string;
   sort?: SidebarViewSort | undefined;
@@ -59,8 +60,16 @@ export function SidebarViewMenuItems({
   display?:
     | { value: "list" | "icons"; set: (value: "list" | "icons") => void }
     | undefined;
+  /** A card's own layouts, when it offers them instead of list or icons. */
+  layout?:
+    | {
+        value: string;
+        options: readonly { id: string; label: string }[];
+        set: (value: string) => void;
+      }
+    | undefined;
 }) {
-  if (!sort && !unreadsFirst && !filter && !display) return null;
+  if (!sort && !unreadsFirst && !filter && !display && !layout) return null;
   const preset =
     filter?.days === undefined ||
     (SIDEBAR_FILTER_DAYS as readonly number[]).includes(filter.days);
@@ -191,6 +200,25 @@ export function SidebarViewMenuItems({
                 </MenuIcon>
                 Icons
               </MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuGroup>
+        </>
+      )}
+      {layout && (
+        <>
+          {(sort || unreadsFirst || filter || display) && <MenuSeparator />}
+          <MenuGroup>
+            <MenuGroupLabel emphasis="quiet">Layout</MenuGroupLabel>
+            <MenuRadioGroup value={layout.value} onValueChange={layout.set}>
+              {layout.options.map((option) => (
+                <MenuRadioItem
+                  key={option.id}
+                  value={option.id}
+                  selection="highlight"
+                >
+                  {option.label}
+                </MenuRadioItem>
+              ))}
             </MenuRadioGroup>
           </MenuGroup>
         </>

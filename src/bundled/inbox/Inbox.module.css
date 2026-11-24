@@ -164,3 +164,39 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Compact Activity: a sidebar row's icon slot, name and unread look, with
+   who wrote last after the name in lighter text. */
+.compactIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  flex: 0 0 1.25rem;
+}
+.compactLabel {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+  white-space: nowrap;
+}
+.compactPlace {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compactSender {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-metadata);
+}
+.compactLabel[data-unread] .compactPlace {
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+[data-selected] .compactLabel[data-unread] .compactPlace {
+  color: var(--text-row-selected);
+}

@@ -19,6 +19,9 @@ import type {
 import { DroppableSidebarSection } from "./ChannelSidebarDnd";
 import { sidebarTarget } from "./routes";
 
+const noSubscribe = () => () => {};
+const noLayout = () => "";
+
 function isSelectedDestination(destination: OpenTarget, target: OpenTarget) {
   const selectedKey = targetKey(target);
   if (targetKey(destination) === selectedKey) return true;
@@ -201,6 +204,17 @@ function SectionContents({
       setActionError(true);
     }
   };
+  const layouts = entry.layouts;
+  const layoutValue = useSyncExternalStore(
+    layouts?.subscribe ?? noSubscribe,
+    layouts?.snapshot ?? noLayout,
+    layouts?.snapshot ?? noLayout,
+  );
+  const layout = layouts && {
+    value: layoutValue,
+    options: layouts.options,
+    set: layouts.select,
+  };
   const actions = (entry.actions ?? []).map((action) => (
     <IconButton
       key={action.id}
@@ -235,6 +249,7 @@ function SectionContents({
       move={move}
       hideMoreActions={!reorderable}
       headerActions={actions}
+      layout={layout}
       headerNotice={
         actionError && (
           <p className={styles.contributionFeedback} role="alert">

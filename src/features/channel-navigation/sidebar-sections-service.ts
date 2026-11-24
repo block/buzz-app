@@ -38,6 +38,14 @@ export type SidebarSectionBodyProps = Readonly<{
   target: OpenTarget;
 }>;
 
+/** Ways a card can lay out its contents, offered as Layout in its menu. */
+export type SidebarSectionLayouts = Readonly<{
+  options: readonly Readonly<{ id: string; label: string }>[];
+  snapshot: () => string;
+  subscribe: (listener: () => void) => () => void;
+  select: (id: string) => void;
+}>;
+
 export type SidebarSectionContribution = Readonly<{
   version: 1;
   id: string;
@@ -50,6 +58,7 @@ export type SidebarSectionContribution = Readonly<{
   }>;
   select: (row: SidebarSectionRow) => OpenTarget;
   actions?: readonly SidebarSectionAction[];
+  layouts?: SidebarSectionLayouts;
   /** Bundled plugins only. Preview, likely to break: the card's own contents,
    * shown inside its frame above any rows. */
   body?: ComponentType<SidebarSectionBodyProps>;
@@ -177,7 +186,21 @@ export class SidebarSectionsService extends Service implements SidebarSections {
               !action.label.trim() ||
               action.icon == null ||
               typeof action.onSelect !== "function",
-          )))
+          ))) ||
+      (section.layouts !== undefined &&
+        (!Array.isArray(section.layouts.options) ||
+          section.layouts.options.length < 2 ||
+          section.layouts.options.some(
+            (option) =>
+              !option ||
+              typeof option.id !== "string" ||
+              !idPattern.test(option.id) ||
+              typeof option.label !== "string" ||
+              !option.label.trim(),
+          ) ||
+          typeof section.layouts.snapshot !== "function" ||
+          typeof section.layouts.subscribe !== "function" ||
+          typeof section.layouts.select !== "function"))
     )
       throw new Error(
         "A sidebar section needs an id, title, rows, and select action",

@@ -3,6 +3,7 @@ import type { Navigation } from "../../features/navigation/controller";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import { ActivityFeed, type FeedDestination } from "./ActivityFeed";
+import { useActivityLayout } from "./activity-layout";
 
 /** Activity in a sidebar card: one list, unread first, then newest first. */
 export function ActivityCard({
@@ -11,6 +12,7 @@ export function ActivityCard({
   target,
 }: SidebarSectionBodyProps & { relay: RelayData; navigator: Navigation }) {
   const connection = useRelayConnection(relay);
+  const layout = useActivityLayout();
   const { viewer, scope } = connection;
   if (
     connection.status !== "ready" ||
@@ -32,6 +34,7 @@ export function ActivityCard({
       navigator={navigator}
       isOpen={isOpen}
       unreadFirst
+      compact={layout === "compact"}
       showTime={false}
     />
   );

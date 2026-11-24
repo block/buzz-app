@@ -69,7 +69,7 @@
 }
 
 /* A light rule between rows, inset to the rows' padding, for scanning. */
-.list > li + li::before {
+.list:not([data-layout="compact"]) > li + li::before {
   content: "";
   display: block;
   height: 1px;

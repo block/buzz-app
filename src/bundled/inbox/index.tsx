@@ -6,6 +6,7 @@ import { inboxRouteTarget, isInboxRoute, type InboxRoute } from "./route";
 import type { Context } from "@deepseek-ai/cordis";
 import type { SidebarSectionBodyProps } from "../../features/channel-navigation/sidebar-sections-service";
 import { BellIcon } from "../../shared/design-system/icons";
+import { activityLayouts } from "./activity-layout";
 import { ActivityCard } from "./ActivityCard";
 import { ActivitySettings } from "./ActivitySettings";
 import { createDisplay, showsCard, showsPage } from "./display";
@@ -107,6 +108,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           title: "Activity",
           rows: noRows,
           select: () => inboxRouteTarget({}),
+          layouts: activityLayouts,
           body: (props: SidebarSectionBodyProps) => (
             <ActivityCard {...props} relay={relay} navigator={navigator} />
           ),

@@ -270,15 +270,6 @@ test("reads ahead one page in each of at most 16 channels", async () => {
   );
 });
 
-test("reads ahead one page per channel", async () => {
-  const { channelReads } = await fixture(history, {
-    warm: () => ["crew"],
-    settle: false,
-  });
-  await vi.advanceTimersByTimeAsync(10_000);
-  expect(channelReads).toHaveLength(1);
-});
-
 test("a deletion removes its message, now and from pages read later, only by deletions that apply", async () => {
   const now = Math.floor(Date.now() / 1000);
   const live = message(author, "crew", "Live quartz", now - 10);

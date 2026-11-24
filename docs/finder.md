@@ -152,7 +152,7 @@ twice.
 
 Why 16 channels one page deep, and not fewer channels read deeper: most
 searches are for recent messages, so a second page of a channel finds much less
-than a first page of another channel. `bin/node src/bundled/finder/readahead-bench.ts <messages>`
+than a first page of another channel. `bin/node scripts/perf/finder/readahead-bench.ts <messages>`
 models a 60-channel community and someone who visits a few channels much more
 than others. The share of searches whose message is already indexed when you
 start typing:
@@ -188,7 +188,7 @@ Each search scans every indexed message. Three things keep that fast:
    letters, only the messages that matched before are checked again.
 
 Timings for one keystroke, typed one letter at a time, on synthetic history
-(`bin/node src/bundled/finder/bench.ts <messages>`). The synthetic history uses
+(`bin/node scripts/perf/finder/bench.ts <messages>`). The synthetic history uses
 a small vocabulary, so far more messages match each word than in real
 conversations. Treat these as worst cases.
 
@@ -213,8 +213,8 @@ never waits) and splitting the search across several workers.
 | `src/bundled/finder/search.ts` | What the dialog shows: device matches, older pages of one channel, and relay hits merged below |
 | `src/bundled/finder/sync.ts` | Fills the index and keeps it current, including the read-ahead |
 | `src/bundled/finder/interest.ts` | Which channels you use most |
-| `src/bundled/finder/bench.ts` | The search benchmark |
-| `src/bundled/finder/readahead-bench.ts` | The read-ahead model |
+| `scripts/perf/finder/bench.ts` | The search benchmark |
+| `scripts/perf/finder/readahead-bench.ts` | The read-ahead model |
 | `tests/fixtures/finder.html` | The dialog on fake data, for trying it without an account |
 
 The matcher is ported from fzf, which is MIT licensed. Its license is in

@@ -1,7 +1,7 @@
 // How often the message you're looking for is already in the index, with and
 // without reading ahead in the channels you visit most. Run from the
 // repository root:
-//   bin/node src/bundled/finder/readahead-bench.ts [messages=60000]
+//   bin/node scripts/perf/finder/readahead-bench.ts [messages=60000]
 // A model, not a measurement: a 60-channel community and a person who visits
 // a few channels much more than the rest, searching mostly for recent
 // messages in the channels they pay attention to.
@@ -26,7 +26,9 @@ Object.assign(globalThis, {
     removeItem: (key: string) => void store.delete(key),
   },
 });
-const { noteInterest, topInterest } = await import("./interest.ts");
+const { noteInterest, topInterest } = await import(
+  "../../../src/bundled/finder/interest.ts"
+);
 
 let state = 7;
 const random = () => {

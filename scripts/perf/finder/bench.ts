@@ -1,9 +1,9 @@
 // Finder search timing on synthetic history. Run from the repository root:
-//   bin/node src/bundled/finder/bench.ts [messages=200000]
+//   bin/node scripts/perf/finder/bench.ts [messages=200000]
 // Prints the median and slowest time per keystroke for each query, typed one
 // key at a time (the real case) and searched cold (the worst case).
-import { createCorpus } from "./corpus.ts";
-import { syntheticDocs } from "./synthetic.ts";
+import { createCorpus } from "../../../src/bundled/finder/corpus.ts";
+import { syntheticDocs } from "../../../tests/fixtures/finder-synthetic.ts";
 
 const size = Number(process.argv[2] ?? 200_000);
 const docs = syntheticDocs(size);

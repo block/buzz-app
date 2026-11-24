@@ -21,7 +21,7 @@ const BACKOFF_CAP_MS = 60_000;
 /** After the first fill, the newest page of each channel you visit and
  * search most: at most 16 background reads per session. Many channels one
  * page deep find more than a few channels read deeper, since most searches
- * are for recent messages (src/bundled/finder/readahead-bench.ts). */
+ * are for recent messages (scripts/perf/finder/readahead-bench.ts). */
 const WARM_CHANNELS = 16;
 const WARM_PAGES = 1;
 /** How far before the last fill a resumed one reads again, for clock skew

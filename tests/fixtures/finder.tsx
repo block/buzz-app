@@ -24,7 +24,7 @@ import {
   type FinderScope,
 } from "../../src/bundled/finder/FinderDialog";
 import { startFinderSync } from "../../src/bundled/finder/sync";
-import { syntheticDocs } from "../../src/bundled/finder/synthetic.ts";
+import { syntheticDocs } from "./finder-synthetic.ts";
 
 import { queryEvents } from "./finder-data";
 

@@ -176,7 +176,7 @@ test.describe("Inline", () => {
       historyCounts: { alpha: 2, beta: 1 },
     });
 
-    test("a thread tab's channel button opens the channel with the thread in a tab, not inline", async ({
+    test("a thread tab's channel button opens the channel with the thread inline", async ({
       page,
       app,
     }) => {
@@ -201,17 +201,13 @@ test.describe("Inline", () => {
       await side(inbox)
         .getByRole("button", { name: "#Alpha", exact: true })
         .click();
-      await expect(composer(page)).toBeVisible();
-      await expect(
-        side(page).getByRole("tab", { name: /^Thread/, selected: true }),
-      ).toBeVisible();
-      await expect(sheets(page)).toHaveCount(0);
-      expect(await address(page)).toMatchObject({
-        channelId: "alpha",
-        threadRootId: root.id,
-        context: "channel",
-      });
-      expect(await address(page)).not.toHaveProperty("inline");
+      await expect(thread(page)).toBeVisible();
+      await expect
+        .poll(() => address(page))
+        .toMatchObject({ channelId: "alpha", inline: root.id });
+      expect(await address(page)).not.toHaveProperty("threadRootId");
+      expect(await address(page)).not.toHaveProperty("context");
+      await expect(side(page).getByRole("tab")).toHaveCount(0);
       await page.goBack();
       await expect(inbox).toBeVisible();
     });

@@ -40,7 +40,6 @@ import {
   VOICE_JUMP_THRESHOLD,
   type VoiceJump as JumpResult,
 } from "./places";
-import "../../app/shell/SearchChoices.css";
 import styles from "./VoiceJump.module.css";
 
 export type VoiceJumpScope = Readonly<{

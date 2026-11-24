@@ -289,11 +289,15 @@ it("keys every joined community's unread, opening its session and repair once", 
   second.join("b");
   second.set("b", { observedCount: 2 });
   expect(unreads.snapshot().get(two)).toEqual({ unread: true, attention: 0 });
-  // Its session acts on it only while its unread is known.
-  expect(unreads.session(two)).toBe(second.session);
-  second.set("b", { observedCount: 2, freshness: "stale" });
+  // Its session acts on it only once a repair has sampled what it counts: a
+  // live arrival alone leaves older unread still on its way.
   expect(unreads.session(two)).toBeUndefined();
-  second.set("b", { observedCount: 2 });
+  second.set("b", { observedCount: 2, sampled: true });
+  expect(unreads.snapshot().get(two)).toEqual({ unread: true, attention: 0 });
+  expect(unreads.session(two)).toBe(second.session);
+  second.set("b", { observedCount: 2, sampled: true, freshness: "stale" });
+  expect(unreads.session(two)).toBeUndefined();
+  second.set("b", { observedCount: 2, sampled: true });
   expect(unreads.session(two)).toBe(second.session);
   // Leaving drops it.
   snapshot = { ...snapshot, selected: one, memberships: [{ id: one }] };

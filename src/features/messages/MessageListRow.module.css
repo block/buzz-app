@@ -178,9 +178,9 @@
   }
 }
 
-/* A list that marks unread by weight alone: unread rows are medium on both
-   lines and read rows are normal throughout. The dot stays for assistive
-   technology and as Mark as read's place, but is not drawn. */
+/* A list that marks unread by weight alone: unread rows are medium on the
+   name and the message, and read rows are normal throughout. The dot stays
+   for assistive technology and as Mark as read's place, but is not drawn. */
 [data-unread-emphasis="weight"] .sender {
   font-weight: var(--type-weight-normal);
 }

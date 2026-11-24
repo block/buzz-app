@@ -157,9 +157,15 @@ export function ActivityFeed({
     (mine) => !unreadOnly && (view === "all" || !!mine.rootId),
   );
   // Only someone else's message makes a row unread; yours and reactions never do.
+  // A row opened while unread keeps its place while it stays open; once you
+  // move on, it settles among the rest by when it was last active.
+  const [held, setHeld] = useState<string>();
   const unreadIds = new Set(
     conversationRows.flatMap((row) =>
-      row.kind === "conversation" && hasUnread(row.item) ? [row.item.id] : [],
+      row.kind === "conversation" &&
+      (hasUnread(row.item) || (row.item.id === held && isOpen?.(row.item)))
+        ? [row.item.id]
+        : [],
     ),
   );
   const rows = [
@@ -342,6 +348,7 @@ export function ActivityFeed({
         : row.item;
   const open = (row: (typeof rows)[number]) => {
     const item = destination(row);
+    setHeld(unreadIds.has(row.id) ? row.id : undefined);
     onOpen?.();
     void navigator.open({
       version: 1,

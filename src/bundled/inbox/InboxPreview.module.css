@@ -66,6 +66,11 @@
   --message-list-row-preview-lines: 1;
 }
 
+/* A DM row's sender already names it, so a compact feed leaves out the place. */
+.list [data-named-by-sender] {
+  display: none;
+}
+
 /* A row keeps its hover fill while the pointer is on its Mark as read. */
 @media (hover: hover) and (pointer: fine) {
   .list > li:hover > [class~="navigation-item"]:not([data-selected]) {

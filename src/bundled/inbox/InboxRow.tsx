@@ -128,14 +128,23 @@ export function RowPlace({
   channel,
   context,
   thread,
+  own = false,
 }: {
   channel: ChannelSummary | undefined;
   context: string;
   thread: boolean;
+  /** Your own message, whose sender line doesn't say who the DM is with. */
+  own?: boolean;
 }) {
   const Icon = thread ? CornerDownRightIcon : channelIcon(channel);
   return (
-    <span className={styles.place}>
+    <span
+      className={styles.place}
+      // In a DM someone else wrote, their name already says where it is.
+      data-named-by-sender={
+        (!own && channel?.channelType === "dm") || undefined
+      }
+    >
       <Icon size={12} aria-hidden="true" className={styles.placeIcon} />
       <span className={styles.placeName}>
         {channel && channel.channelType !== "dm" ? channel.name : context}
@@ -214,6 +223,7 @@ export function InboxRowButton({
           channel={channel}
           context={context}
           thread={!!(own ? own.rootId : item?.thread || item?.rootId)}
+          own={!!own}
         />
       }
       time={
@@ -350,6 +360,7 @@ export function ReactionRowButton({
       previewId={previewId}
       preview={
         <>
+          reacted{" "}
           {reactions.map((reaction) => (
             <ActivityReactionGlyph
               key={JSON.stringify([reaction.content, reaction.emoji?.url])}
@@ -357,6 +368,7 @@ export function ReactionRowButton({
               session={session}
             />
           ))}{" "}
+          to{" "}
           <PreviewText
             text={preview}
             mentions={item.message}

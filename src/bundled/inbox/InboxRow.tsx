@@ -145,7 +145,7 @@ export function RowPlace({
         (!own && channel?.channelType === "dm") || undefined
       }
     >
-      <Icon size={12} aria-hidden="true" className={styles.placeIcon} />
+      <Icon size={14} aria-hidden="true" className={styles.placeIcon} />
       <span className={styles.placeName}>
         {channel && channel.channelType !== "dm" ? channel.name : context}
       </span>

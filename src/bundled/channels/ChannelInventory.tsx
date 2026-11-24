@@ -2,6 +2,7 @@ import {
   starredMessageTarget,
   workspaceMessageTarget,
 } from "../../features/channel-navigation/new-message-route";
+import { OVERFLOW_SECTIONS, useShowsOverflow } from "./sidebar-overflow";
 import { WorkspaceNewMenu } from "./WorkspaceNewMenu";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { visibleSoloRegions } from "./SoloRegions";
@@ -556,6 +557,7 @@ export function ChannelInventory({
       });
   }, []);
   const hasPages = !!pages;
+  const showsOverflow = useShowsOverflow();
   const cards = useMemo(
     () =>
       sidebarSections(
@@ -566,8 +568,14 @@ export function ChannelInventory({
         new Set<string>(JSON.parse(activeDraftSections)),
         regions.managed,
         hasPages,
+      ).filter(
+        // Without the catch-all cards, the sidebar is Favorites, workspaces
+        // and plugin cards such as Activity; Command K lists the rest.
+        (card) =>
+          showsOverflow || chatsOnly || !OVERFLOW_SECTIONS.has(card.key),
       ),
     [
+      showsOverflow,
       hasPages,
       sidebarChannels,
       preferences.data,

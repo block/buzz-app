@@ -13,7 +13,12 @@ import { ConversationWorkspace, PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
 import { registerPins } from "./pins-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
+import {
+  ChatCircleIcon,
+  CopyIcon,
+  SidebarIcon,
+} from "../../shared/design-system/icons";
+import { SidebarSettings } from "./SidebarSettings";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
 import {
@@ -163,6 +168,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
   });
   const agents = ctx.agents;
   const membership = ctx.adminAccess.membership;
+  ctx.settingsCards.register({
+    id: "sidebar",
+    title: "Sidebar",
+    group: "App",
+    icon: SidebarIcon,
+    component: ({ active }) => <SidebarSettings active={active} />,
+  });
   ctx.settingsCards.register({
     id: "templates",
     title: "Channel templates",

@@ -1,0 +1,164 @@
+.capture {
+  display: grid;
+  gap: var(--space-4);
+  padding-block: var(--space-3);
+}
+.capture[data-phase="review"],
+.capture[data-phase="saving"] {
+  row-gap: var(--space-6);
+  padding-inline: var(--space-half);
+}
+.stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  justify-self: center;
+  width: min(100%, 11rem);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--surface-inset);
+}
+.preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+video.preview {
+  transform: scaleX(-1);
+}
+.actions,
+.tools {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.tools > div,
+.controls {
+  display: grid;
+  gap: var(--space-2);
+}
+.tools > div {
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  justify-items: center;
+}
+.controls label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.controls input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+.stage[data-phase="recording"] {
+  overflow: visible;
+}
+.stage[data-phase="recording"] video {
+  border-radius: inherit;
+}
+.timerRing {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  transform: rotate(-90deg);
+  color: var(--text-standard);
+  pointer-events: none;
+}
+.stage[data-phase="idle"] {
+  border: 2px dashed var(--border-standard);
+}
+.controls {
+  min-width: 0;
+}
+.capture {
+  grid-template-columns: minmax(0, 1fr);
+}
+.colorRow {
+  display: flex;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  user-select: none;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--space-3),
+    black calc(100% - var(--space-3)),
+    transparent
+  );
+}
+.colorRow > button {
+  flex: none;
+  cursor: grab;
+}
+.controls fieldset {
+  width: 100%;
+}
+.stage[data-phase="review"],
+.stage[data-phase="saving"] {
+  background: transparent;
+  box-shadow: 0 0 0 1px var(--border-standard);
+}
+.stage:focus-within {
+  outline: 2px solid var(--text-standard);
+}
+canvas.preview {
+  touch-action: none;
+  cursor: grab;
+}
+canvas.preview:active {
+  cursor: grabbing;
+}
+.tools {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(4, var(--size-control-lg));
+  justify-content: space-between;
+  column-gap: 0;
+  text-align: center;
+}
+.framing,
+.framing label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.framing {
+  gap: var(--space-4);
+}
+.framing label,
+.framing input {
+  flex: 1;
+  min-width: 0;
+}
+.outlineGlyph {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+button[aria-pressed="false"] .outlineGlyph {
+  border-style: dashed;
+}
+
+.colorRow [data-transparent] {
+  background-image: repeating-conic-gradient(
+    var(--border-primary) 0 25%,
+    var(--surface-panel) 0 50%
+  );
+  background-size: 0.75rem 0.75rem;
+  background-position: center;
+}

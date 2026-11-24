@@ -95,12 +95,14 @@ function mergeRefreshedDraft(
 }
 
 export function ProfileSettings({
+  active = true,
   communities,
   community,
   onUnsavedChange,
 }: {
   communities: Communities;
   community?: Membership | undefined;
+  active?: boolean;
   onUnsavedChange?: ((unsaved: boolean) => void) | undefined;
 }) {
   const client = useSyncExternalStore(
@@ -335,25 +337,27 @@ export function ProfileSettings({
               <section aria-label="Profile preview" className={hero.hero}>
                 <ProfileBackdrop src={backdrop} />
                 <div>
-                  <AvatarEditor
-                    personal
-                    size="compact"
-                    value={profile.picture}
-                    name={verifiedName?.name ?? profile.name}
-                    community={community?.id}
-                    {...(thumbnailMedia ? { thumbnailMedia } : {})}
-                    disabled={saving || !previewReady}
-                    onBusyChange={setUploading}
-                    onChange={(picture) => {
-                      // Apply only the completed picture, never the upload's old name/bio.
-                      setDraft((current) => ({
-                        ...(current ?? latestPersisted.current),
-                        picture,
-                      }));
-                      setSaved(false);
-                      setError("");
-                    }}
-                  />
+                  {active && (
+                    <AvatarEditor
+                      personal
+                      size="compact"
+                      value={profile.picture}
+                      name={verifiedName?.name ?? profile.name}
+                      community={community?.id}
+                      {...(thumbnailMedia ? { thumbnailMedia } : {})}
+                      disabled={saving || !previewReady}
+                      onBusyChange={setUploading}
+                      onChange={(picture) => {
+                        // Apply only the completed picture, never the upload's old name/bio.
+                        setDraft((current) => ({
+                          ...(current ?? latestPersisted.current),
+                          picture,
+                        }));
+                        setSaved(false);
+                        setError("");
+                      }}
+                    />
+                  )}
                 </div>
                 <div className={styles.previewCopy}>
                   <h3 className="text-body-lg">

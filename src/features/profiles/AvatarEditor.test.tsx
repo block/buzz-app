@@ -480,3 +480,22 @@ it("sizes and moves the emoji in its preview and its uploaded avatar", async () 
     0.1,
   );
 });
+
+it("offers only Image and Animated for humans while agents keep emoji controls", async () => {
+  const props = {
+    value: "",
+    name: "Person",
+    community,
+    onChange: vi.fn(),
+    inlinePicker: true,
+  };
+  const view = render(<AvatarEditor {...props} personal />);
+  expect(screen.getByRole("tab", { name: "Image" })).toBeVisible();
+  expect(screen.getByRole("tab", { name: "Animated" })).toBeVisible();
+  expect(screen.queryByRole("tab", { name: "Emoji" })).toBeNull();
+  expect(screen.queryByRole("tab", { name: "Background" })).toBeNull();
+  view.unmount();
+  render(<AvatarEditor {...props} />);
+  expect(screen.getByRole("tab", { name: "Emoji" })).toBeVisible();
+  expect(screen.queryByRole("tab", { name: "Animated" })).toBeNull();
+});

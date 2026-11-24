@@ -1,3 +1,4 @@
+import { avatarSource } from "../../shared/avatar-source";
 import { decode } from "nostr-tools/nip19";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -65,7 +66,7 @@ export function WelcomeBack({
             {(name || profile?.picture) && (
               <Avatar
                 alt=""
-                src={profile?.picture}
+                src={avatarSource(profile?.picture)}
                 fallback={name || ""}
                 fallbackSurface="panel"
                 size="large"

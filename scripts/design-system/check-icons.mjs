@@ -23,6 +23,7 @@ const nonIconDependencies = new Set([
   "@fontsource/jetbrains-mono",
   "@hypothesi/tauri-mcp-server", // Native MCP client.
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
+  "@mediapipe/tasks-vision", // Human-avatar selfie segmentation, not an icon catalog.
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
   "@noble/hashes",
@@ -86,6 +87,7 @@ const nonIconDependencies = new Set([
   "tailwindcss",
   "typescript",
   "undici",
+  "upng-js", // Human-avatar APNG encoding, not an icon catalog.
   "virtua",
   "vite",
   "vitest",

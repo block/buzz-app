@@ -920,8 +920,13 @@ it.each(["refresh-first", "upload-first"])(
         { wrapper: ToastProvider },
       );
       fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
-      fireEvent.click(await screen.findByRole("tab", { name: "Background" }));
-      fireEvent.click(screen.getByRole("button", { name: "Done" }));
+      const fileInput = document.querySelector('input[type="file"]');
+      if (!fileInput) throw new Error("Missing avatar file input");
+      fireEvent.change(fileInput, {
+        target: {
+          files: [new File(["image"], "avatar.png", { type: "image/png" })],
+        },
+      });
       await waitFor(() => expect(uploadAvatar).toHaveBeenCalledTimes(1));
       expect(publish).not.toHaveBeenCalled();
       const fresh = {
@@ -938,6 +943,7 @@ it.each(["refresh-first", "upload-first"])(
           refresh.resolve(fresh);
         }
       });
+      fireEvent.click(screen.getByRole("button", { name: "Done" }));
       expect(screen.getByRole("textbox", { name: "Display name" })).toHaveValue(
         "Fresh name",
       );

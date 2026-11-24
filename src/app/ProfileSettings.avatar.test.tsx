@@ -119,13 +119,14 @@ function setup(
       });
     },
   );
-  function CapturedProfile() {
+  function CapturedProfile({ active = true }: { active?: boolean }) {
     const client = useSyncExternalStore(
       communities.subscribe,
       communities.snapshot,
     );
     return (
       <ProfileSettings
+        active={active}
         key={client.selected ?? "local"}
         communities={communities}
         community={client.memberships.find(
@@ -135,7 +136,9 @@ function setup(
     );
   }
   const view = render(<CapturedProfile />, { wrapper: ToastProvider });
-  return { select, saveProfile, view, communities, profiles };
+  const setActive = (active: boolean) =>
+    view.rerender(<CapturedProfile active={active} />);
+  return { select, saveProfile, view, communities, profiles, setActive };
 }
 async function editName(name = "Changed") {
   await screen.findByDisplayValue("Alpha human");
@@ -513,3 +516,42 @@ it.each(["http://images.example/avatar.png", "data:image/png;base64,AA=="])(
     );
   },
 );
+
+it("closes a starting camera when leaving Profile and retains the form draft", async () => {
+  const pending = deferred<MediaStream>();
+  const getUserMedia = vi.fn(() => pending.promise);
+  const original = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia },
+  });
+  try {
+    const { setActive } = setup();
+    await editName("Keep my draft");
+    fireEvent.click(screen.getByRole("button", { name: "Edit avatar" }));
+    const animated = await screen.findByRole("tab", { name: "Animated" });
+    await act(async () => {
+      fireEvent.click(animated);
+      await vi.dynamicImportSettled();
+    });
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Start camera" }),
+    );
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    setActive(false);
+    expect(screen.queryByRole("tab", { name: "Animated" })).toBeNull();
+    const stop = vi.fn();
+    await act(async () =>
+      pending.resolve({
+        getTracks: () => [{ stop }],
+      } as unknown as MediaStream),
+    );
+    expect(stop).toHaveBeenCalledOnce();
+    setActive(true);
+    expect(screen.getByLabelText("Display name")).toHaveValue("Keep my draft");
+    expect(screen.queryByRole("tab", { name: "Animated" })).toBeNull();
+  } finally {
+    if (original) Object.defineProperty(navigator, "mediaDevices", original);
+    else Reflect.deleteProperty(navigator, "mediaDevices");
+  }
+});

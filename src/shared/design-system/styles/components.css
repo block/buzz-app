@@ -916,6 +916,10 @@
     color: var(--text-standard);
   }
 
+  .buzz-avatar:has(> img[data-transparent][data-loaded="true"]) {
+    background: transparent;
+  }
+
   /* Matches reply-stack artwork inside its 24px slot and 1.5px ring. */
   .buzz-avatar[data-size="compact"] {
     @apply text-caption;

@@ -12,17 +12,27 @@ import { useReadyImage } from "../useReadyImage";
 
 /** The host may supply artwork for recognized sources; unknown images keep normal loading. */
 export const AvatarArtworkContext = createContext<
-  ((src: string) => ReactNode) | null
+  | ((
+      src: string,
+      options: {
+        autoPlay: boolean;
+        fallback: ReactNode;
+        loading: "eager" | "lazy" | undefined;
+      },
+    ) => ReactNode)
+  | null
 >(null);
 
 type AvatarSize = "tiny" | "compact" | "small" | "default" | "large" | "fill";
 
-function AvatarArtwork({
+export function AvatarArtwork({
+  transparent = false,
   src,
   fallback,
   loading,
 }: {
   src: string;
+  transparent?: boolean;
   fallback: ReactNode;
   loading: "eager" | "lazy" | undefined;
 }) {
@@ -44,6 +54,7 @@ function AvatarArtwork({
     <>
       <img
         {...image}
+        data-transparent={transparent || undefined}
         data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
         referrerPolicy="no-referrer"
@@ -62,6 +73,7 @@ export function Avatar({
   size = "default",
   shape = "circle",
   statusBadge,
+  autoPlay = false,
   loading,
 }: {
   src?: string | null | undefined;
@@ -73,13 +85,16 @@ export function Avatar({
   size?: AvatarSize;
   shape?: "circle" | "squircle";
   statusBadge?: "online" | "away" | "offline" | undefined;
+  autoPlay?: boolean;
   /** Immediate visible editors may bypass lazy scheduling, never image readiness. */
   loading?: "eager" | "lazy";
 }) {
   const renderArtwork = useContext(AvatarArtworkContext);
-  const artwork = src ? renderArtwork?.(src) : undefined;
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
+  const artwork = src
+    ? renderArtwork?.(src, { autoPlay, fallback: content, loading })
+    : undefined;
   return (
     <span
       className="buzz-avatar-status"

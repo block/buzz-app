@@ -1,3 +1,9 @@
+import { ProfilePeek } from "../../src/features/profiles/ProfilePeek";
+import { IconButton } from "../../src/shared/design-system/ui/IconButton";
+import { AgentAvatarArtworkProvider } from "../../src/features/agents/AgentAvatarArtworkProvider";
+import { Avatar } from "../../src/shared/design-system/ui/Avatar";
+import { avatarMedia } from "../../src/shared/avatar-source";
+import { AvatarEditor } from "../../src/features/profiles/AvatarEditor";
 import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { Context } from "@deepseek-ai/cordis";
 import { createCommunities } from "../../src/features/communities/service";
@@ -31,7 +37,9 @@ for (const id of ["https://relay.example.test", "https://other.example.test"]) {
         content: JSON.stringify({
           name: "Fixture human",
           about: "This field must survive avatar editing.",
-          picture: "",
+          picture: new URLSearchParams(location.search).has("animatedProfile")
+            ? "https://example.org/still.png#buzz-anim=https%3A%2F%2Fexample.org%2Fanimated.png"
+            : "",
         }),
       },
       profileKey,
@@ -132,14 +140,47 @@ const accountActions = {
 } as unknown as AccountActionsService;
 const communities = createCommunities(new Context(), true);
 Object.assign(window, { avatarProfileFixture: { profiles, communities } });
+const samplePicture = avatarMedia(
+  "https://example.org/poster.png#buzz-anim=https%3A%2F%2Fexample.org%2Fanimation.png",
+  (_url, size) =>
+    `/tests/fixtures/attachment-media/${size ? "still.png" : "animated.png"}`,
+);
 function Fixture() {
   useKeyboardFocusVisibility();
   const [human, setHuman] = useState(false);
+  const [agent, setAgent] = useState(false);
+  const [agentPicture, setAgentPicture] = useState("");
   return (
     <main
       data-buzz-ui=""
       className="mx-auto max-w-4xl space-y-4 p-4 text-body text-primary"
     >
+      <AgentAvatarArtworkProvider>
+        <ProfilePeek
+          trigger={
+            <IconButton
+              aria-label="Hover playback button"
+              variant="avatar"
+              icon={
+                <Avatar
+                  alt="Hover playback sample"
+                  fallback="Person"
+                  src={samplePicture}
+                />
+              }
+            />
+          }
+          name="Sample person"
+          picture={samplePicture}
+          pubkey={profileViewer}
+          agent={false}
+          session={undefined}
+          channelId="sample"
+          viewer={undefined}
+          target="sample"
+          onOpen={() => true}
+        />
+      </AgentAvatarArtworkProvider>
       <header className="space-y-3 rounded-xl bg-panel p-4">
         <ProfileButton
           communities={communities}
@@ -157,17 +198,36 @@ function Fixture() {
           {human ? "Close human profile" : "Edit human profile"}
         </Button>
       </header>
+      <Button
+        onClick={() => {
+          setHuman(false);
+          setAgent(true);
+        }}
+      >
+        Edit agent avatar
+      </Button>
+      {agent && (
+        <AvatarEditor
+          value={agentPicture}
+          name="Fixture agent"
+          shape="squircle"
+          community="https://relay.example.test"
+          onChange={setAgentPicture}
+        />
+      )}
       {human && (
         <section className="rounded-xl bg-surface-panel p-6">
-          <ProfileSettings
-            key={communities.snapshot().selected ?? "local"}
-            communities={communities}
-            community={communities
-              .snapshot()
-              .memberships.find(
-                (item) => item.id === communities.snapshot().selected,
-              )}
-          />
+          <AgentAvatarArtworkProvider>
+            <ProfileSettings
+              key={communities.snapshot().selected ?? "local"}
+              communities={communities}
+              community={communities
+                .snapshot()
+                .memberships.find(
+                  (item) => item.id === communities.snapshot().selected,
+                )}
+            />
+          </AgentAvatarArtworkProvider>
         </section>
       )}
     </main>

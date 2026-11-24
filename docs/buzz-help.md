@@ -55,6 +55,7 @@ if that desktop app is up and running.
 - **Left nav**: the icons at the top of the far left switch between
   **Messages**, **Agents** and any pages plugins add. Your communities are at
   the bottom, and your profile picture below them opens **Settings**.
+- In **Settings → Profile**, choose **Animated → Start camera → Record** to make an animated avatar. Choose **Done**, then save your profile. Opening a profile plays its animation when motion is enabled.
 - **Tabs**: threads, agents and other things you open appear as tabs on the
   right.
 - **Left Sidebar**: **Activity** and other pinned pages at the top, then workspaces

@@ -39,6 +39,8 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
           syncBuiltinESMExports();
           try {
             process.chdir(directory);
+            // Model a source archive so each config case avoids scanning the developer checkout.
+            process.env.GIT_DIR = join(directory, ".git");
             const loaded = await loadConfigFromFile(
               { command: 'serve', mode: 'development' }, configFile,
             );

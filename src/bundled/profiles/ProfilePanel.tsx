@@ -639,6 +639,7 @@ function ProfileDetails({
           <ProfileBackdrop src={picture} />
           <div className={styles.portrait}>
             <AgentAvatar
+              autoPlay={!displayAgent}
               session={session}
               agentPubkey={pubkey}
               channelId={context?.channelId}

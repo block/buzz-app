@@ -257,6 +257,7 @@ export function ProfilePeek({
           <div className={styles.artwork}>
             <div className={styles.portrait}>
               <AgentAvatar
+                autoPlay={open && !agent}
                 session={session}
                 agentPubkey={pubkey}
                 channelId={channelId}

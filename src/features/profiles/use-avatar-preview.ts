@@ -1,8 +1,8 @@
-import { avatarMedia } from "../../shared/avatar-source";
+import { animatedAvatarSource, avatarMedia } from "../../shared/avatar-source";
 import { useEffect, useState } from "react";
 import { communityDestination } from "../communities/destination";
 import { registerBrokerCommunity } from "../relay/transport";
-import { avatarPreview } from "./avatar-upload";
+import { avatarPreview, communityMedia } from "./avatar-upload";
 
 /** A protected image must not mount before its destination is registered. */
 export function useAvatarPreview(
@@ -10,11 +10,18 @@ export function useAvatarPreview(
   community?: string,
   size?: "small",
   /** An already-bound session's thumbnail resolver needs no second registration. */
-  thumbnailMedia?: (url: string, size: "small") => string | undefined,
+  thumbnailMedia?: (url: string, size?: "small") => string | undefined,
+  animate = false,
 ) {
   const source = thumbnailMedia
-    ? avatarMedia(value, thumbnailMedia)
-    : avatarPreview(value, community, size);
+    ? avatarMedia(value, (url, requestedSize) =>
+        requestedSize || animate
+          ? thumbnailMedia(url, requestedSize)
+          : undefined,
+      )
+    : animate && animatedAvatarSource(value)
+      ? avatarMedia(value, community ? communityMedia(community) : (url) => url)
+      : avatarPreview(value, community, size);
   const destination =
     !thumbnailMedia && source?.startsWith("/api/relay/") && community
       ? communityDestination(community).id

@@ -52,6 +52,8 @@ import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
 import * as focus from "./focus";
+import jevInboxManifest from "./jev-inbox/manifest.json";
+import * as jevInbox from "./jev-inbox";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
@@ -213,6 +215,12 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...jevInboxManifest, apiVersion: 1 },
+    module: jevInbox,
+    // A prototype: opt-in.
     enabledByDefault: false,
   },
   {

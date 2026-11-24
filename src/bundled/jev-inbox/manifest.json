@@ -1,0 +1,7 @@
+{
+  "id": "buzz.jev-inbox",
+  "name": "Jev Inbox",
+  "apiVersion": 1,
+  "description": "An inbox Jev fills: the conversations you need to see land on top as they arrive, and long threads and channels get a one-line summary from Bestie.",
+  "discovery": { "category": "productivity", "tags": ["messaging"] }
+}

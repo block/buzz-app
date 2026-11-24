@@ -663,6 +663,7 @@ export function ComposerSheet({
   children,
   containsComposer = false,
   readerKey,
+  openingTrigger,
   readerOnly = false,
   tall = false,
   onClosed,
@@ -691,6 +692,8 @@ export function ComposerSheet({
   containsComposer?: boolean;
   /** Replaces the panel reader while keeping the sheet in place. */
   readerKey?: string | undefined;
+  /** The control that opened this reader, if it still holds focus. */
+  openingTrigger?: HTMLElement | null | undefined;
   /** A panel: it takes the full height and covers the composer, which it
    * leaves untouched underneath. */
   readerOnly?: boolean;
@@ -735,9 +738,10 @@ export function ComposerSheet({
     const element = popup.current;
     if (!element) return;
     element.removeAttribute("data-scrolled");
-    if (document.activeElement === document.body)
+    const { activeElement, body } = element.ownerDocument;
+    if (activeElement === body || activeElement === openingTrigger)
       element.focus({ preventScroll: true });
-  }, [readerKey]);
+  }, [readerKey, openingTrigger]);
   const grow = useGrowth();
   // Later changes reverse whatever motion is running.
   useLayoutEffect(() => {

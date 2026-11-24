@@ -15,6 +15,7 @@ export type PanelLayer = Extract<OpenLayer, { target: string }>;
 export type PanelLayerContent = Readonly<{
   title: string;
   content: ReactNode;
+  openingTrigger: HTMLElement | null;
   /** Close the layer and open the panel as a tab. */
   openAsTab(): void;
 }>;

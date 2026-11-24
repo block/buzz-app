@@ -341,6 +341,7 @@ test.describe("Inline", () => {
     }).toPass();
     await pullLink(thread(page)).press("Enter");
     await expect(pullHeading(github(page))).toBeVisible();
+    await expect(github(page)).toBeFocused();
     await expect(profile(page)).toHaveCount(0);
     await expect(thread(page)).toBeVisible();
     await page.reload();

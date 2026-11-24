@@ -94,6 +94,7 @@ function Layer({ open }: { open: OpenLayer }) {
       host={host}
       title={drawn.title}
       readerKey={open.target}
+      openingTrigger={drawn.openingTrigger}
       readerOnly
       onOpenAsTab={drawn.openAsTab}
     >

@@ -121,36 +121,6 @@ export function routedInline(
   };
 }
 
-/** A thread's tab opened beside `current`: the visit `target` asks for,
- * with the thread read inline over that conversation still in it, so the
- * sheet stays as the tab opens. A target that names the inline thread is
- * left alone: that thread is leaving for its tab. */
-export function besideInline(
-  current: OpenTarget | undefined,
-  target: OpenTarget,
-): OpenTarget {
-  const shown = conversation(current);
-  if (
-    !shown?.inline ||
-    target.kind !== "conversation" ||
-    !sameScope(target, shown) ||
-    !target.messageId ||
-    target.inline ||
-    target.detail ||
-    target.panel ||
-    target.forward ||
-    target.layer ||
-    target.context ||
-    (target.threadRootId ?? target.messageId) === shown.inline
-  )
-    return target;
-  return {
-    ...target,
-    inline: shown.inline,
-    ...(shown.inlineMessage ? { inlineMessage: shown.inlineMessage } : {}),
-  };
-}
-
 /** The visit with `layer` open over the view it was opened in. Over a thread
  * the visit keeps that thread; over the conversation it is the
  * conversation's own dialog. */

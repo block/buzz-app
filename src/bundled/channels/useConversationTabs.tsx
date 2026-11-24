@@ -516,9 +516,9 @@ export function useConversationTabs({
     {
       canOpen: canOpenLink,
       // Called only after render, once the link handler below exists.
-      open: (target) =>
+      open: (target, pane) =>
         !!drawerContext &&
-        openConversationLink(drawerContext.channelId, target),
+        openConversationLink(drawerContext.channelId, target, undefined, pane),
     },
     openMembers,
     {

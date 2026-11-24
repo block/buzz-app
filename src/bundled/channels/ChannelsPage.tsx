@@ -1804,6 +1804,8 @@ function ChannelWorkspace({
       routedThread &&
       (exact?.rootId || requestedThread) &&
       routedTarget.kind === "conversation" &&
+      // A visit that names an inline thread already is not asking for another.
+      !routedTarget.inline &&
       !routedTarget.detail &&
       !routedTarget.panel &&
       !routedTarget.forward &&

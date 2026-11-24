@@ -1,5 +1,4 @@
 import { createContext } from "react";
-import { besideInline } from "../../bundled/channels/inline-address";
 import type { Navigation } from "../navigation/controller";
 import { targetKey, type OpenTarget } from "../navigation/targets";
 
@@ -12,6 +11,38 @@ import { targetKey, type OpenTarget } from "../navigation/targets";
 const sideVisits = new WeakMap<Navigation, string>();
 // The attempt a link began by naming the visit already on screen.
 const repeats = new WeakMap<Navigation, string>();
+
+/** A thread's tab opened beside `current`: the visit `target` asks for,
+ * with the thread read inline over that conversation still in it, so the
+ * sheet stays as the tab opens. A target that names the inline thread is
+ * left alone: that thread is leaving for its tab. */
+export function besideInline(
+  current: OpenTarget | undefined,
+  target: OpenTarget,
+): OpenTarget {
+  if (
+    current?.kind !== "conversation" ||
+    !current.inline ||
+    target.kind !== "conversation" ||
+    target.channelId !== current.channelId ||
+    target.scope.viewer !== current.scope.viewer ||
+    target.scope.communityOrigin !== current.scope.communityOrigin ||
+    !target.messageId ||
+    target.inline ||
+    target.detail ||
+    target.panel ||
+    target.forward ||
+    target.layer ||
+    target.context ||
+    (target.threadRootId ?? target.messageId) === current.inline
+  )
+    return target;
+  return {
+    ...target,
+    inline: current.inline,
+    ...(current.inlineMessage ? { inlineMessage: current.inlineMessage } : {}),
+  };
+}
 
 /** Opens `target` for a link chosen in a tab or panel of `pane`. A visit
  * opened from the side pane is remembered, so the page that applies it knows

@@ -207,13 +207,16 @@ export function ProfilePanel({
   );
   const pubkey = profilePanelKey(target) ?? activityKey;
   const owned = useAgent(agents, pubkey ?? "");
+  const pane = useContext(PanelPane);
   if (!pubkey) return <p>Unsupported profile.</p>;
   if (connection.status !== "ready")
     return <p>Connect to a community to view this profile.</p>;
-  // An agent's activity opens a turn's conversation in this community.
+  // An agent's activity opens a turn's conversation in this community, as a
+  // link in this panel does: beside it when it sits in a pane.
   const openConversation = conversationOpener(
     navigation,
     panelCommunity(connection.scope, connection.viewer),
+    (navigator, opening) => openFromPanel(navigator, opening, pane),
   );
   const owner =
     agents &&

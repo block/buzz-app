@@ -47,10 +47,11 @@ export function useChannelPanels(
   context?: ChannelPanelContext,
   onOpen?: () => void,
   tabs?: ChannelPanelTabs,
-  /** Opens a target as a channel tab; drawer panels and launchers share it. */
+  /** Opens a target as a channel tab; drawer panels and launchers share it.
+   * A panel in the side column opens from the side pane. */
   opener?: Readonly<{
     canOpen(target: string): boolean;
-    open(target: string): boolean;
+    open(target: string, pane?: "side"): boolean;
   }>,
   openMembers?: () => void,
   /** The channel's side-column opening, retained across visits until closed. */
@@ -145,7 +146,10 @@ export function useChannelPanels(
     channelId: opening.context.channelId,
     canOpen: (target) => !!opener?.canOpen(target),
     open: (target) =>
-      activeOpening.current === opening && !!opener?.open(target),
+      activeOpening.current === opening &&
+      !!(opening.panel.channelPlacement === "side"
+        ? opener?.open(target, "side")
+        : opener?.open(target)),
   });
   const bound = (binding: ChannelPanelContext, panel: RegisteredPanel) =>
     mounted.current === binding && panels.snapshot().includes(panel);

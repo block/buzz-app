@@ -262,7 +262,7 @@ function useQuickHandoff(
       const scroller = body?.querySelector("[data-message-scroller]");
       const ready = scroller
         ? scroller.matches(
-            ":is([data-thread-drawable=read]:not([data-positioning]), [data-thread-drawable=empty])",
+            "[data-thread-drawable=read]:not([data-positioning])",
           ) &&
           (!scroller.hasAttribute("data-composer-expected") ||
             !!sheet.querySelector("[data-message-composer]"))

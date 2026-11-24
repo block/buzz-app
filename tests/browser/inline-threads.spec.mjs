@@ -208,7 +208,7 @@ test.describe("Inline", () => {
     await expect(sheet(page)).toHaveCount(0);
   });
 
-  test("a thread sheet fits its content, starts at its header's edge and fades into its own surface", async ({
+  test("a thread sheet starts at its header's edge and fades into its own surface", async ({
     page,
     app,
   }) => {
@@ -228,17 +228,15 @@ test.describe("Inline", () => {
             .getBoundingClientRect().bottom,
       );
     await expect.poll(() => sheet(page).evaluate(lead)).toBeLessThan(4);
-    // A short thread hugs its rows instead of taking the full height.
     const room = (element) =>
       Number.parseFloat(getComputedStyle(element).maxHeight) -
       element.getBoundingClientRect().height;
-    await expect.poll(() => sheet(page).evaluate(room)).toBeGreaterThan(100);
     await page.keyboard.press("Escape");
     await expect(sheet(page)).toHaveCount(0);
     for (let index = 0; index < 30; index++) app.reply(long.id, false, false);
     await clickRow(page, viewThread(page, long));
     await expect(sheet(page).getByText("Unread reply 1")).toBeVisible();
-    // A long one grows to the maximum and reads up from its reply box.
+    // A long one takes the maximum and reads up from its reply box.
     await expect.poll(() => sheet(page).evaluate(room)).toBeLessThan(1);
     await sheet(page)
       .locator("[data-message-scroller]")

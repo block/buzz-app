@@ -1066,14 +1066,11 @@ function ThreadMessages({
   }, [navigation?.signal]);
   // Ordinary opens follow the latest reply after bounded history finishes.
   // Keep that first positioning invisible; exact-message navigation reveals itself.
-  // A root with no replies yet has nothing to position, so it
-  // shows at once rather than after the read comes back empty.
   const positioning =
     !revealSelected &&
     !initialPositioned &&
     (!navigation || positionedVisit) &&
-    snapshot.status !== "error" &&
-    snapshot.root?.replyCount !== 0;
+    snapshot.status !== "error";
   // Each ordinary opening starts at the first top-level reply with unread in
   // its branch, decided once before positioning so reading it does not move
   // the line. Undefined while deciding.
@@ -2411,16 +2408,11 @@ function ThreadMessages({
           aria-label="Thread messages"
           aria-busy={positioning}
           data-positioning={positioning || undefined}
-          // A quick-opening sheet draws the thread once it is
-          // read, or at once when its root is known to have no replies yet.
-          // A root with no replies has nothing to position, so it draws even
-          // while the read is still out.
+          // A quick-opening sheet draws the thread once it is read.
           data-thread-drawable={
             snapshot.status === "ready" || snapshot.status === "error"
               ? "read"
-              : snapshot.root?.replyCount === 0 && rows.length > 0
-                ? "empty"
-                : undefined
+              : undefined
           }
           // A thread with no reply box coming (Solo, read-only, no root)
           // draws without waiting for one.

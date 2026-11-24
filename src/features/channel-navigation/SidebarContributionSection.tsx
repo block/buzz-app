@@ -243,6 +243,7 @@ function SectionContents({
         )
       }
     >
+      {entry.body ? <entry.body active={active} target={current} /> : null}
       {rows.map((row) => {
         const trailing = [
           row.badge,

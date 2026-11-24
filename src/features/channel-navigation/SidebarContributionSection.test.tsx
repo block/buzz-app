@@ -464,3 +464,45 @@ it("preserves the receiver for an external row store", () => {
   });
   expect(screen.getByRole("button", { name: "Later item" })).toBeVisible();
 });
+
+it("shows a bundled card's own contents with what the sidebar has open", () => {
+  const open: OpenTarget = {
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: "a".repeat(64), communityOrigin: "wss://one.example" },
+    channelId: "room",
+  };
+  const none: readonly SidebarSectionRow[] = [];
+  const entry: RegisteredSidebarSection = {
+    ...makeEntry("good", { snapshot: () => none, subscribe: () => () => {} }),
+    body: ({ target }) => (
+      <p>{target.kind === "conversation" ? target.channelId : "none"}</p>
+    ),
+  };
+  render(
+    <ChannelSidebarDnd
+      writable={false}
+      onMove={() => {}}
+      onReorder={() => {}}
+      overlay={() => null}
+    >
+      <SidebarContributionSection
+        entry={entry}
+        registry={{
+          version: 1,
+          snapshot: () => [entry],
+          subscribe: () => () => {},
+          register: () => {},
+        }}
+        navigator={navigatorAt(open)}
+        target={open}
+        open
+        onToggle={() => {}}
+        groupIndex={0}
+        reorderable={false}
+        move={{}}
+      />
+    </ChannelSidebarDnd>,
+  );
+  expect(screen.getByText("room")).toBeInTheDocument();
+});

@@ -3,7 +3,7 @@ import type {
   RegisteredSidebarContext,
 } from "../sidebar/contracts";
 import { Service, type Context } from "@deepseek-ai/cordis";
-import type { ReactElement, ReactNode } from "react";
+import type { ComponentType, ReactElement, ReactNode } from "react";
 import type { OpenTarget } from "../navigation/targets";
 import { isBundledOwner } from "../../plugins/provenance";
 import type {
@@ -31,6 +31,13 @@ export type SidebarSectionAction = Readonly<{
   onSelect: () => void | Promise<void>;
 }>;
 
+/** What a card's own contents know: whether the card is still mounted for
+ * its plugin, and what the sidebar has open. */
+export type SidebarSectionBodyProps = Readonly<{
+  active(): boolean;
+  target: OpenTarget;
+}>;
+
 export type SidebarSectionContribution = Readonly<{
   version: 1;
   id: string;
@@ -42,6 +49,9 @@ export type SidebarSectionContribution = Readonly<{
   }>;
   select: (row: SidebarSectionRow) => OpenTarget;
   actions?: readonly SidebarSectionAction[];
+  /** Bundled plugins only. Preview, likely to break: the card's own contents,
+   * shown inside its frame above any rows. */
+  body?: ComponentType<SidebarSectionBodyProps>;
 }>;
 
 export type RegisteredSidebarSection = Contribution<SidebarSectionContribution>;
@@ -139,11 +149,19 @@ export class SidebarSectionsService extends Service implements SidebarSections {
       return;
     }
     if (
+      section.body !== undefined &&
+      (!this.ctx.pluginOwner || !isBundledOwner(this.ctx.pluginOwner))
+    )
+      throw new Error(
+        "Sidebar card contents are available only to bundled plugins",
+      );
+    if (
       typeof section.id !== "string" ||
       !idPattern.test(section.id) ||
       typeof section.title !== "string" ||
       !section.title.trim() ||
       section.icon == null ||
+      (section.body !== undefined && !isComponent(section.body)) ||
       !section.rows ||
       typeof section.rows.snapshot !== "function" ||
       typeof section.rows.subscribe !== "function" ||

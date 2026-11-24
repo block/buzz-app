@@ -643,11 +643,18 @@ it("dates activity from another year with its year, on the card and the page", a
 it("counts unread conversations on the sidebar Activity row until they are read", async () => {
   const h = fixture({ withDm: true });
   const pages = { register: vi.fn() };
+  const scope = { pages, reflect: { get: () => undefined } };
   apply({
     pages,
     relay: h.relay,
     navigation: { open: h.open },
     shortcuts: { register: vi.fn() },
+    settingsCards: { register: vi.fn() },
+    effect: vi.fn(),
+    plugin: (fork: (ctx: typeof scope) => void) => {
+      fork(scope);
+      return { dispose: async () => {} };
+    },
   } as unknown as Parameters<typeof apply>[0]);
   const Badge = pages.register.mock.calls[0]?.[0].badge;
   expect(Badge).toBeTypeOf("function");
@@ -4074,10 +4081,14 @@ it("a Solo chat row previewing unfinished workflow output that is not its eviden
     ],
   });
   // Fill the bounded addressed page so the row's own mention stays settled.
+  // The notes are older than the output, so the row previews the output and
+  // not the viewer's own newest note.
   h.events.unshift(
     output,
     ...Array.from({ length: 49 }, (_, i) =>
-      message(h.viewer, "room", `Note ${i}`, 1 + i, [["p", h.viewer.pubkey]]),
+      message(h.viewer, "room", `Note ${i}`, 1 + (i % 38), [
+        ["p", h.viewer.pubkey],
+      ]),
     ),
   );
   const release = h.holdAux();

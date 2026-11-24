@@ -24,6 +24,7 @@ import styles from "./Inbox.module.css";
 import rowStyles from "../../features/messages/MessageListRow.module.css";
 import { MessageListRow } from "../../features/messages/MessageListRow";
 import { PreviewText } from "../../features/messages/PreviewText";
+import type { OwnActivity } from "./own-activity";
 
 type ResolveName = (
   key: string,
@@ -117,71 +118,98 @@ export const rowProfileIds = (
     : []),
 ];
 
-/** One Inbox conversation row's button: avatar, sender, source, time, preview and unread mark. */
+/** Who a row of your own message names: you, where you wrote it, and your
+ * profile for the avatar. */
+export function ownIdentity(
+  viewer: string,
+  channel: ChannelSummary | undefined,
+  profiles: ReadonlyMap<string, Profile>,
+  name: ResolveName,
+): ReturnType<typeof rowIdentity> {
+  const context =
+    channel?.channelType === "dm"
+      ? dmContext(channel, undefined, " · ", profiles, name)
+      : channel
+        ? channelText(channel)
+        : "Conversation";
+  return { sender: "You", context, profile: profiles.get(viewer) };
+}
+
+/** One Inbox conversation row's button: avatar, sender, source, time, preview
+ * and unread mark. With `own`, the row shows your newer message instead; your
+ * messages never mark it unread. */
 export function InboxRowButton({
   item,
+  own,
   identity: { sender, context, profile },
   session,
   feed,
   time,
   previewId,
   ...props
-}: {
-  item: InboxItem;
+}: (
+  | { item: InboxItem; own?: OwnActivity | undefined }
+  | { item?: undefined; own: OwnActivity }
+) & {
   identity: ReturnType<typeof rowIdentity>;
   session: RelaySession;
   feed: InboxFeedSnapshot;
   time: ReactNode;
   previewId?: string | undefined;
 } & Omit<
-  ComponentProps<typeof NavigationItem>,
-  "icon" | "label" | "trailing" | "aria-label"
->) {
-  const unread = hasUnread(item);
+    ComponentProps<typeof NavigationItem>,
+    "icon" | "label" | "trailing" | "aria-label"
+  >) {
+  const unread = !!item && hasUnread(item);
+  const workflow = own ? undefined : item?.workflowOwnerId;
+  const createdAt = own?.createdAt ?? item?.createdAt ?? 0;
   return (
     <MessageListRow
       {...props}
-      aria-label={`Open ${sender} in ${context}`}
+      aria-label={
+        own ? `Open your message in ${context}` : `Open ${sender} in ${context}`
+      }
       aria-describedby={previewId}
       avatar={
         <Avatar
           size="fill"
           alt=""
           fallback={sender}
-          fallbackContent={
-            item.workflowOwnerId ? <LightningIcon size={20} /> : undefined
-          }
+          fallbackContent={workflow ? <LightningIcon size={20} /> : undefined}
           src={
-            item.workflowOwnerId
-              ? undefined
-              : avatarMedia(profile?.picture, session.media)
+            workflow ? undefined : avatarMedia(profile?.picture, session.media)
           }
-          shape={
-            item.workflowOwnerId || profile?.isAgent ? "squircle" : "circle"
-          }
+          shape={workflow || profile?.isAgent ? "squircle" : "circle"}
         />
       }
       sender={sender}
       source={context}
       time={
-        <time dateTime={new Date(item.createdAt * 1000).toISOString()}>
-          {time}
-        </time>
+        <time dateTime={new Date(createdAt * 1000).toISOString()}>{time}</time>
       }
       unread={unread}
       previewId={previewId}
       preview={
-        incompletePreview(feed, [
-          item.previewMessageId,
-          ...item.messageIds,
-        ]) ?? (
+        own ? (
           <PreviewText
-            text={rowPreview(item.preview)}
-            mentions={item.previewMentions}
+            text={rowPreview(own.preview.content)}
+            mentions={own.preview}
             session={session}
-            channelId={item.channelId}
+            channelId={own.channelId}
           />
-        )
+        ) : item ? (
+          (incompletePreview(feed, [
+            item.previewMessageId,
+            ...item.messageIds,
+          ]) ?? (
+            <PreviewText
+              text={rowPreview(item.preview)}
+              mentions={item.previewMentions}
+              session={session}
+              channelId={item.channelId}
+            />
+          ))
+        ) : null
       }
     />
   );

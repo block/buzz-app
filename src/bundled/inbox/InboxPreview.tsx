@@ -1,70 +1,22 @@
-import { reactionRows } from "./reaction-rows";
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-  type RefObject,
-} from "react";
+import { useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Navigation } from "../../features/navigation/controller";
 import type { NavigationScope } from "../../features/navigation/targets";
 import type { PagePreviewProps } from "../../features/pages/service";
-import { useIdentityNames } from "../../features/identity-names/react";
-import { selectProfiles } from "../../features/relay/profile-selection";
-import {
-  useChannelList,
-  useProfileGeneration,
-  useRelayConnection,
-} from "../../features/relay/react";
+import { useRelayConnection } from "../../features/relay/react";
 import { communityRefusalTitle } from "../../features/federated-identity/CommunitySignIn";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import {
-  ArrowRightIcon,
-  ChecksIcon,
-  EnvelopeOpenIcon,
-} from "../../shared/design-system/icons";
+import { ArrowRightIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
-import { useToastNotification } from "../../shared/design-system/ui/Toast";
-import { shortRelativeTimestamp } from "../../shared/relative-timestamp";
 import { readView, writeView } from "../../shared/view-state";
-import {
-  hasUnread,
-  InboxRowButton,
-  ReactionRowButton,
-  rowIdentity,
-  rowProfileIds,
-} from "./InboxRow";
-import { withMentionedIds } from "../../features/messages/PreviewText";
-import { activityConversation, useActivityMutes } from "./useActivityMutes";
+import { ActivityFeed, useActivitySummary } from "./ActivityFeed";
 import { inboxTarget } from "./route";
-import type { InboxItem } from "../../features/relay/inbox";
-import listRowStyles from "../../features/messages/MessageListRow.module.css";
 import styles from "./InboxPreview.module.css";
 
-/** Rows the card renders and enriches; the Activity page holds the rest. */
-const maxRows = 50;
 /** The card's own Unread only choice, separate from the Activity page filters. */
 const unreadOnlyKey = "inbox:preview-unread-only";
-
-/** The row's explicit read, as Activity's Mark as read saves it. */
-async function readRow(session: RelaySession, item: InboxItem) {
-  if (item.target.kind === "channel")
-    await session.unread.prepareChannelRead(item.channelId)();
-  else if (item.timeline)
-    await session.unread.markTimelineRead(item.channelId, item.messageIds);
-  // One intent across its steps: a newer Mark as unread stops the rest.
-  else await session.unread.markReadThrough(item.readThrough);
-}
 
 /** Recent activity, shown while the pointer rests on the sidebar's Activity row. */
 export function InboxPreview({
@@ -118,28 +70,6 @@ function InboxPreviewCard({
   scope: NavigationScope;
   navigator: Navigation;
 }) {
-  const list = useChannelList(session.channels);
-  const muted = useActivityMutes(session);
-  const inbox = useSyncExternalStore(
-    session.unread.subscribeInbox,
-    session.unread.inbox,
-    session.unread.inbox,
-  );
-  const feed = useSyncExternalStore(
-    session.inboxFeed.subscribe,
-    session.inboxFeed.snapshot,
-    session.inboxFeed.snapshot,
-  );
-  const reactions = useSyncExternalStore(
-    session.inboxFeed.reactions.subscribe,
-    session.inboxFeed.reactions.snapshot,
-    session.inboxFeed.reactions.snapshot,
-  );
-  const sync = useSyncExternalStore(
-    session.unread.subscribeSync,
-    session.unread.sync,
-    session.unread.sync,
-  );
   const viewScope = session.scope;
   const [unreadOnly, setUnreadOnlyState] = useState(
     () => readView<unknown>(viewScope, unreadOnlyKey, false) === true,
@@ -148,349 +78,25 @@ function InboxPreviewCard({
     setUnreadOnlyState(value);
     writeView(viewScope, unreadOnlyKey, value);
   };
-  const [refreshAfterRoster, setRefreshAfterRoster] = useState(false);
-  useEffect(() => {
-    // As on the page, a completed discovery revision can retire a feed attempt.
-    void list.asOf;
-    if (list.status !== "ready") return;
-    // Retry after a roster failure also refreshes activity that failed meanwhile.
-    if (refreshAfterRoster) {
-      setRefreshAfterRoster(false);
-      void Promise.all([
-        session.unread.refresh(),
-        session.inboxFeed.refresh(),
-        session.inboxFeed.reactions.refresh(),
-      ]);
-    } else {
-      void session.unread.ensure();
-      void session.inboxFeed.ensure();
-      void session.inboxFeed.reactions.ensure();
-    }
-  }, [session, list.status, list.asOf, refreshAfterRoster]);
-  const channelOf = (channelId: string) =>
-    list.channels.find((channel) => channel.id === channelId);
-  const recent = inbox.items
-    .map((item) => activityConversation(item, muted))
-    .filter((item) => item !== undefined)
-    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
-  const unread = recent.filter(hasUnread);
-  const rows = [
-    ...(unreadOnly ? unread : recent).map((item) => ({
-      kind: "conversation" as const,
-      item,
-    })),
-    ...(!unreadOnly
-      ? reactionRows(
-          reactions.items.filter(
-            (item) =>
-              !muted.has(item.channelId) ||
-              channelOf(item.channelId)?.channelType === "dm",
-          ),
-        )
-      : []
-    ).map((item) => ({
-      kind: "reaction" as const,
-      item,
-    })),
-  ]
-    .sort(
-      (a, b) =>
-        b.item.createdAt - a.item.createdAt ||
-        a.item.id.localeCompare(b.item.id),
-    )
-    .slice(0, maxRows);
-  const profileKey = withMentionedIds(
-    rows.flatMap((row) => [
-      ...(row.kind === "reaction"
-        ? row.item.events.map((event) => event.pubkey)
-        : [row.item.authorId]),
-      ...rowProfileIds(
-        row.kind === "reaction" ? {} : row.item,
-        channelOf(row.item.channelId),
-      ),
-    ]),
-    rows.map((row) =>
-      row.kind === "reaction" ? row.item.message : row.item.previewMentions,
-    ),
-  )
-    .sort()
-    .join(":");
-  const profileIds = useMemo(
-    () => (profileKey ? profileKey.split(":") : []),
-    [profileKey],
-  );
-  const selection = useMemo(
-    () => selectProfiles(session.profiles, profileIds),
-    [session, profileIds],
-  );
-  const profiles = useSyncExternalStore(
-    selection.subscribe,
-    selection.snapshot,
-    selection.snapshot,
-  );
-  const name = useIdentityNames(session.names);
-  const profileGeneration = useProfileGeneration(session.profiles);
-  useEffect(() => {
-    void profileGeneration;
-    if (profileIds.length && list.status === "ready")
-      void session.profiles.ensure(profileIds, "background").catch(() => {});
-  }, [session, profileIds, list.status, profileGeneration]);
-
-  const loading =
-    list.status === "idle" ||
-    list.status === "loading" ||
-    inbox.status === "loading" ||
-    feed.status === "loading" ||
-    reactions.status === "loading";
-  // As on the page, an empty result is only shown once activity was checked.
-  const checked =
-    inbox.status === "ready" ||
-    feed.status === "ready" ||
-    reactions.status === "ready";
-  const failure =
-    list.error ?? inbox.error ?? feed.error ?? reactions.error ?? sync.error;
-  const retry = async () => {
-    if (list.status !== "ready") {
-      setRefreshAfterRoster(true);
-      session.channels.ensureList();
-    } else
-      await Promise.all([
-        session.unread.refresh(),
-        session.inboxFeed.refresh(),
-        session.inboxFeed.reactions.refresh(),
-      ]);
-    await session.unread.retrySync();
-  };
   const unreadOnlyControl = useRef<HTMLElement>(null);
-  const notify = useToastNotification();
-  const listRef = useRef<HTMLUListElement>(null);
-  const [reading, setReading] = useState<ReadonlySet<string>>(new Set());
-  const canRead = sync.capability === "frontier-sync";
-  /** Mark as read keeps focus in the card when its action leaves: on its
-   * row, which stays read, or when Unread only drops the row, on a neighbor. */
-  const previewRows = () => [
-    ...(listRef.current?.querySelectorAll<HTMLElement>("[data-preview-row]") ??
-      []),
-  ];
-  const markRead = async (item: InboxItem) => {
-    if (reading.has(item.id)) return;
-    const before = previewRows();
-    const held = before.some(
-      (row) =>
-        row.dataset.previewRow === item.id &&
-        row.contains(document.activeElement),
-    );
-    const order = before.map((row) => row.dataset.previewRow);
-    const index = order.indexOf(item.id);
-    setReading((current) => new Set(current).add(item.id));
-    try {
-      await readRow(session, item);
-    } catch {
-      notify("Couldn't mark as read", "error");
-    } finally {
-      setReading((current) => {
-        const next = new Set(current);
-        next.delete(item.id);
-        return next;
-      });
-    }
-    if (!held) return;
-    requestAnimationFrame(() => {
-      // Only focus the action took with it when it left: a failed read keeps
-      // its action, and focus elsewhere stays where the user put it. When
-      // Unread only empties the list, Unread only takes focus.
-      const focused = document.activeElement;
-      if (focused && focused !== document.body) return;
-      const rows = previewRows();
-      const row = [item.id, order[index + 1], order[index - 1]]
-        .map((id) =>
-          rows
-            .find((entry) => entry.dataset.previewRow === id)
-            ?.querySelector<HTMLElement>("button"),
-        )
-        .find(Boolean);
-      (row ?? unreadOnlyControl.current)?.focus({ preventScroll: true });
-    });
-  };
-  const retryFocus = useRef(false);
-  const retryButton = useCallback((button: HTMLButtonElement | null) => {
-    if (!button) return;
-    // Capture ownership before removal, not after focus has fallen to body.
-    return () => {
-      retryFocus.current = document.activeElement === button;
-    };
-  }, []);
-  useLayoutEffect(() => {
-    if (!retryFocus.current) return;
-    retryFocus.current = false;
-    // A recovered Retry hands its focus to the card, as on the page.
-    if (failure || document.activeElement !== document.body) return;
-    unreadOnlyControl.current?.focus({ preventScroll: true });
-  }, [failure]);
-  // Each conversation counts once, under its most specific kind, as the
-  // page's filters with Unread only would list it. A Solo chat's own row has
-  // no kind, so the total leads.
-  let dms = 0;
-  let mentions = 0;
-  let threads = 0;
-  for (const item of unread) {
-    if (channelOf(item.channelId)?.channelType === "dm") dms++;
-    else if (item.mentioned && hasUnread(item.mention ?? item)) mentions++;
-    else if (item.thread) threads++;
-  }
-  const kinds = [
-    mentions && `${mentions} ${mentions === 1 ? "mention" : "mentions"}`,
-    threads && `${threads} ${threads === 1 ? "thread" : "threads"}`,
-    dms && `${dms} ${dms === 1 ? "DM" : "DMs"}`,
-  ].filter(Boolean);
-  const summary = loading
-    ? "Checking recent activity…"
-    : unread.length
-      ? [`${unread.length} unread`, ...kinds].join(" · ")
-      : checked
-        ? "Nothing unread"
-        : undefined;
-  const open = (row: (typeof rows)[number]) => {
-    const item =
-      row.kind === "reaction"
-        ? {
-            channelId: row.item.channelId,
-            messageId: row.item.message.id,
-            rootId: row.item.message.threadRootId,
-          }
-        : row.item;
-    close();
-    void navigator.open({
-      version: 1,
-      kind: "conversation",
-      scope,
-      channelId: item.channelId,
-      messageId: item.messageId,
-      ...(item.rootId && { threadRootId: item.rootId }),
-    });
-  };
   return (
     <Card
       navigator={navigator}
       close={close}
-      summary={summary}
+      summary={useActivitySummary(session)}
       unreadOnly={unreadOnly}
       onUnreadOnlyChange={setUnreadOnly}
       unreadOnlyRef={unreadOnlyControl}
     >
-      {failure && (
-        <div className={styles.notice} role="alert">
-          <p className="text-body">{failure}</p>
-          <Button ref={retryButton} size="sm" onClick={() => void retry()}>
-            Retry activity
-          </Button>
-        </div>
-      )}
-      {rows.length ? (
-        <ul ref={listRef} className={styles.list} aria-label="Recent activity">
-          {rows.map((row) => {
-            const item = row.item;
-            const identity =
-              row.kind === "conversation"
-                ? rowIdentity(
-                    row.item,
-                    channelOf(item.channelId),
-                    profiles,
-                    name,
-                  )
-                : undefined;
-            return (
-              <li
-                key={item.id}
-                className={listRowStyles.unreadActionHost}
-                data-preview-row={item.id}
-              >
-                {row.kind === "reaction" ? (
-                  <ReactionRowButton
-                    item={row.item}
-                    session={session}
-                    profiles={profiles}
-                    name={name}
-                    channel={channelOf(item.channelId)}
-                    time={shortRelativeTimestamp(item.createdAt)}
-                    onClick={() => open(row)}
-                  />
-                ) : (
-                  identity && (
-                    <>
-                      <InboxRowButton
-                        item={row.item}
-                        identity={identity}
-                        session={session}
-                        feed={feed}
-                        time={shortRelativeTimestamp(item.createdAt)}
-                        onClick={() => open(row)}
-                      />
-                      {canRead && hasUnread(row.item) && (
-                        <span className={listRowStyles.unreadAction}>
-                          <IconButton
-                            size="sm"
-                            variant="ghost"
-                            loading={reading.has(item.id)}
-                            aria-label={`Mark as read ${identity.sender} in ${identity.context}`}
-                            title="Mark as read"
-                            onClick={() => void markRead(row.item)}
-                            icon={
-                              <EnvelopeOpenIcon size={16} aria-hidden="true" />
-                            }
-                          />
-                        </span>
-                      )}
-                    </>
-                  )
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      ) : loading ? (
-        [0, 1, 2].map((row) => (
-          <div className={styles.placeholderRow} key={row} aria-hidden="true">
-            <span className={styles.placeholderAvatar} />
-            <span className={styles.placeholderLines}>
-              <span className={styles.placeholderLine} />
-              <span className={styles.placeholderLine} />
-              <span className={styles.placeholderLine} />
-            </span>
-          </div>
-        ))
-      ) : failure || !checked ? null : (
-        <div className={styles.empty} role="status">
-          {unreadOnly ? (
-            <EmptyState
-              frame="none"
-              level={4}
-              icon={<ChecksIcon />}
-              title="You're all caught up"
-              description="No unread mentions, direct messages, or thread replies."
-              action={
-                recent.length || reactions.items.length ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setUnreadOnly(false)}
-                  >
-                    Show recent activity
-                  </Button>
-                ) : undefined
-              }
-            />
-          ) : (
-            <EmptyState
-              frame="none"
-              level={4}
-              icon={<ChecksIcon />}
-              title="No recent activity"
-              description="Mentions, direct messages, thread replies, and reactions to your messages appear here."
-            />
-          )}
-        </div>
-      )}
+      <ActivityFeed
+        session={session}
+        scope={scope}
+        navigator={navigator}
+        unreadOnly={unreadOnly}
+        onUnreadOnlyChange={setUnreadOnly}
+        focusFallback={unreadOnlyControl}
+        onOpen={close}
+      />
     </Card>
   );
 }

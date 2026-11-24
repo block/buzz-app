@@ -2120,6 +2120,7 @@ it("a hidden retained thread tab's rows re-render for new panels, not channel-li
       subscribe: () => () => {},
       refresh: async () => {},
       loadMore: async () => {},
+      pin: () => {},
       retarget: async () => "selected",
       dispose: () => {},
     }),

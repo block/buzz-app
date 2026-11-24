@@ -168,6 +168,7 @@ function fixture(
       subscribe: () => () => {},
       refresh: async () => {},
       loadMore: async () => {},
+      pin: () => {},
       dispose() {},
     }),
     channels: {

@@ -31,7 +31,10 @@ if that desktop app is up and running.
 - **Messages** has three kinds of conversation, which can be filed into
   **Workspaces**:
   - **Channels**: community channels where you exchange messages, with threads via
-    **Reply**. Channels have permissions.
+    **Reply**. Channels have permissions. A thread has no reply limit: it opens
+    at its newest replies, loads older ones as you scroll up and reloads the
+    ones it dropped as you scroll back. **Jump to latest**, or sending a reply,
+    returns to the newest replies.
   - **Chats**: discussions with agents. Continuous at the top level, with no
     threads needed. Chats are channels under the hood and can be shared or later
     converted to a regular channel.

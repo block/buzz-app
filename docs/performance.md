@@ -44,7 +44,7 @@ errors before trusting a number.
 | `scroll-paging-fast-keyboard`, `-markdown`, `-first-seen` | The fast case in keyboard modality, with Markdown messages, or with older pages the app hasn't verified yet |
 | `thread-open-rich`, `-close-rich`, `-reopen-rich` | A 120-reply thread with media, tables and code |
 | `thread-unread-open-60`, `-200` | Opening a thread whose 60 or 200 replies are all unread |
-| `thread-scroll-open`, `-fling`, `-reverse` | The [long-thread workload](#thread-scrolling) |
+| `thread-scroll-open`, `-fling`, `-reverse`, `-deep-page` | The [long-thread workload](#thread-scrolling) |
 | `background-traffic` | Reading one channel while 30 others get a message every 200ms for 30 seconds |
 | `background-traffic-large-sidebar` | The same, with 128 DMs and 1,001 participants |
 
@@ -80,8 +80,13 @@ the two commits, collect a new baseline.
 
 ## Thread scrolling
 
-`thread-scroll` scrolls a 460-reply weekly-update thread from 40 authors, with
-every page loaded first. Chromium scrolls threads off the main thread, so its
+`thread-scroll` scrolls a 5,000-reply weekly-update thread from 40 authors
+(`tests/browser/perf/thread-corpus.mjs`, signed once per worker), each reply opening
+with its position in the thread ("Message #142"), with the
+panel's window of ten pages (460 replies) filled at the newest end first.
+`thread-scroll-deep-page` reads one older page into a window that has slid ten
+pages deep and reports its cadence, `readingShiftPx` (how far the row being read
+moved) and the window's top-level rows. Chromium scrolls threads off the main thread, so its
 frame spacing stays smooth even when compositing is slow; read its counters
 instead. `--browser webkit` shows those stalls in frame spacing, but has no
 counters, CPU throttling or real gesture timing. Neither shows trackpad momentum
@@ -90,11 +95,11 @@ regions. For that, use the native run below.
 
 ### Thread scrolling targets
 
-For the 460-reply thread in the macOS app, with every reply loaded, on a 60 Hz
-display. A run is two upward trackpad flings with a reversal, then Jump to
+For the 5,000-reply thread in the macOS app, with the window full at the newest
+end (460 replies), on a 60 Hz display. A run is two upward trackpad flings with a reversal, then Jump to
 latest. The targets are advisory.
 
-| While scrolling the loaded thread | Target | Ceiling |
+| While scrolling the window | Target | Ceiling |
 | --- | --- | --- |
 | 95th-percentile frame interval | 16.7 ms (60 fps) | 33 ms |
 | Frames longer than two 60 Hz frames, per run | 0 | 5 |

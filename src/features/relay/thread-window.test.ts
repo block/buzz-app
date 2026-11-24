@@ -721,11 +721,11 @@ it("refresh after establishment drops a retained reply it cannot reach within th
   reconnected = true;
   h.traffic.established(channel);
   // Ten pages never reached `old`: it goes rather than sitting below a gap.
-  // The pages read stay, but the reader had one page, so the range settles
-  // on one: a later refresh re-reads one page, not ten, and older pages
-  // continue from its bound. The repair stays ready throughout, so wait on
-  // its rows.
-  const shown = fresh.map((row) => row.id).reverse();
+  // The reader had one page, so the window settles on one and evicts the
+  // pages read past it: a later refresh re-reads one page, not ten, and older
+  // pages continue from its bound. The repair stays ready throughout, so
+  // wait on its rows.
+  const shown = [fresh[0]?.id];
   await vi.waitFor(() => {
     expect(h.view.snapshot().replies.map((row) => row.id)).toEqual(shown);
     expect(h.view.snapshot()).toMatchObject({
@@ -1931,7 +1931,7 @@ it("reads nothing for a parent a read view holds but does not show", async () =>
   view.dispose();
 });
 
-it("settles session recovery when a read view with a quiet failure passes its memory limit", async () => {
+it("keeps the newest replies of an oversized page past the memory budget while a quiet failure still recovers", async () => {
   const rows = Array.from({ length: 12 }, (_, n) => filler(n));
   let down = false;
   const h = await setup((f) => {
@@ -1950,7 +1950,6 @@ it("settles session recovery when a read view with a quiet failure passes its me
     void view.loadMore();
     await vi.advanceTimersByTimeAsync(7000);
     expect(recovery.snapshot().recovering).toBe(true);
-    // Live replies alone pass the limit: no read is running to report it.
     h.traffic.receive(
       Array.from({ length: 5 }, (_, n) =>
         message(author, channel, "x".repeat(1 << 20), 1000 + n, [
@@ -1958,21 +1957,378 @@ it("settles session recovery when a read view with a quiet failure passes its me
         ]),
       ),
     );
-    await vi.waitFor(() =>
-      expect(view.snapshot()).toMatchObject({ status: "error", limited: true }),
-    );
-    expect(recovery.snapshot().recovering).toBe(false);
-    // The limit's own error is retried by hand, not by recovery.
-    const sent = h.requests.length;
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(h.requests).toHaveLength(sent);
-    expect(recovery.snapshot()).toMatchObject({
-      recovering: false,
-      shown: false,
+    // Live growth divides the lone page, keeping its newest replies; its
+    // failed read is still retried.
+    expect(view.snapshot()).toMatchObject({
+      status: "loading",
+      recovering: true,
+      error: undefined,
     });
+    expect(view.snapshot().replies).toHaveLength(2);
+    expect(recovery.snapshot().recovering).toBe(true);
+    down = false;
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.waitFor(() =>
+      expect(view.snapshot()).toMatchObject({
+        status: "ready",
+        recovering: undefined,
+        error: undefined,
+      }),
+    );
+    expect(recovery.snapshot()).toMatchObject({ recovering: false });
   } finally {
     vi.useRealTimers();
     vi.restoreAllMocks();
     view.dispose();
   }
+});
+
+/** A relay serving `rows` newest first, with the overlays of each page. */
+const pager =
+  (rows: RelayEvent[], overlays: RelayEvent[] = []) =>
+  (filter: ReadFilter): readonly RelayEvent[] => {
+    if (filter.ids) return [root];
+    const eligible = [...rows]
+      .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+      .filter(
+        (row) =>
+          filter.until === undefined ||
+          row.created_at < filter.until ||
+          (row.created_at === filter.until &&
+            row.id > (filter.before_id ?? "")),
+      );
+    const page = eligible.slice(0, filter.limit);
+    const last = page.at(-1);
+    return [
+      ...page,
+      ...overlays.filter((event) =>
+        event.tags.some(
+          ([k, id]) => k === "e" && page.some((r) => r.id === id),
+        ),
+      ),
+      bounds(
+        filter,
+        eligible.length > page.length && last ? cursorOf(last) : null,
+      ),
+    ];
+  };
+const ids = (h: {
+  view: { snapshot(): { replies: readonly { id: string }[] } };
+}) => new Set(h.view.snapshot().replies.map((row) => row.id));
+
+it("slides past ten pages, gating live replies above the window, repairing only resident pages, and reopening at the newest", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let page = 1; page < 10; page++) await h.view.loadMore();
+  expect(h.view.snapshot()).toMatchObject({
+    canLoadMore: true,
+    canLoadBack: false,
+    limited: true,
+  });
+  expect(h.view.snapshot().replies).toHaveLength(460);
+  // The eleventh page evicts the newest: the window holds pages 1–10.
+  await h.view.loadMore();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+    canLoadBack: true,
+    limited: true,
+  });
+  expect(h.view.snapshot().replies).toHaveLength(500);
+  expect(ids(h).has(at(620).id)).toBe(false);
+  expect(ids(h).has(at(111).id)).toBe(true);
+  // A live reply above the window would show past its gap.
+  const live = at(700);
+  rows.push(live);
+  h.traffic.receive([live]);
+  expect(ids(h).has(live.id)).toBe(false);
+  // Repair re-reads the resident pages from the window's own start.
+  let before = h.requests.length;
+  await h.view.refresh();
+  const repair = h.requests.slice(before);
+  expect(repair).toHaveLength(11);
+  expect(repair[1]?.[0]).toMatchObject({
+    until: at(611).created_at,
+    before_id: at(611).id,
+    limit: 50,
+  });
+  expect(h.view.snapshot().replies).toHaveLength(500);
+  // Jump to latest reads the newest page and drops the old window.
+  before = h.requests.length;
+  await h.view.latest();
+  expect(h.requests.slice(before)).toHaveLength(2);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+    canLoadBack: false,
+    limited: false,
+  });
+  expect(ids(h)).toEqual(
+    new Set([live, ...rows.slice(611, 620)].map((row) => row.id)),
+  );
+});
+
+it("re-reads an evicted page without resurrecting a deletion or detaching a resident reply from its parent", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  // The newest reply answers one that sits in the oldest resident page once
+  // the window returns to the newest end.
+  const parent = at(112);
+  const child = message(author, channel, "child", 7000, [
+    ["e", root.id, "", "root"],
+    ["e", parent.id, "", "reply"],
+  ]);
+  rows.push(child);
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  const deleted = at(615);
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      content: "",
+      created_at: 8000,
+      tags: [["e", deleted.id]],
+    }),
+  ]);
+  expect(ids(h).has(deleted.id)).toBe(false);
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  expect(ids(h).has(child.id)).toBe(false);
+  // A lagging replica still serves the deleted reply when its page is read
+  // again; the deletion outlived its eviction.
+  const before = h.requests.length;
+  await h.view.loadBack();
+  expect(h.requests.slice(before)).toHaveLength(2);
+  expect(h.requests.at(-1)?.[0]).toMatchObject({ limit: 10 });
+  expect(h.requests.at(-1)?.[0]).not.toHaveProperty("until");
+  expect(ids(h).has(child.id)).toBe(true);
+  expect(ids(h).has(deleted.id)).toBe(false);
+  // Page 10 went with the return, all but the resident child's parent.
+  expect(h.view.snapshot()).toMatchObject({
+    canLoadMore: true,
+    canLoadBack: false,
+  });
+  expect(ids(h).has(parent.id)).toBe(true);
+  expect(ids(h).has(at(113).id)).toBe(false);
+  expect(ids(h).has(at(162).id)).toBe(true);
+});
+
+it("applies a live deletion of a reply evicted earlier when its page is read again", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  const deleted = at(615);
+  expect(ids(h).has(deleted.id)).toBe(false);
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      content: "",
+      created_at: 8000,
+      tags: [["e", deleted.id]],
+    }),
+  ]);
+  await h.view.loadBack();
+  expect(ids(h).has(at(614).id)).toBe(true);
+  expect(ids(h).has(deleted.id)).toBe(false);
+});
+
+it("keeps the window when reading back never reaches its boundary, leaving Jump to latest available", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  const resident = ids(h);
+  rows.push(...Array.from({ length: 500 }, (_, n) => at(621 + n)));
+  const before = h.requests.length;
+  await h.view.loadBack();
+  expect(h.requests.slice(before)).toHaveLength(11);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadBack: true,
+    error: undefined,
+  });
+  expect(ids(h)).toEqual(resident);
+  await h.view.latest();
+  expect(h.view.snapshot()).toMatchObject({ canLoadBack: false });
+  expect(ids(h).has(at(1120).id)).toBe(true);
+}, 30_000);
+
+it("divides the only resident page when live replies outgrow the budget, then reads its evicted half again", async () => {
+  const rows = Array.from({ length: 12 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let n = 0; n < 5; n++) {
+    const big = message(author, channel, "x".repeat(1 << 20), 1000 + n, [
+      ["e", root.id, "", "reply"],
+    ]);
+    rows.push(big);
+    h.traffic.receive([big]);
+  }
+  const kept = h.view.snapshot().replies;
+  expect(kept.length).toBeLessThan(15);
+  expect(kept.at(-1)?.createdAt).toBe(1004);
+  expect(h.view.snapshot()).toMatchObject({ canLoadMore: true });
+  const cut = kept[0];
+  assert.exists(cut);
+  const before = h.requests.length;
+  await h.view.loadMore();
+  expect(h.requests.at(-1)?.[0]).toMatchObject({
+    until: cut.createdAt,
+    before_id: cut.id,
+  });
+  expect(h.requests.length - before).toBe(2);
+  for (const row of rows.slice(0, 12)) expect(ids(h).has(row.id)).toBe(true);
+}, 30_000);
+
+it("keeps the page being read when a live overlay fills a detached window", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  expect(ids(h).has(at(111).id)).toBe(true);
+  expect(ids(h).has(at(610).id)).toBe(true);
+  h.traffic.receive([
+    signed(author, {
+      kind: 40003,
+      created_at: 9000,
+      content: "x".repeat(4 * 1024 * 1024 - 100_000),
+      tags: [["e", at(300).id]],
+    }),
+  ]);
+  expect(ids(h).has(at(111).id)).toBe(true);
+  expect(ids(h).has(at(610).id)).toBe(false);
+  expect(h.view.snapshot()).toMatchObject({ canLoadBack: true });
+}, 30_000);
+
+it("admits a live reply that arrives while Jump to latest reads the newest page", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const serve = pager(rows);
+  let hold: Promise<void> | undefined;
+  const h = await setup(async (f) => {
+    const page = serve(f);
+    if (hold && f.thread_window && f.until === undefined) await hold;
+    return page;
+  });
+  await h.view.refresh();
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  let release!: () => void;
+  hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const before = h.requests.length;
+  const jump = h.view.latest();
+  await vi.waitFor(() => expect(h.requests.length).toBe(before + 2));
+  const late = at(700);
+  rows.push(late);
+  h.traffic.receive([late]);
+  release();
+  await jump;
+  expect(h.view.snapshot()).toMatchObject({ canLoadBack: false });
+  expect(ids(h).has(late.id)).toBe(true);
+  expect(ids(h).has(at(620).id)).toBe(true);
+}, 30_000);
+
+it("reopens at the newest page after a failed page read that Jump to latest waited behind", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  let down = false;
+  const serve = pager(rows);
+  const h = await setup((f) => {
+    if (down && f.thread_window) throw new TypeError("offline");
+    return serve(f);
+  });
+  h.traffic.state({ status: "connected", routes: [] });
+  const view = h.session.thread(channel, root.id, { reading: true });
+  await view.refresh();
+  for (let page = 1; page <= 10; page++) await view.loadMore();
+  expect(view.snapshot()).toMatchObject({ canLoadBack: true });
+  vi.spyOn(Math, "random").mockReturnValue(1);
+  vi.useFakeTimers();
+  try {
+    down = true;
+    void view.loadBack();
+    void view.latest();
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(view.snapshot()).toMatchObject({ recovering: true });
+    down = false;
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.waitFor(() =>
+      expect(view.snapshot()).toMatchObject({
+        status: "ready",
+        canLoadBack: false,
+        recovering: undefined,
+      }),
+    );
+    expect(view.snapshot().replies).toHaveLength(10);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    view.dispose();
+  }
+}, 30_000);
+
+it("keeps a reply being answered loaded through eviction until the target clears", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  h.view.pin(at(615).id);
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  expect(ids(h).has(at(615).id)).toBe(true);
+  expect(ids(h).has(at(618).id)).toBe(false);
+  h.view.pin(undefined);
+  expect(ids(h).has(at(615).id)).toBe(false);
+}, 30_000);
+
+it("withdraws a pinned reply once its deletion arrives", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  h.view.pin(at(615).id);
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      content: "",
+      created_at: 8000,
+      tags: [["e", at(615).id]],
+    }),
+  ]);
+  expect(ids(h).has(at(615).id)).toBe(false);
+}, 30_000);
+
+it("fills an evicted page that a backdated reply grew, leaving no gap before the window", async () => {
+  const rows = Array.from({ length: 620 }, (_, n) => at(n + 1));
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  const backdated = message(author, channel, "backdated", 10 * 615 + 5, [
+    ["e", root.id, "", "reply"],
+  ]);
+  rows.push(backdated);
+  const before = h.requests.length;
+  await h.view.loadBack();
+  // The re-read ends a reply short of the window, so it reads on from there.
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ limit: 10 }],
+    [{ limit: 50, until: at(612).created_at, before_id: at(612).id }],
+  ]);
+  for (const row of [backdated, at(620), at(612), at(611)])
+    expect(ids(h).has(row.id)).toBe(true);
+});
+
+it("keeps every reply of a busy second when a page boundary falls inside it", async () => {
+  // Three replies a second: the relay orders a second's replies by id
+  // ascending, and the window's boundaries must agree.
+  const rows = Array.from({ length: 620 }, (_, n) => reply(n));
+  const newest = [...rows].sort(
+    (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+  );
+  const h = await setup(pager(rows));
+  await h.view.refresh();
+  for (let page = 1; page <= 10; page++) await h.view.loadMore();
+  expect(ids(h)).toEqual(new Set(newest.slice(10, 510).map((row) => row.id)));
+  await h.view.refresh();
+  expect(ids(h)).toEqual(new Set(newest.slice(10, 510).map((row) => row.id)));
+  await h.view.loadBack();
+  expect(ids(h)).toEqual(new Set(newest.slice(0, 460).map((row) => row.id)));
 });

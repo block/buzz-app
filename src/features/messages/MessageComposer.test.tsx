@@ -525,6 +525,7 @@ function mount(
                     subscribe: () => () => {},
                     refresh: async () => {},
                     loadMore: async () => {},
+                    pin: () => {},
                     dispose: () => {},
                   } as unknown as ReturnType<RelaySession["thread"]>;
                 },

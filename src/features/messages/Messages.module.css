@@ -4532,7 +4532,7 @@ html[data-keyboard-navigation]
 
 /* In a dialog the reader scrolls below the header and above the bottom inset,
    so its scrollbar stays off the dialog's rounded corners. */
-[class~="buzz-dialog-body"] > .detailsReader {
+.detailsDialogScroll {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;

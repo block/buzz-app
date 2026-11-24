@@ -7,6 +7,7 @@ import {
 } from "./composer-overlay";
 import { DetailsReader } from "./DetailsReader";
 import { ComposerSheet } from "./ComposerSheet";
+import styles from "./Messages.module.css";
 import { LayerAddressContext, type OpenLayer, layerInView } from "./view-layer";
 
 /** The layer of the view it is mounted in, when the address names one: a
@@ -65,7 +66,14 @@ function Layer({ open }: { open: OpenLayer }) {
               visit
               finalFocus={opener}
             >
-              {body}
+              <section
+                className={styles.detailsDialogScroll}
+                aria-label="Message"
+                // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll owner must support keyboard scrolling.
+                tabIndex={0}
+              >
+                {body}
+              </section>
             </Dialog>
           )
         }

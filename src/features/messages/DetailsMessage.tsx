@@ -130,7 +130,14 @@ export function DetailsMessage({
           bodyLayout="flex"
           finalFocus={trigger}
         >
-          {reader}
+          <section
+            className={styles.detailsDialogScroll}
+            aria-label="Message"
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll owner must support keyboard scrolling.
+            tabIndex={0}
+          >
+            {reader}
+          </section>
         </Dialog>
       )}
     </div>

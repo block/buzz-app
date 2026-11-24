@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { OpenTarget } from "../../features/navigation/targets";
+import {
+  type OpenTarget,
+  parseOpenTarget,
+} from "../../features/navigation/targets";
 import {
   type ConversationTarget,
   canonicalInline,
@@ -43,6 +46,12 @@ describe("inline address", () => {
       layer: { messageId: reply },
     });
     expect(inlineDismissal(conversation, root)).toBeUndefined();
+    // A thread opened at a linked reply closes to an address the navigator
+    // accepts: the reply goes with the thread that named it.
+    const atReply = { ...inline, inlineMessage: reply };
+    const closed = inlineDismissal(atReply, root);
+    expect(closed?.visits(atReply)).toBe(true);
+    expect(parseOpenTarget(closed?.fallback)).toEqual(conversation);
   });
 
   it("renames a reply's inline visits to its root, and only when they differ", () => {
@@ -70,12 +79,7 @@ describe("inline address", () => {
   it("resolves a routed thread to its conversation with the thread inline at the linked reply", () => {
     expect(
       routedInline(
-        {
-          ...conversation,
-          messageId: reply,
-          threadRootId: root,
-          context: "channel",
-        },
+        { ...conversation, messageId: reply, threadRootId: root },
         root,
       ),
     ).toEqual({ ...inline, inlineMessage: reply });

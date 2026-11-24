@@ -1722,9 +1722,10 @@ function ChannelWorkspace({
     // the next destination. That handoff must not dismiss saved thread tabs.
     if (!navigation || navigation.signal.aborted) return;
     if (draft || composingMessage) open(undefined);
-    // A thread opened by its address, as from a link to it, the sidebar or
-    // Activity, reads inline over this conversation as one opened from its
-    // row does, unless a tab already shows it. The visit becomes that
+    // A thread opened by its address, as from a link to it or the sidebar,
+    // reads inline over this conversation as one opened from its row does,
+    // unless a tab already shows it or the visit asks for the thread beside
+    // its root in the channel, which is its tab. The visit becomes that
     // conversation with the thread inline; the message it named, if a reply,
     // is not singled out in the thread. Only a known root goes inline: the
     // timeline's, or the address's hint. A bare link to a message outside
@@ -1738,6 +1739,7 @@ function ChannelWorkspace({
       !routedTarget.panel &&
       !routedTarget.forward &&
       !routedTarget.layer &&
+      routedTarget.context !== "channel" &&
       placeIn(
         { kind: "thread" },
         inlineHost.current,

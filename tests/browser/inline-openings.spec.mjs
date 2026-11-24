@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { activate, clickRow, open, settle } from "./timeline.mjs";
+import { openPage } from "./navigation.mjs";
 
 // Browser-only: with the Inline setting, profiles and link panels open as
 // dialogs over the view they were opened from, addressed by its visit. Only
@@ -160,6 +161,58 @@ test.describe("Inline", () => {
     await expect(side(page).getByRole("tab")).toHaveCount(0);
     await page.reload();
     await expect(row).toBeInViewport();
+    // The reply goes with the thread that named it, so the sheet closes.
+    await close(thread(page)).click();
+    await expect(thread(page)).toHaveCount(0);
+    expect(await address(page)).not.toHaveProperty("inline");
+    expect(await address(page)).not.toHaveProperty("inlineMessage");
+  });
+
+  test.describe("Activity", () => {
+    test.use({
+      threadUnreadMentions: true,
+      historyCounts: { alpha: 2, beta: 1 },
+    });
+
+    test("a thread tab's channel button opens the channel with the thread in a tab, not inline", async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      const root = roots(app).find((row) => row.content === "Thread root 1");
+      // The root row's thread summary says whether the thread is unread.
+      const summary = page.locator(
+        `[data-channel-timeline] [data-message-id="${root.id}"] [data-thread-summary]`,
+      );
+      await expect(summary).toHaveAttribute("aria-label", /unread/);
+      await clickRow(page, viewThread(page, root));
+      await expect(thread(page)).toBeVisible();
+      // Read here, the thread's Activity row opens its tab at its reply, the
+      // message the channel button then carries.
+      await expect(summary).not.toHaveAttribute("aria-label", /unread/);
+      await openPage(page, "Activity");
+      const inbox = page.getByRole("region", { name: "Activity", exact: true });
+      await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
+      const item = inbox.locator(`[data-inbox-row="alpha:${root.id}"]`);
+      await expect(item).not.toHaveAttribute("data-unread", "true");
+      await item.getByRole("button", { name: /^Open / }).click();
+      await side(inbox)
+        .getByRole("button", { name: "#Alpha", exact: true })
+        .click();
+      await expect(composer(page)).toBeVisible();
+      await expect(
+        side(page).getByRole("tab", { name: /^Thread/, selected: true }),
+      ).toBeVisible();
+      await expect(sheets(page)).toHaveCount(0);
+      expect(await address(page)).toMatchObject({
+        channelId: "alpha",
+        threadRootId: root.id,
+        context: "channel",
+      });
+      expect(await address(page)).not.toHaveProperty("inline");
+      await page.goBack();
+      await expect(inbox).toBeVisible();
+    });
   });
 
   test.describe("Membership", () => {

@@ -24,14 +24,15 @@ const conversation = (target: OpenTarget | undefined) =>
   target?.kind === "conversation" ? target : undefined;
 
 /** ✕, Escape and the scrim on the inline thread with `rootId`: its visits
- * retire, with a layer read over it. Back then leaves the conversation. */
+ * retire, with a layer read over it and the reply it was opened at, which an
+ * address names only with its thread. Back then leaves the conversation. */
 export function inlineDismissal(
   current: OpenTarget | undefined,
   rootId: string,
 ): Dismissal | undefined {
   const target = conversation(current);
   if (target?.inline !== rootId) return;
-  const { inline: _inline, layer, ...rest } = target;
+  const { inline: _inline, inlineMessage: _message, layer, ...rest } = target;
   return {
     visits: (visit) =>
       sameScope(visit, target) &&
@@ -88,8 +89,8 @@ export function inlineToTab(
 }
 
 /** The thread with `rootId` inline over `current`'s conversation, the visit a
- * routed thread (a link, the sidebar, Activity) resolves to. A reply it named
- * stays named, so the thread opens at it as its tab would. */
+ * routed thread (a link, the sidebar) resolves to. A reply it named stays
+ * named, so the thread opens at it as its tab would. */
 export function routedInline(
   current: ConversationTarget,
   rootId: string,

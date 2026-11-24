@@ -1,6 +1,7 @@
 import { ToastProvider } from "../../../src/shared/design-system/ui/Toast";
 import "../../../src/shared/styles/globals.css";
 import "@fontsource-variable/inter/wght.css";
+import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";

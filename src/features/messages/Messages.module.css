@@ -4569,3 +4569,59 @@ html[data-keyboard-navigation]
   display: flex;
   margin-top: var(--space-1);
 }
+
+/* Narration stays on the conversation surface in either density/theme. */
+.message[data-narrated-action] {
+  --action-first-line-height: max(
+    var(--size-control-sm),
+    var(--text-message) *
+    var(--text-message--line-height)
+  );
+}
+.message[data-action-continuation] {
+  padding-block-start: 0;
+}
+.message[data-action-continuation] > .messageBody {
+  margin-block-start: calc(-1 * var(--space-half));
+}
+.message[data-narrated-action] > .messageBody {
+  max-width: none;
+}
+.message[data-narrated-action] .messageAvatar {
+  top: calc((var(--action-first-line-height) - var(--size-control-sm)) / 2);
+  bottom: auto;
+  /* The small image shares the full avatar's leading edge inside its control. */
+  translate: calc(-1 * var(--space-1)) 0;
+}
+.actionPayload {
+  position: relative;
+  min-width: 0;
+  min-height: var(--size-control-sm);
+  padding-block-start: calc(
+    (
+      var(--action-first-line-height) -
+      var(--text-message) *
+      var(--text-message--line-height)
+    ) /
+    2
+  );
+  color: var(--text-standard);
+  overflow-wrap: anywhere;
+}
+.actionText {
+  @apply text-message;
+  font-style: italic;
+}
+.actionText > :is(.text, .plainText),
+.actionText > .text > p:first-child {
+  display: inline;
+  margin: 0;
+}
+.actionTime {
+  @apply text-caption;
+  margin-block-end: var(--space-1);
+  color: var(--text-subtle);
+}
+.message .actionText > strong {
+  font-weight: var(--type-weight-normal);
+}

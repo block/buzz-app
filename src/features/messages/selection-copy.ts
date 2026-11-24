@@ -115,6 +115,24 @@ function serialize(
       ? `${bylineOpen}<strong>${escapeHtml(author)}</strong>${escapeHtml(time)}</p>`
       : author + time;
   }
+  // A standalone clock keeps the ordinary full date/time in whole-row copies.
+  // Selecting only part of its visible text still copies that fragment.
+  const timestamp = node.getAttribute("data-copy-time");
+  if (
+    author === null &&
+    timestamp !== null &&
+    (includeHiddenBylines || selectable) &&
+    whole(node, range)
+  ) {
+    const seconds = Number.parseFloat(timestamp);
+    if (Number.isFinite(seconds)) {
+      const clock = text(
+        formatItemTimestamp(seconds, { withTime: true }),
+        format,
+      );
+      return format === "html" ? `<p>${clock}</p>` : clock;
+    }
+  }
   // Unselectable chrome that still carries context, such as reaction counts,
   // states its copy text.
   const copyText = node.getAttribute("data-copy-text");
@@ -251,6 +269,10 @@ function serialize(
         : "";
     return `<${tag.toLowerCase()}${spread}${tag === "OL" && Number.isFinite(start) && start !== 1 ? ` start="${start}"` : ""}>${inner}</${tag.toLowerCase()}>`;
   }
+  // Layout wrappers normally disappear. An explicit message block must keep
+  // its boundary even when its body already contains paragraphs or a list.
+  if (format === "html" && node.hasAttribute("data-copy-block"))
+    return `<div>${inner}</div>`;
   if (format !== "html" || !blockTag.test(tag) || node.querySelector(blocks))
     return inner;
   const block = /^H[1-6]$/.test(tag) ? tag.toLowerCase() : "p";

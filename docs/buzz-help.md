@@ -102,6 +102,8 @@ if that desktop app is up and running.
 
 ## Conversations
 
+- Type `/me passes out` to narrate an action with your avatar and name followed by italic text. Actions support replies, reactions, editing, and deletion. They do not change your profile status. Older clients show the literal `/me …` message.
+
 - **Mentions.** Pick people and agents from the **@** picker so they're
   notified. Mentioning someone who isn't in the conversation offers to add them.
   Mentioning a team mentions each member.

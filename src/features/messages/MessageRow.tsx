@@ -50,6 +50,7 @@ import {
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
+import { narratedMessageAction, actionMessageContent } from "./message-action";
 import { usePresenceStatus } from "../presence/react";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useMessageDensity } from "../../shared/theme/message-density";
@@ -195,6 +196,8 @@ export type MessageRowProps = {
   viewer?: string | undefined;
   stackPrevious?: boolean;
   stackNext?: boolean;
+  /** Adjacent visible message in the same conversation branch. */
+  previousMessage?: ChannelMessage | undefined;
   alignViewer?: boolean;
 
   mediaMode?: "inline" | "thread";
@@ -298,6 +301,7 @@ function MessageRowContent({
   viewer = session?.viewer,
   stackPrevious = layout === "continuation",
   stackNext = false,
+  previousMessage,
   representedAgents,
   repliedAgents,
   stoppedRequest,
@@ -312,8 +316,29 @@ function MessageRowContent({
   agentPubkeys,
 }: MessageContentProps) {
   const [avatarFocused, setAvatarFocused] = useState(false);
+  const messageRenderer = useMessageRenderer(extensions?.messages, row);
   // Compact is a flat list: everyone's rows start at the left, with no own surface.
-  const flat = useMessageDensity() === "compact";
+  const action =
+    !messageRenderer && bodyContent == null
+      ? narratedMessageAction(row)
+      : undefined;
+  const previousRenderer = useMessageRenderer(
+    action && previousMessage ? extensions?.messages : undefined,
+    previousMessage ?? row,
+  );
+  const repeatedActionTime =
+    action !== undefined &&
+    previousMessage !== undefined &&
+    !previousRenderer &&
+    narratedMessageAction(previousMessage) !== undefined &&
+    previousMessage.channelId === row.channelId &&
+    Math.floor(previousMessage.createdAt / 60) ===
+      Math.floor(row.createdAt / 60);
+  const flat = useMessageDensity() === "compact" || action !== undefined;
+  if (action !== undefined) {
+    stackPrevious = false;
+    stackNext = false;
+  }
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const reactions = row.reactions;
@@ -553,7 +578,8 @@ function MessageRowContent({
     !row.workflowOwnerId &&
     !!viewer &&
     row.authorId === viewer;
-  const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
+  const emojiOnly =
+    !action && usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
     session &&
@@ -711,7 +737,6 @@ function MessageRowContent({
   // while its card is mounted, and they return to the host list while its
   // fallback shows. A remounted card starts healthy and claims again.
   const bodyShown = !attachmentOnly;
-  const messageRenderer = useMessageRenderer(extensions?.messages, row);
   const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
   const claims =
     bodyShown && messageRenderer !== failedRenderer
@@ -1135,7 +1160,7 @@ function MessageRowContent({
         directory={directory}
         session={references}
         scope={scope}
-        row={displayRow}
+        row={action ? actionMessageContent(displayRow) : displayRow}
         extensions={extensions}
         media={media}
         onOpenLink={openLink}
@@ -1145,7 +1170,7 @@ function MessageRowContent({
         edited={editedInBody && displayRow.edited}
       />
     ));
-  const avatarSize = compactAvatar && !flat ? "small" : "default";
+  const avatarSize = action || (compactAvatar && !flat) ? "small" : "default";
   const authorName = (
     <>
       {/* Inside the name, so the byline keeps the text baseline. */}
@@ -1154,6 +1179,64 @@ function MessageRowContent({
       )}
       {name}
     </>
+  );
+  const authorLabel = (
+    <strong className={styles.author}>
+      {clickable && !stackPrevious ? (
+        // The avatar is the group's keyboard stop and preview;
+        // the name only answers a click. Text, not a button, so
+        // a selection can start on it and a copy keeps it as
+        // plain prose (no profile target).
+        // biome-ignore lint/a11y/useSemanticElements: a <button> would block starting a text selection on the name
+        <span
+          role="button"
+          tabIndex={-1}
+          data-message-author=""
+          className={styles.authorLink}
+          onClick={(event) => {
+            // A click arriving with text selected (the end of
+            // a drag, or the second click of a double-click)
+            // is a selection, not a request. A double-click's
+            // first click opens the profile like any click.
+            const selection = event.currentTarget.ownerDocument.getSelection();
+            if (selection && !selection.isCollapsed) return;
+            // WebKit skips focusing on pointer click, so the
+            // profile tab's close would have no origin.
+            event.currentTarget.focus();
+            openLink(target);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            openLink(target);
+          }}
+        >
+          {authorName}
+        </span>
+      ) : (
+        authorName
+      )}
+    </strong>
+  );
+  const messageMarkers =
+    session &&
+    actions.map(
+      (contribution) =>
+        contribution.marker && (
+          <ContributionBoundary
+            key={contributionKey(contribution)}
+            fallback={null}
+          >
+            <contribution.marker message={row} session={session} />
+          </ContributionBoundary>
+        ),
+    );
+  const presentedBody = action ? (
+    <div className={styles.actionText}>
+      {authorLabel} {body} {messageMarkers}
+    </div>
+  ) : (
+    body
   );
   const avatar = row.workflowOwnerId ? (
     <span className={styles.nestedAvatar}>
@@ -1479,7 +1562,12 @@ function MessageRowContent({
     );
   };
   const reactionsInBubble =
-    !attachmentOnly && !row.huddle && !shownRow && !emojiOnly && !row.diff;
+    !action &&
+    !attachmentOnly &&
+    !row.huddle &&
+    !shownRow &&
+    !emojiOnly &&
+    !row.diff;
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
   const editedInBubble = !editedInBody && reactionsInBubble;
   const reactionContent =
@@ -1548,6 +1636,9 @@ function MessageRowContent({
         data-highlight-surface=""
         data-thread-open={threadOpen || undefined}
         data-layout={layout}
+        data-narrated-action={action ? "" : undefined}
+        data-action-continuation={repeatedActionTime ? "" : undefined}
+        data-copy-block={action ? "" : undefined}
         data-full-width={fullWidth || undefined}
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
@@ -1568,12 +1659,14 @@ function MessageRowContent({
           <div
             className={styles.messageContent}
             data-bubble={
-              (!attachmentOnly && !row.huddle && !shownRow) || undefined
+              (!action && !attachmentOnly && !row.huddle && !shownRow) ||
+              undefined
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
             {/* Bubbles end a group with its avatar; a flat list starts with it. */}
             {!renderMessage &&
+              !action &&
               (!(flat ? stackPrevious : stackNext) || avatarFocused) && (
                 <div className={styles.messageAvatar}>{avatar}</div>
               )}
@@ -1591,118 +1684,87 @@ function MessageRowContent({
                 !row.huddle &&
                 !renderMessage &&
                 messageActions()}
+              {action && (
+                <div
+                  className={
+                    !showTime || repeatedActionTime
+                      ? "sr-only select-none"
+                      : styles.actionTime
+                  }
+                  data-copy-time={showTime ? row.createdAt : undefined}
+                >
+                  <MessageTimestamp
+                    createdAt={row.createdAt}
+                    visible={showTime && !repeatedActionTime}
+                  />
+                </div>
+              )}
               {/* A selection holding the whole byline copies it as one line,
                 name then time (selection-copy.ts). A grouped row's byline is
                 otherwise screen-reader text that stays out of selections. */}
-              <div
-                className={
-                  stackPrevious ? "sr-only select-none" : styles.byline
-                }
-                data-copy-author={
-                  row.workflowOwnerId && workflowOwnerName ? "Workflow" : name
-                }
-                data-copy-time={showTime ? row.createdAt : undefined}
-              >
-                {row.workflowOwnerId && workflowOwnerName ? (
-                  <WorkflowByline
-                    ownerId={row.workflowOwnerId}
-                    ownerName={workflowOwnerName}
-                    canOpenLink={canOpenLink}
-                    onOpenLink={openLink}
-                  />
-                ) : (
-                  <span className={styles.authorWithStatus}>
-                    <strong className={styles.author}>
-                      {clickable && !stackPrevious ? (
-                        // The avatar is the group's keyboard stop and preview;
-                        // the name only answers a click. Text, not a button, so
-                        // a selection can start on it and a copy keeps it as
-                        // plain prose (no profile target).
-                        // biome-ignore lint/a11y/useSemanticElements: a <button> would block starting a text selection on the name
-                        <span
-                          role="button"
-                          tabIndex={-1}
-                          data-message-author=""
-                          className={styles.authorLink}
-                          onClick={(event) => {
-                            // A click arriving with text selected (the end of
-                            // a drag, or the second click of a double-click)
-                            // is a selection, not a request. A double-click's
-                            // first click opens the profile like any click.
-                            const selection =
-                              event.currentTarget.ownerDocument.getSelection();
-                            if (selection && !selection.isCollapsed) return;
-                            // WebKit skips focusing on pointer click, so the
-                            // profile tab's close would have no origin.
-                            event.currentTarget.focus();
-                            openLink(target);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter" && event.key !== " ")
-                              return;
-                            event.preventDefault();
-                            openLink(target);
-                          }}
-                        >
-                          {authorName}
-                        </span>
-                      ) : (
-                        authorName
+              {!action && (
+                <div
+                  className={
+                    stackPrevious ? "sr-only select-none" : styles.byline
+                  }
+                  data-copy-author={
+                    row.workflowOwnerId && workflowOwnerName ? "Workflow" : name
+                  }
+                  data-copy-time={showTime ? row.createdAt : undefined}
+                >
+                  {row.workflowOwnerId && workflowOwnerName ? (
+                    <WorkflowByline
+                      ownerId={row.workflowOwnerId}
+                      ownerName={workflowOwnerName}
+                      canOpenLink={canOpenLink}
+                      onOpenLink={openLink}
+                    />
+                  ) : (
+                    <span className={styles.authorWithStatus}>
+                      {authorLabel}
+                      {session && !stackPrevious && (
+                        <UserStatusDisplay
+                          session={session}
+                          userId={row.authorId}
+                          compact
+                          focusable={false}
+                        />
                       )}
-                    </strong>
-                    {session && !stackPrevious && (
-                      <UserStatusDisplay
-                        session={session}
-                        userId={row.authorId}
-                        compact
-                        focusable={false}
-                      />
-                    )}
-                  </span>
-                )}
-                {agentAuthor && !stackPrevious && (
-                  <RemoteAgentHint
-                    session={session}
-                    viewer={viewer}
-                    pubkey={row.authorId}
-                  />
-                )}
-                {ownerLabel && (
-                  <span className={styles.authorOwner}>
-                    <span aria-hidden="true">· </span>
-                    {ownerLabel}
-                  </span>
-                )}
-                {!stackPrevious && (
-                  <MessageTimestamp
-                    createdAt={row.createdAt}
-                    visible={showTime}
-                  />
-                )}
-                {!stackPrevious && canViewTranscript && taskCompleted && (
-                  <span className="text-caption">
-                    <button
-                      type="button"
-                      className={referenceStyles.link}
-                      onClick={() => openActivity(transcriptView)}
-                    >
-                      View activity
-                    </button>
-                  </span>
-                )}
-                {session &&
-                  actions.map(
-                    (action) =>
-                      action.marker && (
-                        <ContributionBoundary
-                          key={contributionKey(action)}
-                          fallback={null}
-                        >
-                          <action.marker message={row} session={session} />
-                        </ContributionBoundary>
-                      ),
+                    </span>
                   )}
-              </div>
+                  {agentAuthor && !stackPrevious && (
+                    <RemoteAgentHint
+                      session={session}
+                      viewer={viewer}
+                      pubkey={row.authorId}
+                    />
+                  )}
+                  {ownerLabel && (
+                    <span className={styles.authorOwner}>
+                      <span aria-hidden="true">· </span>
+                      {ownerLabel}
+                    </span>
+                  )}
+                  {!stackPrevious && (
+                    <MessageTimestamp
+                      createdAt={row.createdAt}
+                      visible={showTime}
+                    />
+                  )}
+                  {!stackPrevious && canViewTranscript && taskCompleted && (
+                    <span className="text-caption">
+                      <button
+                        type="button"
+                        className={referenceStyles.link}
+                        onClick={() => openActivity(transcriptView)}
+                      >
+                        View activity
+                      </button>
+                    </span>
+                  )}
+                  {messageMarkers}
+                </div>
+              )}
             </div>
             {session?.relayAuthor && !row.membership && !row.huddle && (
               <PinnedMarker session={session} row={row} />
@@ -1735,13 +1797,20 @@ function MessageRowContent({
               {bodyShown && (
                 <div
                   className={
-                    shownRow || row.huddle ? undefined : styles.messageBubble
+                    action
+                      ? styles.actionPayload
+                      : shownRow || row.huddle
+                        ? undefined
+                        : styles.messageBubble
                   }
                   data-message-action-anchor
                   data-emoji-only={emojiOnly || undefined}
                   data-diff-only={!!row.diff || undefined}
                   data-own={ownBubble || undefined}
                 >
+                  {!renderMessage && action && (
+                    <div className={styles.messageAvatar}>{avatar}</div>
+                  )}
                   {timeReply && (
                     <div className={styles.mediaTimeLink} data-media-timecode>
                       {onMediaTime ? (
@@ -1778,10 +1847,10 @@ function MessageRowContent({
                         )
                       }
                     >
-                      {body}
+                      {presentedBody}
                     </MessageCard>
                   ) : (
-                    body
+                    presentedBody
                   )}
                   {editedInBubble && shown.edited && <EditedMarker />}
                   {reactionsInBubble && !withoutReactions && reactionContent}

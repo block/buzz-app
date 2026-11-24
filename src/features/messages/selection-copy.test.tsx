@@ -788,6 +788,20 @@ describe("serializeNode", () => {
     expect(serializeNode(body, "text")).toBe("Morgan2:31 PM\nhello");
   });
 
+  it("keeps a standalone clock separate from narration when pasted", () => {
+    const body = mount(
+      row(
+        `<div data-copy-block><div><div data-copy-time="${createdAt}"><time>10:31</time></div></div><div><div style="user-select:none">M</div><strong>Morgan</strong><div><p>waves</p></div></div></div>`,
+      ),
+    );
+    const clipboard = document.createElement("div");
+    clipboard.innerHTML = serializeNode(body, "html");
+    const pasted = copyDocument(clipboard);
+    expect(pasted.textBetween(0, pasted.content.size, "\n")).toBe(
+      `${time}\nMorgan\nwaves`,
+    );
+  });
+
   it("numbers a list from its first item a selection holds, keeping a whole empty item", () => {
     const body = mount(
       row('<ol start="3">\n<li>one</li>\n<li></li>\n<li>three</li>\n</ol>'),

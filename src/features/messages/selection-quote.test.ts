@@ -118,33 +118,37 @@ it("captures the original message link with its thread hint", () => {
   );
 });
 
-it("attributes each selected message and skips the next row when selection ends at its start", () => {
-  const firstId = "a".repeat(64);
-  const secondId = "b".repeat(64);
-  const { element } = list(firstId);
-  const second = document.createElement("div");
-  second.dataset.messageId = secondId;
-  second.innerHTML =
-    '<div data-copy-author="Second author" style="user-select: none">Second author</div><p>Second message</p>';
-  element.append(second);
-  const range = select(text(element, "strong"), 0, text(second, "p"));
-  expect(captureSelectedQuote()?.sourceLinks).toEqual([
-    `buzz://message?channel=general&id=${firstId}`,
-    `buzz://message?channel=general&id=${secondId}`,
-  ]);
-  expect([...(captureSelectedQuote()?.messageIds ?? [])]).toEqual([
-    firstId,
-    secondId,
-  ]);
-  range.setEnd(text(second, "p"), 0);
-  const quote = captureSelectedQuote();
-  expect([...(quote?.messageIds ?? [])]).toEqual([firstId]);
-  expect(quote?.sourceLinks).toEqual([
-    `buzz://message?channel=general&id=${firstId}`,
-  ]);
-  expect(quote?.text).toContain("Second author");
-  expect(quote?.html).toContain("<strong>Second author</strong>");
-});
+it.each(["byline", "clock"])(
+  "attributes selected messages and skips a next row with a hidden %s",
+  (metadata) => {
+    const firstId = "a".repeat(64);
+    const secondId = "b".repeat(64);
+    const { element } = list(firstId);
+    const second = document.createElement("div");
+    second.dataset.messageId = secondId;
+    second.innerHTML = `<div ${metadata === "byline" ? 'data-copy-author="Second author"' : ""} data-copy-time="1000" style="user-select: none">Second author</div><p>Second message</p>`;
+    element.append(second);
+    const range = select(text(element, "strong"), 0, text(second, "p"));
+    expect(captureSelectedQuote()?.sourceLinks).toEqual([
+      `buzz://message?channel=general&id=${firstId}`,
+      `buzz://message?channel=general&id=${secondId}`,
+    ]);
+    expect([...(captureSelectedQuote()?.messageIds ?? [])]).toEqual([
+      firstId,
+      secondId,
+    ]);
+    range.setEnd(text(second, "p"), 0);
+    const quote = captureSelectedQuote();
+    expect([...(quote?.messageIds ?? [])]).toEqual([firstId]);
+    expect(quote?.sourceLinks).toEqual([
+      `buzz://message?channel=general&id=${firstId}`,
+    ]);
+    if (metadata === "byline") {
+      expect(quote?.text).toContain("Second author");
+      expect(quote?.html).toContain("<strong>Second author</strong>");
+    }
+  },
+);
 
 it("keeps quoting without inventing a link for an unpublished message", () => {
   const { element, controller } = list("a".repeat(64), { delivery: "sending" });

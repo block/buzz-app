@@ -1991,6 +1991,10 @@ function ThreadMessages({
           ? siblings[index + 1]
           : publicMessageNeighbor(siblings, index, 1);
       const children = tree.children.get(row.id);
+      const precedingRow =
+        previousParent === parent && previousReply !== snapshot.root
+          ? previousReply
+          : undefined;
       const continuation =
         !!previousReply &&
         previousReply !== snapshot.root &&
@@ -2025,6 +2029,7 @@ function ThreadMessages({
         const requestId = presentation.replyRequests.get(row.id);
         return (
           <MessageRow
+            previousMessage={inside ? undefined : precedingRow}
             representedAgents={stableActivity.agents(
               row.id,
               presentation.representedAgents.get(row.id),

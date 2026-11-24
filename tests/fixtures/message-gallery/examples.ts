@@ -99,6 +99,32 @@ const patch =
   "diff --git a/greeting.ts b/greeting.ts\n--- a/greeting.ts\n+++ b/greeting.ts\n@@ -1 +1 @@\n-const greeting = 'Hello';\n+const greeting = 'Welcome';\n";
 export const groups: Group[] = [
   {
+    id: "narrated-actions",
+    title: "Narrated actions",
+    description:
+      "IRC-style /me messages keep the sender visible without a speech bubble.",
+    examples: [
+      {
+        id: "action-conversation",
+        title: "Actions among messages",
+        description:
+          "Own, incoming, consecutive, and multiline actions keep their identity.",
+        rows: [
+          message("before-action", "I found the bug.", { authorId: teammate }),
+          message("fix-action", "/me goes off to fix that bug right now", {
+            authorId: teammate,
+          }),
+          message("food-action", "/me eats a drumstick"),
+          message(
+            "robot-action",
+            "/me grabs a blowtorch and attacks the robot",
+          ),
+          message("after-action", "That should do it."),
+        ],
+      },
+    ],
+  },
+  {
     id: "agent-coordination",
     title: "Agent coordination",
     description:

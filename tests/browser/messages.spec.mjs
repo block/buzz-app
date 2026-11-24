@@ -36,13 +36,18 @@ function createMessagesServer() {
   });
 }
 
-async function withMessagesFixture(page, run, search = "") {
+async function withMessagesFixture(
+  page,
+  run,
+  search = "",
+  fixture = "messages",
+) {
   const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();
     await page.goto(
-      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html${search}`,
+      `http://127.0.0.1:${address.port}/tests/fixtures/${fixture}.html${search}`,
     );
     await run();
   } finally {
@@ -74,6 +79,112 @@ function containedWithin(inner, outer) {
     outer.y + outer.height + epsilon,
   );
 }
+
+// The real composer/outbox preserves the command while the thread reads it as narration.
+test("sending /me preserves the authored event and renders an action in its thread", async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date("2026-11-24T18:42:10Z"));
+  await withMessagesFixture(
+    page,
+    async () => {
+      const root = page
+        .locator("[data-message-id]")
+        .filter({ hasText: "hands over a resignation letter" });
+      await root
+        .getByText("hands over a resignation letter", { exact: true })
+        .hover();
+      await root.getByRole("button", { name: "Reply", exact: true }).click();
+      const thread = page.getByRole("complementary", {
+        name: "Thread",
+        exact: true,
+      });
+      const draft = thread.getByRole("textbox", {
+        name: "Reply to thread",
+        exact: true,
+      });
+      await draft.fill("/me eats a drumstick");
+      await draft.press("Enter");
+      const action = thread
+        .locator("[data-message-id]")
+        .filter({ hasText: "eats a drumstick" });
+      await expect(
+        action.getByText("eats a drumstick", { exact: true }),
+      ).toBeVisible();
+      await expect(action).toContainText("Alex Morgan eats a drumstick");
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              window.messagesFixture.report.publications.filter(
+                (event) => event.content === "/me eats a drumstick",
+              ).length,
+          ),
+        )
+        .toBe(1);
+      await expect(draft).toHaveJSProperty("value", "");
+      await expect(
+        thread.getByRole("button", { name: "Try again", exact: true }),
+      ).toHaveCount(0);
+      // Quote two narrated replies through the real selection menu and editor.
+      const earlier = thread
+        .locator("[data-message-id]")
+        .filter({ hasText: "schedules a follow-up" });
+      await draft.blur();
+      await earlier.scrollIntoViewIfNeeded();
+      await action.scrollIntoViewIfNeeded();
+      const ids = [
+        await earlier.getAttribute("data-message-id"),
+        await action.getAttribute("data-message-id"),
+      ];
+      await thread.evaluate((element, [firstId, lastId]) => {
+        const first = element.querySelector(`[data-message-id="${firstId}"]`);
+        const last = element.querySelector(`[data-message-id="${lastId}"]`);
+        const range = document.createRange();
+        const start = first.querySelector("time").firstChild;
+        const walker = document.createTreeWalker(last, NodeFilter.SHOW_TEXT);
+        let end = walker.nextNode();
+        while (end && end.textContent !== "eats a drumstick") {
+          end = walker.nextNode();
+        }
+        range.setStart(start, 0);
+        range.setEnd(end, end.textContent.length);
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }, ids);
+      await action
+        .getByText("eats a drumstick", { exact: true })
+        .click({ button: "right" });
+      await page
+        .getByRole("menuitem", { name: "Quote highlight", exact: true })
+        .click();
+      await expect(draft).toContainText("schedules a follow-up");
+      await expect(draft).toContainText("eats a drumstick");
+      const attribution = await draft
+        .locator("blockquote p")
+        .filter({ hasText: /Alex Morgan|Dana Brooks/ })
+        .allTextContents();
+      expect(attribution).toHaveLength(2);
+      expect(attribution[0]).toContain("Dana Brooks");
+      expect(attribution[0]).not.toContain("Alex Morgan");
+      expect(attribution[1]).toContain("Alex Morgan");
+      const clock = await action.locator("time [aria-hidden]").textContent();
+      await page.clock.setFixedTime(new Date("2026-11-24T18:42:11Z"));
+      await draft.fill("/me hides the cover sheet");
+      await draft.press("Enter");
+      const nextAction = thread
+        .locator("[data-message-id]")
+        .filter({ hasText: "hides the cover sheet" });
+      await expect(nextAction).toContainText(
+        "Alex Morgan hides the cover sheet",
+      );
+      await expect(nextAction.getByText(clock, { exact: true })).toHaveCount(0);
+    },
+    "",
+    "narrated-actions",
+  );
+});
 
 test("media review stage contains portrait video and image media", async ({
   page,

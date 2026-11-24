@@ -1,5 +1,6 @@
 import type { ChannelMessage } from "../relay/contracts";
 import { calendarDay } from "../../shared/datetime";
+import { messageAction } from "./message-action";
 
 export function continuesMessageGroup(
   previous: ChannelMessage | undefined,
@@ -9,6 +10,8 @@ export function continuesMessageGroup(
     !!previous &&
     !previous.membership &&
     !current.membership &&
+    !messageAction(previous.content) &&
+    !messageAction(current.content) &&
     // Legacy output has no workflow ID: one relay signer is not one workflow.
     !previous.workflowOwnerId &&
     !current.workflowOwnerId &&

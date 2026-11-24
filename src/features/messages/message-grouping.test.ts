@@ -113,3 +113,10 @@ it.each([-1, 1] as const)(
     );
   },
 );
+
+it("keeps every action separate from speech and other actions", () => {
+  const action = { ...first, content: "/me waves" };
+  expect(continuesMessageGroup(first, action)).toBe(false);
+  expect(continuesMessageGroup(action, first)).toBe(false);
+  expect(continuesMessageGroup(action, { ...action, id: "next" })).toBe(false);
+});

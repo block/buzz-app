@@ -3,9 +3,11 @@ import {
   messageEditContent,
   messageEditDraft,
 } from "./message-edit";
+import { sentAttachmentItem } from "./attachment-draft";
 import {
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -80,6 +82,10 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
   const initial = useRef<string | undefined>(undefined);
   const [attachments, setAttachments] = useState<readonly EditAttachment[]>([]);
   const [error, setError] = useState<string>();
+  const items = useMemo(
+    () => attachments.map(({ attachment }) => sentAttachmentItem(attachment)),
+    [attachments],
+  );
   const pending = useSyncExternalStore(
     session.outbox?.subscribe ?? subscribe,
     session.outbox?.snapshot ?? snapshot,
@@ -118,6 +124,8 @@ export function useMessageEdit(session: ComposerSession, restore: () => void) {
     clearError: () => setError(undefined),
     /** Sent attachments the edit keeps; removing one drops it from the message. */
     attachments,
+    /** The kept attachments as finished upload tiles, keyed by URL. */
+    items,
     removeAttachment(url: string) {
       setAttachments((items) =>
         items.filter(({ attachment }) => attachment.url !== url),

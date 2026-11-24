@@ -30,15 +30,11 @@ import { useMediaElementSource } from "./use-media-element-source";
 /** Follows the relay's refusal of a file's type, which offers no Retry. */
 const UNSUPPORTED_GUIDANCE = " Remove it to send.";
 
-/** A GIF staged with the draft, or an attachment an edit keeps. Neither is an
- * upload; `markdown` identifies the tile. */
+/** A GIF staged with the draft. It sends as its Markdown, not as an upload. */
 export type ComposerGif = Readonly<{
   markdown: string;
   title: string;
   source?: string | undefined;
-  /** Defaults to a GIF. */
-  hint?: string;
-  mime?: string | undefined;
 }>;
 
 export function ComposerAttachments({
@@ -211,15 +207,12 @@ function GifItem({
         </span>
       ) : (
         <span className={fileIconStyles.slot}>
-          <FileTypeIcon
-            name={gif.hint ? gif.title : `${gif.title}.gif`}
-            mime={gif.hint ? gif.mime : "image/gif"}
-          />
+          <FileTypeIcon name={`${gif.title}.gif`} mime="image/gif" />
         </span>
       )}
       <div className={styles.details}>
         <span className={styles.name}>{gif.title}</span>
-        <span className={styles.hint}>{gif.hint ?? "GIF"}</span>
+        <span className={styles.hint}>GIF</span>
       </div>
       <div className={styles.actions} data-remove="">
         <IconButton
@@ -267,8 +260,10 @@ function AttachmentItem({
   const [shown, setShown] = useState(source);
   const incoming = image && source !== shown ? source : undefined;
   const bytes = item.uploaded?.size ?? item.file.size;
-  const size =
-    bytes < 1024 * 1024
+  // A sent attachment may not say its size.
+  const size = !bytes
+    ? undefined
+    : bytes < 1024 * 1024
       ? `${Math.max(1, Math.round(bytes / 1024))} KB`
       : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   const uploadFailed = item.status === "error";
@@ -425,7 +420,7 @@ function AttachmentItem({
           aria-atomic="true"
         >
           <span className="sr-only">{item.file.name}: </span>
-          {uploadFailed ? size : `${size} · ${status}`}
+          {uploadFailed ? size : [size, status].filter(Boolean).join(" · ")}
         </span>
         {failed && <span className="sr-only">Preview unavailable</span>}
       </div>

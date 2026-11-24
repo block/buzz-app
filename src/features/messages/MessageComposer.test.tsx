@@ -10545,8 +10545,19 @@ const attachedMessage = () =>
   editableMessage({
     content: "Caption",
     sourceContent: `Caption\n\n![photo](<${photo}>)`,
-    attachments: [{ url: photo, kind: "image", name: "photo.png" }],
+    attachments: [{ url: photo, kind: "image", name: "photo.png", size: 2048 }],
   });
+
+it("shows kept attachments as finished uploads while editing", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([attachedMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  const tiles = screen.getByRole("region", { name: "Attachments" });
+  expect(within(tiles).getByRole("status")).toHaveTextContent("2 KB · Ready");
+  expect(
+    within(tiles).getByRole("button", { name: "Preview photo.png" }),
+  ).toBeEnabled();
+});
 
 it("saves an attachment-only edit without a delete handler", () => {
   const h = mount({}, undefined, first.pubkey);

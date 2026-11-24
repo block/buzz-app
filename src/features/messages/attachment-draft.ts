@@ -1,3 +1,4 @@
+import type { Attachment } from "../relay/contracts";
 import { validateRecording, type VoiceRecording } from "../relay/voice-media";
 import { useState, useSyncExternalStore } from "react";
 import type { ComposerSession } from "./composer-session";
@@ -127,6 +128,25 @@ const uploadedItem = (attachment: UploadedAttachment): DraftAttachment => ({
   uploaded: attachment,
   ...(attachment.voice ? { voice: attachment.voice } : {}),
 });
+
+/** A sent attachment shown as a finished upload, keyed by its URL. */
+export function sentAttachmentItem(attachment: Attachment): DraftAttachment {
+  const { duration, waveform } = attachment;
+  return {
+    ...uploadedItem({
+      name: attachment.name ?? "Attachment",
+      url: attachment.url,
+      type: attachment.mime ?? "",
+      // Zero reads as unknown; the tile then leaves the size out.
+      size: attachment.size ?? 0,
+      sha256: "",
+      ...(attachment.voiceNote && duration !== undefined && waveform
+        ? { voice: { duration, waveform } }
+        : {}),
+    }),
+    id: attachment.url,
+  };
+}
 
 function restoreFiles([scope, key]: SavedFiles) {
   const saved: unknown = readView(scope, key, []);

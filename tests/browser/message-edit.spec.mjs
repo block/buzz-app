@@ -61,6 +61,16 @@ test("Cmd+Up edits in the existing composer and restores native focus, draft his
         .getByRole("region", { name: "Attachments" })
         .getByRole("button", { name: "Remove report.txt", exact: true }),
     ).toBeVisible();
+    // Escape closes a kept attachment's preview without cancelling the edit.
+    await page
+      .getByRole("button", { name: "Preview report.txt", exact: true })
+      .click();
+    const preview = page.getByRole("dialog");
+    await expect(preview).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(preview).toBeHidden();
+    await expect(editor).toBeVisible();
+    await editor.focus();
     expect(
       await editor.evaluate((el) => [el.selectionStart, el.selectionEnd]),
     ).toEqual([source.length, source.length]);

@@ -103,7 +103,6 @@ fn main() {
             "nsec_backup_set_choice",
             "sign_out",
             "sign_out_wipe_refusal",
-            "finish_credential_setup",
             "identity_prepare_remote_agent_authorization",
             "identity_sign_builderlab_binding",
             "federated_identity_snapshot",

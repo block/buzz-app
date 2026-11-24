@@ -65,9 +65,10 @@ pub struct Peer {
     /// The scope that build binds at `root`; a pair bound elsewhere is not its own.
     expected_scope: Scope,
     store: Arc<dyn SecretStore>,
-    /// The peer installation whose witness this observer last read and matched.
-    /// Only that exact committed installation skips a fresh read.
-    qualified: Mutex<Option<Installation>>,
+    /// What this observer last read and matched: an exact committed pair, or
+    /// an explicit empty inventory with a positively absent witness. Only that
+    /// same observation skips a fresh read.
+    qualified: Mutex<Option<Seen>>,
 }
 impl Peer {
     pub fn new(root: PathBuf, expected_scope: Scope, store: Arc<dyn SecretStore>) -> Self {
@@ -78,6 +79,21 @@ impl Peer {
             qualified: Mutex::new(None),
         }
     }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum Seen {
+    Pair(Installation),
+    Empty,
+}
+
+/// What this build's own inventory must hold for a classification.
+#[derive(Clone, Copy)]
+enum Expect<'a> {
+    Absent,
+    /// The explicit empty v1 state, terminal for a cancelled setup.
+    Empty,
+    Record(&'a Record),
 }
 
 /// Whether a classification may read the other build's OS witness. Only a
@@ -114,7 +130,7 @@ impl Established {
             self.build,
             scope,
             &self.root,
-            Some(&Record {
+            Expect::Record(&Record {
                 installation: self.installation.clone(),
                 committed: true,
             }),
@@ -125,39 +141,62 @@ impl Established {
     /// Whether the other build indexes unretired custody under any of `homes`.
     /// This build's journal cannot discharge it, so erasing them must refuse.
     pub fn peer_custody_in(&self, homes: &[PathBuf]) -> Result<bool> {
-        let Some(state) = state(&self.peer.root, self.build.peer)? else {
-            return Ok(false);
-        };
-        let wiped = homes
-            .iter()
-            .map(|home| home_hash(home))
-            .collect::<Result<BTreeSet<_>>>()?;
-        let inventory = Inventory {
-            root: &self.peer.root,
-        };
-        for id in inventory.members(&state.namespaces)? {
-            let namespace = namespace(&self.peer.root, &id)?;
-            if wiped.contains(&namespace.home)
-                && namespace
-                    .entries
-                    .iter()
-                    .any(|entry| entry.phase != Phase::Retired)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        peer_custody_in(self.build, &self.peer, homes)
     }
 }
 
-/// Whether this build's inventory holds an uncommitted setup intent. Read-only
-/// and not eligibility: [`finish`] proves that afresh.
-pub fn unfinished(root: &Path) -> bool {
-    state(root, Build::THIS.this)
-        .ok()
-        .flatten()
-        .and_then(|state| state.installation)
-        .is_some_and(|record| !record.committed)
+fn peer_custody_in(build: Build, peer: &Peer, homes: &[PathBuf]) -> Result<bool> {
+    let Some(state) = state(&peer.root, build.peer)? else {
+        return Ok(false);
+    };
+    let wiped = homes
+        .iter()
+        .map(|home| home_hash(home))
+        .collect::<Result<BTreeSet<_>>>()?;
+    let inventory = Inventory { root: &peer.root };
+    for id in inventory.members(&state.namespaces)? {
+        let namespace = namespace(&peer.root, &id)?;
+        if wiped.contains(&namespace.home)
+            && namespace
+                .entries
+                .iter()
+                .any(|entry| entry.phase != Phase::Retired)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// This build's positively empty inventory: a cancelled setup, or one found
+/// already cancelled. It holds `installation.lock`, so no initializer can
+/// replace the empty state while a caller relies on it. Not credential-use
+/// authority, and not proof that no credential ever existed.
+pub struct Empty {
+    build: Build,
+    root: PathBuf,
+    peer: Peer,
+    _writer: Held,
+}
+impl Empty {
+    /// Filesystem only: still empty, and a peer not already observed refuses.
+    pub fn inspect(&self, scope: &Scope) -> Result<()> {
+        if cancellable(self.build, &self.root, &binding(scope, &self.root)?)? != Own::Empty {
+            return Err(FAILED.into());
+        }
+        inspect(
+            self.build,
+            scope,
+            &self.root,
+            Expect::Empty,
+            &self.peer,
+            PeerRead::Cached,
+        )
+    }
+    /// As [`Established::peer_custody_in`].
+    pub fn peer_custody_in(&self, homes: &[PathBuf]) -> Result<bool> {
+        peer_custody_in(self.build, &self.peer, homes)
+    }
 }
 
 fn binding(scope: &Scope, root: &Path) -> Result<String> {
@@ -211,6 +250,19 @@ fn state(root: &Path, variant: &str) -> Result<Option<State>> {
     }
 }
 
+/// Explicit empty v1 state: no installation and nothing else.
+fn empty(root: &Path, state: &State) -> Result<bool> {
+    Ok(state.installation.is_none() && nothing_else(root, state)?)
+}
+
+/// Nothing indexed, counted, journaled or on disk beside an installation record.
+fn nothing_else(root: &Path, state: &State) -> Result<bool> {
+    Ok(state.namespaces.is_empty()
+        && state.signed_out_seen.is_none()
+        && state.journal.is_none()
+        && !(Inventory { root }).has_records()?)
+}
+
 fn witness(bytes: &[u8]) -> Result<Installation> {
     if bytes.len() > MAX_VALUE_BYTES {
         return Err(FAILED.into());
@@ -218,9 +270,11 @@ fn witness(bytes: &[u8]) -> Result<Installation> {
     serde_json::from_slice(bytes).map_err(|_| FAILED.into())
 }
 
-/// Read/create-only OS work is synchronous so its caller can retain the existing
-/// native creator lease through worker completion, even after a bounded wait.
-/// No R/G/I metadata lock spans either OS call. Never repairs partial evidence.
+/// Read/create/delete OS work is synchronous so its caller can retain the
+/// existing native creator lease through worker completion, even after a
+/// bounded wait. No R/G/I metadata lock spans an OS call. This build's own
+/// exact empty partial setup is cancelled, never finished, before one fresh
+/// attempt; other partial or unknown evidence is never repaired.
 pub fn establish(
     scope: &Scope,
     root: &Path,
@@ -248,10 +302,14 @@ pub(super) fn establish_as(
     };
     let existing = state(root, build.this)?;
     match (existing, found) {
-        (Some(state), Some(found)) => {
+        (Some(state), Some(found))
+            if state
+                .installation
+                .as_ref()
+                .is_some_and(|record| record.committed) =>
+        {
             let record = state.installation.ok_or(FAILED)?;
-            if !record.committed
-                || !found.valid_for(build.this)
+            if !found.valid_for(build.this)
                 || record.installation != found
                 || found.scope != expected_scope
             {
@@ -269,99 +327,181 @@ pub(super) fn establish_as(
         (None, None) => {
             // Positive absence of this build's custody evidence; a qualified
             // peer may coexist, anything else refuses.
-            inspect(build, scope, root, None, &peer, PeerRead::Allowed)?;
+            inspect(build, scope, root, Expect::Absent, &peer, PeerRead::Allowed)?;
             let inventory = Inventory { root };
             inventory.establish()?;
             // Stable completion ownership, not a structural lock. A competing
             // initializer refuses; it cannot replace an in-flight OS witness.
-            let _writer = try_lock(&root.join("installation.lock"))?.ok_or(BUSY)?;
-            let record = Record {
-                installation: Installation {
-                    version: 1,
-                    id: fresh(),
-                    variant: build.this.into(),
-                    scope: expected_scope,
-                },
-                committed: false,
-            };
-            {
-                let _g = inventory.global()?;
-                if preflight::checked(&root.join(STATE))
-                    .map_err(|_| FAILED)?
-                    .is_some()
-                    || inventory.has_records()?
-                {
-                    return Err(FAILED.into());
-                }
-                let mut state = State {
-                    installation: Some(record.clone()),
-                    ..State::default()
-                };
-                inventory.save_state(&mut state)?;
-            }
-            let bytes =
-                Zeroizing::new(serde_json::to_vec(&record.installation).map_err(|_| FAILED)?);
-            store.add(ACCOUNT, &bytes).map_err(|_| FAILED)?;
-            commit(build, scope, root, record, peer)
+            let writer = try_lock(&root.join("installation.lock"))?.ok_or(BUSY)?;
+            initialize(build, scope, root, store, peer, Expect::Absent, writer)
+        }
+        (Some(_), _) => {
+            let empty = cancel_as(build, scope, root, store, peer)?;
+            inspect(
+                build,
+                scope,
+                root,
+                Expect::Empty,
+                &empty.peer,
+                PeerRead::Cached,
+            )?;
+            initialize(
+                build,
+                scope,
+                root,
+                store,
+                empty.peer,
+                Expect::Empty,
+                empty._writer,
+            )
         }
         _ => Err(FAILED.into()),
     }
 }
 
-/// Explicitly finish this build's own fresh setup intent, never anything else:
-/// the exact original record, with no namespace, journal, count or custody
-/// evidence anywhere in the declared scope. A positively absent witness gets
-/// the original bytes create-only; an exactly matching one gets no OS write.
-/// Uncertainty, denial, mismatch or change refuses and leaves the intent as it
-/// is. Success is a committed pair for the next launch to qualify independently.
-pub fn finish(scope: &Scope, root: &Path, store: &dyn SecretStore, peer: Peer) -> Result<()> {
-    finish_as(Build::THIS, scope, root, store, peer)
-}
-
-pub(super) fn finish_as(
+/// A new installation's intent over the absent or empty inventory `from`,
+/// under the caller's completion ownership, then its witness and commit.
+fn initialize(
     build: Build,
     scope: &Scope,
     root: &Path,
     store: &dyn SecretStore,
     peer: Peer,
-) -> Result<()> {
+    from: Expect,
+    _writer: Held,
+) -> Result<Established> {
+    let expected_scope = binding(scope, root)?;
+    let inventory = Inventory { root };
+    let record = Record {
+        installation: Installation {
+            version: 1,
+            id: fresh(),
+            variant: build.this.into(),
+            scope: expected_scope.clone(),
+        },
+        committed: false,
+    };
+    {
+        let _g = inventory.global()?;
+        let unchanged = match from {
+            Expect::Absent => {
+                preflight::checked(&root.join(STATE))
+                    .map_err(|_| FAILED)?
+                    .is_none()
+                    && !inventory.has_records()?
+            }
+            Expect::Empty => cancellable(build, root, &expected_scope)? == Own::Empty,
+            Expect::Record(_) => false,
+        };
+        if !unchanged {
+            return Err(FAILED.into());
+        }
+        let mut state = State {
+            installation: Some(record.clone()),
+            ..State::default()
+        };
+        inventory.save_state(&mut state)?;
+    }
+    let bytes = Zeroizing::new(serde_json::to_vec(&record.installation).map_err(|_| FAILED)?);
+    store.add(ACCOUNT, &bytes).map_err(|_| FAILED)?;
+    commit(build, scope, root, record, peer)
+}
+
+/// Cancel this build's own exact empty setup intent into the explicit empty
+/// v1 state, never anything else: the exact uncommitted record, with no
+/// namespace, journal, count or custody evidence anywhere in the declared
+/// scope. Only its exact witness is deleted, and only confirmed absence lets
+/// the record go. An already empty inventory with an absent witness is
+/// persisted again, so a retry acknowledges its durability. Uncertainty,
+/// denial, mismatch or change refuses and leaves the intent as it is.
+pub fn cancel(scope: &Scope, root: &Path, store: &dyn SecretStore, peer: Peer) -> Result<Empty> {
+    cancel_as(Build::THIS, scope, root, store, peer)
+}
+
+pub(super) fn cancel_as(
+    build: Build,
+    scope: &Scope,
+    root: &Path,
+    store: &dyn SecretStore,
+    peer: Peer,
+) -> Result<Empty> {
     if cfg!(not(unix)) {
         return Err(UNSUPPORTED.into());
     }
     let expected_scope = binding(scope, root)?;
-    let record = intent(build, root, &expected_scope)?;
+    let before = cancellable(build, root, &expected_scope)?;
     // The initializer holds this through its OS add; a late one refuses here.
-    let _writer = try_lock(&root.join("installation.lock"))?.ok_or(BUSY)?;
-    if intent(build, root, &expected_scope)? != record {
+    let writer = try_lock(&root.join("installation.lock"))?.ok_or(BUSY)?;
+    if cancellable(build, root, &expected_scope)? != before {
         return Err(FAILED.into());
     }
-    inspect(build, scope, root, Some(&record), &peer, PeerRead::Allowed)?;
+    let expect = match &before {
+        Own::Intent(record) => Expect::Record(record),
+        Own::Empty => Expect::Empty,
+    };
+    inspect(build, scope, root, expect, &peer, PeerRead::Allowed)?;
     match store.read(ACCOUNT) {
-        Ok(bytes) if witness(&bytes)? == record.installation => {}
-        Err(Error::Absent) => {
-            let bytes =
-                Zeroizing::new(serde_json::to_vec(&record.installation).map_err(|_| FAILED)?);
-            store.add(ACCOUNT, &bytes).map_err(|_| FAILED)?;
-        }
-        _ => return Err(FAILED.into()),
+        Err(Error::Absent) => {}
+        Ok(bytes) => match &before {
+            Own::Intent(record) if witness(&bytes)? == record.installation => {
+                store.delete(ACCOUNT).map_err(|_| FAILED)?;
+                if !matches!(store.read(ACCOUNT), Err(Error::Absent)) {
+                    return Err(FAILED.into());
+                }
+            }
+            _ => return Err(FAILED.into()),
+        },
+        Err(_) => return Err(FAILED.into()),
     }
-    commit(build, scope, root, record, peer).map(drop)
+    inspect(build, scope, root, expect, &peer, PeerRead::Cached)?;
+    {
+        let inventory = Inventory { root };
+        let _g = inventory.global()?;
+        if cancellable(build, root, &expected_scope)? != before {
+            return Err(FAILED.into());
+        }
+        let mut state = state(root, build.this)?.ok_or(FAILED)?;
+        state.installation = None;
+        inventory.save_state(&mut state)?;
+    }
+    Ok(Empty {
+        build,
+        root: root.to_owned(),
+        peer,
+        _writer: writer,
+    })
 }
 
-/// This build's exact uncommitted record, with nothing else indexed.
-fn intent(build: Build, root: &Path, expected_scope: &str) -> Result<Record> {
+/// Read-only: whether this build's own state is exactly a cancellable setup
+/// intent or the explicit empty state. Not authority to delete anything; a
+/// caller must still `cancel` and rely only on the returned `Empty`.
+pub fn cancellable_setup(scope: &Scope, root: &Path) -> bool {
+    binding(scope, root)
+        .and_then(|expected_scope| cancellable(Build::THIS, root, &expected_scope))
+        .is_ok()
+}
+
+#[derive(PartialEq, Eq)]
+enum Own {
+    Intent(Record),
+    Empty,
+}
+
+/// This build's exact uncommitted record or explicit empty state, with
+/// nothing else indexed. A bare directory is neither.
+fn cancellable(build: Build, root: &Path, expected_scope: &str) -> Result<Own> {
     let state = state(root, build.this)?.ok_or(FAILED)?;
-    let record = state.installation.clone().ok_or(FAILED)?;
-    if record.committed
-        || record.installation.scope != expected_scope
-        || !state.namespaces.is_empty()
-        || state.signed_out_seen.is_some()
-        || state.journal.is_some()
-        || (Inventory { root }).has_records()?
-    {
-        return Err(FAILED.into());
+    match state.installation.clone() {
+        None if empty(root, &state)? => Ok(Own::Empty),
+        Some(record)
+            if !record.committed
+                && record.installation.scope == expected_scope
+                && nothing_else(root, &state)? =>
+        {
+            Ok(Own::Intent(record))
+        }
+        _ => Err(FAILED.into()),
     }
-    Ok(record)
 }
 
 /// Revalidate the whole scope, then commit exactly `record` if nothing changed.
@@ -372,7 +512,14 @@ fn commit(
     mut record: Record,
     peer: Peer,
 ) -> Result<Established> {
-    inspect(build, scope, root, Some(&record), &peer, PeerRead::Allowed)?;
+    inspect(
+        build,
+        scope,
+        root,
+        Expect::Record(&record),
+        &peer,
+        PeerRead::Allowed,
+    )?;
     {
         let inventory = Inventory { root };
         let _g = inventory.global()?;
@@ -446,8 +593,9 @@ struct Owner {
 }
 
 /// A present peer inventory qualifies only as the other build's committed pair,
-/// bound to its own expected scope at its fixed root. Its witness is read afresh,
-/// when `peer_read` allows, unless this exact installation already matched.
+/// bound to its own expected scope at its fixed root, or as its explicit empty
+/// inventory with a positively absent witness. The witness is read afresh,
+/// when `peer_read` allows, unless this exact observation already matched.
 fn qualify_peer(
     build: Build,
     scope: &Scope,
@@ -460,22 +608,26 @@ fn qualify_peer(
     if !scope.inventories.contains(&peer.root) {
         return Err(FAILED.into());
     }
-    let record = state.installation.as_ref().ok_or(FAILED)?;
-    if !record.committed || record.installation.scope != binding(&peer.expected_scope, &peer.root)?
-    {
-        return Err(FAILED.into());
-    }
+    let seen = match &state.installation {
+        None if empty(&peer.root, &state)? => Seen::Empty,
+        Some(record)
+            if record.committed
+                && record.installation.scope == binding(&peer.expected_scope, &peer.root)? =>
+        {
+            Seen::Pair(record.installation.clone())
+        }
+        _ => return Err(FAILED.into()),
+    };
     let cached = peer
         .qualified
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    if cached.as_ref() != Some(&record.installation) {
-        if matches!(peer_read, PeerRead::Cached) || read_peer(peer)? != record.installation {
+    if cached.as_ref() != Some(&seen) {
+        if matches!(peer_read, PeerRead::Cached) || read_peer(peer)? != seen {
             return Err(FAILED.into());
         }
-        *peer.qualified.lock().unwrap_or_else(|e| e.into_inner()) =
-            Some(record.installation.clone());
+        *peer.qualified.lock().unwrap_or_else(|e| e.into_inner()) = Some(seen);
     }
     Ok(Some(Owner {
         variant: build.peer,
@@ -486,12 +638,16 @@ fn qualify_peer(
 }
 
 /// Synchronous, so the native caller's completion lease spans the OS read.
-fn read_peer(peer: &Peer) -> Result<Installation> {
-    witness(&peer.store.read(ACCOUNT).map_err(|_| FAILED)?)
+fn read_peer(peer: &Peer) -> Result<Seen> {
+    match peer.store.read(ACCOUNT) {
+        Ok(bytes) => Ok(Seen::Pair(witness(&bytes)?)),
+        Err(Error::Absent) => Ok(Seen::Empty),
+        Err(_) => Err(FAILED.into()),
+    }
 }
 
 /// The one owner-aware classification of the declared scope. `expected` is
-/// this build's record at `root`, or `None` when its inventory must be absent.
+/// what this build's inventory at `root` must hold.
 /// Every v3 registry must validate against the namespace of the inventory that
 /// indexes it, under that inventory's variant; unobserved namespaces may hold
 /// only retired debt. Unknown, partial or unowned evidence refuses.
@@ -499,7 +655,7 @@ fn inspect(
     build: Build,
     scope: &Scope,
     root: &Path,
-    expected: Option<&Record>,
+    expected: Expect,
     peer: &Peer,
     peer_read: PeerRead,
 ) -> Result<()> {
@@ -507,15 +663,26 @@ fn inspect(
         return Err(FAILED.into());
     }
     let current = match expected {
-        Some(expected) => {
+        Expect::Record(expected) => {
             let current = state(root, build.this)?.ok_or(FAILED)?;
             if current.installation.as_ref() != Some(expected) {
                 return Err(FAILED.into());
             }
             Some(current)
         }
-        None if state(root, build.this)?.is_some() => return Err(FAILED.into()),
-        None => None,
+        Expect::Empty => {
+            let current = state(root, build.this)?.ok_or(FAILED)?;
+            if !empty(root, &current)? {
+                return Err(FAILED.into());
+            }
+            Some(current)
+        }
+        Expect::Absent if state(root, build.this)?.is_some() => return Err(FAILED.into()),
+        Expect::Absent => None,
+    };
+    let expected = match expected {
+        Expect::Record(record) => Some(record),
+        Expect::Absent | Expect::Empty => None,
     };
     let own = Owner {
         variant: build.this,
@@ -605,15 +772,19 @@ fn inspect(
             }
         }
     }
-    // Neither owner's installation may have changed during the walk.
-    for (path, variant, before) in [
-        (root, build.this, Some(&own)),
-        (peer.root.as_path(), build.peer, other.as_ref()),
+    // Neither owner's inventory presence or installation may have changed
+    // during the walk.
+    for (path, variant, present, record) in [
+        (root, build.this, current.is_some(), &own.record),
+        (
+            peer.root.as_path(),
+            build.peer,
+            other.is_some(),
+            &other.as_ref().and_then(|owner| owner.record.clone()),
+        ),
     ] {
         let still = state(path, variant)?;
-        if still.is_some() != before.is_some_and(|owner| owner.record.is_some())
-            || still.and_then(|state| state.installation) != before.and_then(|o| o.record.clone())
-        {
+        if still.is_some() != present || still.and_then(|state| state.installation) != *record {
             return Err(FAILED.into());
         }
     }

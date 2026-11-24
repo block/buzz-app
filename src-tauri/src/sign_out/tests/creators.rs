@@ -177,7 +177,8 @@ fn boot_plain_cleanup_always_owns_all_buzz_shared() {
             &paths,
             Some(Slots {
                 continuity: None,
-                finish: None,
+                cancel: None,
+                cancellable: Box::new(|| false),
                 inventory: None,
                 pending: Box::new(pending),
                 cleanup: Some(Box::new(cleanup)),
@@ -277,7 +278,8 @@ fn migration_observes_only_under_all_exclusive_without_taking_key() {
         &paths,
         Some(Slots {
             continuity: None,
-            finish: None,
+            cancel: None,
+            cancellable: Box::new(|| false),
             inventory: None,
             pending: Box::new(pending),
             cleanup: None,

@@ -2,6 +2,7 @@
 use super::*;
 use crate::secrets::{continuity as installation, preflight};
 use serde_json::{json, Value};
+use std::os::unix::fs::MetadataExt;
 use std::sync::mpsc;
 
 fn scope(env: &Env) -> preflight::Scope {
@@ -111,14 +112,7 @@ fn count_only_preexisting_v3_and_foreign_evidence_never_get_retroactive_witnesse
 
 #[test]
 fn missing_malformed_mismatched_or_denied_pair_refuses_without_repair() {
-    for damage in [
-        "inventory",
-        "witness",
-        "malformed",
-        "scope",
-        "uncommitted",
-        "denied",
-    ] {
+    for damage in ["inventory", "witness", "malformed", "scope", "denied"] {
         let env = Env::new();
         env.ready(SLOT);
         let scope = scope(&env);
@@ -161,33 +155,26 @@ fn missing_malformed_mismatched_or_denied_pair_refuses_without_repair() {
 }
 
 #[test]
-fn failed_or_changed_intent_is_not_automatically_completed_later() {
-    for changed in [false, true] {
-        let env = Env::new();
-        env.ready(SLOT);
-        let scope = scope(&env);
-        if changed {
-            let root = scope.inventories[0].clone();
-            *env.store.on_add.lock().unwrap() = Some(Arc::new(move |account| {
-                if account == installation::ACCOUNT {
-                    let path = root.join(STATE);
-                    let mut value: Value =
-                        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-                    value["signedOutSeen"] = json!(0);
-                    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
-                }
-            }));
-        } else {
-            *env.store.fail_add.lock().unwrap() = Some(Error::Denied);
+fn changed_intent_is_neither_completed_nor_cancelled_later() {
+    let env = Env::new();
+    env.ready(SLOT);
+    let scope = scope(&env);
+    let root = scope.inventories[0].clone();
+    *env.store.on_add.lock().unwrap() = Some(Arc::new(move |account| {
+        if account == installation::ACCOUNT {
+            let path = root.join(STATE);
+            let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            value["signedOutSeen"] = json!(0);
+            fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
         }
-        assert!(establish(&env, &scope).is_err());
-        assert_eq!(state(&scope)["installation"]["committed"], false);
-        *env.store.on_add.lock().unwrap() = None;
-        *env.store.fail_add.lock().unwrap() = None;
-        let adds = env.store.adds.load(Ordering::SeqCst);
-        assert!(establish(&env, &scope).is_err());
-        assert_eq!(env.store.adds.load(Ordering::SeqCst), adds);
-    }
+    }));
+    assert!(establish(&env, &scope).is_err());
+    assert_eq!(state(&scope)["installation"]["committed"], false);
+    *env.store.on_add.lock().unwrap() = None;
+    let (adds, deletes) = counts(&env.store);
+    assert!(establish(&env, &scope).is_err());
+    assert_eq!(counts(&env.store), (adds, deletes));
+    assert!(has_witness(&env));
 }
 
 #[test]
@@ -636,13 +623,13 @@ fn plant_misbound_peer(env: &Env, builds: &Builds, case: &str) {
 #[test]
 fn other_build_pair_bound_elsewhere_refuses_despite_its_matching_witness() {
     for case in ["root", "home", "declared"] {
-        for join in ["fresh", "established", "finish"] {
+        for join in ["fresh", "established", "cancel"] {
             let env = Env::new();
             env.ready(SLOT);
             let builds = Builds::new(&env);
             let established = (join == "established").then(|| builds.this(&env).unwrap());
             plant_misbound_peer(&env, &builds, case);
-            if join == "finish" {
+            if join == "cancel" {
                 // The other build refuses beside an intent: park its unchanged
                 // pair while this build's fresh setup fails, then expose it.
                 let parked = env.temp.path().join("parked");
@@ -660,7 +647,7 @@ fn other_build_pair_bound_elsewhere_refuses_despite_its_matching_witness() {
                     observed.requalify(&builds.scope).is_err()
                         && observed.inspect(&builds.scope).is_err()
                 }
-                None if join == "finish" => installation::finish(
+                None if join == "cancel" => installation::cancel(
                     &builds.scope,
                     &builds.scope.inventories[0],
                     env.store.as_ref(),
@@ -826,10 +813,10 @@ fn erase_scope_reports_only_the_other_builds_unretired_custody_in_wiped_homes() 
     assert!(other.peer_custody_in(&[home]).is_err());
 }
 
-// ------------------------------------------------ explicit setup completion
+// ------------------------------------------------ setup cancellation
 
-fn finish(env: &Env, scope: &preflight::Scope) -> Result<()> {
-    installation::finish(
+fn cancel(env: &Env, scope: &preflight::Scope) -> Result<installation::Empty> {
+    installation::cancel(
         scope,
         &scope.inventories[0],
         env.store.as_ref(),
@@ -841,64 +828,157 @@ fn witness_id(env: &Env) -> Value {
         .unwrap()["id"]
         .clone()
 }
+fn has_witness(env: &Env) -> bool {
+    env.store
+        .items
+        .lock()
+        .unwrap()
+        .contains_key(installation::ACCOUNT)
+}
+/// This build's uncommitted intent, with its exact witness when `added`.
+fn interrupted(env: &Env, scope: &preflight::Scope, added: bool) -> Value {
+    let late = scope.homes[0].join("profiles/late");
+    if added {
+        // The add succeeds; unrelated evidence then stops the commit.
+        let late = late.clone();
+        *env.store.on_add.lock().unwrap() = Some(Arc::new(move |_| {
+            fs::create_dir_all(&late).unwrap();
+            fs::write(late.join("registry.json"), b"interrupted").unwrap();
+        }));
+    } else {
+        *env.store.fail_add.lock().unwrap() = Some(Error::Denied);
+    }
+    assert!(establish(env, scope).is_err());
+    *env.store.fail_add.lock().unwrap() = None;
+    *env.store.on_add.lock().unwrap() = None;
+    let _ = fs::remove_dir_all(&late);
+    let intent = state(scope)["installation"].clone();
+    assert_eq!(intent["committed"], false);
+    assert_eq!(has_witness(env), added);
+    intent
+}
+/// A fresh pair that can enroll, use and clear a credential, then sign out.
+fn usable(env: &Env, scope: &preflight::Scope, observed: &installation::Established) {
+    assert_eq!(state(scope)["installation"]["committed"], true);
+    assert_eq!(
+        witness_id(env),
+        state(scope)["installation"]["installation"]["id"]
+    );
+    observe_sign_outs(&scope.inventories[0], 0).unwrap();
+    env.set(ALICE, SENTINEL).unwrap();
+    observed.inspect(scope).unwrap();
+    assert_eq!(env.status(ALICE), SecretStatus::Saved);
+    env.manager
+        .secret_clear(PLUGIN, &env.current(), "api-key", ALICE)
+        .unwrap();
+    assert_eq!(env.status(ALICE), SecretStatus::Missing);
+    env.set(ALICE, SENTINEL).unwrap();
+    begin_sign_out(&scope.inventories[0], Some(ALICE), None).unwrap();
+    finish_sign_out(
+        &scope.inventories[0],
+        env.store.as_ref(),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    assert_eq!(env.status(ALICE), SecretStatus::Missing);
+}
 
 #[test]
-fn failed_fresh_setup_completes_only_by_explicit_finish_then_requalifies() {
-    for interruption in ["denied-add", "after-add"] {
+fn interrupted_setup_is_cancelled_then_freshly_initialized_never_finished() {
+    for added in [false, true] {
         let env = Env::new();
         env.ready(SLOT);
         let scope = scope(&env);
-        let late = scope.homes[0].join("profiles/late");
-        if interruption == "denied-add" {
-            *env.store.fail_add.lock().unwrap() = Some(Error::Denied);
-        } else {
-            // The add succeeds; unrelated evidence then stops the commit.
-            let late = late.clone();
-            *env.store.on_add.lock().unwrap() = Some(Arc::new(move |_| {
-                fs::create_dir_all(&late).unwrap();
-                fs::write(late.join("registry.json"), b"interrupted").unwrap();
-            }));
-        }
-        assert!(establish(&env, &scope).is_err());
-        let intent = state(&scope)["installation"].clone();
-        assert_eq!(intent["committed"], false);
-        *env.store.fail_add.lock().unwrap() = None;
-        *env.store.on_add.lock().unwrap() = None;
-        let _ = fs::remove_dir_all(&late);
-        // Restored access: ordinary qualification still refuses, adding nothing.
-        let adds = env.store.adds.load(Ordering::SeqCst);
-        assert!(establish(&env, &scope).is_err());
-        assert_eq!(env.store.adds.load(Ordering::SeqCst), adds);
-        finish(&env, &scope).unwrap();
-        let expected_adds = adds + usize::from(interruption == "denied-add");
-        assert_eq!(env.store.adds.load(Ordering::SeqCst), expected_adds);
-        assert_eq!(witness_id(&env), intent["installation"]["id"]);
-        assert_eq!(state(&scope)["installation"]["committed"], true);
-        assert_eq!(
-            state(&scope)["installation"]["installation"],
-            intent["installation"]
-        );
-        // The next launch qualifies the pair independently; finishing again refuses.
+        let intent = interrupted(&env, &scope, added);
+        let (adds, deletes) = counts(&env.store);
         let observed = establish(&env, &scope).unwrap();
-        assert_eq!(env.store.adds.load(Ordering::SeqCst), expected_adds);
-        assert!(finish(&env, &scope).is_err());
-        observe_sign_outs(&scope.inventories[0], 0).unwrap();
-        env.set(ALICE, SENTINEL).unwrap();
-        observed.inspect(&scope).unwrap();
-        begin_sign_out(&scope.inventories[0], Some(ALICE), None).unwrap();
-        finish_sign_out(
-            &scope.inventories[0],
-            env.store.as_ref(),
-            Duration::from_secs(5),
-        )
-        .unwrap();
-        assert_eq!(env.status(ALICE), SecretStatus::Missing);
+        // Only the old exact witness was deleted, and one new one added.
+        assert_eq!(counts(&env.store), (adds + 1, deletes + usize::from(added)));
+        assert_ne!(witness_id(&env), intent["installation"]["id"]);
+        assert_ne!(
+            state(&scope)["installation"]["installation"]["id"],
+            intent["installation"]["id"]
+        );
+        usable(&env, &scope, &observed);
+        // The next launch qualifies the new pair without a write.
+        let used = counts(&env.store);
+        establish(&env, &scope).unwrap();
+        assert_eq!(counts(&env.store), used);
     }
 }
 
 #[test]
-fn finish_refuses_everything_but_the_exact_empty_intent_without_writes() {
+fn cancellation_leaves_explicit_empty_state_and_holds_off_initializers() {
+    for added in [false, true] {
+        let env = Env::new();
+        env.ready(SLOT);
+        let scope = scope(&env);
+        let intent = interrupted(&env, &scope, added);
+        let lock = scope.inventories[0].join("installation.lock");
+        let identity = fs::metadata(&lock).unwrap().ino();
+        let empty = cancel(&env, &scope).unwrap();
+        assert_eq!(state(&scope), json!({"version": 1, "namespaces": []}));
+        assert!(!has_witness(&env));
+        assert_eq!(fs::metadata(&lock).unwrap().ino(), identity);
+        empty.inspect(&scope).unwrap();
+        // An initializer cannot replace the empty state while it is relied on.
+        let adds = env.store.adds.load(Ordering::SeqCst);
+        assert!(establish(&env, &scope).is_err());
+        assert_eq!(env.store.adds.load(Ordering::SeqCst), adds);
+        assert_eq!(state(&scope), json!({"version": 1, "namespaces": []}));
+        drop(empty);
+        // A retry reaffirms the empty state without an OS delete.
+        let deletes = env.store.deletes.load(Ordering::SeqCst);
+        drop(cancel(&env, &scope).unwrap());
+        assert_eq!(env.store.deletes.load(Ordering::SeqCst), deletes);
+        let observed = establish(&env, &scope).unwrap();
+        assert_ne!(witness_id(&env), intent["installation"]["id"]);
+        assert_eq!(fs::metadata(&lock).unwrap().ino(), identity);
+        usable(&env, &scope, &observed);
+    }
+}
+
+#[test]
+fn empty_state_inspection_refuses_any_later_evidence() {
+    for change in ["witness", "count", "unlisted"] {
+        let env = Env::new();
+        env.ready(SLOT);
+        let scope = scope(&env);
+        interrupted(&env, &scope, true);
+        let empty = cancel(&env, &scope).unwrap();
+        match change {
+            "witness" => {
+                env.store
+                    .items
+                    .lock()
+                    .unwrap()
+                    .insert(installation::ACCOUNT.into(), b"late".to_vec());
+                // Filesystem only: a late witness is for the next fresh read.
+                empty.inspect(&scope).unwrap();
+                drop(empty);
+                assert!(cancel(&env, &scope).is_err());
+                assert!(establish(&env, &scope).is_err());
+                continue;
+            }
+            "count" => write_state(
+                &scope,
+                &json!({"version": 1, "namespaces": [], "signedOutSeen": 0}),
+            ),
+            _ => fs::write(
+                scope.inventories[0].join(format!("ns-{}.json", "a".repeat(64))),
+                b"{}",
+            )
+            .unwrap(),
+        }
+        assert!(empty.inspect(&scope).is_err(), "{change}");
+    }
+}
+
+#[test]
+fn cancellation_refuses_everything_but_the_exact_empty_intent_without_writes() {
     for case in [
+        "absent",
+        "bare",
         "committed",
         "scope",
         "variant",
@@ -913,22 +993,27 @@ fn finish_refuses_everything_but_the_exact_empty_intent_without_writes() {
         "v3",
         "peer",
         "busy",
-        "occupied",
+        "delete-denied",
+        "delete-unconfirmed",
         "late",
     ] {
         let env = Env::new();
         env.ready(SLOT);
         let scope = scope(&env);
-        *env.store.fail_add.lock().unwrap() = Some(Error::Denied);
-        assert!(establish(&env, &scope).is_err());
-        *env.store.fail_add.lock().unwrap() = None;
-        let mut record = state(&scope);
+        if case == "absent" {
+            assert!(cancel(&env, &scope).is_err());
+            assert!(!scope.inventories[0].exists());
+            continue;
+        }
+        let mut record = interrupted(&env, &scope, true);
+        record = json!({"version": 1, "namespaces": [], "installation": record});
         let mut edit = |change: &dyn Fn(&mut Value)| {
             change(&mut record);
             write_state(&scope, &record);
         };
         let mut held = None;
         match case {
+            "bare" => fs::remove_file(scope.inventories[0].join(STATE)).unwrap(),
             "committed" => edit(&|state| state["installation"]["committed"] = json!(true)),
             "scope" => edit(&|state| {
                 state["installation"]["installation"]["scope"] = json!("0".repeat(64))
@@ -984,53 +1069,142 @@ fn finish_refuses_everything_but_the_exact_empty_intent_without_writes() {
                         .unwrap(),
                 );
             }
-            "occupied" => {
-                // A witness appearing between the read and the create-only add.
-                let store = Arc::downgrade(&env.store);
-                *env.store.on_add.lock().unwrap() = Some(Arc::new(move |account| {
-                    store
+            "delete-denied" => env.store.deny_delete(Some(Error::Denied)),
+            "delete-unconfirmed" => {}
+            _ => {
+                // Changed after the confirmed delete, before the empty state.
+                let (root, store) = (scope.inventories[0].clone(), Arc::downgrade(&env.store));
+                *env.store.on_read.lock().unwrap() = Some(Arc::new(move |account| {
+                    let deleted = !store
                         .upgrade()
                         .unwrap()
                         .items
                         .lock()
                         .unwrap()
-                        .insert(account.into(), b"concurrent".to_vec());
-                }));
-            }
-            _ => {
-                // Changed after the add, before the commit.
-                let root = scope.inventories[0].clone();
-                *env.store.on_add.lock().unwrap() = Some(Arc::new(move |_| {
-                    let path = root.join(STATE);
-                    let mut value: Value =
-                        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-                    value["signedOutSeen"] = json!(0);
-                    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+                        .contains_key(account);
+                    if deleted {
+                        let path = root.join(STATE);
+                        let mut value: Value =
+                            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                        value["signedOutSeen"] = json!(0);
+                        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+                    }
                 }));
             }
         }
-        let before = fs::read(scope.inventories[0].join(STATE)).unwrap();
+        let before = fs::read(scope.inventories[0].join(STATE)).ok();
         let witness = env.store.items.lock().unwrap().clone();
         let deletes = env.store.deletes.load(Ordering::SeqCst);
-        assert!(finish(&env, &scope).is_err(), "{case}");
+        let result = if case == "delete-unconfirmed" {
+            installation::cancel(
+                &scope,
+                &scope.inventories[0],
+                &Unconfirmed(env.store.clone()),
+                peer(&scope, &Arc::default()),
+            )
+        } else {
+            cancel(&env, &scope)
+        };
+        assert!(result.is_err(), "{case}");
+        drop(result);
         drop(held);
-        assert_eq!(env.store.deletes.load(Ordering::SeqCst), deletes, "{case}");
-        if case == "late" {
-            assert_eq!(state(&scope)["installation"]["committed"], false);
-            continue;
-        }
+        *env.store.on_read.lock().unwrap() = None;
+        let deleted = matches!(case, "delete-denied" | "delete-unconfirmed" | "late");
         assert_eq!(
-            fs::read(scope.inventories[0].join(STATE)).unwrap(),
-            before,
+            env.store.deletes.load(Ordering::SeqCst),
+            deletes + usize::from(deleted),
             "{case}"
         );
-        if case == "occupied" {
-            assert_eq!(
-                env.store.items.lock().unwrap()[installation::ACCOUNT],
-                b"concurrent"
-            );
-        } else {
-            assert_eq!(*env.store.items.lock().unwrap(), witness, "{case}");
+        let after = fs::read(scope.inventories[0].join(STATE)).ok();
+        if case == "late" {
+            assert_eq!(state(&scope)["installation"], record["installation"]);
+            assert_eq!(state(&scope)["signedOutSeen"], 0);
+            continue;
+        }
+        assert_eq!(after, before, "{case}");
+        assert_eq!(*env.store.items.lock().unwrap(), witness, "{case}");
+    }
+}
+
+/// Reports every delete as done without deleting anything.
+struct Unconfirmed(Arc<Fake>);
+impl SecretStore for Unconfirmed {
+    fn read(&self, account: &str) -> std::result::Result<Zeroizing<Vec<u8>>, Error> {
+        self.0.read(account)
+    }
+    fn add(&self, account: &str, value: &[u8]) -> std::result::Result<(), Error> {
+        self.0.add(account, value)
+    }
+    fn delete(&self, _: &str) -> std::result::Result<(), Error> {
+        self.0.deletes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[test]
+fn explicit_empty_peer_with_absent_witness_lets_this_build_qualify() {
+    for case in ["empty", "witness", "unlisted", "count", "bare"] {
+        let env = Env::new();
+        env.ready(SLOT);
+        let builds = Builds::new(&env);
+        *builds.other.fail_add.lock().unwrap() = Some(Error::Denied);
+        assert!(builds.other(&env).is_err());
+        *builds.other.fail_add.lock().unwrap() = None;
+        drop(
+            installation::cancel_as(
+                Build::OTHER,
+                &builds.other_scope,
+                &builds.scope.inventories[1],
+                builds.other.as_ref(),
+                installation::Peer::new(
+                    builds.scope.inventories[0].clone(),
+                    builds.scope.clone(),
+                    env.store.clone(),
+                ),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            builds.other_state(),
+            json!({"version": 1, "namespaces": []})
+        );
+        match case {
+            "witness" => {
+                builds
+                    .other
+                    .items
+                    .lock()
+                    .unwrap()
+                    .insert(installation::ACCOUNT.into(), b"late".to_vec());
+            }
+            "unlisted" => fs::write(
+                builds.scope.inventories[1].join(format!("ns-{}.json", "a".repeat(64))),
+                b"{}",
+            )
+            .unwrap(),
+            "count" => builds
+                .write_other_state(&json!({"version": 1, "namespaces": [], "signedOutSeen": 0})),
+            "bare" => fs::remove_file(builds.scope.inventories[1].join(STATE)).unwrap(),
+            _ => {}
+        }
+        let before = fs::read(builds.scope.inventories[1].join(STATE)).ok();
+        let result = builds.this(&env);
+        assert_eq!(result.is_ok(), case == "empty", "{case}");
+        assert_eq!(
+            env.store.adds.load(Ordering::SeqCst),
+            usize::from(case == "empty")
+        );
+        assert_eq!(
+            fs::read(builds.scope.inventories[1].join(STATE)).ok(),
+            before
+        );
+        if let Ok(this) = result {
+            // The empty peer is cached: a filesystem-only inspection reads nothing.
+            let reads = builds.other.reads.load(Ordering::SeqCst);
+            this.inspect(&builds.scope).unwrap();
+            assert_eq!(builds.other.reads.load(Ordering::SeqCst), reads);
+            builds.other(&env).unwrap();
+            this.requalify(&builds.scope).unwrap();
         }
     }
 }

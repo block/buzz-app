@@ -322,7 +322,8 @@ pub(crate) fn phase(name: &'static str) {
 fn negative_slots(root: &Path) -> Slots<'_> {
     Slots {
         continuity: None,
-        finish: None,
+        cancel: None,
+        cancellable: Box::new(|| false),
         inventory: Some(root),
         pending: Box::new(|| secrets::sign_out_pending(root)),
         cleanup: None,
@@ -610,7 +611,7 @@ fn h1_2di_postbegin_revalidation_is_fenced_with_exact_recorded_copy() {
             Err(fenced())
         },
     ));
-    assert_eq!(result, Err(Failure { message: "Buzz couldn't confirm whether this sign-out request was recorded. Open Buzz again to check for pending sign-out work.".into(), fenced: true, finish_setup: false }));
+    assert_eq!(result, Err(Failure { message: "Buzz couldn't confirm whether this sign-out request was recorded. Open Buzz again to check for pending sign-out work.".into(), fenced: true }));
     assert_eq!(exited.get(), 1);
     PHASES.with_borrow(|phases| assert_eq!(phases, &["begin", "commit"]));
     assert!(!root.exists() && !paths.marker.exists());

@@ -2238,7 +2238,8 @@ pub(super) mod slots {
                 (self.root.clone(), self.store.clone(), self.attempts.clone());
             Slots {
                 continuity: None,
-                finish: None,
+                cancel: None,
+                cancellable: Box::new(|| false),
                 inventory: Some(&self.root),
                 pending: Box::new(|| secrets::sign_out_pending(&self.root)),
                 cleanup: Some(Box::new(move || {
@@ -2621,7 +2622,8 @@ pub(super) mod slots {
             let (root, store, cleaned) = (vault.root.clone(), vault.store.clone(), order.clone());
             let slots = Slots {
                 continuity: None,
-                finish: None,
+                cancel: None,
+                cancellable: Box::new(|| false),
                 inventory: Some(&vault.root),
                 pending: Box::new(|| secrets::sign_out_pending(&vault.root)),
                 cleanup: Some(Box::new(move || {

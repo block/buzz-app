@@ -224,38 +224,136 @@ fn second_pending_check_preserves_new_uncertainty_and_committed_cleanup() {
                     vault.pending(),
                     "late committed debt must remain for deliberate cleanup"
                 );
-                let instance = boot(
-                    &paths,
-                    Some(
-                        paths
-                            .plugin_slots(&vault.root, vault.store.clone())
-                            .unwrap(),
-                    ),
-                    no_agents,
-                    || panic!("no marker"),
-                )
-                .unwrap();
+                let calls = vault.calls();
                 assert!(
-                    !vault.pending(),
-                    "next deliberate launch completes readable journal cleanup first"
+                    calls.iter().all(|call| call.starts_with("read ")),
+                    "legacy debt must not acquire or repair a witness: {calls:?}"
                 );
-                assert!(
-                    instance.h1_unknown(),
-                    "count-only inventory is never retroactively adopted"
+                // The next deliberate launch completes cleanup, leaving exact E,
+                // before its single fresh witness add.
+                let (stalled, entered) = mpsc::channel();
+                let (release, released) = mpsc::channel();
+                *vault.store.add_stall.lock().unwrap() = Some((stalled, released));
+                let launched = std::thread::scope(|scope| {
+                    let launch = scope.spawn(|| {
+                        let instance = boot(
+                            &paths,
+                            Some(
+                                paths
+                                    .plugin_slots(&vault.root, vault.store.clone())
+                                    .unwrap(),
+                            ),
+                            no_agents,
+                            || panic!("no marker"),
+                        )
+                        .unwrap();
+                        (instance.h1_unknown(), instance.plugin_inventory().is_some())
+                    });
+                    assert_eq!(entered.recv_timeout(BUDGET).unwrap(), Step::Stalled);
+                    assert!(!vault.pending());
+                    let state: serde_json::Value =
+                        serde_json::from_slice(&fs::read(vault.root.join("state.json")).unwrap())
+                            .unwrap();
+                    assert_eq!(state["namespaces"], serde_json::json!([]));
+                    assert!(state.get("signedOutSeen").is_none() && state.get("journal").is_none());
+                    assert_eq!(state["installation"]["committed"], false);
+                    release.send(()).unwrap();
+                    launch.join().unwrap()
+                });
+                assert_eq!(launched, (false, true));
+                let state: serde_json::Value =
+                    serde_json::from_slice(&fs::read(vault.root.join("state.json")).unwrap())
+                        .unwrap();
+                let installation = &state["installation"];
+                assert_eq!(installation["committed"], true);
+                let id = installation["installation"]["id"].as_str().unwrap();
+                assert!(uuid::Uuid::parse_str(id).is_ok());
+                assert_eq!(vault.saved().len(), 1);
+                let calls = vault.calls();
+                assert_eq!(
+                    calls.iter().filter(|call| call.starts_with("add ")).count(),
+                    1,
+                    "{calls:?}"
                 );
+                continue;
             }
         }
-        let calls = vault.calls();
-        if outcome == "journal" {
-            assert!(
-                calls.iter().all(|call| call.starts_with("read ")),
-                "legacy debt must not acquire or repair a witness: {calls:?}"
-            );
-        } else {
-            assert!(
-                calls.is_empty(),
-                "no witness operation after journal uncertainty"
-            );
-        }
+        assert!(
+            vault.calls().is_empty(),
+            "no witness operation after journal uncertainty"
+        );
     }
+}
+
+#[test]
+fn production_remove_after_interrupted_setup_restarts_into_a_usable_fresh_manager() {
+    let (_dir, paths) = fixture();
+    let vault = Vault::new(paths.plugin_inventory().unwrap());
+    let slots = || {
+        paths
+            .plugin_slots(&vault.root, vault.store.clone())
+            .unwrap()
+    };
+    // Interrupted at its witness save, twice: once fresh, once after cancelling.
+    *vault.store.add_denied.lock().unwrap() = true;
+    drop(boot(&paths, Some(slots()), no_agents, || panic!("no marker")).unwrap());
+    let instance = boot(&paths, Some(slots()), no_agents, || panic!("no marker")).unwrap();
+    *vault.store.add_denied.lock().unwrap() = false;
+    assert!(instance.h1_unknown() && instance.partial);
+    let unqualified = instance.configure_plugin_secrets(manager(&paths), vault.store.clone());
+    assert!(unqualified.credential_cleanup_status().is_err());
+    let identity = IdentityHost::fixture();
+    vault.calls();
+    run(attempt_native(
+        &instance,
+        &paths,
+        PLAIN,
+        instance.plugin_inventory(),
+        &identity,
+        || async { Ok(()) },
+        || {},
+        || async { Ok(()) },
+        || async { panic!("no forced exit") },
+    ))
+    .unwrap();
+    assert!(paths.marker.exists());
+    assert!(!vault.calls().iter().any(|call| call.starts_with("add ")));
+    drop((unqualified, instance));
+    let removed = Cell::new(0);
+    let instance = boot(&paths, Some(slots()), no_agents, || {
+        removed.set(removed.get() + 1);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(removed.get(), 1);
+    assert!(!paths.marker.exists());
+    assert!(!instance.h1_unknown());
+    assert_eq!(instance.plugin_inventory(), Some(vault.root.as_path()));
+    assert_eq!(vault.saved().len(), 1);
+    let manager = instance.configure_plugin_secrets(manager(&paths), vault.store.clone());
+    vault.enroll(&paths.app_data, "default", &[]);
+    let revision = manager
+        .catalog()
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == PLUGIN)
+        .unwrap()
+        .revision;
+    let viewer = identity.current_viewer().unwrap().unwrap();
+    let status = || {
+        manager
+            .secret_status(PLUGIN, &revision, "api-key", &viewer)
+            .unwrap()
+    };
+    manager
+        .secret_set(PLUGIN, &revision, "api-key", &viewer, "FAKE-LATER", &|| {
+            true
+        })
+        .unwrap();
+    assert_eq!(status(), secrets::SecretStatus::Saved);
+    manager
+        .secret_clear(PLUGIN, &revision, "api-key", &viewer)
+        .unwrap();
+    assert_eq!(status(), secrets::SecretStatus::Missing);
 }

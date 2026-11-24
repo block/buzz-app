@@ -900,9 +900,13 @@ development build, which share the debug key, and leaves the installed app
 signed in. Wipe is unavailable while
 `BUZZODZ_HOME` moves plugin storage out of app data, and while the other build
 still keeps saved plugin credentials in data it would erase. Either build's plain
-sign-out cleans only its own saved plugin credentials. When the refusal comes from
-this build's own unfinished saved-credential setup, the dialog offers **Finish
-credential setup**, a confirmation that finishes it and restarts Buzz.
+sign-out cleans only its own saved plugin credentials. When this build's own
+saved-credential setup was interrupted and holds nothing else, **Remove from
+device** cancels it into an empty setup, then signs out as usual. After the key is
+removed at the next launch, that launch sets up saved credentials afresh once, with
+a new installation, so the next sign-in can save credentials without another
+restart. An ordinary launch that finds such a setup does the same: it cancels it
+and tries one fresh setup. Unknown or nonempty storage still refuses.
 
 Every running instance, debug or release under any identifier, holds two locks
 shared in the user data folder (created first if a first launch finds none)

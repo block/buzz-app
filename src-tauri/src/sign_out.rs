@@ -41,7 +41,6 @@ const PEER_CUSTODY: &str = if cfg!(debug_assertions) {
 } else {
     "Erasing is unavailable because a development build of Buzz keeps saved plugin credentials in this data; nothing was removed. Clear them in that build first."
 };
-const SETUP_UNAVAILABLE: &str = "Saved-credential setup can't be finished here.";
 pub(crate) mod legacy_identifier;
 mod preflight;
 // TEMPORARY agents rename: remove after 2026-10-18; see the migration module.
@@ -206,23 +205,27 @@ impl Paths {
             move || Peer::new(root.clone(), peer_scope.clone(), store.clone())
         };
         let (witness_root, witness_store) = (root.to_owned(), store.clone());
-        let (finish_scope, finish_root, finish_store) =
+        let (cancel_scope, cancel_root, cancel_store) =
             (scope.clone(), root.to_owned(), store.clone());
-        let finish_peer = peer.clone();
+        let cancel_peer = peer.clone();
+        let (cancellable_scope, cancellable_root) = (scope.clone(), root.to_owned());
         let cleanup_root = root.to_owned();
         Ok(Slots {
             inventory: Some(root),
             continuity: Some(Box::new(move || {
                 continuity::establish(&scope, &witness_root, witness_store.as_ref(), peer())
             })),
-            finish: Some(Arc::new(move || {
-                continuity::finish(
-                    &finish_scope,
-                    &finish_root,
-                    finish_store.as_ref(),
-                    finish_peer(),
+            cancel: Some(Arc::new(move || {
+                continuity::cancel(
+                    &cancel_scope,
+                    &cancel_root,
+                    cancel_store.as_ref(),
+                    cancel_peer(),
                 )
             })),
+            cancellable: Box::new(move || {
+                continuity::cancellable_setup(&cancellable_scope, &cancellable_root)
+            }),
             pending: Box::new(move || buzzodz_plugins::secrets::sign_out_pending(root)),
             cleanup: Some(Box::new(move || {
                 buzzodz_plugins::secrets::finish_sign_out(
@@ -317,10 +320,14 @@ pub(crate) struct Instance {
         buzzodz_plugins::secrets::preflight::Scope,
         Arc<buzzodz_plugins::secrets::continuity::Established>,
     )>,
-    finish: Option<FinishSetup>,
+    cancel: Option<CancelSetup>,
+    /// Unqualified only because this build's own exact setup intent or empty
+    /// state is present: Remove may cancel it, then admit on the empty proof.
+    partial: bool,
     wait: Duration,
 }
-type FinishSetup = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+type CancelSetup =
+    Arc<dyn Fn() -> Result<buzzodz_plugins::secrets::continuity::Empty, String> + Send + Sync>;
 struct Shared {
     locks: Mutex<Locks>,
     gate: Mutex<Gate>,
@@ -446,31 +453,29 @@ impl Instance {
         })
     }
 
-    /// Whether this unqualified launch found its own unfinished setup intent.
-    fn setup_unfinished(&self) -> bool {
-        self.continuity.is_none()
-            && self.finish.is_some()
-            && self
-                .inventory
-                .as_deref()
-                .is_some_and(buzzodz_plugins::secrets::continuity::unfinished)
-    }
-
-    /// Explicit recovery of this build's failed fresh setup, under the same
-    /// completion-owned lease as enrollment. It never qualifies this launch:
-    /// custody stays unknown until a restart qualifies the committed pair.
-    /// A timeout is outcome-unknown; the lease lasts until the work finishes.
-    pub(crate) fn finish_credential_setup(&self) -> Result<(), String> {
-        let finish = match (&self.continuity, &self.finish) {
-            (None, Some(finish)) if cfg!(unix) => finish.clone(),
-            _ => return Err(SETUP_UNAVAILABLE.into()),
+    /// Cancel this build's own exact empty setup under a completion-owned
+    /// lease. A sticky runtime unknown still refuses; a late result is dropped
+    /// with its lease, so it never continues into sign-out.
+    fn cancel_setup(&self) -> Result<buzzodz_plugins::secrets::continuity::Empty, String> {
+        let cancel = match &self.cancel {
+            Some(cancel) if self.partial && cfg!(unix) => cancel.clone(),
+            _ => return Err(H1_UNKNOWN.into()),
         };
+        if self
+            .shared
+            .gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .h1_unknown
+        {
+            return Err(H1_UNKNOWN.into());
+        }
         let lease = self.lease(false)?;
         let (done, result) = std::sync::mpsc::channel();
         std::thread::Builder::new()
-            .name("plugin installation setup".into())
+            .name("plugin installation cancel".into())
             .spawn(move || {
-                let outcome = finish();
+                let outcome = cancel();
                 drop(lease);
                 let _ = done.send(outcome);
             })
@@ -478,6 +483,7 @@ impl Instance {
         result
             .recv_timeout(self.wait)
             .map_err(|_| SAVING.to_owned())?
+            .map_err(|_| H1_UNKNOWN.to_owned())
     }
 
     fn inspect_continuity(&self) -> Result<(), String> {
@@ -684,8 +690,10 @@ pub(crate) struct Slots<'a> {
                 + Send,
         >,
     >,
-    /// Explicit completion of this build's own failed fresh setup; never run at boot.
-    finish: Option<FinishSetup>,
+    /// Cancels this build's own exact empty setup into the empty state.
+    cancel: Option<CancelSetup>,
+    /// Read-only: whether this build's own state is exactly what `cancel` takes.
+    cancellable: Box<dyn Fn() -> bool + 'a>,
     /// Whether a journaled sign-out still owes cleanup; reads only.
     pending: Box<dyn Fn() -> Result<bool, String> + 'a>,
     /// This launch's one attempt, which may ask for secure storage access.
@@ -730,25 +738,17 @@ fn settle(slots: &mut Option<Slots>, locks: Locks) -> Result<Locks, String> {
     }
 }
 
-/// Keep all inherited ownership through OS-witness read/create completion,
-/// including when launch stops waiting. No structural metadata lock is held.
-fn qualify_continuity<'a>(
+/// Keep all inherited ownership through OS-witness read/create/delete
+/// completion, including when launch stops waiting. No structural metadata
+/// lock is held. `qualify` establishes, or cancels an exact empty setup.
+fn qualify_continuity<'a, T: Send + 'static>(
     paths: &Paths,
     slots: &mut Option<Slots<'a>>,
+    take: impl FnOnce(&mut Slots<'a>) -> Option<Box<dyn FnOnce() -> Result<T, String> + Send>>,
     mut locks: Locks,
     ready: impl Fn(&Option<Slots<'a>>) -> Result<bool, String>,
-) -> Result<
-    (
-        Locks,
-        Option<buzzodz_plugins::secrets::continuity::Established>,
-        bool,
-    ),
-    String,
-> {
-    let Some((qualify, wait)) = slots
-        .as_mut()
-        .and_then(|s| Some((s.continuity.take()?, s.wait)))
-    else {
+) -> Result<(Locks, Option<T>, bool), String> {
+    let Some((qualify, wait)) = slots.as_mut().and_then(|s| Some((take(s)?, s.wait))) else {
         return Ok((locks, None, false));
     };
     if !wait_for(|| locks.key.try_lock_shared()) || !wait_for(|| locks.all.try_lock_shared()) {
@@ -864,10 +864,13 @@ pub(crate) fn boot(
         FAILED.to_owned()
     };
     let h1_unknown = std::cell::Cell::new(false);
+    // Unknown from a source no empty proof answers, such as an unread journal.
+    let independent = std::cell::Cell::new(false);
     let pending_slots = |slots: &Option<Slots>| match owed(slots) {
         Ok(pending) => Ok(pending),
         Err(error) => {
             h1_unknown.set(true);
+            independent.set(true);
             // Read uncertainty is not positive journal authority. A real marker
             // still fences; without intent, ordinary launch remains available.
             if pending(&paths.marker)?.is_some() {
@@ -888,26 +891,52 @@ pub(crate) fn boot(
         locks.all.unlock().map_err(failed)?;
         locks.key.unlock().map_err(failed)?;
     }
-    let (qualified_locks, continuity, unknown) =
-        qualify_continuity(paths, &mut slots, locks, |slots| {
-            // A newly committed readable journal belongs to the next deliberate attempt.
-            if pending_slots(slots)? {
-                return Err(buzzodz_plugins::secrets::SIGN_OUT_INCOMPLETE.into());
-            }
-            Ok(!h1_unknown.get())
-        })?;
+    // A pending removal with this build's own exact setup intent or empty
+    // state cancels instead of establishing: nothing initializes until the
+    // marker retires. Established or journaled custody keeps its usual path.
+    let removal_pending = pending(&paths.marker)?.is_some() || legacy_marker(paths)?;
+    let deferred =
+        std::cell::Cell::new(removal_pending && slots.as_ref().is_some_and(|s| (s.cancellable)()));
+    let ready = |slots: &Option<Slots>| {
+        // A newly committed readable journal belongs to the next deliberate attempt.
+        if pending_slots(slots)? {
+            return Err(buzzodz_plugins::secrets::SIGN_OUT_INCOMPLETE.into());
+        }
+        Ok(!h1_unknown.get())
+    };
+    let (qualified_locks, established, empty, unknown) = if deferred.get() {
+        let take = |s: &mut Slots| {
+            let cancel = s.cancel.clone()?;
+            let cancel: Box<dyn FnOnce() -> Result<_, String> + Send> = Box::new(move || cancel());
+            Some(cancel)
+        };
+        let (locks, empty, unknown) = qualify_continuity(paths, &mut slots, take, locks, ready)?;
+        (locks, None, empty, unknown)
+    } else {
+        let take = |s: &mut Slots| s.continuity.take();
+        let (locks, established, unknown) =
+            qualify_continuity(paths, &mut slots, take, locks, ready)?;
+        (locks, established, None, unknown)
+    };
     locks = qualified_locks;
     if unknown {
         h1_unknown.set(true);
     }
+    let continuity = std::cell::RefCell::new(established);
+    // Held until the marker retires, so no initializer replaces E meanwhile.
+    let empty = std::cell::RefCell::new(empty);
+    // The held, revalidated empty proof observes its own inventory in place of
+    // the negative scanner, which refuses any present inventory. It never
+    // resets an unknown already set.
     let observe = |slots: &Option<Slots>| {
-        if paths
-            .inspect_continuity(
-                slots.as_ref().and_then(|s| s.inventory),
-                continuity.as_ref(),
-            )
-            .is_err()
-        {
+        let inventory = slots.as_ref().and_then(|s| s.inventory);
+        let observed = match &*empty.borrow() {
+            Some(empty) => paths
+                .inspection_scope(inventory)
+                .and_then(|scope| empty.inspect(&scope)),
+            None => paths.inspect_continuity(inventory, continuity.borrow().as_ref()),
+        };
+        if observed.is_err() {
             h1_unknown.set(true);
         }
     };
@@ -933,7 +962,25 @@ pub(crate) fn boot(
         // Plain cleanup takes K exclusive plus A shared; erase takes both exclusive.
         let marker = pending_wipe(&paths.marker).map_err(failed)?;
         let Some(wipe) = marker.or(pending_slots(&slots)?.then_some(false)) else {
-            break;
+            if !deferred.replace(false) {
+                break;
+            }
+            // Removal finished: initialize afresh once, then take the locks
+            // and look again.
+            drop(empty.borrow_mut().take());
+            locks.all.unlock().map_err(failed)?;
+            locks.key.unlock().map_err(failed)?;
+            let take = |s: &mut Slots| s.continuity.take();
+            let (qualified_locks, established, unknown) =
+                qualify_continuity(paths, &mut slots, take, locks, |slots| {
+                    Ok(!pending_slots(slots)? && !h1_unknown.get())
+                })?;
+            locks = qualified_locks;
+            if unknown {
+                h1_unknown.set(true);
+            }
+            *continuity.borrow_mut() = established;
+            continue;
         };
         // A restarting instance may still be exiting; wait for it to let go.
         locks.all.unlock().map_err(failed)?;
@@ -957,6 +1004,11 @@ pub(crate) fn boot(
                 }
                 if choices.wipe {
                     agents_stopped(&paths.ownership)?;
+                }
+                // At the deletion boundary: still exactly empty, no journal.
+                observe(&slots);
+                if h1_unknown.get() && !owned_cleanup {
+                    return Err(H1_UNKNOWN.into());
                 }
                 finish(paths, choices, &mut remove_agent_keys, &mut remove_key).map_err(
                     |error| {
@@ -985,9 +1037,15 @@ pub(crate) fn boot(
         seen: finished(&paths.finished).map_err(failed)?,
         h1_unknown: h1_unknown.get(),
         inventory: slots.as_ref().and_then(|s| s.inventory.map(Path::to_owned)),
-        finish: slots.as_ref().and_then(|s| s.finish.clone()),
+        cancel: slots.as_ref().and_then(|s| s.cancel.clone()),
+        partial: !independent.get()
+            && continuity.borrow().is_none()
+            && slots
+                .as_ref()
+                .is_some_and(|s| s.cancel.is_some() && (s.cancellable)()),
         wait: slots.as_ref().map_or(WAIT, |s| s.wait),
         continuity: continuity
+            .into_inner()
             .map(|established| {
                 paths
                     .inspection_scope(slots.as_ref().and_then(|s| s.inventory))
@@ -1231,6 +1289,22 @@ fn clear_except(path: &Path, keep: &[&str]) -> std::io::Result<()> {
 
 /// The pending sign-out's choices, if any. Unreadable or malformed is the
 /// message shown before exiting, never absence.
+/// Whether the legacy identifier's marker, which migration moves to ours
+/// later in boot, is present. Presence alone counts: it is never read here.
+fn legacy_marker(paths: &Paths) -> Result<bool, String> {
+    let Some((legacy, _)) = paths.moves.iter().find(|(_, to)| to == &paths.marker) else {
+        return Ok(false);
+    };
+    match fs::symlink_metadata(legacy) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => {
+            eprintln!("buzz: sign out did not finish: {error}");
+            Err(FAILED.into())
+        }
+    }
+}
+
 fn pending(marker: &Path) -> Result<Option<Choices>, String> {
     let raw = match fs::read(marker) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -1324,22 +1398,17 @@ pub(crate) struct Failure {
     message: String,
     #[serde(skip)]
     fenced: bool,
-    /// This build's own setup is unfinished; offer the explicit recovery.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    finish_setup: bool,
 }
 fn refuse(message: &str) -> Failure {
     Failure {
         message: message.into(),
         fenced: false,
-        finish_setup: false,
     }
 }
 fn fenced() -> Failure {
     Failure {
         message: FENCED.into(),
         fenced: true,
-        finish_setup: false,
     }
 }
 
@@ -1485,6 +1554,9 @@ where
         let _ = root;
         None::<&Path>
     };
+    if root.is_none() && instance.partial {
+        return attempt_cancelled(instance, paths, choices, revoke, close, shutdown, exit).await;
+    }
     if root.is_some() {
         // Owned requalification of any new peer, before admission closes.
         instance
@@ -1549,11 +1621,56 @@ where
         exit,
     )
     .await
-    .map_err(|mut failure| {
-        failure.finish_setup =
-            !failure.fenced && failure.message == H1_UNKNOWN && instance.setup_unfinished();
-        failure
-    })
+}
+
+/// Remove from this build's own exact empty setup: cancel it, then admit on
+/// the held empty proof instead of the negative scanner. There is no
+/// credential to journal, so commit records nothing; the proof stays held
+/// until the marker is written or the attempt refuses.
+async fn attempt_cancelled<V, S, E>(
+    instance: &Instance,
+    paths: &Paths,
+    choices: Choices,
+    revoke: impl FnOnce() -> V,
+    close: impl Fn(),
+    shutdown: impl FnOnce() -> S,
+    exit: impl FnOnce() -> E,
+) -> Result<(), Failure>
+where
+    V: Future<Output = Result<(), Failure>>,
+    S: Future<Output = Result<(), String>>,
+    E: Future<Output = Result<(), Failure>>,
+{
+    let empty = instance
+        .cancel_setup()
+        .map_err(|message| refuse(&message))?;
+    let inventory = instance.inventory.as_deref();
+    let admit = || {
+        let scope = paths.inspection_scope(inventory)?;
+        empty.inspect(&scope).map_err(|_| H1_UNKNOWN.to_owned())?;
+        match choices.wipe {
+            true if !matches!(empty.peer_custody_in(&paths.wiped_homes()), Ok(false)) => {
+                Err(PEER_CUSTODY.to_owned())
+            }
+            _ => Ok(()),
+        }
+    };
+    let journal = Journal {
+        commit: &|| Ok(()),
+        pending: &|| Ok(false),
+        admit: &admit,
+    };
+    attempt(
+        instance,
+        paths,
+        choices,
+        revoke,
+        Some(&journal),
+        close,
+        shutdown,
+        exit,
+    )
+    .await
 }
 
 /// Tear down as Quit does, however that goes, then explain and exit. Agent
@@ -1682,26 +1799,6 @@ pub(crate) async fn sign_out<R: tauri::Runtime>(
         || exit_fenced(app.clone()),
     )
     .await?;
-    crate::relaunch::request(&app);
-    Ok(())
-}
-
-/// Finish this build's own failed fresh saved-credential setup, then restart:
-/// only the next launch can qualify it and enable saved credentials.
-#[tauri::command]
-pub(crate) async fn finish_credential_setup<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-) -> Result<(), Failure> {
-    let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        handle
-            .try_state::<Instance>()
-            .ok_or_else(|| SETUP_UNAVAILABLE.to_owned())?
-            .finish_credential_setup()
-    })
-    .await
-    .map_err(|_| refuse(SAVING))?
-    .map_err(|message| refuse(&message))?;
     crate::relaunch::request(&app);
     Ok(())
 }

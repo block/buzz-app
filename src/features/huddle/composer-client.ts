@@ -138,10 +138,6 @@ export function createHuddleComposerClient(token: string) {
       scope: initial.scope,
       media: (url, size) => value().media.get(size ? `${url}:${size}` : url),
       names,
-      gifs: {
-        supports: (signal) => request("gifSupport", undefined, signal),
-        search: (query, signal) => request("gifSearch", query, signal),
-      },
       channels: {
         list: () => value().channels,
         subscribeList: subscribe,

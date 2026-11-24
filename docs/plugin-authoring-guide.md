@@ -77,6 +77,12 @@ Each line is the main call. Read the types for every field.
 | `ui` (optional) | The host's own controls | `Button`, `Input`, `Field`, `Switch`, `Dialog`, and `Menu` (newer hosts: check `ui.Menu`). `Menu` takes `items` (`label`, `onSelect`, `tone: "destructive"`, `disabled`), a `label` or `aria-label`, `icon` and `align`. Fall back to plain elements when missing. |
 | `host` | Commands, HTTPS, processes, files | Needs `manifest.host`, below |
 
+In a mounted panel, `ctx.panels.useTabTitle?.(label, icon, actions)` sets the
+live tab title and optional icon. Pass a stable array of `{ label, run }`
+entries as the optional third argument to add commands to the tab's context
+menu. The commands remain available while the panel publishes them. Older
+hosts that support the title hook may ignore the third argument.
+
 Agent tool names match `/^[a-z][a-z0-9_]{0,63}$/` and are unique across plugins; prefix them with your plugin. Changing a tool's name, description or schema restarts some agent sessions. `addInstructions` text is sent on every turn, so keep it short.
 
 In a Solo region, check `ui.headerMenuActions === true` before passing

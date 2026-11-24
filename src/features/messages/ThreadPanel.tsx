@@ -428,7 +428,7 @@ function RetainedThreadPanel(props: ThreadPanelProps) {
   return (
     <>
       {error && !opening && (
-        <div role="alert" className={styles.empty}>
+        <div role="alert" className={styles.empty} data-settled-notice="">
           <p>{THREAD_FAILED}</p>
           <Button loading={pending} onClick={retryNavigation}>
             Try again
@@ -540,7 +540,7 @@ function OwnedThreadPanel({
     requireReadyRoot,
   ]);
   return error ? (
-    <div className={styles.empty} role="alert">
+    <div className={styles.empty} role="alert" data-settled-notice="">
       <p>{THREAD_FAILED}</p>
       <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
         Try again

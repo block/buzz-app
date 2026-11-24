@@ -213,30 +213,44 @@ function revealFrom(
     ),
   ];
   reveals.set(element, animations);
-  surface.finished.then(
-    () => {
-      if (reveals.get(element) !== animations) return;
-      reveals.delete(element);
-      if (clip) delete clip.dataset.moving;
-      onFinish();
-    },
-    () => {},
-  );
+  // A motion stopped before its end still opens the sheet; only a newer
+  // reveal of the same sheet takes over from it.
+  const done = () => {
+    const current = reveals.get(element);
+    if (current && current !== animations) return;
+    reveals.delete(element);
+    if (clip) delete clip.dataset.moving;
+    onFinish();
+  };
+  surface.finished.then(done, done);
 }
 
 /** The quick open's handoff. The view's composer stays where it
  * is, drawn over the sheet, while its placeholder turns into the thread's in
  * place. The thread mounts hidden under it and is drawn all at once, rows and
  * reply box in one frame, once the open motion has finished and its rows are
- * in. */
+ * in. Until then the thread is inert, so neither focus nor typing reaches a
+ * reply box that can't be seen; `onReveal` is told when it can. */
 function useQuickHandoff(
   sheet: HTMLElement | null,
   source: HTMLElement,
   enabled: boolean,
   placeholder: string | undefined,
+  onReveal: (() => void) | undefined,
 ) {
+  const reveal = useRef(onReveal);
+  reveal.current = onReveal;
   useLayoutEffect(() => {
     if (!sheet || !enabled) return;
+    // Drawn once, a thread stays drawn when this runs again for it.
+    if (sheet.hasAttribute("data-revealed")) {
+      source.dataset.composerCovered = "";
+      return () => {
+        delete source.dataset.composerCovered;
+      };
+    }
+    const body = sheet.querySelector<HTMLElement>("[data-sheet-body]");
+    if (body) body.inert = true;
     source.dataset.composerAbove = "";
     if (placeholder) {
       source.style.setProperty(
@@ -258,7 +272,6 @@ function useQuickHandoff(
         source.dataset.threadPlaceholder = "";
       }
       if (!sheet.hasAttribute("data-opened")) return;
-      const body = sheet.querySelector("[data-sheet-body]");
       const scroller = body?.querySelector("[data-message-scroller]");
       const ready = scroller
         ? scroller.matches(
@@ -266,15 +279,18 @@ function useQuickHandoff(
           ) &&
           (!scroller.hasAttribute("data-composer-expected") ||
             !!sheet.querySelector("[data-message-composer]"))
-        : // Nothing to read into: a notice, or a failure with its retry.
-          !!body?.querySelector("[role=status], [role=alert]");
+        : // Nothing to read into: a settled notice, or a failure with its
+          // retry. A loading status is not one.
+          !!body?.querySelector("[data-settled-notice]");
       if (!ready) return;
       revealed = true;
       // One frame: the rows and reply box show, the view's composer hides.
       sheet.dataset.revealed = "";
+      if (body) body.inert = false;
       source.dataset.composerCovered = "";
       delete source.dataset.composerAbove;
       observer.disconnect();
+      reveal.current?.();
     };
     const observer = new MutationObserver(check);
     observer.observe(sheet, {
@@ -291,6 +307,7 @@ function useQuickHandoff(
     check();
     return () => {
       observer.disconnect();
+      if (body) body.inert = false;
       delete source.dataset.composerAbove;
       delete source.dataset.composerCovered;
       delete source.dataset.threadPlaceholder;
@@ -644,7 +661,9 @@ export function ComposerSheet({
 }: {
   /** A thread's quick open, and the placeholder its reply box will
    * show, which the view's composer turns into in place. */
-  quick?: { placeholder?: string | undefined } | undefined;
+  quick?:
+    | { placeholder?: string | undefined; onReveal?: () => void }
+    | undefined;
   open: boolean;
   onOpenChange(open: boolean): void;
   host: ComposerOverlayHost;
@@ -688,6 +707,7 @@ export function ComposerSheet({
     composer,
     open && !!quick && containsComposer,
     quick?.placeholder,
+    quick?.onReveal,
   );
   useStackedHeight(surface, dock, open && !containsComposer, readerOnly);
   const popup = useRef<HTMLDivElement | null>(null);

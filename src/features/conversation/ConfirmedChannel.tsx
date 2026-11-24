@@ -142,7 +142,7 @@ function Unavailable({
   };
   const text = reason();
   return text ? (
-    <p role="status" className={styles.empty}>
+    <p role="status" className={styles.empty} data-settled-notice="">
       {text}
     </p>
   ) : (

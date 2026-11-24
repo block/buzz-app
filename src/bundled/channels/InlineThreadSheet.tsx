@@ -80,6 +80,8 @@ export function InlineThreadSheet({
   );
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [placeholder] = useState(() => guessPlaceholder(rootId));
+  // The reply box takes focus once the thread is drawn, not while hidden.
+  const [focusRequest, setFocusRequest] = useState(0);
   // The thread mounts once the open motion is under way on the
   // compositor, not in the click's frame, and draws hidden until it's ready.
   const [threadMounted, setThreadMounted] = useState(false);
@@ -106,7 +108,7 @@ export function InlineThreadSheet({
         title="Thread"
         containsComposer
         tall={tall}
-        quick={{ placeholder }}
+        quick={{ placeholder, onReveal: () => setFocusRequest(1) }}
         spotlight={intro}
         onSpotlightAnchor={setAnchor}
         onMoveToTab={() => {
@@ -127,7 +129,7 @@ export function InlineThreadSheet({
                 <ConversationThread
                   messageId={messageId ?? rootId}
                   revealSelected={messageId !== undefined}
-                  focusRequest={1}
+                  focusRequest={focusRequest}
                   onResolvedRoot={onResolvedRoot}
                 />
                 <LayerReader channelId={confirmed.id} />

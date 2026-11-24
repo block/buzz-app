@@ -133,9 +133,11 @@ it("quotes selected message text with Q only when its composer can take it", () 
   const row = document.querySelector<HTMLElement>("[data-message-id]");
   if (!row) throw new Error("No message row");
   row.dataset.messageId = id;
+  const authorId = "b".repeat(64);
   vi.spyOn(controller, "row").mockReturnValue({
     id,
     channelId: "general",
+    authorId,
   } as ChannelMessage);
   const text = document.querySelector('[data-layout="timeline"]')?.firstChild;
   if (!text) throw new Error("No message text");
@@ -147,7 +149,10 @@ it("quotes selected message text with Q only when its composer can take it", () 
   vi.mocked(controller.canQuote).mockReturnValue(true);
   expect(press("q")).toBe(true);
   expect(controller.quote).toHaveBeenCalledExactlyOnceWith(
-    '<div data-buzz-copy="timeline">One</div>',
+    expect.stringMatching(
+      /^<div data-buzz-copy="timeline" data-copy-id="[\w-]+">One<\/div>$/,
+    ),
     [`buzz://message?channel=general&id=${id}`],
+    [authorId],
   );
 });

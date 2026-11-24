@@ -24,6 +24,8 @@ import {
 import * as clipboard from "../../shared/clipboard";
 
 const cleanups: (() => void)[] = [];
+const quotedLink =
+  /^<div data-buzz-copy="timeline" data-copy-id="[\w-]+"><a href="https:\/\/example.org\/">Quote me<\/a><\/div>$/;
 const ownRects = Object.getOwnPropertyDescriptor(
   Range.prototype,
   "getClientRects",
@@ -49,7 +51,7 @@ function setup({
   Range.prototype.getClientRects = () =>
     [new DOMRect(10, 100, 100, 20)] as unknown as DOMRectList;
   const controller: MessageList = {
-    row: (id) => ({ id }) as ChannelMessage,
+    row: (id) => ({ id, authorId: "author" }) as ChannelMessage,
     newest: () => "one",
     canEdit: () => false,
     edit: vi.fn(),
@@ -240,7 +242,7 @@ it("copies the whole message or the captured highlight independently", async () 
   ]);
   expect(rich).toHaveBeenCalledExactlyOnceWith(
     "Quote me (https://example.org/)",
-    '<div data-buzz-copy="timeline"><a href="https://example.org/">Quote me</a></div>',
+    expect.stringMatching(quotedLink),
     { fallbackToPlainText: true },
   );
   expect(controller.quote).not.toHaveBeenCalled();
@@ -358,8 +360,9 @@ it.each(["context", "touch overflow"])(
     await user.click(item);
     await waitFor(() =>
       expect(controller.quote).toHaveBeenCalledExactlyOnceWith(
-        '<div data-buzz-copy="timeline"><a href="https://example.org/">Quote me</a></div>',
+        expect.stringMatching(quotedLink),
         [],
+        ["author"],
       ),
     );
     await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());

@@ -14,6 +14,8 @@ type EditScopeValue = {
   /** The scope's message list, where Up from an empty composer selects. */
   list: RefObject<HTMLElement | null>;
   focusTarget(): HTMLElement | null;
+  /** The scope's composer heard that its draft now quotes these authors. */
+  quoted?: ((authors: readonly string[]) => void) | undefined;
   exactRows?: (() => readonly ChannelMessage[]) | undefined;
 };
 const EditScope = createContext<EditScopeValue | undefined>(undefined);

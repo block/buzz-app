@@ -88,6 +88,7 @@ import { ThreadPanel } from "./ThreadPanel";
 import { publishOutgoing, type OutgoingMessage } from "./outgoing-message";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
+import { stampCopiedAuthors } from "./copied-authors";
 import { MessageEditScope, useMessageEditScope } from "./MessageEditScope";
 import { registerMessageList } from "./message-selection";
 import { setEditWithUpArrowPreference } from "./edit-key-preference";
@@ -14933,6 +14934,41 @@ it("a tag further in the draft joins the pill's agent", async () => {
   // The pill keeps both for the follow-up.
   await waitFor(() => expect(h.input()).toHaveValue(""));
   expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+});
+
+it("pasting an agent's copied words sends to that agent, unless the draft tags one", () => {
+  writeView("scope", "draft:channel", {
+    text: "Plan this, then ask @Bea to build it",
+    recipients: [{ pubkey: second.pubkey, name: "Bea", start: 20, end: 24 }],
+  });
+  const { h, bea, sendingTo } = mountSoloAgents();
+  const paste = (copyId: string | undefined) =>
+    act(() => {
+      h.input().focus();
+      const html = `<div data-buzz-copy="timeline" data-copy-id="${copyId}"><p>Ship it</p></div>`;
+      fireEvent.paste(h.input(), {
+        clipboardData: {
+          items: [],
+          types: ["text/html", "text/plain"],
+          getData: (type: string) =>
+            type === "text/html"
+              ? html
+              : type === "text/plain"
+                ? "Ship it"
+                : "",
+        },
+      });
+    });
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  paste(stampCopiedAuthors([bea.pubkey]));
+  expect(sendingTo("Ada, Bea")).toBeInTheDocument();
+  h.fill("Plan this");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  // Clipboard HTML is untrusted: an id the app never issued names no one.
+  paste("forged");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+  paste(stampCopiedAuthors(["viewer", bea.pubkey]));
+  expect(sendingTo("Bea")).toBeInTheDocument();
 });
 
 it("with a tag further in, removing the pill's last agent sends to the tag alone, and removing the tag too brings the main agent", async () => {

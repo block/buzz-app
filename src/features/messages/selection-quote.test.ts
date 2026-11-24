@@ -88,7 +88,7 @@ it.each(["live", "captured"])(
     expect(channel.controller.quote).not.toHaveBeenCalled();
     expect(thread.controller.quote).toHaveBeenCalledOnce();
     const html = vi.mocked(thread.controller.quote).mock.calls[0]?.[0];
-    expect(html).toMatch(/^<div data-buzz-copy="timeline">/);
+    expect(html).toMatch(/^<div data-buzz-copy="timeline"[ >]/);
     expect(html).toContain("thread says <strong>hello</strong>");
     expect(document.getSelection()?.rangeCount).toBe(0);
   },

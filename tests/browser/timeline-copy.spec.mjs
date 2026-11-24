@@ -53,10 +53,13 @@ test("copying a timeline selection keeps mentions, channel refs and links in bot
     document.addEventListener(
       "copy",
       (event) => {
+        const html = event.clipboardData?.getData("text/html");
         window.__copyPayload = {
           prevented: event.defaultPrevented,
           text: event.clipboardData?.getData("text/plain"),
-          html: event.clipboardData?.getData("text/html"),
+          // The id names the copied message's author to a later paste.
+          stamped: / data-copy-id="[\w-]+"/.test(html ?? ""),
+          html: html?.replace(/ data-copy-id="[\w-]+"/, ""),
         };
       },
       { once: true },
@@ -75,6 +78,7 @@ test("copying a timeline selection keeps mentions, channel refs and links in bot
     .toEqual({
       prevented: true,
       text: "Ping @Fixture Reader about #Beta and https://example.test/docs",
+      stamped: true,
       html: `<div data-buzz-copy="timeline"><p>Ping <a href="nostr:${npubEncode(app.viewer)}">@Fixture Reader</a> about <a href="buzz://channel/beta">#Beta</a> and <a href="https://example.test/docs">https://example.test/docs</a></p></div>`,
     });
 });

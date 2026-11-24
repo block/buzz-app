@@ -28,6 +28,7 @@ import { useComposerWrites } from "./composer-writes";
 import { LayerAddressContext, layerInView } from "./view-layer";
 import { retireReplyTarget, threadDraftKey } from "./reply-target";
 import { useEffectEvent } from "react";
+import { copiedAuthors } from "./copied-authors";
 import { useMessageEditScope } from "./MessageEditScope";
 import { selectNewestMessage } from "./message-selection";
 import { useMessageDeletion } from "./MessageManagement";
@@ -1674,6 +1675,29 @@ function Composer({
         },
       }
     : undefined;
+  // Quoting an agent answers it, unless the draft already tags someone.
+  const routeQuoted = (authors: readonly string[]) => {
+    if (!routing) return;
+    if (
+      valueRef.current.recipients.some((person) => !referenced(person.pubkey))
+    )
+      return;
+    const members = mentionChannel(session, channelId)?.members ?? [];
+    const quoted = authors.flatMap((key) =>
+      key !== session.viewer && members.includes(key)
+        ? (pastedMentionRecipient(
+            session,
+            channelId,
+            key,
+            agentChoices,
+            currentRoster.current,
+          ) ?? [])
+        : [],
+    );
+    if (quoted.length) choose(quoted);
+  };
+  const latestRouteQuoted = useRef(routeQuoted);
+  latestRouteQuoted.current = routeQuoted;
   const editLocked = useListedChannel(
     listed,
     channelId,
@@ -2233,13 +2257,17 @@ function Composer({
   useEffect(() => {
     if (!editScope) return;
     const start = (row: ChannelMessage) => startEdit(row);
+    const quoted = (authors: readonly string[]) =>
+      latestRouteQuoted.current(authors);
     editScope.current = start;
     editScope.input.current = input.current;
+    editScope.quoted = quoted;
     return () => {
       if (editScope.current === start) {
         editScope.current = undefined;
         editScope.input.current = null;
       }
+      if (editScope.quoted === quoted) editScope.quoted = undefined;
     };
   }, [editScope]);
   // DOM props are committed before child layout effects; closures can still
@@ -4432,6 +4460,7 @@ function Composer({
                     saveDraft({ ...valueRef.current, forward: source });
                     return true;
                   }
+                  routeQuoted(copiedAuthors(data.getData("text/html")));
                   return false;
                 }}
                 onPasteTooLong={() => setPasteTooLong(true)}

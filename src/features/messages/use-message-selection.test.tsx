@@ -89,6 +89,7 @@ it("keeps a managed quote through outbox settlement but rejects conversation and
   const first = createOwner(),
     replacement = createOwner();
   const insertQuote = vi.fn(() => true);
+  const quoted = vi.fn();
   const source = { ...message("a".repeat(64), 100), channelId: "room" };
   const rows = [source];
   function Draft() {
@@ -97,7 +98,10 @@ it("keeps a managed quote through outbox settlement but rejects conversation and
       <textarea
         aria-label="Draft"
         ref={(input) => {
-          if (scope) scope.input.current = input;
+          if (scope) {
+            scope.input.current = input;
+            scope.quoted = quoted;
+          }
           if (input) Object.assign(input, { insertQuote });
         }}
       />
@@ -157,6 +161,7 @@ it("keeps a managed quote through outbox settlement but rejects conversation and
       expect.stringContaining(source.id),
       [`buzz://message?channel=room&id=${source.id}`],
     );
+    expect(quoted).toHaveBeenCalledExactlyOnceWith([source.authorId]);
     const oldConversation = capture();
     view.rerender(<Surface session={first.session} conversationId="other" />);
     expect(element.isConnected).toBe(true);

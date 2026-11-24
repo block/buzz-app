@@ -8,13 +8,16 @@ import {
 import { formatItemTimestamp } from "../../shared/datetime";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { profileKey } from "../profiles/target";
+import type { ChannelMessage } from "../relay/contracts";
 import { safeLinkUrl } from "../relay/message-content";
 import { composerSchema, projectComposerDocument } from "./composer-document";
+import { stampCopiedAuthors } from "./copied-authors";
 import {
   composerMarkdown,
   type ComposerMarkdownMode,
 } from "./composer-markdown";
 import { bareHostParts } from "./message-link-parts";
+import { messageListOf } from "./message-selection";
 
 /** `text` reads well outside the app; `markdown` keeps identity locators and
  * the block syntax the composer understands; `html` is the semantic `text/html`
@@ -648,9 +651,46 @@ export function messageSelection(range: Range): boolean {
   );
 }
 
-/** A message selection as this app's `text/html` copy payload. */
-export const timelineCopy = (selection: Selection) =>
-  `<div data-buzz-copy="timeline">${serializeSelection(selection, "html")}</div>`;
+/** The messages whose text a selection covers, when it lies in one list. */
+export function selectedMessages(ranges: readonly Range[]) {
+  const [owner, ...others] = ranges.map((range) =>
+    messageListOf(range.commonAncestorContainer),
+  );
+  if (!owner || others.some((other) => other?.element !== owner.element))
+    return [];
+  const rows: ChannelMessage[] = [];
+  for (const element of owner.element.querySelectorAll<HTMLElement>(
+    "[data-message-id]",
+  )) {
+    if (
+      messageListOf(element)?.element !== owner.element ||
+      !ranges.some(
+        (range) =>
+          range.intersectsNode(element) &&
+          // A grouped byline can enrich the clipboard without contributing
+          // selectable text to the highlight.
+          serializeNode(element, "text", range, {
+            includeHiddenBylines: false,
+          }).trim(),
+      )
+    )
+      continue;
+    const row = owner.list.row(element.dataset.messageId ?? "");
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
+/** A message selection as this app's `text/html` copy payload, stamped so a
+ * paste can tell whose messages it quotes. */
+export function timelineCopy(
+  selection: Selection,
+  authors: readonly string[] = [],
+) {
+  const id = stampCopiedAuthors(authors);
+  const stamp = id ? ` data-copy-id="${id}"` : "";
+  return `<div data-buzz-copy="timeline"${stamp}>${serializeSelection(selection, "html")}</div>`;
+}
 
 // Registered in the capture phase so it runs before `copyEmoji`
 // (src/bundled/emoji/copy-emoji.ts), which bubbles on the same document and
@@ -674,7 +714,8 @@ function copyMessageSelection(event: ClipboardEvent) {
     "text/plain",
     serializeSelection(selection, "text"),
   );
-  event.clipboardData.setData("text/html", timelineCopy(selection));
+  const authors = selectedMessages(ranges).map((row) => row.authorId);
+  event.clipboardData.setData("text/html", timelineCopy(selection, authors));
   event.preventDefault();
 }
 

@@ -58,8 +58,11 @@ export function useMessageSelection(
       markUnread: (row) => latest.current.actions?.markUnread(row),
       composer: () => editScope?.focusTarget() ?? null,
       canQuote: () => !!quoteTarget(),
-      quote: (html, sourceLinks) =>
-        !!quoteTarget()?.insertQuote(html, sourceLinks),
+      quote: (html, sourceLinks, authors = []) => {
+        if (!quoteTarget()?.insertQuote(html, sourceLinks)) return false;
+        editScope?.quoted?.(authors);
+        return true;
+      },
     });
     return () => {
       unregister();

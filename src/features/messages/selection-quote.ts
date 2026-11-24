@@ -2,8 +2,8 @@ import { messageListOf } from "./message-selection";
 import { messageCopyLink } from "./message-copy";
 import {
   messageSelection,
+  selectedMessages,
   serializeSelection,
-  serializeNode,
   timelineCopy,
 } from "./selection-copy";
 
@@ -31,36 +31,21 @@ export function captureSelectedQuote() {
   const selection = document.getSelection();
   const target = quotableSelection(selection);
   if (!selection || !target) return;
+  const rows = selectedMessages(target.ranges);
   const sourceLinks = new Set<string>();
-  const messageIds = new Set<string>();
-  for (const element of target.element.querySelectorAll<HTMLElement>(
-    "[data-message-id]",
-  )) {
-    if (
-      messageListOf(element)?.element !== target.element ||
-      !target.ranges.some(
-        (range) =>
-          range.intersectsNode(element) &&
-          // A grouped byline can enrich the clipboard without contributing
-          // selectable text to the highlight.
-          serializeNode(element, "text", range, {
-            includeHiddenBylines: false,
-          }).trim(),
-      )
-    )
-      continue;
-    const row = target.list.row(element.dataset.messageId ?? "");
-    if (row) messageIds.add(row.id);
-    const link = row && messageCopyLink(row, target.list.scope);
+  for (const row of rows) {
+    const link = messageCopyLink(row, target.list.scope);
     if (link) sourceLinks.add(link);
   }
+  const authors = [...new Set(rows.map((row) => row.authorId))];
   return {
     ...target,
     ranges: target.ranges.map((range) => range.cloneRange()),
-    html: timelineCopy(selection),
+    html: timelineCopy(selection, authors),
     text: serializeSelection(selection, "text"),
     sourceLinks: [...sourceLinks],
-    messageIds,
+    messageIds: new Set(rows.map((row) => row.id)),
+    authors,
   };
 }
 
@@ -77,7 +62,8 @@ export function quoteSelection(quote = captureSelectedQuote()) {
   // Clear the timeline range before the composer focuses and places its caret;
   // clearing afterwards would remove the composer's caret instead.
   selection.removeAllRanges();
-  if (quote.list.quote(quote.html, quote.sourceLinks)) return true;
+  if (quote.list.quote(quote.html, quote.sourceLinks, quote.authors))
+    return true;
   for (const range of quote.ranges)
     if (quote.element.contains(range.commonAncestorContainer))
       selection.addRange(range);

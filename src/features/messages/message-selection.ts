@@ -22,8 +22,13 @@ export type MessageList = Readonly<{
   markUnread(row: ChannelMessage): void;
   /** Where Escape and Down past the newest message return focus. */
   composer(): HTMLElement | null;
-  /** Append copied message HTML and its source links to this list's own composer. */
-  quote(html: string, sourceLinks?: readonly string[]): boolean;
+  /** Append copied message HTML and its source links to this list's own
+   * composer; `authors` wrote the quoted messages. */
+  quote(
+    html: string,
+    sourceLinks?: readonly string[],
+    authors?: readonly string[],
+  ): boolean;
   canQuote(): boolean;
 }>;
 

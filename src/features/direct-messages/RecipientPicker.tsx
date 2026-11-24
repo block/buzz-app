@@ -100,6 +100,8 @@ export function RecipientPicker({
   onTyped(typed: boolean): void;
 }) {
   const [query, setQuery] = useState("");
+  // A typed @, as in a mention, isn't part of the name.
+  const search = query.replace(/^\s*@/, "");
   const [open, setOpen] = useState(initiallyOpen);
   const input = useRef<HTMLInputElement>(null);
   const field = useRef<HTMLFieldSetElement>(null);
@@ -110,24 +112,24 @@ export function RecipientPicker({
   selection.current = selected;
   const id = useId();
   const errorId = useId();
-  const directory = usePeople(session, query);
+  const directory = usePeople(session, search);
   // Searched people the community verified carry their verified names, as in
   // Command-K; the read waits for the directory to settle.
   const verified = useVerifiedNames(session, directory.people, {
-    key: query,
+    key: search,
     settled: !directory.loading,
   });
   const agents = useAgentChoices(session, false, true);
   const removal = useChipRemoval();
   const atLimit = !!selectedChannel || selected.length >= maxRecipients;
-  const needle = query.trim().toLowerCase();
+  const needle = search.trim().toLowerCase();
   const typed = pickerText("dm", needle);
   const invalid = !open && !!needle && selected.length > 0;
   // biome-ignore lint/correctness/useExhaustiveDependencies: a choice or removal makes the stored usage newer.
   const usage = useMemo(() => readSearchUsage(scope), [scope, selected.length]);
   const known = useRef(new Map<string, Recipient>());
   const ordered = useRef<{ query: string; pubkeys: string[] }>({
-    query,
+    query: search,
     pubkeys: [],
   });
   const channels = session.channels.list().channels;
@@ -178,7 +180,7 @@ export function RecipientPicker({
     // profile-name search cannot find them by that name.
     const pool: Recipient[] = [];
     const pageNames = new Map<string, VerifiedProfile>();
-    if (query.trim())
+    if (search.trim())
       for (const [pubkey, person] of [...profiles, ...known.current]) {
         if (person.isAgent || inDirectory.has(pubkey) || pageNames.has(pubkey))
           continue;
@@ -186,7 +188,7 @@ export function RecipientPicker({
         if (
           identity &&
           [identity.displayName, identity.username, identity.fullName].some(
-            (name) => !!name && matchPerson(name, query) !== undefined,
+            (name) => !!name && matchPerson(name, search) !== undefined,
           )
         ) {
           pageNames.set(pubkey, identity);
@@ -205,15 +207,15 @@ export function RecipientPicker({
         }
       }
     const byVerifiedName = withVerifiedNames(pool, pageNames, profiles);
-    const typedKey = typedPublicKey(query);
-    const localAgents = query.trim()
+    const typedKey = typedPublicKey(search);
+    const localAgents = search.trim()
       ? agents.selectable.flatMap((agent): Recipient[] => {
           if (
             !canMessageAgent(agent) ||
             !agent.name ||
             inDirectory.has(agent.pubkey) ||
             (agent.pubkey !== typedKey &&
-              matchPerson(agent.name, query) === undefined)
+              matchPerson(agent.name, search) === undefined)
           )
             return [];
           // Show the profile already seen for this key, as browsing did.
@@ -263,8 +265,8 @@ export function RecipientPicker({
         usageKeys: [key, ...(dm ? [`channel:${dm}`] : [])],
       });
     };
-    if (ordered.current.query !== query)
-      ordered.current = { query, pubkeys: [] };
+    if (ordered.current.query !== search)
+      ordered.current = { query: search, pubkeys: [] };
     const knownOrder = new Set(ordered.current.pubkeys);
     ordered.current.pubkeys.push(
       ...eligible
@@ -328,7 +330,7 @@ export function RecipientPicker({
     directory.people,
     people,
     viewer,
-    query,
+    search,
     needle,
     typed,
     usage,
@@ -384,7 +386,7 @@ export function RecipientPicker({
   const listed = visible && !atLimit;
   const channelsOnly = channelOptions.length > 0 && needle.startsWith("#");
   const highlight = useSearchHighlight({
-    query,
+    query: search,
     keys,
     onChoose: chooseKey,
     open: listed,
@@ -400,7 +402,7 @@ export function RecipientPicker({
       ? exactName(
           eligible,
           (person) => [...namesOf(person), ...(person.profileNames ?? [])],
-          query,
+          search,
         )
       : undefined;
   const loadingRows = useRef(10);

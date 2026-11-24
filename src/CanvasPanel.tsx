@@ -105,7 +105,7 @@ export function CanvasPanel({
       );
     const View = type.component;
     return (
-      <div key={item.id} className={styles.view} inert={following}>
+      <div key={item.id} className={styles.view}>
         <View
           state={item.state}
           interactive={!following}

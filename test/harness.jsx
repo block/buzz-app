@@ -42,6 +42,27 @@ const hostUi = new URLSearchParams(location.search).has("ui") && {
   },
 };
 
+// Stands in for the host's browser view: its own address bar, and a page that
+// can go somewhere on its own. Like the host, it hands out a new function on
+// every read of `View`, and keeps the address it was opened at.
+const native = new URLSearchParams(location.search).has("native");
+let opened = 0;
+function NativeView({ url }) {
+  const [at, setAt] = React.useState(url);
+  const [draft, setDraft] = React.useState(url);
+  React.useEffect(() => { opened += 1; }, []);
+  const go = (next) => { setAt(next); setDraft(next); };
+  return (
+    <div data-native>
+      <form onSubmit={(event) => { event.preventDefault(); go(draft); }}>
+        <input aria-label="Address" value={draft} onChange={(event) => setDraft(event.target.value)} />
+      </form>
+      <p data-page>{at}</p>
+      <button type="button" onClick={() => go("https://pages.example/linked")}>A link in the page</button>
+    </div>
+  );
+}
+
 function host(viewer) {
   const seat = { tools: [], effects: [] };
   const session = {
@@ -55,7 +76,7 @@ function host(viewer) {
   const snapshot = { status: "ready", viewer, scope: "test", generation: 1, session };
   plugin.apply({
     react: React,
-    browser: { available: false, View: () => null },
+    browser: native ? { available: true, get View() { return (props) => <NativeView {...props} />; } } : { available: false, View: () => null },
     panels: { register: (panel) => (seat.panel = panel), requestOpen: () => true },
     relay: { subscribe: () => () => {}, snapshot: () => snapshot },
     agents: { addTool: (tool) => seat.tools.push(tool), addInstructions() {} },
@@ -68,6 +89,7 @@ function host(viewer) {
 const seats = [host(ada), host(ben)];
 window.canvasHarness = {
   inject: plugin.inject,
+  opened: () => opened,
   async agent(name, args = {}) {
     const tool = seats[0].tools.find((candidate) => candidate.name === name);
     return JSON.parse(await tool.call({ pubkey: agent, query: read, publish }, { channel: CHANNEL }, args));

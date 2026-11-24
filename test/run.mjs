@@ -25,6 +25,37 @@ const server = await createServer({ root: app, configFile: false, envDir: false,
 await server.listen();
 const browser = await chromium.launch();
 try {
+  {
+    // With the host's own browser view: one address bar, and where the driver
+    // goes inside the page is where everyone goes.
+    const page = await browser.newPage({ viewport: { width: 1440, height: 800 } });
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/zz-canvas-plugin.html?native`);
+    const ada = page.getByRole("region", { name: "Ada's screen" });
+    const ben = page.getByRole("region", { name: "Ben's screen" });
+    const shows = (seat, url) => seat.locator("[data-page]").filter({ hasText: new RegExp(`^${url}$`) }).waitFor();
+    await ada.getByRole("button", { name: "Take control" }).click();
+    await ada.getByRole("button", { name: "Browser" }).click();
+    await ada.getByRole("textbox", { name: "Shared address" }).fill("pages.example/roadmap");
+    await ada.getByRole("button", { name: "Go" }).click();
+    await shows(ben, "https://pages.example/roadmap");
+    assert.equal(await ada.getByRole("textbox").count(), 1, "the driver has one address bar");
+    assert.equal(await ben.locator("[inert] [data-native]").count(), 0, "the host hides its view inside anything inert");
+    // Typing in the host's own bar moves everyone, at once.
+    await ada.getByRole("textbox", { name: "Address" }).fill("https://pages.example/typed");
+    await ada.getByRole("textbox", { name: "Address" }).press("Enter");
+    await shows(ben, "https://pages.example/typed");
+    // So does a link inside the page, once the page has settled.
+    await page.waitForTimeout(4200);
+    await ada.getByRole("button", { name: "A link in the page" }).click();
+    await shows(ben, "https://pages.example/linked");
+    // Where a follower wanders is their own business.
+    await ben.getByRole("button", { name: "A link in the page" }).click();
+    await page.waitForTimeout(1200);
+    assert.equal((await page.evaluate(() => window.canvasHarness.agent("canvas_read"))).views[0].state.url, "https://pages.example/linked");
+    // The driver's page was opened once; the follower's once per place it was sent.
+    assert.equal(await page.evaluate(() => window.canvasHarness.opened()), 4);
+    console.log("ok: one address bar with the host's browser view, and its navigation is shared");
+  }
   for (const ui of ["", "?ui"]) {
   const page = await browser.newPage({ viewport: { width: 1440, height: 800 } });
   const errors = [];

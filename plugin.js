@@ -310,8 +310,7 @@ function CanvasPanel({ channel, views, viewer, name }) {
 		const View = type.component;
 		return /* @__PURE__ */ createElement("div", {
 			key: item.id,
-			className: styles.view,
-			inert: following
+			className: styles.view
 		}, /* @__PURE__ */ createElement(View, {
 			state: item.state,
 			interactive: !following,
@@ -824,17 +823,82 @@ function AddressBar({ url, label, go }) {
 		onValueChange: setDraft
 	}), /* @__PURE__ */ createElement(Button, { type: "submit" }, "Go"));
 }
+/** How long after a page is opened for this viewer its address changes count
+* as the site redirecting, not as the viewer going somewhere. */
+var SETTLE = 4e3;
+/** The host's own browser view, with its own back, forward and address bar.
+* It doesn't say where its page goes, so this reads the address it shows:
+* where the viewer goes inside the page is then shared like any other change.
+* That reaches into the host's markup and can break with it; the page still
+* shows if it does, but only the address it was opened at is shared. */
+function HostPage({ View, state, interactive, update }) {
+	const frame = useRef(null);
+	const [guest, setGuest] = useState({
+		url: state.url,
+		opened: 0
+	});
+	const seen = useRef(state.url);
+	const quietUntil = useRef(Date.now() + SETTLE);
+	const typing = useRef(false);
+	const share = useRef({
+		interactive,
+		update
+	});
+	share.current = {
+		interactive,
+		update
+	};
+	useEffect(() => {
+		if (state.url === seen.current) return;
+		seen.current = state.url;
+		quietUntil.current = Date.now() + SETTLE;
+		setGuest((was) => ({
+			url: state.url,
+			opened: was.opened + 1
+		}));
+	}, [state.url]);
+	useEffect(() => {
+		const timer = setInterval(() => {
+			const address = frame.current?.querySelector("input[aria-label=\"Address\"]");
+			const url = address && !typing.current && pageUrl(address.value);
+			if (!url || url === seen.current) return;
+			seen.current = url;
+			if (share.current.interactive && Date.now() >= quietUntil.current) share.current.update({ url });
+		}, 500);
+		return () => clearInterval(timer);
+	}, []);
+	return /* @__PURE__ */ createElement("div", {
+		ref: frame,
+		className: styles.fill,
+		onInput: () => {
+			typing.current = true;
+		},
+		onSubmit: () => {
+			typing.current = false;
+			quietUntil.current = 0;
+		},
+		onBlur: () => {
+			typing.current = false;
+		}
+	}, /* @__PURE__ */ createElement(View, {
+		key: guest.opened,
+		url: guest.url,
+		storage: "canvas"
+	}));
+}
 function Page({ state, interactive, update, browser, addressable }) {
-	const Native = browser?.available ? browser.View : void 0;
+	const [Native] = useState(() => browser?.available ? browser.View : void 0);
+	if (Native && state.url) return /* @__PURE__ */ createElement(HostPage, {
+		View: Native,
+		state,
+		interactive,
+		update
+	});
 	return /* @__PURE__ */ createElement("div", { className: styles.fill }, addressable && interactive && /* @__PURE__ */ createElement(AddressBar, {
 		url: state.url,
 		label: "Shared address",
 		go: (url) => update({ url })
-	}), !state.url ? /* @__PURE__ */ createElement("p", { className: styles.hint }, interactive ? "Enter an address to show a page here." : "No page is open here yet.") : Native ? /* @__PURE__ */ createElement(Native, {
-		key: state.url,
-		url: state.url,
-		storage: "canvas"
-	}) : /* @__PURE__ */ createElement("iframe", {
+	}), !state.url ? /* @__PURE__ */ createElement("p", { className: styles.hint }, interactive ? "Enter an address to show a page here." : "No page is open here yet.") : /* @__PURE__ */ createElement("iframe", {
 		className: styles.frame,
 		title: state.url,
 		src: state.url,

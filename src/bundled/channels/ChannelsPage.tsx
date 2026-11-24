@@ -35,6 +35,7 @@ import {
   layerDismissal,
   layerVisit,
   routedInline,
+  threadTabVisit,
 } from "./inline-address";
 import {
   LayerAddressContext,
@@ -93,6 +94,10 @@ import { lifecycleNoun } from "./ChannelLifecycleDialog";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { targetKey, type OpenTarget } from "../../features/navigation/targets";
+import {
+  dismissalOf,
+  type DismissedVisits,
+} from "../../features/navigation/history";
 import {
   buzzLinkTarget,
   isBuzzLink,
@@ -1396,8 +1401,33 @@ function ChannelWorkspace({
       paneOpen,
     };
   };
+  // A thread's visits are the ones whose address selected it: those this page
+  // entered, by ID, and those restored after a reload, which it never
+  // entered, by address. `also` names more visits to retire with them.
+  const threadDismissal = (
+    tabs: readonly ConversationTab[],
+    also: readonly string[] = [],
+  ): DismissedVisits => {
+    const threads = tabs.filter(
+      (tab): tab is Extract<ConversationTab, { kind: "thread" }> =>
+        tab.kind === "thread",
+    );
+    const ids = [
+      ...threads.flatMap((tab) =>
+        tabState.threadVisits(tab.channelId, rootOfTab(tab)),
+      ),
+      ...also,
+    ];
+    const target = navigator?.snapshot().entry.target;
+    if (!threads.length || target?.kind !== "conversation") return ids;
+    return (visit, id) =>
+      ids.includes(id) ||
+      threads.some((tab) =>
+        threadTabVisit(visit, target, tab.channelId, rootOfTab(tab)),
+      );
+  };
   const dismissContent = (
-    visits: readonly string[],
+    visits: DismissedVisits,
     fallback: OpenTarget,
     pane: "main" | "side",
     entries = tabState.entries,
@@ -1409,13 +1439,14 @@ function ChannelWorkspace({
     const keptTab = tabState.tabs.find((tab) => tab.id === keep);
     const keptEntry = entries.find((entry) => panelTabId(entry) === keep);
     const current = navigator.snapshot().entry;
+    const closesCurrent = dismissalOf([current], visits)(current);
     if (
       keep !== undefined &&
       (keptTab ||
         keptEntry ||
         keep === "settings" ||
         (pane === "side" && tabState.sidePanel)) &&
-      visits.includes(current.id) &&
+      closesCurrent &&
       keptTab?.kind !== "thread" &&
       !(keptEntry && historyPanel(keptEntry))
     )
@@ -1434,7 +1465,7 @@ function ChannelWorkspace({
         ? pendingReturn.current
         : undefined;
     if (
-      (pending || visits.includes(current.id)) &&
+      (pending || closesCurrent) &&
       navigator.snapshot().entry.id === current.id
     )
       pendingReturn.current = {
@@ -1535,18 +1566,14 @@ function ChannelWorkspace({
             : "main";
       const fallback = closeTarget(pane, remaining);
       if (!navigator || !fallback) return;
-      const visits = [
-        ...tabs.flatMap((tab) =>
-          tab.kind === "thread"
-            ? tabState.threadVisits(tab.channelId, rootOfTab(tab))
-            : [],
-        ),
-        ...entries.flatMap((entry) =>
+      const visits = threadDismissal(
+        tabs,
+        entries.flatMap((entry) =>
           historyPanel(entry)
             ? tabState.detailVisits(entry.channelId, entry.target)
             : [],
         ),
-      ];
+      );
       dismissContent(
         visits,
         fallback,
@@ -1571,11 +1598,7 @@ function ChannelWorkspace({
       // Retire this tab's addressed visits, including ones behind the cursor.
       const fallback = closeTarget(tabPane(tab));
       if (navigator && fallback) {
-        dismissContent(
-          tabState.threadVisits(tab.channelId, rootOfTab(tab)),
-          fallback,
-          tabPane(tab),
-        );
+        dismissContent(threadDismissal([tab]), fallback, tabPane(tab));
       }
       const trigger = threadTrigger.current;
       // While tabs remain, the opener takes focus only from within their pane.

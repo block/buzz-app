@@ -20,6 +20,19 @@ export const sameScope = (visit: OpenTarget, target: ConversationTarget) =>
   visit.scope.viewer === target.scope.viewer &&
   visit.scope.communityOrigin === target.scope.communityOrigin;
 
+/** Whether `visit` is the address a thread tab's visit has: `rootId`'s
+ * thread in `channelId`, for `target`'s viewer, with no detail beside it. */
+export const threadTabVisit = (
+  visit: OpenTarget,
+  target: ConversationTarget,
+  channelId: string,
+  rootId: string,
+) =>
+  sameScope(visit, { ...target, channelId }) &&
+  visit.kind === "conversation" &&
+  visit.threadRootId === rootId &&
+  !visit.detail;
+
 const conversation = (target: OpenTarget | undefined) =>
   target?.kind === "conversation" ? target : undefined;
 

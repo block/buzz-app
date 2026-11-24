@@ -83,11 +83,17 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   host.history.replaceState({ ...host.history.state, [KEY]: current }, "");
   let stamp: Stamp = current;
   let returning: string | undefined;
-  const known = new Map<number, NavigationEntry>([[stamp.index, stamp.entry]]);
-  // Keep the immediate opener across reload so dismissing a restored dialog
-  // can return to it without leaving an identical-looking history stop.
-  if (stamp.index > 0 && stamp.previous)
-    known.set(stamp.index - 1, stamp.previous);
+  // Every retained visit whose target this document knows. A reload restores
+  // them from the saved window, so a dismissal still matches each one.
+  const known = new Map<number, NavigationEntry>();
+  function knowStamp() {
+    known.set(stamp.index, stamp.entry);
+    // Keep the immediate opener across reload so dismissing a restored dialog
+    // can return to it without leaving an identical-looking history stop. The
+    // window is saved after every change, so it is newer than this copy.
+    if (stamp.index > 0 && stamp.previous && !known.has(stamp.index - 1))
+      known.set(stamp.index - 1, stamp.previous);
+  }
   const dismissedKey = () => `buzz-navigation-dismissed:${stamp.chain}`;
   function readDismissed() {
     try {
@@ -144,10 +150,52 @@ export function createBrowserHistory(host: Window): NavigationHistory {
             Array.isArray(item) &&
             Number.isSafeInteger(item[0]) &&
             typeof item[1] === "string"
-          )
+          ) {
             identities.set(item[0], item[1]);
+            // A visit saved by an older build, or without room, has no target.
+            if (item[2] === undefined) continue;
+            try {
+              known.set(
+                item[0],
+                Object.freeze({
+                  id: item[1],
+                  target: parseOpenTarget(item[2]),
+                }),
+              );
+            } catch {
+              /* Its identity is still retained. */
+            }
+          }
     } catch {
       /* The current document still bounds its managed window. */
+    }
+  }
+  function saveWindow() {
+    const save = (targets: boolean) =>
+      host.sessionStorage.setItem(
+        identitiesKey(),
+        JSON.stringify(
+          [...identities].map(([index, id]) => {
+            const entry = targets ? known.get(index) : undefined;
+            return entry ? [index, id, entry.target] : [index, id];
+          }),
+        ),
+      );
+    try {
+      host.sessionStorage.setItem(floorKey(), String(floor));
+      try {
+        save(true);
+      } catch {
+        save(false); // Full storage keeps the identities, which are small.
+      }
+    } catch {
+      // Best-effort persistence; no unbounded in-memory fallback. A window
+      // that could not be saved must not leave an older one to be restored.
+      try {
+        host.sessionStorage.removeItem(identitiesKey());
+      } catch {
+        /* Storage is unavailable, so nothing was saved either. */
+      }
     }
   }
   function trimWindow() {
@@ -159,17 +207,10 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       if (index < floor || index > end) known.delete(index);
     for (const index of dismissed)
       if (index < floor || index > end) dismissed.delete(index);
-    try {
-      host.sessionStorage.setItem(
-        identitiesKey(),
-        JSON.stringify([...identities]),
-      );
-      host.sessionStorage.setItem(floorKey(), String(floor));
-    } catch {
-      /* Best-effort persistence; no unbounded in-memory fallback. */
-    }
+    saveWindow();
   }
   readWindow();
+  knowStamp();
   trimWindow();
   const adjacent = (from: number, direction: -1 | 1) => {
     let next = from + direction;
@@ -323,9 +364,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       floor = Math.max(0, end - HISTORY_CAPACITY + 1);
       readWindow();
     }
-    known.set(stamp.index, stamp.entry);
-    if (stamp.index > 0 && stamp.previous && !known.has(stamp.index - 1))
-      known.set(stamp.index - 1, stamp.previous);
+    knowStamp();
     try {
       host.sessionStorage.setItem(endKey(), String(end));
     } catch {

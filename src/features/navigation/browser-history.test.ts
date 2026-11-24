@@ -1,7 +1,12 @@
 import { expect, it } from "vitest";
 import { createBrowserHistory } from "./browser-history";
 import { createNavigationController } from "./controller";
-import { createMemoryHistory, homeTarget } from "./history";
+import {
+  createMemoryHistory,
+  homeTarget,
+  type NavigationHistory,
+} from "./history";
+import { targetKey, type OpenTarget } from "./targets";
 
 const settings = {
   version: 1,
@@ -528,4 +533,60 @@ it("guards asynchronous native traversal without losing the presentation or its 
   expect(nav.snapshot().entry.target).toEqual(homeTarget);
   expect(original.signal.aborted).toBe(true);
   host.dispose();
+});
+
+const alpha = {
+  version: 1,
+  kind: "page",
+  pluginId: "test",
+  pageId: "alpha",
+} as const;
+const beta = { ...alpha, pageId: "beta" } as const;
+const alphaThread = {
+  ...alpha,
+  route: { version: 1, params: { thread: "root" } },
+} as const;
+const closesThread = (target: OpenTarget) =>
+  targetKey(target) === targetKey(alphaThread);
+/** Home, Alpha, Alpha + thread, Beta, Alpha, Alpha + thread; the next driver is a reload. */
+function visitThreadTwice(fixture: ReturnType<typeof browser>) {
+  const driver = createBrowserHistory(fixture.host);
+  for (const target of [alpha, alphaThread, beta, alpha, alphaThread])
+    driver.push(target);
+  driver.dispose();
+}
+function walkBack(driver: NavigationHistory) {
+  const walked = [];
+  while (driver.snapshot().canGoBack) {
+    driver.back();
+    walked.push(driver.snapshot().current.target);
+  }
+  return walked;
+}
+
+it("an explicit close after reload retires every retained visit it covers", () => {
+  const fixture = browser();
+  visitThreadTwice(fixture);
+  const driver = createBrowserHistory(fixture.host);
+  driver.dismiss(closesThread, alpha);
+  expect(driver.snapshot().current.target).toEqual(alpha);
+  expect(driver.snapshot().canGoForward).toBe(false);
+  expect(walkBack(driver)).toEqual([beta, alpha, homeTarget]);
+  driver.dispose();
+});
+
+it("visits an older build saved without targets stay retained and reachable", () => {
+  const fixture = browser();
+  visitThreadTwice(fixture);
+  const storage = fixture.host.sessionStorage;
+  const key = `buzz-navigation-identities:${fixture.host.history.state.buzzNavigationV1.chain}`;
+  const saved: [number, string][] = JSON.parse(storage.getItem(key) ?? "[]");
+  storage.setItem(key, JSON.stringify(saved.map(([index, id]) => [index, id])));
+  const driver = createBrowserHistory(fixture.host);
+  expect(driver.snapshot().retainedVisits).toHaveLength(6);
+  driver.dismiss(closesThread, alpha);
+  expect(driver.snapshot().current.target).toEqual(alpha);
+  // Only the visits this document has read can match, as before.
+  expect(walkBack(driver)).toEqual([beta, alphaThread, alpha, homeTarget]);
+  driver.dispose();
 });

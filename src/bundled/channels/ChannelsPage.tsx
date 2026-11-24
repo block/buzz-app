@@ -978,8 +978,6 @@ function ChannelWorkspace({
     ),
     () => !!watched && newChat(queries.channels.window(watched)),
   );
-  // Solo has no main tab workspace; its threads open beside the chat.
-  const threadPane = solo ? ("side" as const) : undefined;
   // Confirmations belong to this visit; a Solo conversation that leaves the
   // owner's view opens its nearest sidebar neighbor, or else a new draft,
   // rather than an empty page.
@@ -1215,7 +1213,6 @@ function ChannelWorkspace({
   // The route addresses a thread; its tab owns presentation, the route only
   // selects it and supplies the reveal request.
   const detailSource =
-    !solo &&
     navigation?.target.kind === "conversation" &&
     !!navigation.target.detail &&
     navigation.target.context === "channel";
@@ -1232,7 +1229,7 @@ function ChannelWorkspace({
             channelId: current.id,
             messageId: requestedMessage,
             rootId: exact.rootId ?? requestedThread ?? requestedMessage,
-            pane: detailReply ? ("main" as const) : threadPane,
+            ...(detailReply ? { pane: "main" as const } : {}),
             navigation,
           }
         : undefined,
@@ -1243,7 +1240,6 @@ function ChannelWorkspace({
       requestedMessage,
       requestedThread,
       exact,
-      threadPane,
       detailReply,
     ],
   );
@@ -1532,7 +1528,7 @@ function ChannelWorkspace({
     extensions,
     leadingIds: settings ? ["settings"] : [],
     threadId: routedThread?.messageId,
-    mainPane: !solo,
+    mainPane: true,
     // Side thread tabs leave during an image or video review; this is what
     // hands the thread draft back from the viewer. The viewer's comment
     // composer reads the thread's saved draft when it mounts, and a thread
@@ -2028,13 +2024,7 @@ function ChannelWorkspace({
       }
       // Every opening keeps existing work: a new thread adds a tab and an
       // open one is selected wherever it was placed.
-      tabState.openThreadTab(
-        channelId,
-        messageId,
-        threadRootId,
-        intent,
-        threadPane,
-      );
+      tabState.openThreadTab(channelId, messageId, threadRootId, intent);
       if (
         navigator &&
         viewer &&
@@ -2064,7 +2054,6 @@ function ChannelWorkspace({
       scope,
       open,
       setSettings,
-      threadPane,
       hasThreadTab,
       tabState.openThreadTab,
       tabState.leaveVisit,

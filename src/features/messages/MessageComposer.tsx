@@ -693,10 +693,9 @@ function Composer({
   const dmMembers = useListedChannel(listed, channelId, (channel) =>
     channel?.channelType === "dm" ? channel.members : undefined,
   );
-  // A DM or Solo chat is one conversation; elsewhere a top-level message
-  // starts a thread of its own.
-  const startsThread =
-    !threadRootId && !solo && channelType !== "dm" && channelType !== "solo";
+  // A DM is one conversation; elsewhere a top-level message starts a thread
+  // of its own.
+  const startsThread = !threadRootId && channelType !== "dm";
   const host = fullSession(session);
   const agentChoices = inviteAgents || solo;
   const recoveryKey = `${scope}:${draftKey}`;
@@ -1146,14 +1145,9 @@ function Composer({
   const sessionPlace = useMemo(
     () => ({
       channelId,
-      ...(!solo &&
-      channelType !== "dm" &&
-      channelType !== "solo" &&
-      threadRootId
-        ? { root: threadRootId }
-        : {}),
+      ...(channelType !== "dm" && threadRootId ? { root: threadRootId } : {}),
     }),
-    [channelId, solo, channelType, threadRootId],
+    [channelId, channelType, threadRootId],
   );
   // A one-to-one DM wakes its other member without an explicit mention.
   // Include that session in both the rendered state and late send rechecks.

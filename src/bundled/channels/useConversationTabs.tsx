@@ -441,12 +441,8 @@ export function useConversationTabs({
     ...mainPanelTabs.map(tabId),
   ];
   // App-like panels keep their page wherever they go, so they may move panes.
-  // A flat solo chat shows no main tab strip.
   const movableEntry = (entry: Opening) =>
-    mainPane &&
-    current?.channelType !== "solo" &&
-    !!entry.panel.keepOpen &&
-    !entry.channelContext;
+    mainPane && !!entry.panel.keepOpen && !entry.channelContext;
   const placeEntry = (id: string, pane: TabPane) => {
     flushSync(() => tabState.moveEntry(id, pane));
     // Whichever panel tab the side pane now shows is its active one.

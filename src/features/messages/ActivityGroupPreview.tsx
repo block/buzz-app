@@ -151,8 +151,8 @@ export function ActivityGroupPreview({
   return (
     <AgentResponsePreview
       name={name}
-      variant={coordination && !expanded ? "coordination" : "activity"}
-      fullWidth={expanded}
+      variant={coordination ? "coordination" : "activity"}
+      fullWidth
       bylineHint={
         <RemoteAgentHint
           session={session}
@@ -173,6 +173,7 @@ export function ActivityGroupPreview({
         container={container}
         trigger={disclosure}
         expanded={expanded}
+        coordination={coordination}
         onToggle={onToggle}
         label={`${expanded ? "Collapse" : "Show"} activity history: ${coordination ? label : summaryLabel}`}
         icon={

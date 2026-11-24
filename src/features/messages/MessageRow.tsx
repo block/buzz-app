@@ -2097,6 +2097,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
             }}
           >
             <ActivityDisclosure
+              coordination={coordination}
               expanded={open}
               onToggle={() => setOpen((value) => !value)}
               trigger={trigger}
@@ -2265,7 +2266,7 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
       {props.day && <DayDivider createdAt={row.createdAt} />}
       <AgentResponsePreview
         name={author.name}
-        variant={coordination && !open ? "coordination" : "activity"}
+        variant={coordination ? "coordination" : "activity"}
         bylineHint={
           <RemoteAgentHint
             session={session}

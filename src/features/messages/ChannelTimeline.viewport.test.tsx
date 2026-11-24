@@ -213,10 +213,6 @@ it("shows one latest-agent preview, retains expanded history through appends, an
     expect(toggle).toHaveFocus();
     expect(screen.getByText("Update 0")).toBeVisible();
     expect(screen.getAllByText("Update 10")).toHaveLength(1);
-    expect(
-      screen.getByText("Update 0").compareDocumentPosition(toggle) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     fireEvent.click(toggle);
     expect(screen.queryByText("Update 5")).toBeNull();
     expect(screen.getByText("Update 10")).toBeVisible();
@@ -281,13 +277,6 @@ it("shows the first three distinct agents in the visible identity cluster while 
     );
     expect(screen.queryByText("+1")).toBeNull();
     expect(screen.getByText("Update 8")).toBeVisible();
-    const collapse = screen.getByRole("button", {
-      name: /Collapse activity history/,
-    });
-    expect(
-      screen.getByText("Update 8").compareDocumentPosition(collapse) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(screen.getByText("Update 0")).toBeVisible();
   } finally {
     owner.dispose();

@@ -213,7 +213,8 @@ if that desktop app is up and running.
   subagents inherit the role. Goose agents also obey the owner's saved Goose
   denials and approval requirements, but a saved "always allow" never overrides
   the role; where Buzz can't enforce that, a Goose agent with a restricted role
-  doesn't run. Tool access is not a process sandbox: an allowed Shell can still
+  stops its running turn and holds new messages, saying so under its name,
+  until the role can be enforced or is loosened. Tool access is not a process sandbox: an allowed Shell can still
   use files and credentials available to the agent process.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.

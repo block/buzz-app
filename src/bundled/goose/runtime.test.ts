@@ -4601,6 +4601,40 @@ describe("goose turns through the agent gateway", () => {
     }
   });
 
+  it("holds messages while a restricted role can't be enforced, and hands each over once it can", async () => {
+    const f = setup({
+      wrap: (spawn) => async (id, options) => {
+        if (id === "goose-root") throw new Error("No symlinks here");
+        return spawn(id, options);
+      },
+    });
+    const reviewer = { ...DEFAULT_CONFIG, toolPreset: "reviewer" };
+    try {
+      f.runtime.sync([{ ...f.agent, config: reviewer } as unknown as Agent]);
+      const first = f.deliver(message("1", "First"));
+      const second = f.deliver(message("2", "Second"));
+      await vi.waitFor(() =>
+        expect(f.runtime.paused(f.agent.key)).toMatch(/saved tool permissions/),
+      );
+      expect(f.fake.geese).toHaveLength(0);
+      f.runtime.sync([
+        { ...f.agent, config: DEFAULT_CONFIG } as unknown as Agent,
+      ]);
+      await Promise.all([first, second]);
+      await vi.waitFor(() =>
+        expect(
+          f.fake.geese.flatMap((goose) => goose.turns.map((turn) => turn.text)),
+        ).toEqual([
+          expect.stringContaining("First"),
+          expect.stringContaining("Second"),
+        ]),
+      );
+      expect(f.runtime.paused(f.agent.key)).toBeUndefined();
+    } finally {
+      f.runtime.dispose();
+    }
+  });
+
   it("runs a standalone turn on a binding of its own, saving nothing, and the agent retires only once its goose has exited and closed", async () => {
     const g = gateway();
     const f = setup({ forwarding: g.forwarding, hold: true });

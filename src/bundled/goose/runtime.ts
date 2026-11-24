@@ -143,6 +143,9 @@ import {
   localSessions,
 } from "./sessions";
 import { ownerAllows, prepareRoot, UNENFORCEABLE } from "./permissions";
+
+/** How often messages paused for an unenforceable role check again. */
+const PAUSE_RETRY_MS = 60_000;
 import {
   goosePlatform,
   nativeToolAllowed,
@@ -261,6 +264,9 @@ type Entry = {
   /** Forwarded turns' goose processes that run without the agent's own
    * root, stopped once its role restricts any tool. */
   unisolated: Set<GooseProcess>;
+  /** Why messages wait to be handed to goose, while they do; settled when
+   * the agent's config changes, so they check again. */
+  paused?: Readonly<{ reason: string; changed: Promise<void>; change(): void }>;
   policies: Map<
     string,
     {
@@ -400,6 +406,48 @@ export class GooseRuntime {
     return this.desktop.readFile(path, { cwd: config(agent.config).workspace });
   }
 
+  /** Waits, without handing a message to goose, while the agent's role
+   * restricts a tool and goose can't run in the agent's own root, so saved
+   * permissions could override it. It checks again when the config changes
+   * and every minute, and the message is handed over once, as usual. */
+  private async enforceable(
+    agentKey: AgentKey,
+    entry: Entry,
+    stopped: () => boolean,
+  ) {
+    const access = this.access(agentKey, () => entry.config);
+    while (
+      access.restricted() &&
+      !stopped() &&
+      this.agents.get(agentKey) === entry &&
+      !(entry.goose.isolated || entry.worker?.isolated) &&
+      !(await access.root())
+    ) {
+      if (!entry.paused) {
+        let change!: () => void;
+        const changed = new Promise<void>((resolve) => (change = resolve));
+        entry.paused = { reason: UNENFORCEABLE, changed, change };
+        this.notify();
+      }
+      const { changed } = entry.paused;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        changed,
+        new Promise((resolve) => (timer = setTimeout(resolve, PAUSE_RETRY_MS))),
+      ]);
+      clearTimeout(timer);
+      if (entry.paused?.changed === changed) {
+        delete entry.paused;
+        this.notify();
+      }
+    }
+  }
+
+  /** Why the agent's messages wait to be handed to goose, if they do. */
+  paused(agent: AgentKey) {
+    return this.agents.get(agent)?.paused?.reason;
+  }
+
   /** An agent's tool access for its goose: its own root, and every tool
    * call decided by the owner's saved permissions and its current role. */
   private access(agent: AgentKey, current: () => Config): GooseAccess {
@@ -516,6 +564,7 @@ export class GooseRuntime {
         entry.worker?.enforce();
         if (toolPolicyKey(next))
           for (const goose of entry.unisolated) void goose.kill();
+        entry.paused?.change();
         entry.sessions.reconfigure();
       }
     }
@@ -625,6 +674,7 @@ export class GooseRuntime {
     const control = `${agent.key}/${key}`;
     const entry = this.entry(agent.key, this.settings(agent.config));
     if (action === "interrupt") {
+      entry.paused?.change();
       if (!this.controls.compacting(control)) entry.policies.get(key)?.cancel();
       this.controls.interrupt(control);
       await entry.sessions.interrupt(key);
@@ -878,6 +928,7 @@ export class GooseRuntime {
         }
         if (!deferred) signal.throwIfAborted();
         await wait;
+        await this.enforceable(agent.key, entry, () => interrupted);
         if (interrupted || this.agents.get(agent.key) !== entry) {
           delivered = Promise.resolve({ ok: true, undelivered: true });
           return;

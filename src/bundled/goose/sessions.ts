@@ -170,6 +170,10 @@ export class AgentProcess {
     this.current = start;
     return start.ready;
   }
+  /** Whether the goose new sessions use runs in the agent's own root. */
+  get isolated() {
+    return !!this.current?.isolated;
+  }
   /** Stops a goose that can't keep saved permissions from overriding the
    * agent's role once that role restricts any tool, failing its sessions
    * before another tool call; the next start refuses to run unisolated. */

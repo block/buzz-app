@@ -23,6 +23,12 @@ function browser(initialHash = "", deferredTraversal = false) {
   const location = { pathname: "/", search: "", hash: initialHash };
   const storage = new Map<string, string>();
   let storageFull = false;
+  let storageCap = Infinity;
+  const storageSize = () =>
+    [...storage].reduce(
+      (size, [key, value]) => size + key.length + value.length,
+      0,
+    );
   const history = {
     get state() {
       return entries[index]?.state;
@@ -64,7 +70,11 @@ function browser(initialHash = "", deferredTraversal = false) {
     sessionStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => {
-        if (storageFull)
+        const size =
+          storageSize() -
+          (storage.get(key)?.length ?? -key.length) +
+          value.length;
+        if (storageFull || size > storageCap)
           throw new DOMException("Storage is full", "QuotaExceededError");
         storage.set(key, value);
       },
@@ -89,6 +99,10 @@ function browser(initialHash = "", deferredTraversal = false) {
     /** Every later write to session storage fails, as when it is full. */
     fillStorage() {
       storageFull = true;
+    },
+    /** Session storage keeps its current size as its quota, so only writes that grow it fail. */
+    capStorage() {
+      storageCap = storageSize();
     },
   };
 }
@@ -659,5 +673,33 @@ it("a reload never saves a copied opener over the visit that replaced it", () =>
   driver.dismiss(closesThread, alpha);
   expect(driver.snapshot().current.target).toEqual(alpha);
   expect(walkBack(driver)).toEqual([beta, alpha, homeTarget]);
+  driver.dispose();
+});
+
+it("full storage drops saved targets so a growing floor keeps the window", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  for (let i = 0; i < 108; i++) first.push(i % 2 ? beta : alpha);
+  fixture.capStorage();
+  // The floor moves from 9 to 10, one character longer.
+  first.push(alphaThread);
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  expect(driver.snapshot().retainedVisits).toHaveLength(100);
+  driver.dispose();
+});
+
+it("full storage drops saved targets so a close survives reload", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  for (const target of [alpha, alphaThread, beta]) first.push(target);
+  first.back();
+  first.back();
+  fixture.capStorage();
+  first.dismiss(closesThread, alpha);
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  driver.forward();
+  expect(driver.snapshot().current.target).toEqual(beta);
   driver.dispose();
 });

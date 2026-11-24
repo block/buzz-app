@@ -126,15 +126,26 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   let dismissed = readDismissed();
   function saveDismissed() {
     try {
-      host.sessionStorage.setItem(
-        dismissedKey(),
-        JSON.stringify([...dismissed]),
-      );
+      store(dismissedKey(), JSON.stringify([...dismissed]));
     } catch {
       /* Dismissal still holds for this document. */
     }
   }
   const endKey = () => `buzz-navigation-end:${stamp.chain}`;
+  // The saved targets are the largest record and the only optional one, so a
+  // full storage drops them to make room for the floor, end and dismissals.
+  function store(key: string, value: string) {
+    try {
+      host.sessionStorage.setItem(key, value);
+    } catch (error) {
+      try {
+        saveIdentities(false);
+      } catch {
+        throw error;
+      }
+      host.sessionStorage.setItem(key, value);
+    }
+  }
   let end = stamp.index;
   try {
     end = Math.max(end, Number(host.sessionStorage.getItem(endKey())) || 0);
@@ -184,24 +195,25 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       /* The current document still bounds its managed window. */
     }
   }
+  function saveIdentities(targets: boolean) {
+    host.sessionStorage.setItem(
+      identitiesKey(),
+      JSON.stringify(
+        [...identities].map(([index, id]) => {
+          const entry =
+            targets && !copied.has(index) ? known.get(index) : undefined;
+          return entry ? [index, id, entry.target] : [index, id];
+        }),
+      ),
+    );
+  }
   function saveWindow() {
-    const save = (targets: boolean) =>
-      host.sessionStorage.setItem(
-        identitiesKey(),
-        JSON.stringify(
-          [...identities].map(([index, id]) => {
-            const entry =
-              targets && !copied.has(index) ? known.get(index) : undefined;
-            return entry ? [index, id, entry.target] : [index, id];
-          }),
-        ),
-      );
     try {
-      host.sessionStorage.setItem(floorKey(), String(floor));
+      store(floorKey(), String(floor));
       try {
-        save(true);
+        saveIdentities(true);
       } catch {
-        save(false); // Full storage keeps the identities, which are small.
+        saveIdentities(false); // Full storage keeps the identities, which are small.
       }
     } catch {
       // Best-effort persistence; no unbounded in-memory fallback. A window
@@ -287,7 +299,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     }
     saveDismissed();
     try {
-      host.sessionStorage.setItem(endKey(), String(end));
+      store(endKey(), String(end));
     } catch {
       /* In-document traversal still works. */
     }
@@ -383,7 +395,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     }
     knowStamp();
     try {
-      host.sessionStorage.setItem(endKey(), String(end));
+      store(endKey(), String(end));
     } catch {
       /* In-document traversal still works. */
     }

@@ -685,3 +685,73 @@ test("losing a channel drops its messages; rejoining reads its history again", a
   expect(reads.filter((filter) => !filter["#h"])).toHaveLength(1);
   expect(reads.filter((filter) => filter["#h"]?.[0] === "lab")).toHaveLength(1);
 });
+
+test("losing one direct message of a 50-message chunk resets that chunk's fill", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const ids = Array.from(
+    { length: 60 },
+    (_, n) => `dm${String(n).padStart(2, "0")}`,
+  );
+  const said = message(author, "dm07", "Direct quartz", now - 86_400);
+  const rooms = (member: boolean) =>
+    ids.flatMap((id) => [
+      metadata(relay, id, "", 1_700_000_000, [["t", "dm"]]),
+      roster(
+        relay,
+        id,
+        member || id !== "dm07"
+          ? [viewer.pubkey, author.pubkey]
+          : [author.pubkey],
+      ),
+    ]);
+  const joined = rooms(true);
+  const left = rooms(false);
+  const reads: { "#h"?: readonly string[]; since?: number }[] = [];
+  const connect = async (member: boolean) => {
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      async query(filters) {
+        for (const filter of filters)
+          if ((filter["#h"]?.length ?? 0) > 1) reads.push(filter);
+        // The relay withholds the channel's messages while access is gone.
+        const events = [...discovery, ...(member ? [...joined, said] : left)];
+        return queryEvents(events, filters);
+      },
+    });
+    dispose.push(owner.dispose);
+    await owner.session.channels.ensureList();
+    return owner;
+  };
+  vi.useFakeTimers();
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const corpus = createCorpus();
+  const state = createFinderState();
+  const run = async (member: boolean) => {
+    reads.length = 0;
+    const owner = await connect(member);
+    const sync = startFinderSync({
+      session: owner.session,
+      corpus,
+      state,
+      changed() {},
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(sync.status().phase).toBe("ready");
+    sync.dispose();
+    owner.dispose();
+  };
+  await run(true);
+  expect(corpus.search("quartz").total).toBe(1);
+  await run(false);
+  expect(corpus.search("quartz").total).toBe(0);
+  await run(true);
+  expect(corpus.search("quartz").total).toBe(1);
+  const chunk = reads.find((filter) => filter["#h"]?.includes("dm07"));
+  // Read from the horizon again, not resumed from its last read.
+  expect(chunk?.since).toBeLessThan(now - 86_400);
+  // The other chunk only resumes.
+  const other = reads.find((filter) => filter["#h"]?.includes("dm55"));
+  expect(other?.since).toBeGreaterThanOrEqual(now - 300);
+});

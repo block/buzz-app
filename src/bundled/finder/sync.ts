@@ -63,6 +63,8 @@ type FillProgress = {
   /** The oldest page read so far, until the horizon is reached. */
   cursor?: ChannelCursor;
   complete: boolean;
+  /** The channels its filter names, so lost access can reset it. */
+  channelIds?: readonly string[];
 };
 
 /** What the index knows, kept across reconnects of one account in one
@@ -419,9 +421,12 @@ export function startFinderSync({
 
   /** Every page of `filter` back to the horizon. After a reconnect, only
    * what is newer than the last read, then any older pages it didn't reach. */
-  async function readAll(filter: Omit<ReadFilter, "limit">) {
-    const key = JSON.stringify(filter);
-    const progress = fills.get(key) ?? { complete: false };
+  async function readAll(key: string, filter: Omit<ReadFilter, "limit">) {
+    const channelIds = filter["#h"];
+    const progress: FillProgress = fills.get(key) ?? {
+      complete: false,
+      ...(channelIds && { channelIds }),
+    };
     fills.set(key, progress);
     const started = Math.floor(Date.now() / 1000);
     // Roots by ID don't change, so one complete read is enough.
@@ -439,8 +444,9 @@ export function startFinderSync({
    * when `channelId` is given. */
   async function readHistory(channelId?: string) {
     const scope = channelId ? { "#h": [channelId] } : {};
-    await readAll({ kinds: KINDS, authors: [viewer], ...scope });
-    await readAll({ kinds: KINDS, "#p": [viewer], ...scope });
+    const at = channelId ? `@${channelId}` : "";
+    await readAll(`own${at}`, { kinds: KINDS, authors: [viewer], ...scope });
+    await readAll(`mentions${at}`, { kinds: KINDS, "#p": [viewer], ...scope });
     const dms = session.channels
       .list()
       .channels.filter(
@@ -448,11 +454,19 @@ export function startFinderSync({
       )
       .map((c) => c.id);
     for (const ids of chunks(dms, 50))
-      await readAll({ kinds: KINDS, "#h": ids });
+      await readAll(`dms:${ids.join()}`, { kinds: KINDS, "#h": ids });
     // Replies in threads you replied in, and the roots themselves.
     for (const ids of chunks([...roots], 100)) {
-      await readAll({ kinds: KINDS, "#e": ids, ...scope });
-      await readAll({ kinds: KINDS, ids, ...scope });
+      await readAll(`roots-e:${ids.join()}${at}`, {
+        kinds: KINDS,
+        "#e": ids,
+        ...scope,
+      });
+      await readAll(`roots-ids:${ids.join()}${at}`, {
+        kinds: KINDS,
+        ids,
+        ...scope,
+      });
     }
   }
 
@@ -553,8 +567,8 @@ export function startFinderSync({
           cursors.delete(id);
           revoked.add(id);
           // A later rejoin reads this channel's history from the start.
-          for (const key of fills.keys())
-            if (key.includes(`"#h":[${JSON.stringify(id)}]`)) fills.delete(key);
+          for (const [key, progress] of fills)
+            if (progress.channelIds?.includes(id)) fills.delete(key);
         }
       }
     }

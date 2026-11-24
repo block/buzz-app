@@ -28,7 +28,8 @@ export type NotificationEligibility = boolean | "wait";
 export type NotificationInput = Readonly<{
   sourceKey: string;
   target: OpenTarget;
-  /** Optional display text; the host flattens and bounds it before the OS sees it. */
+  /** Optional display text; the host flattens and bounds it before the OS sees it.
+   * On macOS the title still shows when previews are hidden; keep private text in `body`. */
   title?: string;
   body?: string;
   /** Asked again at each host re-check until delivery, as for built-in

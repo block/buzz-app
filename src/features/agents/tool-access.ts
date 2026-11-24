@@ -39,7 +39,7 @@ export type BuzzCapability =
   | "buzz:coordinate"
   | "buzz:deliverable";
 /** Every tool from another MCP server the harness connects to; a server's
- * own tools are `connected:<server>`. */
+ * own tools are `connected:<server>`, and one of them `connected:<server>/<tool>`. */
 export const CONNECTED = "connected";
 export type Capability = NativeCapability | BuzzCapability | typeof CONNECTED;
 
@@ -454,10 +454,10 @@ const groups: readonly [readonly string[], NativeCapability][] = [
     "native:meta",
   ],
 ];
-/** Another MCP server's tool: its server's name, from `mcp__<server>__<tool>`. */
-export function connectedServer(name: string) {
-  const match = /^mcp__(.+?)__./i.exec(name);
-  return match?.[1];
+/** Another MCP server's tool, from `mcp__<server>__<tool>`. */
+export function connectedTool(name: string) {
+  const match = /^mcp__(.+?)__(.+)$/i.exec(name);
+  return match && { server: match[1] as string, tool: match[2] as string };
 }
 
 export function nativeCapability(name: string): NativeCapability {
@@ -478,9 +478,13 @@ export function nativeToolAllowed(
 ) {
   if (isBuzzNativeTool(name)) return true;
   const policy = toolPolicy(config);
-  const server = connectedServer(name);
-  return server
-    ? allows(policy, [`${CONNECTED}:${server}`, CONNECTED])
+  const connected = connectedTool(name);
+  return connected
+    ? allows(policy, [
+        `${CONNECTED}:${connected.server}/${connected.tool}`,
+        `${CONNECTED}:${connected.server}`,
+        CONNECTED,
+      ])
     : allows(policy, [nativeCapability(name)]);
 }
 

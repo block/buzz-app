@@ -57,7 +57,7 @@ test("starts Custom from a role, adjusts tools and a connected server, then save
   await page.getByRole("option", { name: /^Custom/ }).click();
   await page.getByRole("switch", { name: "Subagents" }).click();
   await page
-    .getByRole("textbox", { name: "Connected server name" })
+    .getByRole("textbox", { name: "Connected server or tool" })
     .fill("github");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByRole("switch", { name: "github" })).toBeChecked();

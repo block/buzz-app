@@ -54,7 +54,7 @@ it("saves a Custom selection that starts from the chosen role", async () => {
   expect(screen.getByRole("switch", { name: "Files: read" })).toBeChecked();
   await user.click(screen.getByRole("switch", { name: "tasks_update" }));
   await user.type(
-    screen.getByRole("textbox", { name: "Connected server name" }),
+    screen.getByRole("textbox", { name: "Connected server or tool" }),
     "github{Enter}",
   );
 

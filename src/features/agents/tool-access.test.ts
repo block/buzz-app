@@ -106,6 +106,18 @@ it("allows exactly a Custom selection, including one connected server or plugin 
   ).toBe(true);
 });
 
+it("allows one connected tool while another on the same server stays off", () => {
+  const custom = {
+    toolPreset: "custom",
+    toolAllow: "connected:github/get_pull_request",
+  };
+  expect(nativeToolAllowed("mcp__github__get_pull_request", custom)).toBe(true);
+  expect(nativeToolAllowed("mcp__github__merge_pull_request", custom)).toBe(
+    false,
+  );
+  expect(nativeToolAllowed("mcp__linear__get_issue", custom)).toBe(false);
+});
+
 it("classifies every built-in Buzz tool explicitly", () => {
   expect(
     sessionTools()

@@ -65,7 +65,7 @@ export function AgentToolAccess({
     });
   const addServer = () => {
     const name = server.trim();
-    if (!name || /\s|,/.test(name)) return;
+    if (!/^[^\s,/]+(\/[^\s,/]+)?$/.test(name)) return;
     if (!servers.includes(SERVER_PREFIX + name))
       toggle(SERVER_PREFIX + name, true);
     setServer("");
@@ -174,19 +174,21 @@ export function AgentToolAccess({
             {
               id,
               label: id.slice(SERVER_PREFIX.length),
-              description: "Every tool from this MCP server.",
+              description: id.includes("/")
+                ? "This one tool from its MCP server."
+                : "Every tool from this MCP server.",
             },
             true,
           ),
         )}
         {custom && (
           <PreferenceRow
-            title="Allow one server"
-            subtitle="Its name as the harness shows it, such as github for mcp__github__ tools."
+            title="Allow a server or one of its tools"
+            subtitle="As the harness names it: github for every mcp__github__ tool, or github/create_issue for one."
             trailing={
               <div className="flex items-center gap-2">
                 <Input
-                  aria-label="Connected server name"
+                  aria-label="Connected server or tool"
                   value={server}
                   onChange={(event) => setServer(event.target.value)}
                   onKeyDown={(event) => {

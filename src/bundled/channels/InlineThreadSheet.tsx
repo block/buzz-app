@@ -41,7 +41,7 @@ export function InlineThreadSheet({
   rootId: string;
   /** The reply a link named, which the thread opens at. */
   messageId?: string | undefined;
-  /** A panel sits over it: it takes the full height until that closes. */
+  /** A layer sits over it: it grows to fit that layer until it closes. */
   tall: boolean;
   /** Records that the viewer has been shown the intro. */
   seen?: Seen | undefined;

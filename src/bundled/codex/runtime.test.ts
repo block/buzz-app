@@ -9637,6 +9637,28 @@ describe("a thread that keeps the base sections it started with", () => {
     return f;
   };
 
+  it("reports whether saved local conversations may restart for custom instructions", () => {
+    const empty = fixture();
+    const key = empty.delivery("check").agent.key;
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+    expect(resumed().runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    expect(
+      resumed({
+        layout: 1,
+        parts: current.parts,
+      }).runtime.mayRestartForBaseInstructions(key, scope),
+    ).toBe(false);
+    const reconnecting = resumed();
+    reconnecting.snapshot.status = "connecting";
+    expect(reconnecting.runtime.mayRestartForBaseInstructions(key, scope)).toBe(
+      true,
+    );
+    empty.snapshot.status = "connecting";
+    expect(empty.runtime.mayRestartForBaseInstructions(key, scope)).toBe(false);
+  });
+
   it("saves them with a new thread and sends no update while they are current", async () => {
     const f = fixture();
     await f.runtime.run(f.delivery("first"));

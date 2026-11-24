@@ -1814,12 +1814,20 @@ export class CodexRuntime {
       ...new Map([...saved, ...held].map((row) => [row.key, row])).values(),
     ].sort((a, b) => (b.at ?? 0) - (a.at ?? 0));
   }
-  private localConversations(agent: AgentKey) {
-    const reads = this.reads(agent);
-    const saved =
+  mayRestartForBaseInstructions(agent: AgentKey, scope: string) {
+    return Object.values(this.localBindings(agent, scope)).some(
+      ({ sections }) =>
+        !this.keepsSections(sections, { custom: true, plugin: false }),
+    );
+  }
+  private localBindings(agent: AgentKey, scope = this.reads(agent)?.scope) {
+    return (
       this.entries.get(agent)?.saved ??
-      (reads ? this.load(this.storageKey(reads.scope, agent)) : {});
-    return this.savedConversations(agent, saved);
+      (scope === undefined ? {} : this.load(this.storageKey(scope, agent)))
+    );
+  }
+  private localConversations(agent: AgentKey) {
+    return this.savedConversations(agent, this.localBindings(agent));
   }
   private savedConversations(agent: AgentKey, saved: Record<string, Saved>) {
     const reads = this.reads(agent);

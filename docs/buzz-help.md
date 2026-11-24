@@ -134,11 +134,18 @@ if that desktop app is up and running.
 - **Sidebar actions.** Hover over a workspace or channel heading, or press Tab
   to reach its actions. On touch, tap **⋯**. In workspaces and Solo channels
   that support tasks, **⋯ → New task** works even when the pencil is hidden.
+  Plugins can add actions after **View channel details** in a Solo channel’s
+  **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.
+- **Finder.** With the Finder plugin on (it's off by default), ⌘P (Ctrl+P)
+  finds a message in the channel you're in from any piece you remember, and
+  ⌘⇧P (Ctrl+Shift+P) searches all of Buzz; a switch under the field changes
+  between them. Letters don't need to be next to each other: `dplyrlbk` finds
+  "deploy rollback". While typing in a text field, ⌘⇧P stays Spoiler.
 - **Charts.** With the Charts plugin on, a `buzz-chart` code block of JSON
   draws a chart, for example
   `{"version":1,"type":"bar","title":"…","x":"team","y":"issues","data":[…]}`.
@@ -169,6 +176,10 @@ if that desktop app is up and running.
   community on this computer deletes its list.
 - **Instructions** change how an agent behaves. They don't give it new tools,
   accounts or permissions.
+- **Settings → Agent setup → Base instructions** shows the instructions Buzz
+  gives agents on this device. Open a section to read it. For editable
+  sections, use **Save** or **Cancel**. **Options** lets you disable or enable
+  a section, or put the default text back in the editor for you to save.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.
 - **While it works**, the agent shows typing dots, and you can stop it. If it

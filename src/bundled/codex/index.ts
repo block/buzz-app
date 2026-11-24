@@ -1,6 +1,8 @@
 import { nativeHookOutput } from "../hook-output";
 import { CODEX_HOOK_EVENTS } from "./hook-bridge";
 import { repositoriesContext } from "../../features/communities/repositories";
+import { communityDestination } from "../../features/communities/destination";
+import { relayPartition } from "../../features/relay/partition";
 import { isTauri } from "@tauri-apps/api/core";
 import { pubkeyOf } from "../../features/agents/membership";
 import { ownerReads, readyOwnerReads } from "../../features/agents/reads";
@@ -182,6 +184,13 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ctx.agents.inspectExecution(key),
   );
   ctx.agents.register<Config>({
+    mayRestartForBaseInstructions: ({ key, owner, relay }) =>
+      !ctx.agents.executionBinding(key) &&
+      runtime.mayRestartForBaseInstructions(
+        key,
+        ctx.agents.relay(key)?.snapshot().scope ??
+          relayPartition(communityDestination(relay).url, owner),
+      ),
     id: TYPE_ID,
     conversationFolders: true,
     conversationSections: true,

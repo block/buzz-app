@@ -1123,6 +1123,10 @@ export type AgentType<Config = unknown> = {
   /** Huddles supplies a running agent owned by the current viewer.
    * Full-duplex voice on the existing room conversation; abort closes the pipe. */
   voice?(seat: AgentVoiceSeat<Config>): Promise<AgentVoiceConnection>;
+  /** Whether saved local conversations may restart when base instructions are customized. */
+  mayRestartForBaseInstructions?(
+    agent: Pick<Agent, "key" | "owner" | "relay">,
+  ): boolean;
   /** Native callback events this harness exposes to plugins. */
   hooks?: Readonly<{ events: readonly string[] }>;
   id: string;

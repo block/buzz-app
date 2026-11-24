@@ -18,6 +18,7 @@ import { useChannelNavigation } from "../../features/channel-navigation/ChannelN
 import { soloSuccessor } from "../../features/channel-navigation/solo-successor";
 import { historyPanel, useConversationTabs } from "./useConversationTabs";
 import type { MessageLinkOrigin } from "../../features/messages/MessageRow";
+import { useComposerWrites } from "../../features/messages/composer-writes";
 import { focusDock, useCoveredByDock } from "./useCoveredByDock";
 import tabStyles from "./ChannelTabs.module.css";
 import panelStyles from "../../features/panels/Panels.module.css";
@@ -835,12 +836,19 @@ function ChannelWorkspace({
     navigator && navigation?.target.kind === "conversation"
       ? navigation.target
       : undefined;
-  // Inline threads draw over the composer, which these conversations lack.
+  // Inline threads draw over the composer, which these conversations lack,
+  // as does a connection that can only read: its composer has no box.
+  const { readingOnly } = useComposerWrites(
+    queries,
+    currentId,
+    current?.channelType === "solo",
+  );
   const composes =
     !!current &&
     !current.archived &&
     current.viewerRole !== "guest" &&
-    (!current.readOnly || current.cached);
+    (!current.readOnly || current.cached) &&
+    !readingOnly;
   const inlineRoot =
     addressed?.inline &&
     addressed.channelId === currentId &&
@@ -2956,9 +2964,9 @@ function ChannelWorkspace({
           channel={current}
           rootId={inlineThread}
           messageId={addressed?.inlineMessage}
-          // A panel over the thread takes the full height; so does the thread.
+          // A layer over the thread grows the thread to fit it.
           tall={
-            !!layerTarget?.target &&
+            !!layerTarget &&
             layerTarget.rootId === inlineThread &&
             !layerTarget.channelId
           }

@@ -389,6 +389,7 @@ export type EditableInputProps = Omit<
   maxLength: number;
   /** One policy for wire output, editing budgets and both clipboard flavors. */
   markdownMode?: ComposerMarkdownMode;
+  preservePlainTextLineBreaks?: boolean;
   onDraftChange(draft: MentionDraft): void;
   onFormatsChange(active: readonly ComposerFormat[]): void;
   onScrollCaret?(bottom: number): void;
@@ -458,6 +459,7 @@ export function EditableInput({
   placeholder,
   maxLength,
   markdownMode = "chat",
+  preservePlainTextLineBreaks = false,
   onDraftChange,
   onFormatsChange,
   onScrollCaret,
@@ -482,6 +484,7 @@ export function EditableInput({
     decorationsFor,
     maxLength,
     markdownMode,
+    preservePlainTextLineBreaks,
     serializeDraft,
     onDraftChange,
     onFormatsChange,
@@ -501,6 +504,7 @@ export function EditableInput({
     decorationsFor,
     maxLength,
     markdownMode,
+    preservePlainTextLineBreaks,
     serializeDraft,
     onDraftChange,
     onFormatsChange,
@@ -2739,6 +2743,14 @@ export function EditableInput({
               return true;
             // Code takes visible text verbatim; prose preserves copied web links.
             const html = event.clipboardData?.getData("text/html") ?? "";
+            if (
+              current.current.preservePlainTextLineBreaks &&
+              !html &&
+              /[\r\n]/.test(plain)
+            ) {
+              insertPastedText(plain);
+              return true;
+            }
             const hasPlain =
               !!plain || event.clipboardData?.types?.includes("text/plain");
             const copy = code

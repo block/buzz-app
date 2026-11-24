@@ -148,6 +148,7 @@ function Unavailable({
   ) : (
     <MessageLoading
       label={view === "thread" ? "Loading thread…" : "Loading conversation…"}
+      placeholders={view !== "thread"}
     />
   );
 }

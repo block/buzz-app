@@ -128,6 +128,7 @@ export function CommunityLocalSettings({
             error={error}
           >
             <Input
+              id="setting-community-name"
               ref={nameInput}
               value={value}
               placeholder={communityDefaultName(community)}
@@ -187,7 +188,7 @@ export function CommunityLocalSettings({
             label="Community address"
             description="This is the relay URL you use to connect to this community."
           >
-            <Input value={address} readOnly />
+            <Input id="setting-community-address" value={address} readOnly />
           </Field>
           {copyError && (
             <p role="alert" className="m-0 text-body-sm text-danger">
@@ -217,6 +218,7 @@ export function CommunityLocalSettings({
       <div className="mt-section-gap">
         <SettingsGroup>
           <PreferenceRow
+            id="setting-caches"
             title="Cached data"
             subtitle={`Channels, messages and images this device saved from this community. Buzz loads them again as needed. Clearing also cancels uploads in progress.${usage === undefined ? "" : ` Uses ${size(usage)} on this device.`}`}
             trailing={

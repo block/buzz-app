@@ -173,6 +173,7 @@ export function NotificationSettings({
           <InlineHeader title="Delivery" />
           <SettingsGroup>
             <SwitchPreferenceRow
+              id="setting-desktop-alerts"
               label="Desktop alerts"
               checked={desktopAlertsEnabled}
               disabled={state.developmentPaused}

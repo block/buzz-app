@@ -154,6 +154,7 @@ export function AppearanceSettings({
             }
           />
           <PreferenceRow
+            id="setting-interface-size"
             title="Interface size"
             trailing={
               <fieldset
@@ -200,6 +201,7 @@ export function AppearanceSettings({
             }
           />
           <PreferenceRow
+            id="setting-accent"
             title="Accent color"
             trailing={(label) => (
               <fieldset
@@ -253,6 +255,7 @@ export function AppearanceSettings({
             )}
           />
           <PreferenceRow
+            id="setting-vibe"
             title="Vibe level"
             trailing={
               <Select
@@ -276,6 +279,7 @@ export function AppearanceSettings({
             }
           />
           <PreferenceRow
+            id="setting-clock"
             title="Clock"
             subtitle="System uses your device’s time format."
             trailing={
@@ -301,11 +305,13 @@ export function AppearanceSettings({
             }
           />
           <SwitchPreferenceRow
+            id="setting-seconds"
             label="Show seconds"
             checked={clock.seconds}
             onCheckedChange={(seconds) => setClockPreference({ seconds })}
           />
           <SwitchPreferenceRow
+            id="setting-time-zone-details"
             label="Show time zone details on profiles"
             description="With someone’s local time, shows how far ahead or behind you they are and their time zone."
             checked={clock.localTimeDetails}
@@ -319,6 +325,7 @@ export function AppearanceSettings({
         <InlineHeader title="Conversations" />
         <SettingsGroup>
           <PreferenceRow
+            id="setting-density"
             title="Message density"
             subtitle="Compact shows conversations as a flat list that fits more messages on screen."
             trailing={
@@ -344,6 +351,7 @@ export function AppearanceSettings({
           />
           {density === "default" && (
             <PreferenceRow
+              id="setting-width"
               title="Message width"
               trailing={
                 <Select
@@ -376,6 +384,7 @@ export function AppearanceSettings({
         <div className="mt-4">
           <SettingsGroup>
             <PreferenceRow
+              id="setting-timestamps"
               title="Message timestamps"
               subtitle="Hidden times stay available to screen readers."
               trailing={
@@ -406,6 +415,7 @@ export function AppearanceSettings({
             />
             {verifiedCommunity && (
               <PreferenceRow
+                id="setting-names"
                 title="Show people by"
                 subtitle="How people with verified names appear to you. Search, profiles, and previews show both."
                 trailing={
@@ -431,6 +441,7 @@ export function AppearanceSettings({
               />
             )}
             <PreferenceRow
+              id="setting-follow-up"
               title="Follow-up behavior"
               subtitle="In Solo, send follow-ups immediately or queue them until the agent finishes its previous response."
               trailing={
@@ -456,6 +467,7 @@ export function AppearanceSettings({
             />
 
             <PreferenceRow
+              id="setting-threads"
               title="Open threads in"
               subtitle="New threads open here. Inline opens threads, profiles and links over the conversation instead of in tabs; calls, canvases and apps still open as tabs. Already-open threads stay where you placed them."
               trailing={
@@ -486,6 +498,7 @@ export function AppearanceSettings({
             />
             {autocorrectAvailable && (
               <SwitchPreferenceRow
+                id="setting-autocorrect"
                 label="Allow automatic spelling correction"
                 description="Lets macOS correct misspelled words in messages. Turn correction on or off from the message box’s Spelling and Grammar menu."
                 checked={autocorrect.enabled}
@@ -493,12 +506,14 @@ export function AppearanceSettings({
               />
             )}
             <SwitchPreferenceRow
+              id="setting-unread-first"
               label="Show unread first in search"
               description="With nothing typed, search leads with unread channels and DMs and selects the newest."
               checked={unreadFirst.enabled}
               onCheckedChange={setUnreadFirstPreference}
             />
             <PreferenceRow
+              id="setting-search-sort"
               title="Sort messages by"
               subtitle="Where the relay supports sorting, new searches of one conversation start in this order. Sort messages in the search field changes only that search."
               trailing={

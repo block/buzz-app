@@ -71,8 +71,9 @@ const SEARCH_ID = "global-search";
 const SEARCH_BINDING: KeyBinding = { key: "k", mod: true };
 // Slack opens its ⌘K switcher from ⌘T too; the hint shows ⌘K.
 const SEARCH_BINDINGS = [SEARCH_BINDING, { key: "t", mod: true }];
-const CONVERSATION_SEARCH_ID = "conversation-search";
-const CONVERSATION_SEARCH_BINDING: KeyBinding = { key: "f", mod: true };
+// Settings search follows this chord (and its rebind) while Settings is open.
+export const CONVERSATION_SEARCH_ID = "conversation-search";
+export const CONVERSATION_SEARCH_BINDING: KeyBinding = { key: "f", mod: true };
 const PREVIOUS_RESULT_ID = "search-previous-result";
 const NEXT_RESULT_ID = "search-next-result";
 const NO_OVERRIDES: ShortcutBindingsSnapshot = { overrides: {}, error: null };

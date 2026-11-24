@@ -153,6 +153,7 @@ export function DeveloperSettings() {
           <InlineHeader title="Runtime settings" />
           <SettingsGroup layout="form">
             <PreferenceRow
+              id="setting-log-level"
               title="Log level"
               subtitle="Saved for this worktree, including browser relay diagnostics."
               trailing={
@@ -193,6 +194,7 @@ export function DeveloperSettings() {
           />
           <SettingsGroup layout="form">
             <PreferenceRow
+              id="setting-import-finds"
               title="What Import finds"
               trailing={
                 <Select
@@ -210,6 +212,7 @@ export function DeveloperSettings() {
               }
             />
             <SwitchPreferenceRow
+              id="setting-new-community"
               label="Show as a new community"
               description="The Agents page shows no agents or teams here, as a first visit would."
               checked={scenario.empty}

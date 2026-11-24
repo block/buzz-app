@@ -1,4 +1,6 @@
-import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
+import { SettingsSearchNavigation } from "./SettingsSearchNavigation";
+import type { SettingSearchEntry } from "./settings-search";
+import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { CommunityAddress } from "./CommunityAddress";
 import { useMemo, useSyncExternalStore } from "react";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
@@ -15,6 +17,8 @@ export function SettingsSidebar({
   selected,
   recommendations = 0,
   onSection,
+  onSetting,
+  shortcutBindings,
 }: {
   cards: SettingsCards;
   communities: Communities;
@@ -22,6 +26,8 @@ export function SettingsSidebar({
   /** Managed plugin recommendations awaiting review. */
   recommendations?: number;
   onSection: (section: string) => void;
+  onSetting?: (setting: SettingSearchEntry) => void;
+  shortcutBindings?: ShortcutBindings;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const client = useSyncExternalStore(
@@ -55,7 +61,12 @@ export function SettingsSidebar({
   );
 
   return (
-    <SidebarNavigation wrapSections>
+    <SettingsSearchNavigation
+      groups={groups}
+      onSection={onSection}
+      onSetting={onSetting ?? ((entry) => onSection(entry.section))}
+      shortcutBindings={shortcutBindings}
+    >
       {selectedCommunity && (
         <NavigationSection>
           <CommunityAddress
@@ -69,6 +80,6 @@ export function SettingsSidebar({
           {group.sections.map(section)}
         </NavigationSection>
       ))}
-    </SidebarNavigation>
+    </SettingsSearchNavigation>
   );
 }

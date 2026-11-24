@@ -76,6 +76,11 @@ if that desktop app is up and running.
     **External apps** and **Software updates**.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
+- **Search settings**, above the Settings section list, finds individual
+  settings by name or related words (for example "font size") and opens them.
+  If a setting is hidden behind another option, it lands on that option
+  without changing it. While Settings is open, the **Search this conversation**
+  shortcut (⌘F, Ctrl+F elsewhere, or your rebind) focuses it.
 
 ## Getting started
 

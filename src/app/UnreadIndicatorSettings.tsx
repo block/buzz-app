@@ -17,7 +17,7 @@ export function UnreadIndicatorSettings({
   const [checking, checkPermission] = usePermissionCheck(indicator.refresh);
   if (!indicator.available) return null;
   return (
-    <div className="space-y-3">
+    <div id="setting-dock-badge" className="space-y-3">
       <InlineHeader title="Dock unread badge" />
       <SettingsGroup layout="form">
         <p className="text-body-sm text-subtle">

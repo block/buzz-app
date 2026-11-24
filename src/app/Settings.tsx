@@ -9,7 +9,8 @@ import {
   useReducedMotion,
   type HTMLMotionProps,
 } from "motion/react";
-import { SidebarNavigation } from "../shared/design-system/ui/SidebarNavigation";
+import { SettingsSearchNavigation } from "./SettingsSearchNavigation";
+import { revealSetting, type SettingSearchEntry } from "./settings-search";
 import { CommunityAddress } from "./CommunityAddress";
 import type { Agents } from "../features/agents/service";
 import type {
@@ -801,6 +802,7 @@ export function Settings({
     [contributed, departureCommunity],
   );
   const [selected, setSelected] = useState(defaultSection);
+  const [searchLanding, setSearchLanding] = useState<SettingSearchEntry>();
   // Shortcuts lists every binding with its own controls, so it is built on
   // first visit rather than with every Settings open, then kept like the rest.
   const [shortcutsVisited, setShortcutsVisited] = useState(false);
@@ -881,6 +883,12 @@ export function Settings({
     if (target && startHidden(target))
       target.scrollIntoView({ block: "start" });
   }, [selected, navigationPane]);
+  useLayoutEffect(() => {
+    if (searchLanding && selected === searchLanding.section) {
+      revealSetting(searchLanding);
+      setSearchLanding(undefined);
+    }
+  }, [searchLanding, selected]);
   const openSection =
     onSection &&
     ((id: string) => {
@@ -1957,7 +1965,19 @@ export function Settings({
               </h1>
             </div>
             <nav aria-label="Settings sections" className={styles.navigation}>
-              <SidebarNavigation wrapSections>
+              <SettingsSearchNavigation
+                groups={groups}
+                shortcutBindings={shortcutBindings}
+                onSection={(id) => {
+                  if (onSection) onSection(id);
+                  else setSelected(id);
+                }}
+                onSetting={(entry) => {
+                  setSearchLanding(entry);
+                  if (onSection) onSection(entry.section);
+                  else setSelected(entry.section);
+                }}
+              >
                 {departureCommunity && (
                   <NavigationSection>
                     <CommunityAddress
@@ -1992,7 +2012,7 @@ export function Settings({
                     ))}
                   </NavigationSection>
                 ))}
-              </SidebarNavigation>
+              </SettingsSearchNavigation>
             </nav>
           </aside>
           {detail}

@@ -76,6 +76,7 @@ export function AgentSettings({
         <InlineHeader title="Agent behavior" />
         <SettingsGroup>
           <SwitchPreferenceRow
+            id="setting-remember-agents"
             label="Remember mentioned agents"
             description="Keep the same agents selected for your next message in this channel or thread."
             checked={rememberAgents}
@@ -83,6 +84,7 @@ export function AgentSettings({
           />
           {keepAwakeAvailable && (
             <PreferenceRow
+              id="setting-keep-awake"
               title="Keep this Mac awake"
               subtitle="So agents can keep answering. Closing the lid still puts it to sleep."
               trailing={
@@ -100,6 +102,7 @@ export function AgentSettings({
           )}
           {keepAwakeAvailable && keepAwake.mode === "auto" && (
             <PreferenceRow
+              id="setting-awake-after"
               title="Stay awake after agents finish"
               trailing={
                 <Select

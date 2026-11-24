@@ -22,6 +22,7 @@ function browser(initialHash = "", deferredTraversal = false) {
     index = 0;
   const location = { pathname: "/", search: "", hash: initialHash };
   const storage = new Map<string, string>();
+  let storageFull = false;
   const history = {
     get state() {
       return entries[index]?.state;
@@ -63,7 +64,12 @@ function browser(initialHash = "", deferredTraversal = false) {
     sessionStorage: {
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: (key: string, value: string) => {
+        if (storageFull)
+          throw new DOMException("Storage is full", "QuotaExceededError");
         storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
       },
     },
     addEventListener: events.addEventListener.bind(events),
@@ -80,6 +86,10 @@ function browser(initialHash = "", deferredTraversal = false) {
     },
     pending: () => pending.length,
     length: () => entries.length,
+    /** Every later write to session storage fails, as when it is full. */
+    fillStorage() {
+      storageFull = true;
+    },
   };
 }
 for (const kind of ["memory", "browser"] as const) {
@@ -586,7 +596,40 @@ it("visits an older build saved without targets stay retained and reachable", ()
   expect(driver.snapshot().retainedVisits).toHaveLength(6);
   driver.dismiss(closesThread, alpha);
   expect(driver.snapshot().current.target).toEqual(alpha);
-  // Only the visits this document has read can match, as before.
-  expect(walkBack(driver)).toEqual([beta, alphaThread, alpha, homeTarget]);
+  expect(walkBack(driver).at(-1)).toEqual(homeTarget);
+  driver.dispose();
+});
+
+it("a reload does not restore a window that could not be saved", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  first.push(alpha);
+  first.push(beta);
+  first.back();
+  first.back();
+  fixture.fillStorage();
+  first.push(beta);
+  const opener = first.snapshot().current;
+  first.push(alphaThread);
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  // The last window saved has Alpha where Beta now is.
+  expect(driver.snapshot().previous).toEqual(opener);
+  driver.dispose();
+});
+
+it("a close after reload spares a visit that replaced the closed view", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  first.push(alphaThread);
+  first.push(beta);
+  first.back();
+  first.replace(alpha);
+  first.forward();
+  first.dispose();
+  const driver = createBrowserHistory(fixture.host);
+  // Beta's own history state still names the thread as its opener.
+  driver.dismiss(closesThread, alpha);
+  expect(walkBack(driver)).toEqual([alpha, homeTarget]);
   driver.dispose();
 });

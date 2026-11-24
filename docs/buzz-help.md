@@ -108,6 +108,9 @@ if that desktop app is up and running.
   Agents pin with the `pin` tool.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
   folder and **/** a skill. Attach files by pasting or dragging them in.
+  Clicking anywhere in a conversation that isn't a control, field, or text you
+  select, including a message row and the space around the composer, puts you
+  back in that conversation's composer so you can keep typing.
 - **Drafts.** Every message box open on a conversation shares its draft. A box
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my

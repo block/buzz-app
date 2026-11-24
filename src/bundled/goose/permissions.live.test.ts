@@ -71,6 +71,8 @@ const spawnWith =
 /** A model that runs each queued shell command in turn, then says done. */
 function scriptedModel() {
   const commands: string[] = [];
+  /** The tool names each model request offered, in order. */
+  const offered: string[][] = [];
   let shell = "";
   const server = createServer(async (request, response) => {
     if (request.method === "GET") {
@@ -85,6 +87,7 @@ function scriptedModel() {
     const input = JSON.parse(body) as {
       tools?: { function: { name: string } }[];
     };
+    offered.push((input.tools ?? []).map((tool) => tool.function.name));
     shell ||=
       input.tools
         ?.map((tool) => tool.function.name)
@@ -113,7 +116,7 @@ function scriptedModel() {
       );
     response.end("data: [DONE]\n\n");
   });
-  return { server, commands, shellName: () => shell };
+  return { server, commands, offered, shellName: () => shell };
 }
 
 describe.skipIf(!BIN)("goose-acp with saved permissions", () => {
@@ -177,6 +180,7 @@ describe.skipIf(!BIN)("goose-acp with saved permissions", () => {
     gooseRoot: string,
     permits: (name: string) => Promise<boolean>,
     load?: string,
+    platform?: readonly unknown[],
   ) {
     model.commands.push(...commands);
     const tools: ToolServer = async (_conversation, message) =>
@@ -194,6 +198,7 @@ describe.skipIf(!BIN)("goose-acp with saved permissions", () => {
         tools,
         choice: () => ({ provider: "openai", model: "gpt-4o" }),
         ...(load ? { load } : {}),
+        ...(platform ? { platform } : {}),
       });
       const result = await session.send("Run the commands.");
       expect(result.ok).toBe(true);
@@ -295,5 +300,49 @@ describe.skipIf(!BIN)("goose-acp with saved permissions", () => {
       expect(existsSync(join(path, "config", "permission.yaml"))).toBe(false);
       expect(existsSync(join(path, "data"))).toBe(true);
     }
+  });
+
+  it("offers Shell again when a session saved as Reviewer resumes as Coder", {
+    timeout: 120_000,
+  }, async () => {
+    writeFileSync(
+      ownerPermissions,
+      "user:\n  always_allow: []\n  ask_before: []\n  never_allow: []\n",
+    );
+    let config: unknown = { toolPreset: "reviewer" };
+    const role = () => config;
+    const id = await turn(["touch reviewer-shell"], root.root, decide(role));
+    expect(existsSync(marker("reviewer-shell"))).toBe(false);
+    config = { toolPreset: "coder" };
+    const from = model.offered.length;
+    expect(await turn(["touch coder-shell"], root.root, decide(role), id)).toBe(
+      id,
+    );
+    expect(
+      model.offered
+        .slice(from)
+        .some((tools) => tools.includes(model.shellName())),
+    ).toBe(true);
+    expect(existsSync(marker("coder-shell"))).toBe(true);
+  });
+
+  it("keeps the filtered tool list of a session saved before this change", {
+    timeout: 120_000,
+  }, async () => {
+    // As the earlier draft created a Reviewer session: developer read tools only.
+    const filtered = [
+      {
+        type: "platform",
+        name: "developer",
+        available_tools: ["tree", "read_image"],
+      },
+    ];
+    const coder = async (name: string) =>
+      decide(() => ({ toolPreset: "coder" }))(name);
+    const id = await turn([], root.root, coder, undefined, filtered);
+    const from = model.offered.length;
+    await turn([], root.root, coder, id);
+    const offered = model.offered.slice(from).flat();
+    expect(offered.some((name) => /(^|__)shell$/.test(name))).toBe(false);
   });
 });

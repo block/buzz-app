@@ -1183,6 +1183,10 @@ async fn send(
     result
 }
 
+/// The relay's NIP-FI denial of an assertion it was sent (buzz-auth
+/// `nip_fi/denial.rs`), as opposed to one it was not sent.
+const EVIDENCE_REJECTED: &str = "evidence rejected\n";
+
 /// What the whole community refused, as `http-admission.ts` reads it: the
 /// relay's exact NIP-FI denial bodies (buzz-auth `nip_fi/denial.rs`), a
 /// community without NIP-FI refusing a key that isn't a member or is banned
@@ -1192,7 +1196,7 @@ async fn send(
 fn community_refusal(result: &Result<RelayResponse>) -> Option<&'static str> {
     match result {
         Ok(response) => match (response.status, response.body.as_str()) {
-            (401, "authentication required\n") | (403, "evidence rejected\n") => Some("sign-in"),
+            (401, "authentication required\n") | (403, EVIDENCE_REJECTED) => Some("sign-in"),
             (403, "authorization denied\n") => Some("access"),
             (403, body) => serde_json::from_str::<serde_json::Value>(body)
                 .ok()
@@ -1335,7 +1339,21 @@ async fn send_authorized(
         {
             return Err(reason.into());
         }
-        read_response(response, response_limit).await
+        let response = read_response(response, response_limit).await?;
+        // The relay refused this assertion itself (NIP-FI `evidence
+        // rejected`): drop it, so the next try is issued a fresh one instead
+        // of sending it again.
+        if (response.status, response.body.as_str()) == (403, EVIDENCE_REJECTED) {
+            if let (Some(fi), Some(assertion)) = (
+                authorization.fi,
+                authorization
+                    .assertion
+                    .and_then(|authorization| authorization.assertion.as_ref()),
+            ) {
+                fi.reject_assertion(assertion).await;
+            }
+        }
+        Ok(response)
     };
     if let (Some(fi), Some(assertion)) = (authorization.fi, authorization.assertion) {
         fi.during_admitted_operation(host, assertion, mutation, operation)

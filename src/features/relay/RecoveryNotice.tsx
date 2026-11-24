@@ -104,18 +104,23 @@ export function useHeadReadPending(
 export const RECOVERY_TITLE = "Buzz is having trouble connecting";
 
 /** The one relay recovery notice, on every page. Recovery retries on its own,
- * so it offers no button. */
+ * so it offers no button. `detail` says what on this device may need
+ * attention meanwhile, such as secure storage. */
 export function RecoveryNotice({
   recovery,
+  detail,
 }: {
   recovery: RelayRecovery | undefined;
+  detail?: string | undefined;
 }) {
   const { shown } = useRecovery(recovery);
   if (!shown) return null;
   return (
     <ToastNotice
       title={RECOVERY_TITLE}
-      description="Retrying automatically."
+      description={
+        detail ? `${detail} Retrying automatically.` : "Retrying automatically."
+      }
       tone="info"
     />
   );

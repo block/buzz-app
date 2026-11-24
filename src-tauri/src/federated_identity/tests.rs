@@ -6,9 +6,11 @@ pub(super) struct Memory {
     pub(super) raw: Mutex<Option<Zeroizing<Vec<u8>>>>,
     pub(super) compare_gate: Mutex<Option<super::agent::grant::tests::Gate>>,
     /// Holds the next read after it reads the item. `load` reads too.
-    read_gate: Mutex<Option<super::agent::grant::tests::Gate>>,
+    pub(super) read_gate: Mutex<Option<super::agent::grant::tests::Gate>>,
     refusal: Mutex<Option<String>>,
     pub(super) denied: AtomicBool,
+    /// `remove` marks the refusal, then finds secure storage busy.
+    pub(super) busy: AtomicBool,
     reads: AtomicUsize,
 }
 impl Store for Memory {
@@ -52,6 +54,9 @@ impl Store for Memory {
         *self.refusal.lock().unwrap() = Some(revision.into());
         if self.denied.load(Ordering::SeqCst) {
             return Err("storage-denied");
+        }
+        if self.busy.load(Ordering::SeqCst) {
+            return Err("storage-busy");
         }
         *raw = None;
         *self.refusal.lock().unwrap() = None;
@@ -831,7 +836,7 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 11);
+    assert_eq!(public.as_object().unwrap().len(), 10);
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 
@@ -1963,39 +1968,3 @@ fn speech_signs_in_at_the_server_of_the_community_it_bills() {
     assert!(server("not a relay").is_none());
 }
 
-/// Endings are kept beside the sign-out mark, so a restart still shows why
-/// the last sign-in ended; they hold codes and times, never the session.
-#[tokio::test]
-async fn signing_out_is_remembered_across_a_restart_without_the_session() {
-    let dir = tempfile::tempdir().unwrap();
-    // Endings sit beside the sign-out mark (`FederatedIdentity::build`).
-    let path = dir.path().join("account.signed-out");
-    let open = |store: Arc<Memory>| {
-        FederatedIdentity::build(
-            host(Arc::new(Memory::default())).0.config.clone(),
-            "fingerprint".into(),
-            "account".into(),
-            store,
-            Vec::new(),
-            None,
-            Some(path.clone()),
-        )
-    };
-    let store = Arc::new(Memory::default());
-    let first = open(store.clone());
-    {
-        let mut state = first.state();
-        state.restored = true;
-        first.install_session(&mut state, record());
-    }
-    first.sign_out(None).await;
-    let endings = first.snapshot().endings;
-    assert_eq!(endings.len(), 1);
-    assert_eq!(endings[0].reason, endings::Reason::SignedOut);
-    // Signing out again with no session is not another ending.
-    first.sign_out(None).await;
-    assert_eq!(first.snapshot().endings.len(), 1);
-    let saved = std::fs::read_to_string(dir.path().join("account.endings")).unwrap();
-    assert!(!saved.contains("fixture-session-token"));
-    assert_eq!(open(store).snapshot().endings, endings);
-}

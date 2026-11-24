@@ -2,7 +2,9 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -12,7 +14,15 @@ import userEvent from "@testing-library/user-event";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import type { CommunityRefusal } from "../relay/http-admission";
 import { federatedFixture } from "./testing";
-import { CommunityRefusalNotice } from "./CommunitySignIn";
+import {
+  createRecovery,
+  RECOVERY_NOTICE_DELAY_MS,
+  type RecoverySource,
+} from "../relay/recovery";
+import {
+  CommunityRecoveryNotice,
+  CommunityRefusalNotice,
+} from "./CommunitySignIn";
 afterEach(cleanup);
 
 function mount(
@@ -86,10 +96,60 @@ it("checks a saved sign-in once before signing in again", async () => {
   expect(h.service.signOut).not.toHaveBeenCalled();
   expect(h.service.signIn).not.toHaveBeenCalled();
   // Refused again with the same session: now it signs out and in.
-  await user.click(screen.getByRole("button", { name: "Sign in again" }));
-  await waitFor(() => expect(retry).toHaveBeenCalledTimes(2));
+  cleanup();
+  mount("sign-in", h.service);
+  await user.click(
+    within(await notice("Sign in to open this community")).getByRole("button", {
+      name: "Sign in again",
+    }),
+  );
+  await waitFor(() => expect(h.service.signIn).toHaveBeenCalledOnce());
   expect(h.service.signOut).toHaveBeenCalledOnce();
-  expect(h.service.signIn).toHaveBeenCalledOnce();
+  expect(h.service.askAgain).toHaveBeenCalledOnce();
+});
+
+it("never signs out on a second click before the check's retry is refused", async () => {
+  const h = federatedFixture();
+  h.publish({ status: "signed-in", email: "a@example.com", revision: "held" });
+  let answer = () => {};
+  vi.mocked(h.service.askAgain).mockImplementation(
+    () => new Promise<void>((resolve) => (answer = resolve)),
+  );
+  const retry = vi.fn();
+  const notice = (attempt: number) => (
+    <ToastProvider>
+      <CommunityRefusalNotice
+        refusal="sign-in"
+        identity={h.service}
+        retry={retry}
+        relay="wss://relay.example"
+        attempt={attempt}
+      />
+    </ToastProvider>
+  );
+  const view = render(notice(1));
+  const user = userEvent.setup();
+  await user.click(
+    await screen.findByRole("button", { name: "Sign in again" }),
+  );
+  // A fast second click lands on a button that waits for the check.
+  const waiting = screen.getByRole("button", {
+    name: "Checking your sign-in…",
+  });
+  expect(waiting).toBeDisabled();
+  fireEvent.click(waiting);
+  fireEvent.click(waiting);
+  answer();
+  await waitFor(() => expect(retry).toHaveBeenCalledOnce());
+  // The retry has not been refused yet: still waiting, still signed in.
+  expect(
+    screen.getByRole("button", { name: "Checking your sign-in…" }),
+  ).toBeDisabled();
+  expect(h.service.signOut).not.toHaveBeenCalled();
+  // A fresh refusal of the retried attempt offers the sign-out.
+  view.rerender(notice(2));
+  await user.click(screen.getByRole("button", { name: "Sign in again" }));
+  await waitFor(() => expect(h.service.signOut).toHaveBeenCalledOnce());
   expect(h.service.askAgain).toHaveBeenCalledOnce();
 });
 
@@ -253,3 +313,41 @@ it.each(["access", "sign-in"] as const)(
     }
   },
 );
+
+// A saved sign-in that secure storage or the clock keeps from being checked
+// is retried on its own, but only the person can fix the cause.
+it("says when secure storage or the clock holds up a saved sign-in", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const h = federatedFixture();
+  const source: RecoverySource = {
+    status: () => "failed",
+    subscribe: () => () => {},
+    retry() {},
+  };
+  const recovery = createRecovery([source]);
+  render(
+    <ToastProvider>
+      <CommunityRecoveryNotice recovery={recovery} identity={h.service} />
+    </ToastProvider>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(RECOVERY_NOTICE_DELAY_MS + 100));
+  const recovering = () =>
+    screen.getByRole("dialog", { name: "Buzz is having trouble connecting" });
+  // The network comes back by itself: only the retry is mentioned.
+  act(() => {
+    h.publish({ status: "unavailable", failure: "network-unavailable" });
+  });
+  expect(recovering()).toHaveAccessibleDescription("Retrying automatically.");
+  act(() => {
+    h.publish({ status: "unavailable", failure: "storage-unavailable" });
+  });
+  expect(recovering()).toHaveAccessibleDescription(
+    /credential permissions.*Retrying automatically\.$/,
+  );
+  act(() => {
+    h.publish({ status: "unavailable", failure: "clock-unavailable" });
+  });
+  expect(recovering()).toHaveAccessibleDescription(/date and time settings/);
+  recovery.dispose();
+  vi.useRealTimers();
+});

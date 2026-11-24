@@ -338,11 +338,10 @@ mentions still work.
   stay readable meanwhile.
 - **Refused by a community**: the notice says what to do, such as sign in,
   switch accounts, or ask an admin for access.
-- **Asked to sign in again often**: **Settings → Identity** lists why each
-  recent sign-in ended, such as expired, ended by the sign-in server, or
-  signed out. If Buzz couldn't check a saved sign-in, it keeps it and tries
-  again, and the first **Sign in again** checks it once more before opening
-  the browser.
+- **Asked to sign in again after a wake or a short outage**: if Buzz couldn't
+  check a saved sign-in, it keeps it and tries again, and the notice says when
+  secure storage or the clock needs attention. The first **Sign in again**
+  checks the saved sign-in once more before it opens the browser.
 
 ### A conversation change didn't send
 

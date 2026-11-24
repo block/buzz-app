@@ -104,6 +104,32 @@ const chunks = <T>(items: readonly T[], size: number) =>
     items.slice(n * size, n * size + size),
   );
 
+/** Where a message was said, as Finder names it. */
+function placeOf(session: RelaySession, channelId: string) {
+  const found = session.channels.get?.(channelId);
+  if (!found) return "Conversation";
+  if (found.channelType === "dm") return found.name || "Direct message";
+  return found.channelType === "stream" || found.channelType === "forum"
+    ? `#${found.name}`
+    : found.name || "Conversation";
+}
+const nameOf = (session: RelaySession, pubkey: string) =>
+  session.profiles.snapshot().get(pubkey)?.name ?? pubkey.slice(0, 10);
+
+/** A message, from the relay or its search, as Finder indexes it: named
+ * by who wrote it and where, for `session`'s viewer. */
+export const finderDoc = (
+  session: RelaySession,
+  message: Omit<FinderDoc, "author" | "place">,
+): FinderDoc => ({
+  ...message,
+  author:
+    message.authorId === session.viewer
+      ? "You"
+      : nameOf(session, message.authorId),
+  place: placeOf(session, message.channelId),
+});
+
 /** Fills `corpus` with the viewer's own conversations from the last 90
  * days, then keeps it current from what the session already receives. */
 export function startFinderSync({
@@ -144,26 +170,17 @@ export function startFinderSync({
 
   const channel = (id: string): ChannelSummary | undefined =>
     session.channels.get?.(id);
-  const placeOf = (id: string) => {
-    const found = channel(id);
-    if (!found) return "Conversation";
-    if (found.channelType === "dm") return found.name || "Direct message";
-    return found.channelType === "stream" || found.channelType === "forum"
-      ? `#${found.name}`
-      : found.name || "Conversation";
+  const docOf = (event: RelayEvent): FinderDoc => {
+    const channelId = event.tags.find(([name]) => name === "h")?.[1] ?? "";
+    return finderDoc(session, {
+      id: event.id,
+      channelId,
+      threadRootId: threadReference(event)?.rootId,
+      authorId: event.pubkey,
+      createdAt: event.created_at,
+      text: searchText(event).replace(/\s+/g, " ").trim(),
+    });
   };
-  const nameOf = (pubkey: string) =>
-    session.profiles.snapshot().get(pubkey)?.name ?? pubkey.slice(0, 10);
-  const docOf = (event: RelayEvent): FinderDoc => ({
-    id: event.id,
-    channelId: event.tags.find(([name]) => name === "h")?.[1] ?? "",
-    threadRootId: threadReference(event)?.rootId,
-    authorId: event.pubkey,
-    createdAt: event.created_at,
-    author: event.pubkey === viewer ? "You" : nameOf(event.pubkey),
-    place: placeOf(event.tags.find(([name]) => name === "h")?.[1] ?? ""),
-    text: searchText(event).replace(/\s+/g, " ").trim(),
-  });
 
   /** Anything the app receives from a conversation you belong to: live
    * traffic and what you scroll past, at no extra relay cost. Previews of
@@ -519,11 +536,7 @@ export function startFinderSync({
         }
       }
     }
-    const relabeled = [...docs.values()].map((doc) => ({
-      ...doc,
-      author: doc.authorId === viewer ? "You" : nameOf(doc.authorId),
-      place: placeOf(doc.channelId),
-    }));
+    const relabeled = [...docs.values()].map((doc) => finderDoc(session, doc));
     for (const doc of relabeled) docs.set(doc.id, doc);
     corpus.add(relabeled);
     publish({});

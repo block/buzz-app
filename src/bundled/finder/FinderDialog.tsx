@@ -1,5 +1,4 @@
 import {
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -17,7 +16,6 @@ import {
   type PreviewCache,
   SearchPreview,
 } from "../../app/shell/SearchPreview";
-import { useSearchMessages } from "../../app/shell/useSearchMessages";
 import type { RelaySession } from "../../features/relay/session";
 import { formatItemTimestamp } from "../../shared/datetime";
 import { avatarMedia } from "../../shared/avatar-source";
@@ -26,17 +24,11 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
-import {
-  createCorpus,
-  type FinderCorpus,
-  type FinderDoc,
-  type FinderResults,
-} from "./corpus.ts";
-import type { ChannelSearchStatus, FinderSync } from "./sync";
+import type { FinderCorpus, FinderDoc, FinderResults } from "./corpus.ts";
+import { useFinderAll, useFinderChannel, useFinderHeld } from "./search.ts";
+import type { FinderSync } from "./sync";
 
 export type FinderScope = "channel" | "buzz";
-
-const PAGE = 50;
 
 /** About `width` characters of `text` around its first match, with the
  * matched code points shifted into the window. */
@@ -96,21 +88,7 @@ export function FinderDialog(props: Props) {
   }, [props.open]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: one budget per dialog opening and session, even when switching scopes.
   const opening = useMemo(() => ({}), [props.open, props.session]);
-  // Relay hits join the index when Finder closes, so the device rows above
-  // them never change while you read.
-  const held = useRef(new Map<string, FinderDoc>());
-  const { sync, open } = props;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: closing flushes, so `open` is the trigger, not an input.
-  useEffect(
-    () => () => {
-      sync?.remember([...held.current.values()]);
-      held.current.clear();
-    },
-    [sync, open],
-  );
-  const hold = (docs: readonly FinderDoc[]) => {
-    for (const doc of docs) held.current.set(doc.id, doc);
-  };
+  const hold = useFinderHeld(props.sync, props.open);
   const contents = { ...props, query, setQuery, input, opening, hold };
   return (
     <Dialog
@@ -155,34 +133,14 @@ function LocalResults(props: Contents) {
   const { corpus, query, revision, sync, scope, currentChannelId, opening } =
     props;
   const channelId = scope === "channel" ? currentChannelId : undefined;
-  const typed = useRef(query);
-  typed.current = query;
-  const reader = useRef<ReturnType<FinderSync["searchChannel"]>>(undefined);
-  const [progress, setProgress] = useState<ChannelSearchStatus>();
-  useEffect(() => {
-    setProgress(undefined);
-    if (!sync || !channelId) return;
-    const running = sync.searchChannel(
-      channelId,
-      () => corpus.search(typed.current, 20, channelId).total < 20,
-      setProgress,
-      opening,
-    );
-    reader.current = running;
-    return () => {
-      reader.current = undefined;
-      running.dispose();
-    };
-  }, [sync, channelId, corpus, opening]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: edits and new corpus contents wake the existing reader.
-  useEffect(() => {
-    reader.current?.wake();
-  }, [query, revision]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: revision names the corpus contents.
-  const results = useMemo(
-    () => corpus.search(query, 50, channelId),
-    [corpus, query, revision, channelId],
-  );
+  const { results, progress, keepGoing } = useFinderChannel({
+    corpus,
+    query,
+    revision,
+    sync,
+    channelId,
+    opening,
+  });
   const channel = props.session?.channels.get?.(channelId ?? "");
   const where = channel?.name
     ? channel.channelType === "stream" || channel.channelType === "forum"
@@ -216,7 +174,7 @@ function LocalResults(props: Contents) {
             variant="ghost"
             onClick={() => {
               props.input.current?.focus();
-              reader.current?.keepGoing();
+              keepGoing();
             }}
           >
             Keep going
@@ -256,112 +214,9 @@ const wordsOf = (query: string) =>
     .map((word) => word.replace(/^'/, ""))
     .filter(Boolean);
 
-/** Device matches at once, then the relay's after a pause in typing. The
- * existing message search owns debounce, cancellation and channel access. */
 function AllResults(props: Contents & { session: RelaySession }) {
-  const { session, query, corpus, revision, hold } = props;
-  // While the relay is asked, and once its rows show, the device rows above
-  // hold still until the text changes: the relay's own hits also reach the
-  // index as they arrive, and would otherwise move in above.
-  const holding = useRef(false);
-  const kept = useRef<{
-    query: string;
-    session: RelaySession;
-    results: FinderResults;
-  }>(undefined);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: revision names the corpus contents.
-  const fresh = useMemo(
-    () => corpus.search(query, PAGE),
-    [corpus, query, revision],
-  );
-  const local =
-    holding.current &&
-    kept.current?.query === query &&
-    kept.current.session === session
-      ? kept.current.results
-      : fresh;
-  kept.current = { query, session, results: local };
-  // Always asked: a page of device rows with every word can still rank below
-  // an unindexed message that has them together.
-  const search = useSearchMessages(session, query);
-  const [previous, setPrevious] = useState<{
-    session: RelaySession;
-    query: string;
-    messages: typeof search.messages;
-  }>();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the hook projects a new array each render; IDs identify its completed page.
-  useEffect(() => {
-    if (!search.loading && !search.error && !search.tooShort) {
-      setPrevious({ session, query, messages: search.messages });
-    }
-  }, [
-    session,
-    query,
-    search.loading,
-    search.error,
-    search.tooShort,
-    search.messages.map((message) => message.id).join(","),
-  ]);
-  // Only this text's rows stay through a reload or retry; another text's
-  // could be opened by mistake while this one loads.
-  const messages =
-    (search.loading || search.error) &&
-    previous?.session === session &&
-    previous.query === query
-      ? previous.messages
-      : search.messages;
-  const shown = new Set(local.hits.map(({ doc }) => doc.id));
-  const docs = messages
-    .filter((message) => {
-      const channel = session.channels.get?.(message.channelId);
-      return (
-        !shown.has(message.id) &&
-        channel &&
-        !channel.huddle &&
-        !channel.metadataPending
-      );
-    })
-    .map((message): FinderDoc => {
-      const channel = session.channels.get?.(message.channelId);
-      return {
-        id: message.id,
-        channelId: message.channelId,
-        authorId: message.authorId,
-        createdAt: message.createdAt,
-        author:
-          message.authorId === session.viewer
-            ? "You"
-            : (session.profiles.snapshot().get(message.authorId)?.name ??
-              message.authorId.slice(0, 10)),
-        place:
-          channel?.channelType === "stream" || channel?.channelType === "forum"
-            ? `#${channel.name}`
-            : channel?.name || "Conversation",
-        text: message.text,
-      };
-    });
-  // Fresh completed hits join the index when Finder closes; sync keeps
-  // public previews out.
-  const freshKey = search.messages.map((message) => message.id).join(",");
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each fresh page once, never retained refresh results.
-  useEffect(() => {
-    if (!search.loading && !search.error) hold(docs);
-  }, [session, search.loading, search.error, freshKey]);
-  const ranked = createCorpus();
-  ranked.add(docs);
-  const results = ranked.search(query, docs.length || 1);
-  const matched = new Set(results.hits.map(({ doc }) => doc.id));
-  const relay = {
-    total: docs.length,
-    hits: [
-      ...results.hits,
-      ...docs
-        .filter((doc) => !matched.has(doc.id))
-        .map((doc) => ({ doc, score: 0, positions: [] })),
-    ],
-  };
-  const asked = !search.tooShort && !!query.trim();
-  holding.current = asked && (search.loading || relay.hits.length > 0);
+  const { query } = props;
+  const { local, relay, search, asked } = useFinderAll(props);
   const retry = search.error ? search.retry : search.loadMore;
   const error = search.error || search.moreError;
   return (

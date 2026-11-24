@@ -69,3 +69,14 @@ it.each([
   await waitFor(() => expect(value()?.textContent).toBe(title));
   expect(value()?.childElementCount).toBe(0);
 });
+
+it("shows a name stored as a first message's cut-off media source as its title", () => {
+  const name = `![video](https://relay.example/media/${"a".repeat(64)}.mp4)`;
+  const { container } = render(<SoloChatTitle title={name.slice(0, 80)} />, {
+    wrapper: ({ children }) => <button type="button">{children}</button>,
+  });
+  expect(screen.getByRole("button")).toHaveAccessibleName("Video");
+  expect(container.querySelector('[aria-hidden="true"]')).toHaveTextContent(
+    /^Video$/,
+  );
+});

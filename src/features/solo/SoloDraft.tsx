@@ -6,6 +6,7 @@ import {
   detailsDraftErrors,
 } from "../relay/channel-details-protocol";
 import { startingChatTitle } from "./chat-title";
+import { attachmentKind } from "../relay/fold";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
@@ -398,7 +399,18 @@ export function SoloDraft({
       !!canonicalDetailsName(draftSettings.name);
     const name =
       typeof draftSettings.name === "string"
-        ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
+        ? canonicalDetailsName(draftSettings.name) ||
+          startingChatTitle(
+            draft,
+            // An upload's own type once it is prepared, as its message says.
+            files.snapshot().map(({ file, uploaded }) => ({
+              kind: attachmentKind(
+                { m: uploaded?.type ?? file.type },
+                "",
+                file.name,
+              ),
+            })),
+          )
         : draftSettings.name;
     const ttlSeconds = draftLifetime(scope, draftSettings);
     const project = selectedProject;

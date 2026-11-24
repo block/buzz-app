@@ -3,6 +3,7 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { SoloChatTitle } from "../../features/solo/SoloChatTitle";
+import { shownChatTitle } from "../../features/solo/shown-title";
 import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
 import styles from "./ChannelHeaderIdentity.module.css";
 
@@ -62,10 +63,11 @@ export function ChannelHeaderIdentity({
   /** From `memberAccess`, so the name matches the dialog it opens. */
   access: ReturnType<typeof memberAccess>;
 }) {
+  const solo = access === soloAccess || access === soloReadOnlyAccess;
   return (
     <SurfaceButton
       {...props}
-      aria-label={`${access.label(name)}${detail ? `, ${detail}` : ""}`}
+      aria-label={`${access.label(solo ? shownChatTitle(name) : name)}${detail ? `, ${detail}` : ""}`}
       title={detail ?? access.title}
       aria-haspopup="dialog"
       className={styles.identity}
@@ -79,7 +81,7 @@ export function ChannelHeaderIdentity({
       </span>
       <span className={styles.label}>
         <span className={`${styles.name} text-body-sm`}>
-          {access === soloAccess || access === soloReadOnlyAccess ? (
+          {solo ? (
             <SoloChatTitle
               key={channelId}
               channelId={channelId}

@@ -7,6 +7,7 @@ import {
 } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { ChannelDetailsCapability } from "../relay/channel-details";
+import { shownChatTitle } from "./shown-title";
 import styles from "./SoloChatTitle.module.css";
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -31,7 +32,7 @@ const character = {
 
 /** Key by chat id at the call site: renames animate, navigation starts at rest. */
 export function SoloChatTitle({
-  title,
+  title: name,
   channelId,
   details,
 }: {
@@ -41,8 +42,10 @@ export function SoloChatTitle({
 }) {
   const reducedMotion = useReducedMotion();
   const localRename = channelId
-    ? details?.localRename?.(channelId, title)
+    ? details?.localRename?.(channelId, name)
     : undefined;
+  // A name another client took from a first message's source reads as a title.
+  const title = shownChatTitle(name);
   const [presenceKey, setPresenceKey] = useState(localRename);
   // Start a new presence group at rest for this editor's save. Keep its key
   // for the next incoming title so that title can still animate.

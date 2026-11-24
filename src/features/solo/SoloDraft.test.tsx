@@ -2528,6 +2528,30 @@ it("uploads files as soon as they are attached to a new chat, then sends them", 
   ).toEqual([]);
 });
 
+it("names a new chat that says nothing but its source link after the file it attaches", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  const uploadForNewChat = vi.fn(async () => notes);
+  Object.assign(test.session, { attachments: { uploadForNewChat } });
+  writeView(
+    "test",
+    "solo:new-draft",
+    taggedDraft(`buzz://message?channel=design&id=${"c".repeat(64)}`),
+  );
+  render(
+    <SoloDraft session={test.session} scope="test" onStarted={onStarted} />,
+  );
+  await user.upload(
+    screen.getByLabelText("Choose attachments"),
+    new File(["notes"], "notes.txt", { type: "text/plain" }),
+  );
+  await waitFor(() => expect(uploadForNewChat).toHaveBeenCalledOnce());
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.channelWrites.create.mock.calls[0]?.[1]).toBe("Attachment");
+});
+
 it("a file dropped anywhere on the new chat page attaches to its composer", async () => {
   const test = setup();
   const uploadForNewChat = vi.fn(async () => notes);

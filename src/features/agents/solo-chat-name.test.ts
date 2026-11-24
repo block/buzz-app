@@ -427,3 +427,39 @@ it("an agent tag without a caption retains the session-card starting title", asy
     }),
   ).toBe("Session: Fix");
 });
+
+it("names a chat that still has the title its media-only first message gave it", async () => {
+  const url = `https://relay.example/media/${"d".repeat(64)}.mp4`;
+  const sent = {
+    ...event,
+    content: `@Agent\n\n![video](${url})`,
+    tags: [
+      ["h", "chat"],
+      ["p", first],
+      ["imeta", `url ${url}`, "m video/mp4"],
+    ],
+  } as unknown as RelayEvent;
+  // This client's title, an earlier one's, and one stored as the source.
+  for (const starting of ["Video", "Chat", `![video](${url})`.slice(0, 80)]) {
+    let name = starting;
+    const relay = connection(() => ({
+      status: "ready",
+      viewer: owner,
+      session: {
+        channels: soloChannels,
+        read: async () => [sent],
+        profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
+        agentChoices: { snapshot: () => ({ identities: [] }) },
+        channelDetails: {
+          available: true,
+          load: async () => ({ name, canEdit: true }),
+          save: async (_base: unknown, draft: { name: string }) => {
+            name = draft.name;
+          },
+        },
+      },
+    }));
+    await nameSoloChat(relay, owner, first, sent, "Review the clip");
+    expect(name, starting).toBe("Review the clip");
+  }
+});

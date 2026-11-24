@@ -1,6 +1,7 @@
 import type { RelayData } from "../relay/service";
 import type { RelayEvent } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
+import { parseAttachments } from "../relay/fold";
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { profileMentionParts } from "../messages/profile-mentions";
 import { profileKey } from "../profiles/target";
@@ -125,7 +126,12 @@ export async function nameSoloChat(
   if (
     base.labels?.includes(SOLO_NAMED_LABEL) ||
     base.name === name ||
-    !isStartingChatTitle(base.name, { text: original.content, recipients })
+    !isStartingChatTitle(
+      base.name,
+      { text: original.content, recipients },
+      // What the message attached, so a title that names it is recognized.
+      parseAttachments(original, []),
+    )
   )
     return skip("chat already renamed");
   await details.save(base, { ...base, name });

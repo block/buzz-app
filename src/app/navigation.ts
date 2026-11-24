@@ -330,16 +330,21 @@ export function useAppNavigation(
     attempt: OpenAttempt;
     presentation: ReturnType<AppServices["navigationHost"]["request"]>;
   }>(undefined);
+  const messageAddress =
+    state.entry.target.kind === "conversation"
+      ? (state.attempt.address ?? state.entry.target)
+      : state.entry.target;
   const replayingMessage = (retained: typeof workspace.current) =>
     !!retained?.owner.attempt.address &&
     !!retained.owner.page &&
+    retained.owner.attempt.entry.target.kind === "page" &&
     pages.includes(retained.owner.page) &&
     retained.owner.attempt.entry.id === state.entry.id &&
-    targetKey(retained.owner.attempt.address) === targetKey(state.entry.target);
+    targetKey(retained.owner.attempt.address) === targetKey(messageAddress);
   // Keep the page hidden during a same-visit readmission, including a return
   // from Settings, and restore it only if the same route is offered again.
   const parkedWorkspace =
-    state.status === "opening" && !failure && isMessageLink(state.entry.target)
+    state.status === "opening" && !failure && isMessageLink(messageAddress)
       ? [workspace.current, parked.current?.workspace].find(replayingMessage)
       : undefined;
   const parkedFromSettings = parkedWorkspace
@@ -348,7 +353,9 @@ export function useAppNavigation(
       : !!settingsView.current
     : false;
   const offered =
-    owner.attempt.address && targetKey(owner.attempt.entry.target);
+    owner.attempt.address &&
+    owner.attempt.entry.target.kind === "page" &&
+    targetKey(owner.attempt.entry.target);
   const carriedProjection =
     workspace.current?.owner.attempt.id === owner.attempt.id &&
     workspace.current.owner.page === owner.page
@@ -430,15 +437,18 @@ export function useAppNavigation(
       workspace.current = undefined;
     }
     const visitTarget = owner.attempt.entry.target;
+    const inline = visitTarget.kind === "conversation" && !!visitTarget.inline;
+    const source = (inline && owner.attempt.address) || visitTarget;
     const link =
-      visitTarget.kind === "conversation" &&
-      visitTarget.messageLink &&
-      !visitTarget.context &&
-      !visitTarget.panel &&
-      !visitTarget.detail &&
-      !visitTarget.forward &&
-      !visitTarget.join
-        ? visitTarget
+      source.kind === "conversation" &&
+      source.messageLink &&
+      !source.context &&
+      !source.panel &&
+      !source.detail &&
+      !source.forward &&
+      !source.layer &&
+      !source.join
+        ? source
         : undefined;
     function valid() {
       // Check exact registration identity at use time, before eventual React cleanup.
@@ -482,6 +492,9 @@ export function useAppNavigation(
             .some((page) => page.route?.resolveMessageLink),
         // Leave time for the ordinary reader to commit its reveal.
         remaining,
+        projectInline: (target) =>
+          services.navigationHost.resolve(owner.attempt, target, true),
+        ...(inline && { inlineFallback: visitTarget }),
         async run(root, verified, signal) {
           const connection = services.relay.snapshot();
           const channels = connection.session.channels;

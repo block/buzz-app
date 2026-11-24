@@ -692,6 +692,7 @@ export function createNavigationController(
     complete(
       attempt: OpenAttempt,
       result: Extract<OpenResult, { status: "opened" | "failed" }>,
+      address?: OpenTarget,
     ) {
       return transaction(() => {
         if (
@@ -701,6 +702,15 @@ export function createNavigationController(
           (!active.pending && !active.late)
         )
           return false;
+        if (address) {
+          // Commit an ordinary fallback after its reader declines the offer.
+          resolving = active;
+          try {
+            history.resolve(address);
+          } finally {
+            resolving = undefined;
+          }
+        }
         // A kept page may still answer after its deadline, either way.
         finish(active, result, "answer");
         return true;

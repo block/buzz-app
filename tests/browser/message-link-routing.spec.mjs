@@ -62,6 +62,7 @@ async function links(page, app) {
     href("alpha", plain.id),
     href("beta", reply.id),
     `${href("alpha", root.id)}&thread=${root.id}`,
+    `${href("alpha", reply.id)}&thread=${root.id}`,
   ];
   const source = app.append(
     "primary",
@@ -436,4 +437,138 @@ test("a verified reply still reveals while a legacy thread read withholds its ro
   } finally {
     read.release();
   }
+});
+
+test.describe("Inline thread placement", () => {
+  test.use({ threadPlacement: "inline" });
+
+  const sheet = (page) =>
+    page.locator("[data-details-sheet-surface]").filter({
+      has: page.getByRole("heading", { name: "Thread", exact: true }),
+    });
+  const dismiss = (page) =>
+    sheet(page)
+      .getByRole("button", { name: "Close", exact: true })
+      .first()
+      .click();
+
+  test("an admitted inline link preserves its visit and restores draft and focus from Settings", async ({
+    page,
+    app,
+  }) => {
+    const { root, reply, activate } = await links(page, app);
+    const source = (await state(page)).entry.id;
+    await activate(4);
+    await expect(destination(page)).toBeVisible();
+    const id = (await state(page)).entry.id;
+    const address = page.url();
+    const proof = {
+      scope: scope(app),
+      channelId: "alpha",
+      messageId: reply.id,
+      threadRootId: root.id,
+    };
+    expect(await offers(page)).toEqual([proof]);
+    await page.evaluate((target) => window.fixtureNavigation.open(target), {
+      version: 1,
+      kind: "conversation",
+      ...proof,
+      messageLink: true,
+    });
+    await expect(destination(page)).toBeVisible();
+    expect((await state(page)).entry.id).toBe(id);
+    expect(page.url()).toBe(address);
+
+    const draft = page.getByRole("textbox", { name: "Destination draft" });
+    await draft.fill("Keep the draft");
+    await draft.focus();
+    await page.evaluate(() => {
+      void window.fixtureNavigation.open({ version: 1, kind: "settings" });
+    });
+    await expect(page.getByRole("dialog", { name: "Settings" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(draft).toHaveValue("Keep the draft");
+    await expect(draft).toBeFocused();
+    expect((await state(page)).entry.id).toBe(id);
+    expect(await offers(page)).toEqual([proof, proof, proof]);
+
+    await page.goBack();
+    await expect.poll(async () => (await state(page)).entry.id).toBe(source);
+    await expect(destination(page)).toHaveCount(0);
+    await page.goForward();
+    await expect(destination(page)).toBeVisible();
+    expect((await state(page)).entry.id).toBe(id);
+    expect(page.url()).toBe(address);
+    expect(await offers(page)).toEqual([proof, proof, proof, proof]);
+  });
+
+  test("declined and disabled offers keep the ordinary inline address and reveal", async ({
+    page,
+    app,
+  }) => {
+    const { root, reply, activate } = await links(page, app);
+    await page.evaluate(() => {
+      window.fixtureMessageLinks.mode = "decline";
+    });
+    const linked = sheet(page).locator(row(page, reply.id));
+    await activate(4);
+    await expect(linked).toBeVisible();
+    await expect.poll(async () => (await state(page)).status).toBe("opened");
+    expect((await state(page)).entry.target).toMatchObject({
+      inline: root.id,
+      inlineMessage: reply.id,
+    });
+    const address = page.url();
+    expect(await offers(page)).toHaveLength(1);
+    await page.goBack();
+    await expect(sheet(page)).toHaveCount(0);
+    await page.goForward();
+    await expect(linked).toBeVisible();
+    expect(await offers(page)).toHaveLength(1);
+
+    await dismiss(page);
+    await openSettings(page);
+    await selectSettingsSection(page, "Manage plugins");
+    await setPluginEnabled(page, "Message link fixture", false);
+    await closeSettings(page);
+    await activate(4);
+    await expect(linked).toBeVisible();
+    expect(page.url()).toBe(address);
+    expect(await offers(page)).toHaveLength(1);
+  });
+
+  test("closing an inline thread cancels the pending offer and retires its visit", async ({
+    page,
+    app,
+  }) => {
+    await page.clock.install();
+    const { activate } = await links(page, app);
+    await page.evaluate(() => {
+      window.fixtureMessageLinks.mode = "hold";
+    });
+    await pauseClock(page);
+    try {
+      await activate(4);
+      // Let the sheet mount its reader before waiting for the offer.
+      await page.clock.runFor(50);
+      await expect
+        .poll(() => page.evaluate(() => !!window.fixtureMessageLinks.release))
+        .toBe(true);
+      await dismiss(page);
+      await expect(sheet(page)).toHaveCount(0);
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.fixtureMessageLinks.signal.reason?.name),
+        )
+        .toBe("AbortError");
+    } finally {
+      await page.clock.resume();
+      await page.evaluate(() => window.fixtureMessageLinks.release?.());
+    }
+    await expect(destination(page)).toHaveCount(0);
+    await page.goBack();
+    await page.goForward();
+    await expect(sheet(page)).toHaveCount(0);
+    expect(await offers(page)).toHaveLength(1);
+  });
 });

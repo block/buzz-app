@@ -55,13 +55,14 @@ type MessageLinkOffer = (
 type OfferSource = {
   available(): boolean;
   remaining(): number;
+  projectInline(target: OpenTarget): boolean;
+  inlineFallback?: OpenTarget;
   run: MessageLinkOffer;
 };
 const messageLinkOffers = new WeakMap<PageNavigation, OfferSource>();
 /** Only the bundled conversation readers receive a session-bound offer. */
 export function messageLinkOffer(request: PageNavigation | undefined) {
-  const offer = request && messageLinkOffers.get(request);
-  return offer?.available() ? offer : undefined;
+  return request && messageLinkOffers.get(request);
 }
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -159,7 +160,9 @@ export function provideNavigation(
               completion = result;
               return false;
             }
-            const accepted = current() && controller.complete(active, result);
+            const accepted =
+              current() &&
+              controller.complete(active, result, messageLink?.inlineFallback);
             if (accepted) completion = result;
             return accepted;
           },
@@ -285,6 +288,8 @@ function bindPresentation(
         messageLinkOffers.set(bound.request, {
           available: messageLink.available,
           remaining: messageLink.remaining,
+          projectInline: (target) =>
+            !bound.request.signal.aborted && messageLink.projectInline(target),
           run: (root, verified, signal) =>
             messageLink.run(
               root,

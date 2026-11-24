@@ -7,7 +7,8 @@ export function useMessageLinkOffer(
   verifiedRoot: () => string | undefined,
   checking = false,
 ) {
-  const offer = messageLinkOffer(navigation);
+  const source = messageLinkOffer(navigation);
+  const offer = source?.available() ? source : undefined;
   const [settled, setSettled] = useState<typeof offer>();
   const hasTime = !!offer?.remaining();
   const root = hasTime ? verifiedRoot() : undefined;

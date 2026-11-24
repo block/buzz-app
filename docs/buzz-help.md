@@ -317,8 +317,9 @@ minute. If that prompt is declined, or left unanswered for a minute, those
 alerts are dropped, macOS reports notifications as off and Buzz cannot ask
 again: turn them on in macOS **System Settings → Notifications → Buzz**. In
 Buzz, **Settings → Notifications → Allow notifications** works only while
-macOS has never been asked. Windows and Linux have no permission prompt, and a
-browser asks only from Settings.
+macOS has never been asked. **Check permission** shows the current permission
+in Buzz without sending a test alert. Windows and Linux have no permission
+prompt, and a browser asks only from Settings.
 
 ### Huddle voice isn't working
 

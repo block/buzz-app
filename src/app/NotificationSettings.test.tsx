@@ -387,13 +387,13 @@ it("cleans up the preview when playback rejects", async () => {
   await act(async () => reject(new Error("blocked")));
   expect(audios[0]?.close).toHaveBeenCalledOnce();
 });
-it("keeps an explicit permission check focused and busy until the native read finishes", async () => {
+it("keeps the permission check focused and reports its result even when permission is unchanged", async () => {
   const ctx = new Context();
   contexts.push(ctx);
   const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
   ctx.effect(() => () => runtime.dispose());
   const permission = vi.fn(
-    async (): Promise<NotificationPermission> => "default",
+    async (): Promise<NotificationPermission> => "granted",
   );
   const service = new NotificationsService(
     ctx,
@@ -408,9 +408,13 @@ it("keeps an explicit permission check focused and busy until the native read fi
   );
   await service.refreshPermission();
   vi.useFakeTimers();
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
   render(<NotificationSettings notifications={service} />, {
     wrapper: ToastProvider,
   });
+  expect(
+    screen.queryByText("Notification permission is on."),
+  ).not.toBeInTheDocument();
   let resolve!: (value: NotificationPermission) => void;
   permission.mockImplementationOnce(
     () =>
@@ -430,13 +434,14 @@ it("keeps an explicit permission check focused and busy until the native read fi
   expect(button).toHaveFocus();
   await act(() => vi.advanceTimersByTimeAsync(1000));
   expect(button).toHaveAttribute("aria-busy", "true");
+  expect(
+    screen.queryByText("Notification permission is on."),
+  ).not.toBeInTheDocument();
   await act(async () => resolve("granted"));
+  await act(() => vi.advanceTimersByTimeAsync(0));
   expect(button).not.toHaveAttribute("aria-busy", "true");
   expect(button).toHaveFocus();
-  expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Allow notifications" }),
-  ).not.toBeInTheDocument();
+  expect(screen.getByText("Notification permission is on.")).toBeVisible();
 });
 it("the permission check never sends the automatic request; the next window focus still does", async () => {
   const ctx = new Context();

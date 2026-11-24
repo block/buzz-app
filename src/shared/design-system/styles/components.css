@@ -2619,10 +2619,10 @@
     outline-offset: 2px;
   }
 
-  /* Dialog autofocus identifies what Enter will press, even after pointer entry.
-     Keep that focus indicator separate from the button's action hierarchy. */
+  /* A focused action in a confirmation or form dialog shows what Enter will
+     press. Navigation dialogs use the app's keyboard focus treatment. */
   html[data-keyboard-navigation] .buzz-button:focus-visible,
-  .buzz-dialog .buzz-button:focus {
+  .buzz-dialog:not([data-navigation]) .buzz-button:focus {
     outline: 2px solid var(--border-focus);
     /* Fit the existing 4px focus allowance in scrolling dialog footers. */
     outline-offset: 2px;

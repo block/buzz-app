@@ -398,8 +398,31 @@ export function apply(ctx: Context) {
     await writeFile(
       join(dir, "plugin-status-consumer.ts"),
       `
-import type { Context } from "@buzz/author";
+import type {
+  Context,
+  PluginInstallationArtifactHash,
+  PluginInstaller,
+} from "@buzz/author";
+type OptionalArtifactHash = {} extends Pick<
+  PluginInstaller,
+  "getInstallationArtifactHash"
+>
+  ? true
+  : false;
+const artifactHashRemainsOptional: OptionalArtifactHash = true;
+const availableHash: PluginInstallationArtifactHash = {
+  status: "available",
+  sha256: "a".repeat(64),
+};
+const absentHash: PluginInstallationArtifactHash = { status: "absent" };
+const unavailableHash: PluginInstallationArtifactHash = { status: "unavailable" };
 export function observePlugin(ctx: Context) {
+  const installer = ctx.reflect.get("pluginInstaller");
+  const hash = installer?.getInstallationArtifactHash?.("example.plugin");
+  if (hash?.status === "available") {
+    const sha256: string = hash.sha256;
+    void sha256;
+  }
   const owner = ctx.pluginOwner;
   if (!owner) return;
   const id: string = owner.id;
@@ -415,7 +438,15 @@ export function observePlugin(ctx: Context) {
     isActive: () => true,
     subscribe: () => () => {},
   };
-  void [active, settled, withoutReadiness];
+  void [
+    active,
+    settled,
+    withoutReadiness,
+    artifactHashRemainsOptional,
+    availableHash,
+    absentHash,
+    unavailableHash,
+  ];
   // @ts-expect-error A revision is a string, not a generation number.
   ctx.pluginStatus.isActive(id, 1);
   // @ts-expect-error Subscription requires a callback.

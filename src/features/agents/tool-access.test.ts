@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { sessionTools } from "../../buzz-mcp/session-tools";
 import {
   buzzToolAllowed,
+  isCodexBuzzTool,
   classifiedBuzzTool,
   goosePlatform,
   hookedToolName,
@@ -192,4 +193,12 @@ it("covers Pi 1.5's concrete CodingTools names", () => {
     ["bash", "native:shell"],
   ] as const)
     expect(nativeCapability(name)).toBe(capability);
+});
+
+it("leaves Codex's Buzz dynamic tools to the Buzz MCP server's own gate", () => {
+  const buzz = sessionTools().map((tool) => tool.name);
+  expect(isCodexBuzzTool("buzzsend", buzz)).toBe(true);
+  expect(isCodexBuzzTool("buzzmem_set", buzz)).toBe(true);
+  expect(isCodexBuzzTool("buzzdelete_everything", buzz)).toBe(false);
+  expect(isCodexBuzzTool("exec_command", buzz)).toBe(false);
 });

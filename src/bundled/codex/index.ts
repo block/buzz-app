@@ -1,6 +1,8 @@
 import { nativeHookOutput } from "../hook-output";
+import { sessionTools } from "../../buzz-mcp/session-tools";
 import {
   hookedToolName,
+  isCodexBuzzTool,
   missingToolPolicyDenial,
   nativeToolDenial,
 } from "../../features/agents/tool-access";
@@ -73,7 +75,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
             const configured = ctx.agents
               .snapshot()
               .running.find((item) => item.key === agent);
-            const name = hookedToolName(input) ?? "";
+            const hooked = hookedToolName(input) ?? "";
+            const buzz = sessionTools(ctx.agents.tools()).map(
+              (tool) => tool.name,
+            );
+            const name = isCodexBuzzTool(hooked, buzz) ? "" : hooked;
             const denied = configured
               ? nativeToolDenial("codex", event, name, configured.config)
               : missingToolPolicyDenial("codex", event, name);

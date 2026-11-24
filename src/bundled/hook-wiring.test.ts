@@ -73,6 +73,7 @@ it.each(["claude", "codex", "pi"] as const)(
         subscribe: () => () => {},
         snapshot: () => ({ status: "ready", running: [] }),
         dispatchHook,
+        tools: () => [],
       },
       settingsCards: { register: vi.fn() },
       agentProtection: { registerModels: vi.fn() },

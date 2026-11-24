@@ -355,6 +355,12 @@ function allows(policy: ToolPolicy, ids: readonly string[]) {
 
 /** Maps each harness's native spelling to a capability. Buzz's own MCP tools
  * are always available and are not subject to this native capability policy. */
+/** Codex names a Buzz dynamic tool by its namespace and name joined, as
+ * `buzzsend`; the Buzz MCP server gates those calls by the role itself. */
+export function isCodexBuzzTool(name: string, buzzTools: readonly string[]) {
+  return name.startsWith("buzz") && buzzTools.includes(name.slice(4));
+}
+
 export function isBuzzNativeTool(name: string) {
   const normalized = name.toLowerCase();
   return (

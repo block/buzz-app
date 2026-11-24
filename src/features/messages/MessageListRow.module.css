@@ -179,14 +179,12 @@
 }
 
 /* A list that marks unread by weight alone: unread rows are medium on the
-   name and the message, and read rows are normal throughout. The dot stays
+   name and the message, never the place, and read rows are normal throughout. The dot stays
    for assistive technology and as Mark as read's place, but is not drawn. */
 [data-unread-emphasis="weight"] .sender {
   font-weight: var(--type-weight-normal);
 }
-[data-unread-emphasis="weight"]
-  .content[data-unread]
-  :is(.sender, .source, .preview) {
+[data-unread-emphasis="weight"] .content[data-unread] :is(.sender, .preview) {
   font-weight: var(--type-weight-medium);
 }
 [data-unread-emphasis="weight"] .unreadDot {

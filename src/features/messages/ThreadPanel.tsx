@@ -72,6 +72,13 @@ import styles from "./Messages.module.css";
 import { Reading, readingPositioned } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import { usePendingRequest } from "./use-pending-request";
+import {
+  replyTarget,
+  retireReplyTarget,
+  setReplyTarget,
+  threadDraftKey,
+  useReplyTarget,
+} from "./reply-target";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -755,7 +762,17 @@ function ThreadMessages({
       setExpandedActivity((current) => new Set([...current, ...ids]));
   }, [messageId, navigation?.signal, revealRequest, snapshot.replies, tree]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [replyParent, setReplyParent] = useState<string>();
+  // The reply this thread's draft is aimed at is kept with that draft, under
+  // the key the reply box saves it by, so it follows the thread from an
+  // inline sheet to its tab and through a close and reopen.
+  const targetKey = snapshot.root
+    ? threadDraftKey(
+        channelId,
+        snapshot.root.id,
+        subthreadId ? snapshot.root.threadRootId : undefined,
+      )
+    : undefined;
+  const replyParent = useReplyTarget(session, scope, targetKey);
   const resolveName = useChannelIdentityNames(session, channelId);
   const senderName = (row: ChannelMessage) => {
     const id = row.workflowOwnerId ?? row.authorId;
@@ -1309,16 +1326,34 @@ function ThreadMessages({
     }
   }, [joining, channelAccess, active]);
   const focusReply = useCallback(() => {
-    setReplyParent(undefined);
+    if (targetKey) setReplyTarget(session, scope, targetKey, undefined);
     setReplyFocus((value) => value + 1);
-  }, []);
-  const targetReply = useCallback((id: string) => {
-    setReplyParent((current) => (current === id ? undefined : id));
-    setReplyFocus((value) => value + 1);
-  }, []);
+  }, [session, scope, targetKey]);
+  const targetReply = useCallback(
+    (id: string) => {
+      if (targetKey)
+        setReplyTarget(
+          session,
+          scope,
+          targetKey,
+          replyTarget(session, scope, targetKey) === id ? undefined : id,
+        );
+      setReplyFocus((value) => value + 1);
+    },
+    [session, scope, targetKey],
+  );
   useEffect(() => {
-    if (replyRequest) focusReply();
-  }, [replyRequest, focusReply]);
+    if (replyRequest) setReplyFocus((value) => value + 1);
+  }, [replyRequest]);
+  // A reply request answers the thread itself, so it drops a target kept
+  // from before: once per request, when the root has named where it is kept.
+  const untargeted = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!replyRequest || !targetKey || untargeted.current === replyRequest)
+      return;
+    untargeted.current = replyRequest;
+    setReplyTarget(session, scope, targetKey, undefined);
+  }, [replyRequest, session, scope, targetKey]);
   useEffect(() => {
     if (focusRequest) setReplyFocus((value) => value + 1);
   }, [focusRequest]);
@@ -2182,6 +2217,14 @@ function ThreadMessages({
     });
   }
   const selectedParent = snapshot.replies.find((row) => row.id === replyParent);
+  // A target kept from an earlier reader is judged once this one has read the
+  // thread. Until then the reply box waits: it neither says the target is
+  // gone nor sends to it.
+  const targetMissing =
+    !!replyParent &&
+    !selectedParent &&
+    (snapshot.status === "ready" || snapshot.status === "error") &&
+    !snapshot.resumed;
   // The banner's one line about its target. `plainText` flattens CommonMark,
   // replaces control characters and cuts the result at 200 characters; GFM
   // that the row renders (strikethrough, tables, task-list boxes) still
@@ -2584,7 +2627,7 @@ function ThreadMessages({
             (!!replyParent && !selectedParent)
           }
           replyContext={
-            replyParent && !selectedParent ? (
+            targetMissing ? (
               <div className={styles.replyContext}>
                 <span>Reply target is no longer available.</span>
                 <Button size="sm" onClick={focusReply}>
@@ -2640,9 +2683,8 @@ function ThreadMessages({
                   ]),
               );
             // A background send may publish after the user picked a new target.
-            setReplyParent((current) =>
-              current === replyParent ? undefined : current,
-            );
+            if (targetKey)
+              retireReplyTarget(session, scope, targetKey, replyParent);
             setSent(id);
           }}
         />

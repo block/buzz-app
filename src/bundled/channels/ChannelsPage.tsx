@@ -42,6 +42,10 @@ import {
   type PanelLayer as PanelLayerAddress,
 } from "../../features/messages/view-layer";
 import { LayerReader } from "../../features/messages/LayerReader";
+import {
+  setReplyTarget,
+  threadDraftKey,
+} from "../../features/messages/reply-target";
 import { type InlineHost, inlineMedia, placeIn } from "./placement";
 import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
 import type { Seen } from "../../features/seen/service";
@@ -1982,6 +1986,15 @@ function ChannelWorkspace({
           hasThreadTab(channelId, threadRootId),
         ) === "inline"
       ) {
+        // Reply on a row answers its thread, so a reply the thread's draft
+        // was aimed at before is dropped, as a tab's reply request drops it.
+        if (intent === "reply")
+          setReplyTarget(
+            queries,
+            scope,
+            threadDraftKey(channelId, threadRootId),
+            undefined,
+          );
         if (target.inline !== threadRootId)
           void navigator.open({
             version: 1,
@@ -2026,6 +2039,7 @@ function ChannelWorkspace({
     [
       navigator,
       viewer,
+      queries,
       scope,
       open,
       setSettings,
@@ -2058,13 +2072,14 @@ function ChannelWorkspace({
     if (dismissal) navigator.dismiss(dismissal.visits, dismissal.fallback);
   };
   // Move to side panel hands the thread over: its tab opens in place of its
-  // inline visits. The draft is keyed by thread, so it follows.
+  // inline visits. The draft is keyed by thread, so it follows, and the reply
+  // it is aimed at is kept with it: the tab focuses the reply box as it is.
   const moveInlineToTab = (rootId: string) => {
     const target = navigator?.snapshot().entry.target;
     const dismissal = inlineToTab(target, rootId);
     if (!dismissal || target?.kind !== "conversation") return;
     tabState.leaveVisit();
-    tabState.openThreadTab(target.channelId, rootId, rootId, "reply", "side");
+    tabState.openThreadTab(target.channelId, rootId, rootId, "focus", "side");
     navigator.dismiss(dismissal.visits, dismissal.fallback);
   };
   // A layer (details or a panel) opens over the composer of the view it was
@@ -2079,12 +2094,14 @@ function ChannelWorkspace({
     [navigator],
   );
   /** ✕, Escape or a send: the layer's visits retire, and what was under it
-   * stays. `fallback` lands somewhere else instead, as Open as tab does. */
+   * stays. `fallback` lands somewhere else instead, as Open as tab does.
+   * `only` names the layer meant, and closes nothing once another is open. */
   const dismissLayer = useCallback(
-    (fallback?: OpenTarget) => {
+    (fallback?: OpenTarget, only?: OpenLayer) => {
       const dismissal = layerDismissal(
         navigator?.snapshot().entry.target,
         fallback,
+        only,
       );
       if (navigator && dismissal)
         navigator.dismiss(dismissal.visits, dismissal.fallback);
@@ -2210,7 +2227,7 @@ function ChannelWorkspace({
               rootId: layerTarget.rootId,
             }),
       show: showLayer,
-      dismiss: () => dismissLayer(),
+      dismiss: (layer) => dismissLayer(undefined, layer),
       renderPanel: (layer) => renderLayerRef.current(layer),
     };
   }, [navigator, layerTarget, layerChannel, showLayer, dismissLayer]);

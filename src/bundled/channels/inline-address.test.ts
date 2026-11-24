@@ -123,5 +123,13 @@ describe("inline address", () => {
       conversation,
     );
     expect(layerDismissal(inline)).toBeUndefined();
+    // A send made under details A is still publishing when the reader opens
+    // details B: its closing names A, so B stays open.
+    const a = { channelId: "alpha", messageId: root };
+    const b = { channelId: "alpha", messageId: reply };
+    const overA = layerVisit(conversation, a);
+    const overB = layerVisit(conversation, b);
+    expect(layerDismissal(overA, undefined, a)?.visits(overA)).toBe(true);
+    expect(layerDismissal(overB, undefined, a)).toBeUndefined();
   });
 });

@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { hoverMessage } from "./message-actions.mjs";
 import { clickRow, open, settle } from "./timeline.mjs";
 
 // Browser-only: the inline thread and details are dialogs on the conversation
@@ -322,13 +323,24 @@ test.describe("Inline", () => {
     await expect(detailsSheet(page)).toHaveCount(0);
   });
 
-  test("Move to side panel hands the thread and its draft to a tab", async ({
+  test("Move to side panel hands the thread, its draft and the reply it answers to a tab", async ({
     page,
     app,
   }) => {
     await open(page, app);
     const [root] = roots(app);
     await clickRow(page, viewThread(page, root));
+    await expect(reply(sheet(page))).toBeFocused();
+    // The draft is aimed at a reply, not at the thread.
+    const parent = sheet(page)
+      .locator("[data-message-id]")
+      .filter({ hasText: "Unread reply 0" });
+    const parentId = await parent.getAttribute("data-message-id");
+    await hoverMessage(parent);
+    await parent.getByRole("button", { name: "Reply", exact: true }).click();
+    await expect(
+      sheet(page).getByRole("button", { name: "Cancel reply target" }),
+    ).toBeVisible();
     await expect(reply(sheet(page))).toBeFocused();
     await page.keyboard.type("Half-written reply");
     await sheet(page)
@@ -337,6 +349,9 @@ test.describe("Inline", () => {
     await expect(sheet(page)).toHaveCount(0);
     await expect(threadTab(page, root)).toBeVisible();
     await expect(reply(side(page))).toHaveText("Half-written reply");
+    await expect(
+      side(page).getByRole("button", { name: "Cancel reply target" }),
+    ).toBeVisible();
     // The handoff retired the inline visit: Back never shows both.
     await page.goBack();
     await expect(sheet(page)).toHaveCount(0);
@@ -348,6 +363,18 @@ test.describe("Inline", () => {
     );
     await expect(sheet(page)).toHaveCount(0);
     await expect(reply(side(page))).toHaveText("Half-written reply");
+    // Sent from the tab, the draft still answers the reply it was aimed at.
+    await reply(side(page)).press("Enter");
+    await expect
+      .poll(() =>
+        app.report.publications
+          .find(({ event }) => event?.content === "Half-written reply")
+          ?.event.tags.filter(([key]) => key === "e"),
+      )
+      .toEqual([
+        ["e", root.id, "", "root"],
+        ["e", parentId, "", "reply"],
+      ]);
   });
 
   // On a cold start the open channel is listed from saved membership until

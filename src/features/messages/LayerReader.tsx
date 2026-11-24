@@ -37,7 +37,7 @@ function Layer({ open }: { open: OpenLayer }) {
   if (!address || !view) return null;
   const host = dock ? composerHost(view.handle) : null;
   const onOpenChange = (next: boolean) => {
-    if (!next) address.dismiss();
+    if (!next) address.dismiss(open);
   };
   if (open.target === undefined)
     return (

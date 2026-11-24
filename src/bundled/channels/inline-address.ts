@@ -141,14 +141,28 @@ export function layerVisit(
 }
 
 /** ✕, Escape or a send on the layer: its visits retire, and what was under
- * it stays, or `fallback` takes their place, as Open as tab does. */
+ * it stays, or `fallback` takes their place, as Open as tab does. A closing
+ * that names the layer it means (`only`) does nothing once another is open:
+ * a send that was waiting never closes what the reader opened meanwhile. */
 export function layerDismissal(
   current: OpenTarget | undefined,
   fallback?: OpenTarget,
+  only?: OpenLayer,
 ): Dismissal | undefined {
   const target = conversation(current);
   if (!target?.layer) return;
   const { layer, ...under } = target;
+  if (
+    only &&
+    !(
+      layer.messageId === only.messageId &&
+      layer.target === only.target &&
+      layer.threadId === only.threadId &&
+      layer.rootId === only.rootId &&
+      (layer.channelId ?? target.channelId) === only.channelId
+    )
+  )
+    return;
   return {
     visits: (visit) =>
       sameScope(visit, target) &&

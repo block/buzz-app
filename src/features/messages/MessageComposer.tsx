@@ -25,6 +25,7 @@ import { useTypingBroadcast } from "./useTypingBroadcast";
 import { TypingIndicator } from "./TypingIndicator";
 import { useComposerDockRef, useComposerScope } from "./composer-overlay";
 import { LayerAddressContext, layerInView } from "./view-layer";
+import { retireReplyTarget, threadDraftKey } from "./reply-target";
 import { useEffectEvent } from "react";
 import { useMessageEditScope } from "./MessageEditScope";
 import { selectNewestMessage } from "./message-selection";
@@ -647,13 +648,10 @@ function Composer({
   );
   const inputId = useId();
   const forwardDisclosureId = useId();
-  const threadDraftKey = threadRootId
-    ? sourceRootId
-      ? `draft:${channelId}:thread:${sourceRootId}:subthread:${threadRootId}`
-      : `draft:${channelId}:thread:${threadRootId}`
+  const threadKey = threadRootId
+    ? threadDraftKey(channelId, threadRootId, sourceRootId)
     : undefined;
-  const draftKey =
-    submission?.draftKey ?? threadDraftKey ?? `draft:${channelId}`;
+  const draftKey = submission?.draftKey ?? threadKey ?? `draft:${channelId}`;
   const [admitting, setAdmitting] = useState(false);
   const admission = useRef(false);
   const live = useRef(true);
@@ -3587,6 +3585,13 @@ function Composer({
       }
       // Every prompt passed, so this message goes out to who was declined.
       oldAgents.decline(declinedImports);
+      // The reader keeps the reply this draft is aimed at beside the draft. A
+      // send that lands once this composer is gone, where its reader cannot
+      // hear of it, still answers that reply.
+      const answered = () => {
+        if (threadKey)
+          retireReplyTarget(session, scope, threadKey, replyParentId);
+      };
       // Destination and content are fixed here; a background send never retargets.
       function publishNow(
         uploaded: readonly UploadedAttachment[],
@@ -3782,6 +3787,7 @@ function Composer({
               return send.publish(recovery);
             },
             onSend: (id) => {
+              answered();
               if (live.current) onSend?.(id);
             },
           },
@@ -3823,6 +3829,7 @@ function Composer({
             // Report a synchronous publication before the new row can render.
             const result = publish(uploaded);
             const sent = typeof result === "string" ? result : await result;
+            if (sent) answered();
             if (sent && live.current) onSend?.(sent);
           },
           (files, preparationError) => {
@@ -3928,12 +3935,15 @@ function Composer({
       recoveryFor(session).set(recoveryKey, pending);
       setAccepted(pending);
       // A send answers the details read over this composer, as ✕ closes them.
+      // It names the details it was sent under: by now the reader may have
+      // opened another layer, which stays.
+      const details = layerAddress?.open;
       if (
         composerView &&
-        layerAddress?.open?.messageId &&
-        layerInView(layerAddress.open, channelId, composerView)
+        details?.messageId &&
+        layerInView(details, channelId, composerView)
       )
-        layerAddress.dismiss();
+        layerAddress?.dismiss(details);
       attachments.store.clear();
       completion.invalidate();
       clearMediaTime?.();

@@ -24,8 +24,9 @@ export type PanelLayerContent = Readonly<{
 export type LayerAddress = Readonly<{
   open: OpenLayer | undefined;
   show(layer: OpenLayer): void;
-  /** Explicit close, as ✕, Escape or a send do: retires the visit. */
-  dismiss(): void;
+  /** Explicit close of `layer`, as ✕, Escape or a send do: retires its
+   * visit. Nothing closes when another layer has taken its place since. */
+  dismiss(layer: OpenLayer): void;
   /** Draws an open panel layer; the page owns its panels. */
   renderPanel(layer: PanelLayer): PanelLayerContent | undefined;
 }>;

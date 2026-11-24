@@ -414,7 +414,11 @@ export function BestieConversation({
     if (
       placeOpening(
         { kind: "thread" },
-        { hasTab: hasThreadTab(rootId), canHold: composes },
+        {
+          hasTab: hasThreadTab(rootId),
+          // An inline thread is a page visit; without one it opens a tab.
+          canHold: composes && navigation?.target.kind === "page",
+        },
       ) === "inline"
     ) {
       // Reply on a row answers its thread, so a reply the thread's draft was
@@ -448,7 +452,6 @@ export function BestieConversation({
         }),
       );
   };
-  // A thread is never inline and in a tab at once: its tab wins.
   const inlineThread =
     inline?.channelId === channel.id && composes && !hasThreadTab(inline.inline)
       ? inline.inline
@@ -466,6 +469,26 @@ export function BestieConversation({
       fallback ? bestieThreadTarget(base, fallback) : base,
     );
   };
+  /** Move to side panel, or a tab opened for the inline thread elsewhere,
+   * such as an agent's: the tab is selected in place of the inline visit. */
+  const handInlineToTab = (rootId: string, pane?: "side") => {
+    if (navigation?.target.kind !== "page" || !ownsCurrentVisit()) return;
+    state.leaveVisit();
+    state.openThreadTab(channel.id, rootId, rootId, "focus", pane);
+    dismissInline(rootId, {
+      channelId: channel.id,
+      messageId: rootId,
+      threadRootId: rootId,
+    });
+  };
+  // A thread is never inline and in a tab at once: its tab wins, shown.
+  const tabbedInline =
+    inline?.channelId === channel.id && hasThreadTab(inline.inline)
+      ? inline.inline
+      : undefined;
+  useLayoutEffect(() => {
+    if (tabbedInline) handInlineToTab(tabbedInline);
+  });
   const media = useMediaReview();
   const split = usePanelSplit(
     scope,
@@ -572,7 +595,7 @@ export function BestieConversation({
       }
     />
   );
-  const conversation = (
+  return (
     <ForwardMessageProvider
       session={session}
       scope={scope}
@@ -685,62 +708,56 @@ export function BestieConversation({
                           <ConversationPresentation
                             value={secondary.selectedMain === "conversation"}
                           >
-                            <section
-                              className={styles.work}
-                              data-attachment-drop-zone=""
-                            >
-                              <MessageManagementStatus />
-                              <ChannelBody
-                                intro={
-                                  welcome ? (
-                                    <FirstAgentWelcome
-                                      name={bestie}
-                                      picture={agent.picture}
-                                      community={community}
-                                    />
-                                  ) : undefined
-                                }
-                                viewer={session.viewer}
-                                cached={!!channel.cached}
-                                revealMessageId={sent}
-                                marksRead
-                                onOpenThread={openThread}
-                              />
-                              <ConversationComposer
-                                label={`Message ${bestie}`}
-                                shown={
-                                  secondary.selectedMain === "conversation"
-                                }
-                                focusRequest={composerFocus}
-                                onSend={setSent}
-                              />
-                              {inlineThread && (
-                                <InlineThreadSheet
-                                  key={inlineThread}
-                                  session={session}
-                                  channel={channel}
-                                  rootId={inlineThread}
-                                  tall={layer?.rootId === inlineThread}
-                                  close={() => dismissInline(inlineThread)}
-                                  moveToTab={() => {
-                                    state.leaveVisit();
-                                    state.openThreadTab(
-                                      channel.id,
-                                      inlineThread,
-                                      inlineThread,
-                                      "focus",
-                                      "side",
-                                    );
-                                    dismissInline(inlineThread, {
-                                      channelId: channel.id,
-                                      messageId: inlineThread,
-                                      threadRootId: inlineThread,
-                                    });
-                                  }}
+                            {/* The conversation and its inline thread read details
+                                over their composers. Thread tabs have no layer
+                                address, so their details and media open as they
+                                do without one. */}
+                            <LayerAddressContext value={layerAddress}>
+                              <section
+                                className={styles.work}
+                                data-attachment-drop-zone=""
+                              >
+                                <MessageManagementStatus />
+                                <ChannelBody
+                                  intro={
+                                    welcome ? (
+                                      <FirstAgentWelcome
+                                        name={bestie}
+                                        picture={agent.picture}
+                                        community={community}
+                                      />
+                                    ) : undefined
+                                  }
+                                  viewer={session.viewer}
+                                  cached={!!channel.cached}
+                                  revealMessageId={sent}
+                                  marksRead
+                                  onOpenThread={openThread}
                                 />
-                              )}
-                              <LayerReader channelId={channel.id} />
-                            </section>
+                                <ConversationComposer
+                                  label={`Message ${bestie}`}
+                                  shown={
+                                    secondary.selectedMain === "conversation"
+                                  }
+                                  focusRequest={composerFocus}
+                                  onSend={setSent}
+                                />
+                                {inlineThread && (
+                                  <InlineThreadSheet
+                                    key={inlineThread}
+                                    session={session}
+                                    channel={channel}
+                                    rootId={inlineThread}
+                                    tall={layer?.rootId === inlineThread}
+                                    close={() => dismissInline(inlineThread)}
+                                    moveToTab={() =>
+                                      handInlineToTab(inlineThread, "side")
+                                    }
+                                  />
+                                )}
+                                <LayerReader channelId={channel.id} />
+                              </section>
+                            </LayerAddressContext>
                           </ConversationPresentation>
                         ),
                       },
@@ -800,10 +817,5 @@ export function BestieConversation({
         </ConversationChannel>
       </LinkThreadTabContext>
     </ForwardMessageProvider>
-  );
-  return (
-    <LayerAddressContext value={layerAddress}>
-      {conversation}
-    </LayerAddressContext>
   );
 }

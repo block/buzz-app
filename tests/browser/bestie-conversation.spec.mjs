@@ -472,6 +472,21 @@ test.describe("Inline", () => {
     ).toBeVisible();
     await page.getByRole("button", { name: /^Close .* tab$/ }).click();
     await expect(threadTabs).toHaveCount(0);
+    // A tab an agent opens for the inline thread takes it over, shown, in
+    // place of its inline visit.
+    await viewThread.click();
+    await expect(thread).toBeVisible();
+    await page.evaluate(() => {
+      const f = window.bestieFixture;
+      f.tabs.open(f.channelId, f.rootIds[0]);
+    });
+    await expect(thread).toHaveCount(0);
+    await expect(threadTabs).toHaveAttribute("aria-selected", "true");
+    await expect(
+      page.getByRole("textbox", { name: "Reply to thread" }),
+    ).toBeVisible();
+    await page.evaluate(() => window.bestieFixture.back());
+    await expect(thread).toHaveCount(0);
 
     await page
       .locator("[data-message-id]")

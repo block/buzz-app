@@ -974,8 +974,9 @@ it("rechecks eligibility before retrying a failed DM open", async () => {
   expect(f.open).toHaveBeenCalledTimes(attempts);
 });
 
+// Mounted without a page visit, which an inline thread needs: the thread
+// opens as a tab under the default inline placement too.
 it("keeps the welcome, DM and draft mounted beside a thread and retains the reply draft while collapsing its pane", async () => {
-  setThreadPlacementPreference("side");
   const f = await fixture({ existing: true, withReply: true });
   rememberFirstAgent(f.scope, pollen);
   f.choose(pollen);

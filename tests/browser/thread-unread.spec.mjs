@@ -10,6 +10,9 @@ import {
 import { openPage } from "./navigation.mjs";
 import { channelUnread } from "./unread-state.mjs";
 
+// Each journey owns its app, relay state and browser context.
+test.describe.configure({ mode: "parallel" });
+
 test.use({
   productionBroker: true,
   readState: true,
@@ -29,7 +32,7 @@ test.describe("mentioned reply priority", () => {
     app,
   }) => {
     await holdReadingFocus(page);
-    await open(page, app);
+    await open(page, app, { cold: true });
     const alpha = page.locator('button[data-channel-id="alpha"]');
     // The open channel's row is quiet; its activity popover still lists threads.
     await expect
@@ -64,7 +67,7 @@ test.describe("mentioned reply priority", () => {
     // thread cannot earn it while it opens.
     await page.clock.install();
     await holdReadingFocus(page);
-    await open(page, app);
+    await open(page, app, { cold: true });
     const root = app.histories
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 1");
@@ -141,7 +144,7 @@ test.describe("mentioned reply priority", () => {
     // Hold the clock so the thread cannot be read before Activity opens it.
     await page.clock.install();
     await holdReadingFocus(page);
-    await open(page, app);
+    await open(page, app, { cold: true });
     const root = app.histories
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 1");
@@ -206,7 +209,7 @@ test.describe("mentioned reply priority", () => {
   }) => {
     await page.clock.install();
     await holdReadingFocus(page);
-    await open(page, app);
+    await open(page, app, { cold: true });
     const rows = app.histories.get("primary/alpha");
     const [x, t] = ["Thread root 1", "Thread root 0"].map((content) =>
       rows.find((row) => row.content === content),
@@ -280,7 +283,7 @@ test.describe("mentioned reply priority", () => {
     // As above, hold the clock so the thread cannot be read while it opens.
     await page.clock.install();
     await holdReadingFocus(page);
-    await open(page, app);
+    await open(page, app, { cold: true });
     const root = app.histories
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 1");
@@ -354,7 +357,7 @@ test.describe("mentioned reply priority", () => {
     page,
     app,
   }) => {
-    await open(page, app);
+    await open(page, app, { cold: true });
     const unread = () =>
       page.evaluate(() => {
         const { unread } = window.fixtureRelay.snapshot().session;
@@ -433,7 +436,7 @@ test("thread buttons show observed unread independently, clear only after readin
   // run the deadline exactly where the test proves reading.
   await page.clock.install();
   await holdReadingFocus(page);
-  await open(page, app);
+  await open(page, app, { cold: true });
   const roots = app.histories
     .get("primary/alpha")
     .filter((row) => row.content.startsWith("Thread root"));
@@ -473,13 +476,13 @@ test("thread buttons show observed unread independently, clear only after readin
   await openChannelDetails(page);
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
-    .getByRole("button", { name: "Mark as unread on this device", exact: true })
+    .getByRole("button", { name: "Mark as unread", exact: true })
     .click();
   await page
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
   await expect(
-    alpha.getByRole("img", { name: /Marked unread on this device only/ }),
+    alpha.getByRole("img", { name: /^Marked unread$/ }),
   ).toBeAttached();
   // Marking it unread shows the whole row again, its threads included.
   await expect(activity).toHaveAccessibleName(/unread threads?/);
@@ -556,6 +559,20 @@ test("thread buttons show observed unread independently, clear only after readin
     .click();
   await expect(alpha).toBeFocused();
   await page.clock.resume();
+  // The channel mark syncs and forces every reply unread. End only that mark
+  // before reading the threads: their own unread indications must remain.
+  await page.evaluate(() =>
+    window.fixtureRelay
+      .snapshot()
+      .session.unread.clearUnreadLocal({ kind: "channel", channelId: "alpha" }),
+  );
+  await expect(alpha.getByRole("img", { name: /^Marked unread$/ })).toHaveCount(
+    0,
+  );
+  await expect
+    .poll(async () => (await channelUnread(page, "alpha")).threads)
+    .toBe(2);
+  await expect(broadcast).toHaveAccessibleName(/Observed unread replies/);
   const beforeRect = await first.boundingBox();
   await first.hover();
   const afterRect = await first.boundingBox();
@@ -746,7 +763,7 @@ test("same-thread sidebar activity replaces timeline focus return", async ({
   app,
 }) => {
   await holdReadingFocus(page);
-  await open(page, app);
+  await open(page, app, { cold: true });
   const root = app.histories
     .get("primary/alpha")
     .find((row) => row.content === "Thread root 0");
@@ -826,7 +843,7 @@ test("opening a fitting thread reads after unchanged-row continuation without an
   app,
 }) => {
   await page.clock.install();
-  await open(page, app);
+  await open(page, app, { cold: true });
   const root = app.histories
     .get("primary/alpha")
     .find((row) => row.content === "Thread root 1");
@@ -912,7 +929,7 @@ test("a line placed just short of the latest reply stays in view", async ({
   page,
   app,
 }) => {
-  await open(page, app);
+  await open(page, app, { cold: true });
   const root = app.histories
     .get("primary/alpha")
     .find((row) => row.content === "Thread root 1");
@@ -1029,7 +1046,7 @@ test("channel bottom quiets ordinary replies newer than the latest top-level mes
   page,
   app,
 }) => {
-  await open(page, app);
+  await open(page, app, { cold: true });
   const alpha = page.locator('button[data-channel-id="alpha"]');
   const root = app.histories
     .get("primary/alpha")
@@ -1062,7 +1079,7 @@ for (const { paneOpen, width } of [
     await page.setViewportSize({ width, height: 950 });
     await page.clock.install();
     await holdReadingFocus(page);
-    await open(page, app);
+    await open(page, app, { cold: true });
     const root = app.histories
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 1");
@@ -1144,7 +1161,7 @@ test("opening a message link reads the channel but not its already-open thread",
 }) => {
   await page.clock.install();
   await holdReadingFocus(page);
-  await open(page, app);
+  await open(page, app, { cold: true });
   const history = app.histories.get("primary/alpha");
   const root = history.find((row) => row.content === "Thread root 1");
   // An ordinary message, not the open thread's root: a link to the root can
@@ -1210,7 +1227,7 @@ test("a live reply in a main-pane thread stays unread while focus is in the side
 }) => {
   await page.clock.install();
   await holdReadingFocus(page);
-  await open(page, app);
+  await open(page, app, { cold: true });
   const roots = app.histories
     .get("primary/alpha")
     .filter((row) => row.content.startsWith("Thread root"));
@@ -1294,7 +1311,7 @@ test.describe("top-level mention activity", () => {
     page,
     app,
   }) => {
-    await open(page, app);
+    await open(page, app, { cold: true });
     // Load Beta's window first: an exact opening that arrives while the window
     // is still settling opens the message as its own tab instead.
     const beta = page.locator('button[data-channel-id="beta"]');
@@ -1365,7 +1382,7 @@ test.describe("top-level mention activity", () => {
     page,
     app,
   }) => {
-    await open(page, app);
+    await open(page, app, { cold: true });
     // Leave Alpha, its window loaded, so its new messages arrive unseen.
     await page.locator('button[data-channel-id="beta"]').click();
     await expect(

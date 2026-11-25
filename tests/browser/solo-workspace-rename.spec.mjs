@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { newChat } from "./navigation.mjs";
+import { clickSidebarHeadingAction, newChat } from "./navigation.mjs";
 
 const chat = "33333333-3333-4333-8333-333333333333";
 test.use({
@@ -22,6 +22,7 @@ test("workspace settings rename preserves filing in ordinary and composed headin
   await page.goto(app.origin);
   await newChat(page);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  await sidebar.getByRole("button", { name: "Alpha", exact: true }).hover();
   await sidebar.getByRole("button", { name: "Actions for Alpha" }).click();
   await page.getByRole("menuitem", { name: "Move to…", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
@@ -66,15 +67,25 @@ test("workspace settings rename preserves filing in ordinary and composed headin
         await title().focus();
         await page.keyboard.press("Shift+F10");
       } else {
-        await header
-          .getByRole("button", { name: `More actions for ${name}` })
-          .click();
+        await clickSidebarHeadingAction(
+          header.getByRole("button", { name: `More actions for ${name}` }),
+        );
       }
       const settings = page.getByRole("menuitem", {
         name: "Workspace settings",
         exact: true,
       });
       await expect(settings).toBeVisible();
+      await expect(
+        page.getByRole("menuitem", {
+          name: "Archive inactive chats",
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      if (!composed)
+        await expect(
+          page.getByRole("menuitem", { name: "Filter", exact: true }),
+        ).toBeVisible();
       await expect(
         page.getByRole("menuitem", { name: "Rename workspace", exact: true }),
       ).toHaveCount(0);

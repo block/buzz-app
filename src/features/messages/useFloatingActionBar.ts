@@ -17,7 +17,8 @@ import {
   observeOverlays,
 } from "../../shared/design-system/overlayLayer";
 
-const contentSelector =
+/** A row's rendered message content, without its byline or day divider. */
+export const contentSelector =
   "[data-message-action-anchor], [data-message-attachments] > *";
 
 const floatingQuery = "(hover: hover) and (pointer: fine)";

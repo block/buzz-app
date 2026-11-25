@@ -617,7 +617,7 @@ test("Share opens View only and posts a link without promoting or moving the Sol
   expect(links).toHaveLength(1);
   expect(links[0].event.tags).toContainEqual(["h", destination]);
   expect(links[0].event.tags.filter(([key]) => key === "p")).toHaveLength(0);
-  expect(links[0].event.content).toBe(`[Chat: Alpha](buzz://channel/${id})`);
+  expect(links[0].event.content).toBe(`[Alpha](buzz://channel/${id})`);
   // Reopen the same app surface immediately after sharing, without reloading
   // the page. The new access edit must use the confirmed View only snapshot.
   await row.click({ button: "right" });
@@ -1398,6 +1398,63 @@ test.describe("Solo composer caret", () => {
         ),
     );
     expect(await outside()).toBe(destination);
+  });
+});
+
+// Inline completion inserting a tag at a native caret mid-sentence needs a browser.
+test.describe("Solo tags join the pill", () => {
+  test.use({ soloAgentNames: ["Owned Honey", "Owned Brain"] });
+  test("a tag typed later in the message joins the pill's agent, and one that opens it goes alone", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await newChat(page);
+    const composer = page.getByRole("textbox", {
+      name: "Message your agents",
+      exact: true,
+    });
+    const [honey, brain] = app.soloAgents;
+    const pill = page.getByRole("button", { name: /Change agents$/ });
+    await expect(pill).toHaveAccessibleName(
+      `Sending to ${honey.name}. Change agents`,
+    );
+    await composer.click();
+    await page.keyboard.insertText("plan this, then ");
+    await page.keyboard.type(`@${brain.name}`);
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText("can build it");
+    await expect(composer).toHaveText(
+      `plan this, then @${brain.name} can build it`,
+    );
+    await expect(pill).toHaveAccessibleName(
+      `Sending to ${honey.name}, ${brain.name}. Change agents`,
+    );
+    // Removing the pill's agent leaves the tag alone; the text is untouched.
+    await page
+      .getByRole("button", {
+        name: `Remove agent ${honey.name} ${honey.pubkey}`,
+      })
+      .click();
+    await expect(pill).toHaveAccessibleName(
+      `Sending to ${brain.name}. Change agents`,
+    );
+    await expect(composer).toHaveText(
+      `plan this, then @${brain.name} can build it`,
+    );
+    await expect(composer).toBeFocused();
+    // A new draft that opens with the tag goes to that agent alone.
+    await composer.fill("");
+    await expect(pill).toHaveAccessibleName(
+      `Sending to ${honey.name}. Change agents`,
+    );
+    await page.keyboard.type(`@${brain.name}`);
+    await page.keyboard.press("Enter");
+    await page.keyboard.insertText("build it");
+    await expect(composer).toHaveText(`@${brain.name} build it`);
+    await expect(pill).toHaveAccessibleName(
+      `Sending to ${brain.name}. Change agents`,
+    );
   });
 });
 

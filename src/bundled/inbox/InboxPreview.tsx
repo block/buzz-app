@@ -35,6 +35,7 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
+import { shortRelativeTimestamp } from "../../shared/relative-timestamp";
 import { readView, writeView } from "../../shared/view-state";
 import {
   hasUnread,
@@ -43,6 +44,8 @@ import {
   rowIdentity,
   rowProfileIds,
 } from "./InboxRow";
+import { withMentionedIds } from "../../features/messages/PreviewText";
+import { activityConversation, useActivityMutes } from "./useActivityMutes";
 import { inboxTarget } from "./route";
 import type { InboxItem } from "../../features/relay/inbox";
 import listRowStyles from "../../features/messages/MessageListRow.module.css";
@@ -52,20 +55,6 @@ import styles from "./InboxPreview.module.css";
 const maxRows = 50;
 /** The card's own Unread only choice, separate from the Activity page filters. */
 const unreadOnlyKey = "inbox:preview-unread-only";
-
-// The card is narrower than the Activity page, so it abbreviates its timestamps
-// as the channel activity preview does, with a date after a week.
-const shortAge = (createdAt: number, now = Date.now()) => {
-  const seconds = Math.max(0, Math.floor(now / 1000) - createdAt);
-  if (seconds < 60) return "now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)}d`;
-  return new Date(createdAt * 1000).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-};
 
 /** The row's explicit read, as Activity's Mark as read saves it. */
 async function readRow(session: RelaySession, item: InboxItem) {
@@ -130,6 +119,7 @@ function InboxPreviewCard({
   navigator: Navigation;
 }) {
   const list = useChannelList(session.channels);
+  const muted = useActivityMutes(session);
   const inbox = useSyncExternalStore(
     session.unread.subscribeInbox,
     session.unread.inbox,
@@ -179,16 +169,26 @@ function InboxPreviewCard({
   }, [session, list.status, list.asOf, refreshAfterRoster]);
   const channelOf = (channelId: string) =>
     list.channels.find((channel) => channel.id === channelId);
-  const recent = [...inbox.items].sort(
-    (a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id),
-  );
+  const recent = inbox.items
+    .map((item) => activityConversation(item, muted))
+    .filter((item) => item !== undefined)
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
   const unread = recent.filter(hasUnread);
   const rows = [
     ...(unreadOnly ? unread : recent).map((item) => ({
       kind: "conversation" as const,
       item,
     })),
-    ...(!unreadOnly ? reactionRows(reactions.items) : []).map((item) => ({
+    ...(!unreadOnly
+      ? reactionRows(
+          reactions.items.filter(
+            (item) =>
+              !muted.has(item.channelId) ||
+              channelOf(item.channelId)?.channelType === "dm",
+          ),
+        )
+      : []
+    ).map((item) => ({
       kind: "reaction" as const,
       item,
     })),
@@ -199,19 +199,20 @@ function InboxPreviewCard({
         a.item.id.localeCompare(b.item.id),
     )
     .slice(0, maxRows);
-  const profileKey = [
-    ...new Set(
-      rows.flatMap((row) => [
-        ...(row.kind === "reaction"
-          ? row.item.events.map((event) => event.pubkey)
-          : [row.item.authorId]),
-        ...rowProfileIds(
-          row.kind === "reaction" ? {} : row.item,
-          channelOf(row.item.channelId),
-        ),
-      ]),
+  const profileKey = withMentionedIds(
+    rows.flatMap((row) => [
+      ...(row.kind === "reaction"
+        ? row.item.events.map((event) => event.pubkey)
+        : [row.item.authorId]),
+      ...rowProfileIds(
+        row.kind === "reaction" ? {} : row.item,
+        channelOf(row.item.channelId),
+      ),
+    ]),
+    rows.map((row) =>
+      row.kind === "reaction" ? row.item.message : row.item.previewMentions,
     ),
-  ]
+  )
     .sort()
     .join(":");
   const profileIds = useMemo(
@@ -334,7 +335,7 @@ function InboxPreviewCard({
   let threads = 0;
   for (const item of unread) {
     if (channelOf(item.channelId)?.channelType === "dm") dms++;
-    else if (item.mention && hasUnread(item.mention)) mentions++;
+    else if (item.mentioned && hasUnread(item.mention ?? item)) mentions++;
     else if (item.thread) threads++;
   }
   const kinds = [
@@ -411,7 +412,7 @@ function InboxPreviewCard({
                     profiles={profiles}
                     name={name}
                     channel={channelOf(item.channelId)}
-                    time={shortAge(item.createdAt)}
+                    time={shortRelativeTimestamp(item.createdAt)}
                     onClick={() => open(row)}
                   />
                 ) : (
@@ -420,9 +421,9 @@ function InboxPreviewCard({
                       <InboxRowButton
                         item={row.item}
                         identity={identity}
-                        media={session.media}
+                        session={session}
                         feed={feed}
-                        time={shortAge(item.createdAt)}
+                        time={shortRelativeTimestamp(item.createdAt)}
                         onClick={() => open(row)}
                       />
                       {canRead && hasUnread(row.item) && (

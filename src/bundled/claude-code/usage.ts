@@ -66,11 +66,14 @@ export function buzzStart(entries: readonly Json[]) {
   const field = (name: string) =>
     context?.match(new RegExp(`^${name}: (.*)$`, "m"))?.[1]?.trim();
   const channel = field("Channel");
-  if (!channel) return undefined;
+  if (!channel && field("Session scope") !== "community") return undefined;
   const root = field("Session scope") === "thread" && field("Thread root");
   return {
     agent: field("Agent"),
-    channelId: channel.match(/\(#([^)]+)\)$/)?.[1] ?? channel,
+    ...(field("Session scope") === "community" ? { community: true } : {}),
+    ...(channel
+      ? { channelId: channel.match(/\(#([^)]+)\)$/)?.[1] ?? channel }
+      : {}),
     ...(root ? { root } : {}),
   };
 }
@@ -290,9 +293,11 @@ function combine(
       seen.set(key ?? `${seen.size}`, observation);
   return {
     id,
-    ...(start ? { channelId: start.channelId } : {}),
+    ...(start?.channelId ? { channelId: start.channelId } : {}),
     ...(start?.root ? { root: start.root } : {}),
-    ...(main.title ? { title: main.title } : {}),
+    // A community session's generated title may describe any channel it
+    // served, not only the one it started in.
+    ...(main.title && !start?.community ? { title: main.title } : {}),
     startedAt: Math.min(...times.map((time) => time.first)),
     lastAt: Math.max(...times.map((time) => time.last)),
     gaps,

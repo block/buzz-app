@@ -49,6 +49,7 @@ import { MentionPicker } from "../../bundled/mentions/MentionPicker";
 import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
 import { mentionQuery } from "../../bundled/mentions/mention-query";
 import { attachmentDraft } from "../messages/attachment-draft";
+import { UPLOAD_FAILURES, UploadError } from "../relay/attachments";
 import { NewMessage } from "./NewMessage";
 import type { PageNavigation } from "../navigation/service";
 import { OutboxStatus } from "../../bundled/channels/OutboxStatus";
@@ -793,9 +794,10 @@ it.each(["", "Please review these fixes"])(
     t.mount(second);
     const retry = await screen.findByRole("button", { name: "Retry send" });
     expect(
-      await screen.findByRole("region", { name: "Chat attachments" }),
-    ).toHaveTextContent("Fix");
-    expect(screen.getByRole("textbox")).toHaveValue(caption);
+      screen.queryByRole("region", { name: "Chat attachments" }),
+    ).toBeNull();
+    expect(screen.getByRole("textbox")).toHaveTextContent("Fix");
+    if (caption) expect(screen.getByRole("textbox")).toHaveTextContent(caption);
     await t.user.click(retry);
     await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
     expect(t.publish).toHaveBeenCalledTimes(2);
@@ -804,6 +806,39 @@ it.each(["", "Please review these fixes"])(
     expect(readView(scope, "direct-message:new-draft", null)).toBeNull();
   },
 );
+
+it("retries an unchanged failed DM saved with legacy chat attachments", async () => {
+  const t = setup();
+  const link = "[Session: Fix](buzz://channel/session-id)";
+  const text = "Please review these fixes";
+  const event = message(viewer, channel, `${link}\n\n${text}`, 1_700_000_001);
+  await t.storage.save([
+    {
+      event,
+      signed: event,
+      delivery: "failed",
+      error: "Not sent",
+      recovery: {
+        key: "direct-message:new",
+        value: JSON.stringify({
+          people: [{ pubkey: other.pubkey, name: "Avery" }],
+          draft: { text, recipients: [], chatCards: [link] },
+        }),
+      },
+    },
+  ]);
+  t.mount(t.create());
+  await waitFor(() => expect(send()).toBeEnabled());
+  expect(screen.getByRole("textbox")).toHaveTextContent("Session: Fix");
+  expect(screen.getByRole("textbox")).toHaveTextContent(text);
+  await t.user.click(send());
+  await waitFor(() =>
+    expect(t.onStarted).toHaveBeenCalledWith(channel, event.id),
+  );
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).toHaveBeenCalledOnce();
+  expect(t.publish.mock.calls[0]?.[0]).toEqual(event);
+});
 
 it("loads matching DM history inline and keeps the draft while recipients change", async () => {
   const t = setup();
@@ -1461,7 +1496,7 @@ it("waits for uploads before opening a DM and reports failure only on the chip",
   ).toBeEnabled();
   expect(
     await screen.findByText(
-      "A file couldn’t upload. Retry or remove it, then send again.",
+      "A file couldn’t upload. Follow the guidance on each file that shows an error, then send again.",
     ),
   ).toHaveAttribute("role", "status");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
@@ -1472,6 +1507,42 @@ it("waits for uploads before opening a DM and reports failure only on the chip",
   await waitFor(() => expect(f.files.snapshot()[0]?.status).toBe("ready"));
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+});
+
+it("offers only removal for a file whose type the relay refuses while a DM waits for it", async () => {
+  const t = setup();
+  const f = attachable(t);
+  let rejectUpload = (_reason: Error) => {};
+  f.uploadForNewChat.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        rejectUpload = reject;
+      }),
+  );
+  await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+  await f.attach();
+  await waitFor(() => expect(f.uploadForNewChat).toHaveBeenCalledOnce());
+  try {
+    await t.user.click(send());
+    expect(await screen.findByText("Uploading files…")).toBeVisible();
+  } finally {
+    await act(async () => rejectUpload(new UploadError("type")));
+  }
+  // The relay would refuse the same bytes again, so the chip offers no Retry
+  // and the page points at each chip rather than naming an action.
+  expect(
+    await screen.findByText(
+      "A file couldn’t upload. Follow the guidance on each file that shows an error, then send again.",
+    ),
+  ).toHaveAttribute("role", "status");
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    `photo.png: ${UPLOAD_FAILURES.type}`,
+  );
+  expect(screen.queryByRole("button", { name: /Retry/ })).toBeNull();
+  expect(send()).toBeDisabled();
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  await t.user.click(screen.getByRole("button", { name: "Remove photo.png" }));
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it.each(["remove", "replace", "rename", "unchanged"])(

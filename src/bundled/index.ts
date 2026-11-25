@@ -17,8 +17,6 @@ import mermaidManifest from "./mermaid/manifest.json";
 import * as mermaid from "./mermaid";
 import chartsManifest from "./charts/manifest.json";
 import * as charts from "./charts";
-import fileViewerManifest from "./file-viewer/manifest.json";
-import * as fileViewer from "./file-viewer";
 import namingManifest from "./identity-naming/manifest.json";
 import * as naming from "./identity-naming";
 import feedbackManifest from "./feedback/manifest.json";
@@ -53,6 +51,8 @@ import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
+import finderManifest from "./finder/manifest.json";
+import * as finder from "./finder";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
@@ -63,6 +63,7 @@ import * as changesets from "./changesets";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
+import { orgPlugins } from "./org";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
 import moderationManifest from "./moderation/manifest.json";
@@ -73,9 +74,11 @@ import typesafeManifest from "./typesafe/manifest.json";
 import * as typesafe from "./typesafe";
 import pluginDevelopmentManifest from "./plugin-development/manifest.json";
 import * as pluginDevelopment from "./plugin-development";
+import performanceDiagnosticsManifest from "./performance-diagnostics/manifest.json";
+import * as performanceDiagnostics from "./performance-diagnostics";
 
-import relayNotesManifest from "./relay-notes/manifest.json";
-import * as relayNotes from "./relay-notes";
+import docsManifest from "./docs/manifest.json";
+import * as docs from "./docs";
 
 const codexHarness: BundledPlugin = {
   manifest: { ...codexManifest, apiVersion: 1 },
@@ -93,11 +96,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
     // Opt-in: it reads community membership in the background once enabled.
-    enabledByDefault: false,
-  },
-  {
-    manifest: { ...relayNotesManifest, apiVersion: 1 },
-    module: relayNotes,
     enabledByDefault: false,
   },
   {
@@ -147,11 +145,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: false,
   },
   {
-    manifest: { ...fileViewerManifest, apiVersion: 1 },
-    module: fileViewer,
-    enabledByDefault: false,
-  },
-  {
     manifest: { ...namingManifest, apiVersion: 1 },
     module: naming,
     enabledByDefault: true,
@@ -182,6 +175,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
+    manifest: { ...docsManifest, apiVersion: 1 },
+    module: docs,
+    enabledByDefault: false,
+  },
+  {
     manifest: { ...githubManifest, apiVersion: 1 },
     module: github,
     enabledByDefault: true,
@@ -209,6 +207,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...finderManifest, apiVersion: 1 },
+    module: finder,
     enabledByDefault: false,
   },
   {
@@ -271,4 +274,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: pluginDevelopment,
     enabledByDefault: true,
   },
+  {
+    manifest: { ...performanceDiagnosticsManifest, apiVersion: 1 },
+    module: performanceDiagnostics,
+    enabledByDefault: false,
+  },
+  // An organization's own build may bundle plugins here (org.ts).
+  ...orgPlugins,
 ];

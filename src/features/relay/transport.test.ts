@@ -1,3 +1,4 @@
+import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import { assert, afterEach, expect, it, vi } from "vitest";
 import {
   connectBrokerTransport,
@@ -9,7 +10,7 @@ import {
   ReadStateTimestampRejected,
   READ_STATE_TIMESTAMP_REFUSAL,
 } from "./read-state-host";
-import { PublishRejected } from "./outbox";
+import { PublishNotSent, PublishRejected } from "./outbox";
 import { hostSigner, keypair, signed } from "./testing";
 const key = keypair();
 afterEach(() => vi.unstubAllGlobals());
@@ -99,6 +100,100 @@ it("publishes the unchanged signed event bytes through the host's /events reques
     controller.signal,
   );
 });
+it("sends a message while task artifacts wait for native HTTP capacity", async () => {
+  const started: string[] = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const transport = await connectSignedTransport(
+    hostSigner(key, async (_url, body) => {
+      const event = JSON.parse(body) as { id: string; kind: number };
+      started.push(event.id);
+      if (event.kind === ARTIFACT_KIND) await held;
+      return Response.json({ accepted: true, event_id: event.id });
+    }),
+    "https://publication-priority.test",
+    "relay",
+  );
+  assert.exists(transport.writer);
+  const writer = transport.writer;
+  const signal = new AbortController().signal;
+  const artifacts = Array.from({ length: 5 }, (_, index) =>
+    signed(key, { kind: ARTIFACT_KIND, content: String(index), tags: [] }),
+  );
+  const results = artifacts.map((event) => writer.publish(event, signal));
+  try {
+    const chat = signed(key, {
+      kind: 9,
+      content: "priority message",
+      tags: [["h", "c"]],
+    });
+    await writer.publish(chat, signal);
+    expect(started).toEqual([
+      ...artifacts.slice(0, 4).map((event) => event.id),
+      chat.id,
+    ]);
+    release();
+    await Promise.all(results);
+    expect(started.at(-1)).toBe(artifacts[4]?.id);
+  } finally {
+    release();
+    await Promise.allSettled(results);
+  }
+});
+
+it.each([
+  [429, { error: "rate-limited: quota exceeded; retry in 5s" }, true],
+  [
+    503,
+    { error: "rate-limited: shared admission unavailable", sent: false },
+    true,
+  ],
+  [429, { error: "rate-limited: quota exceeded; retry in 5s" }, false],
+] as const)(
+  "keeps the HTTP refusal (%s) and scopes its cooldown (migration=%s)",
+  async (status, refusal, scoped) => {
+    const regular = signed(key, {
+      kind: 9,
+      content: "hello",
+      tags: [["h", "c"]],
+    });
+    const migration = signed(key, {
+      kind: 9000,
+      content: "",
+      tags: [
+        ["h", "c"],
+        ["p", "c".repeat(64)],
+        ["migration", "slack"],
+      ],
+    });
+    const request = vi.fn(async (_url: string, body: string) =>
+      JSON.parse(body).id === migration.id
+        ? Response.json(refusal, {
+            status,
+            ...(scoped ? { headers: { "Retry-After": "5" } } : {}),
+          })
+        : Response.json({ accepted: true, event_id: regular.id }),
+    );
+    const transport = await connectSignedTransport(
+      hostSigner(key, request),
+      `https://${scoped ? "migration" : "shared"}.example.org`,
+      "relay",
+    );
+    assert.exists(transport.writer);
+    const signal = new AbortController().signal;
+    const failure = await transport.writer
+      .publish(migration, signal)
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(PublishNotSent);
+    expect(failure).toHaveProperty("message", refusal.error);
+    const ordinary = transport.writer.publish(regular, signal);
+    if (scoped) await expect(ordinary).resolves.toBe("");
+    else await expect(ordinary).rejects.toThrow(/^Relay requests paused/);
+    expect(request).toHaveBeenCalledTimes(scoped ? 2 : 1);
+  },
+);
 it("distinguishes explicit rejection from invalid or missing delivery receipts", async () => {
   const event = signed(key, { kind: 9, content: "hello", tags: [["h", "c"]] });
   const transport = await connectSignedTransport(

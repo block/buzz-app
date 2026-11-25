@@ -96,12 +96,15 @@ export type ComposerLinkEdit = {
  * translates them into document positions; callers never manipulate its DOM. */
 export type ComposerInputElement = HTMLDivElement & {
   value: string;
+  /** Includes automatic prefill, staged content and the host's editing/sending state. */
+  isEmptyForShortcuts(): boolean;
   selectionStart: number;
   selectionEnd: number;
   selectionDirection: "forward" | "backward" | "none";
   disabled: boolean;
   readOnly: boolean;
   setSelectionRange(start: number, end: number, direction?: string): void;
+  /** `"typed"`: only the terminator landed; the text did not fit. */
   insertText(
     text: string,
     recipient?: MentionRecipient | readonly MentionRecipient[],
@@ -112,7 +115,7 @@ export type ComposerInputElement = HTMLDivElement & {
     terminator?: string,
     /** Automatic edits preserve focus and the current selection. */
     focus?: boolean,
-  ): boolean;
+  ): boolean | "typed";
   replaceRecipients(recipients: readonly MentionRecipient[]): boolean;
   /** Replace the typed `@name` with a chip the host is still resolving,
    * followed by the key that ended it (a space by default); the returned id
@@ -147,7 +150,7 @@ export type ComposerInputElement = HTMLDivElement & {
     range: { start: number; end: number },
   ): boolean;
   toggleFormat(format: ComposerFormat): void;
-  insertLineBreak(): boolean;
+  insertLineBreak(kind?: "paragraph" | "hard"): boolean;
   editLink(): ComposerLinkEdit | null;
   /** Append source links and this app's copied `text/html` as a quote. Leave
    * the caret on a new line after it; false when the draft cannot take it. */

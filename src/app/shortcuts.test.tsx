@@ -55,16 +55,20 @@ function harness(platform = "Win32") {
   const shortcuts = new ShortcutsService(ctx, window, bindings);
   const appearance = createAppearance(window);
   const openSettings = vi.fn();
+  const reload = vi.fn();
   const remove = registerAppShortcuts(
     shortcuts,
     appearance,
     openSettings,
     true,
+    reload,
+    bindings,
   );
   return {
     ctx,
     shortcuts,
     openSettings,
+    reload,
     bindings,
     remove,
     async dispose() {
@@ -605,6 +609,46 @@ it.each([
   },
 );
 
+it("macOS desktop leaves the default Mod+, to the Settings menu, not a rebound chord", async () => {
+  const h = harness("MacIntel");
+  const comma = { key: ",", metaKey: true, ctrlKey: false };
+  try {
+    // Unhandled, the key reaches Buzz → Settings…, which flashes and opens it.
+    expect(press(document.body, comma).defaultPrevented).toBe(false);
+    expect(h.openSettings).not.toHaveBeenCalled();
+    window.dispatchEvent(new Event("buzz:open-settings"));
+    expect(h.openSettings).toHaveBeenCalledOnce();
+    act(() => h.bindings.set("settings", { key: ";", mod: true }));
+    expect(press(document.body, { ...comma, key: ";" }).defaultPrevented).toBe(
+      true,
+    );
+    expect(h.openSettings).toHaveBeenCalledTimes(2);
+    expect(press(document.body, comma).defaultPrevented).toBe(false);
+    expect(h.openSettings).toHaveBeenCalledTimes(2);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it.each([
+  [true, "Win32", { ctrlKey: true }],
+  [false, "MacIntel", { metaKey: true, ctrlKey: false }],
+])(
+  "desktop=%s, platform=%s: the page opens Settings with Mod+,",
+  async (desktop, platform, mod) => {
+    vi.mocked(isTauri).mockReturnValue(desktop);
+    const h = harness(platform);
+    try {
+      expect(press(document.body, { key: ",", ...mod }).defaultPrevented).toBe(
+        true,
+      );
+      expect(h.openSettings).toHaveBeenCalledOnce();
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
 it("the macOS Settings menu request opens Settings, not behind a modal", async () => {
   const h = harness("MacIntel");
   const request = () => window.dispatchEvent(new Event("buzz:open-settings"));
@@ -796,3 +840,29 @@ it.each(["menu", "popover"] as const)(
     }
   },
 );
+
+it("⌘R reloads communities in place and ⇧⌘R reloads the page", async () => {
+  const h = harness("MacIntel");
+  const pageReload = vi.fn();
+  vi.spyOn(window, "location", "get").mockReturnValue({
+    ...window.location,
+    reload: pageReload,
+  });
+  try {
+    press(document.body, { key: "r", ctrlKey: false, metaKey: true });
+    expect(h.reload).toHaveBeenCalledOnce();
+    expect(pageReload).not.toHaveBeenCalled();
+
+    press(document.body, {
+      key: "R",
+      ctrlKey: false,
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(pageReload).toHaveBeenCalledOnce();
+    expect(h.reload).toHaveBeenCalledOnce();
+  } finally {
+    vi.restoreAllMocks();
+    await h.dispose();
+  }
+});

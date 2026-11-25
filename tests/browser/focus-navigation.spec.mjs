@@ -29,6 +29,31 @@ async function focusKeys(page) {
   };
 }
 
+// With typed Markdown kept as source, the composer leaves ⌘K/Ctrl+K to Search.
+test("search opens from a composer that keeps Markdown as typed", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("buzz-message-markdown-as-typed.v1", "on"),
+  );
+  await open(page, app);
+  const { mod } = await focusKeys(page);
+  const alpha = page
+    .locator("[data-main-workspace], [data-solo-focus-pane]")
+    .getByRole("textbox", { name: "Message #Alpha", exact: true });
+  await alpha.click();
+  await page.keyboard.type("**draft**");
+  await page.keyboard.press(`${mod}+k`);
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  await expect(
+    search.getByRole("combobox", { name: "Search Buzz", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(search).toHaveCount(0);
+  await expect(alpha).toHaveText("**draft**");
+});
+
 // Browser focus, modal dismissal and native editor selection require a real
 // browser. The app and broker are real; upstream relay traffic is modeled.
 test("search, composer and split-pane keyboard focus preserve both drafts", async ({
@@ -372,12 +397,14 @@ test("covered panes and notifications preserve focus and F6 recovery", async ({
     await expect(search).toBeFocused();
     await expect(alpha).toHaveText("Alpha draft");
   }
-  // Repeat with a notification above the competing dock. Toasts now rise above
-  // docked composers; pin the stack to its base offset so a covered composer's
-  // focus recovery stays exercised.
+  // Force overlap with the competing dock to exercise covered-composer focus
+  // recovery independently of the production toast's top-right placement.
   await page.addStyleTag({
-    content:
-      '[aria-label="App notifications"] { --buzz-toast-clearance: 0px !important; }',
+    content: `[data-sonner-toaster] {
+      top: auto !important;
+      bottom: 8px !important;
+      height: var(--front-toast-height) !important;
+    }`,
   });
   await page.setViewportSize({ width: 1440, height: 900 });
   await composer.fill("Toast draft");
@@ -579,13 +606,23 @@ test.extend({ readState: true, threadUnread: true })(
     await page
       .getByRole("textbox", { name: "Message #Alpha", exact: true })
       .click();
-    const newest = Math.max(...history.map((event) => event.created_at));
+    // Channel catch-up stops at the newest top-level post, never a reply.
+    const newest = Math.max(
+      ...history
+        .filter(
+          (event) =>
+            !event.tags.some(
+              ([name, , , marker]) => name === "e" && marker === "reply",
+            ),
+        )
+        .map((event) => event.created_at),
+    );
     await expect
-      .poll(async () => (await frontiers())["activity:alpha"] ?? 0)
+      .poll(async () => (await frontiers())["alpha"] ?? 0)
       .toBeGreaterThanOrEqual(newest);
     await page.setViewportSize({ width: 600, height: 900 });
     await expect(tab).toBeFocused();
-    const caughtUp = (await frontiers())["activity:alpha"];
+    const caughtUp = (await frontiers())["alpha"];
     const message = app.append(
       "primary",
       "alpha",
@@ -604,16 +641,14 @@ test.extend({ readState: true, threadUnread: true })(
     // message has passed too.
     const reply = app.reply(root.id);
     await expect
-      .poll(async () =>
-        read(await frontiers(), reply, `thread-activity:${root.id}`),
-      )
+      .poll(async () => read(await frontiers(), reply, `thread:${root.id}`))
       .toBe(true);
-    expect(read(await frontiers(), message, "activity:alpha")).toBe(false);
+    expect(read(await frontiers(), message, "alpha")).toBe(false);
     await page
       .getByRole("button", { name: "Close Thread root 1 tab", exact: true })
       .click();
     await expect
-      .poll(async () => read(await frontiers(), message, "activity:alpha"))
+      .poll(async () => read(await frontiers(), message, "alpha"))
       .toBe(true);
   },
 );

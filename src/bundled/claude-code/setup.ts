@@ -53,6 +53,7 @@ const STEPS: Readonly<Record<string, string>> = {
   install: "install",
   use: "use",
   review: "review",
+  "inherited-headers": "inherited-headers",
 };
 /** Starts `claude` and its other steps as steps of `claude.sh`, which the
  * manifest grants as `bash -c`; other processes start as declared. */
@@ -97,7 +98,12 @@ async function queryModels(spawn: Spawn, signal: AbortSignal) {
     process = await ClaudeProcess.start(
       async (id, options) => {
         request.signal.throwIfAborted();
-        child = await spawn(id, options);
+        // As an ordinary agent's, with the device's variables, so a key kept
+        // only there lists its models. A review never comes this way.
+        child = await spawn(id, {
+          ...options,
+          secrets: [...(options?.secrets ?? []), "agent-env"],
+        });
         if (request.signal.aborted) await child.kill();
         request.signal.throwIfAborted();
         return child;
@@ -251,6 +257,9 @@ export type SetupState = Readonly<{
   output: string;
   /** Why the latest release is not the one in use, after it failed its test. */
   notice: string | undefined;
+  /** Whether a protected agent could run, from the same sample as `status`
+   * (`ClaudeAuth.protectedEligible`); undefined until known. */
+  protectedReady: boolean | undefined;
 }>;
 const OUTPUT_LIMIT = 20_000;
 
@@ -265,6 +274,7 @@ export class ClaudeSetup {
     running: undefined,
     output: "",
     notice: undefined,
+    protectedReady: undefined,
   };
   private readonly listeners = new Set<() => void>();
   private health: AgentProviderSnapshot = { readiness: "checking" };
@@ -290,6 +300,8 @@ export class ClaudeSetup {
     readonly auth = new ClaudeAuth(spawn),
   ) {
     this.spawn = spawn && auth.authorize(spawn);
+    // A saved or cleared key, or a changed own setup, changes it at once.
+    auth.subscribe(() => this.set({ protectedReady: auth.protectedEligible }));
   }
 
   snapshot = () => this.state;
@@ -338,10 +350,17 @@ export class ClaudeSetup {
       });
       return;
     }
-    if (this.state.checking || this.state.running) return;
+    if (this.state.running) return;
+    // Callers wait for a check under way, so none reads its status early.
+    if (this.state.checking) return this.checkWork;
+    this.checkWork = this.runCheck(this.spawn, refreshModels);
+    return this.checkWork;
+  }
+  private checkWork?: Promise<void>;
+  private async runCheck(spawn: Spawn, refreshModels: boolean) {
     const previous = this.state.status;
     this.set({ checking: true });
-    const status = await checkClaude(this.spawn, this.auth);
+    const status = await checkClaude(spawn, this.auth);
     const invalidate =
       refreshModels || JSON.stringify(previous) !== JSON.stringify(status);
     if (invalidate) {
@@ -351,6 +370,7 @@ export class ClaudeSetup {
     }
     this.set({
       status,
+      protectedReady: this.auth.protectedEligible,
       ...(invalidate
         ? { models: [], modelsChecking: false, modelsError: "" }
         : {}),
@@ -408,11 +428,25 @@ export class ClaudeSetup {
     }
   }
   /** Whether Claude is installed and signed in here and lists `model`, by
-   * its name or the model an alias stands for, on `effort` when it takes one. */
+   * its name or the model an alias stands for, on `effort` when it takes one.
+   * Rejects when a failed or unfinished check, or a failed model listing,
+   * leaves that unknown, so the answer is unsure rather than no. */
   async offers({ model, effort }: Readonly<{ model: string; effort: string }>) {
-    if (this.state.status?.state !== "ready") await this.check();
-    if (this.state.status?.state !== "ready") return false;
-    const listed = (await this.catalog()).find(
+    // A refresh under way keeps the last status meanwhile: wait for its answer.
+    if (this.state.checking || this.state.status?.state !== "ready")
+      await this.check();
+    const state = this.state.status?.state;
+    if (state !== "ready") {
+      if (
+        !this.state.running &&
+        (state === "missing" || state === "outdated" || state === "signed-out")
+      )
+        return false;
+      throw new Error("Claude couldn't say whether it is ready");
+    }
+    const models = await this.catalog();
+    if (!models.length) throw new Error("Claude didn't list its models");
+    const listed = models.find(
       (item) => item.value === model || item.resolvedModel === model,
     );
     return (
@@ -446,7 +480,7 @@ export class ClaudeSetup {
     return this.hold(
       (async () => {
         const status = await checkClaude(spawn, this.auth);
-        this.set({ status });
+        this.set({ status, protectedReady: this.auth.protectedEligible });
         if (!needed && status.state === "missing") return;
         await this.run("install", false);
       })(),

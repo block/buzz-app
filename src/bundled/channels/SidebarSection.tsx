@@ -49,6 +49,7 @@ import type { SidebarSortMode } from "../../features/relay/sidebar-sort";
 import type { SidebarFilter } from "./useSidebarFilters";
 import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import { SidebarStarIcon } from "./SidebarStarIcon";
+import { isChannelSectionKey } from "./sidebar-sections";
 import { ChannelSidebarMenuItem } from "./ChannelSidebarMenuItem";
 import styles from "./Channels.module.css";
 
@@ -182,7 +183,7 @@ export function SidebarSection({
     >
       <NavigationSectionHeading
         disclosure
-        revealActions
+        revealActions={isChannelSectionKey(sectionKey) ? "overlay" : true}
         actions={
           <>
             {!hideMoreActions && (
@@ -253,7 +254,7 @@ export function SidebarSection({
                             <MenuIcon>
                               <TimerIcon size={14} />
                             </MenuIcon>
-                            Active in the last
+                            Active
                             {filter.value === "active" && (
                               <MenuTrailing>
                                 {activeWindowLabel(filter.activeWindowSeconds)}
@@ -274,7 +275,8 @@ export function SidebarSection({
                                 </MenuGroupLabel>
                                 {channels.rows.map((channel) => {
                                   const select = () => {
-                                    onToggle(true);
+                                    if (channel.channelType !== "solo")
+                                      onToggle(true);
                                     channels.select(channel.id);
                                     setMenuOpen(false);
                                   };

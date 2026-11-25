@@ -1,9 +1,11 @@
 // NIP-AP config history (plan §7): offset pages of one artifact's revisions,
 // every chain segment they form, the cause of each gap, diffs and revert.
 // Display only: history never decides artifact state (§3.2).
+import { notesOf } from "./plugin-notes";
 import { retryRead } from "../relay/read-retry";
 import type { EventData, RelayEvent } from "../relay/events";
 import { type SettingsSchema, syncedSettings } from "./agent-config";
+import { routedSettings } from "./synced-route";
 import {
   ARTIFACT_KIND,
   artifactOp,
@@ -13,6 +15,7 @@ import {
   type Expected,
   type SnapshotRead,
 } from "./agent-config-artifacts";
+import type { ConfigHistory } from "./service";
 
 /** Revisions per page: well under the relay's 1,000 so each "Load older"
  * stays a short list. The offset ceiling is the relay's (`buzz-core`
@@ -250,8 +253,14 @@ export type FieldChange = Readonly<{
 
 /** Settings fields that differ between two `buzz.agent.settings` revisions. */
 export function settingsDiff(before: string, after: string): FieldChange[] {
-  const fields = (content: string) =>
-    (parse(content)?.settings ?? {}) as Record<string, unknown>;
+  // A route shows as the model it is in a config.
+  const fields = (content: string) => {
+    const body = parse(content) ?? {};
+    return routedSettings(
+      body,
+      (body.settings ?? {}) as Record<string, string>,
+    ) as Record<string, unknown>;
+  };
   const a = fields(before);
   const b = fields(after);
   return [...new Set([...Object.keys(a), ...Object.keys(b)])]
@@ -300,6 +309,17 @@ export function revisionProblem(
   return "problem" in checked ? checked.problem : undefined;
 }
 
+export function incompatibleSettings(history: ConfigHistory | undefined) {
+  const track = history?.sides.find(({ side }) => side === "settings");
+  return Boolean(
+    !history?.settingsProblem &&
+      history?.settings &&
+      track?.head &&
+      artifactOp(track.head) !== "delete" &&
+      revisionProblem(track.expected, track.head, history.settings),
+  );
+}
+
 const ENVELOPE = new Set(["ar", "d", "h", "type", "title", "op", "prev"]);
 
 /** Revert: a new revision whose content is `target`'s snapshot and whose
@@ -326,6 +346,16 @@ export function revertTemplate(
       ...parse(target.content),
       name: parse(base.content)?.name,
     });
+  // Going back keeps the head's plugin notes: a plugin's memory of the agent
+  // isn't a setting to undo.
+  const reverted = parse(content);
+  if (expected.type === "buzz.agent.settings" && reverted) {
+    const { pluginNotes: _, ...rest } = reverted;
+    // A deleted or unreadable head has none to keep: the target's stay.
+    const current = restore ? undefined : parse(head.content);
+    const notes = notesOf(current ?? reverted);
+    content = JSON.stringify(notes ? { ...rest, pluginNotes: notes } : rest);
+  }
   const template = artifactTemplate({
     ...expected,
     op: restore ? "restore" : "update",

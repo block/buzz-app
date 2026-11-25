@@ -148,7 +148,8 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
     app,
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    await open(page, app);
+    // Straight to Activity: #Alpha has read nothing beyond its head.
+    await page.goto(app.origin);
     await openPage(page, "Activity");
     const inbox = page.getByRole("region", { name: "Activity", exact: true });
     await expect(inbox.getByText("Checking recent activity…")).toHaveCount(0);
@@ -211,7 +212,15 @@ test.describe("with the thread's root beyond the channel's newest page", () => {
     await expect(tab).toBeFocused();
     // Beside it, the channel waits to show its list at the thread's root,
     // reading the older page the fixture holds.
-    await expect.poll(() => app.pending.length).toBe(1);
+    // Reopening the channel at the root cancels its read-ahead.
+    await expect
+      .poll(() => app.pending.filter((read) => !read.closed).length)
+      .toBe(1);
+    app.pending.splice(
+      0,
+      app.pending.length,
+      ...app.pending.filter((read) => !read.closed),
+    );
     expect(app.pending[0].channel).toBe("alpha");
     await expect(channel.getByRole("status")).toHaveText("Loading messages…");
     await expect(tab).toBeFocused();
@@ -527,9 +536,9 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
     });
   }
 
-  // Each window width leaves the dock's 66px beside the list: a 540px list at
-  // 606, then 522px and 402px lists, where Unread and then From wrap.
-  for (const width of [1280, 606, 588, 468]) {
+  // The dock and gutters take 60px. At list widths of 540px, 522px and
+  // 402px, the controls stay on one row, wrap Unread, and wrap From, respectively.
+  for (const width of [1280, 600, 582, 462]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(
       inbox.getByRole("tab", { name: "Reactions", exact: true }),
@@ -563,13 +572,15 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
         unreadY: centerY('[role="switch"][aria-label="Unread"]'),
       };
     });
-    if (width === 606) {
+    if (width === 600) {
       expect(geometry.width).toBe(540);
       expect(Math.abs(geometry.tabsY - geometry.unreadY)).toBeLessThan(3);
-    } else if (width === 588) {
+    } else if (width === 582) {
+      expect(geometry.width).toBe(522);
       expect(geometry.unreadY).toBeGreaterThan(geometry.tabsY + 20);
       expect(Math.abs(geometry.tabsY - geometry.fromY)).toBeLessThan(3);
-    } else if (width === 468) {
+    } else if (width === 462) {
+      expect(geometry.width).toBe(402);
       expect(geometry.fromY).toBeGreaterThan(geometry.tabsY + 20);
       expect(Math.abs(geometry.fromY - geometry.unreadY)).toBeLessThan(3);
     }

@@ -51,10 +51,48 @@
 .soloConversation {
   container: solo-conversation / inline-size;
 }
+/* A workspace's main reader and the page's aside (WorkspaceRow). Isolated, a
+   floating aside stacks over the reader, never over a narrow dock. */
+.workspaceRow {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
 .workspaceReader {
   flex: 1;
   min-height: 0;
   min-width: 0;
+}
+/* The page's aside, from the history's top over its end edge, beside its
+   scrollbar. Docked, it may run to the reader's bottom, beside the composer;
+   floating, it stops at the history's bottom, above the composer. It draws
+   nothing itself: its content draws its card, sizes to it, and scrolls itself
+   when taller. Only that content takes pointer input, so the wheel beside or
+   below it scrolls the history. */
+.workspaceAside {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  inset-block-start: var(--aside-top, 0px);
+  inset-inline-end: var(--aside-scrollbar, 0px);
+  max-block-size: var(--aside-height, 100%);
+  max-inline-size: 100%;
+  pointer-events: none;
+}
+.workspaceAside[data-workspace-aside="docked"] {
+  max-block-size: calc(100% - var(--aside-top, 0px));
+}
+.workspaceAside > * {
+  min-block-size: 0;
+  pointer-events: auto;
+}
+.workspaceAside[hidden] {
+  display: none;
 }
 .conversation
   :is(
@@ -75,7 +113,7 @@
   max-height: 100%;
 }
 .unifiedChatName {
-  --session-row-inset: var(--space-2);
+  --session-row-inset: calc(var(--space-2) + var(--space-half));
   --session-action-size: calc(var(--space-6) + var(--space-1));
 }
 .sidebarIcon {
@@ -109,14 +147,21 @@
    recipe; the panel's subtle fill nearly matches the sidebar in both themes. */
 .unreadEdge {
   @apply interaction-floating;
+  --unread-edge-inline-start: var(--space-1);
+  --unread-edge-inline-end: calc(var(--space-1) + var(--sidebar-padding-end));
   position: absolute;
-  left: 50%;
+  inset-inline: var(--unread-edge-inline-start) var(--unread-edge-inline-end);
+  margin-inline: auto;
   display: grid;
-  transform: translateX(-50%) translateY(2px) scale(0.97);
+  transform: translateY(2px) scale(0.97);
   z-index: 3;
   isolation: isolate;
   width: max-content;
-  max-width: calc(100% - var(--space-2));
+  max-width: calc(
+    100% -
+    var(--unread-edge-inline-start) -
+    var(--unread-edge-inline-end)
+  );
   /* Button owns the fill; a second backing makes its soft edge muddy. */
   box-shadow: var(--shadow-sm);
   border-radius: var(--radius-capsule);
@@ -134,7 +179,7 @@
   visibility: visible;
   pointer-events: auto;
   opacity: 1;
-  transform: translateX(-50%) translateY(0) scale(1);
+  transform: translateY(0) scale(1);
   filter: blur(0);
   transition-duration: var(--duration-state);
   transition-delay: 0s;
@@ -142,7 +187,7 @@
 @media (prefers-reduced-motion: reduce) {
   .unreadEdge,
   .unreadEdge[data-visible="true"] {
-    transform: translateX(-50%);
+    transform: none;
     filter: none;
     transition-property: opacity, visibility;
   }
@@ -187,17 +232,78 @@
 .unreadEdge[data-edge="below"] {
   bottom: var(--space-3);
 }
+.unreadEdge[data-edge="below"][data-lifted] {
+  bottom: calc(var(--space-3) + var(--sidebar-floating-action-clearance));
+}
+.unreadEdge[data-preview-limit="0"] .unreadDmPreviews,
+.unreadEdge[data-preview-limit="1"] .unreadDmAvatar:nth-child(n + 2),
+.unreadEdge[data-preview-limit="2"] .unreadDmAvatar:nth-child(n + 3) {
+  display: none;
+}
+.unreadEdge[data-edge="below"] [class~="buzz-button-label"] {
+  flex-wrap: wrap;
+}
+.unreadEdge[data-edge][data-beside-action] {
+  --unread-edge-inline-start: var(--sidebar-floating-action-clearance);
+  top: auto;
+  bottom: calc(var(--space-2) + (var(--size-control) - var(--space-6)) / 2);
+}
+.unreadEdge[data-share-action-row="split"] {
+  --unread-row-split: calc(
+    (
+      100% +
+      var(--sidebar-floating-action-clearance) -
+      var(--sidebar-padding-end) -
+      var(--space-1)
+    ) /
+    2
+  );
+}
+.unreadEdge[data-edge="above"][data-share-action-row="split"] {
+  --unread-edge-inline-start: calc(var(--unread-row-split) + var(--space-1));
+}
+.unreadEdge[data-edge="below"][data-share-action-row="split"] {
+  --unread-edge-inline-end: calc(
+    100% -
+    var(--unread-row-split) +
+    var(--space-1)
+  );
+}
+.unreadEdge[data-beside-action] > [class~="buzz-button"] {
+  padding-inline: var(--space-1);
+}
+.unreadEdge[data-edge="above"][data-share-action-row="stacked"] {
+  top: var(--space-half);
+  bottom: auto;
+}
+.unreadEdge[data-edge="below"][data-share-action-row="stacked"] {
+  bottom: var(--space-half);
+}
+.unreadEdge[data-share-action-row="stacked"] > [class~="buzz-button"] {
+  min-block-size: var(--sidebar-stacked-cue-height);
+  padding-block: var(--space-half);
+}
+.unreadEdge[data-beside-action] [class~="buzz-button-label"] {
+  flex-wrap: nowrap;
+}
+.unreadEdge[data-beside-action] :is(.unreadDmPreviews, .unreadEdgeSuffix) {
+  display: none;
+}
 .channelSection {
   position: relative;
   flex-shrink: 0;
+  --sidebar-section-gap: var(--space-2);
+}
+.channelSection[data-sidebar-section="starred"] {
+  --sidebar-section-gap: var(--space-4);
 }
 .channelSection + .channelSection {
-  margin-top: var(--space-4);
+  margin-top: var(--sidebar-section-gap);
 }
 [data-sidebar-slot]:has(> .channelSection)
   ~ [data-sidebar-slot]
   > .channelSection:first-child {
-  margin-top: var(--space-4);
+  margin-top: var(--sidebar-section-gap);
 }
 .channelSection[data-drop-target] {
   border-radius: var(--radius-row);
@@ -208,7 +314,7 @@
 }
 .createSectionHitArea {
   position: absolute;
-  inset: calc(-1 * var(--space-4)) 0 0;
+  inset: calc(-1 * var(--sidebar-section-gap)) 0 0;
   pointer-events: none;
 }
 .createSectionReveal {
@@ -361,10 +467,20 @@ details:not([open]) > summary .sectionChevron {
 .timelinePlaceholder {
   flex: 1;
 }
+/* The loading mark fills the timeline's slot, so it sits centered in it. */
+.timelineLoading {
+  display: flex;
+  flex-direction: column;
+}
 .panelStack {
+  /* A saved width is in pixels; the conversation's minimum follows the interface size. */
   width: max(
     var(--split-floor, 19.75rem),
-    var(--secondary-panel-width, var(--split-default, calc(100cqw / 2.1)))
+    min(
+      var(--secondary-panel-width, var(--split-default, calc(100cqw / 2.1))),
+      100cqw -
+      20rem
+    )
   );
   position: relative;
   border-inline-start: 1px solid var(--border-standard);
@@ -463,7 +579,7 @@ details:not([open]) > summary .sectionChevron {
   .board,
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
-    overflow: hidden;
+    overflow: clip;
   }
   .panelStack > [data-panel-resize] {
     display: none;
@@ -486,7 +602,7 @@ details:not([open]) > summary .sectionChevron {
   .board,
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
-    overflow: hidden;
+    overflow: clip;
   }
   .panelStack > [data-panel-resize] {
     display: none;
@@ -509,7 +625,7 @@ details:not([open]) > summary .sectionChevron {
   .board,
   .board:has(> [data-panel-dock]:not([hidden], [data-closing])) {
     grid-template-columns: minmax(0, 1fr);
-    overflow: hidden;
+    overflow: clip;
   }
   .panelStack {
     grid-column: 1 / -1;
@@ -970,4 +1086,41 @@ html[data-keyboard-navigation]
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+}
+
+/* Show more and Show fewer are text actions sharing one row below a capped
+   section, which spans the row fill. Like ChannelSidebarRow, Show more's caret
+   and label sit on the row icons and titles, and Show fewer ends where trailing
+   content ends, 8px inside the fill. Show more fills the space between them, so
+   the inner edges need little padding: at the 220px minimum the two labels
+   leave only about 9px between them. */
+.sectionShowMore {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-inline: var(--channel-row-fill-start, 0) var(--channel-row-fill-end, 0);
+}
+.sectionShowMore > [data-show-more-expand] {
+  --space-row-gap: calc(var(--space-1) + var(--space-half));
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  padding-inline: calc(
+      var(--space-2) +
+      var(--space-half) -
+      var(--channel-row-fill-start, 0%)
+    )
+    0;
+}
+.sectionShowMore > [data-show-more-fold] {
+  flex: 0 0 auto;
+  width: auto;
+  padding-inline: var(--space-1) var(--space-2);
+}
+.sectionShowMoreIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-5);
+  flex: 0 0 var(--space-5);
 }

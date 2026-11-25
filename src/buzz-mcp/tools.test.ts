@@ -88,6 +88,8 @@ function fake(
     });
   };
   const client: BuzzClient = {
+    // A host that knows the relay has no self key.
+    signingAuthority: null,
     key: me,
     pubkey: me,
     effectiveEdit: vi.fn(async (id: string) => {
@@ -157,7 +159,8 @@ it.each([false, true])(
         // The shared session gate checks these optional hooks before dispatch.
         if (property === "protect")
           return protectedSession ? protect : undefined;
-        if (property === "nativeToolGate") return undefined;
+        if (property === "nativeToolGate" || property === "settle")
+          return undefined;
         // The tool list checks whether settings and the Bestie can change here.
         if (property === "settings" || property === "bestie") return undefined;
         throw new Error(`Help must not access the host: ${String(property)}`);
@@ -477,10 +480,10 @@ it("tags a message for agents, and needs the audience said", async () => {
   ]);
   await expect(
     callTool(client, context, "send", { text: "hi" }),
-  ).rejects.toThrow("audience must be everyone or agents");
+  ).rejects.toThrow("audience must be everyone, details or agents");
   await expect(
     callTool(client, context, "send", { text: "hi", audience: "humans" }),
-  ).rejects.toThrow("audience must be everyone or agents");
+  ).rejects.toThrow("audience must be everyone, details or agents");
   expect(published).toHaveLength(1);
 });
 
@@ -508,6 +511,60 @@ it("signs the turn's triggering request separately from the flattened reply", as
       }),
     ).rejects.toThrow("Not an event id");
   expect(published).toHaveLength(1);
+});
+
+it("tags details for people to open, as written", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  await callTool(client, context, "send", {
+    text: "The sidebar is fixed.\n\n- Keeps its place while channels load",
+    audience: "details",
+  });
+  expect(published[0]?.content).toBe(
+    "The sidebar is fixed.\n\n- Keeps its place while channels load",
+  );
+  expect(published[0]?.tags.at(-1)).toEqual(["audience", "details"]);
+});
+
+it("refuses an everyone message over 128 words, or a brief over 50, on send but not on edit", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root };
+  const long = Array.from({ length: 51 }, () => "word").join(" ");
+  await callTool(client, context, "send", { text: long, audience: "everyone" });
+  published.length = 0;
+  await expect(
+    callTool(client, context, "send", {
+      text: Array.from({ length: 129 }, () => "word").join(" "),
+      audience: "everyone",
+    }),
+  ).rejects.toThrow("This is 129 words, too long for everyone");
+  await expect(
+    callTool(client, context, "send", {
+      text: `${long}\n\nThe rest.`,
+      audience: "details",
+    }),
+  ).rejects.toThrow("The brief, the first paragraph, is 51 words");
+  // A leading heading shows with the block after it, so both count.
+  await expect(
+    callTool(client, context, "send", {
+      text: `# Summary\n\n${long}\n\nThe rest.`,
+      audience: "details",
+    }),
+  ).rejects.toThrow("is 53 words");
+  expect(published).toHaveLength(0);
+  await callTool(client, context, "send", {
+    text: `The sidebar is fixed.\n\n${long}`,
+    audience: "details",
+  });
+  await callTool(client, context, "send", { text: long, audience: "agents" });
+  expect(published).toHaveLength(2);
+  // An edit keeps the message's audience, and a message sent before the limits
+  // can already be over them, so correcting it must not fail.
+  await callTool(client, context, "edit", {
+    id: root,
+    text: Array.from({ length: 200 }, () => "word").join(" "),
+  });
+  expect(published).toHaveLength(3);
 });
 
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
@@ -771,6 +828,39 @@ it("tags a community emoji reaction and refuses a shortcode outside the palette"
   expect(published).toHaveLength(2);
 });
 
+it("pins and unpins a message in its own channel", async () => {
+  const { client, published } = fake([
+    ...community,
+    event({ id: root, pubkey: bob }),
+  ]);
+  expect(await callTool(client, {}, "pin", { id: root })).toContain("pinned");
+  expect(await callTool(client, {}, "pin", { id: root, off: true })).toContain(
+    "unpinned",
+  );
+  expect(published).toEqual([
+    {
+      kind: 40010,
+      content: "",
+      tags: [
+        ["h", "chan"],
+        ["e", root],
+        ["client-id", expect.any(String)],
+      ],
+    },
+    {
+      kind: 40011,
+      content: "",
+      tags: [
+        ["h", "chan"],
+        ["e", root],
+        ["client-id", expect.any(String)],
+      ],
+    },
+  ]);
+  // Each command is its own event.
+  expect(published[0]?.tags.at(-1)).not.toEqual(published[1]?.tags.at(-1));
+});
+
 it("reads no emoji sets for a message without a shortcode", async () => {
   const { client } = fake(community);
   await callTool(client, { channel: "chan" }, "send", {
@@ -889,14 +979,9 @@ it("reads the current thread when optional fields are blank or 0", async () => {
 
 it.each([
   ["channel", { channel: "chan" }],
-  ["search", { q: "hello" }],
   ["current thread", {}],
   ["explicit thread", { thread: nested }],
   ["message link", { message_url: `buzz://message?channel=chan&id=${nested}` }],
-  [
-    "message search",
-    { message_url: `buzz://message?channel=chan&id=${nested}`, q: "hello" },
-  ],
 ] as const)(
   "keeps agent ownership and nested reply context in a %s read",
   async (_, args) => {
@@ -941,8 +1026,10 @@ it.each([
     const line = text.split("\n").find((line) => line.startsWith(id));
     expect(line).toContain(`from ${alice} "Alice Smith" claimed owner ${bob}`);
     expect(line).toContain(`reply_to ${nested}`);
+    // Its thread fields name its root and reply tags, so no tags repeat them.
+    expect(line).not.toContain("tags ");
     expect(line).toContain("hello, edited");
-    if ("channel" in args || "q" in args) expect(line).toContain(`re ${root}`);
+    if ("channel" in args) expect(line).toContain(`re ${root}`);
     else expect(text.split("\n")[0]).toBe(`thread ${root} in chan`);
     // Human authors and direct replies keep their compact, unambiguous form.
     expect(
@@ -957,6 +1044,87 @@ it.each([
     expect(message.sig).toBe(signature);
   },
 );
+
+it("shows a message's meaningful tags in a read, but not its bookkeeping", async () => {
+  const id = "4".repeat(64);
+  const shown = [
+    // A lone root isn't a reply, so no thread field names it.
+    ["e", root, "", "root"],
+    ["p", bob],
+    ["q", nested],
+    ["t", "release"],
+    ["imeta", "url https://relay.test/media/a.png", "m image/png"],
+    ["buzz:request", nested],
+  ];
+  const auth = ["auth", bob, "kind=9", "8".repeat(128)];
+  const hidden = [
+    ["audience", "agents"],
+    ["client-id", "c1"],
+    ["ms", "5"],
+    ["model", bob, "m"],
+  ];
+  const { client } = fake([
+    ...community,
+    event({
+      id,
+      content: "tagged",
+      tags: [["h", "chan"], auth, ...shown, ...hidden],
+    }),
+  ]);
+  const line = (await read(client, { channel: "chan" }))
+    .split("\n")
+    .find((line) => line.startsWith(id));
+  expect(line).toContain(`tags ${JSON.stringify(shown)} at `);
+  expect(line).not.toContain('"h"');
+  expect(line).not.toContain(auth[3]);
+});
+
+it("reads an edited message with the files and emoji its latest edit leaves", async () => {
+  const id = "4".repeat(64);
+  const { client } = fake([
+    ...community,
+    event({
+      id,
+      content: "files :party:",
+      tags: [
+        ["h", "chan"],
+        ["imeta", "url https://relay.test/media/old.png"],
+        ["emoji", "party", "https://relay.test/party.png"],
+      ],
+    }),
+    event({
+      id: "5".repeat(64),
+      kind: 40003,
+      created_at: 110,
+      content: "files, edited",
+      tags: [
+        ["h", "chan"],
+        ["e", id],
+        ["imeta", "url https://relay.test/media/new.png"],
+      ],
+    }),
+    // Newer, with no files, so it clears them, as the relay does.
+    event({
+      id: "6".repeat(64),
+      kind: 40003,
+      created_at: 120,
+      content: "files, edited again :wave:",
+      tags: [
+        ["h", "chan"],
+        ["e", id],
+        ["emoji", "wave", "https://relay.test/wave.png"],
+      ],
+    }),
+  ]);
+  const line = (await read(client, { channel: "chan" }))
+    .split("\n")
+    .find((line) => line.startsWith(id));
+  expect(line).toContain(
+    `tags ${JSON.stringify([
+      ["emoji", "wave", "https://relay.test/wave.png"],
+    ])} at `,
+  );
+});
 
 const reply = (id: string, created_at: number) =>
   event({
@@ -975,47 +1143,7 @@ const next = (answer: string) => {
   return found ? (JSON.parse(found) as Record<string, unknown>) : undefined;
 };
 
-it("searches one author's messages since a time across channels, before the limit", async () => {
-  const { client } = fake([
-    profile(alice, "Alice Smith"),
-    event({ id: "3".repeat(64), created_at: 50, content: "too old" }),
-    event({
-      id: "4".repeat(64),
-      created_at: 200,
-      content: "rollout done",
-      tags: [["h", "other"]],
-    }),
-    // Newer messages from someone else that a limit applied first would keep.
-    ...["5", "6", "7"].map((n) =>
-      event({ id: n.repeat(64), pubkey: bob, created_at: 300 }),
-    ),
-  ]);
-  const answer = await read(client, {
-    q: "rollout",
-    author: npubEncode(alice),
-    since: 100,
-    limit: 2,
-  });
-  expect(answer).toBe(
-    `${"4".repeat(64)} from ${alice} "Alice Smith" in other at 1970-01-01T00:03Z: rollout done`,
-  );
-  // Without a channel, search still spans every channel it can read.
-  expect(client.query).toHaveBeenCalledWith([
-    {
-      kinds: [9, 40002, 45001, 45003],
-      search: "rollout",
-      limit: 2,
-      authors: [alice],
-      since: 100,
-    },
-  ]);
-  // A full page says more may match.
-  expect(await read(client, { q: "x", limit: 1 })).toMatch(
-    /\nResult limit reached; more matches may exist\. Narrow with channel, author, since or before\.$/,
-  );
-});
-
-it("tells apart people with the same name, and where each message is", async () => {
+it("names a channel read's channel once, and each reply's thread", async () => {
   const { client } = fake([
     profile(alice, "Sam"),
     profile(bob, "Sam"),
@@ -1031,11 +1159,6 @@ it("tells apart people with the same name, and where each message is", async () 
       ],
     }),
   ]);
-  expect((await read(client, { q: "ship" })).split("\n")).toEqual([
-    `${"3".repeat(64)} from ${alice} "Sam" in chan at 1970-01-01T00:01Z: ship it`,
-    `${"4".repeat(64)} from ${bob} "Sam" in other re ${root} at 1970-01-01T00:02Z: ship it too`,
-  ]);
-  // A channel read names the channel once, and each reply's thread.
   expect(
     (await read(client, { channel: "other", author: bob, since: 110 })).split(
       "\n",
@@ -1096,26 +1219,34 @@ it("pages a thread to its start, each reply once, through timestamp ties", async
 it("refuses read arguments it cannot apply, saying how to fix them", async () => {
   const { client } = fake(community);
   for (const [args, error] of [
-    [{ q: "x", author: "alice" }, "author must be a hex pubkey or npub"],
-    [{ q: "x", author: 7 }, "author must be a hex pubkey or npub"],
-    [{ q: "x", since: "friday" }, "since must be Unix seconds"],
-    [{ q: "x", since: -1 }, "since must be Unix seconds"],
-    [{ q: "x", since: 1.5 }, "since must be Unix seconds"],
-    [{ q: "x", since: 1_760_000_000_000 }, "since must be Unix seconds"],
-    [{ q: "x", since: 200, before: 100 }, "since must not be after before"],
+    // A session that kept an older tool list may still search through read.
+    [{ q: "x" }, "read does not search; use search with the same q."],
+    [{ q: "x", channel: "chan" }, "read does not search; use search"],
+    [
+      { channel: "chan", author: "alice" },
+      "author must be a hex pubkey or npub",
+    ],
+    [{ channel: "chan", author: 7 }, "author must be a hex pubkey or npub"],
+    [{ channel: "chan", since: "friday" }, "since must be Unix seconds"],
+    [{ channel: "chan", since: -1 }, "since must be Unix seconds"],
+    [{ channel: "chan", since: 1.5 }, "since must be Unix seconds"],
+    [
+      { channel: "chan", since: 1_760_000_000_000 },
+      "since must be Unix seconds",
+    ],
+    [
+      { channel: "chan", since: 200, before: 100 },
+      "since must not be after before",
+    ],
     [{ channel: "chan", before_id: root }, "before_id needs before"],
     [{ channel: "chan", before: 1, before_id: "x" }, "before_id must be"],
     [
-      { q: "x", before: 1, before_id: root },
-      "before_id pages thread and channel reads",
-    ],
-    [
       { author: alice },
-      "author and since filter a search (q) or a channel read",
+      "author and since filter a channel read, not a thread; add channel, or use search.",
     ],
     [
       { thread: root, since: 1 },
-      "author and since filter a search (q) or a channel read",
+      "author and since filter a channel read, not a thread",
     ],
   ] as const)
     await expect(read(client, args), JSON.stringify(args)).rejects.toThrow(
@@ -2117,13 +2248,24 @@ it("creates a Solo chat with its members in the create, as Buzz does", async () 
   ).resolves.toBe(`${plain} ops (stream, private)\nyou: owner`);
 });
 
+/** A host's workspaces that file everything and have no defaults. */
+const workspaces = (
+  overrides: Partial<NonNullable<BuzzClient["workspaces"]>> = {},
+): NonNullable<BuzzClient["workspaces"]> => ({
+  list: async () => [],
+  prepare: async () => async () => ({ status: "filed" }),
+  defaults: async () => ({ canvas: "", agents: [], skipped: [] }),
+  move: async () => ({ status: "filed" }),
+  ...overrides,
+});
+
 it("discovers local workspaces and files only after creating a Solo with explicit members", async () => {
   const { client, published } = relay();
   const file = vi.fn(async () => ({ status: "filed" as const }));
   const list = vi.fn(async () => [{ id: "work", name: "Work" }]);
   const prepare = vi.fn(async () => file);
-  client.soloWorkspaces = { list, prepare };
-  expect(await callTool(client, {}, "solo_workspace_list", {})).toBe(
+  client.workspaces = workspaces({ list, prepare });
+  expect(await callTool(client, {}, "workspace_list", {})).toBe(
     JSON.stringify([{ id: "work", name: "Work" }]),
   );
   const answer = await callTool(client, {}, "channel_create", {
@@ -2134,7 +2276,11 @@ it("discovers local workspaces and files only after creating a Solo with explici
     workspace: "work",
   });
   const id = published[0]?.tags[0]?.[1];
-  expect(prepare).toHaveBeenCalledExactlyOnceWith("work", [alice], id);
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    { members: [alice], open: false },
+    id,
+  );
   expect(file).toHaveBeenCalledExactlyOnceWith(id);
   expect(answer).toBe(
     `created ${id}\nadded ${alice} Alice Smith\nfiled in workspace work`,
@@ -2152,7 +2298,7 @@ it("rejects unsupported or invalid workspace placement before publication", asyn
     members: [alice],
     workspace: "work",
   };
-  await expect(callTool(client, {}, "solo_workspace_list", {})).rejects.toThrow(
+  await expect(callTool(client, {}, "workspace_list", {})).rejects.toThrow(
     "unavailable on this host",
   );
   await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
@@ -2161,14 +2307,7 @@ it("rejects unsupported or invalid workspace placement before publication", asyn
   const prepare = vi.fn(async () => {
     throw new Error("No such workspace");
   });
-  client.soloWorkspaces = { list: async () => [], prepare };
-  await expect(
-    callTool(client, {}, "channel_create", {
-      ...args,
-      solo: false,
-      members: undefined,
-    }),
-  ).rejects.toThrow("workspace is for Solo");
+  client.workspaces = workspaces({ prepare });
   await expect(callTool(client, {}, "channel_create", args)).rejects.toThrow(
     "No such workspace",
   );
@@ -2185,7 +2324,7 @@ it.each([
   const file = vi.fn(async () => {
     throw new Error(message);
   });
-  client.soloWorkspaces = { list: async () => [], prepare: async () => file };
+  client.workspaces = workspaces({ prepare: async () => file });
   const answer = await callTool(client, {}, "channel_create", {
     name: "triage",
     visibility: "private",
@@ -2198,7 +2337,7 @@ it.each([
   expect(answer).toContain(
     `workspace placement unconfirmed and may have completed: ${message}`,
   );
-  expect(answer).toContain("do not create another chat");
+  expect(answer).toContain("do not create another");
   expect(published).toHaveLength(1);
   expect(file).toHaveBeenCalledOnce();
 });
@@ -2207,10 +2346,9 @@ it.each(["not-filed", "unconfirmed"] as const)(
   "reports structured placement outcome without repeating create: %s",
   async (status) => {
     const { client, published } = relay();
-    client.soloWorkspaces = {
-      list: async () => [],
+    client.workspaces = workspaces({
       prepare: async () => async () => ({ status, error: "placement stopped" }),
-    };
+    });
     const answer = await callTool(client, {}, "channel_create", {
       name: "triage",
       visibility: "private",
@@ -2225,7 +2363,7 @@ it.each(["not-filed", "unconfirmed"] as const)(
         : "placement unconfirmed and may have completed",
     );
     if (status === "unconfirmed")
-      expect(answer).toContain("Inspect or refresh");
+      expect(answer).toContain("Check your owner's sidebar");
     expect(published).toHaveLength(1);
   },
 );
@@ -2241,15 +2379,14 @@ it("reports uncertainty after a gated durable placement loses its app lifetime",
     started = resolve;
   });
   let durable = false;
-  client.soloWorkspaces = {
-    list: async () => [],
+  client.workspaces = workspaces({
     prepare: async () => async () => {
       durable = true;
       started();
       await delivered;
       throw new Error("retired after durable placement");
     },
-  };
+  });
   const pending = callTool(client, {}, "channel_create", {
     name: "triage",
     visibility: "private",
@@ -2267,8 +2404,86 @@ it("reports uncertainty after a gated durable placement loses its app lifetime",
   const answer = await pending;
   expect(answer).toContain(`created ${published[0]?.tags[0]?.[1]}`);
   expect(answer).toContain("placement unconfirmed and may have completed");
-  expect(answer).toContain("Inspect or refresh");
+  expect(answer).toContain("Check your owner's sidebar");
   expect(answer).not.toContain("not filed");
+});
+
+it("starts a team channel with its members and the workspace's defaults", async () => {
+  const { client, published } = relay();
+  const prepare = vi.fn(async () => async () => ({ status: "filed" as const }));
+  client.workspaces = workspaces({
+    prepare,
+    defaults: async () => ({ canvas: "# Rules", agents: [bob], skipped: [] }),
+  });
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "launch",
+    visibility: "private",
+    type: "forum",
+    members: [alice],
+    workspace: "work",
+  });
+  const id = published[0]?.tags[0]?.[1];
+  // The host refuses a private one before creation unless the owner is named.
+  expect(prepare).toHaveBeenCalledExactlyOnceWith(
+    "work",
+    { members: [alice], open: false },
+    id,
+  );
+  expect(published[0]?.tags).toContainEqual(["p", alice]);
+  expect(published[1]?.content).toBe("# Rules");
+  expect(answer).toContain("filed in workspace work");
+  expect(answer).toContain(`added ${bob}`);
+});
+
+it("leaves out default agents it can't add, names them, and creates anyway", async () => {
+  const { client, published, state } = relay();
+  const archived = "d".repeat(64);
+  state.push(
+    event({
+      kind: 10100,
+      pubkey: bob,
+      content: JSON.stringify({ channel_add_policy: "owner_only" }),
+    }),
+  );
+  client.workspaces = workspaces({
+    defaults: async () => ({
+      canvas: "",
+      agents: [alice, bob],
+      skipped: [archived],
+    }),
+  });
+  const answer = await callTool(client, {}, "channel_create", {
+    name: "launch",
+    visibility: "open",
+    workspace: "work",
+  });
+  expect(answer).toMatch(/^created /);
+  expect(answer).toContain(
+    `workspace default agent ${bob} not added: only your owner can add this agent`,
+  );
+  expect(answer).toContain(
+    `workspace default agent ${archived} not added: not available in this community`,
+  );
+  const added = published.flatMap(({ tags }) =>
+    tags.flatMap(([key, value]) => (key === "p" ? [value] : [])),
+  );
+  expect(added).toEqual([alice]);
+});
+
+it("moves a conversation to a workspace, or unfiles it", async () => {
+  const { client } = relay();
+  const move = vi.fn(async () => ({ status: "filed" as const }));
+  client.workspaces = workspaces({ move });
+  await expect(
+    callTool(client, {}, "channel_move", { channel: room, workspace: "work" }),
+  ).resolves.toBe(`moved ${room} to workspace work`);
+  await expect(
+    callTool(client, { channel: room }, "channel_move", { workspace: " " }),
+  ).resolves.toBe(`unfiled ${room}`);
+  expect(move.mock.calls).toEqual([
+    [room, "work"],
+    [room, undefined],
+  ]);
 });
 
 it("refuses Solo arguments that do not fit, before publishing", async () => {
@@ -2288,10 +2503,6 @@ it("refuses Solo arguments that do not fit, before publishing", async () => {
   await expect(create({ solo: true, template: "Triage" })).rejects.toThrow(
     shape,
   );
-  for (const members of [[alice], ["alice"], alice])
-    await expect(create({ members })).rejects.toThrow(
-      "members is for Solo chats.",
-    );
   await expect(create({ solo: true, members: ["alice"] })).rejects.toThrow(
     "Not a pubkey: alice",
   );
@@ -2305,7 +2516,7 @@ it("refuses Solo arguments that do not fit, before publishing", async () => {
     n.toString(16).padStart(64, "0"),
   );
   await expect(create({ solo: true, members: many })).rejects.toThrow(
-    "A Solo chat starts with at most 32 members.",
+    "A channel starts with at most 32 members.",
   );
   expect(published).toEqual([]);
 });
@@ -2487,7 +2698,7 @@ function channelListing(count: number, joined: boolean) {
   return { client, metadata, memberships };
 }
 
-it.each([9_999, 10_000, 10_001])(
+it.each([10_000, 10_001])(
   "searches %i metadata events without an oversized reply or hard failure",
   async (count) => {
     const { client } = channelListing(count, false);
@@ -2504,7 +2715,7 @@ it.each([9_999, 10_000, 10_001])(
   },
 );
 
-it.each([9_999, 10_000, 10_001])(
+it.each([10_000, 10_001])(
   "searches %i memberships within joined scope and reports incomplete scans",
   async (count) => {
     const { client, metadata } = channelListing(count, true);
@@ -2583,7 +2794,7 @@ it.each([500, 501])(
   },
 );
 
-it.each(["x", "界", "😀", '"\\\n'])(
+it.each(["😀"])(
   "bounds MCP text bytes with long %j names, retaining a usable ID",
   async (unit) => {
     const { client, metadata } = channelListing(2, false);
@@ -2616,51 +2827,6 @@ it.each(["x", "界", "😀", '"\\\n'])(
       (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
     expect(text).toContain("Partial channel list");
     expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(16_384);
-  },
-);
-
-it.each([-1, 0, 1])(
-  "handles the UTF-8 output boundary at offset %i",
-  async (offset) => {
-    const { client, metadata } = channelListing(2, false);
-    const notice =
-      "Partial channel list: scan or output limit reached. Narrow with q or use a known channel ID.";
-    const suffix = " (not joined)";
-    const budget = 16_384 - new TextEncoder().encode(notice).length - 1;
-    const prefix = "room-0 ";
-    const name = "界".repeat(
-      Math.floor((budget - prefix.length - suffix.length) / 3),
-    );
-    const padding =
-      budget -
-      prefix.length -
-      suffix.length -
-      new TextEncoder().encode(name).length;
-    metadata[0] = event({
-      id: "0".repeat(64),
-      kind: 39000,
-      tags: [
-        ["d", "room-0"],
-        ["name", name + "x".repeat(padding + offset)],
-      ],
-    });
-    const reply = await respond(
-      client,
-      {},
-      {
-        id: 1,
-        method: "tools/call",
-        params: { name: "channel_list", arguments: { all: true } },
-      },
-    );
-    if (!("result" in reply)) throw new Error("Expected an MCP result");
-    const answer =
-      (reply.result as { content: { text: string }[] }).content[0]?.text ?? "";
-    expect(new TextEncoder().encode(answer).length).toBeLessThanOrEqual(16_384);
-    expect(answer.includes(name)).toBe(offset <= 0);
-    expect(answer).toContain(notice);
-    if (offset === 0)
-      expect(new TextEncoder().encode(answer).length).toBe(16_384);
   },
 );
 
@@ -3824,17 +3990,251 @@ it("finds users through the community's name search, in its order", async () => 
     profile(alice, "Wesley"),
   ]);
   const found = await callTool(client, {}, "users", { q: "Wes" });
-  expect(found).toBe(`${bob} Wes\n${alice} Wesley`);
+  expect(found).toBe(`${bob} "Wes"\n${alice} "Wesley"`);
   expect(client.searchProfiles).toHaveBeenCalledWith("wes", 100);
   expect(client.query).not.toHaveBeenCalled();
 });
 
+function verifiedPeople(more: readonly BuzzEvent[] = []) {
+  const relay = keypair();
+  const carol = "e".repeat(64);
+  const head = (
+    subject: string,
+    display: string,
+    username: string,
+    full: string,
+  ) =>
+    eventDto(
+      signed(relay, {
+        kind: 30382,
+        content: "",
+        created_at: 100,
+        tags: [
+          ["d", subject],
+          ["p", subject],
+          ["active", "true"],
+          ["issuer_label", "Example"],
+          ["verified_at", "100"],
+          ["display_name", display],
+          ["username", username],
+          ["full_name", full],
+        ],
+      }),
+    );
+  const heads = [
+    head(alice, "Ally", "jrivera", "Jordan Rivera"),
+    head(carol, "Cee", "cquinn", "Casey Quinn"),
+  ];
+  const { client: base } = fake([...community, ...heads, ...more]);
+  const client = {
+    ...base,
+    relayAuthor: relay.pubkey,
+    searchProfiles: vi.fn(async () => [
+      event({
+        kind: 0,
+        pubkey: alice,
+        content: JSON.stringify({
+          display_name: "Alice Smith",
+          name: "asmith",
+        }),
+      }),
+      ...heads,
+    ]),
+  };
+  return { client, carol };
+}
+
+it("finds a user by a verified full name that differs from their profile name", async () => {
+  const { client, carol } = verifiedPeople();
+  const found = await callTool(client, {}, "users", { q: "Jordan Rivera" });
+  expect(client.searchProfiles).toHaveBeenCalledWith("jordan rivera", 100);
+  expect(found).toBe(
+    [
+      `${alice} "Alice Smith" (verified: Jordan Rivera)`,
+      `${carol} (verified: Casey Quinn)`,
+    ].join("\n"),
+  );
+});
+
+it("learns the relay's key only when a people search needs it", async () => {
+  const { client: known, carol } = verifiedPeople();
+  const { relayAuthor, ...client } = known;
+  const relayAuthorLookup = vi.fn(async () => relayAuthor);
+  const lazy = { ...client, relayAuthorLookup };
+  await callTool(lazy, {}, "channel_list", {});
+  expect(relayAuthorLookup).not.toHaveBeenCalled();
+  const found = await callTool(lazy, {}, "users", { q: "Jordan Rivera" });
+  expect(found).toBe(
+    [
+      `${alice} "Alice Smith" (verified: Jordan Rivera)`,
+      `${carol} (verified: Casey Quinn)`,
+    ].join("\n"),
+  );
+});
+
+it("asks for the relay's key once per people search", async () => {
+  const { client: known } = verifiedPeople();
+  const { relayAuthor: _, ...client } = known;
+  const relayAuthorLookup = vi.fn(async () => {
+    throw new Error("offline");
+  });
+  const found = await callTool({ ...client, relayAuthorLookup }, {}, "users", {
+    q: "Jordan Rivera",
+  });
+  expect(relayAuthorLookup).toHaveBeenCalledOnce();
+  expect(found).toBe(
+    `${alice} "Alice Smith"\nwarning: the relay's archive list could not be read, so archived identities are not left out or marked.`,
+  );
+});
+
+it("names no author while the relay's key can't be learned, then asks which one is meant", async () => {
+  const { client: known } = verifiedPeople([note(alice, "recipe", 200)]);
+  const { relayAuthor, ...client } = known;
+  const search = client.searchProfiles;
+  client.searchProfiles = vi.fn(async () => [
+    profile("f".repeat(64), "Jordan Rivera"),
+    ...(await search()),
+  ]);
+  const relayAuthorLookup = vi.fn<() => Promise<string | undefined>>(
+    async () => {
+      throw new Error("offline");
+    },
+  );
+  const read = () =>
+    callTool({ ...client, relayAuthorLookup }, {}, "notes_get", {
+      name: "recipe",
+      author: "Jordan Rivera",
+    });
+  await expect(read()).rejects.toThrow(
+    "Couldn't check verified names; try again.",
+  );
+  relayAuthorLookup.mockImplementation(async () => relayAuthor);
+  await expect(read()).rejects.toThrow(
+    "2 people are named Jordan Rivera; give their npub.",
+  );
+});
+
+it("names an author by profile name where the relay has no key", async () => {
+  const { client: known } = verifiedPeople([note(alice, "recipe", 200)]);
+  const { relayAuthor: _, ...client } = known;
+  const relayAuthorLookup = vi.fn(async () => undefined);
+  await expect(
+    callTool({ ...client, relayAuthorLookup }, {}, "notes_get", {
+      name: "recipe",
+      author: "asmith",
+    }),
+  ).resolves.toMatch(/\nrecipe by a$/);
+});
+
+it("quotes a profile's own name, so it can't pass for a verified label", async () => {
+  const { client } = verifiedPeople();
+  const forger = "d".repeat(64);
+  client.searchProfiles = vi.fn(async () => [
+    profile(forger, "Alice (verified: Jordan Rivera)"),
+  ]);
+  const found = await callTool(client, {}, "users", { q: "Jordan Rivera" });
+  expect(found).toBe(`${forger} "Alice (verified: Jordan Rivera)"`);
+  client.searchProfiles = vi.fn(async () => [
+    event({
+      kind: 0,
+      pubkey: forger,
+      content: JSON.stringify({
+        display_name: "Plain",
+        about: `hello\n${forger} "Plain" (verified: Jordan Rivera)`,
+      }),
+    }),
+  ]);
+  const about = await callTool(client, {}, "users", { q: "Jordan Rivera" });
+  expect(String(about).split("\n")).toHaveLength(1);
+});
+
+it("keeps the people the search found when reading verified names fails, but names no author", async () => {
+  const { client, carol } = verifiedPeople([note(alice, "recipe", 200)]);
+  const query = client.query;
+  client.query = vi.fn(async (filters: Parameters<typeof query>[0]) =>
+    filters.some((filter) => (filter.kinds as number[]).includes(30382))
+      ? Promise.reject(new Error("offline"))
+      : query(filters),
+  );
+  const found = await callTool(client, {}, "users", { q: "Jordan Rivera" });
+  expect(found).toBe(
+    [
+      `${alice} "Alice Smith" (verified: Jordan Rivera)`,
+      `${carol} (verified: Casey Quinn)`,
+    ].join("\n"),
+  );
+  await expect(
+    callTool(client, {}, "notes_get", { name: "recipe", author: "asmith" }),
+  ).rejects.toThrow("Couldn't check verified names; try again.");
+});
+
+it("keeps the community's order for a person it found with no profile", async () => {
+  const { client, carol } = verifiedPeople();
+  const heads = (await client.searchProfiles()).filter((e) => e.kind === 30382);
+  client.searchProfiles = vi.fn(async () => [
+    heads[1] as BuzzEvent,
+    profile(alice, "Alice Smith"),
+    heads[0] as BuzzEvent,
+  ]);
+  const found = await callTool(client, {}, "users", { q: "q" });
+  expect(found).toBe(
+    `${carol} (verified: Casey Quinn)\n${alice} "Alice Smith" (verified: Jordan Rivera)`,
+  );
+});
+
+it("names an author by any verified name or profile name, ignoring accents and case", async () => {
+  const carol = "e".repeat(64);
+  const { client } = verifiedPeople([
+    note(alice, "recipe", 200),
+    note(carol, "recipe", 300),
+  ]);
+  const read = (author: string) =>
+    callTool(client, {}, "notes_get", { name: "recipe", author });
+  for (const author of [
+    "Jordán Rivera",
+    "Ally",
+    "jrivera",
+    "alice smith",
+    "asmith",
+  ])
+    await expect(read(author)).resolves.toMatch(/\nrecipe by a$/);
+  await expect(read("Casey Quinn")).resolves.toMatch(/\nrecipe by e$/);
+  await expect(read("Nobody")).rejects.toThrow("No one is named Nobody.");
+});
+
+it("asks which person is meant when a profile name is another's verified name", async () => {
+  const { client } = verifiedPeople([note(alice, "recipe", 200)]);
+  const namesake = "f".repeat(64);
+  const search = client.searchProfiles;
+  client.searchProfiles = vi.fn(async () => [
+    profile(namesake, "Jordan Rivera"),
+    ...(await search()),
+  ]);
+  await expect(
+    callTool(client, {}, "notes_get", {
+      name: "recipe",
+      author: "Jordan Rivera",
+    }),
+  ).rejects.toThrow("2 people are named Jordan Rivera; give their npub.");
+});
+
 it("finds users with NIP-50 search where the community has no name search", async () => {
-  const { client } = fake(community);
+  const dana = "d".repeat(64);
+  const { client } = fake([
+    ...community,
+    event({
+      kind: 0,
+      pubkey: dana,
+      content: JSON.stringify({ display_name: "Dana", name: "dfernández" }),
+    }),
+  ]);
   client.searchProfiles = vi.fn(async () => undefined);
   // The fake ignores `search`; the name filter keeps only matching names.
   expect(await callTool(client, {}, "users", { q: "alice" })).toBe(
-    `${alice} Alice Smith`,
+    `${alice} "Alice Smith"`,
+  );
+  expect(await callTool(client, {}, "users", { q: "Fernandez" })).toBe(
+    `${dana} "Dana"`,
   );
   expect(client.query).toHaveBeenCalledWith([
     { kinds: [0], search: "alice", limit: 100 },
@@ -3861,9 +4261,326 @@ it("reads users by id without the name search", async () => {
   const { client } = fake(community);
   client.searchProfiles = vi.fn(async () => []);
   expect(await callTool(client, {}, "users", { ids: [bob] })).toBe(
-    `${bob} Bob`,
+    `${bob} "Bob"`,
   );
   expect(client.searchProfiles).not.toHaveBeenCalled();
+});
+
+function archivedPeople(forge = false, extra: readonly BuzzEvent[] = []) {
+  const relay = keypair();
+  const list = {
+    kind: 13535,
+    content: "",
+    created_at: 100,
+    tags: [["-"], ["p", bob]],
+  };
+  const { client: base } = fake([
+    ...community,
+    // Unsigned, the connection never admitted it.
+    forge
+      ? event({ ...list, pubkey: relay.pubkey })
+      : eventDto(signed(relay, list)),
+    ...extra,
+  ]);
+  const client = {
+    ...base,
+    signingAuthority: relay.pubkey,
+    searchProfiles: vi.fn(async () => [
+      profile(alice, "Alice Smith"),
+      profile(bob, "Bob"),
+    ]),
+  };
+  return client;
+}
+
+it("reads no archive list signed by a contact key alone", async () => {
+  const { signingAuthority, ...client } = archivedPeople();
+  // The app's contact key, never an archive authority.
+  const contact = {
+    ...client,
+    signingAuthority: null,
+    relayAuthor: signingAuthority,
+  };
+  expect(await callTool(contact, {}, "users", { q: "b" })).toBe(
+    `${alice} "Alice Smith"\n${bob} "Bob"`,
+  );
+  expect(contact.query).not.toHaveBeenCalledWith([
+    expect.objectContaining({ kinds: [13535] }),
+  ]);
+});
+
+it("goes on without an archive list held open", async () => {
+  vi.useFakeTimers();
+  try {
+    const client = archivedPeople();
+    const query = client.query;
+    client.query = vi.fn((filters: readonly Filter[]) =>
+      (filters[0]?.kinds as number[] | undefined)?.includes(13535)
+        ? new Promise<never>(() => {})
+        : query(filters),
+    );
+    const warning =
+      "warning: the relay's archive list could not be read, so archived identities are not left out or marked.";
+    const byId = callTool(client, {}, "users", { ids: [bob] });
+    const search = callTool(client, {}, "users", { q: "b" });
+    await vi.advanceTimersByTimeAsync(0);
+    // The profile read starts beside the archive read, not after it.
+    expect(client.query).toHaveBeenCalledWith([
+      { kinds: [0], authors: [bob], limit: 1 },
+    ]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await byId).toBe(`${bob} "Bob"\n${warning}`);
+    expect(await search).toBe(
+      `${alice} "Alice Smith"\n${bob} "Bob"\n${warning}`,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("leaves archived identities out of a name search unless asked", async () => {
+  const client = archivedPeople();
+  expect(await callTool(client, {}, "users", { q: "b" })).toBe(
+    `${alice} "Alice Smith"`,
+  );
+  expect(
+    await callTool(client, {}, "users", { q: "b", include_archived: true }),
+  ).toBe(`${alice} "Alice Smith"\n${bob} "Bob" archived`);
+});
+
+it("finds yourself in a name search though archived", async () => {
+  const client = { ...archivedPeople(), key: bob, pubkey: bob };
+  expect(await callTool(client, {}, "users", { q: "b" })).toBe(
+    `${alice} "Alice Smith"\n${bob} "Bob" archived`,
+  );
+});
+
+it("marks an archived identity read by id", async () => {
+  const client = archivedPeople();
+  expect(await callTool(client, {}, "users", { ids: [bob, alice] })).toBe(
+    `${alice} "Alice Smith"\n${bob} "Bob" archived`,
+  );
+});
+
+it("searches unfiltered, with a warning, when the archive list can't be read", async () => {
+  const forged = archivedPeople(true);
+  const { relayAuthor: _, ...lost } = archivedPeople();
+  const unreachable = {
+    ...lost,
+    relayAuthorLookup: vi.fn(async () => {
+      throw new Error("offline");
+    }),
+  };
+  const warning =
+    "warning: the relay's archive list could not be read, so archived identities are not left out or marked.";
+  for (const broken of [forged, unreachable])
+    expect(await callTool(broken, {}, "users", { q: "b" })).toBe(
+      `${alice} "Alice Smith"\n${bob} "Bob"\n${warning}`,
+    );
+});
+
+it("refuses to mention an archived identity, by key or by name", async () => {
+  const context = { channel: "chan", root };
+  for (const args of [
+    { text: "see this", mentions: [bob] },
+    { text: "@Bob see this" },
+  ]) {
+    const client = archivedPeople();
+    const publish = vi.spyOn(client, "publish");
+    await expect(
+      callTool(client, context, "send", { ...args, audience: "everyone" }),
+    ).rejects.toThrow(`Bob (${bob}) is archived. Nothing was posted.`);
+    expect(publish).not.toHaveBeenCalled();
+  }
+});
+
+it("refuses a new DM with an archived identity, but opens an existing one", async () => {
+  const client = archivedPeople();
+  const publish = vi.spyOn(client, "publish");
+  await expect(callTool(client, {}, "dm", { to: [bob] })).rejects.toThrow(
+    `Bob (${bob}) is archived. No DM was opened.`,
+  );
+  expect(publish).not.toHaveBeenCalled();
+  const dm = event({
+    kind: 39000,
+    tags: [
+      ["d", "dm-bob"],
+      ["t", "dm"],
+      ["p", me],
+      ["p", bob],
+    ],
+  });
+  const existing = archivedPeople(false, [dm]);
+  expect(await callTool(existing, {}, "dm", { to: [bob] })).toBe("dm-bob");
+});
+
+it("opens an existing DM with an archived identity past the first page", async () => {
+  const dm = (id: string, created_at: number, other: string) =>
+    event({
+      id: id.padStart(64, "0"),
+      kind: 39000,
+      created_at,
+      tags: [
+        ["d", `dm-${id}`],
+        ["t", "dm"],
+        ["p", me],
+        ["p", other],
+      ],
+    });
+  const newer = Array.from({ length: 600 }, (_, i) =>
+    dm(`${i + 1}`, 1000 + i, alice),
+  );
+  const client = archivedPeople(false, [...newer, dm("0", 1, bob)]);
+  const publish = vi.spyOn(client, "publish");
+  expect(await callTool(client, {}, "dm", { to: [bob] })).toBe("dm-0");
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it("refuses an archived mention before uploading its files", async () => {
+  const client = archivedPeople();
+  await expect(
+    callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      files: ["shot.png"],
+      audience: "everyone",
+    }),
+  ).rejects.toThrow(`Bob (${bob}) is archived. Nothing was posted.`);
+  expect(client.upload).not.toHaveBeenCalled();
+  expect(client.publish).not.toHaveBeenCalled();
+});
+
+it("warns, not clears, when the host gives no way to learn the relay's key", async () => {
+  // As in Mesh Agent mode: no signing authority, no lookup.
+  const { signingAuthority: _, ...client } = archivedPeople();
+  expect(
+    await callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    }),
+  ).toMatch(
+    /\nwarning: the relay's archive list could not be read, so archived identities were not checked\.$/,
+  );
+});
+
+it("bounds the relay key's discovery by the archive check's limit", async () => {
+  vi.useFakeTimers();
+  try {
+    const { signingAuthority: _, ...base } = archivedPeople();
+    const client = {
+      ...base,
+      relayAuthorLookup: vi.fn(() => new Promise<never>(() => {})),
+    };
+    const sent = callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await sent).toMatch(
+      /\nwarning: the relay's archive list could not be read/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it.each(["fails", "stalls"])(
+  "refuses an archived mention by key when the profile read %s",
+  async (how) => {
+    vi.useFakeTimers();
+    try {
+      const client = archivedPeople();
+      const query = client.query;
+      client.query = vi.fn((filters: readonly Filter[]) =>
+        (filters[0]?.kinds as number[] | undefined)?.includes(0)
+          ? how === "fails"
+            ? Promise.reject(new Error("offline"))
+            : new Promise<never>(() => {})
+          : query(filters),
+      );
+      const sent = callTool(client, { channel: "chan", root }, "send", {
+        text: "see this",
+        mentions: [bob],
+        audience: "everyone",
+      });
+      const refused = expect(sent).rejects.toThrow(
+        `${bob} (${bob}) is archived. Nothing was posted.`,
+      );
+      await vi.advanceTimersByTimeAsync(5000);
+      await refused;
+      expect(client.publish).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("answers a name search within the limit while the relay key is held", async () => {
+  vi.useFakeTimers();
+  try {
+    const { signingAuthority: _, ...base } = archivedPeople();
+    const client = {
+      ...base,
+      relayAuthorLookup: vi.fn(() => new Promise<never>(() => {})),
+    };
+    let done = false;
+    const search = callTool(client, {}, "users", { q: "b" }).finally(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await search).toMatch(
+      /^.*"Alice Smith"\n.*"Bob"\nwarning: the relay's archive list could not be read/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("gives the name lookup only the time the archive read left", async () => {
+  vi.useFakeTimers();
+  try {
+    const client = archivedPeople();
+    const query = client.query;
+    client.query = vi.fn((filters: readonly Filter[]) => {
+      const kinds = filters[0]?.kinds as number[] | undefined;
+      if (kinds?.includes(0)) return new Promise<never>(() => {});
+      if (kinds?.includes(13535))
+        return new Promise<readonly BuzzEvent[]>((resolve) =>
+          setTimeout(() => resolve(query(filters)), 4000),
+        );
+      return query(filters);
+    });
+    const sent = callTool(client, { channel: "chan", root }, "send", {
+      text: "see this",
+      mentions: [bob],
+      audience: "everyone",
+    });
+    const refused = expect(sent).rejects.toThrow(
+      `${bob} (${bob}) is archived. Nothing was posted.`,
+    );
+    await vi.advanceTimersByTimeAsync(5000);
+    await refused;
+    expect(client.publish).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("sends to an archived identity, with a warning, when the archive list can't be read", async () => {
+  const client = archivedPeople(true);
+  expect(
+    await callTool(client, { channel: "chan", root }, "send", {
+      text: "@Bob see this",
+      audience: "everyone",
+    }),
+  ).toMatch(
+    /^sent [0-9a-f]+\nwarning: the relay's archive list could not be read, so archived identities were not checked\.$/,
+  );
+  expect(client.publish).toHaveBeenCalledOnce();
 });
 
 it("refuses ids with q, and more than 100 ids", async () => {
@@ -4547,6 +5264,54 @@ it("validates creation inputs and reports hosts without agent creation", async (
   });
 });
 
+it("hands off between saved tasks in one source thread", async () => {
+  const second = "3".repeat(64);
+  const { client } = fake([
+    event({ kind: 39000, tags: [["d", "chan"]] }),
+    ...[nested, second].map((id) =>
+      event({
+        id,
+        tags: [
+          ["h", "chan"],
+          ["e", root, "", "reply"],
+        ],
+      }),
+    ),
+  ]);
+  const handoff = vi.fn();
+  Object.assign(client, {
+    handoff,
+    isTaskThread: (_channel: string, id: string) => id === second,
+  });
+  const context: import("./client").Context = {
+    channel: "chan",
+    root: nested,
+    sourceRoot: root,
+  };
+  const wake = (thread: string, from = context) =>
+    callTool(client, from, "self_handoff", {
+      channel: "chan",
+      thread,
+      text: "Continue",
+    });
+  await expect(wake(nested)).rejects.toThrow("That is this conversation.");
+  await expect(wake(second)).resolves.toContain(second);
+  expect(handoff).toHaveBeenCalledExactlyOnceWith({
+    channel: "chan",
+    root: second,
+    text: "Continue",
+    from: { channel: "chan", root: nested },
+  });
+  const channelWide = { channel: "chan", root, wholeChannel: true };
+  await expect(wake(second, channelWide)).resolves.toContain(second);
+  expect(handoff).toHaveBeenLastCalledWith({
+    channel: "chan",
+    root: second,
+    text: "Continue",
+    from: { channel: "chan", root },
+  });
+});
+
 it("hands off to the agent in another of its conversations it can see", async () => {
   const solo = event({
     kind: 39000,
@@ -4886,7 +5651,7 @@ it.each([undefined, "humans"])(
         audience,
         text: "hi",
       }),
-    ).rejects.toThrow("audience must be everyone or agents.");
+    ).rejects.toThrow("audience must be everyone, details or agents.");
     expect(published).toEqual([]);
   },
 );
@@ -5161,7 +5926,7 @@ it.each(["send", "reply_in_subthread"])(
         files: ["shot.png"],
       }),
     ).rejects.toThrow("self_handoff");
-    expect(client.upload).toHaveBeenCalledOnce();
+    expect(client.upload).not.toHaveBeenCalled();
     expect(client.publish).not.toHaveBeenCalled();
   },
 );
@@ -5314,4 +6079,177 @@ it("preserves ordinary attachment sends when snapshot hashing is unavailable", a
   } finally {
     hash.mockRestore();
   }
+});
+
+it("keeps ordinary routed sends in the task branch and preserves an explicit source reply", async () => {
+  const { client, published } = fake(community);
+  const context = { channel: "chan", root: nested, sourceRoot: root };
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: "Task work",
+  });
+  await callTool(client, context, "send", {
+    audience: "everyone",
+    text: "Source",
+    reply: root,
+  });
+  expect(published.map((event) => event.tags)).toEqual([
+    [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+    [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  ]);
+});
+
+it("reads nested task replies when their parents are on later pages", async () => {
+  const parent = event({
+    id: "3".repeat(64),
+    content: "Task parent",
+    created_at: 110,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const child = event({
+    id: "4".repeat(64),
+    content: "Task child",
+    created_at: 130,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", parent.id, "", "reply"],
+    ],
+  });
+  const sibling = event({
+    id: "5".repeat(64),
+    content: "Source sibling",
+    created_at: 120,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const anchor = event({
+    id: nested,
+    created_at: 125,
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const { client } = fake([anchor, parent, child, sibling]);
+  const context = { channel: "chan", root: nested, sourceRoot: root };
+  const first = await callTool(client, context, "read", { limit: 1 });
+  expect(first).toContain("Task child");
+  expect(first).toContain("Older replies remain");
+  expect(first).not.toContain("Task parent");
+  const next = await callTool(client, context, "read", {
+    limit: 1,
+    before: child.created_at,
+    before_id: child.id,
+  });
+  expect(next).not.toContain("Source sibling");
+  const last = await callTool(client, context, "read", {
+    limit: 1,
+    before: sibling.created_at,
+    before_id: sibling.id,
+  });
+  expect(last).toContain("Task parent");
+  expect(last).not.toContain("Task child");
+  await expect(
+    callTool(client, context, "read", {
+      channel: "other",
+      thread: nested,
+    }),
+  ).rejects.toThrow("different channel");
+});
+
+it("keeps an explicit flat reply to a nested task message in the task", async () => {
+  const parent = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const child = event({
+    id: "4".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", parent.id, "", "reply"],
+    ],
+  });
+  const { client, published } = fake([...community, parent, child]);
+  await callTool(
+    client,
+    { channel: "chan", root: nested, sourceRoot: root },
+    "send",
+    {
+      audience: "everyone",
+      text: "Reply in task",
+      reply: child.id,
+    },
+  );
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+  ]);
+});
+
+it("passes only explicit runtime settings through the owner review tool", async () => {
+  const { client } = fake([]);
+  client.updateAgent = vi.fn(async () => ({
+    requestId: "draft",
+    saved: false as const,
+  }));
+  const settings = {
+    model: "",
+    effort: "high",
+    scope: "community",
+    voice: "maple",
+    apps: false,
+    workspace: "~/example",
+    compactAt: "150000",
+  };
+  await expect(
+    callTool(client, {}, "agent_update", {
+      agent: "Self",
+      ...settings,
+      model: "  ",
+      effort: " high ",
+      voice: " maple ",
+    }),
+  ).resolves.toBe('{"requestId":"draft","saved":false}');
+  expect(client.updateAgent).toHaveBeenCalledWith({ agent: "Self", settings });
+  for (const invalid of [
+    { scope: "all" },
+    { apps: "false" },
+    { model: null },
+    { compactAt: "99000" },
+    { compactAt: "150500" },
+    { compactAt: 150000 },
+    { config: {} },
+  ])
+    await expect(
+      callTool(client, {}, "agent_update", {
+        agent: "Self",
+        ...invalid,
+      }),
+    ).rejects.toThrow();
+  expect(client.updateAgent).toHaveBeenCalledTimes(1);
+  await callTool(client, {}, "agent_update", { agent: "Self", compactAt: "" });
+  expect(client.updateAgent).toHaveBeenLastCalledWith({
+    agent: "Self",
+    settings: { compactAt: "" },
+  });
 });

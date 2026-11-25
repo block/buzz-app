@@ -1,4 +1,5 @@
 import type { AgentExecutionBinding } from "../../features/agents/execution";
+import { TranscriptFocus } from "../../features/agents/ActivityTranscript";
 import { AgentTabs } from "../agents/AgentTabs";
 import type {
   Agent,
@@ -28,6 +29,10 @@ import {
   localStore,
   type AgentStore,
 } from "../../features/agents/state";
+import {
+  awaitRecommendation,
+  setRuntimeRecommendation,
+} from "../../features/agents/recommended";
 import type { AgentViewProps } from "../../features/agents/service";
 import { AgentCreateDialog } from "../agents/AgentCreateDialog";
 import type { HostProcessOptions } from "../../features/host/service";
@@ -82,6 +87,7 @@ function fixture({
   installed = true,
   saved = {},
   turns = () => ({ result: { data: [] } }),
+  rolloutPath,
   threads = [],
   configured = {},
   voices = ["cove", "maple"],
@@ -110,7 +116,8 @@ function fixture({
   requiresOpenaiAuth?: boolean;
   installed?: boolean;
   saved?: Record<string, unknown>;
-  turns?: (threadId: string) => Wire;
+  turns?: (threadId: string) => Wire | Promise<Wire>;
+  rolloutPath?: () => string | null;
   threads?: { id: string; name: string; updatedAt: number }[] | string;
   configured?: {
     model?: string;
@@ -132,6 +139,15 @@ function fixture({
   const logins: ReturnType<typeof deferred<number | null>>[] = [];
   const spawn = vi.fn(async (id: string, options?: HostProcessOptions) => {
     const exit = deferred<number | null>();
+    if (id === "read" || id === "read-from" || id === "rollout-stat") {
+      if (id === "rollout-stat") options?.onStdout?.("0 1:1 1");
+      return {
+        write: async () => {},
+        end: async () => {},
+        kill: async () => {},
+        exited: Promise.resolve(0),
+      };
+    }
     if (id === "codex" || id === "login") {
       const args = options?.args?.join(" ");
       if (id === "login") logins.push(exit);
@@ -157,7 +173,9 @@ function fixture({
         const wire: Wire = JSON.parse(text);
         if (wire.id == null) return;
         if (wire.method === "thread/turns/list") {
-          const reply = turns((wire.params as { threadId: string }).threadId);
+          const reply = await turns(
+            (wire.params as { threadId: string }).threadId,
+          );
           // Kept for `thread/items/list`, which Buzz reads them through.
           const listed = reply.result as { data?: Record<string, unknown>[] };
           for (const turn of listed?.data ?? [])
@@ -173,6 +191,8 @@ function fixture({
             nextCursor: null,
           };
         }
+        if (wire.method === "thread/read")
+          result = { thread: { path: rolloutPath?.() ?? null } };
         if (wire.method === "config/read") {
           await configGate;
           result = { config: configured };
@@ -397,6 +417,267 @@ it("lists saved conversations and shows one's Codex thread, or that Codex no lon
   expect(screen.queryByRole("alert")).toBeNull();
   expect(save).not.toHaveBeenCalled();
 });
+
+function recordedTurn(id: string, count: number, startedAt = 1, live = false) {
+  return {
+    id,
+    startedAt,
+    completedAt: live ? null : startedAt + 1,
+    status: live ? "inProgress" : "completed",
+    items: Array.from({ length: count }, (_, i) => ({
+      type: "agentMessage",
+      id: `${id}-${i}`,
+      text: `Message ${id}-${i}`,
+    })),
+  };
+}
+
+const savedKey = JSON.stringify(["channel", "channel"]);
+function previewFixture(
+  turns: (thread: string) => Wire | Promise<Wire>,
+  rolloutPath: () => string | null = () => "/sessions/thread.jsonl",
+) {
+  return fixture({
+    saved: { [savedKey]: { threadId: "thread", workspace: "/w", at: 1 } },
+    turns,
+    rolloutPath,
+  });
+}
+
+const loadedEntries = () =>
+  Array.from(
+    document.querySelectorAll("[data-transcript] [data-entry^='item:']"),
+    (row) => row.getAttribute("data-entry"),
+  );
+
+it("expands the clipped session opener without rereading it, and Refresh reads new rows in full", async () => {
+  let count = 130;
+  const f = previewFixture(() => ({
+    result: { data: [recordedTurn("first", count)] },
+  }));
+  const props = f.props();
+  render(<f.tabs.ActivityTab {...props} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: /^View transcript/ }),
+  );
+  const expand = await screen.findByRole("button", {
+    name: "Load earlier activity",
+  });
+  expect(loadedEntries()).toEqual(
+    Array.from({ length: 128 }, (_, i) => `item:first-${i + 2}`),
+  );
+  expect(
+    screen.getByText("The start of this turn isn't loaded."),
+  ).toBeVisible();
+  expect(screen.queryByText("New session")).toBeNull();
+  const reads = f.spawn.mock.calls.length;
+  const user = userEvent.setup();
+  const refresh = screen.getByRole("button", { name: "Refresh transcript" });
+  refresh.focus();
+  await user.tab();
+  expect(document.activeElement).toBe(expand);
+  await user.keyboard("{Enter}");
+  expect(await screen.findByText("New session")).toBeVisible();
+  expect(loadedEntries()).toEqual(
+    Array.from({ length: 130 }, (_, i) => `item:first-${i}`),
+  );
+  expect(document.activeElement).toBe(refresh);
+  expect(f.spawn.mock.calls).toHaveLength(reads);
+  count++;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh transcript" }));
+  await screen.findByText("Message first-130", { selector: "summary span" });
+  expect(f.spawn.mock.calls.filter(([id]) => id === "app-server")).toHaveLength(
+    2,
+  );
+  expect(loadedEntries()).toHaveLength(131);
+});
+
+it("keeps the first preview row when a send starts a new Codex thread for the same conversation", async () => {
+  const binding = { threadId: "missing", workspace: "/w" };
+  const previous = recordedTurn("previous", 130);
+  const live = recordedTurn("live", 3, 3, true);
+  const started = deferred<void>();
+  const pending = deferred<Wire>();
+  const tag = sessionTag("a".repeat(64), { channelId: "channel" });
+  const f = fixture({
+    saved: { [savedKey]: binding },
+    threads: [{ id: "archive", name: `Sol · ${tag}`, updatedAt: 1 }],
+    turns: (thread) => {
+      if (thread === "new") {
+        started.resolve();
+        return pending.promise;
+      }
+      return { result: { data: thread === "archive" ? [previous] : [] } };
+    },
+    rolloutPath: () => "/sessions/test.jsonl",
+  });
+  const sessions = vi.spyOn(f.runtime, "sessions").mockReturnValue([]);
+  const mounted = render(<f.tabs.ActivityTab {...f.props()} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: /^View transcript/ }),
+  );
+  await screen.findByRole("button", { name: "Load earlier activity" });
+  const prior = loadedEntries();
+  expect(prior[0]).toBe("item:previous-2");
+
+  binding.threadId = "new";
+  sessions.mockReturnValue([{ key: savedKey, status: "Working", detail: "" }]);
+  mounted.rerender(<f.tabs.ActivityTab {...f.props()} />);
+  await started.promise;
+  const whileReading = loadedEntries();
+  await act(async () => pending.resolve({ result: { data: [live] } }));
+  await screen.findByText("Message live-2", { selector: "summary span" });
+  expect.soft(whileReading).toEqual(prior);
+  expect(loadedEntries()).toEqual([
+    ...prior,
+    ...live.items.map((item) => `item:${item.id}`),
+  ]);
+});
+
+it.each(["Load earlier activity", "Refresh transcript", "linked message"])(
+  "keeps the prior turn and all live rows, and honors %s during a stop read",
+  async (action) => {
+    const event = "d".repeat(64);
+    const history = recordedTurn("previous", 130);
+    const previous = {
+      ...history,
+      items: [
+        {
+          type: "dynamicToolCall",
+          id: "sent",
+          namespace: "buzz",
+          tool: "send",
+          arguments: { text: "Linked reply" },
+          status: "completed",
+          contentItems: [{ type: "inputText", text: `sent ${event}` }],
+          success: true,
+        },
+        ...history.items.slice(1),
+      ],
+    };
+    const live = recordedTurn("live", 135, 3, true);
+    const stopped = deferred<Wire>();
+    const started = deferred<void>();
+    let served: Wire | Promise<Wire> = { result: { data: [previous] } };
+    const f = previewFixture(() => {
+      if (served === stopped.promise) started.resolve();
+      return served;
+    });
+    const sessions = vi.spyOn(f.runtime, "sessions").mockReturnValue([]);
+    const focus = { events: [event], inputs: 0, done() {} };
+    const panel = (opening?: typeof focus) => (
+      <TranscriptFocus.Provider value={opening}>
+        <f.tabs.ActivityTab {...f.props()} />
+      </TranscriptFocus.Provider>
+    );
+    const mounted = render(panel());
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^View transcript/ }),
+    );
+    await screen.findByRole("button", { name: "Load earlier activity" });
+    const prior = loadedEntries();
+    served = { result: { data: [live, previous] } };
+    sessions.mockReturnValue([
+      { key: savedKey, status: "Working", detail: "" },
+    ]);
+    mounted.rerender(panel());
+    await screen.findByText("Message live-134", { selector: "summary span" });
+    expect(loadedEntries()).toEqual([
+      ...prior,
+      ...live.items.map((item) => `item:${item.id}`),
+    ]);
+    served = stopped.promise;
+    sessions.mockReturnValue([]);
+    mounted.rerender(panel());
+    await started.promise;
+    const full = { result: { data: [recordedTurn("live", 136, 3), previous] } };
+    if (action === "linked message") {
+      served = full;
+      const original = Object.getOwnPropertyDescriptor(
+        Element.prototype,
+        "scrollIntoView",
+      );
+      Element.prototype.scrollIntoView = () => {};
+      try {
+        mounted.rerender(panel(focus));
+        await act(async () =>
+          stopped.resolve({
+            error: { code: -32603, message: "Stop read failed" },
+          }),
+        );
+        await waitFor(() =>
+          expect(
+            document.querySelector('[data-entry="item:sent"] [data-arrived]'),
+          ).toBeVisible(),
+        );
+        expect(screen.queryByRole("alert")).toBeNull();
+      } finally {
+        if (original)
+          Object.defineProperty(Element.prototype, "scrollIntoView", original);
+        else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      }
+    } else {
+      const user = userEvent.setup();
+      const control = screen.getByRole("button", { name: action });
+      control.focus();
+      await user.keyboard("{Enter}");
+      expect(document.activeElement).toBe(control);
+      await act(async () => stopped.resolve(full));
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Refresh transcript" }),
+      );
+    }
+    await screen.findByText("Message live-135", { selector: "summary span" });
+    expect(loadedEntries()).toHaveLength(266);
+    expect(
+      screen.queryByRole("button", { name: "Load earlier activity" }),
+    ).toBeNull();
+    expect(
+      f.spawn.mock.calls.filter(([id]) => id === "app-server"),
+    ).toHaveLength(action === "Load earlier activity" ? 3 : 4);
+  },
+);
+
+it.each(["linked message", "unavailable tools", "working turn"])(
+  "opens a large transcript for a %s",
+  async (mode) => {
+    const old = recordedTurn("old", 1);
+    const newest = recordedTurn("latest", 130, 3, mode === "working turn");
+    const f = previewFixture(
+      () => ({ result: { data: [newest, old] } }),
+      () => (mode === "unavailable tools" ? null : "/sessions/thread.jsonl"),
+    );
+    const focus =
+      mode === "linked message"
+        ? { events: ["message"], inputs: 0, done() {} }
+        : undefined;
+    render(
+      <TranscriptFocus.Provider value={focus}>
+        <f.tabs.ActivityTab {...f.props()} />
+      </TranscriptFocus.Provider>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^View transcript/ }),
+    );
+    await screen.findByText("Message latest-129", { selector: "summary span" });
+    expect(loadedEntries()).toContain("item:latest-0");
+    if (mode === "working turn") {
+      expect(loadedEntries()).not.toContain("item:old-0");
+      expect(
+        screen.getByRole("button", { name: "Load earlier activity" }),
+      ).toBeVisible();
+    } else {
+      expect(loadedEntries()).toContain("item:old-0");
+      expect(
+        screen.queryByRole("button", { name: "Load earlier activity" }),
+      ).toBeNull();
+      if (mode === "unavailable tools")
+        expect(loadedEntries()).toContain(
+          "item:thread:recorded-tools-unavailable",
+        );
+    }
+  },
+);
 
 it("sets the conversation the profile was opened from apart from recent conversations", async () => {
   const root = "e".repeat(64);
@@ -2237,7 +2518,7 @@ it("separates identity fields from runtime settings without changing the stored 
     screen.queryByRole("button", { name: "Huddle voice" }),
   ).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Workspace")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Sessions")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Session scope")).not.toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   view.rerender(<Settings {...props} settingsSection="runtime" />);
   expect(
@@ -2246,7 +2527,7 @@ it("separates identity fields from runtime settings without changing the stored 
     "Determines which voice your agent speaks with in Huddles (Codex only). Codex default",
   );
   expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
-  expect(screen.getByLabelText("Sessions")).toBeInTheDocument();
+  expect(screen.getByLabelText("Session scope")).toBeInTheDocument();
   expect(screen.queryByText("Runtime diagnostics")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Instructions")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
@@ -2406,7 +2687,11 @@ it.each(["Needs attention", "Session could not be saved"])(
   async (status) => {
     const f = fixture();
     vi.spyOn(f.runtime, "sessions").mockReturnValue([
-      { key: "unbound", status, detail: "First line\nSecond line" },
+      {
+        key: JSON.stringify(["channel", "channel"]),
+        status,
+        detail: "First line\nSecond line",
+      },
     ]);
     render(<f.tabs.ActivityTab {...f.props()} />);
     const diagnostic = await screen.findByText("First line Second line");
@@ -2419,13 +2704,43 @@ it.each(["Needs attention", "Session could not be saved"])(
 it("collapses Working command details", async () => {
   const f = fixture();
   vi.spyOn(f.runtime, "sessions").mockReturnValue([
-    { key: "unbound", status: "Working", detail: "git status" },
+    {
+      key: JSON.stringify(["channel", "channel"]),
+      status: "Working",
+      detail: "git status",
+    },
   ]);
   render(<f.tabs.ActivityTab {...f.props()} />);
   expect(
     (await screen.findByText("git status")).closest("details"),
   ).not.toHaveAttribute("open");
   expect(screen.getByText("Latest activity")).toBeVisible();
+});
+
+it("keeps a failed standalone watch run visible", async () => {
+  const f = fixture();
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key: "watch/deploys", status: "Needs attention", detail: "Watch failed" },
+  ]);
+  render(<f.tabs.ActivityTab {...f.props()} />);
+  expect(await screen.findByText("watch/deploys")).toBeInTheDocument();
+  expect(screen.getByText("Watch failed")).toBeInTheDocument();
+});
+
+it("hides a live session's details while it serves a channel its owner cannot read", async () => {
+  const f = fixture();
+  const key = JSON.stringify(["@community", "@community"]);
+  vi.spyOn(f.runtime, "sessions").mockReturnValue([
+    { key, status: "Working", detail: "cat private-dm-notes" },
+  ]);
+  const readable = vi.spyOn(f.runtime, "readableDetail").mockReturnValue(false);
+  const { rerender } = render(<f.tabs.ActivityTab {...f.props()} />);
+  await screen.findByText(key);
+  expect(screen.queryByText("cat private-dm-notes")).toBeNull();
+  expect(readable).toHaveBeenCalledWith(expect.anything(), key);
+  readable.mockReturnValue(true);
+  rerender(<f.tabs.ActivityTab {...f.props()} />);
+  expect(await screen.findByText("cat private-dm-notes")).toBeInTheDocument();
 });
 
 it("shows why the conversation it was opened from failed, as plain text", async () => {
@@ -2662,7 +2977,7 @@ it.each([true, false])(
     const agent = "a".repeat(64);
     const root = "e".repeat(64);
     const place = JSON.stringify(["channel", root]);
-    const prefix = `buzz.codex.sessions.v17:test:${agent}`;
+    const prefix = `buzz.codex.sessions.v19:test:${agent}`;
     const items = new Map([
       [
         prefix,
@@ -2750,7 +3065,7 @@ it.each([false, true])(
       JSON.stringify({ key: "old-session", intent: "existing" }),
     );
     await storage.set(
-      `buzz.codex.sessions.v17:test:${agent}:session:old-session`,
+      `buzz.codex.sessions.v19:test:${agent}:session:old-session`,
       JSON.stringify({
         [place]: { threadId: "old-thread", workspace: "/guest" },
       }),
@@ -2905,6 +3220,110 @@ describe("Recommended", () => {
     await expect(
       fixture({ installed: false }).provider.recommends(candidate),
     ).resolves.toBe(false);
+  });
+
+  it("keeps and reports no pick before a bundled plugin's setup is final, and tells readers when it is", async () => {
+    const pluginPick = {
+      harness: "codex",
+      model: "model-a",
+      effort: "low",
+      label: "Model A",
+    };
+    let answer = (_setup: unknown) => {};
+    const final = awaitRecommendation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    try {
+      const f = fixture();
+      const heard = vi.fn();
+      f.provider.subscribe(heard);
+      // The catalog loads first: the build's candidate, not kept.
+      await f.provider.check();
+      expect(f.provider.recommended()).toEqual(candidate);
+      // Nor reported: a read says it isn't loaded yet.
+      const saved = { ...defaults, preset: "recommended" as const };
+      expect(f.provider.readModelSettings(saved).model).toEqual({
+        source: "recommended",
+        resolved: { unavailable: "not-loaded" },
+      });
+      heard.mockClear();
+      answer({ recommendedBy: "Example Org", candidates: [pluginPick] });
+      await final;
+      await Promise.resolve();
+      // Readers hear, and then see the plugin's.
+      expect(heard).toHaveBeenCalled();
+      expect(f.provider.recommended()).toEqual(pluginPick);
+      expect(f.provider.readModelSettings(saved).model).toEqual({
+        source: "recommended",
+        resolved: { value: "model-a", source: "recommended" },
+      });
+    } finally {
+      // Never leave the wait open for later tests.
+      answer(undefined);
+      await final;
+      setRuntimeRecommendation(undefined);
+    }
+  });
+
+  it("waits for a refresh under way instead of answering from the last check", async () => {
+    const { provider } = fixture();
+    let finish = () => {};
+    // As a refresh that finds Codex signed out, while the last check said ready.
+    vi.spyOn(provider, "check").mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = () => {
+            Object.assign(provider, {
+              state: {
+                ...provider.snapshot(),
+                readiness: "attention",
+                checking: false,
+                data: undefined,
+                error: "Codex needs you to sign in.",
+              },
+            });
+            resolve();
+          };
+        }),
+    );
+    Object.assign(provider, {
+      state: {
+        ...provider.snapshot(),
+        readiness: "ready",
+        checking: true,
+        data: { models: [] },
+      },
+    });
+    let answered: boolean | undefined;
+    const asked = provider.recommends(candidate).then((value) => {
+      answered = value;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(answered).toBeUndefined();
+    finish();
+    await asked;
+    expect(answered).toBe(false);
+  });
+
+  it("is unsure, rejecting, when its check failed some other way", async () => {
+    const { provider } = fixture();
+    // As after a check whose catalog read failed.
+    vi.spyOn(provider, "check").mockResolvedValue(undefined);
+    Object.assign(provider, {
+      state: {
+        ...provider.snapshot(),
+        readiness: "attention",
+        data: undefined,
+        error: "app-server exited",
+      },
+    });
+    await expect(provider.recommends(candidate)).rejects.toThrow(
+      "Codex couldn't say whether it is ready",
+    );
   });
 
   it("runs an agent on Recommended on the first candidate its catalog offers", async () => {
@@ -3590,6 +4009,53 @@ it("saves the voice against the latest synced revision", async () => {
         instructions: "Synced instructions",
       }),
       { base: { settings: "synced" } },
+    ),
+  );
+});
+
+it("blocks an unsupported proposal effort and lets the owner clear it", async () => {
+  const f = fixture();
+  const user = userEvent.setup();
+  const save = vi.fn(async () => {});
+  render(
+    <f.tabs.SettingsTab
+      {...f.props({ ...defaults, model: "model-b", effort: "xhigh" }, save)}
+      settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
+    />,
+  );
+  await screen.findByRole("combobox", { name: "Model" });
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(await screen.findByText(/Choose a thinking level/)).toBeVisible();
+  expect(save).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "Clear model and thinking overrides" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ model: "", effort: "" }),
+  );
+});
+
+it("saves proposed model and effort overrides for a verified execution target", async () => {
+  const binding = { provider: "test/guest" };
+  const f = fixture({ binding });
+  const save = vi.fn(async () => {});
+  const props = f.props(
+    { ...defaults, model: "target-custom-model", effort: "high" },
+    save,
+  );
+  render(
+    <f.tabs.SettingsTab
+      {...props}
+      agent={{ ...props.agent, executionBinding: binding }}
+      settingsHost={{ proposedModelOrEffort: true, pendingSave: save }}
+    />,
+  );
+  await screen.findByDisplayValue("Selected when the session starts");
+  await userEvent.setup().click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "target-custom-model", effort: "high" }),
     ),
   );
 });

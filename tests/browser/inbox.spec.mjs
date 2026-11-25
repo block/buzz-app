@@ -134,7 +134,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Inbox DM fixture reply");
   const dmSource = rows.first().locator("[data-inbox-source]");
-  await expect(dmSource).toHaveText("DM · Alice Fixture");
+  await expect(dmSource).toHaveText("DM");
   await expect(dmSource.locator("svg")).toHaveCount(0);
   const dmStyle = await dmSource.evaluate((element) => ({
     background: getComputedStyle(element).backgroundColor,
@@ -379,9 +379,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await page.keyboard.press("Shift+F10");
   let action = page.getByRole("menuitem", { name: "Mark as unread" });
   await expect(action).toBeVisible();
-  await expect(
-    page.getByText("Mark as unread on this device only."),
-  ).toHaveCount(0);
+  await expect(page.locator('[title="Mark as unread"]')).toHaveCount(0);
   await action.click();
   await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
   await row.getByRole("button", { name: /^Open / }).click({ button: "right" });

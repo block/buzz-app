@@ -1991,7 +1991,7 @@ function Timeline({
         }
       }
     };
-    let frame = requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
         // A request can be cancelled while the scroller is attaching.
         if (
@@ -2048,8 +2048,9 @@ function Timeline({
               recordPosition(scroller.current, true);
               layoutCorrection.current = true;
             }
-            cancelAnimationFrame(frame);
-            frame = requestAnimationFrame(restorePosition);
+            // Virtua wrote this height before paint; following in a later
+            // frame would paint rows below a grown one pushed down first.
+            restorePosition();
           });
           observer.observe(list, {
             attributes: true,

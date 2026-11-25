@@ -863,8 +863,8 @@ html[data-keyboard-navigation]
 .pluginLauncher {
   display: contents;
 }
-.pluginLauncher [class~="buzz-button-label"] svg,
-.pluginLauncher [class~="buzz-button-label"] svg * {
+.pluginLauncher svg,
+.pluginLauncher svg * {
   /* biome-ignore lint/complexity/noImportantStyles: Plugin icons may set an inline stroke-width. */
   stroke-width: 2 !important;
 }

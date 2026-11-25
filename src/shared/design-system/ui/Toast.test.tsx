@@ -229,7 +229,7 @@ it("keeps all unresolved recovery controls accessible, including after Escape an
   expect(screen.getAllByRole("button", { name: /Retry/ })).toHaveLength(5);
 });
 
-it("explicit dismissal calls the source once", async () => {
+it("explicit dismissal calls the source once, synchronously on button activation", async () => {
   const dismiss = vi.fn();
   render(
     <ToastProvider>
@@ -239,6 +239,7 @@ it("explicit dismissal calls the source once", async () => {
   fireEvent.click(
     await screen.findByRole("button", { name: "Dismiss notification" }),
   );
+  expect(dismiss).toHaveBeenCalledOnce();
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
@@ -347,6 +348,32 @@ it("keeps completed feedback after its source leaves and dismisses by its return
   });
   await waitFor(() => expect(screen.queryByText("Copied")).toBeNull());
   view.unmount();
+});
+
+it("runs a completed-feedback action once while its card exits", async () => {
+  const undo = vi.fn();
+  function Source() {
+    const notify = useToastNotification();
+    return (
+      <Button
+        onClick={() =>
+          notify("Archived", "success", { label: "Undo", onClick: undo })
+        }
+      >
+        Archive
+      </Button>
+    );
+  }
+  render(
+    <ToastProvider>
+      <Source />
+    </ToastProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+  const action = await screen.findByRole("button", { name: "Undo" });
+  fireEvent.click(action);
+  fireEvent.click(action);
+  expect(undo).toHaveBeenCalledOnce();
 });
 
 it("preserves a toast action's focus destination after the toast host leaves", async () => {

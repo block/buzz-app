@@ -1,13 +1,33 @@
+import { plainText } from "../../features/notifications/content";
 import { workflowOwner } from "../../features/relay/workflow-attribution";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   messageSearchable,
   searchDebounce,
 } from "../../shared/search-debounce";
 import { objectBody } from "../../features/relay/body";
+import { threadReference } from "../../features/relay/thread-reference";
+import { imetaAttachmentUrls } from "../../features/relay/fold";
+import { projectMarkdownAttachments } from "../../features/relay/message-content";
+import type { PreviewMentions } from "../../features/messages/PreviewText";
 import type { RelaySession } from "../../features/relay/session";
 import type { ReadFilter } from "../../features/relay/events";
+import { ReadError } from "../../features/relay/errors";
+import type { Profile } from "../../features/relay/contracts";
 import { foldProfiles } from "../../features/relay/profiles";
+import { searchedProfiles } from "../../features/relay/profile-search";
+import {
+  VERIFIED_PROFILE_BATCH,
+  type VerifiedProfile,
+} from "../../features/relay/verified-profile";
+import { verifiedName } from "../../features/profiles/useVerifiedNames";
 import { normalizeName } from "../../features/search/person-match";
 import {
   isHexPubkey,
@@ -20,7 +40,7 @@ import {
 } from "./parseSearchOperators";
 
 const noAgentNames: ReadonlyMap<string, string> = new Map();
-const PAGE_SIZE = 20;
+export const PAGE_SIZE = 20;
 
 export type SearchSort = "relevance" | "newest";
 
@@ -29,9 +49,82 @@ export type SearchMessage = Readonly<{
   channelId: string;
   authorId: string;
   workflowOwnerId?: string | undefined;
+  /** The hit mentions the viewer, as unread mentions count it. */
+  mentionsViewer?: true;
+  /** Kind 40002: self-declared agent output, as message rows read it. */
+  agentEnvelope?: true;
   createdAt: number;
   preview: string;
+  /** The searchable text, whitespace kept, for snippets and previews. */
+  text: string;
+  /** The message's signed mentions, which its chips bind. */
+  mentioned: PreviewMentions;
+  /** The thread a reply belongs to, from its signed tags. */
+  threadRootId?: string;
 }>;
+
+/** Message kinds search returns: chat, agent and diff messages. Ranked
+ * search resolves hit channels only for these (see the relay session). */
+export const SEARCH_KINDS = [9, 40002, 40008];
+
+/** An indexed event's readable text. */
+export function eventText(event: { kind: number; content: string }) {
+  if (event.kind !== 40002) return event.content;
+  const body = objectBody(event.content);
+  return typeof body?.content === "string" ? body.content : "Agent message";
+}
+
+type IndexedEvent = {
+  kind: number;
+  content: string;
+  tags: readonly (readonly string[])[];
+};
+
+/** An indexed event's body as its conversation binds it, with its images
+ * and attachment links projected out the same way. */
+function eventBody(event: IndexedEvent) {
+  const content = eventText(event);
+  const urls = imetaAttachmentUrls(event);
+  return content.includes("![") || urls.size
+    ? projectMarkdownAttachments(content, urls)
+    : { content, seams: [] };
+}
+
+/** An indexed event's text as it reads, without Markdown syntax and with
+ * spoilers hidden, for snippets and previews. It keeps the raw body, with
+ * attachment names and image markers, so a search for a file name shows it;
+ * only chips bind the projected body (`eventMentions`), and past an
+ * attachment the preview's text check leaves names as text. */
+export function searchText(event: { kind: number; content: string }) {
+  return plainText(eventText(event), { limit: 4000 });
+}
+
+/** An indexed event's body and signed mentions, read from its tags as a
+ * message reads them: `p` recipients and two-field `mention` references. A
+ * patch shows as raw text, so it binds no one. */
+export function eventMentions(event: IndexedEvent): PreviewMentions {
+  if (event.kind === 40008) return { content: eventText(event), mentions: [] };
+  const keys = (pick: (tag: readonly string[]) => boolean) => [
+    ...new Set(
+      event.tags.flatMap((tag) =>
+        pick(tag) && tag[1] && isHexPubkey(tag[1]) ? [tag[1]] : [],
+      ),
+    ),
+  ];
+  const mentions = keys(([name]) => name === "p");
+  const mentionReferences = keys(
+    (tag) => tag.length === 2 && tag[0] === "mention",
+  );
+  if (!mentions.length && !mentionReferences.length)
+    return { content: eventText(event), mentions };
+  const { content, seams } = eventBody(event);
+  return {
+    content,
+    mentions,
+    mentionReferences,
+    ...(seams.length ? { attachmentSeams: seams } : {}),
+  };
+}
 type Result = {
   owner: object;
   messages: readonly SearchMessage[];
@@ -70,7 +163,7 @@ async function readPage(
     const hitChannelId = destinations[0]?.[1];
     const hitChannel = hitChannelId && session.channels.get?.(hitChannelId);
     if (
-      ![9, 40002, 40008].includes(event.kind) ||
+      !SEARCH_KINDS.includes(event.kind) ||
       destinations.length !== 1 ||
       !hitChannelId ||
       (channelId && hitChannelId !== channelId) ||
@@ -80,26 +173,36 @@ async function readPage(
       return [];
     // Search returns original indexed events, not an auxiliary edit fold.
     // Exact navigation owns current content/deletion checks when opened.
-    const body = event.kind === 40002 ? objectBody(event.content) : undefined;
-    const text =
-      event.kind === 40002
-        ? typeof body?.content === "string"
-          ? body.content
-          : "Agent message"
-        : event.content;
+    const text = searchText(event);
+    const root = threadReference(event)?.rootId;
+    const owner = workflowOwner(event, session.workflowAuthority);
+    const tagged = (name: string) =>
+      event.tags.some(
+        ([key, value]) => key === name && value === session.viewer,
+      );
     return [
       {
         id: event.id,
         channelId: hitChannelId,
         authorId: event.pubkey,
-        workflowOwnerId: workflowOwner(event, session.workflowAuthority),
+        workflowOwnerId: owner,
+        // As unread counts mentions: the relay also tags a workflow's owner,
+        // whose own workflow mentions them only through its explicit targets.
+        ...(tagged("p") &&
+        (owner !== session.viewer || tagged("buzz:workflow-mention"))
+          ? { mentionsViewer: true as const }
+          : {}),
+        ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         createdAt: event.created_at,
         preview: text.replace(/\s+/g, " ").trim().slice(0, 240) || "Attachment",
+        text,
+        mentioned: eventMentions(event),
+        ...(root ? { threadRootId: root } : {}),
       },
     ];
   });
   // The relay pages by offset, so only a full page can have a successor.
-  return { messages, more: relayCount >= PAGE_SIZE };
+  return { messages, more: relayCount >= (filter.limit ?? PAGE_SIZE) };
 }
 
 /** Later pages extend the list. Offsets can shift between reads, so a repeated
@@ -131,6 +234,9 @@ export function useSearchMessages(
   agentNames: ReadonlyMap<string, string> = noAgentNames,
   /** Newest is honored only by relays advertising `buzz-search-sort`. */
   sort: SearchSort = "relevance",
+  /** Pages the first relevance-ranked read asks for at once, so a reranker
+   * sees more than one. Later pages are read one at a time. */
+  rankedPages = 1,
 ) {
   const ordinaryChannel = useCallback(
     (id: string, includePending = false) => {
@@ -187,9 +293,77 @@ export function useSearchMessages(
   const newest = sort === "newest" && session.searchSort;
   // Without text the relay reads its ordinary newest-first history.
   const newestFirst = newest || !parsed.text;
+  const firstPages = newestFirst ? 1 : rankedPages;
+  // Only evidence consulted by this resolution can invalidate its results.
+  // Other views verify unrelated people without resetting these pages.
+  const verification = useMemo(() => {
+    const profiles = session.profiles;
+    const subjects = new Map(
+      [
+        ...(channelId
+          ? (session.channels.get?.(channelId)?.members ?? [])
+          : []),
+        ...agents.keys(),
+      ].map((key) => [key, !!profiles.verifiedHeld?.(key)]),
+    );
+    let authority = profiles.verifiedAuthority?.();
+    let seen = profiles.verifiedRevision?.() ?? 0;
+    let revision = 0;
+    return {
+      consult(keys: Iterable<string>) {
+        for (const key of keys)
+          if (!subjects.has(key))
+            subjects.set(key, !!profiles.verifiedHeld?.(key));
+      },
+      snapshot() {
+        if (
+          !parsed.from ||
+          isHexPubkey(parsed.from) ||
+          isViewerHandle(parsed.from)
+        )
+          return 0;
+        const next = profiles.verifiedRevision?.() ?? 0;
+        const current = profiles.verifiedAuthority?.();
+        if (next === seen && current === authority) return revision;
+        let changed = current !== authority;
+        for (const [key, held] of subjects) {
+          const now = !!profiles.verifiedHeld?.(key);
+          if (now !== held || profiles.verifiedSince?.(key, seen))
+            changed = true;
+          subjects.set(key, now);
+        }
+        seen = next;
+        authority = current;
+        if (changed) revision++;
+        return revision;
+      },
+    };
+  }, [session, parsed, channelId, agents]);
+  const verifiedRevision = useSyncExternalStore(
+    session.profiles.subscribe,
+    verification.snapshot,
+  );
   const owner = useMemo(
-    () => ({ session, query, channelId, unresolvedChannel, attempt, newest }),
-    [session, query, channelId, unresolvedChannel, attempt, newest],
+    () => ({
+      session,
+      query,
+      channelId,
+      unresolvedChannel,
+      attempt,
+      newest,
+      verifiedRevision,
+      firstPages,
+    }),
+    [
+      session,
+      query,
+      channelId,
+      unresolvedChannel,
+      attempt,
+      newest,
+      verifiedRevision,
+      firstPages,
+    ],
   );
   // The copied result changes synchronously even if React has not committed it yet.
   const copied = useRef<Result | undefined>(undefined);
@@ -239,22 +413,84 @@ export function useSearchMessages(
             const knownMembers = channelId
               ? (session.channels.get?.(channelId)?.members ?? [])
               : [];
+            verification.consult([...knownMembers, ...agents.keys()]);
             if (knownMembers.length) {
               await session.profiles.ensure(knownMembers, "foreground");
               controller.signal.throwIfAborted();
             }
-            // A key matches by its profile name or, for a selectable agent,
-            // by the agent's own name.
-            const named = (pubkey: string, profileName = "") =>
-              normalizeName(profileName) === handle ||
-              normalizeName(agents.get(pubkey) ?? "") === handle;
+            let remoteNames: ReadonlyMap<string, VerifiedProfile> | undefined;
+            // Kind 0 loads before the shared verified subscription settles.
+            // Check every still-unknown member before treating a public-name
+            // match as unique; another member may own that verified alias.
+            const authority = session.profiles.verifiedAuthority?.();
+            const pending = authority
+              ? knownMembers.filter(
+                  (pubkey) => !session.profiles.verifiedHeld?.(pubkey),
+                )
+              : [];
+            const checkedNames = new Map<string, VerifiedProfile>();
+            for (
+              let start = 0;
+              start < pending.length;
+              start += VERIFIED_PROFILE_BATCH
+            ) {
+              const checked = await session.directMessages.verified(
+                pending.slice(start, start + VERIFIED_PROFILE_BATCH),
+                controller.signal,
+              );
+              controller.signal.throwIfAborted();
+              if (
+                !checked ||
+                checked.authority !== authority ||
+                session.profiles.verifiedAuthority?.() !== authority
+              )
+                throw new Error("Author names changed.");
+              for (const [pubkey, profile] of checked.profiles)
+                checkedNames.set(pubkey, profile);
+            }
+            if (pending.length) remoteNames = checkedNames;
+            // Shared labels can qualify namesakes. Their signed profile names
+            // still participate in exact-name ambiguity.
+            const originals = foldProfiles(
+              [...new Set([...knownMembers, ...agents.keys()])].flatMap(
+                (pubkey) => {
+                  const event = session.profiles.event?.(pubkey);
+                  return event ? [event] : [];
+                },
+              ),
+            );
+            // Exact completion accepts the same profile and verified aliases
+            // as the picker, independently of the device's display preference.
+            const named = (pubkey: string, profile?: Profile) => {
+              const shared = session.profiles.snapshot().get(pubkey);
+              const original = originals.get(pubkey);
+              const verified =
+                shared?.verified ??
+                (session.profiles.verifiedHeld?.(pubkey)
+                  ? undefined
+                  : remoteNames
+                    ? remoteNames.get(pubkey)
+                    : verifiedName(session.profiles, pubkey));
+              return [
+                profile?.name,
+                profile?.username,
+                original?.name,
+                original?.username,
+                verified?.displayName,
+                verified?.username,
+                verified?.fullName,
+                agents.get(pubkey),
+              ].some(
+                (name) => name !== undefined && normalizeName(name) === handle,
+              );
+            };
             // Selectable agents are offered wherever the picker runs, so they
             // are always candidates, alongside members or relay matches.
             const agentMatches = [...agents.keys()].filter((pubkey) =>
-              named(pubkey, session.profiles.snapshot().get(pubkey)?.name),
+              named(pubkey, session.profiles.snapshot().get(pubkey)),
             );
             const scoped = knownMembers.filter((pubkey) =>
-              named(pubkey, session.profiles.snapshot().get(pubkey)?.name),
+              named(pubkey, session.profiles.snapshot().get(pubkey)),
             );
             const resolve = (keys: readonly string[]) => {
               const unique = [...new Set(keys)];
@@ -275,10 +511,28 @@ export function useSearchMessages(
                 typed.toLowerCase(),
                 { limit, signal: controller.signal },
               );
-              const matches = [...foldProfiles(candidates)]
+              const profiles = searchedProfiles(
+                candidates,
+                session.profiles.verifiedAuthority?.(),
+              );
+              verification.consult(profiles.keys());
+              const checked = await session.directMessages.verified(
+                [...profiles.keys()],
+                controller.signal,
+              );
+              controller.signal.throwIfAborted();
+              if (
+                authority &&
+                (!checked ||
+                  checked.authority !== authority ||
+                  session.profiles.verifiedAuthority?.() !== authority)
+              )
+                throw new Error("Author names changed.");
+              remoteNames = checked?.profiles;
+              const matches = [...profiles]
                 .filter(
                   ([pubkey, profile]) =>
-                    named(pubkey, profile.name) || pubkey === handle,
+                    named(pubkey, profile) || pubkey === handle,
                 )
                 .map(([pubkey]) => pubkey);
               const found = resolve([...matches, ...agentMatches]);
@@ -290,7 +544,7 @@ export function useSearchMessages(
           }
         }
         const filter: ReadFilter = {
-          kinds: [9, 40002, 40008],
+          kinds: SEARCH_KINDS,
           ...(parsed.text
             ? {
                 search: parsed.text,
@@ -306,16 +560,41 @@ export function useSearchMessages(
           ...(parsed.since !== null ? { since: parsed.since } : {}),
           ...(parsed.until !== null ? { until: parsed.until } : {}),
         };
-        const page = await readPage(
-          session,
-          channelId,
-          filter,
-          1,
-          controller.signal,
-        );
+        const read = (limit: number) =>
+          readPage(
+            session,
+            channelId,
+            { ...filter, limit },
+            1,
+            controller.signal,
+          );
+        let pages = firstPages;
+        let page: Awaited<ReturnType<typeof read>>;
+        try {
+          page = await read(PAGE_SIZE * pages);
+        } catch (error) {
+          // Full events can overflow the read budget across several pages
+          // when one page fits: the search still shows that page.
+          if (
+            pages === 1 ||
+            !(error instanceof ReadError && error.kind === "invalid-response")
+          )
+            throw error;
+          pages = 1;
+          page = await read(PAGE_SIZE);
+        }
+        // Offsets count in the later pages' size: after n first pages, the
+        // next is page n + 1.
         return {
           messages: page.messages,
-          ...(page.more ? { next: { filter, page: 2 } } : {}),
+          ...(page.more
+            ? {
+                next: {
+                  filter: { ...filter, limit: PAGE_SIZE },
+                  page: pages + 1,
+                },
+              }
+            : {}),
         };
       })()
         .then(({ messages, next, ambiguousAuthor }) => {
@@ -353,6 +632,8 @@ export function useSearchMessages(
     scopedChannelId,
     agents,
     newest,
+    verification,
+    firstPages,
   ]);
   const loadMore = useCallback(() => {
     const base = copied.current;

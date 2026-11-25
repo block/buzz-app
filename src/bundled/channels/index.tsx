@@ -1,17 +1,24 @@
-import { StartLinkedChat, canStartLinkedChat } from "./StartLinkedChat";
+import type { SidebarContextProps } from "../../features/sidebar/contracts";
+import { useSyncExternalStore } from "react";
+import { MessagesSidebar } from "./MessagesSidebar";
+import { soloSidebarSource } from "./SoloSidebarSource";
+import { teamSidebarSource } from "./TeamSidebarSource";
+import { StartLinkedChat, canStartLinkedChatFrom } from "./StartLinkedChat";
 import { ChannelCompletion } from "./ChannelCompletion";
 import { channelQuery } from "./channel-query";
 import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
-import { PageTabs } from "./PageTabs";
+import { ConversationWorkspace, PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
+import { registerPins } from "./pins-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
 import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
 import {
   conversationRows,
+  inFieldOutsideComposer,
   inTerminal,
   stepConversation,
 } from "./conversation-rows";
@@ -28,7 +35,39 @@ export const inject = [
   "adminAccess",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
+  ctx.reflect.get("sidebarSections")?.registerContext?.({
+    id: "messages",
+    page: "buzz.channels/channels",
+    matches: () => true,
+    order: 100,
+    component: function MessagesContext(props: SidebarContextProps) {
+      const client = useSyncExternalStore(
+        ctx.communityReader.subscribe,
+        ctx.communityReader.snapshot,
+      );
+      return (
+        <MessagesSidebar
+          {...props}
+          relay={ctx.relay}
+          navigator={ctx.navigation}
+          agents={ctx.agents}
+          federatedIdentity={ctx.reflect.get("federatedIdentity")}
+          memberships={client.memberships}
+          chatIcons={ctx.conversation.chatIcons}
+          chatMenus={ctx.conversation.chatMenus}
+          sidebarSections={ctx.reflect.get("sidebarSections")}
+          sidebarScope={ctx.reflect.get("sidebarScope")}
+          sidebarRows={ctx.reflect.get("sidebarRows")}
+        >
+          {props.children}
+        </MessagesSidebar>
+      );
+    },
+  });
+  ctx.reflect.get("sidebarSections")?.registerSource?.(soloSidebarSource);
+  ctx.reflect.get("sidebarSections")?.registerSource?.(teamSidebarSource);
   registerCanvas(ctx);
+  registerPins(ctx);
   ctx.conversation.registerCompletion({
     id: "channel-typeahead",
     title: "Channel",
@@ -39,6 +78,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
   extensions.registerTabs((props) => (
     <PageTabs {...props} host={ctx} extensions={extensions} />
   ));
+  extensions.registerWorkspace(
+    (props) => (
+      <ConversationWorkspace {...props} host={ctx} extensions={extensions} />
+    ),
+    { slots: { headerActions: true, trailing: true, aside: true } },
+  );
   const relay = ctx.relay;
   const navigator = ctx.navigation;
   ctx.conversation.registerMessageAction({
@@ -46,9 +91,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Start Solo chat",
     placement: "menu",
     icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
-    matches: (message, session) =>
-      canStartLinkedChat(session, message.channelId) &&
-      (!message.delivery || ["accepted", "seen"].includes(message.delivery)),
+    matches: canStartLinkedChatFrom,
     component: ({ message, session }) => (
       <StartLinkedChat
         session={session}
@@ -72,8 +115,9 @@ export const apply: PluginModule["apply"] = (ctx) => {
     when: () => !!archive.current?.available(),
     run: () => archive.current?.run(),
   });
-  // Slack's sidebar stepping. Terminals keep Option+Arrow, and stepping is
-  // unavailable (the key is left alone) while the sidebar renders no rows.
+  // Slack's sidebar stepping. Terminals and text fields outside the composer
+  // keep Option+Arrow, and stepping is unavailable (the key is left alone)
+  // while the sidebar renders no rows.
   const stepping = [
     ["previous-conversation", "Previous conversation", "ArrowUp", false, 30],
     ["next-conversation", "Next conversation", "ArrowDown", false, 31],
@@ -99,7 +143,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       binding: { key, alt: true, shift: unreadOnly },
       order,
       allowInEditable: true,
-      when: () => !inTerminal() && conversationRows().length > 0,
+      when: () =>
+        !inTerminal() &&
+        !inFieldOutsideComposer() &&
+        conversationRows().length > 0,
       run: () =>
         stepConversation(key === "ArrowUp" ? "previous" : "next", unreadOnly),
     });
@@ -148,6 +195,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         agents={agents}
         communities={ctx.communityReader}
         membership={membership}
+        seen={ctx.reflect.get("seen")}
       />
     ),
   });

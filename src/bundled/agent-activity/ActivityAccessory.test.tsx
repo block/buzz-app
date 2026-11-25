@@ -854,6 +854,118 @@ function hosted(running: boolean | Promise<boolean> = true) {
   };
 }
 
+it("notes a finished local request that ran without its gateway, and nothing for one that didn't", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  const begin = () =>
+    local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId: root,
+      agent: A,
+    });
+  try {
+    act(() => {
+      const work = begin();
+      work.started();
+      work.finish({ ok: true });
+    });
+    expect(screen.queryByText(/Ran without/)).not.toBeInTheDocument();
+    act(() => {
+      const work = begin();
+      work.notice(
+        "Ran without the agent gateway: Buzz couldn't reach the gateway.",
+      );
+      work.started();
+      work.finish({ ok: true });
+    });
+    expect(
+      screen.getByText(
+        "Ran without the agent gateway: Buzz couldn't reach the gateway.",
+      ),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps a fallback turn's notice when a later message supersedes it, without calling it stopped", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  const NOTICE =
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
+  try {
+    act(() => {
+      const work = local.begin({
+        scope: "test",
+        channelId: "c",
+        threadRootId: root,
+        messageId: root,
+        agent: A,
+      });
+      work.notice(NOTICE);
+      work.started();
+      work.supersede();
+    });
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(screen.queryByText(/stopped/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /activity history: Blossom, Continued on a later message/,
+      }),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
+it("keeps a fallback turn's outcome beside its notice when it is stopped or fails", () => {
+  const local = createLocalAgentActivity();
+  const f = fixture(local);
+  const view = render(<ActivityAccessory {...f.props} />);
+  const begin = () =>
+    local.begin({
+      scope: "test",
+      channelId: "c",
+      threadRootId: root,
+      messageId: root,
+      agent: A,
+    });
+  const NOTICE =
+    "Ran without the agent gateway: Buzz couldn't reach the gateway.";
+  try {
+    act(() => {
+      const work = begin();
+      work.notice(NOTICE);
+      work.started();
+      work.finish({ ok: true, stopped: true });
+    });
+    expect(screen.getByText("Stopped")).toBeInTheDocument();
+    expect(screen.getByText(`· ${NOTICE}`)).toBeInTheDocument();
+    act(() => {
+      const work = begin();
+      work.notice(NOTICE);
+      work.started();
+      work.finish({ ok: false, error: "Provider refused the model" });
+    });
+    expect(screen.getByText("Couldn’t finish")).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: /activity history: Blossom/ }),
+    );
+    expect(
+      screen.getByText(`Provider refused the model · ${NOTICE}`),
+    ).toBeInTheDocument();
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});
+
 it.each(["waiting", "working"])(
   "stops a local request that is %s through its harness, then notes it stopped",
   async (state) => {
@@ -2701,3 +2813,70 @@ it.each([
     }
   },
 );
+/** Whether any hook state of a mounted fiber, current or alternate, holds `target`. */
+function fibersHold(container: HTMLElement, target: object) {
+  const key = Object.keys(container).find((name) =>
+    name.startsWith("__reactContainer$"),
+  );
+  type Hook = {
+    memoizedState: unknown;
+    baseState: unknown;
+    queue: unknown;
+    next: Hook | null;
+  };
+  type Fiber = {
+    child: Fiber | null;
+    sibling: Fiber | null;
+    alternate: Fiber | null;
+    memoizedState: unknown;
+  };
+  const holds = (value: unknown): boolean =>
+    value === target ||
+    (Array.isArray(value) && value.some((item) => holds(item))) ||
+    (!!value &&
+      typeof value === "object" &&
+      ("value" in value || "lastRenderedState" in value) &&
+      (holds((value as { value?: unknown }).value) ||
+        holds((value as { lastRenderedState?: unknown }).lastRenderedState)));
+  const seen = new Set<Fiber>();
+  const visit = (fiber: Fiber | null): boolean => {
+    for (let node = fiber; node; node = node.sibling) {
+      for (const each of [node, node.alternate]) {
+        if (!each || seen.has(each)) continue;
+        seen.add(each);
+        for (
+          let hook = each.memoizedState as Hook | null;
+          hook && typeof hook === "object" && "next" in hook;
+          hook = hook.next
+        )
+          if (
+            holds(hook.memoizedState) ||
+            holds(hook.baseState) ||
+            holds(hook.queue)
+          )
+            return true;
+      }
+      if (visit(node.child) || (node.alternate && visit(node.alternate.child)))
+        return true;
+    }
+    return false;
+  };
+  const root = (container as unknown as Record<string, Fiber>)[key ?? ""];
+  return visit(root ?? null);
+}
+it("releases the activity snapshot once hidden work on a row ends", () => {
+  const f = fixture();
+  const view = render(<ActivityAccessory {...f.props} canOpen={() => false} />);
+  try {
+    f.send(A, "a", 1, "turn_started", { triggeringEventIds: [root] });
+    const working = f.activity.queries.snapshot("c");
+    expect(fibersHold(view.container, working)).toBe(true);
+    f.send(A, "a", 2, "turn_completed");
+    f.send(B, "b", 1, "turn_started", { triggeringEventIds: [next] });
+    expect(f.activity.queries.snapshot("c")).not.toBe(working);
+    expect(fibersHold(view.container, working)).toBe(false);
+  } finally {
+    view.unmount();
+    f.dispose();
+  }
+});

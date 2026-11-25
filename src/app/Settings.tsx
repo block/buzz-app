@@ -17,6 +17,11 @@ import type {
   RegisteredProvider,
 } from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
+import type {
+  RegisteredSpeechProvider,
+  SpeechService,
+} from "../features/speech/service";
+import { SpeechSettings } from "./SpeechSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -37,6 +42,7 @@ import {
   type ReactNode,
   forwardRef,
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -52,6 +58,11 @@ import {
   SquaresFourIcon,
   SidebarRightIcon,
 } from "../shared/design-system/icons/index";
+import {
+  sharedPluginUpdateChecks,
+  pluginUpdateAvailable,
+  type PluginUpdateChecks,
+} from "../plugins/update-checks";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
@@ -64,7 +75,7 @@ import {
   UrlPluginInstallReview,
   UrlPluginDetails,
 } from "./ManagedPlugins";
-import { managedBy, pendingManaged } from "../plugins/managed";
+import { managedBy, managedLabel, pendingManaged } from "../plugins/managed";
 import { RecommendationCount } from "./RecommendationCount";
 import {
   isUrlInstallSource,
@@ -72,6 +83,7 @@ import {
   type PluginInstallRequests,
 } from "../plugins/installer";
 import { PluginReadme } from "./PluginReadme";
+import performanceDiagnosticsManifest from "../bundled/performance-diagnostics/manifest.json";
 import { bundledReadmes } from "../bundled/readmes";
 import { bundledIcons } from "../bundled/icons";
 import type { Identity } from "../features/identity/service";
@@ -90,6 +102,7 @@ import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
 import { AgentSettings } from "./AgentSettings";
+import { pluginSection as replaceableSection } from "../features/agent-harness/sections";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
@@ -103,6 +116,7 @@ import {
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
 
 import { pluginCategoryDefinitions } from "./plugin-categories";
+import { scrollport } from "./scrollport";
 
 // Exit animations retain DOM briefly; retired results must stop accepting focus.
 const PluginListEntry = forwardRef<HTMLDivElement, HTMLMotionProps<"div">>(
@@ -151,6 +165,25 @@ function isEssentialPlugin(plugin: PluginInfo) {
   );
 }
 
+/** The names of the plugins that are on and can replace `section` of the
+ * agents' base instructions in the chats they manage. Safe mode pauses the
+ * external ones. */
+export const sectionPlugins = (
+  plugins: readonly PluginInfo[],
+  section: string,
+  externalPaused = false,
+) =>
+  plugins
+    .filter(
+      (plugin) =>
+        plugin.enabled &&
+        !(externalPaused && plugin.source === "external") &&
+        plugin.manifest.host?.agentPromptSections?.some(
+          (id) => replaceableSection(id)?.id === section,
+        ),
+    )
+    .map((plugin) => plugin.manifest.name);
+
 function comparePlugins(a: PluginInfo, b: PluginInfo) {
   return (
     Number(isRequiredPlugin(b)) - Number(isRequiredPlugin(a)) ||
@@ -166,6 +199,12 @@ function groupPlugins(plugins: readonly PluginInfo[]) {
   const other: PluginInfo[] = [];
   const core: PluginInfo[] = [];
   for (const plugin of plugins) {
+    // Diagnostics are offered through agent requests in this panel.
+    if (
+      plugin.source === "bundled" &&
+      plugin.manifest.id === performanceDiagnosticsManifest.id
+    )
+      continue;
     if (isCorePlugin(plugin)) {
       core.push(plugin);
       continue;
@@ -249,6 +288,8 @@ const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
 const noProviders: readonly RegisteredProvider[] = [];
 const noDecisionProviders = () => noProviders;
+const noSpeechChoices: readonly RegisteredSpeechProvider[] = [];
+const noSpeechProviders = () => noSpeechChoices;
 /** The plugin whose details a Manage plugins visit shows, for Back/Forward. */
 const PLUGIN_DETAILS = "settings.pluginDetails";
 
@@ -291,12 +332,6 @@ function covered(element: Element | null) {
   return !!element && getComputedStyle(element).visibility === "hidden";
 }
 
-function scrollport(element: Element) {
-  for (let node = element.parentElement; node; node = node.parentElement)
-    if (/auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
-  return null;
-}
-
 /** Whether any scrollport around `element` has scrolled past its start. */
 function startHidden(element: Element) {
   const top = element.getBoundingClientRect().top;
@@ -330,10 +365,10 @@ function PluginDetails({
   onCheckAccess,
   catalog,
   authorizeGit,
-  onUpdateAvailableChange,
   reviewRequested,
   onReviewHandled,
   initialUpdateAvailable,
+  updateChecks,
   holdReview,
   openUpdateSettings = false,
   sections,
@@ -352,10 +387,10 @@ function PluginDetails({
   catalog: Catalog;
   authorizeGit: Parameters<typeof PluginImport>[0]["authorizeGit"];
   onCheckAccess(): void;
-  onUpdateAvailableChange(available: boolean): void;
   reviewRequested: boolean;
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
+  updateChecks: PluginUpdateChecks;
   holdReview: (() => () => void) | undefined;
   openUpdateSettings?: boolean;
   sections: readonly SettingsSection[];
@@ -435,7 +470,7 @@ function PluginDetails({
           </span>
           {managed && (
             <span className={styles.pluginInstallBadge}>
-              Managed by {managed.source}
+              Managed by {managedLabel(managed)}
             </span>
           )}
           <span
@@ -546,7 +581,7 @@ function PluginDetails({
             key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
             initialUpdateAvailable={initialUpdateAvailable}
             actionTarget={actionTarget}
-            onUpdateAvailableChange={onUpdateAvailableChange}
+            updateChecks={updateChecks}
             reviewRequested={reviewRequested}
             onReviewHandled={onReviewHandled}
             holdReview={holdReview}
@@ -667,6 +702,7 @@ function PluginDetails({
 export function Settings({
   agents,
   decisions,
+  speech,
   cards,
   plugins,
   adminAccess,
@@ -691,6 +727,7 @@ export function Settings({
 }: {
   agents?: Agents | undefined;
   decisions?: DecisionsService | undefined;
+  speech?: SpeechService | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
   adminAccess?: AdminAccessReader;
@@ -756,6 +793,10 @@ export function Settings({
     decisions?.subscribe ?? noAccessSubscription,
     decisions?.providers ?? noDecisionProviders,
   );
+  const speechProviders = useSyncExternalStore(
+    speech?.subscribe ?? noAccessSubscription,
+    speech?.providers ?? noSpeechProviders,
+  );
   const identityCards = contributed.filter((card) => card.identityRow);
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -783,9 +824,67 @@ export function Settings({
   // first visit rather than with every Settings open, then kept like the rest.
   const [shortcutsVisited, setShortcutsVisited] = useState(false);
   if (selected === "shortcuts" && !shortcutsVisited) setShortcutsVisited(true);
-  // A switch made from inside the content hides or removes the control that
-  // made it, so focus moves into the section it opened.
+  // Sections share one scrollport, so each would open at the last one's
+  // offset. Side by side, keep each section's place while Settings is open, and
+  // start one not yet shown at its start. Stacked navigation scrolls with the
+  // content, and the sidebar starts sections there (Dialog).
+  const detailElement = useRef<HTMLDivElement>(null);
+  const sectionPlaces = useRef(new Map<string, number>());
+  const placedSection = useRef(selected);
+  // The section a switch made from inside the content opened (effect below).
   const contentFocus = useRef<string>(undefined);
+  useLayoutEffect(() => {
+    const content = detailElement.current;
+    // Standalone Settings scrolls its own detail; App mounts only the pane.
+    if (!navigationPane || !content) return;
+    // The layout can change at any time; stacked, the port leads with the nav.
+    const stacked = (port: Element) => !!port.querySelector(":scope > nav");
+    // Side by side, the plugin catalog scrolls in the detail instead, which the
+    // pane holds to the port's height (Settings.module.css).
+    const detailScrolls = selected === "plugins";
+    // A restore waits for content that renders late, until the user scrolls.
+    // A link starts its section at the top (contentFocus, below).
+    const shown = placedSection.current;
+    placedSection.current = selected;
+    let pending =
+      shown === selected || contentFocus.current === selected
+        ? undefined
+        : sectionPlaces.current.get(selected);
+    const restore = () => {
+      const port = scrollport(content);
+      if (port && !stacked(port))
+        (detailScrolls ? content : port).scrollTop = pending ?? 0;
+    };
+    if (shown !== selected) restore();
+    const keep = ({ target }: Event) => {
+      if (!(target instanceof Node) || !target.contains(content)) return;
+      const port = scrollport(content);
+      if (!port) return;
+      const side = !stacked(port);
+      const at = side && detailScrolls ? content : port;
+      if (target !== at) return;
+      // A clamped restore rests at the bottom edge, where the only way out is
+      // up, so the user's first scroll there clears it.
+      const clamped = at.scrollTop >= at.scrollHeight - at.clientHeight - 1;
+      if (side && pending !== undefined && at.scrollTop < pending && clamped)
+        return;
+      pending = undefined;
+      if (side) sectionPlaces.current.set(selected, at.scrollTop);
+    };
+    const grown = new ResizeObserver(() => pending !== undefined && restore());
+    grown.observe(content);
+    // The held detail keeps its size while the catalog grows inside it.
+    if (detailScrolls && pluginSection.current)
+      grown.observe(pluginSection.current);
+    document.addEventListener("scroll", keep, { capture: true, passive: true });
+    return () => {
+      grown.disconnect();
+      document.removeEventListener("scroll", keep, { capture: true });
+    };
+  }, [selected, navigationPane]);
+  // A switch made from inside the content hides or removes the control that
+  // made it, so focus moves into the section it opened. This effect must stay
+  // after the scroll-place one, so a link starts its section at the top.
   useLayoutEffect(() => {
     if (selected !== contentFocus.current) return;
     contentFocus.current = undefined;
@@ -820,6 +919,13 @@ export function Settings({
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? defaultSection)
+      : undefined;
+  // A visit naming a part lands on it as its section mounts. That wins over
+  // any scroll place Settings restores for the section, so a restore must
+  // skip such a visit.
+  const landing =
+    navigation?.target.kind === "settings" && navigation.target.part
+      ? navigation.entryId
       : undefined;
   useEffect(() => {
     if (
@@ -961,9 +1067,15 @@ export function Settings({
     currentNavigation.current?.savePosition(PLUGIN_DETAILS, id ?? null);
   };
   const [reviewPluginId, setReviewPluginId] = useState<string>();
-  const [updateChecks, setUpdateChecks] = useState<
-    Record<string, { revision: string; available: boolean }>
-  >({});
+  const imports = plugins.imports;
+  const updateChecks = useMemo(
+    () => sharedPluginUpdateChecks(imports),
+    [imports],
+  );
+  const updateSnapshot = useSyncExternalStore(
+    updateChecks.subscribe,
+    updateChecks.snapshot,
+  );
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
@@ -1019,6 +1131,27 @@ export function Settings({
       navigation?.savePosition(PLUGIN_DETAILS, null);
     }
   }, [catalog, navigation, selectedPlugin, selectedPluginId]);
+  const closePluginImport = () => {
+    // "Open in Buzz" and "Open plugin" show their plugin before this dismissal
+    // lands. An install finishing after Back closes nothing.
+    if (
+      navigation?.target.kind === "settings" &&
+      navigation.target.pluginImport &&
+      navigation.entryId === currentNavigation.current?.entryId
+    )
+      closingVisit.current = true;
+    onPluginImportClosed?.();
+  };
+  const openInstalledPlugin = (id: string) => {
+    pluginTrigger.current =
+      [
+        ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
+          "button[data-plugin-id]",
+        ) ?? []),
+      ].find((button) => button.dataset.pluginId === id) ?? null;
+    setActivationAttempt(undefined);
+    showPluginDetails(id);
+  };
   const closePluginDetails = () => {
     holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
@@ -1073,11 +1206,15 @@ export function Settings({
           ? decisionProviders.some(
               (provider) => provider.pluginId === selectedPlugin.manifest.id,
             )
-          : contributed.some(
-              (card) =>
-                card.key === section.id &&
-                card.pluginId === selectedPlugin.manifest.id,
-            ),
+          : section.id === "speech"
+            ? speechProviders.some(
+                (provider) => provider.pluginId === selectedPlugin.manifest.id,
+              )
+            : contributed.some(
+                (card) =>
+                  card.key === section.id &&
+                  card.pluginId === selectedPlugin.manifest.id,
+              ),
       )
     : [];
   const renderPluginGroup = (
@@ -1127,8 +1264,7 @@ export function Settings({
               const updateAvailable =
                 !!plugins.imports &&
                 !managedBy(managed, id) &&
-                updateChecks[id]?.revision === plugin.revision &&
-                !!updateChecks[id]?.available;
+                pluginUpdateAvailable(updateSnapshot, plugin);
               const name = (
                 <span className={styles.pluginName}>
                   <span>{plugin.manifest.name}</span>
@@ -1234,7 +1370,7 @@ export function Settings({
                           <PluginProvenance
                             source={plugin.source}
                             publisher={plugin.publisher}
-                            managedBy={managedBy(managed, id)?.source}
+                            managedBy={managedLabel(managedBy(managed, id))}
                             className={styles.pluginRowAuthor}
                           />
                         </span>
@@ -1247,20 +1383,26 @@ export function Settings({
                         </span>
                       )}
                       {updateAvailable ? (
-                        <Button
-                          size="sm"
-                          variant="prominent"
-                          disabled={busy}
-                          aria-label={`Update ${plugin.manifest.name}`}
-                          onClick={(event) => {
-                            holdPluginRow(event.currentTarget);
-                            setActivationAttempt(undefined);
-                            showPluginDetails(id);
-                            setReviewPluginId(id);
-                          }}
+                        <Tooltip
+                          content={null}
+                          open={false}
+                          disableHoverablePopup
                         >
-                          Update
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="prominent"
+                            disabled={busy}
+                            aria-label={`Update ${plugin.manifest.name}`}
+                            onClick={(event) => {
+                              holdPluginRow(event.currentTarget);
+                              setActivationAttempt(undefined);
+                              showPluginDetails(id);
+                              setReviewPluginId(id);
+                            }}
+                          >
+                            Update
+                          </Button>
+                        </Tooltip>
                       ) : isRequiredPlugin(plugin) ? (
                         <Button variant="outline" size="sm" disabled>
                           Required
@@ -1359,12 +1501,15 @@ export function Settings({
     communities.relay.subscribe,
     communities.relay.snapshot,
   );
-  const authorizePluginGit = async (repository: string) => {
-    const connection = communities.relay.snapshot();
-    return connection.status === "ready"
-      ? ((await connection.session.authorizeGit?.(repository)) ?? null)
-      : null;
-  };
+  const authorizePluginGit = useCallback(
+    async (repository: string) => {
+      const connection = communities.relay.snapshot();
+      return connection.status === "ready"
+        ? ((await connection.session.authorizeGit?.(repository)) ?? null)
+        : null;
+    },
+    [communities.relay],
+  );
   // Keep announcements outside filtered rows and the covered narrow catalog.
   const announcement = (
     <div
@@ -1381,6 +1526,7 @@ export function Settings({
   const detail = (
     <>
       <div
+        ref={detailElement}
         className={`${styles.detail} buzz-settings-page`}
         data-integrated={navigationPane || undefined}
       >
@@ -1410,6 +1556,13 @@ export function Settings({
           <AgentSettings
             agents={agents}
             active={selected === "agents"}
+            sectionPlugins={(section) =>
+              sectionPlugins(
+                catalog?.plugins ?? [],
+                section,
+                externalPluginsPaused,
+              )
+            }
             navigation={navigation}
             onProvider={onProvider}
           />
@@ -1419,6 +1572,16 @@ export function Settings({
             <DecisionsSettings
               decisions={decisions}
               active={() => selected === "decisions"}
+              onSection={openSection}
+            />
+          </div>
+        )}
+        {speech && (
+          <div hidden={selected !== "speech"}>
+            <SpeechSettings
+              speech={speech}
+              community={relay.status === "ready" ? relay.origin : undefined}
+              active={() => selected === "speech"}
               onSection={openSection}
             />
           </div>
@@ -1523,6 +1686,7 @@ export function Settings({
                   )
                 : undefined
             }
+            landing={landing}
           />
         )}
         {selected === "security" && (
@@ -1530,7 +1694,7 @@ export function Settings({
         )}
         {developerMode && (
           <div hidden={selected !== "developer"}>
-            <DeveloperSettings relay={communities.relay} />
+            <DeveloperSettings />
           </div>
         )}
         <div hidden={selected !== "plugins"}>
@@ -1615,6 +1779,7 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 returnFocus={() => pluginSection.current}
+                onOpenInstalled={openInstalledPlugin}
               />
             )}
             {catalog && linkedPlugin && "url" in linkedPlugin && (
@@ -1627,7 +1792,8 @@ export function Settings({
                 requester="A link"
                 holdReview={installRequests?.holdReview}
                 returnFocus={() => pluginSection.current}
-                onClose={() => onPluginImportClosed?.()}
+                onOpenInstalled={openInstalledPlugin}
+                onClose={closePluginImport}
               />
             )}
             {catalog ? (
@@ -1643,17 +1809,7 @@ export function Settings({
                     : undefined
                 }
                 requestSignal={navigation?.signal}
-                onClosed={() => {
-                  // "Open in Buzz" shows its plugin before this dismissal
-                  // lands. An install finishing after Back closes nothing.
-                  if (
-                    navigation?.target.kind === "settings" &&
-                    navigation.target.pluginImport &&
-                    navigation.entryId === currentNavigation.current?.entryId
-                  )
-                    closingVisit.current = true;
-                  onPluginImportClosed?.();
-                }}
+                onClosed={closePluginImport}
                 actionTarget={pluginImportActions}
                 request={
                   installRequest && !isUrlInstallSource(installRequest.source)
@@ -1669,16 +1825,7 @@ export function Settings({
                 catalog={catalog}
                 busy={busy}
                 authorizeGit={authorizePluginGit}
-                onOpenInstalled={(id) => {
-                  pluginTrigger.current =
-                    [
-                      ...(pluginSection.current?.querySelectorAll<HTMLButtonElement>(
-                        "button[data-plugin-id]",
-                      ) ?? []),
-                    ].find((button) => button.dataset.pluginId === id) ?? null;
-                  setActivationAttempt(undefined);
-                  showPluginDetails(id);
-                }}
+                onOpenInstalled={openInstalledPlugin}
                 returnFocus={() => detailsClose.current ?? visibleReturn(null)}
               />
             ) : configuration.status === "recovery" ? (
@@ -1783,28 +1930,13 @@ export function Settings({
           catalog={catalog}
           initialUpdateAvailable={
             !managedBy(managed, selectedPlugin.manifest.id) &&
-            updateChecks[selectedPlugin.manifest.id]?.revision ===
-              selectedPlugin.revision &&
-            updateChecks[selectedPlugin.manifest.id]?.available === true
+            pluginUpdateAvailable(updateSnapshot, selectedPlugin)
           }
+          updateChecks={updateChecks}
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}
           holdReview={installRequests?.holdReview}
-          onUpdateAvailableChange={(available) =>
-            setUpdateChecks((current) => {
-              const id = selectedPlugin.manifest.id;
-              if (
-                current[id]?.revision === selectedPlugin.revision &&
-                current[id]?.available === available
-              )
-                return current;
-              return {
-                ...current,
-                [id]: { revision: selectedPlugin.revision, available },
-              };
-            })
-          }
           failure={selectedFailure}
           retryable={canRetryPlugin(
             selectedPlugin,

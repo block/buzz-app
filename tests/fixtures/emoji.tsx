@@ -12,9 +12,11 @@ import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { MessageRow } from "../../src/features/messages/MessageRow";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
+import { ReadError } from "../../src/features/relay/errors";
 import { foldMessages } from "../../src/features/relay/fold";
 import { mediaUrl } from "../../src/features/relay/transport";
 import {
+  bounds,
   keypair,
   message,
   metadata,
@@ -69,7 +71,14 @@ const sessions = ["a", "b"].map((community) => {
   let live!: LiveCallbacks;
   let catalogRead: Promise<void> | undefined;
   let coldFailure = new URLSearchParams(location.search).has("cold-error");
+  let timeouts = Number(
+    new URLSearchParams(location.search).get("catalog-timeouts") ?? 0,
+  );
   let releaseCatalogRead: (() => void) | undefined;
+  if (new URLSearchParams(location.search).has("hold-catalog"))
+    catalogRead = new Promise<void>((resolve) => {
+      releaseCatalogRead = resolve;
+    });
   const makeSet = (empty = false) =>
     signed(member, {
       kind: 30030,
@@ -120,6 +129,8 @@ const sessions = ["a", "b"].map((community) => {
       ],
     });
   let catalog = makeSet();
+  /** The channel's history, which its head page returns. */
+  const history: RelayEvent[] = [];
   let archiveTime = 10;
   const owner = createRelaySession(
     {
@@ -147,6 +158,10 @@ const sessions = ["a", "b"].map((community) => {
             throw new Error("Fixture catalog offline");
           }
           if (fail) throw new Error("Fixture catalog offline");
+          if (timeouts > 0) {
+            timeouts--;
+            throw new ReadError("unavailable", "Relay read timed out");
+          }
           return [catalog];
         }
         if (
@@ -163,6 +178,12 @@ const sessions = ["a", "b"].map((community) => {
           }
           return events;
         }
+        // A real relay's head page holds the rows the stream also delivers.
+        if (filters.some((filter) => filter.top_level && !filter.until))
+          return [
+            ...history,
+            bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
+          ];
         return [
           roster(relay, "c", [viewer.pubkey], 1),
           metadata(relay, "c", "Test", 1),
@@ -331,16 +352,18 @@ const sessions = ["a", "b"].map((community) => {
     6,
     [["emoji", "party", `${origin}/media/blocks.png`]],
   );
-  owner.session.channels.ensure("c");
-  live.receive([root, broken, unloaded, single, table, blocks]);
-  live.receive([
+  const seeded = [
     ...(grouped ? [] : [reaction]),
     ...(wrap ? [...wrapReactions, ownReaction] : []),
     ...longReactions,
     ...repeatedReactions,
     ...groupedReactions,
     ...tableReactions,
-  ]);
+  ];
+  history.push(root, broken, unloaded, single, table, blocks, ...seeded);
+  owner.session.channels.ensure("c");
+  live.receive([root, broken, unloaded, single, table, blocks]);
+  live.receive(seeded);
   return {
     ...owner,
     community,

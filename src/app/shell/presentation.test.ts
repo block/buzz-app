@@ -4,6 +4,7 @@ import {
   BellIcon,
   BrowserIcon,
   ChatsCircleIcon,
+  NoteIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
 import {
@@ -104,6 +105,14 @@ describe("page mark precedence", () => {
       "bundled Inbox keeps BellIcon and ignores a declared icon",
       page("buzz.inbox/inbox", "Inbox", owl),
       { label: "Inbox", icon: BellIcon },
+    ],
+    [
+      "the external legacy Notes reader keeps NoteIcon and ignores a declared icon",
+      {
+        ...page("buzz.relay-notes/notes", "Shared notes", owl),
+        revision: "external-reader-v1",
+      },
+      { label: "Shared notes", icon: NoteIcon },
     ],
     [
       "bundled channels stays Messages and ignores a declared icon",
@@ -212,4 +221,17 @@ describe("navigation owner", () => {
       expect(navigationOwner(pages, selected)).toBe(selected);
     },
   );
+});
+
+test("unlisted conversation pages keep Messages without adding a navigation row", () => {
+  const taskPage = {
+    ...page("example.task/main", "Task"),
+    primary: false,
+    conversationNavigation: true,
+  };
+  expect(pagePlacement(taskPage)).toBeUndefined();
+  expect(
+    navigationOwner([{ ...messages, primary: true }, taskPage], taskPage.key),
+  ).toBe(messages.key);
+  expect(navigationOwner([taskPage], taskPage.key)).toBe(taskPage.key);
 });

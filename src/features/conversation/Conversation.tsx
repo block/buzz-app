@@ -1,3 +1,4 @@
+import { hostComposerProvenance } from "../messages/mention-draft";
 import { ActivityIndicatorPresentation } from "./typing-presentation";
 import {
   createContext,
@@ -25,9 +26,11 @@ import {
 } from "../messages/MessageManagement";
 import { MediaReviewViewer } from "../messages/MediaReviewViewer";
 import { ThreadPanel, type ThreadPanelProps } from "../messages/ThreadPanel";
+import { ComposerScopeProvider } from "../messages/composer-overlay";
 import { useListedChannel } from "../relay/listed-channel";
 import { ownSolo } from "../solo/labels";
 import { useSoloHasPeople } from "../solo/people";
+import { AdminSetupRecovery } from "../solo/AdminSetupRecovery";
 import {
   ConversationHost,
   type ConversationHostServices,
@@ -61,7 +64,8 @@ export type MediaReview = Pick<
   | "close"
 >;
 
-/** A review that opens over its page and returns focus to its opener. */
+/** A fullscreen review that opens over its page and returns focus to its
+ * opener. */
 export function useMediaReview() {
   const [media, setMedia] =
     useState<Omit<MediaReview, "restoreFocus" | "close">>();
@@ -143,8 +147,9 @@ export function ConversationChannel(props: ChannelProps) {
   const { session, scope, extensions, channel, active, children } = props;
   const channelName = props.channelName ?? channel?.name ?? "";
   // While the channel is open the profile cache keeps room for its whole roster
-  // on top of its base; leaving gives the room back. A retained tab in the
-  // background and a preview that does not visit the channel hold none.
+  // on top of its base; leaving gives the room back after a short hold. A
+  // retained tab in the background and a preview that does not visit the
+  // channel hold none.
   const members = useListedChannel(
     session.channels,
     channel?.id,
@@ -170,6 +175,7 @@ export function ConversationChannel(props: ChannelProps) {
       channel={channel}
       channelName={channelName}
       interactions={interactions}
+      shown={active !== false}
     >
       {children}
       {review && <ConversationMediaReview {...review} />}
@@ -215,9 +221,12 @@ function Provider({
   channel,
   channelName,
   interactions: { onOpenLink, canOpenLink, onOpenMediaReview },
+  shown,
 }: Pick<ChannelProps, "session" | "scope" | "extensions" | "channel"> & {
   channelName: string;
   interactions: ConversationInteractions;
+  /** Whether the conversation is on screen, for the dialogs its rows open. */
+  shown: boolean;
   children: ReactNode;
 }) {
   const id = channel?.id;
@@ -254,7 +263,12 @@ function Provider({
   );
   return (
     <Context.Provider value={value}>
-      <ActivityIndicatorPresentation>{children}</ActivityIndicatorPresentation>
+      {/* The conversation's own view; a thread view starts its own. */}
+      <ComposerScopeProvider shown={shown}>
+        <ActivityIndicatorPresentation>
+          {children}
+        </ActivityIndicatorPresentation>
+      </ComposerScopeProvider>
     </Context.Provider>
   );
 }
@@ -309,18 +323,28 @@ export function ConversationComposer(props: Own<MessageComposerProps>) {
     shared.soloConversation,
   );
   return (
-    <MessageComposer
-      {...shared}
-      {...(shared.soloConversation
-        ? {
-            label: withPeople
-              ? "Message this conversation"
-              : "Message your agents",
-          }
-        : {})}
-      chatPresentation={shared.ownSoloConversation}
-      requireMention={shared.soloConversation}
-      {...props}
-    />
+    <>
+      {shared.session.outbox && !props.threadRootId && (
+        <AdminSetupRecovery
+          key={shared.channelId}
+          outbox={shared.session.outbox}
+          channelId={shared.channelId}
+        />
+      )}
+      <MessageComposer
+        evidenceOwner={hostComposerProvenance}
+        {...shared}
+        {...(shared.soloConversation
+          ? {
+              label: withPeople
+                ? "Message this conversation"
+                : "Message your agents",
+            }
+          : {})}
+        chatPresentation={shared.ownSoloConversation}
+        requireMention={shared.soloConversation}
+        {...props}
+      />
+    </>
   );
 }

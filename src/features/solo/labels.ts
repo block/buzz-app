@@ -1,3 +1,4 @@
+import { viewerMember } from "../relay/membership.ts";
 import type { ChannelSummary } from "../relay/contracts.ts";
 
 /** Presentation provenance in the relay's existing NIP-CL labels, never access. */
@@ -19,12 +20,14 @@ export function soloShareDisclosure(multiple = false): string {
 export function soloRetainedAccessWarning(
   base: Pick<ChannelSummary, "visibility" | "joinRole">,
   mayHaveGuestMembers = true,
+  removalLocation: string | null = "People",
 ): string {
   if (base.visibility !== "public") return "";
+  const untilRemoved = `until you remove them${removalLocation ? ` in ${removalLocation}` : ""}.`;
   if (base.joinRole !== "guest")
-    return "People who already joined remain members and keep their access until you remove them in People.";
+    return `People who already joined remain members and keep their access ${untilRemoved}`;
   return mayHaveGuestMembers
-    ? "People who joined while it was View only are members and keep reading until you remove them in People."
+    ? `People who joined while it was View only are members and keep reading ${untilRemoved}`
     : "";
 }
 
@@ -53,6 +56,23 @@ export function soloChatLinkName(channel: { id: string; name: string }) {
   return channel.name.trim() || channel.id.slice(0, 8);
 }
 
+/** The title a link to a Solo chat itself reads by, in its conversation and
+ * in previews of it, in place of a channel's `#name`; empty for any other
+ * link. `channels` is the session's own list: only a chat the relay has
+ * confirmed counts, and a retained copy's `cached` can be out of date. */
+export function linkedSoloChatName(
+  link: { channelId: string; messageId?: string; threadRootId?: string },
+  channels:
+    | readonly Pick<ChannelSummary, "id" | "name" | "channelType" | "cached">[]
+    | undefined,
+) {
+  if (link.messageId || link.threadRootId) return "";
+  const channel = channels?.find((item) => item.id === link.channelId);
+  return channel?.channelType === "solo" && !channel.cached
+    ? soloChatLinkName(channel)
+    : "";
+}
+
 /** The authorized Solo inventory; unknown metadata never implies Solo. */
 export function eligibleSolo(
   channel: ChannelSummary,
@@ -65,6 +85,6 @@ export function eligibleSolo(
       ownSolo(channel, viewer) ||
       (!!viewer &&
         channel.viewerRole === "guest" &&
-        !!channel.members?.includes(viewer)))
+        viewerMember(channel, viewer)))
   );
 }

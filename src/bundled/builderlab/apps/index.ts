@@ -56,6 +56,8 @@ export function applyApps(
   /** The development broker's Apps calls; otherwise they go through the
    * native NIP-FI forwarder, which holds the session. */
   dev?: Pick<Host, "request" | "upload">,
+  /** Opens where the Settings sign-in is renewed, for an app that refuses it. */
+  openSignIn?: () => void,
 ) {
   // Cordis wraps service functions on access; keep React's component identity.
   const View = ctx.browser.View;
@@ -89,11 +91,14 @@ export function applyApps(
       builderlab: session.viewerSession(),
       canResumeUrl: viewerAppDomain() ? isViewerTarget : undefined,
       label: appName(target),
+      openSignIn,
     });
   };
   ctx.panels.register({
     id: "app",
     title: "App",
+    // A running app: it stays a tab until it survives a dialog closing.
+    inline: false,
     keepOpen: true,
     matches: (target) => ctx.browser.available && isAppUrl(target),
     component: AppView,

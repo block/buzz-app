@@ -71,7 +71,7 @@ function matchesConversion(base: ChannelDetails, receipt: ChatConversion) {
   );
 }
 
-/** Clear the Solo label, drop the chat's project filing, then hand off navigation. */
+/** Clear the Solo label, keeping the chat's workspace, then hand off navigation. */
 export function ConvertToChannel({
   session,
   id,
@@ -252,20 +252,6 @@ export function ConvertToChannel({
           updateChatConversion(session, id, exact);
         }
         active.throwIfAborted();
-        // A channel is no longer filed in a Solo project.
-        const projects = session.soloPreferences;
-        if (projects.snapshot().status !== "unsupported") {
-          await projects.refresh();
-          active.throwIfAborted();
-          const filing = projects.snapshot();
-          if (filing.status !== "ready")
-            throw new Error(
-              filing.error ?? "Solo workspaces could not be read. Try again.",
-            );
-          if (filing.data?.assignments[id])
-            await projects.assign(id, undefined);
-          active.throwIfAborted();
-        }
         updateChatConversion(session, id, undefined);
         if (!active.aborted) {
           notify("Converted to channel.", "success");
@@ -305,7 +291,6 @@ export function ConvertToChannel({
       initialFocus={cancel}
       title="Convert to channel"
       size="compact"
-      headerGap="compact"
       footerGap="compact"
       description={
         base?.visibility === "private" && selectedAccess !== "private"
@@ -313,7 +298,7 @@ export function ConvertToChannel({
           : (base &&
               selectedAccess === "private" &&
               soloRetainedAccessWarning(base)) ||
-            "Move this conversation from Solo to Team. History, Canvas, members and lifetime stay the same."
+            "Change this chat to a channel. It keeps its workspace, history, Canvas, members and lifetime."
       }
       onOpenChange={(open) => {
         if (!open) setOpen(false);
@@ -381,7 +366,7 @@ export function ConvertToChannel({
       />
       {converted && (
         <p role="status">
-          Channel converted. Finish removing it from its Solo workspace.
+          Channel converted. Finish to return to the conversation.
         </p>
       )}
       {!base && !error && <p role="status">Loading chat details…</p>}

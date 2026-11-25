@@ -1,8 +1,10 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
+  createNotificationPreferences,
   parsePreferences,
 } from "./preferences";
+import { DEFAULT_SOUND } from "./sound";
 
 const stored = {
   enabled: true,
@@ -25,18 +27,108 @@ it.each([
     thread: "silent",
     agent: "silent",
   },
-])(
-  "saved sound choices round-trip and unknown names reject the payload: %j",
+])("saved sound choices round-trip: %j", (sounds) => {
+  expect(
+    parsePreferences(JSON.parse(JSON.stringify({ ...stored, sounds }))).sounds,
+  ).toEqual(sounds);
+});
+
+it.each([["ping"], [null], [[]]])(
+  "a sounds value that is not an object rejects the payload: %j",
   (sounds) => {
-    expect(
-      parsePreferences(JSON.parse(JSON.stringify({ ...stored, sounds })))
-        .sounds,
-    ).toEqual(sounds);
-    expect(() => parsePreferences({ ...stored, sounds: "ping" })).toThrow(
+    expect(() => parsePreferences({ ...stored, sounds })).toThrow(
       "Invalid notification sounds",
     );
-    expect(() =>
-      parsePreferences({ ...stored, sounds: { mention: "klaxon" } }),
-    ).toThrow("Invalid notification sounds");
   },
 );
+
+it("a sound name this build lacks falls back to the default for its category only", () => {
+  // "klaxon" stands in for a name a newer build bundles and this one does not
+  // (what a #2877 build writes as "buzz"); it must never join SOUND_NAMES.
+  const { sounds } = parsePreferences({
+    ...stored,
+    sounds: { mention: "klaxon", direct: 7, thread: null, agent: "doodone" },
+  });
+  expect(sounds).toEqual({
+    mention: DEFAULT_SOUND,
+    direct: DEFAULT_SOUND,
+    thread: DEFAULT_SOUND,
+    agent: "doodone",
+  });
+  expect(Object.isFrozen(sounds)).toBe(true);
+});
+
+it("restore keeps alerts on for an unknown sound name and leaves storage untouched", () => {
+  const viewer = "a".repeat(64);
+  const key = `buzz-notification-preferences.v1:${viewer}`;
+  // Every category saved under a name this build lacks, as a #2877 build
+  // writes its "buzz" default; "klaxon" must never join SOUND_NAMES.
+  const saved = JSON.stringify({
+    ...stored,
+    sounds: {
+      mention: "klaxon",
+      direct: "klaxon",
+      thread: "klaxon",
+      agent: "klaxon",
+    },
+  });
+  const store = new Map([[key, saved]]);
+  const setItem = vi.fn((k: string, v: string) => void store.set(k, v));
+  const host = {
+    localStorage: { getItem: (k: string) => store.get(k) ?? null, setItem },
+    addEventListener() {},
+    removeEventListener() {},
+  } as unknown as Window;
+  const service = createNotificationPreferences(host);
+  service.selectViewer(viewer);
+  expect(service.snapshot()).toEqual({
+    preferences: { ...stored, sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds },
+    error: null,
+  });
+  expect(setItem).not.toHaveBeenCalled();
+  expect(store.get(key)).toBe(saved);
+  expect(service.update({})).toBe(true);
+  expect(JSON.parse(store.get(key) ?? "")).toEqual({
+    ...stored,
+    sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
+  });
+  service.dispose();
+});
+
+it("the automatic permission request is claimed once per device, and never without working storage", () => {
+  const store = new Map<string, string>();
+  const storage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+  };
+  const host = (localStorage: Partial<Storage>) =>
+    ({
+      localStorage,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as Window;
+  const first = createNotificationPreferences(host(storage));
+  first.selectViewer("a".repeat(64));
+  expect(first.claimAutomaticRequest()).toBe(true);
+  expect(first.claimAutomaticRequest()).toBe(false);
+  first.selectViewer("b".repeat(64));
+  expect(first.claimAutomaticRequest()).toBe(false);
+  // One device-wide key, apart from each account's saved choices.
+  expect([...store.keys()]).toEqual(["buzz-notification-permission-asked.v1"]);
+  expect(
+    createNotificationPreferences(host(storage)).claimAutomaticRequest(),
+  ).toBe(false);
+  const throws = () => {
+    throw new Error("disk");
+  };
+  for (const broken of [
+    { getItem: throws, setItem: storage.setItem },
+    { getItem: () => null, setItem: throws },
+  ])
+    expect(
+      createNotificationPreferences(host(broken)).claimAutomaticRequest(),
+    ).toBe(false);
+  expect(createNotificationPreferences(undefined).claimAutomaticRequest()).toBe(
+    false,
+  );
+});

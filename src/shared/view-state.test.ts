@@ -3,10 +3,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   clearView,
   clearViewScope,
+  conflictDraftKey,
   draftCoordinates,
+  draftRetirementCursor,
+  draftWasRetired,
   listDraftViews as enumerateDrafts,
   readView,
   replaceView,
+  retireViewDraft,
   viewRevision,
   subscribeView,
   writeView,
@@ -25,6 +29,45 @@ const listDraftViews = (scope: string) =>
 afterEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
+});
+
+it("records both accepted drafts when cleanup finishes out of order", () => {
+  const scope = "example-scope";
+  const key = "draft:room";
+  const first = JSON.stringify("First accepted draft");
+  const second = JSON.stringify("Second accepted draft");
+  const cleared = JSON.stringify({ text: "", recipients: [] });
+  const cursor = draftRetirementCursor(scope, key);
+  writeView(scope, key, JSON.parse(first));
+  writeView(scope, key, JSON.parse(second));
+  expect(retireViewDraft(scope, key, second, cleared, cursor)).toBe("saved");
+  expect(retireViewDraft(scope, key, first, cleared, cursor)).toBe("saved");
+  expect(viewRevision(scope, key)).toBe(cleared);
+  expect(draftWasRetired(scope, key, first, cursor)).toBe(true);
+  expect(draftWasRetired(scope, key, second, cursor)).toBe(true);
+
+  const afterBoth = draftRetirementCursor(scope, key);
+  expect(retireViewDraft(scope, key, first, cleared, cursor)).toBe("saved");
+  expect(draftWasRetired(scope, key, first, afterBoth)).toBe(false);
+  writeView(scope, key, JSON.parse(first));
+  expect(retireViewDraft(scope, key, first, cleared, cursor)).toBe("changed");
+  expect(viewRevision(scope, key)).toBe(first);
+  expect(retireViewDraft(scope, key, first, cleared, afterBoth)).toBe("saved");
+  expect(draftWasRetired(scope, key, first, afterBoth)).toBe(true);
+});
+
+it("bounds stored retirement metadata for repeated clears of one draft", () => {
+  const scope = "example-scope";
+  for (let index = 0; index < 64; index++) {
+    writeView(scope, "draft:room", `Draft ${index}`);
+    clearView(scope, "draft:room");
+  }
+  const size = Object.entries(localStorage).reduce(
+    (total, [key, value]) => total + key.length + value.length,
+    0,
+  );
+  expect(size).toBeLessThan(2300);
+  expect(viewRevision(scope, "draft:room")).toBeNull();
 });
 it("enumerates only this viewer's existing channel/thread composer keys, including punctuated channel IDs", () => {
   const root = "a".repeat(64);
@@ -133,6 +176,10 @@ it("community scope cleanup removes only that scope and notifies its same-window
   writeView(scope, "draft:room", "Leaving draft");
   writeView(scope, "scroll:room", { offset: 42 });
   writeView(`${scope}-other`, "draft:room", "Keep draft");
+  const conflictKey = conflictDraftKey(scope, "draft:room");
+  const otherConflictKey = conflictDraftKey(`${scope}-other`, "draft:room");
+  sessionStorage.setItem(conflictKey, "Unresolved draft");
+  sessionStorage.setItem(otherConflictKey, "Other unresolved draft");
   const listener = vi.fn();
   const stop = subscribeView(scope, listener);
   try {
@@ -143,8 +190,13 @@ it("community scope cleanup removes only that scope and notifies its same-window
       { key: "draft:room", value: "Keep draft" },
     ]);
     expect(listener).toHaveBeenCalledOnce();
+    expect(sessionStorage.getItem(conflictKey)).toBeNull();
+    expect(sessionStorage.getItem(otherConflictKey)).toBe(
+      "Other unresolved draft",
+    );
   } finally {
     stop();
+    sessionStorage.clear();
   }
 });
 
@@ -195,4 +247,28 @@ it("uses one raw read with unchanged fallback and falsy-value semantics", () => 
   read.mockClear();
   expect(readView("scope", "value", "fallback")).toBe("fallback");
   expect(read).toHaveBeenCalledExactlyOnceWith(key);
+});
+
+it("records the write phase when a subscriber fails after storage accepts a draft", async () => {
+  const invoke = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("isTauri", true);
+  vi.stubGlobal("__TAURI_INTERNALS__", { invoke });
+  const stop = subscribeView("scope", () => {
+    throw Error("private error");
+  });
+  try {
+    expect(writeView("scope", "draft:room", "private draft")).toBe(false);
+    expect(readView("scope", "draft:room", "")).toBe("private draft");
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalled());
+    const payload = invoke.mock.calls.at(-1)?.[1];
+    expect(payload).toMatchObject({
+      records: expect.arrayContaining([
+        expect.objectContaining({ operation: "notify-failed" }),
+      ]),
+    });
+    expect(JSON.stringify(payload)).not.toContain("private");
+  } finally {
+    stop();
+    vi.unstubAllGlobals();
+  }
 });

@@ -1,7 +1,9 @@
+import { readSubthread } from "../features/relay/subthread";
 import { messageAuthor } from "../features/relay/fold";
 // The Buzz tools: what an agent does in Buzz, in the wire formats the `buzz`
 // CLI writes. Names, arguments and descriptions are kept short because every
 // session pays for them in context. Each tool answers in plain text.
+import { bytesToHex } from "nostr-tools/utils";
 import { decode, npubEncode } from "nostr-tools/nip19";
 import buzzHelp from "../../docs/buzz-help.md?raw";
 import { namingRulesApply } from "../bundled/channels/channel-naming-policy";
@@ -14,6 +16,7 @@ import {
   canonicalDetailsName,
   detailsDraftErrors,
 } from "../features/relay/channel-details-protocol";
+import { detailsBrief } from "../features/relay/audience";
 import {
   lifecycleChannelId,
   lifecycleTemplate,
@@ -29,14 +32,19 @@ import {
 import {
   communityEmoji,
   contentEmojiTags,
+  CUSTOM_REACTION,
   EMOJI_SET,
   EMOJI_SET_KIND,
   referencedEmoji,
 } from "../features/relay/emoji";
-import { newer } from "../features/relay/events";
+import { hasEventProof, newer } from "../features/relay/events";
+import { createIdentityArchives } from "../features/relay/identity-archives";
+import type { RelayReader } from "../features/relay/reader";
+import { normalizeName } from "../features/search/person-match";
 import {
   VERIFIED_PROFILE_BATCH,
   type VerifiedProfile,
+  type VerifiedProfileAuthority,
   verifiedProfile,
   verifiedProfileFilter,
   verifiedProfileSubject,
@@ -44,12 +52,21 @@ import {
 import { imageType } from "../features/relay/attachment-limits";
 import { LIVE_CANVAS_BYTES } from "../features/channel-templates/model";
 import { threadReference } from "../features/relay/thread-reference";
+import {
+  editedTags,
+  readableTags,
+} from "../features/agent-harness/turn-records";
 import { parseBuzzLink } from "../features/navigation/buzz-links";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import { channelLabelTags } from "../features/relay/channel-labels";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../features/solo/labels";
 import type { RelayEvent } from "../features/relay/events";
+import {
+  compactAt as parseCompactAt,
+  MIN_COMPACT_AT,
+} from "../features/agents/compact-at";
 import { attestedOwner } from "../features/agents/owner-attestation";
+import type { AgentSettingsProposal } from "../features/agents/settings-proposal";
 import type {
   BuzzClient,
   BuzzEvent,
@@ -57,7 +74,9 @@ import type {
   Context,
   Filter,
   Memory,
+  ManagedAttachment,
   Upload,
+  Template,
 } from "./client";
 
 const ROLES = ["owner", "admin", "member", "guest", "bot"];
@@ -66,9 +85,9 @@ const strs = { type: "array", items: str } as const;
 // Shared by send and reply_in_subthread.
 const audience = {
   type: "string",
-  enum: ["everyone", "agents"],
+  enum: ["everyone", "details", "agents"],
   description:
-    "agents: only other agents need this (delegating, asking or answering an agent)",
+    "everyone: for the people here, a few sentences at most. details: a longer write-up for people, shown as its first paragraph, a brief of at most 50 words, until opened; send it last. agents: delegating to, asking or answering another agent",
 } as const;
 const request = {
   type: "string",
@@ -162,13 +181,35 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "agent_update",
-    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Nothing changes until they save it.",
-    { agent: str, name: str, type: str, instructions: str, picture: str },
+    "Submit an unsaved draft of changes to one of your owner's agents, yourself included, for them to review. agent is its pubkey or exact name; type is a key from agent_types; picture is a local image file for its avatar. Supported runtime settings can be proposed for your owner’s local agents in this community. Nothing changes until the owner saves it.",
+    {
+      agent: str,
+      name: str,
+      type: str,
+      instructions: str,
+      picture: str,
+      model: { ...str, description: "Model ID; empty follows the default." },
+      effort: {
+        ...str,
+        description: "Thinking level; empty follows the default.",
+      },
+      scope: { type: "string", enum: ["thread", "channel", "community"] },
+      workspace: str,
+      voice: {
+        ...str,
+        description: "Huddle voice ID; empty follows the default.",
+      },
+      apps: { type: "boolean", description: "Allow Codex apps and plugins." },
+      compactAt: {
+        ...str,
+        description: `Auto-compact threshold in tokens, in multiples of 1000 from ${MIN_COMPACT_AT}. Empty uses the harness default.`,
+      },
+    },
     ["agent"],
   ),
   tool(
     "agent_read",
-    "Read one of your owner's agents here, yourself included: name, type, instructions, whether they sync and their current revision; a hosted agent or one on another device says its config is unavailable when it can't be read here. agent is its pubkey or exact name; without it, lists them all.",
+    "Read one of your owner's agents here, yourself included: name, type, instructions, sync revision and safe modelSettings. Settings retain saved configured/default/Recommended policy. Types can add resolved current selections with their source, or an unavailable reason. These do not prove an active turn's model. Unreadable or unsupported settings say unavailable. agent is its pubkey or exact name; without it, lists them all.",
     { agent: str },
   ),
   tool(
@@ -184,7 +225,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "send",
-    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread.",
+    "Post a message. Without channel, replies in the current thread. A reply goes in its message's thread. To wake yourself in another conversation, use self_handoff; self-mentions are refused, and so are mentions of anyone the relay archived.",
     {
       text: str,
       path: str,
@@ -215,7 +256,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "self_handoff",
-    "Hand off to yourself in another of your conversations, waking that session with text. thread: any of its messages, outside a Solo chat.",
+    "Queue work for yourself in another conversation. Use this instead of sending yourself a mention. The receipt confirms queue admission, not execution or completion. thread: any of its messages, outside a Solo chat.",
     { channel: str, thread: str, text: str },
     ["channel", "text"],
   ),
@@ -234,34 +275,63 @@ export const TOOLS: readonly Tool[] = [
     ["id", "emoji"],
   ),
   tool(
-    "read",
-    "Read a thread (default: current), a channel's latest, or search with q.",
-    {
-      channel: str,
-      thread: str,
-      message_url: {
-        type: "string",
-        description: "Buzz message link; replaces channel and thread.",
-      },
-      q: str,
-      author: {
-        type: "string",
-        description: "With q or channel: only this hex pubkey or npub.",
-      },
-      since: {
-        type: "integer",
-        description: "With q or channel: Unix seconds, at or after.",
-      },
-      before: { type: "integer", description: "Unix seconds, at or before." },
-      before_id: {
-        type: "string",
-        description: "For paginating: with before, from a continue line.",
-      },
-      limit: {
-        type: "integer",
-        description: "Search 20 (max 100), thread 100 (500), channel 30 (200).",
-      },
+    "pin",
+    "Pin a message to its channel for everyone; off unpins it.",
+    { id: str, off: { type: "boolean" } },
+    ["id"],
+  ),
+  tool("read", "Read a thread (default: current) or a channel's latest.", {
+    channel: str,
+    thread: str,
+    message_url: {
+      type: "string",
+      description: "Buzz message link; replaces channel and thread.",
     },
+    author: {
+      type: "string",
+      description: "With channel: only this hex pubkey or npub.",
+    },
+    since: {
+      type: "integer",
+      description: "With channel: Unix seconds, at or after.",
+    },
+    before: { type: "integer", description: "Unix seconds, at or before." },
+    before_id: {
+      type: "string",
+      description: "For paginating: with before, from a continue line.",
+    },
+    limit: {
+      type: "integer",
+      description: "Thread 100 (max 500), channel 30 (max 200).",
+    },
+  }),
+  tool(
+    "search",
+    'Search messages you can read, best match first. The query q matches whole words only, not other forms of a word, and supports "exact phrase", -word and a or b. Without q, the newest messages matching the other fields. Each result has a link to cite it or open it with read.',
+    {
+      q: str,
+      from: { type: "string", description: "me, a name, npub or hex pubkey." },
+      in: {
+        type: "string",
+        description:
+          "A channel's name or ID, @name for your DM with someone, or a Buzz link.",
+      },
+      after: {
+        type: "string",
+        description:
+          "Only messages at or after this time: a date YYYY-MM-DD (from its start, UTC), a UTC time YYYY-MM-DDTHH:MM:SSZ, or a time back from now: 7d, 2w, 3m, 1y.",
+      },
+      before: {
+        type: "string",
+        description:
+          "Only messages before this time, not at it: a date YYYY-MM-DD (from its start, UTC, so that day is left out), a UTC time YYYY-MM-DDTHH:MM:SSZ, or a time back from now: 7d, 2w, 3m, 1y.",
+      },
+      sort: { type: "string", enum: ["relevance", "newest"] },
+      limit: { type: "integer", description: "Default 30, max 100." },
+      page: { type: "integer", description: "From a continue line." },
+    },
+    [],
+    { readOnlyHint: true },
   ),
   tool(
     "channel_list",
@@ -281,6 +351,11 @@ export const TOOLS: readonly Tool[] = [
     channel: str,
   }),
   tool(
+    "workspace_list",
+    "List your owner's sidebar workspaces on this local host: each one's ID and name.",
+    {},
+  ),
+  tool(
     "channel_create",
     "Create a channel. template: one of your owner's, by name. solo: a private Solo chat, with members added in the create.",
     {
@@ -297,9 +372,29 @@ export const TOOLS: readonly Tool[] = [
       join_role: joinRole,
       template: str,
       solo: { type: "boolean" },
-      members: { ...strs, description: "Solo only: pubkeys or npubs." },
+      members: {
+        ...strs,
+        description: "Pubkeys or npubs who join in the create.",
+      },
+      workspace: {
+        ...str,
+        description:
+          "Local host: exact ID from workspace_list. Your owner must see it: open, or with your owner in members. Without template, applies the workspace's defaults.",
+      },
     },
     ["name", "visibility"],
+  ),
+  tool(
+    "channel_move",
+    "Move a conversation your owner can see, of any type, to one of their sidebar workspaces. Local host only.",
+    {
+      channel: { ...str, description: "Default: current." },
+      workspace: {
+        ...str,
+        description: "Exact ID from workspace_list; empty unfiles it.",
+      },
+    },
+    ["workspace"],
   ),
   tool("channel_update", "Change a channel's details.", {
     channel: str,
@@ -336,8 +431,17 @@ export const TOOLS: readonly Tool[] = [
     { channel: str, pubkeys: strs },
     ["pubkeys"],
   ),
-  tool("users", "Profiles by pubkey or name.", { ids: strs, q: str }),
-  tool("dm", "Open a DM; returns its channel.", { to: strs }, ["to"]),
+  tool(
+    "users",
+    "Profiles by pubkey or name: each row's quoted profile name, then, for a name search, (verified: …) when the relay verified a different name, then the quoted about text, then archived for an identity the relay archived. A name search leaves archived identities out unless include_archived is true; ids always returns them.",
+    { ids: strs, q: str, include_archived: { type: "boolean" } },
+  ),
+  tool(
+    "dm",
+    "Open a DM; returns its channel. A new DM with anyone the relay archived is refused; an existing one still opens.",
+    { to: strs },
+    ["to"],
+  ),
   tool(
     "mem_get",
     "Read memory: slug gives its version and text; q finds entries with every word; neither lists slugs.",
@@ -373,14 +477,17 @@ export const TOOLS: readonly Tool[] = [
     ["name"],
   ),
   tool("notes_rm", "Delete your note.", { name: str }, ["name"]),
-  tool("canvas_get", "Read a channel's canvas.", { channel: str }),
+  tool("canvas_get", "Read a channel's canvas and its version.", {
+    channel: str,
+  }),
   tool(
     "canvas_set",
-    `Replace a channel's canvas (at most ${LIVE_CANVAS_BYTES / 1024} KiB).`,
+    `Write a channel's canvas (at most ${LIVE_CANVAS_BYTES / 1024} KiB). To replace one, pass the version from your latest canvas_get or canvas_set of it as expected; without expected it only creates.`,
     {
       channel: str,
       content: str,
       path: str,
+      expected: str,
     },
   ),
   tool(
@@ -437,6 +544,8 @@ const SEARCH = [9, 40002, 45001, 45003];
 const HEX = /^[0-9a-f]{64}$/;
 /** A NIP-23 long-form note, as `buzz notes` writes it. */
 const NOTE = 30023;
+/** A channel ID, as Buzz links accept it. */
+const CHANNEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
 /** A repository name the community accepts. */
 const REPO = /^[a-zA-Z0-9_-][a-zA-Z0-9._-]{0,63}$/;
 /** Pages of a channel's repository announcements read before giving up. */
@@ -470,7 +579,11 @@ export function callTool(
   if (!handler) throw new Error(`No tool ${name}`);
   // A channel or member tool refuses arguments it does not list, so a
   // misspelled target cannot fall back to the current channel.
-  if (name.startsWith("channel_") || name.startsWith("member_")) {
+  if (
+    name.startsWith("channel_") ||
+    name.startsWith("member_") ||
+    name === "agent_update"
+  ) {
     const listed =
       TOOLS.find((tool) => tool.name === name)?.inputSchema.properties ?? {};
     const extra = Object.keys(args).filter(
@@ -530,12 +643,24 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // A harness takes a wake with no thread only in a Solo chat.
     if (!event && !soloChannelMetadata(metadata as RelayEvent))
       throw new Error("thread is required outside a Solo chat.");
-    const root = event && rootOf(event);
-    if (
-      channel === context.channel &&
-      (!context.root || context.wholeChannel || root === context.root)
-    )
-      throw new Error("That is this conversation.");
+    const same = channel === context.channel;
+    const task =
+      event &&
+      ((same && !!context.sourceRoot && event.id === context.root) ||
+        client.isTaskThread?.(channel, event.id));
+    const root = event && (task ? event.id : rootOf(event));
+    // A conversation with no thread is the whole channel, unless the host
+    // says this channel's threads have sessions of their own.
+    const rootless = same && !context.root && !context.wholeChannel;
+    const apart = rootless ? client.threadsApart?.(channel) : undefined;
+    const whole =
+      !task && (context.wholeChannel || (!context.root && apart !== true));
+    if (same && (whole || root === context.root))
+      throw new Error(
+        rootless && client.threadsApart && apart === undefined
+          ? "That is this conversation for now: this channel has not loaded here yet, so its threads cannot be told apart from it. Try again shortly."
+          : "That is this conversation.",
+      );
     const { channel: from, root: fromRoot } = context;
     client.handoff({
       channel,
@@ -546,7 +671,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(fromRoot && { root: fromRoot }),
       },
     });
-    return root ? `Handed off to thread ${root}.` : `Handed off to ${channel}.`;
+    return `Queued self-handoff to ${channel}${root ? `, thread ${root}` : ""}. No message was posted. Execution has not been confirmed.`;
   },
   async agent_update({ client }, args) {
     if (!client.updateAgent)
@@ -556,7 +681,51 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const name = text(args.name);
     const type = text(args.type);
     // Empty instructions propose clearing them.
-    const { instructions } = args;
+    const {
+      instructions,
+      model,
+      effort,
+      scope,
+      workspace,
+      voice,
+      apps,
+      compactAt,
+    } = args;
+    for (const [key, value] of Object.entries({
+      model,
+      effort,
+      workspace,
+      voice,
+    })) {
+      if (value !== undefined && typeof value !== "string")
+        throw new Error(`${key} must be a string`);
+    }
+    if (
+      scope !== undefined &&
+      scope !== "thread" &&
+      scope !== "channel" &&
+      scope !== "community"
+    )
+      throw new Error("scope must be thread, channel or community");
+    if (apps !== undefined && typeof apps !== "boolean")
+      throw new Error("apps must be a boolean");
+    if (
+      compactAt !== undefined &&
+      compactAt !== "" &&
+      !parseCompactAt(compactAt)
+    )
+      throw new Error(
+        `compactAt must be a token count string in multiples of 1000 from ${MIN_COMPACT_AT}, or empty for the harness default`,
+      );
+    const settings: AgentSettingsProposal = {
+      ...(typeof model === "string" && { model: model.trim() }),
+      ...(typeof effort === "string" && { effort: effort.trim() }),
+      ...(scope !== undefined && { scope }),
+      ...(typeof workspace === "string" && { workspace }),
+      ...(typeof voice === "string" && { voice: voice.trim() }),
+      ...(typeof apps === "boolean" && { apps }),
+      ...(typeof compactAt === "string" && { compactAt }),
+    };
     const picture = proposedPicture(client, args.picture);
     return JSON.stringify(
       await client.updateAgent({
@@ -564,6 +733,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         ...(name && { name }),
         ...(type && { type }),
         ...(typeof instructions === "string" && { instructions }),
+        ...(Object.keys(settings).length && { settings }),
         ...(picture && { picture }),
       }),
     );
@@ -613,7 +783,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         "This chat stays at the top level: send again without reply.",
       );
     const audienceTags = [...audienceOf(args), ...requestOf(args)];
-    const thread = reply ? await tools.threadTags(reply) : [];
+    const thread = reply ? await tools.threadTags(reply, channel) : [];
     return post(tools, channel, args, thread, audienceTags);
   },
 
@@ -631,7 +801,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // As relay ingest reads it: the last valid marker, in either case.
     const root = target
       ? (threadReference(target)?.rootId ?? target.id)
-      : parent;
+      : (context.sourceRoot ?? parent);
     return post(
       tools,
       channel,
@@ -701,6 +871,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const emoji = required(args, "emoji");
     if (args.off !== true) {
       const target = await tools.event(id);
+      // A `:shortcode:` reaction renders only with its NIP-30 tag, so one
+      // outside the community palette is refused rather than published bare.
+      const isCustom = CUSTOM_REACTION.test(emoji);
+      const custom = isCustom ? await tools.emoji(emoji) : [];
+      if (isCustom && !custom.length)
+        throw new Error(`unknown custom emoji ${emoji}`);
       await client.publish({
         kind: 7,
         content: emoji,
@@ -710,9 +886,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             "p",
             messageAuthor(
               { ...target, tags: target.tags.map((tag) => [...tag]) },
-              client.signingAuthority,
+              client.signingAuthority ?? undefined,
             ),
           ],
+          ...custom,
         ],
       });
       return "reacted";
@@ -726,8 +903,28 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     return "removed";
   },
 
+  async pin(tools, args) {
+    const id = required(args, "id");
+    const channel = tag(await tools.event(id), "h");
+    if (!channel) throw new Error(`${id} is not a channel message.`);
+    await tools.client.publish({
+      kind: args.off === true ? 40011 : 40010,
+      content: "",
+      tags: [
+        ["h", channel],
+        ["e", id],
+        // NIP-PM: each new command is a distinct event.
+        ["client-id", crypto.randomUUID()],
+      ],
+    });
+    return args.off === true ? "unpinned" : "pinned";
+  },
+
   async read(tools, args) {
     const { client, context } = tools;
+    // A session that kept an older tool list may still search through read.
+    if (text(args.q))
+      throw new Error("read does not search; use search with the same q.");
     args = ignoreBlankFields(args, [
       "channel",
       "thread",
@@ -779,32 +976,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       ...(before !== undefined ? { until: before } : {}),
       ...(beforeId ? { before_id: beforeId } : {}),
     };
-    const q = text(args.q);
     let channel = text(args.channel) ?? context.channel;
-    if (q) {
-      if (beforeId)
-        throw new Error(
-          "before_id pages thread and channel reads; narrow a search with before or since.",
-        );
-      const max = bound(limit, 20, 100);
-      const found = await client.query([
-        {
-          kinds: SEARCH,
-          search: q,
-          limit: max,
-          ...(args.channel ? { "#h": [channel] } : {}),
-          ...cursor,
-          ...filters,
-        },
-      ]);
-      const lines = await tools.messages(found, {});
-      if (!lines.length) return "No messages.";
-      if (found.length >= max)
-        lines.push(
-          "Result limit reached; more matches may exist. Narrow with channel, author, since or before.",
-        );
-      return lines.join("\n");
-    }
     let scope: { channel?: string; root?: string };
     let max: number;
     let more: Args;
@@ -813,7 +985,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (text(args.thread) || (args.channel === undefined && context.root)) {
       if (author || since !== undefined)
         throw new Error(
-          "author and since filter a search (q) or a channel read, not a thread; add q or channel.",
+          "author and since filter a channel read, not a thread; add channel, or use search.",
         );
       const id = text(args.thread) ?? (context.root as string);
       let root = id;
@@ -823,6 +995,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         channel = tag(event, "h") ?? channel;
       }
       if (!channel) throw new Error("channel is required here.");
+      const sourceRoot = root === context.root ? context.sourceRoot : undefined;
+      if (sourceRoot && channel !== context.channel)
+        throw new Error("The task thread is in a different channel.");
       max = bound(limit, 100, 500);
       // The root comes on the first page only, apart from the replies' limit
       // and cursor.
@@ -830,12 +1005,20 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         {
           kinds: THREAD,
           "#h": [channel],
-          "#e": [root],
-          limit: max + 1,
+          "#e": [sourceRoot ?? root],
+          // The task anchor may also be returned by the physical reply query.
+          limit: max + (sourceRoot ? 2 : 1),
           ...cursor,
         },
-        ...(before === undefined
-          ? [{ ids: [root], kinds: [...THREAD, 45001], limit: 1 }]
+        ...(before === undefined || sourceRoot
+          ? [
+              {
+                ids: [root],
+                kinds: [...THREAD, 45001],
+                ...(sourceRoot ? { "#h": [channel] } : {}),
+                limit: 1,
+              },
+            ]
           : []),
       ]);
       first = events.find((event) => event.id === root);
@@ -868,18 +1051,168 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // retention can leave older history unseen.
     const shown = found.slice(0, max);
     const last = shown.at(-1);
-    const lines = await tools.messages(
-      first ? [first, ...shown] : shown,
-      scope,
-    );
-    if (!lines.length) return "No messages.";
+    const page = first ? [first, ...shown] : shown;
+    const branch =
+      scope.root && scope.root === context.root && context.sourceRoot
+        ? await readSubthread(
+            page,
+            { channel, root: context.sourceRoot, anchor: scope.root },
+            THREAD,
+            (filters) => client.query(filters),
+          )
+        : undefined;
+    const lines = await tools.messages(branch?.events ?? page, scope);
+    if (!lines.length && !(scope.root === context.root && context.sourceRoot))
+      return "No messages.";
     const noun = scope.root ? "replies" : "messages";
     return [
       scope.root ? `thread ${scope.root} in ${channel}` : `channel ${channel}`,
       ...lines,
+      ...(branch?.incomplete
+        ? ["Some replies could not be verified as part of this task."]
+        : []),
       last && found.length > max
         ? `Older ${noun} remain; continue with ${JSON.stringify({ ...more, before: last.created_at, before_id: last.id })}`
         : `The relay returned no older ${noun}.`,
+    ].join("\n");
+  },
+
+  async search(tools, args) {
+    const { client } = tools;
+    args = ignoreBlankFields(args, ["q", "from", "in", "after", "before"]);
+    const q = text(args.q);
+    // 0 is what a model sends for a field it means to leave out.
+    const limit = bound(
+      typeof args.limit === "number" ? args.limit || undefined : undefined,
+      30,
+      100,
+    );
+    const page = (args.page as number) || 1;
+    if (!Number.isSafeInteger(page) || page < 1)
+      throw new Error("page must be a whole number, 1 or more.");
+    const sort = text(args.sort) ?? "relevance";
+    if (sort !== "relevance" && sort !== "newest")
+      throw new Error("sort must be relevance or newest.");
+    const since = searchTime(args, "after");
+    const before = searchTime(args, "before");
+    // `before` excludes its time; the relay's `until` includes it.
+    const until = before === undefined ? undefined : before - 1;
+    if (since !== undefined && until !== undefined && since > until)
+      throw new Error("after must be earlier than before.");
+    const from =
+      args.from === undefined
+        ? undefined
+        : await tools.author(String(args.from).trim().replace(/^@/, ""));
+    const place =
+      args.in === undefined ? undefined : await tools.place(String(args.in));
+    if (!q && !from && !place && since === undefined && until === undefined)
+      throw new Error("Give q, or from, in, after or before.");
+    const newest = !q || sort === "newest";
+    const found = await client.query([
+      {
+        kinds: q ? SEARCH : MESSAGES,
+        limit,
+        ...(q ? { search: q } : {}),
+        // Bridge extensions: a newest-first search, and a later page.
+        ...(q && newest ? { search_sort: "newest" } : {}),
+        ...(page > 1 ? { page } : {}),
+        ...(from ? { authors: [from] } : {}),
+        ...(place ? { "#h": [place.id] } : {}),
+        ...(since !== undefined ? { since } : {}),
+        ...(until !== undefined ? { until } : {}),
+      },
+    ]);
+    // Keep the relay's order: for a search, best match first.
+    const edits = found.length
+      ? await client.query([
+          { kinds: [40003], "#e": found.map((e) => e.id), limit: 500 },
+        ])
+      : [];
+    const latest = new Map(edited([...found, ...edits]).map((e) => [e.id, e]));
+    const hits = found.flatMap((event) => latest.get(event.id) ?? []);
+    // Newest first if this community supports it (it advertises
+    // `buzz-search-sort`). An older relay ignores `search_sort` and ranks by
+    // relevance; that shows here only when the page is out of date order, so
+    // one hit, or a relevance page that happens to be in date order, is still
+    // called newest first.
+    const unsorted =
+      q &&
+      newest &&
+      hits.some(
+        (event, i) =>
+          i > 0 && event.created_at > (hits[i - 1] as BuzzEvent).created_at,
+      );
+    const order = !newest
+      ? "best match first"
+      : unsorted
+        ? "best match first (this community can't sort a search by newest)"
+        : "newest first";
+    const owners = hits.flatMap((event) => tag(event, "auth") ?? []);
+    const names = await tools.names([
+      ...(from ? [from] : []),
+      ...hits.map((e) => e.pubkey),
+      ...owners,
+    ]);
+    // Always the key: anyone can take another person's display name.
+    const who = (key: string) => {
+      const name = names.get(key);
+      return name ? `${key} ${JSON.stringify(name)}` : key;
+    };
+    const asked = [
+      q && JSON.stringify(q),
+      from && `from ${who(from)}`,
+      place && `in ${place.label}`,
+      text(args.after) && `after ${text(args.after)}`,
+      text(args.before) && `before ${text(args.before)}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const scope =
+      "Searched with your own access: channels you're in and open channels, not other people's private channels or DMs.";
+    if (!hits.length)
+      return `No messages${page > 1 ? ` on page ${page}` : ""} for ${asked}.\n${scope}`;
+    const places = await tools.places(hits.flatMap((e) => tag(e, "h") ?? []));
+    const words = q?.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+    const lines = hits.map((event, i) => {
+      const channel = tag(event, "h");
+      const thread = threadReference(event)?.rootId;
+      const owner = tag(event, "auth");
+      const link = channel
+        ? `buzz://message?${new URLSearchParams({ channel, id: event.id, ...(thread ? { thread } : {}) })}`
+        : event.id;
+      const meta = [
+        link,
+        channel && (places.get(channel) ?? channel),
+        `from ${who(event.pubkey)}`,
+        owner && `claimed owner ${who(owner)}`,
+        time(event.created_at),
+        thread && "in a thread",
+      ].filter(Boolean);
+      const body = snippet(
+        event.content.replace(/\s+/g, " ").trim(),
+        words,
+        400,
+      );
+      return `[${(page - 1) * limit + i + 1}] ${meta.join(" · ")}\n    ${body}`;
+    });
+    const more = {
+      ...(q ? { q } : {}),
+      ...(from ? { from } : {}),
+      ...(place ? { in: place.id } : {}),
+      // Resolved, so a span like 7d does not move between pages.
+      ...(since !== undefined ? { after: utc(since) } : {}),
+      ...(before !== undefined ? { before: utc(before) } : {}),
+      ...(q && newest ? { sort } : {}),
+      limit,
+      page: page + 1,
+    };
+    return [
+      `${hits.length} result${hits.length === 1 ? "" : "s"} for ${asked}, ${order}.`,
+      scope,
+      ...lines,
+      found.length >= limit
+        ? `More may match; continue with ${JSON.stringify(more)}`
+        : "No more matches.",
     ].join("\n");
   },
 
@@ -961,7 +1294,26 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
 
   channel_get: (tools, args) => tools.details(target(tools, args)),
+  workspace_list: async ({ client }) => {
+    if (!client.workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    return JSON.stringify(await client.workspaces.list());
+  },
   channel_create: (tools, args) => tools.create(args),
+  channel_move: async (tools, args) => {
+    const channel = target(tools, args);
+    if (typeof args.workspace !== "string")
+      throw new Error("workspace must be a workspace ID, or empty to unfile.");
+    const workspace = args.workspace.trim() || undefined;
+    if (!tools.client.workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    const placement = await tools.client.workspaces.move(channel, workspace);
+    if (placement.status === "filed")
+      return workspace
+        ? `moved ${channel} to workspace ${workspace}`
+        : `unfiled ${channel}`;
+    return `${channel} may not have moved: ${placement.error ?? "unconfirmed"}. Check your owner's sidebar before trying again.`;
+  },
   channel_update: (tools, args) => tools.update(target(tools, args), args),
   channel_join: (tools, args) => lifecycle(tools, args, "join"),
   channel_leave: (tools, args) => lifecycle(tools, args, "leave"),
@@ -1013,59 +1365,92 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     if (!ids.length && !q) throw new Error("Give ids or q.");
     if (ids.length && q) throw new Error("Give ids or q, not both.");
     if (ids.length > 100) throw new Error("Give at most 100 ids.");
-    // Name search matches only name and display_name, best match first;
-    // NIP-50 search matches the whole profile, so text in avatars or `about`
-    // can fill its results and hide the person asked for. Name search refuses
-    // a query longer than its limit, so a longer name uses NIP-50 search.
-    const named =
-      !ids.length && q && [...q].length <= PROFILE_SEARCH_QUERY_MAX
-        ? await client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
-        : undefined;
-    const profiles =
-      named?.filter((event) => event.kind === 0) ??
-      (await client.query([
-        ids.length
-          ? { kinds: [0], authors: ids, limit: ids.length }
-          : { kinds: [0], search: q, limit: 100 },
-      ]));
-    const rows = newest(profiles)
-      .map((event) => {
+    // One deadline bounds the key both the search and the archive check use.
+    const deadline = archiveDeadline();
+    const relay = tools.relayKey(deadline);
+    const [people, byId, archived] = await Promise.all([
+      ids.length ? undefined : tools.searchPeople(q ?? "", relay),
+      ids.length
+        ? client.query([{ kinds: [0], authors: ids, limit: ids.length }])
+        : undefined,
+      // The standalone lookup serves both the search and the archive list.
+      tools.archivedIdentities(deadline, client.relayAuthorLookup && relay),
+    ]);
+    // As the app's archiveHides: you always find yourself.
+    const hidden = (key: string) =>
+      !ids.length &&
+      args.include_archived !== true &&
+      key !== client.pubkey &&
+      !!archived?.has(key);
+    const profiles = people?.profiles ?? byId ?? [];
+    const verified = people?.verified ?? new Map<string, VerifiedProfile>();
+    const shown = (pubkey: string, name: string) => {
+      const found = verified.get(pubkey);
+      const label = found && (found.fullName ?? found.displayName);
+      return label && label !== name ? ` (verified: ${label})` : "";
+    };
+    const byKey = new Map<string, { aliases: readonly string[]; row: string }>([
+      ...newest(profiles).map((event) => {
         const profile = parse(event.content);
         const name = profileName(profile) ?? "";
         const about =
           typeof profile.about === "string" && profile.about.trim()
-            ? ` — ${profile.about.trim().slice(0, 120)}`
+            ? ` — ${JSON.stringify(profile.about.trim().slice(0, 120))}`
             : "";
-        return { name, row: `${event.pubkey} ${name}${about}` };
-      })
+        return [
+          event.pubkey,
+          {
+            aliases: [
+              ...profileNames(profile),
+              ...verifiedAliases(verified.get(event.pubkey)),
+            ],
+            row: `${event.pubkey} ${JSON.stringify(name)}${shown(event.pubkey, name)}${about}${archived?.has(event.pubkey) ? " archived" : ""}`,
+          },
+        ] as const;
+      }),
+      ...[...verified]
+        .filter(([key]) => !profiles.some((event) => event.pubkey === key))
+        .map(
+          ([key, found]) =>
+            [
+              key,
+              {
+                aliases: verifiedAliases(found),
+                row: `${key}${shown(key, "")}${archived?.has(key) ? " archived" : ""}`,
+              },
+            ] as const,
+        ),
+    ]);
+    const needle = normalizeName(q ?? "");
+    const rows = (people?.order ?? [...byKey.keys()])
+      .flatMap((key) => (hidden(key) ? [] : (byKey.get(key) ?? [])))
       .filter(
-        ({ name }) =>
-          !q || ids.length || named || name.toLowerCase().includes(q),
+        ({ aliases }) =>
+          !q ||
+          ids.length ||
+          people?.searched ||
+          aliases.some((alias) => normalizeName(alias).includes(needle)),
       );
-    return rows.map(({ row }) => row).join("\n") || "No users.";
+    const found = rows.map(({ row }) => row).join("\n") || "No users.";
+    return archived
+      ? found
+      : `${found}\n${ARCHIVE_UNREAD}, so archived identities are not left out or marked.`;
   },
 
   async dm(tools, args) {
     const { client } = tools;
     const to = list(args.to).map(pubkey);
     if (!to.length) throw new Error("to is required.");
-    const people = new Set([client.pubkey, ...to]);
-    const find = async () =>
-      (
-        await client.query([
-          { kinds: [39000], "#p": [client.pubkey], "#t": ["dm"], limit: 500 },
-        ])
-      ).find((event) => {
-        const members = new Set(
-          event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
-        );
-        return (
-          members.size === people.size &&
-          [...people].every((key) => members.has(key))
-        );
-      });
-    let found = await find();
+    const first = await tools.findDm(to);
+    let found = first.dm;
+    let warning = "";
     if (!found) {
+      warning = await tools.unarchived(
+        to,
+        first.complete
+          ? "No DM was opened."
+          : "You have too many DMs to tell whether one with them exists, so none was opened.",
+      );
       await client.publish({
         kind: 41010,
         content: "",
@@ -1074,12 +1459,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       // The relay creates the channel's metadata just after answering.
       for (let tries = 0; !found && tries < 5; tries++) {
         if (tries) await new Promise((resolve) => setTimeout(resolve, 400));
-        found = await find();
+        found = (await tools.findDm(to)).dm;
       }
     }
     const channel = found && tag(found, "d");
     if (!channel) throw new Error("The DM did not open.");
-    return channel;
+    return `${channel}${warning}`;
   },
 
   async mem_get(tools, args) {
@@ -1353,7 +1738,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? tools.context.channel;
     if (!channel) throw new Error("channel is required here.");
     const head = await canvas(tools, channel);
-    return head?.content || "No canvas.";
+    return head ? `version: ${head.id}\n\n${head.content}` : "No canvas.";
   },
 
   async canvas_set(tools, args) {
@@ -1361,18 +1746,65 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const channel = text(args.channel) ?? context.channel;
     if (!channel) throw new Error("channel is required here.");
     const content = (await tools.body(args, true, "content")) as string;
+    const expected = text(args.expected);
+    // A copied canvas_get reply would save its header into the canvas.
+    if (/^version: [0-9a-f]{64}\n/.test(content))
+      throw new Error(
+        "Leave out the version line from canvas_get; pass the version as expected.",
+      );
     if (new TextEncoder().encode(content).length > LIVE_CANVAS_BYTES)
       throw new Error(
         `The canvas is over its limit of ${LIVE_CANVAS_BYTES} bytes.`,
       );
     const head = await canvas(tools, channel);
+    // Others may have saved since this session read the canvas: replacing
+    // needs the version it was shown, so nothing it never saw is lost.
+    const changed = () =>
+      new Error(
+        head
+          ? `The canvas changed since version ${head.id}. Read it again with canvas_get, merge your change into it, and pass the new version as expected.`
+          : "Another canvas was just saved. Read it with canvas_get, merge your change into it, and pass its version as expected.",
+      );
+    if (!head && expected)
+      throw new Error(
+        `No canvas in ${channel} to replace; leave out expected to create it.`,
+      );
+    if (head && !expected)
+      throw new Error(
+        "The channel has a canvas. Read it with canvas_get, keep what still holds, and pass its version as expected.",
+      );
+    if (head && expected !== head.id)
+      throw new Error(
+        `The canvas changed since version ${expected}. Read it again with canvas_get, merge your change into it, and pass the new version as expected.`,
+      );
     // The newest canvas wins, so a write must be dated after the current one.
     const after = head ? (head.created_at + 1) * 1000 : 0;
     if (after - Date.now() > 5000)
       throw new Error("The canvas was just changed; try again.");
     await waitUntil(after);
-    await client.publish({ kind: 40100, content, tags: [["h", channel]] });
-    return "saved";
+    // The relay refuses it if the canvas moved past the head read above.
+    const saved = await client
+      .publish({
+        kind: 40100,
+        content,
+        tags: [
+          ["h", channel],
+          ["expected-revision", head?.id ?? "none"],
+        ],
+      })
+      .catch((error: unknown) => {
+        throw reason(error).includes("conflict:") ? changed() : error;
+      });
+    const selected = await canvas(tools, channel).catch((error: unknown) => {
+      throw new Error(
+        `saved as version ${saved.id}, but the canvas could not be read back to confirm it is current: ${reason(error)}. Read canvas_get before you write again.`,
+      );
+    });
+    if (selected?.id !== saved.id)
+      throw new Error(
+        `conflict: the canvas was saved as version ${saved.id}, but another (${selected?.id ?? "none"}) is now current. Read canvas_get, merge your change into it, and pass its version as expected.`,
+      );
+    return `saved; version ${saved.id}`;
   },
 
   async canvas_history(tools, args) {
@@ -1599,9 +2031,14 @@ function requestOf(args: Args): string[][] {
 
 /** The tags for a message's required audience. */
 function audienceOf(args: Args): string[][] {
-  if (args.audience !== "everyone" && args.audience !== "agents")
-    throw new Error("audience must be everyone or agents.");
-  return args.audience === "agents" ? [["audience", "agents"]] : [];
+  const { audience } = args;
+  if (
+    audience !== "everyone" &&
+    audience !== "details" &&
+    audience !== "agents"
+  )
+    throw new Error("audience must be everyone, details or agents.");
+  return audience === "everyone" ? [] : [["audience", audience]];
 }
 
 /** Publishes `args`' text, files and mentions as a message in `channel`,
@@ -1613,10 +2050,22 @@ async function post(
   thread: readonly string[][],
   extra: readonly string[][] = [],
 ) {
-  const files = await tools.attach(list(args.files));
-  const content = `${(await tools.body(args, !files.links)) ?? ""}${files.links}`;
-  const mentions = await tools.mentions(channel, content, list(args.mentions));
-  const event = await tools.client.publish({
+  const paths = list(args.files);
+  const body = (await tools.body(args, !paths.length)) ?? "";
+  // Refuse an overlong message before uploading its files.
+  checkLength(args.audience as "everyone" | "details" | "agents", body);
+  // Uploads come after every refusal; their links name no one.
+  const mentions = await tools.mentions(channel, body, list(args.mentions));
+  // The runner suppresses every relay event authored by this agent. A post
+  // receipt must not suggest that a self-mention scheduled another session.
+  if (mentions.includes(tools.client.pubkey))
+    throw new Error(
+      "Self-mentions do not wake your other sessions. Nothing was posted. Use self_handoff with channel, text, and thread outside a Solo chat.",
+    );
+  const warning = await tools.unarchived(mentions, "Nothing was posted.");
+  const files = await tools.attach(paths);
+  const content = `${body}${files.links}`;
+  const template: Template = {
     kind: 9,
     content,
     tags: [
@@ -1627,8 +2076,13 @@ async function post(
       ...(await tools.emoji(content)),
       ...extra,
     ],
-  });
-  return `sent ${event.id}`;
+  };
+  const event = await (files.managedAttachments.length
+    ? tools.client.publish(template, {
+        managedAttachments: files.managedAttachments,
+      })
+    : tools.client.publish(template));
+  return `sent ${event.id}${warning}`;
 }
 
 /** One call's helpers, so lookups it repeats are made once. */
@@ -1673,10 +2127,36 @@ class Tools {
 
   /** The e-tag of a `send` reply to `parent`: a reply to any message in a
    * thread is a reply to the thread's root. */
-  async threadTags(parent: string) {
-    const root =
-      parent === this.context.root ? parent : rootOf(await this.event(parent));
-    return [["e", root, "", "reply"]];
+  async threadTags(parent: string, channel: string) {
+    const { channel: taskChannel, root: anchor, sourceRoot } = this.context;
+    const target = parent === anchor ? undefined : await this.event(parent);
+    if (anchor && sourceRoot) {
+      const taskTags = [
+        ["e", sourceRoot, "", "root"],
+        ["e", anchor, "", "reply"],
+      ];
+      if (!target) {
+        if (channel !== taskChannel)
+          throw new Error("The task thread is in a different channel.");
+        return taskTags;
+      }
+      if (
+        channel === taskChannel &&
+        tag(target, "h") === channel &&
+        threadReference(target)?.rootId === sourceRoot
+      ) {
+        const branch = await readSubthread(
+          [target],
+          { channel, root: sourceRoot, anchor },
+          THREAD,
+          (filters) => this.client.query(filters),
+        );
+        if (branch.events.length) return taskTags;
+        if (branch.incomplete)
+          throw new Error("Could not verify the task reply's parent thread.");
+      }
+    }
+    return [["e", target ? rootOf(target) : parent, "", "reply"]];
   }
 
   /** Visit matching events in relay order, retaining only what the caller needs.
@@ -1716,6 +2196,107 @@ class Tools {
       { kinds: [39000], "#d": [channel], limit: 1 },
     ]);
     return metadata;
+  }
+
+  /** Your DM with exactly `people`, if it exists; never creates one.
+   * `complete` is false when your DMs were too many to read them all. */
+  async findDm(people: readonly string[]) {
+    const wanted = new Set([this.client.pubkey, ...people]);
+    let dm: BuzzEvent | undefined;
+    const complete = await this.scan(
+      { kinds: [39000], "#p": [this.client.pubkey], "#t": ["dm"] },
+      (event) => {
+        const members = new Set(
+          event.tags.filter((t) => t[0] === "p").map((t) => t[1]),
+        );
+        if (
+          members.size === wanted.size &&
+          [...wanted].every((key) => members.has(key))
+        )
+          dm = event;
+        return !dm;
+      },
+    );
+    return { dm, complete: complete || !!dm };
+  }
+
+  /** The channel `value` names: a Buzz link, @person for your DM with them,
+   * or a channel's ID or name (optionally #name). */
+  async place(value: string) {
+    const v = value.trim();
+    const link = parseBuzzLink(v);
+    if (link?.format === "legacy") return this.placeOf(link.channelId);
+    if (v.startsWith("@")) {
+      const person = await this.author(v.slice(1));
+      const dm =
+        person === this.client.pubkey
+          ? undefined
+          : (await this.findDm([person])).dm;
+      if (!dm) throw new Error(`You have no DM with ${v.slice(1)}.`);
+      return this.placeOf(tag(dm, "d") as string);
+    }
+    const name = v.replace(/^#/, "");
+    if (name === v && CHANNEL_ID.test(v) && (await this.metadata(v)))
+      return this.placeOf(v);
+    const lower = name.toLowerCase();
+    const named: BuzzEvent[] = [];
+    const similar: BuzzEvent[] = [];
+    await this.scan({ kinds: [39000] }, (event) => {
+      const channel = tag(event, "name")?.toLowerCase();
+      if (channel === lower) named.push(event);
+      else if (channel?.includes(lower) && similar.length < 5)
+        similar.push(event);
+      return true;
+    });
+    const rows = (events: BuzzEvent[]) =>
+      events.map((e) => `${tag(e, "d")} #${tag(e, "name")}`).join("\n");
+    if (named.length > 1)
+      throw new Error(
+        `${named.length} channels are named ${name}; give its ID.\n${rows(named)}`,
+      );
+    if (!named[0])
+      throw new Error(
+        `No channel you can see is named ${name}.${similar.length ? `\nSimilar:\n${rows(similar)}` : ""}`,
+      );
+    return this.placeOf(tag(named[0], "d") as string);
+  }
+
+  async placeOf(id: string) {
+    return { id, label: (await this.places([id])).get(id) ?? id };
+  }
+
+  /** Labels for `channels`: #name, or "DM with" its other members. */
+  async places(channels: readonly string[]) {
+    const wanted = [...new Set(channels)];
+    const labels = new Map<string, string>();
+    if (!wanted.length) return labels;
+    const found = await this.client.query([
+      { kinds: [39000], "#d": wanted, limit: wanted.length },
+    ]);
+    const others = (event: BuzzEvent) =>
+      event.tags
+        .filter((t) => t[0] === "p" && t[1] && t[1] !== this.client.pubkey)
+        .map((t) => t[1] as string);
+    const dms = found.filter((event) => tag(event, "t") === "dm");
+    const names = await this.names(dms.flatMap(others));
+    for (const event of found) {
+      const id = tag(event, "d");
+      if (!id) continue;
+      const name = tag(event, "name");
+      labels.set(
+        id,
+        tag(event, "t") === "dm"
+          ? `DM with ${
+              others(event)
+                .map((key) => names.get(key) ?? key)
+                .join(", ") || "yourself"
+            }`
+          : name
+            ? `#${name}`
+            : id,
+      );
+    }
+    return labels;
   }
 
   async details(channel: string) {
@@ -1760,8 +2341,6 @@ class Tools {
     if (args.solo !== undefined && typeof args.solo !== "boolean")
       throw new Error("solo must be true or false.");
     const solo = args.solo === true;
-    if (!solo && args.members !== undefined)
-      throw new Error("members is for Solo chats.");
     // Solo chats are private working spaces and system channels are
     // infrastructure, so the naming rules are for ordinary channels.
     if (!solo && type !== "system" && namingRulesApply(this.client.relayUrl)) {
@@ -1790,13 +2369,63 @@ class Tools {
         "A Solo chat is a private stream without about or template.",
       );
     if (members.length > 32)
-      throw new Error("A Solo chat starts with at most 32 members.");
+      throw new Error("A channel starts with at most 32 members.");
     // Found first, so a wrong name creates nothing.
     const template =
       args.template === undefined
         ? undefined
         : await this.template(required(args, "template"));
+    const workspace =
+      args.workspace === undefined ? undefined : required(args, "workspace");
+    const workspaces = this.client.workspaces;
+    if (workspace !== undefined && !workspaces)
+      throw new Error("Workspaces are unavailable on this host");
+    // A private one is filed only with the owner in `members`; the host
+    // checks that before anything is created.
+    // As New channel or New chat in a workspace: its defaults, unless a
+    // template is chosen. Read first, so they apply or nothing is created.
+    const defaults =
+      workspace !== undefined && !template
+        ? await workspaces?.defaults(
+            workspace,
+            solo ? { solo, members } : { solo },
+          )
+        : undefined;
+    // Its default agents that this agent may add: Buzz adds them with your
+    // owner's key, which this agent never signs with.
+    const { addable, refused: barred } = await this.addable(
+      (defaults?.agents ?? []).filter((key) => key !== this.client.pubkey),
+    );
+    // As New chat and New channel, one not available here is skipped.
+    const refused: [string, string][] = [
+      ...(defaults?.skipped ?? [])
+        .filter((key) => key !== this.client.pubkey)
+        .map((key): [string, string] => [
+          key,
+          "not available in this community (archived, being deleted, or not in any channel here)",
+        ]),
+      ...barred,
+    ];
+    // A Solo chat's agents join in the create, as Buzz starts one.
+    const joining = solo ? [...new Set([...members, ...addable])] : members;
+    if (joining.length > 32)
+      throw new Error("A channel starts with at most 32 members.");
+    const setup: ChannelTemplate | undefined =
+      template ??
+      (defaults && {
+        name: "workspace defaults",
+        canvas: defaults.canvas,
+        agents: solo ? [] : addable,
+      });
     const id = crypto.randomUUID();
+    const file =
+      workspace === undefined
+        ? undefined
+        : await workspaces?.prepare(
+            workspace,
+            { members: joining, open: args.visibility === "open" },
+            id,
+          );
     await this.client.publish({
       kind: 9007,
       content: "",
@@ -1809,21 +2438,42 @@ class Tools {
         ...(ttl ? [["ttl", String(ttl)]] : []),
         // As Buzz starts a Solo chat: the relay adds the `p` members in the create.
         ...(solo ? channelLabelTags([SOLO_LABEL, SOLO_NAMED_LABEL]) : []),
-        ...members.map((key) => ["p", key]),
+        ...joining.map((key) => ["p", key]),
       ],
     });
     const labeled = (now: BuzzEvent | undefined) =>
       !!now && (!solo || soloChannelMetadata(now as RelayEvent));
     const shown = await until(() => this.metadata(id), labeled).catch(unread);
     if (!shown || shown instanceof Error)
-      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${template ? "; the template was not applied" : ""}${role === "guest" ? "; join_role was not set" : ""}${members.length ? "; its members are not confirmed" : ""}.`;
-    const lines = [`created ${id}`];
+      return `The community accepted channel ${id} but ${shown ? shown.message : "does not show it yet"}${setup ? `; ${template ? "the template was" : "the workspace defaults were"} not applied` : ""}${role === "guest" ? "; join_role was not set" : ""}${joining.length ? "; its members are not confirmed" : ""}${file ? "; not filed in workspace" : ""}${refused.length ? `; workspace default agents not added: ${refused.map(([key]) => key).join(", ")}` : ""}.`;
+    const lines = [
+      `created ${id}`,
+      ...refused.map(
+        ([key, why]) => `workspace default agent ${key} not added: ${why}`,
+      ),
+    ];
     if (!labeled(shown))
       lines.push(
         "The community did not keep the Solo label, so it is an ordinary private channel.",
       );
-    if (members.length) lines.push(...(await this.joined(id, members)));
-    if (template) lines.push(...(await this.apply(id, template)));
+    if (joining.length) lines.push(...(await this.joined(id, joining)));
+    if (file) {
+      try {
+        const placement = await file(id);
+        lines.push(
+          placement.status === "filed"
+            ? `filed in workspace ${workspace}`
+            : placement.status === "not-filed"
+              ? `created, not filed in workspace: ${placement.error}. Use channel_move; do not create another.`
+              : `created; workspace placement unconfirmed and may have completed: ${placement.error}. Check your owner's sidebar before channel_move; do not create another.`,
+        );
+      } catch (error) {
+        lines.push(
+          `created; workspace placement unconfirmed and may have completed: ${reason(error)}. Check your owner's sidebar before channel_move; do not create another.`,
+        );
+      }
+    }
+    if (setup) lines.push(...(await this.apply(id, setup)));
     // Last, so the template's agents join as members, not guests.
     if (role === "guest")
       try {
@@ -1881,6 +2531,40 @@ class Tools {
       }
     if (agents.length) lines.push(...(await this.change(id, agents, [])).lines);
     return lines;
+  }
+
+  /** Which of `agents` this agent may add, by each one's own
+   * `channel_add_policy`; the rest with why not. A failed read throws, so
+   * nothing is created. */
+  async addable(agents: readonly string[]) {
+    if (!agents.length)
+      return { addable: [] as string[], refused: [] as [string, string][] };
+    const events = await this.client.query([
+      { kinds: [10100], authors: [...agents] },
+    ]);
+    const policy = new Map<string, { at: number; value: unknown }>();
+    for (const event of events) {
+      if (!agents.includes(event.pubkey)) continue;
+      const seen = policy.get(event.pubkey);
+      if (seen && seen.at >= event.created_at) continue;
+      let value: unknown;
+      try {
+        value = (JSON.parse(event.content) as Record<string, unknown>)
+          .channel_add_policy;
+      } catch {}
+      policy.set(event.pubkey, { at: event.created_at, value });
+    }
+    const addable: string[] = [];
+    const refused: [string, string][] = [];
+    for (const key of agents) {
+      const value = policy.get(key)?.value;
+      if (value === "owner_only")
+        refused.push([key, "only your owner can add this agent"]);
+      else if (value === "nobody")
+        refused.push([key, "this agent can't be added by anyone else"]);
+      else addable.push(key);
+    }
+    return { addable, refused };
   }
 
   /** The owner's template named `name`, as one, without guessing. */
@@ -2045,31 +2729,179 @@ class Tools {
     };
   }
 
-  /** The author `value` names: me, a pubkey or npub, or one display name. */
+  /** The relay's key: rejects when it can't be learned now, or by
+   * `deadline`; undefined when the relay has none. */
+  async relayKey(deadline?: number): Promise<string | undefined> {
+    const { relayAuthor, relayAuthorLookup } = this.client;
+    if (relayAuthor !== undefined || !relayAuthorLookup) return relayAuthor;
+    if (deadline === undefined) return relayAuthorLookup();
+    const found = await within(
+      deadline,
+      relayAuthorLookup().then((key) => ({ key })),
+      undefined,
+    );
+    if (!found) throw new Error("The relay's key took too long");
+    return found.key;
+  }
+
+  /** The relay's signed NIP-IA archive list, its key learned and the list
+   * read fresh by `deadline`; undefined when it can't be, so callers
+   * fail open. Only the relay's NIP-11 self key signs it: the standalone
+   * lookup, or the app's signing authority, never its contact key. A host that
+   * gives neither can't tell; a relay with no self key archives no one. */
+  async archivedIdentities(
+    deadline: number,
+    lookup = this.client.relayAuthorLookup?.(),
+  ): Promise<ReadonlySet<string> | undefined> {
+    const client = this.client;
+    if (!lookup && !("signingAuthority" in client)) return undefined;
+    let late = false;
+    let archives: ReturnType<typeof createIdentityArchives> | undefined;
+    const read = async () => {
+      const authority = lookup ? await lookup : client.signingAuthority;
+      if (!authority) return new Set<string>();
+      if (late) return undefined;
+      archives = createIdentityArchives(
+        {
+          async read(filters, options) {
+            const signal = options?.signal;
+            const events = await new Promise<readonly BuzzEvent[]>(
+              (resolve, reject) => {
+                const stop = () => reject(signal?.reason);
+                signal?.addEventListener("abort", stop, { once: true });
+                client
+                  .query(filters as readonly Filter[])
+                  .then(resolve, reject);
+              },
+            );
+            // The connection admits signed events; anything else is no evidence.
+            if (
+              !events.every((event) =>
+                hasEventProof(event as unknown as RelayEvent),
+              )
+            )
+              throw new Error("Unsigned archive snapshot");
+            return events as unknown as readonly RelayEvent[];
+          },
+        } as RelayReader,
+        authority,
+      );
+      await archives.queries.refresh();
+      const snapshot = archives.queries.snapshot();
+      return snapshot.status === "ready"
+        ? new Set(snapshot.archived)
+        : undefined;
+    };
+    try {
+      return await within(
+        deadline,
+        read().catch(() => undefined),
+        undefined,
+      );
+    } finally {
+      late = true;
+      // Aborts a read still held open.
+      archives?.dispose();
+    }
+  }
+
+  /** Fails, naming them, when the relay archived any of `people`; otherwise
+   * "", or a warning line when the archive list can't be read. */
+  async unarchived(people: readonly string[], outcome: string) {
+    if (!people.length) return "";
+    const deadline = archiveDeadline();
+    const archived = await this.archivedIdentities(deadline);
+    if (!archived)
+      return `\n${ARCHIVE_UNREAD}, so archived identities were not checked.`;
+    const gone = people.filter((key) => archived.has(key));
+    if (!gone.length) return "";
+    // The list alone decides; a name only helps say who, in the time left.
+    const names =
+      Date.now() < deadline
+        ? await within(
+            deadline,
+            this.names(gone).catch(() => undefined),
+            undefined,
+          )
+        : undefined;
+    throw new Error(
+      `${gone.map((key) => `${names?.get(key) ?? key} (${key})`).join(", ")} ${gone.length > 1 ? "are" : "is"} archived. ${outcome}`,
+    );
+  }
+
+  async searchPeople(q: string, key = this.relayKey()) {
+    let unknownKey = false;
+    const [named, relay] = await Promise.all([
+      [...q].length <= PROFILE_SEARCH_QUERY_MAX
+        ? this.client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
+        : undefined,
+      key.catch(() => {
+        unknownKey = true;
+        return undefined;
+      }),
+    ]);
+    const profiles = newest(
+      named?.filter((event) => event.kind === 0) ??
+        (await this.client.query([{ kinds: [0], search: q, limit: 100 }])),
+    );
+    const authority = relayAuthorityOf(relay);
+    const order = [
+      ...new Set(
+        (named ?? profiles).flatMap((event) =>
+          event.kind === 0
+            ? [event.pubkey]
+            : (authority &&
+                verifiedProfileSubject(event as RelayEvent, authority)) ||
+              [],
+        ),
+      ),
+    ];
+    const heads = named?.filter((event) => event.kind !== 0) ?? [];
+    const { names: verified, failed } = await this.verifiedNamesBy(
+      authority,
+      order,
+      heads,
+    );
+    return {
+      searched: !!named,
+      profiles,
+      verified,
+      order,
+      unverified: unknownKey || failed,
+    };
+  }
+
   async author(value: string) {
     if (value === "me") return this.client.pubkey;
     try {
       return pubkey(value);
     } catch {}
-    const q = value.toLowerCase();
-    const named =
-      [...q].length <= PROFILE_SEARCH_QUERY_MAX
-        ? await this.client.searchProfiles?.(q, PROFILE_SEARCH_MAX)
-        : undefined;
-    const profiles =
-      named?.filter((event) => event.kind === 0) ??
-      (await this.client.query([{ kinds: [0], search: q, limit: 100 }]));
-    const found = newest(profiles).filter(
-      (event) => profileName(parse(event.content))?.toLowerCase() === q,
+    const { profiles, verified, unverified } = await this.searchPeople(
+      value.toLowerCase(),
+    );
+    if (unverified)
+      throw new Error("Couldn't check verified names; try again.");
+    const names = new Map(
+      profiles.map((event) => [
+        event.pubkey,
+        profileNames(parse(event.content)),
+      ]),
+    );
+    const handle = normalizeName(value);
+    const found = [...new Set([...names.keys(), ...verified.keys()])].filter(
+      (key) =>
+        [...(names.get(key) ?? []), ...verifiedAliases(verified.get(key))].some(
+          (name) => normalizeName(name) === handle,
+        ),
     );
     if (found.length > 1)
       throw new Error(
         `${found.length} people are named ${value}; give their npub.\n${found
-          .map((event) => npubEncode(event.pubkey))
+          .map((key) => npubEncode(key))
           .join("\n")}`,
       );
     if (!found[0]) throw new Error(`No one is named ${value}.`);
-    return found[0].pubkey;
+    return found[0];
   }
 
   /** Display names of `pubkeys` that have a profile. */
@@ -2122,29 +2954,45 @@ class Tools {
    * reads them, so `send` and the app agree on who is verified. None without
    * the connection's relay key. */
   async verifiedNames(pubkeys: readonly string[]) {
+    return (
+      await this.verifiedNamesBy(
+        relayAuthorityOf(this.client.relayAuthor),
+        pubkeys,
+      )
+    ).names;
+  }
+
+  private async verifiedNamesBy(
+    authority: VerifiedProfileAuthority | undefined,
+    pubkeys: readonly string[],
+    known: readonly unknown[] = [],
+  ) {
     const names = new Map<string, VerifiedProfile>();
-    const relay = this.client.relayAuthor;
-    if (!relay || !HEX_KEY.test(relay)) return names;
-    const authority = { pubkey: relay, multipleIssuers: false };
+    let failed = false;
+    if (!authority) return { names, failed };
     const subjects = [...new Set(pubkeys)].filter((key) => HEX_KEY.test(key));
     const batches: string[][] = [];
     for (let at = 0; at < subjects.length; at += VERIFIED_PROFILE_BATCH)
       batches.push(subjects.slice(at, at + VERIFIED_PROFILE_BATCH));
-    const found = (
-      await Promise.all(
-        batches.map((batch) =>
-          this.client
-            .query([verifiedProfileFilter(relay, batch)])
-            .catch(() => []),
-        ),
-      )
-    ).flat();
+    const found = [
+      ...known,
+      ...(
+        await Promise.all(
+          batches.map((batch) =>
+            this.client
+              .query([verifiedProfileFilter(authority.pubkey, batch)])
+              .catch(() => {
+                failed = true;
+                return [];
+              }),
+          ),
+        )
+      ).flat(),
+    ];
     // The newest event at each address decides; a newer malformed or
     // retracted one leaves the person unverified, as in the app.
     const latest = new Map<string, RelayEvent>();
     for (const item of found) {
-      // Queries admit the events whose signatures they checked; the app's
-      // projection takes only those.
       const event = item as unknown as RelayEvent;
       const subject = verifiedProfileSubject(event, authority);
       if (!subject || !subjects.includes(subject)) continue;
@@ -2154,7 +3002,7 @@ class Tools {
       const verified = verifiedProfile(event, authority, true);
       if (verified) names.set(subject, verified);
     }
-    return names;
+    return { names, failed };
   }
 
   /** Messages oldest first with their latest edits, a line each: its ID,
@@ -2244,21 +3092,67 @@ class Tools {
   async attach(paths: readonly string[]) {
     const tags: string[][] = [];
     let links = "";
+    // Bound bookkeeping, not ordinary attachment count. On overflow omit all hints.
+    const candidates = new Map<string, ManagedAttachment | null>();
+    let overflow = false;
     for (const path of paths) {
       const data = await this.client.read(path);
+      const size = data.byteLength;
+      // Hints are optional: hash support/failure must not break an ordinary send.
+      let sha256: string | undefined;
+      if (size <= 16 * 1024 * 1024) {
+        try {
+          sha256 = bytesToHex(
+            new Uint8Array(
+              await crypto.subtle.digest(
+                "SHA-256",
+                data as Uint8Array<ArrayBuffer>,
+              ),
+            ),
+          );
+        } catch {
+          /* No cleanup hint; preserve the existing upload/send behavior. */
+        }
+      }
       const upload = await this.client.upload(
         data,
         sniff(data) ?? "application/octet-stream",
       );
+      if (!overflow) {
+        if (!candidates.has(path) && candidates.size === 16) {
+          overflow = true;
+          candidates.clear();
+        } else {
+          const previous = candidates.get(path);
+          candidates.set(
+            path,
+            sha256 !== undefined &&
+              upload.sha256 === sha256 &&
+              upload.size === size &&
+              previous !== null &&
+              (!previous ||
+                (previous.sha256 === sha256 && previous.size === size))
+              ? { path, sha256, size, url: upload.url }
+              : null,
+          );
+        }
+      }
       const name = attachmentName(path.split(/[\\/]/).pop() ?? "");
       tags.push([...imeta(upload), `filename ${name}`]);
       links += `\n${attachmentMarkdown(name, upload)}`;
     }
-    return { tags, links };
+    return {
+      tags,
+      links,
+      managedAttachments: [...candidates.values()].filter(
+        (candidate): candidate is ManagedAttachment => candidate !== null,
+      ),
+    };
   }
 }
 
-/** A message's line in a read, omitting what `scope` names. */
+/** A message's line in a read, omitting what `scope` names, then its other
+ * tags. */
 function messageLine(
   event: BuzzEvent,
   name: string | undefined,
@@ -2268,6 +3162,14 @@ function messageLine(
   const owner = tag(event, "auth");
   const reference = threadReference(event);
   const thread = reference?.rootId;
+  // The rest, but for the thread references the line already names.
+  const named = [reference?.rootId, reference?.parentId];
+  const tags = readableTags(event.tags).filter(
+    ([name, value, , marker]) =>
+      name !== "e" ||
+      (marker !== "root" && marker !== "reply") ||
+      !named.includes(value?.toLowerCase()),
+  );
   return [
     event.id,
     `from ${event.pubkey}`,
@@ -2278,6 +3180,7 @@ function messageLine(
     reference &&
       reference.parentId !== thread &&
       `reply_to ${reference.parentId}`,
+    tags.length > 0 && `tags ${JSON.stringify(tags)}`,
     `at ${time(event.created_at)}: ${event.content}`,
   ]
     .filter(Boolean)
@@ -2294,7 +3197,10 @@ function rootOf(event: BuzzEvent) {
   return ((root && reply ? root : reply)?.[1] ?? event.id) as string;
 }
 
-/** Messages oldest first, each showing its author's latest edit. */
+/** Messages oldest first, each showing its author's latest edit, with the
+ * files it leaves (none when it clears them, as the relay serves; the
+ * timeline's `foldMessages` still shows the last files) and its custom
+ * emoji. */
 function edited(events: readonly BuzzEvent[]) {
   const messages = events.filter((event) => event.kind !== 40003);
   const byId = new Map(messages.map((event) => [event.id, event]));
@@ -2302,12 +3208,11 @@ function edited(events: readonly BuzzEvent[]) {
   for (const event of events)
     if (event.kind === 40003) {
       const target = tag(event, "e");
-      const message = target ? byId.get(target) : undefined;
       const last = target && edits.get(target);
       // Authorship first, so someone else's newer edit hides none.
       if (
         target &&
-        message?.pubkey === event.pubkey &&
+        byId.get(target)?.pubkey === event.pubkey &&
         (!last || last.created_at < event.created_at)
       )
         edits.set(target, event);
@@ -2315,7 +3220,18 @@ function edited(events: readonly BuzzEvent[]) {
   return messages
     .map((event) => {
       const edit = edits.get(event.id);
-      return edit ? { ...event, content: edit.content } : event;
+      return edit
+        ? {
+            ...event,
+            content: edit.content,
+            tags: editedTags(
+              event.tags,
+              edit.tags,
+              (edit.tags.some(([name]) => name === "emoji") ? edit : event)
+                .tags,
+            ),
+          }
+        : event;
     })
     .sort((a, b) => a.created_at - b.created_at);
 }
@@ -2434,15 +3350,20 @@ function searchMemory(entries: readonly Memory[], q: string) {
   ].join("\n");
 }
 
-/** `line`, cut to SEARCH_LINE_CHARS around its first match. */
-function snippet(line: string, words: readonly string[]) {
-  if (line.length <= SEARCH_LINE_CHARS) return line;
+/** `line`, cut to `chars` around its first match, or its start without one. */
+function snippet(
+  line: string,
+  words: readonly string[],
+  chars = SEARCH_LINE_CHARS,
+) {
+  if (line.length <= chars) return line;
   const lower = line.toLowerCase();
   const at = Math.min(
     ...words.map((word) => lower.indexOf(word)).filter((index) => index >= 0),
   );
-  const start = Math.max(0, Math.min(at - 40, line.length - SEARCH_LINE_CHARS));
-  const end = start + SEARCH_LINE_CHARS;
+  const start =
+    at === Infinity ? 0 : Math.max(0, Math.min(at - 40, line.length - chars));
+  const end = start + chars;
   return `${start ? "…" : ""}${line.slice(start, end)}${end < line.length ? "…" : ""}`;
 }
 
@@ -2502,6 +3423,37 @@ const NAME_WEIGHT = {
 } as const;
 
 const HEX_KEY = /^[0-9a-f]{64}$/;
+/** How long a users lookup waits for the archive list before going on without it. */
+const ARCHIVE_READ_MS = 5000;
+/** When an archive check that starts now must be done. */
+const archiveDeadline = () => Date.now() + ARCHIVE_READ_MS;
+/** `work`, or `fallback` once `deadline` passes. */
+async function within<T, F>(deadline: number, work: Promise<T>, fallback: F) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<F>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), deadline - Date.now());
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const ARCHIVE_UNREAD = "warning: the relay's archive list could not be read";
+
+const relayAuthorityOf = (relay: string | undefined) =>
+  relay && HEX_KEY.test(relay)
+    ? { pubkey: relay, multipleIssuers: false }
+    : undefined;
+
+const verifiedAliases = (verified: VerifiedProfile | undefined) =>
+  verified
+    ? [verified.displayName, verified.username, verified.fullName].filter(
+        (name): name is string => !!name,
+      )
+    : [];
 
 /** Who a name tags: everyone holding it in its strongest form. */
 function bestNamed(holders: ReadonlyMap<string, number> | undefined) {
@@ -2512,10 +3464,12 @@ function bestNamed(holders: ReadonlyMap<string, number> | undefined) {
     .map(([key]) => key);
 }
 
-const profileName = (profile: Record<string, unknown>) =>
-  [profile.display_name, profile.name].find(
+const profileNames = (profile: Record<string, unknown>) =>
+  [profile.display_name, profile.name].filter(
     (name): name is string => typeof name === "string" && !!name.trim(),
   );
+const profileName = (profile: Record<string, unknown>) =>
+  profileNames(profile)[0];
 function parse(content: string): Record<string, unknown> {
   try {
     const value = JSON.parse(content);
@@ -2666,10 +3620,11 @@ async function leads(
 const unread = (error: unknown) =>
   new Error(`its state could not be read back: ${reason(error)}`);
 
-/** The channel's newest canvas, once the channel is known to be visible. */
+/** The channel's newest canvas, once the channel is known to be visible.
+ * Read from the writer, as the app does, so its version is the real head. */
 async function canvas(tools: Tools, channel: string) {
   const [head] = await tools.client.query([
-    { kinds: [40100], "#h": [channel], limit: 1 },
+    { kinds: [40100], "#h": [channel], limit: 1, consistency: "strong" },
   ]);
   if (!head && !(await tools.metadata(channel))) throw unseen(channel);
   return head;
@@ -2797,6 +3752,61 @@ function unixTime(args: Args, key: string) {
       `${key} must be Unix seconds: a whole number, not milliseconds.`,
     );
   return value as number;
+}
+
+const AGO: Record<string, number> = { d: 1, w: 7, m: 30, y: 365 };
+
+/** Unix `seconds` as a UTC time searchTime reads back. */
+const utc = (seconds: number) =>
+  new Date(seconds * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+/** `args[key]` as Unix seconds: the start of a UTC date (YYYY-MM-DD), a UTC
+ * time (YYYY-MM-DDTHH:MM:SSZ), or a span back from now (7d, 2w, 3m, 1y; a
+ * month is 30 days). */
+function searchTime(args: Args, key: string) {
+  const value = text(args[key]);
+  if (value === undefined) return undefined;
+  const ago = /^(\d{1,4})([dwmy])$/i.exec(value);
+  if (ago)
+    return (
+      Math.floor(Date.now() / 1000) -
+      Number(ago[1]) * (AGO[(ago[2] as string).toLowerCase()] as number) * 86400
+    );
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const ms = Date.parse(day ? `${value}T00:00:00Z` : value);
+  // The round trip rejects other forms and impossible dates such as 02-30.
+  if (
+    !(day || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(value)) ||
+    Number.isNaN(ms) ||
+    utc(ms / 1000) !== (day ? `${value}T00:00:00Z` : value)
+  )
+    throw new Error(
+      `${key} must be a date (YYYY-MM-DD), a UTC time (YYYY-MM-DDTHH:MM:SSZ) or a span back from now (7d, 2w, 3m, 1y).`,
+    );
+  return ms / 1000;
+}
+
+/** The words people see before opening a message: a details message's brief,
+ * its first paragraph, and an `everyone` message, which the prompt asks to
+ * keep to a few sentences and this holds to a looser limit. */
+export const SHOWN_WORDS = { details: 50, everyone: 128 } as const;
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+function checkLength(
+  audience: "everyone" | "details" | "agents",
+  body: string,
+) {
+  if (audience === "agents") return;
+  // Count what people see: the brief the chat and notifications show.
+  const shown = audience === "details" ? detailsBrief(body) : body;
+  const count = words(shown);
+  const limit = SHOWN_WORDS[audience];
+  if (count <= limit) return;
+  throw new Error(
+    audience === "details"
+      ? `The brief, the first paragraph, is ${count} words: keep it to ${limit} and move the rest into later paragraphs.`
+      : `This is ${count} words, too long for everyone: say it in a few sentences, or send it as details with a short brief.`,
+  );
 }
 
 /** The checks Buzz makes on a channel's name, description and lifetime. */

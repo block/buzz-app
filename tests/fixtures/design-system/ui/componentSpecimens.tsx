@@ -1,6 +1,10 @@
 import { SidebarNavigation } from "../../../../src/shared/design-system/ui/SidebarNavigation";
 import { LoadingRegion } from "../../../../src/shared/design-system/ui/LoadingRegion";
-import { SettingsGroup } from "../../../../src/shared/design-system/ui/SettingsGroup";
+import {
+  SettingsGroup,
+  SettingsGroupExpand,
+} from "../../../../src/shared/design-system/ui/SettingsGroup";
+import { ValueChip } from "../../../../src/shared/design-system/ui/ValueChip";
 import { EmptyState } from "../../../../src/shared/design-system/ui/EmptyState";
 import { ExamplePreview } from "./ExamplePreview";
 import { Calendar } from "../../../../src/shared/design-system/ui/Calendar";
@@ -61,6 +65,7 @@ import {
   SmileyIcon,
   SquaresFourIcon,
   GlobeIcon,
+  SparklesIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useId, useState } from "react";
@@ -70,6 +75,7 @@ import {
 } from "../../../../src/shared/design-system/ui/ThemePicker";
 import { KeyboardShortcut } from "../../../../src/shared/design-system/ui/KeyboardShortcut";
 import { CountBadge } from "../../../../src/shared/design-system/ui/CountBadge";
+import { Badge } from "../../../../src/shared/design-system/ui/Badge";
 
 function ThemePickerSpecimen() {
   const [value, setValue] = useState<ThemeMode>("system");
@@ -872,7 +878,13 @@ function TabsSpecimen() {
         variant="dock"
         value={panelDestination}
         onValueChange={setPanelDestination}
-        items={iconItems}
+        items={iconItems.map((item, index) => ({
+          ...item,
+          trailing:
+            index === 0 ? (
+              <CountBadge count={12} label="12 items" />
+            ) : undefined,
+        }))}
       />
       <Tabs
         label="Icon segmented filters"
@@ -2178,6 +2190,24 @@ function RadioGroupSpecimen() {
         </Field>
       </SpecimenGroup>
       <SpecimenGroup
+        label="Compact checkmarked rows"
+        code={`<Field label="Voice">
+  <RadioGroup size="sm" defaultValue="cove">
+    <Radio value="cove" label="Cove" variant="row" />
+    <Radio value="maple" label="Maple" variant="row" />
+    <Radio value="none" label="Unavailable" variant="row" disabled />
+  </RadioGroup>
+</Field>`}
+      >
+        <Field label="Voice">
+          <RadioGroup size="sm" defaultValue="cove">
+            <Radio value="cove" label="Cove" variant="row" />
+            <Radio value="maple" label="Maple" variant="row" />
+            <Radio value="none" label="Unavailable" variant="row" disabled />
+          </RadioGroup>
+        </Field>
+      </SpecimenGroup>
+      <SpecimenGroup
         label="Native form reset"
         code={`<form aria-label="Notification preferences">
   <Field label="Notifications">
@@ -2445,6 +2475,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           </div>
         </SettingsGroup>
       </div>
+      <ExpandSpecimen />
       <div>
         <InlineHeader title="Attached folders" />
         <SettingsGroup layout="cards">
@@ -2454,7 +2485,26 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </div>
     </div>
   ),
+  "value-chip": () => (
+    <p className="m-0 flex flex-wrap items-center gap-2 text-body-sm text-secondary">
+      Uses
+      <ValueChip icon={<SparklesIcon size={14} />} label="Example harness">
+        Model A · High
+      </ValueChip>
+      <ValueChip>
+        A much longer value that ellipsizes in a narrow column
+      </ValueChip>
+    </p>
+  ),
   "theme-picker": ThemePickerSpecimen,
+  badge: () => (
+    <div className="flex items-center gap-2">
+      <Badge size="xs">Read only</Badge>
+      <Badge size="xs" tone="success">
+        Best match
+      </Badge>
+    </div>
+  ),
   "count-badge": () => (
     <div className="flex w-64 flex-col gap-1">
       <NavigationItem
@@ -2479,8 +2529,9 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     </div>
   ),
   "preference-row": SwitchSpecimen,
-  accordion: () => (
+  accordion: () => [
     <SpecimenFrame
+      key="standard"
       code={`<Accordion
   animate
   items={[
@@ -2627,8 +2678,190 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
           },
         ]}
       />
-    </SpecimenFrame>
-  ),
+    </SpecimenFrame>,
+    <SpecimenGroup
+      key="popout"
+      label="Popout accordion in a long list"
+      code={`<Accordion
+  variant="popout"
+  items={[
+    {
+      value: "Access",
+      title: "Access",
+      content: (
+        <p className="m-0 px-4.5 text-body-sm">
+          Use the step-free entrance on Grove Street. From the lobby, take
+          the lift to the second floor and follow the signs to Studio B.
+        </p>
+      ),
+    },
+  ]}
+/>`}
+    >
+      <section
+        aria-label="Popout accordion in a long list"
+        className="mx-auto w-full max-w-lg"
+      >
+        <Accordion
+          variant="popout"
+          items={(
+            [
+              ["Location", "The workshop takes place in the studio."],
+              ["Arrival", "Check in with the welcome desk from 9 a.m."],
+              ["Agenda", "Bring a draft to discuss in the first session."],
+              [
+                "Materials",
+                "Download workshop-materials-and-accessibility-preparation-guide-for-first-time-attendees.pdf before you arrive.",
+              ],
+              [
+                "Access",
+                "Use the step-free entrance on Grove Street. From the lobby, take the lift to the second floor and follow the signs to Studio B.",
+              ],
+              ["Breaks", "Breaks begin at 11 a.m. and 2 p.m."],
+              ["Lunch", "The café has vegetarian and gluten-free options."],
+              ["Wi-Fi", "Collect the guest network details at check-in."],
+              ["Recording", "The recap includes slides and shared notes."],
+              [
+                "Questions",
+                "Leave questions in the workbook during each session.",
+              ],
+              ["Feedback", "The closing session includes time for feedback."],
+              ["Follow-up", "The recap will be sent the next day."],
+            ] as const
+          ).map(([title, text]) => ({
+            value: title,
+            title,
+            content: <p className="m-0 px-4.5 text-body-sm">{text}</p>,
+          }))}
+        />
+      </section>
+    </SpecimenGroup>,
+    <SpecimenGroup
+      key="expanded-settings"
+      label="Popout accordion in Settings"
+      code={`<SettingsGroup>
+  <Accordion
+    variant="popout"
+    items={[
+      {
+        value: "Publishing",
+        title: "Publishing",
+        content: (
+          <div className="grid grid-cols-1 gap-3">
+            <div className="rounded-row border border-standard p-2">
+              <section
+                aria-label="Publishing instructions"
+                className="max-h-48 overflow-y-auto px-2"
+                tabIndex={0}
+              >
+                <p>Publishing instructions go here.</p>
+              </section>
+            </div>
+            <div className="[&>button]:max-w-full">
+              <Button size="sm" variant="outline">
+                <span className="whitespace-normal">Restore default</span>
+              </Button>
+            </div>
+          </div>
+        ),
+      },
+    ]}
+  />
+</SettingsGroup>`}
+    >
+      <section
+        aria-label="Popout accordion in Settings"
+        className="mx-auto w-full max-w-lg"
+      >
+        <SettingsGroup>
+          <Accordion
+            variant="popout"
+            items={[
+              {
+                value: "Response style",
+                title: "Response style",
+                content: (
+                  <p className="m-0 px-4.5 text-body-sm">
+                    Use plain language and lead with the result.
+                  </p>
+                ),
+              },
+              {
+                value: "Publishing",
+                title: "Publishing",
+                triggerDescription: "Default instructions",
+                content: (
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="rounded-row border border-standard p-2">
+                      <section
+                        aria-label="Publishing instructions"
+                        // biome-ignore lint/a11y/noNoninteractiveTabindex: This caller supplies a keyboard-scrollable region.
+                        tabIndex={0}
+                        className="grid max-h-48 gap-4 overflow-y-auto px-2 text-body-sm"
+                      >
+                        <p className="m-0">
+                          Before sharing a document, identify the audience and
+                          check who has access. Use the destination the
+                          requester named and confirm the people who need to act
+                          on it.
+                        </p>
+                        <p className="m-0">
+                          Open the final copy and check that it contains the
+                          agreed changes. Make sure links work for the intended
+                          audience and captions explain the attached images.
+                        </p>
+                        <p className="m-0">
+                          Give the recipient enough context to understand the
+                          decision. Put the requested action near the top and
+                          keep details about implementation in the document.
+                        </p>
+                        <p className="m-0">
+                          For a change that needs approval, use the existing
+                          review flow. Keep related feedback with the document
+                          so reviewers can see the questions and their answers.
+                        </p>
+                        <p className="m-0">
+                          Check that the final version uses the agreed title and
+                          that other versions still have a clear purpose.
+                          Preserve links that teammates already use.
+                        </p>
+                        <p className="m-0">
+                          After publishing, open the shared link and verify that
+                          it shows the expected version. Report the outcome
+                          where the request was made.
+                        </p>
+                      </section>
+                    </div>
+                    <div className="[&>button]:max-w-full">
+                      <Button size="sm" variant="outline">
+                        <span className="whitespace-normal">
+                          Restore default
+                        </span>
+                      </Button>
+                    </div>
+                  </div>
+                ),
+              },
+            ]}
+          />
+          <Accordion
+            variant="settings"
+            items={[
+              {
+                value: "Working notes",
+                title: "Working notes",
+                content: (
+                  <p className="m-0 text-body-sm">
+                    Keep decisions next to the work they affect.
+                  </p>
+                ),
+              },
+            ]}
+          />
+        </SettingsGroup>
+      </section>
+    </SpecimenGroup>,
+  ],
   "empty-state": () => (
     <div className="grid gap-8">
       <SpecimenFrame
@@ -2718,3 +2951,50 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };
+
+/** A choice that reveals its rows in place, as Manual does in AI settings. */
+function ExpandSpecimen() {
+  const [mode, setMode] = useState("automatic");
+  return (
+    <div>
+      <InlineHeader title="Expand in place" />
+      <SettingsGroup>
+        <PreferenceRow
+          icon={<SparklesIcon size={20} />}
+          title="Mode"
+          subtitle={
+            mode === "manual" ? "You choose each setting." : "Chosen for you."
+          }
+          trailing={
+            <Select
+              label="Mode"
+              variant="compact"
+              align="end"
+              value={mode}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    { value: "automatic", label: "Automatic" },
+                    { value: "manual", label: "Manual" },
+                  ],
+                },
+              ]}
+              onValueChange={setMode}
+            />
+          }
+        />
+        <SettingsGroupExpand open={mode === "manual"}>
+          <PreferenceRow
+            title="First"
+            trailing={<Button size="sm">Edit</Button>}
+          />
+          <PreferenceRow
+            title="Second"
+            trailing={<Button size="sm">Edit</Button>}
+          />
+        </SettingsGroupExpand>
+      </SettingsGroup>
+    </div>
+  );
+}

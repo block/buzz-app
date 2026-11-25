@@ -1,3 +1,4 @@
+mod app_navigation;
 mod archive;
 #[cfg(test)]
 mod build_resources;
@@ -22,9 +23,11 @@ use browser::{
 };
 mod agent_state;
 mod app_agents;
+mod build_identity;
 mod decisions;
 mod deep_links;
 mod dock;
+mod draft_diagnostics;
 mod huddle_window;
 use huddle_window::{
     huddle_window_action, huddle_window_open, huddle_window_reset_incoming, huddle_window_update,
@@ -40,6 +43,7 @@ mod enterprise_auth_build;
 mod enterprise_relay_url;
 mod host_command;
 mod host_files;
+mod host_forward;
 mod host_mcp;
 mod host_process;
 mod host_request;
@@ -56,13 +60,17 @@ use nsec_backup::{
     nsec_restore_install, nsec_restore_wait, NsecBackupHost,
 };
 use nsec_backup_choice::{nsec_backup_choice, nsec_backup_set_choice};
+mod agent_env;
 mod claude_key;
+#[cfg(unix)]
+mod cli_link;
 mod clipboard;
 mod jev;
 mod keep_awake;
 #[cfg(target_os = "macos")]
 mod legacy_cli_shortcut;
 mod legacy_communities;
+mod local_skills;
 mod loopback;
 #[cfg(target_os = "macos")]
 mod media_context_menu;
@@ -72,22 +80,29 @@ mod microphone;
 mod mouse_nav;
 #[cfg(target_os = "macos")]
 mod reshow;
+#[cfg(any(target_os = "macos", test))]
+mod webkit_reaper;
 
 mod notifications;
 mod os_idle;
 mod packaged_plugins;
 mod plugin_url;
 mod repositories_folder;
+mod subject_lift;
+mod web_inspector;
 mod window_controls;
 mod window_state;
 mod workspace_folder;
 use legacy_communities::legacy_communities;
+use local_skills::local_skills_list;
 use os_idle::get_os_idle_seconds;
-use repositories_folder::repositories_folder_validate;
+use repositories_folder::{repositories_folder_list, repositories_folder_validate};
 mod relaunch;
 mod relay;
 mod relay_admin;
+mod saved_downloads;
 mod sign_out;
+mod speech;
 mod system_clock;
 use identity::{
     identity_create, identity_export, identity_import, identity_import_legacy,
@@ -95,14 +110,16 @@ use identity::{
     identity_sign_builderlab_binding, IdentityHost,
 };
 use relay::{
-    file_download, media_copy_image, media_download, media_stream_base, relay_agent_library,
-    relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer, relay_agent_resolve,
-    relay_channel_publish, relay_channel_sign, relay_decode_read_state, relay_decode_reminders,
-    relay_decode_sidebar, relay_direct_message, relay_git_authorization, relay_http,
-    relay_http_cancel, relay_kit_decode, relay_kit_prepare, relay_kit_sign, relay_project_git,
-    relay_project_git_cancel, relay_publish_read_state, relay_sign, relay_sign_read_state,
-    relay_sign_reminder, relay_sign_sidebar, relay_upload, relay_upload_begin, relay_upload_cancel,
-    relay_upload_chunk, relay_verify_signatures, relay_workflow_runs,
+    file_download, media_copy_image, media_download, media_lift_subject, media_stream_base,
+    relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
+    relay_agent_resolve, relay_channel_publish, relay_channel_sign, relay_decode_read_state,
+    relay_decode_reminders, relay_decode_sidebar, relay_decode_thread_follows,
+    relay_direct_message, relay_git_authorization, relay_http, relay_http_cancel, relay_kit_decode,
+    relay_kit_prepare, relay_kit_sign, relay_project_git, relay_project_git_cancel,
+    relay_publish_read_state, relay_publish_thread_follows, relay_sign, relay_sign_read_state,
+    relay_sign_reminder, relay_sign_sidebar, relay_sign_thread_follows, relay_upload,
+    relay_upload_begin, relay_upload_cancel, relay_upload_chunk, relay_verify_signatures,
+    relay_workflow_runs,
 };
 use relay::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
 mod terminal;
@@ -119,8 +136,13 @@ use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use host_command::plugin_host_run_command;
 use host_files::{
-    plugin_host_delete_managed_file, plugin_host_read_file, plugin_host_resolve_directory,
-    plugin_host_save_bytes,
+    plugin_host_delete_managed_file, plugin_host_read_file, plugin_host_repository_folders,
+    plugin_host_resolve_directory, plugin_host_save_bytes,
+};
+use host_forward::{
+    plugin_host_forward_admission, plugin_host_forward_associate, plugin_host_forward_close,
+    plugin_host_forward_open, plugin_host_forward_register_child, plugin_host_forward_seal,
+    HostForward,
 };
 use host_mcp::{
     plugin_host_mcp_authorize, plugin_host_mcp_close, plugin_host_mcp_pairing,
@@ -350,7 +372,29 @@ async fn plugin_import_folder<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
     upload: Option<FolderUpload>,
+    path: Option<String>,
+    check_only: Option<bool>,
 ) -> Result<Option<Preview>, String> {
+    // An agent's request names the folder instead of the picker; the folder
+    // reader's checks apply unchanged, and the owner reviews it before install.
+    if let Some(path) = path {
+        let folder = std::path::PathBuf::from(&path);
+        if !folder.is_absolute() || path.chars().any(char::is_control) {
+            return Err("Enter an absolute folder path".into());
+        }
+        if check_only == Some(true) {
+            // Checks must never lock or replace Add's preview.
+            return tauri::async_runtime::spawn_blocking(move || {
+                prepare_folder(&folder).map(|prepared| Some(prepared.preview))
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        return prepare_import(imports.inner().clone(), move || {
+            prepare_folder(&folder).map(Some)
+        })
+        .await;
+    }
     prepare_import(imports.inner().clone(), move || {
         if let Some(upload) = upload {
             return prepare_upload(upload).map(Some);
@@ -395,9 +439,13 @@ async fn plugin_import_git(
     authorization: Option<String>,
     check_only: Option<bool>,
     commit: Option<String>,
+    path: Option<String>,
 ) -> Result<Option<Preview>, String> {
     if let Some(commit) = &commit {
         buzzodz_plugins::imports::RequiredCommit::parse(commit)?;
+    }
+    if let Some(path) = &path {
+        buzzodz_plugins::imports::repository_folder(path)?;
     }
     let repository = buzzodz_plugins::imports::repository_url(&repository)?;
     let url = url::Url::parse(&repository).map_err(|_| "Invalid repository")?;
@@ -433,6 +481,7 @@ async fn plugin_import_git(
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
+                path.as_deref(),
                 required,
                 authorization.as_deref(),
                 assertion
@@ -461,6 +510,7 @@ async fn plugin_import_git(
             buzzodz_plugins::imports::prepare_git_authorized(
                 &repository,
                 &reference,
+                path.as_deref(),
                 required,
                 authorization.as_deref(),
                 assertion
@@ -574,8 +624,19 @@ async fn plugin_import_install(
 }
 
 fn ready(manager: &Manager, catalog: Catalog) -> InstallationResult {
+    let managed = manager.managed(&catalog);
+    // Every catalog read can start it, so a new or changed policy applies without a
+    // restart; each pinned version is tried once per run, and one apply runs at a time.
+    if manager.automatic_due(&managed, &catalog) {
+        let manager = manager.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) = manager.apply_automatic() {
+                eprintln!("Could not apply the managed plugin policy: {error}");
+            }
+        });
+    }
     InstallationResult::Ready {
-        managed: manager.managed(&catalog),
+        managed,
         catalog,
         external_plugins_paused: manager.external_plugins_paused(),
     }
@@ -729,8 +790,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::federated_identity_snapshot,
         federated_identity::federated_identity_servers,
         federated_identity::federated_identity_requires,
+        federated_identity::federated_identity_ask_again,
         federated_identity::federated_identity_sign_in,
         federated_identity::federated_identity_cancel_sign_in,
+        federated_identity::federated_identity_sign_in_link,
         federated_identity::federated_identity_sign_out,
         federated_identity::access::federated_identity_register,
         federated_identity::access::federated_identity_unregister,
@@ -739,10 +802,16 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::socket::relay_socket_start,
         federated_identity::socket::relay_socket_send,
         federated_identity::socket::relay_socket_close,
+        draft_diagnostics::draft_diagnostics_save,
+        web_inspector::web_inspector,
+        build_identity::get_build_identity,
         relay_sign,
         relay_decode_read_state,
         relay_sign_read_state,
         relay_publish_read_state,
+        relay_decode_thread_follows,
+        relay_sign_thread_follows,
+        relay_publish_thread_follows,
         relay_http,
         relay_http_cancel,
         relay_verify_signatures,
@@ -776,13 +845,22 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         relay_upload_cancel,
         file_download,
         media_download,
+        relay::media_cache_clear,
+        relay::media_cache_forget,
+        relay::media_cache_usage,
+        saved_downloads::media_download_status,
+        saved_downloads::media_download_open,
         media_copy_image,
+        media_lift_subject,
+        subject_lift::media_lift_subject_supported,
         clipboard::clipboard_write_text,
         media_stream_base,
         get_os_idle_seconds,
         system_clock::system_hour_cycle,
         workspace_pick_folder,
         repositories_folder_validate,
+        repositories_folder_list,
+        local_skills_list,
         legacy_communities,
         plugin_import_folder,
         plugin_update_check,
@@ -816,8 +894,15 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_host_mcp_pairing,
         plugin_host_mcp_reply,
         plugin_host_mcp_close,
+        plugin_host_forward_admission,
+        plugin_host_forward_open,
+        plugin_host_forward_associate,
+        plugin_host_forward_register_child,
+        plugin_host_forward_seal,
+        plugin_host_forward_close,
         plugin_host_read_file,
         plugin_host_resolve_directory,
+        plugin_host_repository_folders,
         nsec_backup_available,
         nsec_backup_confirmed,
         nsec_backup_session,
@@ -855,14 +940,18 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         app_agents::app_agent_remember,
         app_agents::app_agent_claim,
         app_agents::app_agent_release,
+        agent_env::agent_env_status,
+        agent_env::agent_env_set,
         claude_key::claude_api_key_status,
         claude_key::claude_api_key_set,
+        claude_key::claude_api_key_clear,
         jev::jev_classifier_status,
         jev::jev_classifier_set_key,
         jev::jev_classifier_clear_key,
         agent_state::app_agent_state_load,
         agent_state::app_agent_state_set,
         decisions::decide,
+        speech::speech_connect,
         title_bar_double_click,
         notification_show,
         #[cfg(target_os = "macos")]
@@ -886,9 +975,26 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         sign_out::sign_out_wipe_refusal
     ]
 }
+
+#[cfg(target_os = "macos")]
+fn register_spellcheck_default() {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{ns_string, NSDictionary, NSNumber, NSUserDefaults};
+    let enabled = NSNumber::numberWithBool(true);
+    let enabled: &AnyObject = &enabled;
+    let defaults = NSDictionary::from_slices(
+        &[ns_string!("WebContinuousSpellCheckingEnabled")],
+        &[enabled],
+    );
+    // SAFETY: the dictionary maps an NSString key to an NSNumber value.
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     credential_service::drop_inherited();
+    #[cfg(target_os = "macos")]
+    register_spellcheck_default();
     let context = app_context();
     // Reject unsafe test launch settings before any identity or pending erase work.
     let native_mcp = native_mcp::plugin(
@@ -906,22 +1012,11 @@ pub fn run() {
         sign_out::boot(
             &paths,
             |app_data| {
-                let credentials = buzz_agent_controller::PlatformCredentials::default();
-                let old = app_data.join(sign_out::OLD_AGENTS);
-                if old
-                    .try_exists()
-                    .map_err(|error| format!("check agent registry: {error}"))?
-                {
-                    buzz_agent_controller::delete_local_agent_keys(old, &credentials)?;
-                }
-                // The pending erase runs before the temporary startup migration.
-                for folder in [sign_out::AGENTS, sign_out::migrate_agents::LEGACY] {
-                    buzz_agent_controller::AppAgents::open(
-                        app_data.join(folder).join("identities.json"),
-                    )
-                    .delete_keys(&credentials)?;
-                }
-                Ok(())
+                sign_out::remove_local_agents(
+                    app_data,
+                    &buzz_agent_controller::PlatformCredentials::default(),
+                    &agent_env::os_store,
+                )
             },
             || {
                 host_mcp::pairing::revoke(&paths.app_data)?;
@@ -930,7 +1025,7 @@ pub fn run() {
             },
         )
         .and_then(|instance| {
-            sign_out::forget_signed_out_key(&instance, identity::remove_current_key)
+            sign_out::forget_signed_out_key(&instance, &paths, identity::remove_current_key)
                 .map(|()| instance)
         })
         .unwrap_or_else(|message| sign_out::exit_with(&message))
@@ -963,6 +1058,7 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(app_navigation::init())
         .manage(federated_identity.clone())
         .manage(federated_identity::access::Registrations::default())
         .manage(federated_identity::socket::Sockets::default())
@@ -998,6 +1094,10 @@ pub fn run() {
                 if let Err(error) = window_state::restore(&window.as_ref().window()) {
                     eprintln!("Could not restore Buzz window: {error}");
                 }
+                #[cfg(target_os = "macos")]
+                if let Err(error) = window_state::opaque_background(&window) {
+                    eprintln!("Could not set the Buzz window background: {error}");
+                }
             }
             #[cfg(target_os = "macos")]
             notifications::macos::init();
@@ -1006,17 +1106,44 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             reshow::install(app.handle());
             #[cfg(target_os = "macos")]
+            webkit_reaper::install(app.handle());
+            #[cfg(target_os = "macos")]
             if let Some(home) = dirs::home_dir() {
                 if let Err(error) = legacy_cli_shortcut::remove_stale(&home.join(".local/bin")) {
                     eprintln!("Could not remove old Buzz's CLI shortcut: {error}");
                 }
             }
-            tauri::async_runtime::spawn(host_command::load_login_shell_path());
+            #[cfg(unix)]
+            if let (Some(home), Ok(cli)) = (
+                dirs::home_dir(),
+                app.path()
+                    .resource_dir()
+                    .map_err(std::io::Error::other)
+                    .and_then(|resources| resources.join("bin/buzz").canonicalize()),
+            ) {
+                if cli_link::owns(
+                    cli_link::development(tauri::is_dev()),
+                    &app.config().identifier,
+                    std::env::var_os("APPIMAGE").is_some(),
+                    &cli,
+                ) {
+                    if let Err(error) = cli_link::ensure(&home.join(".local/bin"), &cli) {
+                        eprintln!("Could not link the buzz command: {error}");
+                    }
+                }
+            }
+            tauri::async_runtime::spawn(host_command::load_login_shell_environment());
             if let Ok(manager) = &app.state::<PluginManager>().0 {
                 packaged_plugins::spawn(manager.clone());
             }
             deep_links::setup(app.handle());
             mesh_compute::setup(app.handle());
+            app.manage(relay::MediaCache::new(
+                app.path()
+                    .app_cache_dir()
+                    .ok()
+                    .map(|path| path.join(relay::MEDIA_CACHE_DIR)),
+            ));
             app.manage(relay::Spools::new(
                 app.path()
                     .app_cache_dir()
@@ -1179,18 +1306,22 @@ pub fn run() {
         .manage(identity)
         .manage(archive::ArchiveHost::default())
         .manage(jev::JevHost::new())
+        .manage(agent_env::AgentEnvs::new())
         .manage(claude_key::ClaudeKey::new())
         .manage(decisions::DecisionsHost::new())
         .manage(pairing::Pairing::default())
         .manage(Huddles::default())
         .manage(HuddleWindow::default())
+        .manage(saved_downloads::SavedDownloads::default())
         .manage(relay::Uploads::default())
         .register_asynchronous_uri_scheme_protocol("buzz-media", relay::media_protocol)
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(HostCalls::default())
         .manage(HostProcesses::default())
+        .manage(host_files::ManagedFiles::default())
         .manage(HostMcpServers::default())
+        .manage(HostForward::default())
         .manage(OAuthCallbackHost::default())
         .manage(NsecBackupHost::default().with_federated_identity(federated_identity))
         .manage(Notifications::default())
@@ -1242,7 +1373,9 @@ pub fn run() {
                 webview.state::<federated_identity::socket::Sockets>().clear();
                 webview.state::<federated_identity::FederatedIdentity>().clear_discoveries();
                 webview.state::<HostProcesses>().stop_all();
+                webview.state::<agent_env::AgentEnvs>().page_load();
                 webview.state::<HostMcpServers>().stop_all();
+                webview.state::<HostForward>().stop_all();
                 webview.state::<app_agents::AppAgentHost>().page_load();
                 if let Some(credentials) = webview.try_state::<credential_service::CredentialService>() {
                     credentials.page_load();
@@ -1329,6 +1462,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();
+    app.state::<HostForward>().stop_all();
     browser::shutdown();
     if let Err(error) = app.state::<Terminals>().shutdown() {
         eprintln!("Terminal shutdown failed: {error}");
@@ -1439,6 +1573,7 @@ mod tests {
                 None,
                 Some(check_only),
                 None,
+                None,
             ))
             .err()
             .unwrap()
@@ -1458,10 +1593,32 @@ mod tests {
                 None,
                 Some(check_only),
                 Some(commit.into()),
+                None,
             ))
             .err()
             .unwrap()
         };
+        let folder = |path: &str, check_only| {
+            tauri::async_runtime::block_on(super::plugin_import_git(
+                app.state(),
+                app.state(),
+                app.state(),
+                app.state(),
+                "https://example.invalid/plugins".into(),
+                "main".into(),
+                None,
+                Some(check_only),
+                None,
+                Some(path.into()),
+            ))
+            .err()
+            .unwrap()
+        };
+        for path in ["/plugins", "plugins/../one", "plugins\\one", "plugins//one"] {
+            for check_only in [false, true] {
+                assert!(folder(path, check_only).contains("path"), "{path}");
+            }
+        }
         for commit in ["main", "abc123", &"a".repeat(41), &"g".repeat(40)] {
             for check_only in [false, true] {
                 assert!(

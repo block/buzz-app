@@ -20,7 +20,7 @@ test("ordinary thread reveals its first content already positioned at the bottom
   const seen = new Promise((resolve) => {
     intercepted = resolve;
   });
-  await page.route("**/api/relay/**/query", async (route) => {
+  await page.route("**/api/relay/primary/query", async (route) => {
     if (
       !route
         .request()
@@ -61,7 +61,13 @@ test("ordinary thread reveals its first content already positioned at the bottom
     ).toBeFocused();
     await expect(history).toHaveAttribute("data-positioning");
     await expect(history.getByRole("status")).toHaveText("Loading thread…");
-    await expect(history.getByRole("status")).toBeInViewport();
+    // The status is for screen readers; nothing is drawn while the thread
+    // opens, since a brief flash of placeholders reads as jank.
+    await expect(history.locator("[data-message-waiting]")).toHaveCount(1);
+    await expect(history.locator("[data-message-loading]")).toHaveCount(0);
+    await expect(
+      history.locator('img[src="/buzz-loading-mark.svg"]'),
+    ).toHaveCount(0);
     await expect(history.locator("[data-thread-rows]")).toHaveAttribute(
       "inert",
     );

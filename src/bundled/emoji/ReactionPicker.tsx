@@ -3,15 +3,17 @@ import type { ReactionToolProps } from "../../features/conversation/contracts";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { SmileyPlusIcon } from "../../shared/design-system/icons";
 import { EmojiPicker } from "./EmojiPicker";
+import type { AddEmoji } from "./add-emoji";
 
 /** Plugin-owned coordination; inactive rows keep only their accessible trigger. */
-export function createReactionPicker() {
+export function createReactionPicker(addEmoji?: AddEmoji) {
   let active: (() => void) | undefined;
   return function ReactionPicker({
     session,
     scope,
     disabled,
     select,
+    reacted,
   }: ReactionToolProps) {
     const [open, setOpen] = useState(false);
     const trigger = useRef<HTMLButtonElement>(null);
@@ -63,7 +65,12 @@ export function createReactionPicker() {
             session={session}
             scope={scope}
             disabled={disabled}
-            insert={select}
+            // Removing an existing reaction succeeds but is not a use.
+            insert={(emoji) => {
+              const removes = reacted?.(emoji) === true;
+              return select(emoji) && !removes;
+            }}
+            addEmoji={addEmoji}
             reaction
             externalTrigger={{
               ref: trigger,

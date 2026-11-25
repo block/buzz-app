@@ -1,10 +1,13 @@
 import { expect } from "@playwright/test";
+import { isSidebarPreferencesBatch } from "../../src/features/relay/sidebar-preferences.ts";
 import { verifyEvent } from "nostr-tools";
 import { createHash } from "node:crypto";
 
 /** Model the relay boundaries that matter to this journey, not a replacement
  * session: AUTH, explicit channel fan-out, EOSE, CLOSED and HTTP quota reasons.
  * The production broker owns all pacing, signing, SSE and retry controls. */
+const REQUEST_PART = Symbol("request part");
+
 export function policyRelay({
   viewer,
   relayAuthor,
@@ -16,6 +19,8 @@ export function policyRelay({
   acceptPublication,
   latencyMs = 0,
   holdOlder = true,
+  // Release each held older page after this delay instead of on demand.
+  olderPageDelayMs = null,
 }) {
   const sockets = [];
   // A page can close between sending a publication and its acceptance. The
@@ -97,6 +102,8 @@ export function policyRelay({
           ? "observer"
           : undefined);
   report.wireFrames = [];
+  // Subscription ids are per socket: pair a frame with its socket to match it.
+  report.socketFrames = [];
   report.startupFrames = [];
   let emptyRoster = false;
   let heldContent = false;
@@ -108,6 +115,7 @@ export function policyRelay({
   };
   function emit(socket, frame) {
     report.wireFrames.push(frame);
+    report.socketFrames.push({ socket: sockets.indexOf(socket), frame });
     if (wsLimit)
       report.startupFrames.push({
         socket: sockets.indexOf(socket),
@@ -117,7 +125,7 @@ export function policyRelay({
     if (socket.readyState === 1)
       socket.onmessage?.({ data: JSON.stringify(frame) });
   }
-  return {
+  const api = {
     startupQuota(limit, setupLatencyMs = 40) {
       wsLimit = limit;
       eoseMs = setupLatencyMs;
@@ -183,22 +191,42 @@ export function policyRelay({
     emptyRoster() {
       emptyRoster = true;
     },
+    // Quotas refuse primary's next matching read: every joined community
+    // reads its own roster and heads at startup.
     quotaNextRoster(seconds = 1) {
-      quotas.set("roster", seconds);
+      quotas.set("primary/roster", seconds);
     },
     quotaNextHead(channel, seconds = 1) {
-      quotas.set(channel, seconds);
+      quotas.set(`primary/${channel}`, seconds);
     },
     quotaNextOlder(channel, seconds = 1) {
-      quotas.set(`older:${channel}`, seconds);
+      quotas.set(`primary/older:${channel}`, seconds);
     },
     /** With `only`, just the signed requests to those paths. */
     refuseSigned(status, body, only) {
       refusal = status ? { status, body, only } : undefined;
     },
     async fetch(url, init) {
+      const holdProfile = (result) =>
+        new Promise((resolve, reject) => {
+          const held = { pending: true, aborted: false };
+          profileHolds.push(held);
+          const abort = () => {
+            held.pending = false;
+            held.aborted = true;
+            reject(init.signal.reason);
+          };
+          init.signal.addEventListener("abort", abort, { once: true });
+          pendingProfiles.push(() => {
+            held.pending = false;
+            init.signal.removeEventListener("abort", abort);
+            resolve(Response.json(result));
+          });
+        });
+      // One filter of a request already checked and delayed as a whole.
+      const part = init?.[REQUEST_PART] === true;
       try {
-        if (latencyMs)
+        if (latencyMs && !part)
           await new Promise((resolve) => setTimeout(resolve, latencyMs));
         // NIP-11 is a public GET with no signed query body. The rail now reads
         // it for saved communities, including inactive ones.
@@ -219,23 +247,58 @@ export function policyRelay({
           "/profiles/search",
           ...(acceptPublication ? ["/events"] : []),
         ]).toContain(new URL(url).pathname);
-        const auth = JSON.parse(
-          Buffer.from(init.headers.Authorization.slice(6), "base64").toString(),
-        );
-        expect(verifyEvent(auth)).toBe(true);
-        expect(auth.pubkey).toBe(viewer);
-        expect(auth.kind).toBe(27235);
-        expect(auth.tags).toContainEqual(["u", String(url)]);
-        expect(auth.tags).toContainEqual([
-          "payload",
-          createHash("sha256").update(init.body).digest("hex"),
-        ]);
+        if (!part) {
+          const auth = JSON.parse(
+            Buffer.from(
+              init.headers.Authorization.slice(6),
+              "base64",
+            ).toString(),
+          );
+          expect(verifyEvent(auth)).toBe(true);
+          expect(auth.pubkey).toBe(viewer);
+          expect(auth.kind).toBe(27235);
+          expect(auth.tags).toContainEqual(["u", String(url)]);
+          expect(auth.tags).toContainEqual([
+            "payload",
+            createHash("sha256").update(init.body).digest("hex"),
+          ]);
+        }
         const filters = JSON.parse(init.body);
         if (new URL(url).pathname === "/profiles/search")
           return Response.json(searchProfiles(communityOf(url), filters));
         if (new URL(url).pathname === "/events") {
           acceptPublication(communityOf(url), filters);
           return Response.json({ accepted: true, event_id: filters.id });
+        }
+        // A channel head read carries the channel's newest membership notices
+        // second; each filter is answered as its own read would be.
+        if (
+          filters.length === 2 &&
+          filters[0].top_level === true &&
+          filters[0].until === undefined &&
+          filters[1].kinds?.length === 1 &&
+          filters[1].kinds[0] === 40099
+        ) {
+          expect(filters[1]["#h"]).toEqual(filters[0]["#h"]);
+          // Returned, not awaited: a part held and then cancelled by the app
+          // is consumer cancellation, not a fault (see the presence hold).
+          return Promise.all(
+            filters.map((filter) =>
+              api.fetch(url, {
+                ...init,
+                body: JSON.stringify([filter]),
+                [REQUEST_PART]: true,
+              }),
+            ),
+          ).then(async (parts) => {
+            const failed = parts.find((response) => !response.ok);
+            if (failed) return failed;
+            return Response.json(
+              (
+                await Promise.all(parts.map((response) => response.json()))
+              ).flat(),
+            );
+          });
         }
         if (filters.length === 2 && filters[1].depth_limit) {
           const [root, replies] = filters;
@@ -423,15 +486,15 @@ export function policyRelay({
           );
         }
         if (filters.length !== 1) {
-          // Sidebar preferences read only these five exact own-author coordinates.
-          expect(filters).toHaveLength(5);
-          expect(filters.map((filter) => filter["#d"]?.[0]).sort()).toEqual([
-            "channel-filter",
-            "channel-mutes",
-            "channel-sections",
-            "channel-sort",
-            "channel-stars",
-          ]);
+          const legacySortAndFilter =
+            filters.length === 2 &&
+            filters
+              .map((filter) => filter["#d"]?.[0])
+              .sort()
+              .join() === "channel-filter,channel-sort";
+          expect(
+            legacySortAndFilter || isSidebarPreferencesBatch(filters),
+          ).toBe(true);
           for (const filter of filters) {
             expect(filter.kinds).toEqual([30078]);
             expect(filter.authors).toEqual([viewer]);
@@ -499,7 +562,7 @@ export function policyRelay({
         const channel = filter["#h"]?.[0];
         // Head catch-up is an exact top-level channel window, not a batched
         // sidebar preview that happens to contain that channel.
-        const quota = filter.kinds?.includes(39002)
+        const scope = filter.kinds?.includes(39002)
           ? "roster"
           : filter.kinds?.includes(9)
             ? filter.until === undefined
@@ -508,6 +571,7 @@ export function policyRelay({
                 : undefined
               : `older:${channel}`
             : undefined;
+        const quota = scope && `${community}/${scope}`;
         if (quotas.has(quota)) {
           const seconds = quotas.get(quota);
           quotas.delete(quota);
@@ -528,12 +592,15 @@ export function policyRelay({
           heldUnread &&
           filter.kinds?.includes(9) &&
           filter["#h"]?.length &&
+          // Unread repair asks for edits too; a search preview's plain
+          // channel read does not.
+          filter.include_aux &&
           filter.top_level === undefined &&
           filter.depth_limit === undefined &&
           filter.until === undefined
         )
           return new Promise((resolve, reject) => {
-            const held = { pending: true, aborted: false };
+            const held = { community, pending: true, aborted: false };
             unreadHolds.push(held);
             const abort = () => {
               held.pending = false;
@@ -552,39 +619,44 @@ export function policyRelay({
           filter.kinds?.includes(0) &&
           filter.authors?.some((id) => heldAuthors.has(id))
         )
-          return new Promise((resolve, reject) => {
-            const held = { pending: true, aborted: false };
-            profileHolds.push(held);
-            const abort = () => {
-              held.pending = false;
-              held.aborted = true;
-              reject(init.signal.reason);
-            };
-            init.signal.addEventListener("abort", abort, { once: true });
-            pendingProfiles.push(() => {
-              held.pending = false;
-              init.signal.removeEventListener("abort", abort);
-              resolve(Response.json(result));
-            });
-          });
+          return holdProfile(result);
+        // An older page's aux closure, read apart from its rows, is not held.
+        // A thread window page carries aux too, but it is the page itself.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
+          !(
+            filter.include_aux &&
+            !filter.include_summaries &&
+            !filter.thread_window
+          ) &&
           holdOlder
         )
           return new Promise((resolve, reject) => {
-            const abort = () => reject(init.signal.reason);
+            const abort = () => {
+              // A read the app cancels is no longer pending.
+              const index = pending.indexOf(receipt);
+              if (index >= 0) pending.splice(index, 1);
+              reject(init.signal.reason);
+            };
             init.signal.addEventListener("abort", abort, { once: true });
-            pending.push({
+            const receipt = {
               community,
               channel,
               filter,
               events: result.filter((event) => event.kind === 9),
+              // The app abandoned the read, such as a cancelled read-ahead.
+              get closed() {
+                return init.signal.aborted;
+              },
               release() {
                 init.signal.removeEventListener("abort", abort);
                 resolve(Response.json(result));
               },
-            });
+            };
+            pending.push(receipt);
+            if (olderPageDelayMs !== null)
+              setTimeout(() => receipt.release(), olderPageDelayMs);
           });
         return Response.json(result);
       } catch (error) {
@@ -874,4 +946,5 @@ export function policyRelay({
           socket.close();
     },
   };
+  return api;
 }

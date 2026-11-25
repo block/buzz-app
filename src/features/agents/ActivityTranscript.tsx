@@ -1,17 +1,21 @@
 import {
+  Component,
   Fragment,
   createContext,
+  memo,
   useContext,
   useEffect,
   useSyncExternalStore,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
-import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  promptEventIds,
+  sentEventIds,
   sectionTitle,
   type PromptSection,
   type ToolDiff,
@@ -21,6 +25,11 @@ import {
   type TranscriptTurn,
 } from "./activity-transcript";
 import { MAX_MARKDOWN_LENGTH, scanMarkdown } from "../relay/message-content";
+import {
+  MarkdownDocument,
+  sharedComponents,
+} from "../markdown/MarkdownDocument";
+import type { MarkdownProfile } from "../markdown/profiles";
 import {
   BulbIcon,
   CheckCircleIcon,
@@ -49,6 +58,7 @@ import messageStyles from "../messages/Messages.module.css";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { readerInputs } from "../profiles/target";
 import { useAvatarPreview } from "../profiles/use-avatar-preview";
 import { bundledPoster } from "./avatar-packs";
 import { AgentsContext } from "./react";
@@ -62,7 +72,48 @@ const PeopleContext = createContext<{
   community?: string | undefined;
 }>({});
 
-const AgentAvatarSource = createContext<string | undefined>(undefined);
+const RowContext = createContext<{
+  picture?: string | undefined;
+  focused?: string | undefined;
+}>({});
+
+/** The Buzz events a profile was opened for, most wanted first, and the
+ * reader's input count then. A transcript showing one of their turns shows it
+ * first, once, and then reports `done`. */
+export const TranscriptFocus = createContext<
+  { events: readonly string[]; inputs: number; done(): void } | undefined
+>(undefined);
+
+/** The item, else the turn, that the first of `events` it has began or
+ * posted, so a reply shows itself before the prompt it answered. */
+function focusedEntry(transcript: Transcript, events: readonly string[]) {
+  // Newest first: a retried request's latest attempt is the one that answered.
+  const turns = [...transcript.turns].reverse();
+  for (const event of events)
+    for (const turn of turns) {
+      const item = turn.items.find((entry) => shows(entry, event));
+      if (item) return `item:${item.id}`;
+      if (turn.triggeringEventIds.includes(event)) return `turn:${turn.turnId}`;
+    }
+  return undefined;
+}
+/** Whether `item` began or posted `event`: a prompt for it, the reply it
+ * is, or a call whose result, or a call its script made, names it as sent. */
+function shows(item: TranscriptItem, event: string): boolean {
+  switch (item.type) {
+    case "prompt":
+      return promptEventIds(item.sections).includes(event);
+    case "message":
+      return item.messageId === event;
+    case "tool":
+      return (
+        sentEventIds(item.output).includes(event) ||
+        !!item.children?.some((child) => shows(child, event))
+      );
+    default:
+      return false;
+  }
+}
 
 type TurnState = "working" | "unknown" | "ended";
 // Icons follow ACP's standard tool kinds; tool names stay as the adapter sent them.
@@ -160,12 +211,16 @@ const END_SLACK = 32;
 function useFollowLatest(content: unknown, enabled: boolean) {
   const timeline = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const restoredTop = useRef<number | undefined>(undefined);
   useLayoutEffect(() => {
     const view = enabled ? scroller(timeline.current) : undefined;
     if (!view) return;
     const read = () => {
+      const top = view.scrollTop;
+      if (restoredTop.current === top) return;
+      restoredTop.current = undefined;
       following.current =
-        view.scrollHeight - view.scrollTop - view.clientHeight <= END_SLACK;
+        view.scrollHeight - top - view.clientHeight <= END_SLACK;
     };
     view.addEventListener("scroll", read, { passive: true });
     return () => view.removeEventListener("scroll", read);
@@ -175,7 +230,148 @@ function useFollowLatest(content: unknown, enabled: boolean) {
     const view = enabled && following.current && scroller(timeline.current);
     if (view) view.scrollTop = view.scrollHeight;
   }, [content, enabled]);
-  return timeline;
+  return { timeline, following, restoredTop };
+}
+
+type HistoryAnchor = {
+  view: HTMLElement;
+  candidates: { row: HTMLElement; offset: number }[];
+};
+
+class TranscriptTimeline extends Component<{
+  scroll: ReturnType<typeof useFollowLatest>;
+  partial: boolean;
+  focused: boolean;
+  children: ReactNode;
+}> {
+  getSnapshotBeforeUpdate({ partial }: { partial: boolean }) {
+    if (!partial || this.props.partial || this.props.focused) return null;
+    const { timeline, following } = this.props.scroll;
+    const body = timeline.current;
+    const view = scroller(body);
+    if (!body || !view) return null;
+    if (
+      following.current &&
+      view.scrollHeight - view.scrollTop - view.clientHeight <= END_SLACK
+    )
+      return null;
+    following.current = false;
+    const top = view.getBoundingClientRect().top + view.clientTop;
+    const header = body
+      .closest("[data-transcript]")
+      ?.querySelector(":scope > [data-transcript-header]");
+    const visibleTop = Math.max(
+      top,
+      header?.getBoundingClientRect().bottom ?? top,
+    );
+    const bottom = top + view.clientHeight;
+    const visible = (rect: DOMRect) =>
+      rect.bottom > visibleTop && rect.top < bottom;
+    const turn = [
+      ...body.querySelectorAll<HTMLElement>(":scope > article"),
+    ].find((article) => visible(article.getBoundingClientRect()));
+    if (!turn) return null;
+    const candidates: HistoryAnchor["candidates"] = [];
+    for (const row of turn.querySelectorAll<HTMLElement>(
+      ":scope > [data-entry]",
+    )) {
+      const rect = row.getBoundingClientRect();
+      if (rect.top >= bottom) break;
+      if (visible(rect)) candidates.push({ row, offset: rect.top - top });
+    }
+    candidates.push({
+      row: turn,
+      offset: turn.getBoundingClientRect().top - top,
+    });
+    return { view, candidates };
+  }
+
+  componentDidUpdate(
+    _previous: unknown,
+    _state: unknown,
+    anchor?: HistoryAnchor | null,
+  ) {
+    const { timeline, restoredTop } = this.props.scroll;
+    const body = timeline.current;
+    const survivor = anchor?.candidates.find(({ row }) => body?.contains(row));
+    if (!anchor || !survivor) return;
+    const { view } = anchor;
+    const { row, offset } = survivor;
+    const top = view.getBoundingClientRect().top + view.clientTop;
+    const shift = row.getBoundingClientRect().top - top - offset;
+    view.scrollTop += shift;
+    restoredTop.current = view.scrollTop;
+  }
+
+  render() {
+    return (
+      <div
+        ref={this.props.scroll.timeline}
+        className={`text-body ${styles.timeline}`}
+      >
+        {this.props.children}
+      </div>
+    );
+  }
+}
+
+/** Shows the focused entry once it is loaded, opening its prompt, instead of
+ * the latest; the reader then scrolls on from there. */
+function useShowFocused(
+  transcript: Transcript,
+  timeline: { current: HTMLDivElement | null },
+  following: { current: boolean },
+  partial: boolean,
+) {
+  const focus = useContext(TranscriptFocus);
+  const entry =
+    !partial && focus ? focusedEntry(transcript, focus.events) : undefined;
+  useLayoutEffect(() => {
+    if (!focus || !entry) return;
+    const element = [
+      ...(timeline.current?.querySelectorAll<HTMLElement>("[data-entry]") ??
+        []),
+    ].find((node) => node.dataset.entry === entry);
+    if (!element) return;
+    // Its own, not those of entries nested in it, such as a script's calls.
+    const own = <E extends HTMLElement = HTMLElement>(selector: string) =>
+      [...element.querySelectorAll<E>(selector)].find(
+        (node) => node.closest("[data-entry]") === element,
+      );
+    const details = own<HTMLDetailsElement>("details");
+    if (details) details.open = true;
+    // Its text, or else its title, is marked as an arriving message is,
+    // once: the mark goes when its animation ends or is cut short, so showing
+    // the transcript again does not replay it. A repeat arrival restarts it.
+    const surface = own("[data-arrival-surface]") ?? own("summary") ?? element;
+    for (const marked of timeline.current?.querySelectorAll("[data-arrived]") ??
+      [])
+      marked.removeAttribute("data-arrived");
+    void surface.offsetWidth;
+    surface.setAttribute("data-arrived", "");
+    const unmark = () => surface.removeAttribute("data-arrived");
+    surface.addEventListener("animationend", unmark, { once: true });
+    surface.addEventListener("animationcancel", unmark, { once: true });
+    following.current = false;
+    // Start below the panel's sticky header, which would otherwise cover it,
+    // with room for the focus ring and the arrival wash's spread.
+    const header = element
+      .closest("[data-transcript]")
+      ?.querySelector<HTMLElement>(":scope > [data-transcript-header]");
+    element.style.scrollMarginBlockStart = `calc(${header?.offsetHeight ?? 0}px + var(--space-2))`;
+    element.scrollIntoView({ block: "start" });
+    element.style.removeProperty("scroll-margin-block-start");
+    // Keyboard focus arrives too, after the panel's own handoff, unless the
+    // reader has pressed or typed since asking and so moved it themselves.
+    requestAnimationFrame(() => {
+      if (!element.isConnected || readerInputs() !== focus.inputs) return;
+      const target = own("summary") ?? element;
+      if (target === element) element.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    });
+    focus.done();
+  }, [focus, entry, timeline, following]);
+  return entry;
 }
 
 /** Turn-by-turn transcript of the loaded activity, oldest first, opened at
@@ -191,7 +387,7 @@ export function ActivityTranscript({
   agentKey,
   community,
 }: {
-  transcript: Transcript;
+  transcript: Transcript & { partial?: true };
   agentName: string;
   state: (turnId: string) => TurnState | undefined;
   /** Paging controls shown above the oldest loaded turn. */
@@ -205,7 +401,14 @@ export function ActivityTranscript({
   agentKey?: string;
   community?: string | undefined;
 }) {
-  const timeline = useFollowLatest(transcript, follow);
+  const partial = transcript.partial === true;
+  const scroll = useFollowLatest(transcript, follow);
+  const focused = useShowFocused(
+    transcript,
+    scroll.timeline,
+    scroll.following,
+    partial,
+  );
   const agents = useContext(AgentsContext);
   const relay = useSyncExternalStore(
     agents?.subscribe ?? noSubscribe,
@@ -225,10 +428,18 @@ export function ActivityTranscript({
     community,
     "small",
   );
+  const rowContext = useMemo(
+    () => ({ picture: poster ?? picture, focused }),
+    [poster, picture, focused],
+  );
   return (
     <PeopleContext.Provider value={{ profiles, community }}>
-      <AgentAvatarSource.Provider value={poster ?? picture}>
-        <div ref={timeline} className={`text-body ${styles.timeline}`}>
+      <RowContext.Provider value={rowContext}>
+        <TranscriptTimeline
+          scroll={scroll}
+          partial={partial}
+          focused={focused !== undefined}
+        >
           {before}
           {!transcript.turns.length && (
             <p className="text-body text-secondary">
@@ -244,18 +455,20 @@ export function ActivityTranscript({
                     : "Session continued; earlier turns not shown"}
                 </p>
               )}
-              <Turn
+              <MemoizedTurn
                 turn={turn}
                 state={
-                  turn.endedAt ? "ended" : (state(turn.turnId) ?? "unknown")
+                  turn.endedAt || turn.outcome
+                    ? "ended"
+                    : (state(turn.turnId) ?? "unknown")
                 }
                 agentName={agentName}
                 openConversation={openConversation}
               />
             </Fragment>
           ))}
-        </div>
-      </AgentAvatarSource.Provider>
+        </TranscriptTimeline>
+      </RowContext.Provider>
     </PeopleContext.Provider>
   );
 }
@@ -306,6 +519,7 @@ function Turn({
   return (
     <article
       className={styles.turn}
+      data-entry={`turn:${turn.turnId}`}
       aria-label={
         known(turn.startedAt) ? `Turn ${time(turn.startedAt)}` : "Turn"
       }
@@ -370,6 +584,8 @@ function Turn({
   );
 }
 
+const MemoizedTurn = memo(Turn);
+
 /** The same live-work treatment at the start and end of the turn. */
 function WorkingLabel() {
   return (
@@ -393,6 +609,7 @@ function Entry({
     <div
       className={styles.item}
       data-type={item.type}
+      data-entry={`item:${item.id}`}
       title={known(item.at) ? formatFullTimestamp(item.at / 1000) : undefined}
     >
       <Item item={item} agentName={agentName} />
@@ -407,8 +624,14 @@ function Sections({
   title: string;
   sections: readonly PromptSection[];
 }) {
+  const [visited, setVisited] = useState(false);
   return (
-    <details className={styles.context}>
+    <details
+      className={styles.context}
+      onToggle={(event) => {
+        if (event.currentTarget.open) setVisited(true);
+      }}
+    >
       <summary className="text-body text-subtle">
         <FileTextIcon size="1rem" aria-hidden="true" />
         <span>
@@ -420,15 +643,18 @@ function Sections({
           aria-hidden="true"
         />
       </summary>
-      {sections.map((section, index) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
-        <section key={index} className={styles.codePanel}>
-          <h3 className={`text-body text-secondary ${styles.codePanelHeading}`}>
-            {sectionTitle(section.tag)}
-          </h3>
-          <pre className={styles.pre}>{section.body}</pre>
-        </section>
-      ))}
+      {visited &&
+        sections.map((section, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: sections are a positional, immutable parse of one prompt.
+          <section key={index} className={styles.codePanel}>
+            <h3
+              className={`text-body text-secondary ${styles.codePanelHeading}`}
+            >
+              {sectionTitle(section.tag)}
+            </h3>
+            <pre className={styles.pre}>{section.body}</pre>
+          </section>
+        ))}
     </details>
   );
 }
@@ -451,9 +677,15 @@ function Disclosure({
   footer?: ReactNode;
   children: ReactNode;
 }) {
+  const focused = useContext(RowContext).focused === `item:${item.id}`;
+  const [visited, setVisited] = useState(focused);
+  if (focused && !visited) setVisited(true);
   return (
     <details
       className={styles.tool}
+      onToggle={(event) => {
+        if (event.currentTarget.open) setVisited(true);
+      }}
       data-status={item.type === "tool" ? item.status : undefined}
     >
       <summary className={styles.row}>
@@ -470,8 +702,8 @@ function Disclosure({
         />
         <Stamp item={item} />
       </summary>
-      {children && <div className={styles.toolBody}>{children}</div>}
-      {footer}
+      {visited && children && <div className={styles.toolBody}>{children}</div>}
+      {visited && footer}
     </details>
   );
 }
@@ -510,7 +742,7 @@ function Item({
   item: TranscriptItem;
   agentName: string;
 }) {
-  const avatarSource = useContext(AgentAvatarSource);
+  const { picture: avatarSource } = useContext(RowContext);
   switch (item.type) {
     case "system":
       return <Sections title="System prompt" sections={item.sections} />;
@@ -523,7 +755,7 @@ function Item({
           label={<span className={styles.subject}>{name}</span>}
           preview={line(item.text)}
         >
-          <p className={styles.text}>
+          <p className={styles.text} data-arrival-surface>
             {item.steer && <em>(steer) </em>}
             {item.text}
           </p>
@@ -577,7 +809,7 @@ function Item({
           }
           preview={line(item.text)}
         >
-          <div className={messageStyles.messageBubble}>
+          <div className={messageStyles.messageBubble} data-arrival-surface>
             <div className="text-message">
               <Reply text={item.text} />
             </div>
@@ -618,18 +850,13 @@ function Item({
 }
 
 // Module-scoped so rerenders keep rendered links (and their focus) in place.
-const REMARK = [remarkGfm];
-const MARKDOWN: Components = {
-  a: ({ href, children }) =>
-    href ? (
-      <a href={href} target="_blank" rel="noreferrer">
-        {children}
-      </a>
-    ) : (
-      <>{children}</>
-    ),
-  img: ({ alt }) => alt ?? null,
+// The react-markdown default URL policy; links open externally.
+const PROFILE: MarkdownProfile = {
+  syntax: [remarkGfm],
+  transforms: [],
+  html: "literal",
 };
+const CAPABILITIES = { copy: true };
 
 /** Agent replies are Markdown; remote images stay unloaded. */
 function Reply({ text }: { text: string }) {
@@ -639,11 +866,14 @@ function Reply({ text }: { text: string }) {
   );
   if (!bounded) return <div className={styles.plain}>{text}</div>;
   return (
-    <div className={styles.markdown}>
-      <Markdown remarkPlugins={REMARK} components={MARKDOWN}>
-        {text}
-      </Markdown>
-    </div>
+    <MarkdownDocument
+      content={text}
+      profile={PROFILE}
+      components={sharedComponents}
+      capabilities={CAPABILITIES}
+      scale="message"
+      className={styles.markdown}
+    />
   );
 }
 

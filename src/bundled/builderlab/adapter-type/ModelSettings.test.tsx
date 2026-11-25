@@ -43,6 +43,7 @@ it.each(["deadline", "cancel"] as const)(
           email: "a@example.com",
           canUseRemoteAgents: allowed,
           canUseBuilderlabDecisions: false,
+          canUseHostedTranscription: false,
         },
       }),
       undefined,
@@ -165,6 +166,7 @@ async function fixture(
         email: "a@example.com",
         canUseRemoteAgents: true,
         canUseBuilderlabDecisions: false,
+        canUseHostedTranscription: false,
       },
     }),
     undefined,
@@ -274,6 +276,14 @@ it("keeps the Builderlab mark when no shared Harness control is supplied", async
   expect(mark).toHaveAttribute("aria-hidden", "true");
   expect(mark?.querySelector("mask")).not.toBeNull();
   expect(screen.queryByRole("button", { name: /Change harness/ })).toBeNull();
+});
+
+it("shows the instruction limit as accessible field help", async () => {
+  await fixture();
+  expect(
+    screen.getByRole("textbox", { name: "Instructions" }),
+  ).toHaveAccessibleDescription("Up to 20,000 characters.");
+  expect(screen.getByText("Up to 20,000 characters.")).toBeVisible();
 });
 
 it("requires an explicit supported pair, clears effort when the model changes, and reads back server validity", async () => {
@@ -710,7 +720,9 @@ it("keeps the session and the draft when Builderlab refuses a save, and saves on
   await user.type(field, " Draft");
   h.request.mockResolvedValueOnce({ status: 401, headers: {}, body: "{}" });
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("session expired");
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Builderlab didn’t accept this request. Try again.",
+  );
   // A 401 refuses only this call: the native session decides when it ends.
   expect(h.session.snapshot().status).toBe("signed-in");
   expect(field).toHaveValue("Saved instructions. Draft");

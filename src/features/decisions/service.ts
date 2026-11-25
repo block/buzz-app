@@ -142,7 +142,9 @@ export type DecisionProvider = Readonly<{
   ): Promise<DecisionReply>;
   /** Its settings, shown under Settings > Decisions API while it is
    * selected. */
-  Settings?: ComponentType<{ active(): boolean }>;
+  Settings?: ComponentType<{ active(): boolean; grouped?: boolean }>;
+  /** Whether Settings adds a heading above the contribution. Defaults to true. */
+  showSettingsHeading?: boolean;
   /** Lower comes first in Settings. Default 0. */
   order?: number;
 }>;
@@ -164,9 +166,23 @@ export interface Decisions {
    * The host then uses its default providers. Other choices stay in effect. */
   retireProvider(id: string): void;
 }
+/** Provided while decisions can be answered on this device, and withdrawn
+ * while they can't: while the provider decisions go to (`backend`) is
+ * registered and not `needs-setup`. One still `checking` a sign-in or key, or
+ * `unconfirmed`, counts, so a flaky sign-in doesn't flap it. Read it as
+ * "worth asking", not as "a provider is registered": a decision can still
+ * fail while it is present. */
+export type DecisionsAnswerable = Readonly<{ version: 1 }>;
+const ANSWERABLE: DecisionsAnswerable = Object.freeze({ version: 1 });
+
 declare module "@deepseek-ai/cordis" {
   interface Context {
     decisions: Decisions;
+    /** Optional: a plugin that only works with decisions registers its
+     * contributions inside `ctx.inject(["decisionsAnswerable"], …)`, so they
+     * come and go with it. Never in a module's top-level `inject`, where a
+     * device without a provider would fail its startup. */
+    decisionsAnswerable?: DecisionsAnswerable;
   }
 }
 
@@ -238,6 +254,21 @@ export class DecisionsService extends Service implements Decisions {
       // Unreadable storage means no choice.
     }
     let stops: (() => void)[] = [];
+    let withdraw: (() => void) | undefined;
+    let live = false;
+    // Follows every change `notify` reports: providers, their status and
+    // the user's choice.
+    const answerable = () => {
+      const route = live ? this.route() : undefined;
+      const can = !!route && route.status !== "needs-setup";
+      if (can && !withdraw)
+        withdraw = ctx.provide("decisionsAnswerable", ANSWERABLE);
+      else if (!can && withdraw) {
+        withdraw();
+        withdraw = undefined;
+      }
+    };
+    this.listeners.add(answerable);
     const watch = () => {
       for (const stop of stops) stop();
       this.sorted = Object.freeze([...this.registry.snapshot()].sort(byOrder));
@@ -251,12 +282,15 @@ export class DecisionsService extends Service implements Decisions {
       this.notify();
     };
     ctx.effect(() => {
+      live = true;
       const stop = this.registry.subscribe(watch);
       watch();
       return () => {
+        live = false;
         stop();
         for (const each of stops) each();
         stops = [];
+        answerable();
       };
     });
   }

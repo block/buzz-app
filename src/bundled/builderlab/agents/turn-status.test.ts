@@ -73,6 +73,7 @@ async function fixture(
         email: "fixture@example.com",
         canUseRemoteAgents: true,
         canUseBuilderlabDecisions: false,
+        canUseHostedTranscription: false,
       },
     }),
     undefined,
@@ -106,6 +107,7 @@ async function fixture(
       return () => listeners.delete(listener);
     },
     retry() {},
+    tryAgain() {},
     disconnect() {},
     clearCache: async () => {},
   };

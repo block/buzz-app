@@ -1,6 +1,8 @@
 // A fake Pi host for tests: each process it spawns answers the plugin's
 // requests with the test's handlers, one JSON message a line, as host.mjs
 // does, and can call the plugin's tools and send it events.
+import type { GatewayDescriptor } from "../../features/agents/gateway/descriptor";
+import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -22,6 +24,8 @@ export type FakeProcess = {
   requests: Request[];
   ended: boolean;
   killed: boolean;
+  /** Whether it has exited. */
+  gone: boolean;
   /** The launcher's line: the host source and the packages it installs. */
   launched?: { host: string; package: string; lock: string };
   /** Sends the plugin one message, as stdout. */
@@ -61,6 +65,7 @@ export function fakeHost(
       requests: [],
       ended: false,
       killed: false,
+      gone: false,
       send: (message) => {
         if (!gone) spawnOptions.onStdout?.(`${JSON.stringify(message)}\n`);
       },
@@ -74,6 +79,7 @@ export function fakeHost(
         if (gone) return;
         if (stderr) spawnOptions.onStderr?.(stderr);
         gone = true;
+        process.gone = true;
         exit(code);
       },
     };
@@ -147,3 +153,23 @@ export function deferred<T = void>() {
   });
   return { promise, resolve, reject };
 }
+
+/** The build's Pi upstream base in tests: synthetic, like every value here. */
+export const PI_UPSTREAM = Object.freeze({ base: "/upstream/pi" });
+
+/** A synthetic version 2 gateway descriptor listing `community` at
+ * `origin`, with the shared vectors' header profile and a Pi upstream. */
+export const piGatewayDescriptor = (
+  community: string,
+  origin: string,
+): GatewayDescriptor =>
+  Object.freeze({
+    version: 2,
+    gateway: "https://gateway.test",
+    communities: [{ id: community, origin }],
+    access_path: "/v9/access",
+    launcher_client: VECTOR_PROFILE.launcher_client,
+    headers: VECTOR_PROFILE.headers,
+    reserved_prefixes: VECTOR_PROFILE.reserved_prefixes,
+    upstreams: { pi: PI_UPSTREAM },
+  });

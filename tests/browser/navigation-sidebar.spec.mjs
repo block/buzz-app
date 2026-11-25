@@ -128,107 +128,75 @@ test("segmented selections slide but window resizing follows the selected tab im
   }
 });
 
-test.describe("scope indicator", () => {
-  test.use({ largeSidebar: false });
+test.describe("workspace heading resize", () => {
+  const title = "Workspace planning and collaboration across multiple teams";
+  test.use({
+    largeSidebar: false,
+    savedSidebar: [{ id: "planning", name: title, order: 1 }],
+    productionBroker: true,
+  });
 
-  // Only browser layout can compare the indicator's measured target with its
-  // rendered box during resize; jsdom cannot exercise flex sizing or transitions.
-  test("scope selection follows sidebar resize at normal and enlarged text", async ({
+  // A compact split control and disclosure must both fit the workspace heading.
+  test("workspace controls stay inside the sidebar during resize and text scaling", async ({
     page,
     app,
   }) => {
     await open(page, app);
-    const scope = page.getByRole("tablist", { name: "Navigation scope" });
+    const workspace = page.locator('[data-sidebar-section="group:planning"]');
+    const heading = workspace.locator(".navigation-section-heading");
+    const disclosure = heading.locator("details");
+    const caret = disclosure.locator("summary > [data-navigation-reveal]");
+    const arrow = workspace.getByRole("button", {
+      name: `New options in ${title}`,
+    });
     const handle = page.getByRole("separator", { name: "Resize sidebar" });
-    const aligned = () =>
-      scope.evaluate((list) => {
-        const tab = list
-          .querySelector('[aria-selected="true"]')
-          .getBoundingClientRect();
-        const pill = list
-          .querySelector(".buzz-tabs-indicator")
-          .getBoundingClientRect();
-        return Math.max(
-          Math.abs(tab.left - pill.left),
-          Math.abs(tab.right - pill.right),
-        );
-      });
-
+    await expect(
+      page.getByRole("tablist", { name: "Navigation scope" }),
+    ).toHaveCount(0);
     for (const scale of [1, 2]) {
-      await page.evaluate((scale) => {
+      await page.evaluate((value) => {
         document.documentElement.style.setProperty(
           "--buzz-text-scale",
-          String(scale),
+          String(value),
         );
       }, scale);
-      for (const label of ["All", "Solo", "Team"]) {
-        await handle.press("Home");
-        await scope.getByRole("tab", { name: label, exact: true }).click();
-        await expect.poll(aligned).toBeLessThan(1);
-        const capture = await scope.evaluateHandle((list) => {
-          const indicator = list.querySelector(".buzz-tabs-indicator");
-          const initialWidth = indicator.getBoundingClientRect().width;
-          const state = { sample: undefined };
-          const observer = new MutationObserver(() => {
-            const tab = list
-              .querySelector('[aria-selected="true"]')
-              .getBoundingClientRect();
-            const target = Number.parseFloat(
-              indicator.style.getPropertyValue("--active-tab-width"),
-            );
-            if (
-              Math.abs(target - initialWidth) < 1 ||
-              Math.abs(target - tab.width) > 1
-            )
-              return;
-            // Read at the measurement update, before a CSS transition can settle.
-            // A later retrying geometry assertion would miss resize lag entirely.
-            const pill = indicator.getBoundingClientRect();
-            state.sample = {
-              left: Math.abs(tab.left - pill.left),
-              right: Math.abs(tab.right - pill.right),
-            };
-            observer.disconnect();
-          });
-          observer.observe(indicator, {
-            attributes: true,
-            attributeFilter: ["style"],
-          });
-          return { state, dispose: () => observer.disconnect() };
-        });
-        try {
-          const grip = await handle.boundingBox();
-          await page.mouse.move(
-            grip.x + grip.width / 2,
-            grip.y + grip.height / 2,
-          );
-          await page.mouse.down();
-          await page.mouse.move(
-            grip.x + grip.width / 2 + 180,
-            grip.y + grip.height / 2,
-          );
-          await expect
-            .poll(() => capture.evaluate(({ state }) => state.sample))
-            .toBeDefined();
-          const sample = await capture.evaluate(({ state }) => state.sample);
-          expect(
-            sample.left,
-            `${label} left edge at ${scale * 100}%`,
-          ).toBeLessThan(1);
-          expect(
-            sample.right,
-            `${label} right edge at ${scale * 100}%`,
-          ).toBeLessThan(1);
-        } finally {
-          await page.mouse.up();
-          await capture.evaluate(({ dispose }) => dispose());
-          await capture.dispose();
-        }
-        await expect(
-          scope.getByRole("tab", { name: label, exact: true }),
-        ).toHaveAttribute("aria-selected", "true");
+      for (const width of ["Home", "End"]) {
+        await handle.press(width);
+        const label = heading.getByText(title, { exact: true });
+        const resting = await label.boundingBox();
+        await heading.hover();
+        await expect(arrow).toBeVisible();
+        expect(await label.boundingBox()).toEqual(resting);
+        await expect
+          .poll(async () =>
+            heading.evaluate((row) => {
+              const control = row
+                .querySelector(".buzz-split-button")
+                .getBoundingClientRect();
+              const bounds = row.getBoundingClientRect();
+              return (
+                control.left >= bounds.left - 0.5 &&
+                control.right <= bounds.right + 0.5
+              );
+            }),
+          )
+          .toBe(true);
       }
     }
+    await handle.press("Home");
+    await heading.hover();
+    await expect(caret).toHaveCSS("opacity", "1");
+    await expect(disclosure).toHaveJSProperty("open", true);
+    const bounds = await caret.boundingBox();
+    await page.mouse.click(
+      bounds.x + bounds.width / 2,
+      bounds.y + bounds.height / 2,
+    );
+    await expect(disclosure).toHaveJSProperty("open", false);
+    await arrow.click();
+    await expect(
+      page.getByRole("menuitem", { name: "New channel" }),
+    ).toBeVisible();
   });
 });
 
@@ -302,9 +270,9 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   expect(grip.x).toBeCloseTo(before.x + before.width, 0);
   expect(grip.width).toBe(8);
   expect(grip.height).toBeGreaterThan(500);
-  // Joined regions retain the 2px scrollbar inset without an inner panel border.
+  // The scrollport reaches the joined panel seam without an inner border.
   expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(
-    2,
+    0,
     0,
   );
   await expect(handle).not.toHaveAttribute("title");
@@ -444,10 +412,9 @@ creationSidebar(
 
     const channels = page
       .getByRole("navigation", { name: "Subscribed channels" })
-      .locator("details")
-      .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+      .locator('[data-sidebar-section="channels"]');
     const summary = channels.locator("summary");
-    const create = page.getByRole("button", { name: "Create channel" });
+    const create = channels.getByRole("button", { name: "Create channel" });
     const createContainer = create.locator("..");
     await expect(createContainer).toHaveCSS("opacity", "0");
     await summary.hover();
@@ -457,7 +424,9 @@ creationSidebar(
     // one trailing inset before the row's edge; nothing floats over the title.
     const placement = await create.evaluate((button) => {
       const row = button.closest(".navigation-section-heading");
-      const title = row.querySelector("summary").getBoundingClientRect();
+      const title = row
+        .querySelector("summary")
+        .firstElementChild.getBoundingClientRect();
       const rowEnd = row.getBoundingClientRect().right;
       const { left, right } = button.getBoundingClientRect();
       return { afterTitle: left >= title.right - 0.5, inset: rowEnd - right };
@@ -546,7 +515,7 @@ test("channel navigation preserves sidebar DOM and group state", async ({
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
   const group = sidebar
     .locator("details")
-    .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+    .filter({ has: page.locator("summary", { hasText: /^Team$/ }) });
   await group.locator("summary").click();
   await expect(group).not.toHaveAttribute("open");
   await button(page, "Go back").click();
@@ -581,7 +550,7 @@ test("navigation reveals the current sidebar entry without moving a visible one"
     .getByRole("tab", { name: "Workflows", exact: true });
   const group = sidebar
     .locator("details")
-    .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+    .filter({ has: page.locator("summary", { hasText: /^Team$/ }) });
   await expect(alpha).toHaveAttribute("aria-current", "page");
   expect(await toBottom()).toBeGreaterThan(100);
   await expect(alpha).not.toBeInViewport();
@@ -678,7 +647,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
     });
     const group = sidebar
       .locator("details")
-      .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+      .filter({ has: page.locator("summary", { hasText: /^Team$/ }) });
     const node = await sidebar.elementHandle();
     const toBottom = () =>
       sidebar.evaluate((element) => {
@@ -799,7 +768,7 @@ test("sidebar view state does not leak across communities", async ({
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const group = sidebar
     .locator("details")
-    .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+    .filter({ has: page.locator("summary", { hasText: /^Team$/ }) });
   await group.locator("summary").click();
   await expect(group).not.toHaveAttribute("open");
   await selectCommunity(page, "Secondary");
@@ -841,7 +810,7 @@ test("invalid saved sidebar fields fall back", async ({ page, app }) => {
   ).toBeVisible();
 });
 
-test("rail loads relay-owned image icons for inactive communities without acquiring sessions", async ({
+test("rail loads relay-owned image icons for inactive communities", async ({
   page,
   app,
 }) => {
@@ -858,6 +827,13 @@ test("rail loads relay-owned image icons for inactive communities without acquir
       : emojiIcon;
     return route.fulfill({ json: { icon } });
   });
+  // The inactive community's background unread session is held: its icon
+  // must load without it.
+  const background = Promise.withResolvers();
+  await page.route("**/api/relay/secondary/session", async (route) => {
+    await background.promise;
+    await route.fallback().catch(() => {});
+  });
   await open(page, app);
   const rail = await openCommunityPicker(page);
   for (const [name, icon] of [
@@ -872,6 +848,10 @@ test("rail loads relay-owned image icons for inactive communities without acquir
   }
   expect(infoRequests).toHaveLength(2);
   expect(app.report.sessions).toEqual(["primary"]);
+  background.resolve();
+  await expect
+    .poll(() => app.report.sessions)
+    .toEqual(["primary", "secondary"]);
 });
 
 // Same-page navigation must update the remembered selection without a remount.

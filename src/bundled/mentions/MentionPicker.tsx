@@ -21,10 +21,15 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerSession } from "../../features/messages/composer-session";
+import { withHumanMentionSelection } from "../../features/messages/mention-draft";
 import {
   outsideMentionDetail,
   remoteMentionDetail,
 } from "./mention-candidates";
+import {
+  allowsOutsideMentions,
+  outsideMentionReferences,
+} from "../../features/messages/mention-admission";
 import { matchPerson } from "../../features/search/person-match";
 import { MatchedLabel } from "../../features/search/MatchedLabel";
 import { useSearchHighlight } from "../../features/search/use-search-highlight";
@@ -67,6 +72,7 @@ export function MentionPicker({
   const searchInput = useRef<HTMLElement>(null);
   // The picker stays mounted while closed; each opening is its own lifetime.
   const [opening, setOpening] = useState(0);
+  const [addressed, setAddressed] = useState<ReadonlySet<string>>();
   const lifetime = `picker:${useId()}:${opening}`;
   const model = useMentionChoices(
     session,
@@ -75,6 +81,8 @@ export function MentionPicker({
     search,
     lifetime,
     open && !disabled,
+    addressed,
+    !audience,
   );
   const {
     profiles,
@@ -144,7 +152,7 @@ export function MentionPicker({
   };
   const personKey = (pubkey: string) => `person:${pubkey}`;
   const teamKey = (id: string) => `team:${id}`;
-  // Order stays rankMentions', shared with inline @ completion and mobile.
+  // Highlight follows the installed order, including addressed-first rows.
   // The highlight skips rows that cannot be chosen, as the arrow keys did.
   const highlight = useSearchHighlight({
     query: search,
@@ -194,6 +202,11 @@ export function MentionPicker({
             : "inside";
         if (next) {
           setOpening((value) => value + 1);
+          setAddressed(
+            audience
+              ? new Set(audience.recipients.map((person) => person.pubkey))
+              : undefined,
+          );
           accepted.current = false;
           if (!draftRoster) session.channels.ensureList();
         }
@@ -296,11 +309,12 @@ export function MentionPicker({
               variant="capsule"
               inputRef={searchInput}
               label={
-                draftRoster
-                  ? "Search recipients"
-                  : inviteAgents
-                    ? "Search members and agents"
-                    : "Search community people and agents"
+                !audience &&
+                allowsOutsideMentions(channel, draftRoster, inviteAgents)
+                  ? "Search community people and agents"
+                  : draftRoster
+                    ? "Search recipients"
+                    : "Search members and agents"
               }
               value={search}
               onValueChange={setSearch}
@@ -310,7 +324,11 @@ export function MentionPicker({
               onKeyDown={(event) => {
                 if (event.key === "Enter") event.preventDefault();
                 // Shift+Enter and Shift+arrows stay text keys, as before.
-                const handled = !event.shiftKey && highlight.keyDown(event);
+                const handled =
+                  !event.shiftKey &&
+                  withHumanMentionSelection(event.nativeEvent, () =>
+                    highlight.keyDown(event),
+                  );
                 // Keep these keys from the composer behind the popup.
                 if (handled || event.key === "Enter") event.stopPropagation();
               }}
@@ -417,7 +435,11 @@ export function MentionPicker({
                       aria-current={false}
                       aria-pressed={audience ? addressed : undefined}
                       disabled={disabled || !!reason}
-                      onClick={() => chooseRecipient(recipient)}
+                      onClick={(event) =>
+                        withHumanMentionSelection(event.nativeEvent, () =>
+                          chooseRecipient(recipient),
+                        )
+                      }
                       label={
                         <span className="flex flex-col whitespace-normal">
                           {/* One element, so the flex column keeps the
@@ -450,7 +472,12 @@ export function MentionPicker({
                                 managedBy,
                                 members?.includes(recipient.pubkey)
                                   ? undefined
-                                  : inviteAgents
+                                  : inviteAgents &&
+                                      !outsideMentionReferences(
+                                        channel,
+                                        agents.identities,
+                                        recipient.pubkey,
+                                      )
                                     ? parentAdmission
                                       ? "Adds to channel when you send"
                                       : "Adds to chat when you send"
@@ -477,11 +504,7 @@ export function MentionPicker({
                             session.media,
                           )}
                           size="large"
-                          shape={
-                            agent || !members?.includes(recipient.pubkey)
-                              ? "squircle"
-                              : "circle"
-                          }
+                          shape={agent ? "squircle" : "circle"}
                         />
                       }
                     />
@@ -516,7 +539,11 @@ export function MentionPicker({
                     </span>
                   }
                   aria-label={`${team.name} · ${team.detail}`}
-                  onClick={() => chooseTeam(team)}
+                  onClick={(event) =>
+                    withHumanMentionSelection(event.nativeEvent, () =>
+                      chooseTeam(team),
+                    )
+                  }
                 />
               ))}
               {members && !candidates.length && !teams.choices.length && (

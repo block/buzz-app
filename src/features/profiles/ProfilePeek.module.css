@@ -4,6 +4,10 @@
   --floating-inset: var(--space-half);
   padding: var(--floating-inset);
 }
+/* The profile panel replaces the preview; fading both would overlap them. */
+.handedOff[data-ending-style] {
+  transition: none;
+}
 .content {
   display: flex;
   flex-direction: column;
@@ -35,8 +39,8 @@
   padding: var(--space-4) var(--space-4) var(--space-1);
 }
 .portrait {
-  width: calc(var(--space-6) * 2);
-  height: calc(var(--space-6) * 2);
+  width: calc(var(--space-6) * 4);
+  height: calc(var(--space-6) * 4);
 }
 .identity {
   display: flex;

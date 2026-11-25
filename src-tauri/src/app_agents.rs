@@ -289,7 +289,12 @@ impl AppAgentHost {
     /// will ever have. The row stays, marked deleted, until the WebView has
     /// cleaned up the community and calls `app_agent_forget`. This copy of the
     /// app stops running the agent once it is in no community.
-    async fn delete(&self, pubkey: String, relay: String) -> Result<(), String> {
+    async fn delete(
+        &self,
+        pubkey: String,
+        relay: String,
+        envs: &crate::agent_env::AgentEnvs,
+    ) -> Result<(), String> {
         let page = self.removals().page;
         let turn = self.profile_turn(&pubkey);
         let _turn = turn.lock().await;
@@ -299,6 +304,15 @@ impl AppAgentHost {
             self.tokens.forget_row(&pubkey, &relay)?;
             if let Some(owner) = self.last_community(&pubkey, &relay).await? {
                 self.tokens.forget(&owner, &pubkey).await?;
+            }
+            // Its own environment variables go with its last community too,
+            // before its row does, so a failure leaves the row and retrying
+            // the removal retries this. Its started Delete already refuses any
+            // further save (`agent_env::eligible`).
+            let agents = self.agents.clone()?;
+            let (key, community) = (pubkey.clone(), relay.clone());
+            if blocking(move || agents.is_last_membership(&key, &community)).await? {
+                envs.forget(&pubkey).await?;
             }
         }
         let host = self.clone();
@@ -880,10 +894,11 @@ pub(crate) async fn app_agent_join(
 #[tauri::command]
 pub(crate) async fn app_agent_delete(
     state: tauri::State<'_, AppAgentHost>,
+    envs: tauri::State<'_, crate::agent_env::AgentEnvs>,
     pubkey: String,
     relay: String,
 ) -> Result<(), String> {
-    state.delete(pubkey, relay).await
+    state.delete(pubkey, relay, &envs).await
 }
 
 #[tauri::command]
@@ -996,23 +1011,67 @@ pub(crate) struct AppAgentEvent {
 
 /// Signs one event as the agent and posts it to the agent's own community.
 #[tauri::command]
-pub(crate) async fn app_agent_publish(
+pub(crate) async fn app_agent_publish<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
     event: AppAgentEvent,
+    managed_attachments: Option<Value>,
 ) -> Result<Value, String> {
+    use tauri::Manager as _;
     let (agent, key, evidence) = state.signer(pubkey, relay).await?;
     let signed = agent.sign(&key, event.kind, event.content, event.tags)?;
+    let root = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|root| root.join("plugin-artifacts"));
+    confirmed_post(
+        &agent,
+        &key,
+        evidence,
+        signed,
+        app.state::<crate::host_files::ManagedFiles>()
+            .inner()
+            .clone(),
+        root,
+        managed_attachments,
+    )
+    .await
+}
+
+async fn confirmed_post(
+    agent: &AppAgent,
+    key: &Secret,
+    evidence: Admission,
+    signed: Value,
+    registry: crate::host_files::ManagedFiles,
+    root: Option<PathBuf>,
+    managed_attachments: Option<Value>,
+) -> Result<Value, String> {
     let event_id = signed
         .get("id")
         .and_then(Value::as_str)
         .ok_or("Invalid agent event")?
         .to_owned();
-    evidence
-        .run(true, post(&agent, &key, evidence.header(), signed))
+    let confirmed = evidence
+        .run(true, post(agent, key, evidence.header(), signed))
         .await
-        .map_err(|error| publish_error(&event_id, error))
+        .map_err(|error| publish_error(&event_id, error))?;
+    if let (Some(root), Some(hints)) = (root, managed_attachments) {
+        // App-runtime-owned, not runner-owned: confirmation never waits for byte
+        // admission or cleanup. The future captures its deadline before spawning.
+        // App exit need not drain it; undispatched work may leave the source behind.
+        tauri::async_runtime::spawn(crate::host_files::release_after_send(
+            registry,
+            root,
+            agent.owner.clone(),
+            confirmed.clone(),
+            Some(hints),
+        ));
+    }
+    Ok(confirmed)
 }
 
 fn publish_error(event_id: &str, error: String) -> String {
@@ -1025,17 +1084,21 @@ fn publish_error(event_id: &str, error: String) -> String {
 
 /// Publishes changed public metadata. Safe to call any time; one publication
 /// runs per agent at a time and records only what its community accepted.
+/// `force` republishes it even when unchanged. It is always the app's own
+/// profile (name, bot, picture, about and the saved owner proof), so it
+/// replaces any other fields or tags the relay's latest profile has.
 #[tauri::command]
 pub(crate) async fn app_agent_publish_profile(
     state: tauri::State<'_, AppAgentHost>,
     pubkey: String,
     relay: String,
+    force: Option<bool>,
 ) -> Result<(), String> {
     let turn = state.profile_turn(&pubkey);
     let _turn = turn.lock().await;
     let incarnation = state.tokens.stamp(&pubkey, &relay)?;
     let agent = state.agent(pubkey, relay).await?;
-    if agent.profile_is_current() {
+    if !agent.profile_due(force.unwrap_or(false)) {
         return Ok(());
     }
     let (agent, key) = state.key(agent).await?;
@@ -1811,7 +1874,8 @@ mod tests {
         );
         let turn = host.profile_turn(&agent.pubkey);
         let publishing = turn.lock().await;
-        let mut deleting = Box::pin(host.delete(agent.pubkey.clone(), agent.relay.clone()));
+        let (envs, _) = crate::agent_env::tests::envs();
+        let mut deleting = Box::pin(host.delete(agent.pubkey.clone(), agent.relay.clone(), &envs));
         // Poll through the generation capture into the held publication lock.
         assert!(matches!(
             futures_util::poll!(&mut deleting),
@@ -1832,9 +1896,13 @@ mod tests {
         assert!(host.keys().contains_key(&agent.pubkey));
         assert!(host.removals().held.contains_key(&agent.pubkey));
         // Only the current page may finish cleanup using its own hold.
-        host.delete(agent.pubkey.clone(), agent.relay.clone())
-            .await
-            .unwrap();
+        host.delete(
+            agent.pubkey.clone(),
+            agent.relay.clone(),
+            &crate::agent_env::tests::envs().0,
+        )
+        .await
+        .unwrap();
         assert!(agents.list().unwrap()[0].deleted);
         assert!(agent.read_key(host.credentials.as_ref()).is_err());
         assert!(!host.keys().contains_key(&agent.pubkey));
@@ -1969,7 +2037,10 @@ mod tests {
         let deleting = tokio::spawn({
             let host = host.clone();
             let (pubkey, relay) = (agent.pubkey.clone(), agent.relay.clone());
-            async move { host.delete(pubkey, relay).await }
+            async move {
+                host.delete(pubkey, relay, &crate::agent_env::tests::envs().0)
+                    .await
+            }
         });
         crate::federated_identity::agent::tests::bounded(async {
             while !host.tokens.closed(&agent.pubkey) {
@@ -2010,6 +2081,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn removal_deletes_its_own_env_only_when_held_and_last() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("identities.json");
+        let key = Secret::generate().unwrap();
+        let home = agent_at("wss://home.example".into(), &key);
+        let other = agent_at("wss://other.example".into(), &key);
+        std::fs::write(&path, serde_json::to_vec(&[&home, &other]).unwrap()).unwrap();
+        let mut host = AppAgentHost::new(
+            Ok(path),
+            Err("unused".into()),
+            true,
+            AgentTokens::unconfigured(),
+        );
+        host.credentials = Arc::new(Gated::default());
+        let agents = host.agents().unwrap();
+        let (envs, stores) = crate::agent_env::tests::envs();
+        let rows = vec![crate::agent_env::tests::set("FOO", "bar")];
+        envs.set(&home.pubkey, rows, || Ok(true)).await.unwrap();
+        let saved = || {
+            stores.lock().unwrap()[&home.pubkey]
+                .text
+                .lock()
+                .unwrap()
+                .is_some()
+        };
+        // A removal this page doesn't hold is refused and keeps the list.
+        assert!(host
+            .delete(home.pubkey.clone(), home.relay.clone(), &envs)
+            .await
+            .is_err());
+        assert!(saved());
+        // Leaving one of two communities keeps it.
+        agents.begin_leave(&other.pubkey, &other.relay).unwrap();
+        let removal = agents.hold_removal(&other.pubkey, &other.relay).unwrap();
+        host.removals().held.insert(other.pubkey.clone(), removal);
+        host.delete(other.pubkey.clone(), other.relay.clone(), &envs)
+            .await
+            .unwrap();
+        host.removals().held.remove(&other.pubkey);
+        assert!(saved());
+        // The last: a failed cleanup keeps the row, and a retry finishes both.
+        hold_removal(&host, &home);
+        *stores.lock().unwrap()[&home.pubkey]
+            .unwritable
+            .lock()
+            .unwrap() = true;
+        assert!(host
+            .delete(home.pubkey.clone(), home.relay.clone(), &envs)
+            .await
+            .is_err());
+        assert!(saved());
+        assert!(agents
+            .list()
+            .unwrap()
+            .iter()
+            .any(|agent| agent.relay == home.relay && !agent.deleted));
+        *stores.lock().unwrap()[&home.pubkey]
+            .unwritable
+            .lock()
+            .unwrap() = false;
+        host.delete(home.pubkey.clone(), home.relay.clone(), &envs)
+            .await
+            .unwrap();
+        assert!(!saved());
+        assert!(agents.list().unwrap().iter().all(|agent| agent.deleted));
+    }
+
+    #[tokio::test]
     async fn leaving_one_community_keeps_the_grant_until_the_last_goes() {
         let f = crate::federated_identity::agent::tests::fixture("http://unused".into());
         let dir = tempfile::tempdir().unwrap();
@@ -2034,16 +2173,24 @@ mod tests {
         agents.begin_leave(&other.pubkey, &other.relay).unwrap();
         let removal = agents.hold_removal(&other.pubkey, &other.relay).unwrap();
         host.removals().held.insert(other.pubkey.clone(), removal);
-        host.delete(other.pubkey.clone(), other.relay.clone())
-            .await
-            .unwrap();
+        host.delete(
+            other.pubkey.clone(),
+            other.relay.clone(),
+            &crate::agent_env::tests::envs().0,
+        )
+        .await
+        .unwrap();
         assert!(!host.tokens.closed(&home.pubkey), "still in its home");
         host.removals().held.remove(&other.pubkey);
 
         hold_removal(&host, &home);
-        host.delete(home.pubkey.clone(), home.relay.clone())
-            .await
-            .unwrap();
+        host.delete(
+            home.pubkey.clone(),
+            home.relay.clone(),
+            &crate::agent_env::tests::envs().0,
+        )
+        .await
+        .unwrap();
         assert!(host.tokens.closed(&home.pubkey));
     }
 
@@ -2095,9 +2242,13 @@ mod tests {
         // deleted and the same key is imported again as import II.
         let (old_agent, old_key, old_incarnation) = import().await;
         hold_removal(&host, &old_agent);
-        host.delete(old_agent.pubkey.clone(), old_agent.relay.clone())
-            .await
-            .unwrap();
+        host.delete(
+            old_agent.pubkey.clone(),
+            old_agent.relay.clone(),
+            &crate::agent_env::tests::envs().0,
+        )
+        .await
+        .unwrap();
         let (agent, _, _) = import().await;
         let (_, _, evidence) = host
             .signer(agent.pubkey.clone(), agent.relay.clone())
@@ -2158,7 +2309,7 @@ mod tests {
         (origin, served)
     }
 
-    fn agent_at(relay: String, key: &Secret) -> AppAgent {
+    pub(super) fn agent_at(relay: String, key: &Secret) -> AppAgent {
         AppAgent {
             pubkey: key.pubkey().into(),
             relay,
@@ -2591,9 +2742,13 @@ mod tests {
             agents.begin_leave(&old.pubkey, &old.relay).unwrap();
             let removal = agents.hold_removal(&old.pubkey, &old.relay).unwrap();
             host.removals().held.insert(old.pubkey.clone(), removal);
-            host.delete(old.pubkey.clone(), old.relay.clone())
-                .await
-                .unwrap();
+            host.delete(
+                old.pubkey.clone(),
+                old.relay.clone(),
+                &crate::agent_env::tests::envs().0,
+            )
+            .await
+            .unwrap();
             host.removals().held.remove(&old.pubkey);
             let new = host
                 .agents()
@@ -2719,6 +2874,120 @@ mod tests {
             let body = bounded(response, READ_LIMIT).await;
             assert_eq!(body.map(|b| b.len()).ok(), admitted.then_some(size));
             server.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod managed_publish_tests {
+    use super::*;
+    use crate::host_files::{
+        managed_tests::{commands, release_completion, release_fixture_data, Fixture},
+        ManagedFiles,
+    };
+    use tauri::Manager as _;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// The actual HTTP post/evidence wrapper + real managed save/unlink. Loopback
+    /// fixture only: not Wry/trusted-HTTPS or native signing-custody acceptance.
+    #[cfg(unix)]
+    #[test]
+    fn host_release_confirmed_send_returns_before_cleanup_byte_admission_and_preserves_evidence() {
+        check_managed_publish_outcomes(true);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn host_release_confirmed_send_retains_source_without_platform_file_identity() {
+        check_managed_publish_outcomes(false);
+    }
+
+    fn check_managed_publish_outcomes(releases_accepted_source: bool) {
+        let _serial = commands();
+        for outcome in [
+            "accepted",
+            "byte-busy",
+            "refused",
+            "wrong-id",
+            "bad-json",
+            "lost-reply",
+            "http-error",
+            "retired",
+            "cleanup-refused",
+        ] {
+            let f = Fixture::new(true, false);
+            let (hints, event, owner) = release_fixture_data(&f, b"native confirmed source");
+            let path = PathBuf::from(hints[0]["path"].as_str().unwrap());
+            let registry = f.app.state::<ManagedFiles>().inner().clone();
+            let complete = release_completion(&registry);
+            let root = f.root();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let tokens = AgentTokens::unconfigured();
+                let key = Secret::generate().unwrap();
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let mut agent = tests::agent_at("wss://relay.example".into(), &key);
+                agent.owner = owner;
+                let stamp = tokens.stamp(&agent.pubkey, &agent.relay).unwrap();
+                let evidence = tokens.authorize(&agent, &key, stamp).await.unwrap();
+                let retire = tokens.clone();
+                let pubkey = agent.pubkey.clone();
+                let relay = agent.relay.clone();
+                agent.relay = format!("http://{}", listener.local_addr().unwrap());
+                let tags = serde_json::from_value(event["tags"].clone()).unwrap();
+                let signed = agent.sign(&key, 9, "attachment".into(), tags).unwrap();
+                let server = tokio::spawn(async move {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut head = vec![];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0]; socket.read_exact(&mut byte).await.unwrap(); head.push(byte[0]);
+                    }
+                    let head = String::from_utf8(head).unwrap();
+                    let size: usize = head.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("content-length: ").map(str::to_owned)).unwrap().parse().unwrap();
+                    let mut body = vec![0; size]; socket.read_exact(&mut body).await.unwrap();
+                    let received: Value = serde_json::from_slice(&body).unwrap();
+                    if outcome == "retired" { retire.forget_row(&pubkey, &relay).unwrap(); }
+                    if outcome == "lost-reply" { return received; }
+                    let receipt = match outcome {
+                        "refused" => serde_json::json!({"accepted":false,"event_id":received["id"]}).to_string(),
+                        "wrong-id" => serde_json::json!({"accepted":true,"event_id":"b".repeat(64)}).to_string(),
+                        "bad-json" => "not JSON".into(),
+                        _ => serde_json::json!({"accepted":true,"event_id":received["id"]}).to_string(),
+                    };
+                    let status = if outcome == "http-error" { "403 Forbidden" } else { "200 OK" };
+                    socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{receipt}", receipt.len()).as_bytes()).await.unwrap();
+                    received
+                });
+                let lease = if outcome == "cleanup-refused" { Some(crate::host_files::FileReadLease::new().unwrap()) } else { None };
+                let held = if outcome == "byte-busy" {
+                    Some(crate::host_files::BYTE_WORK.acquire().await.unwrap())
+                } else {
+                    None
+                };
+                let publish = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    confirmed_post(&agent, &key, evidence, signed, registry, Some(root), Some(hints)),
+                ).await;
+                let received = server.await.unwrap(); // Exactly one connection/request; no repost path.
+                if held.is_some() {
+                    assert!(path.exists(), "busy byte permit must prevent early cleanup");
+                }
+                let result = publish.expect("confirmed send waited for cleanup byte admission");
+                drop(held);
+                if matches!(outcome, "accepted" | "byte-busy" | "cleanup-refused") {
+                    assert_eq!(result.unwrap()["id"], received["id"]);
+                    tokio::time::timeout(std::time::Duration::from_secs(10), complete)
+                        .await.expect("detached cleanup did not finish").unwrap();
+                    assert_eq!(path.exists(), !releases_accepted_source || outcome == "cleanup-refused");
+                } else {
+                    assert!(result.is_err(), "{outcome} must be unconfirmed/refused");
+                    assert!(path.exists(), "{outcome} must retain source");
+                }
+                drop(lease);
+            });
         }
     }
 }

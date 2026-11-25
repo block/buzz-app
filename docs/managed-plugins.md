@@ -1,91 +1,55 @@
 # Managed plugin sources
 
-An organization, or a tool that manages a machine for it, can declare "these plugin
-sources are recommended here" by writing one JSON file. Buzz reads the file and
-offers the listed plugins in **Settings → Plugins**. Nothing in Buzz depends on who
-writes the file.
+An organization, or a tool that manages a machine for it, can list the plugins it
+recommends by writing one JSON file, `managed-plugins.json`. Buzz offers them in
+**Settings → Plugins**. A version 1 file only recommends: the person using Buzz installs
+and updates each plugin themselves. A [version 2](#version-2-automatic-installs-and-updates)
+file [signed](#signed-policies) by the key the build names can also install plugins and
+keep them at their pins with no prompt. Only the desktop app reads the file.
 
-The file only recommends. It never installs, enables, updates or removes anything.
-Each plugin still goes through the Git or URL import and its access review, and the person
-using Buzz confirms every change. The desktop app reads the file; the browser build
-has no native plugin storage, so the feature is absent there.
+Whoever writes this file is choosing plugin authors for the people who use it. Plugins
+have no sandbox (see [plugins](plugins.md#trust)), so list only authors you trust with
+those people's accounts and computers. The file isn't a secret, and anything that can
+write the app data folder can change it.
+
+The code is the reference: `crates/plugin-manager/src/managed.rs` parses and compares
+policies, and `buzzodz plugin managed` checks a file with the same code.
 
 ## File location
 
-`managed-plugins.json` lives in the app data folder, next to `profiles/` and outside
-the profile storage Buzz owns. Plugin storage and the policy therefore share one root,
-which `BUZZODZ_HOME` moves.
+The file sits in the app data folder, next to `profiles/`. Buzz reads the first of:
 
-| App | Identifier |
+1. `BUZZ_MANAGED_PLUGINS`, an absolute path to the file (use it for tests).
+2. `$BUZZODZ_HOME/managed-plugins.json`.
+3. `managed-plugins.json` in the app data folder:
+
+| OS | App data folder |
 | --- | --- |
-| Installed Buzz | `xyz.block.buzz.desktop` |
-| Development builds (`just desktop`) | `xyz.block.buzz.desktop.dev` |
+| macOS | `~/Library/Application Support/<identifier>/` |
+| Windows | `%APPDATA%\<identifier>\` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/<identifier>/` |
 
-| OS | App data folder | Policy file |
-| --- | --- | --- |
-| macOS | `~/Library/Application Support/<identifier>/` | `<folder>/managed-plugins.json` |
-| Windows | `%APPDATA%\<identifier>\` | `<folder>\managed-plugins.json` |
-| Linux | `${XDG_DATA_HOME:-~/.local/share}/<identifier>/` | `<folder>/managed-plugins.json` |
+The identifier is `xyz.block.buzz.desktop` for installed Buzz and
+`xyz.block.buzz.desktop.dev` for development builds. One file serves every profile.
 
-Resolution order, the same one `buzzodz` uses for plugin storage:
-
-1. `BUZZ_MANAGED_PLUGINS`, when set and non-empty, is the full path of the file. It must
-   be absolute; a relative value makes the policy unusable. Use it for tests.
-2. Otherwise `$BUZZODZ_HOME/managed-plugins.json`, when `BUZZODZ_HOME` is set.
-3. Otherwise `managed-plugins.json` in the identifier's app data folder above.
-
-One file serves every local profile (`BUZZODZ_PROFILE`) under that folder. A tool that
-wants both an installed and a development Buzz to see the policy writes both paths.
-The pre-1.0 `dev.local.buzz.foundation` folder is not read.
-
-A missing file means no policy, unless the build carries a
-[packaged policy](#packaged-policy). Buzz never creates, edits or deletes the file; the
-writer creates the folder if needed. "Sign out and erase local data" clears the whole
-app data folder, including this file, so a writer should restore it on its next run.
+Buzz never writes the file, and "erase local data" deletes it, so a writer should restore
+it on its next run. Write UTF-8 JSON of at most 256 KiB to a temporary file in the same
+folder, then rename it over the target. Buzz rereads it whenever it refreshes the plugin
+catalog, so changes appear without a restart.
 
 ### Packaged policy
 
-An internal packager can point its build at a policy it publishes, so every install
-recommends the same plugins without anything writing the file, and picks up new pins
-as the packager re-releases them:
+A packager can bake a policy URL into its build instead:
 
 ```sh
 BUZZ_BUILD_MANAGED_PLUGINS_URL=https://plugins.example/managed-plugins.json bin/pnpm tauri build
 ```
 
-The value is read from the build process environment or repository-root `.env.local`.
-The build fails unless it is an `https` URL without credentials or a fragment. Leave it
-unset for OSS builds.
-
-The desktop app fetches the URL when it starts and every 6 hours, or 15 minutes after a
-failed attempt. It follows redirects only to `https` URLs, gives up after 30 seconds,
-and accepts at most 256 KiB. A response that is not a usable version 1 document (the
-rules below) is discarded, and Buzz keeps the last good copy in
-`packaged-managed-plugins-<hash of the URL>.json` beside the profile folders. A copy belongs to its URL: a build that names another URL never shows it, and the first usable policy from the new URL deletes it. Entries the copy ignores
-are reported as they are for the file. Serve the policy with short-lived or no edge
-caching: a stale copy keeps recommending a commit its reference no longer points to.
-
-Until the first fetch succeeds there is no copy to recommend from. Settings → Plugins
-then says the list is loading or, after a failure, that it is unavailable, with the
-reason and a **Retry** button. Opening Settings after a failure also retries once.
-Later failures keep showing the last good copy.
-
-Buzz uses the packaged policy only when no file exists at the resolved location, and
-never when `BUZZ_MANAGED_PLUGINS` names a file. A file written by a machine manager
-therefore replaces it completely; the two are not merged. "Sign out and erase local
-data" deletes the stored copy, and the next fetch restores it. It recommends, exactly
-like the file.
-
-### Writing the file safely
-
-- Write UTF-8 JSON, at most 256 KiB, as a regular file. A symlink to a regular file is
-  followed; a directory, FIFO or other special file is reported as unusable and never
-  opened for reading.
-- Write a temporary file in the same folder and rename it over the target, so Buzz never
-  reads a half-written file. A truncated file would be reported as unusable, then
-  recovered on the next read.
-- The file is advisory configuration, not a secret. Anything that can write the app
-  data folder can write it, so the review dialog, not the label, is what protects the user.
+The URL must be `https`, with no credentials or fragment. The app fetches it at startup
+and every 6 hours (15 minutes after a failure), and keeps the last good copy. It also
+fetches `<url>.sig` for a [signature](#signed-policies); a `404` means unsigned. A local
+file, when there is one, replaces the packaged policy completely. Serve the policy with
+little or no edge caching. Leave this unset for OSS builds.
 
 ## Schema (version 1)
 
@@ -105,145 +69,70 @@ like the file.
 }
 ```
 
-| Field | Required | Rules |
-| --- | --- | --- |
-| `version` | yes | The number `1`. Any other value makes the whole file unusable. |
-| `source` | yes | Display name of the managing organization or tool, shown as "Recommended by *source*" and "Managed by *source*". 1 to 80 characters after trimming. Only visible characters and ordinary spaces: no control characters, no Unicode format characters (such as bidirectional overrides or zero-width characters) and no non-ASCII space or line separators. |
-| `plugins` | yes | Array of at most 64 entries. Later entries beyond 64 are ignored. |
-| `plugins[].id` | yes | The plugin manifest ID: lowercase letters, digits, dots and hyphens, starting with a letter. Not a plugin included with Buzz. |
-| `plugins[].repository` | yes | An HTTPS or SSH Git URL, or GitHub `owner/repository`, as the Add dialog accepts. No credentials, query or fragment. Buzz stores the normalized HTTPS or SSH URL. |
-| `plugins[].reference` | yes | A branch or tag name: letters, digits, `.`, `_`, `/`, `-`, at most 200 characters, not starting with `-`. |
-| `plugins[].commit` | yes | The full 40 digit (SHA-1) or 64 digit (SHA-256) hexadecimal object ID the reference must resolve to. Matching ignores case. Abbreviated IDs are rejected. |
-| `plugins[].path` | no | Relative folder of the built plugin (containing `manifest.json` and `plugin.js`, or a signed release pair) inside the repository. Default `.`. Written canonically: `.` alone, or plain segments joined by single `/` (`plugins/notes/dist`). No empty, `.` or `..` segments, so no leading or trailing `/`, `//` or `./`, and no `\`, `:` or control characters. A path that is not written this way is rejected, because it could never match the folder Buzz finds. |
+| Field | Rules |
+| --- | --- |
+| `version` | `1`, or `2` for automatic entries. |
+| `source` | Shown as "Recommended by *source*". 1 to 80 visible characters. |
+| `plugins` | At most 256 entries. |
+| `id` | The plugin's manifest id. Not a plugin bundled with Buzz. |
+| `repository` | An HTTPS or SSH Git URL, or GitHub `owner/repository`. No credentials, query or fragment. An SSH and an HTTPS URL count as different sources. |
+| `reference` | A branch or tag. |
+| `commit` | The full commit id to install. It must be the tip of `reference` or an earlier commit on it. Pin a tag, or update `commit` when you want a branch to advance. |
+| `path` | Optional folder of the built plugin inside the repository, such as `plugins/notes/dist`. Default `.`. |
 
-### URL entries
-
-For people without access to the Git host, an entry can name a single plugin artifact
-over HTTPS instead of a repository:
+Instead of a repository, an entry can name one artifact over HTTPS:
 
 ```json
-{
-  "id": "example.notes",
-  "url": "https://downloads.example.com/buzz/example.notes-1.4.0.json",
-  "sha256": "9f2c…64 hexadecimal digits"
-}
+{ "id": "example.notes", "url": "https://downloads.example.com/notes-1.4.0.json", "sha256": "<64 hex digits>" }
 ```
 
-| Field | Required | Rules |
-| --- | --- | --- |
-| `plugins[].url` | yes | An HTTPS URL without credentials, query or fragment. Buzz downloads at most 8 MiB and follows redirects only to HTTPS. |
-| `plugins[].sha256` | yes | The SHA-256 of the artifact, 64 hexadecimal digits. Matching ignores case. Buzz installs nothing unless the download hashes to this value, so the server need not be trusted. |
+`buzzodz plugin pack DIST_DIRECTORY FILE` writes the artifact. Buzz installs it only if
+it hashes to `sha256`, so publish each version at its own URL.
 
-A URL entry has no `repository`, `reference`, `commit` or `path`. The artifact is the
-file `buzzodz plugin pack DIST_DIRECTORY FILE` writes from a built plugin: the exact
-bytes Buzz installs, whose SHA-256 is the installed revision. Publish each version at its
-own URL, because a changed file at the same URL no longer matches its pin. A release
-signature is not carried in the artifact.
+Unknown fields are errors. A broken file recommends nothing; a broken entry is skipped
+while the rest apply. Both show their reason in Settings → Plugins.
 
-Unknown fields are errors, at the top level and inside entries, so a typo is reported
-instead of silently ignored. A new schema revision gets a new `version`.
+### Version 2: automatic installs and updates
 
-### What makes a file or entry invalid
+Version 2 adds two optional fields to each entry:
 
-- **Unusable file.** The file is not readable, not UTF-8 or JSON, larger than 256 KiB, not
-  a regular file, not an object, has a wrong or missing `version`, an invalid `source`,
-  a `plugins` value that is not an array, or an unknown top-level field. Buzz recommends
-  nothing and shows the reason in Settings → Plugins.
-- **Ignored entry.** Any entry that breaks the rules above is skipped and reported by
-  position (`Plugin 2: …`) while valid entries still apply. A repeated `id` keeps the
-  first entry and reports the others. At most 16 problems are reported.
+| Field | Values |
+| --- | --- |
+| `install` | `"recommend"` (default) lists it. `"automatic"` installs and enables it if it's missing. `"manual"` never offers it, and only governs updates of a copy the person installed. |
+| `update` | `"review"` (default) offers the update to the person. `"automatic"` moves an installed copy to the pin. |
 
-Neither case crashes Buzz or blocks other plugin management.
+Automatic entries apply only in a signed policy; otherwise they act like the defaults. A
+plugin the person removes is never reinstalled automatically. An automatic update happens
+only when the new version declares the same host access and publisher as the installed
+one. Otherwise the person gets the update to review. The pin wins over the person's own
+choice of version. A plugin installed from a folder or bundled with Buzz is never
+replaced.
 
-## How Buzz compares entries with installed plugins
+### Signed policies
 
-The pinned `commit` identifies exactly what the organization means. When a plugin is
-installed or updated from a recommendation, Buzz records that commit in the plugin's
-saved source. Plugins added any other way (the Add dialog, an earlier Buzz) have no
-recorded commit.
-
-| State | Meaning | Offered |
-| --- | --- | --- |
-| Missing | No plugin with this ID is installed. | **Review and install** |
-| Current | Installed from the same repository at the pinned commit and path. For a URL entry, installed at a revision equal to `sha256`, from any source. | Marked "Managed by *source*" |
-| Outdated | Installed from the same repository, but at another or an unrecorded commit or path. For a URL entry, installed from a URL at another revision. | **Review update**; marked "Managed by *source*" |
-| Other | Installed from a folder, an unrecorded source, another repository, or included with Buzz. | A note only. Buzz does not replace it. Remove it to see the recommendation again. |
-
-Repositories match when scheme, user, host, port and path agree after normalization. The
-host is compared without regard to case, and a trailing `/` or `.git` is ignored. The
-path is case-sensitive, and an SSH form and an HTTPS form of the same repository are
-different sources: a plugin installed over one is Outdated for an entry written with the
-other.
-
-## What the person using Buzz sees
-
-- **Settings → Plugins** shows a **Recommended by *source*** group listing Missing and
-  Outdated plugins, and a note for Other ones. Each row shows the repository, reference
-  and path. Installed managed plugins carry **Managed by *source*** in their row and
-  details.
-- **Review and install** and **Review update** open the existing import review. Buzz
-  reads the repository at the pinned commit, shows the commit, and lists the plugin's
-  host access. For an update it shows what changed from the installed version. Nothing
-  is installed until the person chooses **Install plugin** or **Update**. A new plugin
-  can be installed disabled using the same "Enable plugin" switch as any import; an
-  update keeps the plugin's enabled state.
-- **Pending recommendations** show as a small count beside **Plugins** in the profile
-  menu and beside **Manage plugins** in Settings. There is no startup prompt or modal.
-- **Shell update notices** also check installed Git plugins. For a managed plugin,
-  the check and update use the recommended reference, path, and commit pin. A
-  reference at another commit cannot install. Missing recommendations keep their
-  existing review flow. The Plugins menu keeps updates available after **Later**.
-- **Details of a managed plugin** do not offer the generic update check, which would
-  install the reference's tip instead of the pinned commit. They show the same
-  **Review update** as the group above when the plugin is Outdated.
-- **Disable** works as for any plugin.
-- **Remove** works as for any plugin. The recommendation stays visible, so a removed
-  plugin returns to the Recommended group and can be reinstalled. Buzz never removes a
-  plugin because the file changed or a line was deleted; a plugin no longer listed
-  simply loses its Managed by label.
-- An invalid file or ignored entries are reported in the same section.
-
-## Pinned commit behavior
-
-The Git import resolves `reference` with a shallow clone, then requires `HEAD` to be
-exactly `commit`, and the app checks again that the commit it received is the pinned one.
-If the reference has moved, the review shows the two commits and refuses to continue;
-there is no fallback to the new commit. If the policy entry changes while a review is
-open, the review reads the new entry again, and it closes if the entry is removed. Pin a tag, or rewrite the
-entry's `commit` when you intend a branch to advance. Because only the reference's tip is
-fetched, a commit that is no longer the tip of its reference cannot be installed.
-
-Only an install or update from a recommendation or an agent's request records `commit`
-in the plugin's saved source in the profile registry. Older Buzz versions reject that field and offer settings
-recovery, so downgrading after installing from a recommendation is not supported, as
-with other registry additions. Plugins added through the Add dialog are unaffected.
-
-## Refresh timing
-
-Buzz reads the file when it starts, and again each time it refreshes the plugin
-catalog, about once per second while it runs. A new or changed file therefore appears
-without a restart, in Settings and in the pending counts.
-
-## Inspecting a policy
+A build that should honor automatic entries names the key allowed to sign its policy:
 
 ```sh
-buzzodz plugin managed
-buzzodz --home /path/to/app-data plugin managed
+BUZZ_BUILD_MANAGED_PLUGINS_SIGNER=<64 hex digits> bin/pnpm tauri build
+```
+
+Sign a policy with:
+
+```sh
+BUZZ_MANAGED_PLUGINS_SIGNING_KEY=<nsec or hex> buzzodz plugin sign-policy managed-plugins.json
+```
+
+That writes `managed-plugins.json.sig` beside it. The signature covers the file's exact
+bytes, so any edit needs a new one. Publish the policy before or with its signature. A
+signature never expires: anyone who can serve an older signed policy can roll Buzz back
+to its pins, but can't pin anything the key never signed.
+
+## Checking a policy
+
+```sh
+buzzodz plugin managed            # what Buzz reads, and each entry's state
+buzzodz plugin managed --apply    # also apply version 2 automatic entries
 BUZZ_MANAGED_PLUGINS=/tmp/policy.json buzzodz plugin managed
 ```
 
-The command prints the file path, the source name, each valid entry with its state for
-the selected profile, and the reason for each ignored entry. `buzzodz` and the desktop
-share one implementation, so a writer can use it to check a file it wrote.
-
-To check a packaged policy before publishing it, write it to a scratch file and point
-`BUZZ_MANAGED_PLUGINS` at that file.
-
-## Writer checklist
-
-1. Pick the app data folder (or paths) for the identifiers you manage.
-2. Build the JSON exactly as above: `version` 1, a short `source`, and for every
-   plugin the ID, repository, reference, full commit and built-plugin path.
-3. Write it atomically.
-4. Run `buzzodz plugin managed` and confirm no entry is reported as ignored.
-5. Rewrite the file only when the recommendation changes.
+Check that no entry is reported as ignored before you publish.

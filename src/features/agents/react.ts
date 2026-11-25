@@ -1,3 +1,5 @@
+import { routesGeneration, subscribeRoutes } from "./model-routes";
+import { onAutomatic } from "./recommended";
 import {
   createContext,
   useCallback,
@@ -119,7 +121,9 @@ export type MentionModelChoice = Models &
     loading?: boolean;
     failed?: boolean;
     /** Its type offers immediate controls for sessions of this scope. */
-    session?: "thread" | "channel";
+    session?: "thread" | "channel" | "community";
+    /** On Automatic (Recommended): only its session controls are offered. */
+    automatic?: true;
   }>;
 /** Model catalogs and session actions for the viewer's mentioned agents.
  * A single model still validates saved picks even when no control is needed. */
@@ -140,6 +144,13 @@ export function useMentionModels(
     agents ? agents.types : none,
     none,
   );
+  // A plugin that adds, changes or removes a model route lists again, so
+  // only routes that run are offered. The previous list stays meanwhile.
+  const routes = useSyncExternalStore(
+    subscribeRoutes,
+    routesGeneration,
+    routesGeneration,
+  );
   const key = [...new Set(pubkeys)].join(":");
   const [resolved, setResolved] = useState<{
     remote: typeof remote;
@@ -150,6 +161,7 @@ export function useMentionModels(
     choices: readonly MentionModelChoice[];
   }>();
   useEffect(() => {
+    void routes;
     let current = true;
     void (
       remote
@@ -165,6 +177,21 @@ export function useMentionModels(
                   agent && types?.find((item) => item.key === agent.type);
                 if (!agent || !type) return [];
                 const session = type.sessionControls?.scope(agent);
+                // It runs on the recommendation: no model or effort to pick,
+                // only its session controls, if any.
+                if (onAutomatic(agent.config, type.id))
+                  return session
+                    ? [
+                        {
+                          pubkey,
+                          name: agent.name,
+                          current: "",
+                          models: [],
+                          automatic: true,
+                          session,
+                        },
+                      ]
+                    : [];
                 let found: Models = { current: "", models: [] };
                 let failed = false;
                 try {
@@ -196,7 +223,7 @@ export function useMentionModels(
     return () => {
       current = false;
     };
-  }, [snapshot, types, key, remote, retry]);
+  }, [snapshot, types, key, remote, retry, routes]);
   // Never offer a previous agent/config's choices while the new lookup settles.
   return resolved?.remote === remote &&
     resolved?.snapshot === snapshot &&

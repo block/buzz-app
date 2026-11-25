@@ -51,6 +51,7 @@ function fixture() {
     ],
   });
   let events = [event(48100, owner, now - 2)];
+  const others: { id: string; name: string }[] = [];
   const dm = {
     id: parent,
     name: "Codex",
@@ -80,6 +81,7 @@ function fixture() {
     snapshot: () => ({ status: "ready", running: [agent] }),
     subscribe: subscribe(channels),
     types: () => [{ key: agent.type, voice }],
+    reserveVoice: () => () => {},
   } as unknown as Agents;
   const view = {
     snapshot: () => ({ events, status: "ready" }),
@@ -97,7 +99,7 @@ function fixture() {
       relayAuthor: authority,
       observe: vi.fn(() => view),
       channels: {
-        list: () => ({ channels: [dm, backing] }),
+        list: vi.fn(() => ({ channels: [dm, backing, ...others] })),
         get: (id: string) => (id === room ? backing : dm),
         resolve: vi.fn(async () => {}),
         subscribeList: subscribe(channels),
@@ -154,6 +156,8 @@ function fixture() {
     input,
     report,
     resolve: connection.session.channels.resolve as ReturnType<typeof vi.fn>,
+    list: connection.session.channels.list as ReturnType<typeof vi.fn>,
+    others,
     backing,
     agent,
     emit(
@@ -289,4 +293,13 @@ it("rechecks a near-future start when the phone clock is ahead", async () => {
   expect(f.remote.snapshot().phase).toBe("connected");
   await f.stop();
   vi.useRealTimers();
+});
+
+it("checks each channel once per change instead of searching the list again", async () => {
+  const f = fixture();
+  for (let index = 0; index < 100; index++)
+    f.others.push({ id: `other-${index}`, name: `Other ${index}` });
+  f.list.mockClear();
+  f.notify();
+  expect(f.list.mock.calls.length).toBeLessThan(10);
 });

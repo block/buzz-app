@@ -22,6 +22,7 @@ const credential = (revision: string): Credential =>
       email: "a@example.com",
       canUseRemoteAgents: false,
       canUseBuilderlabDecisions: false,
+      canUseHostedTranscription: false,
     }),
   });
 
@@ -219,7 +220,7 @@ it("refuses only the call when a community route returns 401", async () => {
   await vi.waitFor(() => expect(requests).toHaveLength(2));
   answer({ status: 401, body: { error: { code: "unauthorized" } } });
   await expect(current).rejects.toThrow(
-    "Your Builderlab session expired. Sign in again.",
+    "Builderlab didn’t accept this request. Try again.",
   );
   expect(session.snapshot().status).toBe("signed-in");
 });

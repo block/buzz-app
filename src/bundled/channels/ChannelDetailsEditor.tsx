@@ -337,7 +337,6 @@ export function ChannelDetailsEditor({
         : trigger}
       <Dialog
         open={view.editing}
-        headerGap="compact"
         footerGap="default"
         step={
           confirmDiscard

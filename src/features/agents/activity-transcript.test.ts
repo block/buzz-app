@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { eventBody } from "../agent-harness/turn-records";
 import {
   activityTranscript,
+  promptEventIds,
   promptMessage,
   promptSections,
   STEER,
@@ -560,6 +561,15 @@ it("splits prompt sections and keeps unterminated framing as text", () => {
   ]);
 });
 
+it("keeps the wrapper of a replaced base section inside the base text", () => {
+  const base =
+    'Opening lines.\n\n## Etiquette\n<owner-section id="etiquette">\nBe kind.\n</owner-section>\n\n## Progress\n<plugin-section id="progress" plugin="example">\nReport to the task.\n</plugin-section>\n\n## Audience\n\nText.';
+  expect(promptSections(base)).toEqual([{ tag: "text", body: base }]);
+  expect(promptSections(`<base>\n${base}\n</base>`)).toEqual([
+    { tag: "base", body: base },
+  ]);
+});
+
 it("reads an event sent as an exact record, in its own or a steer's section", () => {
   const event = {
     id: "e".repeat(64),
@@ -585,6 +595,28 @@ it("reads an event sent as an exact record, in its own or a steer's section", ()
   expect(
     promptMessage([{ tag: STEER, body: "<buzz-event>\nContent: x\n" }]),
   ).toEqual({ text: "", author: undefined });
+});
+
+it("reads the ids of a prompt's events, exact or escaped, and nothing else", () => {
+  const event = {
+    id: "e".repeat(64),
+    pubkey: "a".repeat(64),
+    kind: 9,
+    created_at: 1,
+    content: "hi",
+    tags: [],
+  };
+  const body = eventBody(event, "hi");
+  expect(
+    promptEventIds([
+      { tag: "buzz-event", body },
+      { tag: STEER, body: eventBody({ ...event, id: "f".repeat(64) }, "x") },
+      { tag: "buzz-event", body: JSON.stringify({ ...event, id: root }) },
+      { tag: "context", body },
+      { tag: "buzz-event", body: '{"id":"short"}' },
+      { tag: "buzz-event", body: "Content: hi" },
+    ]),
+  ).toEqual([event.id, "f".repeat(64), root]);
 });
 
 it("names an exact-record prompt's author in the turn, as the viewer knows them", () => {
@@ -700,10 +732,23 @@ it("shows a Buzz message a remote tool posted as the agent's reply", () => {
             status: "in_progress",
           }),
         ),
+        // Its result names the posted event.
         event(
           "remote",
           "acp_read",
-          call("send", "buzz__send", "completed", "Done"),
+          update("tool_call_update", {
+            toolCallId: "send",
+            title: "buzz__send",
+            kind: "other",
+            status: "completed",
+            rawInput: { text: "Done", audience: "everyone" },
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: `sent ${"d".repeat(64)}` },
+              },
+            ],
+          }),
         ),
       ]),
       record([
@@ -755,12 +800,12 @@ it("shows a Buzz message a remote tool posted as the agent's reply", () => {
   expect(
     turn?.items.map((item) =>
       item.type === "message"
-        ? [item.type, item.text, item.posted]
+        ? [item.type, item.text, item.posted, item.messageId]
         : [item.type, item.type === "tool" ? item.title : ""],
     ),
   ).toEqual([
-    ["message", "Done", true],
-    ["message", "Nested", true],
+    ["message", "Done", true, "d".repeat(64)],
+    ["message", "Nested", true, undefined],
     ["tool", "buzz__send"],
     ["tool", "buzz__read"],
     ["tool", "buzz__send"],

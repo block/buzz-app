@@ -15,7 +15,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function setup(loginAvailable = true) {
+function setup(loginAvailable = true, openSignIn?: () => void) {
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_URL", "https://login.example");
   vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "apps.example");
   const acquire = vi.fn(async () => ({
@@ -25,6 +25,7 @@ function setup(loginAvailable = true) {
       email: "first@example.com",
       canUseRemoteAgents: false,
       canUseBuilderlabDecisions: false,
+      canUseHostedTranscription: false,
     },
   }));
   const revoke = vi.fn();
@@ -42,7 +43,7 @@ function setup(loginAvailable = true) {
     agents: { addTool: vi.fn() },
     host: {},
   };
-  applyApps(ctx as never, session, loginAvailable);
+  applyApps(ctx as never, session, loginAvailable, undefined, openSignIn);
   const panel = register.mock.calls[0]?.[0] as {
     matches(target: string): boolean;
     component: ComponentType<PanelProps>;
@@ -72,6 +73,7 @@ it("app links and apps_open use the Settings account and replace its guest lifet
       email: "second@example.com",
       canUseRemoteAgents: false,
       canUseBuilderlabDecisions: false,
+      canUseHostedTranscription: false,
     },
   });
   await act(() => session.signIn());
@@ -131,6 +133,7 @@ it("closing an observing app panel does not cancel Settings' pending login", asy
         email: "",
         canUseRemoteAgents: false,
         canUseBuilderlabDecisions: false,
+        canUseHostedTranscription: false,
       },
     });
     await login;
@@ -174,6 +177,40 @@ it("an unconfigured native exchange keeps the account-isolated browser-login pat
   expect(lifetime?.signal.aborted).toBe(true);
   expect(screen.queryByLabelText("App website")).not.toBeInTheDocument();
   session.dispose();
+});
+
+it("gives a signed-in app the way back to sign-in, but not an app on its own browser login", async () => {
+  const openSignIn = vi.fn();
+  const { session, viewed, panel } = setup(true, openSignIn);
+  await session.signIn();
+  render(createElement(panel.component, { target: APP } as PanelProps));
+  expect(viewed.mock.lastCall?.[0]).toMatchObject({
+    url: APP,
+    openSignIn,
+  });
+  // Another tenant's app signs in to its own website, not in Settings.
+  render(
+    createElement(panel.component, {
+      target: "https://counter.apps.other.example/",
+    } as PanelProps),
+  );
+  expect(viewed.mock.lastCall?.[0]).toMatchObject({
+    storage: "builderlab-apps",
+  });
+  expect(viewed.mock.lastCall?.[0].openSignIn).toBeUndefined();
+  session.dispose();
+  cleanup();
+
+  const unavailable = setup(false, openSignIn);
+  render(
+    createElement(unavailable.panel.component, { target: APP } as PanelProps),
+  );
+  expect(unavailable.viewed.mock.lastCall?.[0]).toMatchObject({
+    storage: "builderlab-apps",
+  });
+  expect(unavailable.viewed.mock.lastCall?.[0].openSignIn).toBeUndefined();
+  expect(openSignIn).not.toHaveBeenCalled();
+  unavailable.session.dispose();
 });
 
 it("opens the app for its own browser login when Settings login is unavailable", () => {

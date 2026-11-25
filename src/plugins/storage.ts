@@ -123,23 +123,29 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
 
   const imports: PluginImports | undefined = desktop
     ? {
-        folder: () => invoke("plugin_import_folder"),
+        folder: (path) =>
+          invoke("plugin_import_folder", path ? { path } : undefined),
+        checkPath: (path) =>
+          invoke("plugin_import_folder", { path, checkOnly: true }),
         checkFolder: (id) => invoke("plugin_update_check", { id }),
         previewFolder: (id) => invoke("plugin_update_preview", { id }),
         files: (source, files) =>
           invoke("plugin_import_folder", { upload: { source, files } }),
-        git: (repository, reference, authorization, commit) =>
+        git: (repository, reference, authorization, scope) =>
           invoke("plugin_import_git", {
             repository,
             reference,
             authorization,
-            commit,
+            commit: scope?.commit,
+            path: scope?.path,
           }),
-        checkGit: (repository, reference, authorization) =>
+        checkGit: (repository, reference, authorization, scope) =>
           invoke("plugin_import_git", {
             repository,
             reference,
             authorization,
+            commit: scope?.commit,
+            path: scope?.path,
             checkOnly: true,
           }),
         url: (url, sha256) => invoke("plugin_import_url", { url, sha256 }),

@@ -7,12 +7,10 @@ import draftsSentManifest from "./drafts-sent/manifest.json";
 import * as draftsSent from "./drafts-sent";
 import pairingManifest from "./pairing/manifest.json";
 import * as pairing from "./pairing";
-import todosManifest from "./todos/manifest.json";
 import huddlesManifest from "./huddles/manifest.json";
 import * as huddles from "./huddles";
 import builderlabManifest from "./builderlab/manifest.json";
 import * as builderlab from "./builderlab";
-import * as todos from "./todos";
 import diffsManifest from "./diffs/manifest.json";
 import * as diffs from "./diffs";
 import mermaidManifest from "./mermaid/manifest.json";
@@ -53,18 +51,21 @@ import * as usage from "./usage";
 import inboxManifest from "./inbox/manifest.json";
 import * as inbox from "./inbox";
 import focusManifest from "./focus/manifest.json";
+import finderManifest from "./finder/manifest.json";
+import * as finder from "./finder";
 import * as focus from "./focus";
 import remindersManifest from "./reminders/manifest.json";
 import * as reminders from "./reminders";
 import reposManifest from "./repos/manifest.json";
 import * as repos from "./repos";
+import changesetsManifest from "./changesets/manifest.json";
+import * as changesets from "./changesets";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
+import { orgPlugins } from "./org";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
-import linkPreviewsManifest from "./link-previews/manifest.json";
-import * as linkPreviews from "./link-previews";
 import moderationManifest from "./moderation/manifest.json";
 import * as moderation from "./moderation";
 import relayStaffManifest from "./relay-staff/manifest.json";
@@ -73,9 +74,11 @@ import typesafeManifest from "./typesafe/manifest.json";
 import * as typesafe from "./typesafe";
 import pluginDevelopmentManifest from "./plugin-development/manifest.json";
 import * as pluginDevelopment from "./plugin-development";
+import performanceDiagnosticsManifest from "./performance-diagnostics/manifest.json";
+import * as performanceDiagnostics from "./performance-diagnostics";
 
-import relayNotesManifest from "./relay-notes/manifest.json";
-import * as relayNotes from "./relay-notes";
+import docsManifest from "./docs/manifest.json";
+import * as docs from "./docs";
 
 const codexHarness: BundledPlugin = {
   manifest: { ...codexManifest, apiVersion: 1 },
@@ -93,11 +96,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...meshManifest, apiVersion: 1 },
     module: mesh,
     // Opt-in: it reads community membership in the background once enabled.
-    enabledByDefault: false,
-  },
-  {
-    manifest: { ...relayNotesManifest, apiVersion: 1 },
-    module: relayNotes,
     enabledByDefault: false,
   },
   {
@@ -130,11 +128,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     manifest: { ...feedbackManifest, apiVersion: 1 },
     module: feedback,
     enabledByDefault: true,
-  },
-  {
-    manifest: { ...todosManifest, apiVersion: 1 },
-    module: todos,
-    enabledByDefault: false,
   },
   {
     manifest: { ...diffsManifest, apiVersion: 1 },
@@ -177,14 +170,14 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: true,
   },
   {
-    manifest: { ...linkPreviewsManifest, apiVersion: 1 },
-    module: linkPreviews,
-    enabledByDefault: true,
-  },
-  {
     manifest: { ...channelsManifest, apiVersion: 1 },
     module: channels,
     enabledByDefault: true,
+  },
+  {
+    manifest: { ...docsManifest, apiVersion: 1 },
+    module: docs,
+    enabledByDefault: false,
   },
   {
     manifest: { ...githubManifest, apiVersion: 1 },
@@ -214,6 +207,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   {
     manifest: { ...focusManifest, apiVersion: 1 },
     module: focus,
+    enabledByDefault: false,
+  },
+  {
+    manifest: { ...finderManifest, apiVersion: 1 },
+    module: finder,
     enabledByDefault: false,
   },
   {
@@ -247,6 +245,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     enabledByDefault: false,
   },
   {
+    manifest: { ...changesetsManifest, apiVersion: 1 },
+    module: changesets,
+    enabledByDefault: false,
+  },
+  {
     manifest: { ...workflowsManifest, apiVersion: 1 },
     module: workflows,
     enabledByDefault: false,
@@ -271,4 +274,11 @@ export const bundledPlugins: readonly BundledPlugin[] = [
     module: pluginDevelopment,
     enabledByDefault: true,
   },
+  {
+    manifest: { ...performanceDiagnosticsManifest, apiVersion: 1 },
+    module: performanceDiagnostics,
+    enabledByDefault: false,
+  },
+  // An organization's own build may bundle plugins here (org.ts).
+  ...orgPlugins,
 ];

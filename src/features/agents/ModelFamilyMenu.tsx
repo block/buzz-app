@@ -4,8 +4,10 @@ import {
   CaretDownIcon,
   CheckIcon,
   LightningIcon,
+  ArrowsSplitIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
 import styles from "./ModelFamilyMenu.module.css";
 import {
@@ -77,6 +79,7 @@ export function modelFamily(model: ModelChoice): string {
 export function ModelFamilyMenu({
   leading,
   inherited = false,
+  valueSuffix,
   appearance = "outlined",
   resetLabel,
   label,
@@ -97,6 +100,7 @@ export function ModelFamilyMenu({
 }: {
   leading?: ReactNode;
   inherited?: boolean;
+  valueSuffix?: string | undefined;
   appearance?: "outlined" | "glass-ghost" | "inverted";
   resetLabel?: string | undefined;
   label: string;
@@ -115,21 +119,26 @@ export function ModelFamilyMenu({
   onChange(id: string): void;
   onCustom?: (() => void) | undefined;
 }) {
+  // Routes are listed on their own up front, beside Default, not in a family.
+  const routes = models.filter((model) => model.route);
   const families = new Map<string, ModelChoice[]>();
   for (const model of models) {
+    if (model.route) continue;
     const family = modelFamily(model);
     families.set(family, [...(families.get(family) ?? []), model]);
   }
   const hasFamilyLogos = [...families.keys()].some((family) =>
     modelLogo(family),
   );
+  // Routes' marks need the leading column too.
+  const leadingColumn = hasFamilyLogos || routes.length > 0;
   // Fast models get their own section up front, so the quick choices are one
   // click away; they stay in their families too. A catalog of only fast (or
   // no fast) models gains nothing from a separate section.
-  const fastModels = models.filter((model) => model.fast);
+  const fastModels = models.filter((model) => model.fast && !model.route);
   const fastSection =
-    fastModels.length > 0 && fastModels.length < models.length;
-  const selectedLabel = `${selected.label}${selected.fast ? " · Fast" : ""}${inherited ? " · Default" : ""}`;
+    fastModels.length > 0 && fastModels.length < models.length - routes.length;
+  const selectedLabel = `${selected.label}${selected.fast ? " · Fast" : ""}${valueSuffix ?? (inherited && selected.description ? ` · ${selected.description}` : "")}`;
   const choiceRow = (model: ModelChoice, inFastSection: boolean) => {
     const leading = inFastSection && hasFamilyLogos && (
       <span className="buzz-select-leading" aria-hidden="true">
@@ -182,16 +191,23 @@ export function ModelFamilyMenu({
                 {leading}
               </span>
             )}
-            {modelLogo(modelFamily(selected), "buzz-select-leading")}
-            {/* Card labels keep Default accessible without crowding the model. */}
+            {selected.route ? (
+              <ArrowsSplitIcon
+                className="buzz-select-leading"
+                size={20}
+                aria-hidden="true"
+              />
+            ) : (
+              modelLogo(modelFamily(selected), "buzz-select-leading")
+            )}
             <span className={styles.value}>
               <span className={`buzz-select-value ${styles.model}`}>
                 {selected.label}
               </span>
               {selected.fast && <FastMark />}
-              {inherited && appearance !== "glass-ghost" && (
+              {valueSuffix && (
                 <span className="buzz-select-value-suffix text-subtle">
-                  {" · Default"}
+                  {valueSuffix}
                 </span>
               )}
               {effortLabel && (
@@ -210,13 +226,49 @@ export function ModelFamilyMenu({
             value={inherited ? "" : selected.id}
             onValueChange={(id) => onChange(id)}
           >
-            <MenuRadioItem value="" closeOnClick>
-              {hasFamilyLogos && (
+            <MenuRadioItem
+              value=""
+              aria-label="Default"
+              aria-description={defaultChoice.description}
+              closeOnClick
+            >
+              {leadingColumn && (
                 <span className="buzz-select-leading" aria-hidden="true" />
               )}
-              {defaultChoice.label} · Default
+              <ChoiceRow
+                label="Default"
+                description={defaultChoice.description}
+              />
             </MenuRadioItem>
           </MenuRadioGroup>
+        )}
+        {routes.length > 0 && (
+          <>
+            <MenuRadioGroup
+              value={inherited ? "" : selected.id}
+              onValueChange={(id) => onChange(id)}
+            >
+              {routes.map((model) => (
+                <MenuRadioItem
+                  key={model.id}
+                  value={model.id}
+                  aria-label={model.label}
+                  aria-description={model.description}
+                  closeOnClick
+                >
+                  {/* A split arrow marks a route: it picks the model per turn. */}
+                  <span className="buzz-select-leading" aria-hidden="true">
+                    <ArrowsSplitIcon size={20} aria-hidden="true" />
+                  </span>
+                  <ChoiceRow
+                    label={model.label}
+                    description={model.description}
+                  />
+                </MenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+            {families.size > 0 && <MenuSeparator />}
+          </>
         )}
         {fastSection && (
           <>
@@ -244,7 +296,7 @@ export function ModelFamilyMenu({
           .map(([family, choices]) => (
             <MenuSubmenu key={family}>
               <MenuSubmenuTrigger>
-                {hasFamilyLogos && (
+                {leadingColumn && (
                   <span className="buzz-select-leading" aria-hidden="true">
                     {modelLogo(family)}
                   </span>

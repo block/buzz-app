@@ -23,7 +23,8 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import styles from "./Panels.module.css";
 import type { TabDragHost } from "./useTabDrag";
 
-type Item = {
+/** One retained tab, with content and lifecycle owned by the hosting page. */
+export type PanelWorkspaceItem = {
   id: string;
   label: string;
   icon?: ReactNode;
@@ -44,7 +45,11 @@ type Item = {
   /** Header icon actions for this tab's content, shown while it is selected. */
   toolbar?: ReactNode;
 };
-type Identity = { label: string; icon?: ReactNode };
+type Identity = {
+  label: string;
+  icon?: ReactNode;
+  actions?: readonly TabAction[] | undefined;
+};
 /** `keepOwner`: the owner stays open; only its detail tabs are cleared. */
 type Close = (options?: { keepOwner?: boolean }) => void;
 type Local = { id: string; label: string; owner: string; close: Close };
@@ -59,15 +64,19 @@ export function usePanelTabHost() {
   return useContext(TabHost);
 }
 
-export function usePanelTabTitle(label: string, icon?: ReactNode) {
+export function usePanelTabTitle(
+  label: string,
+  icon?: ReactNode,
+  actions?: readonly TabAction[],
+) {
   const host = usePanelTabHost();
   const title = host?.title;
   const owner = host?.owner;
   useLayoutEffect(() => {
     if (!title || !owner) return;
-    title(owner, { label, icon });
+    title(owner, { label, icon, actions });
     return () => title(owner, undefined);
-  }, [title, owner, label, icon]);
+  }, [title, owner, label, icon, actions]);
 }
 
 // Keyboard opens and reduced motion skip the push. Deciding here, rather than
@@ -104,20 +113,8 @@ function focusWhenReady(panel: HTMLElement, tab: HTMLElement) {
   return stop;
 }
 
-/** The channel owns target tabs; private details retain their feature's lifetime. */
-export function PanelWorkspace({
-  items,
-  value,
-  select,
-  actions,
-  identity,
-  main = false,
-  label = "Panel tabs",
-  focusOnMount = true,
-  adoptSelection,
-  tabMenu,
-  drag,
-}: {
+/** Presentation options for the host tab workspace; navigation stays page-owned. */
+export type PanelWorkspaceProps = {
   /** The channel owner closes tabs across both panes, including hidden tabs. */
   tabMenu?:
     | {
@@ -127,7 +124,7 @@ export function PanelWorkspace({
       }
     | undefined;
   drag?: TabDragHost | undefined;
-  items: Item[];
+  items: PanelWorkspaceItem[];
   value: string;
   select(id: string): void;
   /** Header icon actions owned by the hosting page. */
@@ -144,7 +141,22 @@ export function PanelWorkspace({
   focusOnMount?: boolean;
   /** A new value adopts the current selection without moving focus. */
   adoptSelection?: unknown;
-}) {
+};
+
+/** The channel owns target tabs; private details retain their feature's lifetime. */
+export function PanelWorkspace({
+  items,
+  value,
+  select,
+  actions,
+  identity,
+  main = false,
+  label = "Panel tabs",
+  focusOnMount = true,
+  adoptSelection,
+  tabMenu,
+  drag,
+}: PanelWorkspaceProps) {
   const prefix = useId();
   const panelId = (id: string) => `${prefix}-${id}`;
   const [titles, setTitles] = useState<Record<string, Identity | undefined>>(
@@ -210,16 +222,22 @@ export function PanelWorkspace({
     (tab) => tab.id === localSelection && tab.owner === value,
   );
   const selected = selectedLocal?.id ?? value;
-  const tabs = items.flatMap((item) => [
-    {
-      ...item,
-      ...titles[item.id],
-      icon: titles[item.id]?.icon ?? item.icon ?? <BrowserIcon size="1rem" />,
-    },
-    ...owned
-      .filter((tab) => tab.owner === item.id)
-      .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
-  ]);
+  const tabs = items.flatMap((item) => {
+    const title = titles[item.id];
+    return [
+      {
+        ...item,
+        ...title,
+        icon: title?.icon ?? item.icon ?? <BrowserIcon size="1rem" />,
+        actions: title?.actions
+          ? [...title.actions, ...(item.actions ?? [])]
+          : item.actions,
+      },
+      ...owned
+        .filter((tab) => tab.owner === item.id)
+        .map((tab) => ({ ...tab, icon: <TerminalWindowIcon size="1rem" /> })),
+    ];
+  });
   const active = tabs.find((tab) => tab.id === selected);
   const choose = (id: string) => {
     const local = owned.find((tab) => tab.id === id);

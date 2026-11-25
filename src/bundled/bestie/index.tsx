@@ -18,7 +18,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { BestieChooser } from "./BestieChooser";
 import { PinnedBestie } from "./PinnedBestie";
-import { bestieRoute, bestieDetailRoute } from "./routes";
+import { bestieRoute, bestieDetailRoute, bestieInlineRoute } from "./routes";
 import { onBestieMade } from "../agents/BestieChoice";
 import { bestieTab, formerBestieTab } from "./BestieTab";
 import {
@@ -34,10 +34,15 @@ export const inject = [
   "agents",
   "conversation",
   "panels",
+  "settingsCards",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
-  ctx.agents.registerTab(bestieTab(ctx.relay, ctx.agents));
-  ctx.agents.registerTab(formerBestieTab(ctx.relay, ctx.agents));
+  ctx.agents.registerTab(
+    bestieTab(ctx.relay, ctx.agents, ctx.navigation, ctx.settingsCards),
+  );
+  ctx.agents.registerTab(
+    formerBestieTab(ctx.relay, ctx.agents, ctx.navigation, ctx.settingsCards),
+  );
   // Whoever is Bestie, on any device, only it checks in.
   ctx.effect(() => stopFormerCheckIns(ctx.relay, ctx.agents));
   // A hosted former Bestie's memory is on its provider, read here for its tab.
@@ -59,7 +64,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     route: {
       version: 1,
       validate: (params) =>
-        !!(bestieRoute(params) || bestieDetailRoute(params)),
+        !!(
+          bestieRoute(params) ||
+          bestieDetailRoute(params) ||
+          bestieInlineRoute(params)
+        ),
     },
     component: ({ navigation: pageNavigation }) => (
       <BestieDestination
@@ -133,7 +142,7 @@ function BestieDestination({
           }
           action={
             connection.status === "error" ? (
-              <Button onClick={relay.retry}>Retry connection</Button>
+              <Button onClick={relay.tryAgain}>Retry connection</Button>
             ) : undefined
           }
         />

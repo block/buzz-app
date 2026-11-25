@@ -21,12 +21,15 @@ const nonIconDependencies = new Set([
   "@emoji-mart/data",
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
-  "@hypothesi/tauri-mcp-server", // Native MCP client (docs/native-mcp.md).
+  "@hypothesi/tauri-mcp-server", // Native MCP client.
   "@jsquash/webp", // Lossless media encoder, not an icon catalog.
   "@modelcontextprotocol/server", // The standalone Buzz MCP server.
   "@noble/curves",
+  "@noble/hashes",
   "@playwright/test",
+  "@pierre/diffs", // Diff renderer and syntax highlighting, not an icon catalog.
   "@pydantic/genai-prices", // LLM price data for Usage estimates.
+  "@shikijs/langs", // Syntax grammars for diff highlighting, not an icon catalog.
   "@tailwindcss/postcss",
   "@tanstack/react-router",
   "@tauri-apps/api",
@@ -52,12 +55,15 @@ const nonIconDependencies = new Set([
   "echarts", // Chart marks; not an icon library.
   "emoji-mart",
   "flexlayout-react",
+  "gitdiff-parser", // Validates patch structure before rendering, not an icon library.
   "jsdom",
   "mdast", // Type-only module supplied by @types/mdast.
   "mdast-util-from-markdown",
+  "mdast-util-gfm",
   "mdast-util-gfm-strikethrough",
   "mdast-util-gfm-table",
   "mdast-util-to-markdown",
+  "micromark-extension-gfm",
   "micromark-extension-gfm-strikethrough",
   "micromark-extension-gfm-table",
   "motion",
@@ -73,7 +79,6 @@ const nonIconDependencies = new Set([
   "prosemirror-view",
   "react",
   "react-day-picker", // Calendar behavior; navigation icons use our Tabler gateway.
-  "react-diff-view", // Patch tables/parser, not an icon library.
   "react-dom",
   "react-markdown",
   "remark-breaks",

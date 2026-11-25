@@ -24,12 +24,26 @@ export type {
 export type { NamingIdentity } from "../features/identity-names/policy";
 export type { Browser, BrowserViewProps } from "../features/browser/api";
 export type {
+  AppOverlay,
   Page,
   PagePreviewProps,
   PageSidebarProps,
   Pages,
 } from "../features/pages/service";
+export type { Seen } from "../features/seen/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";
+export type { Notices } from "../features/notices/service";
+export type { SubjectLift } from "../features/messages/subject-lift";
+export type {
+  PluginButtonProps,
+  PluginDialogProps,
+  PluginFieldProps,
+  PluginInputProps,
+  PluginMenuItem,
+  PluginMenuProps,
+  PluginSwitchProps,
+  PluginUi,
+} from "../features/plugin-ui/contract";
 export type {
   SidebarRow,
   SidebarRowSortMode,
@@ -46,6 +60,8 @@ export type {
   PluginInstallOutcome,
   PluginInstallSource,
   PluginInstaller,
+  PluginReleaseCandidate,
+  PluginReleaseComparison,
 } from "./installer";
 export type {
   SidebarRestriction,
@@ -56,9 +72,31 @@ export type {
   Panels,
   ChannelPanelContext,
   ChannelLauncherProps,
+  PanelWorkspaceItem,
+  PanelWorkspaceProps,
 } from "../features/panels/service";
+export type { PanelSplit } from "../features/panels/usePanelSplit";
+export type { MarkdownProps } from "../features/messages/PluginMarkdown";
+export type { ImageViewerProps } from "../features/messages/ImageViewer";
 export type { Conversation } from "../features/conversation/service";
+export type { ChannelMembersDialogProps } from "../bundled/channels/ChannelMembersDialog";
 export type {
+  ChannelGeneralAccessProps,
+  GeneralAccessPolicy,
+} from "../bundled/channels/ChannelGeneralAccess";
+export type { MemberChange } from "../features/channel-members/administration-protocol";
+export type {
+  DocumentEditorProps,
+  DocumentEditorHandle,
+  DocumentEditorSelection,
+} from "../features/messages/DocumentEditor";
+export type {
+  ConversationWorkspaceProps,
+  WorkspaceSlots,
+  WorkspaceAsideWidth,
+  PageTabTarget,
+  PageTabOptions,
+  PageTabsProps,
   ComposerObservation,
   CompletionContext,
   CompletionQuery,
@@ -67,6 +105,11 @@ export type {
   CompletionResult,
   ComposerCompletionProps,
   ComposerCompletion,
+  AnnotationObservation,
+  ComposerAnnotation,
+  ComposerAnnotator,
+  ComposerAnnotatorProps,
+  ComposerReplacement,
   ComposerAccessory,
   ComposerAccessoryProps,
   ComposerResource,
@@ -81,6 +124,9 @@ export type {
   LinkRenderer,
   MessageRenderer,
   MessageAction,
+  IdentityMark,
+  OutgoingMessage,
+  SendGate,
   TargetOpener,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
@@ -113,6 +159,7 @@ export type {
 
 export type {
   Decisions,
+  DecisionsAnswerable,
   DecisionProvider,
   DecisionProviderStatus,
   DecisionReply,
@@ -122,6 +169,18 @@ export type {
   DecisionFailure,
   DecisionResult,
 } from "../features/decisions/service";
+
+export type {
+  Speech,
+  SpeechProvider,
+  SpeechProviderStatus,
+  SpeechConnectRequest,
+  SpeechConnectReply,
+  SpeechFailure,
+  ListenOptions,
+  Listening,
+  ListenState,
+} from "../features/speech/service";
 
 export type {
   Navigation,
@@ -144,15 +203,25 @@ export type {
 } from "../features/notifications/service";
 
 export type { VoiceRecording } from "../features/relay/voice-media";
+export type {
+  RecommendedCandidate,
+  RecommendedSetup,
+} from "../features/agents/recommended";
 
 export type {
   Agents,
   AgentAddedTab,
   AgentHandle,
+  AgentInstructions,
   AgentType,
   AgentSession,
   AgentSessions,
   Delivery,
+  GatewayHarnessSource,
+  ModelSettings,
+  NoteChange,
+  PluginNote,
+  RecommendedSource,
   StandaloneTurn,
   TurnResult,
 } from "../features/agents/service";
@@ -189,6 +258,8 @@ export type {
   SoloWorkspaces,
   SoloWorkspaceSnapshot,
   SoloWorkspaceProps,
+  SoloChannelGroupProps,
+  SoloHeaderMenuAction,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,

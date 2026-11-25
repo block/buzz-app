@@ -18,7 +18,10 @@ import { SettingsCardsService } from "../../features/settings/service";
 import { PanelsService } from "../../features/panels/service";
 import { BrowserService } from "../../features/browser/service";
 import type { BrowserPlatform } from "../../features/browser/platform";
+import type { BrowserViewProps } from "../../features/browser/api";
 import { DecisionsService } from "../../features/decisions/service";
+import { SpeechService } from "../../features/speech/service";
+
 import {
   AgentsService,
   type Agent,
@@ -90,6 +93,30 @@ afterEach(() => {
 function provideApps(root: Context) {
   new PanelsService(root);
   new BrowserService(root, { available: false } as BrowserPlatform);
+}
+
+/** The Apps panel on a native browser whose view records what it is given.
+ * Returns a way to open this build's app once, signed in, and read the
+ * sign-in route its view received. */
+function provideRecordedApps(root: Context) {
+  vi.stubEnv("VITE_BUZZ_BUILDERLAB_APPS_DOMAIN", "apps.example");
+  const panels = new PanelsService(root);
+  const View = vi.fn((_props: BrowserViewProps) => null);
+  root.provide("browser", { available: true, View } as never);
+  return () => {
+    const target = "https://counter--workspace.apps.example/";
+    const panel = panels.resolve(target);
+    if (!panel) throw new Error(`No panel opens ${target}`);
+    const App = panel.component;
+    const { unmount } = render(<App target={target} close={() => {}} />);
+    expect(View).toHaveBeenLastCalledWith(
+      expect.objectContaining({ url: target, builderlab: expect.anything() }),
+      undefined,
+    );
+    const openSignIn = View.mock.lastCall?.[0].openSignIn;
+    unmount();
+    return openSignIn;
+  };
 }
 
 function provideAgents(
@@ -179,6 +206,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     provideApps(root);
     const cards = new SettingsCardsService(root);
     const decisions = new DecisionsService(root, localStorage);
+    new SpeechService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     root.provide("navigation", { open: vi.fn() } as never);
@@ -246,6 +274,7 @@ it("a build with neither NIP-FI nor the development broker has no Builderlab", a
   provideApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
   root.provide("navigation", { open: vi.fn() } as never);
@@ -306,6 +335,7 @@ it.each([undefined, false, true])(
     provideApps(root);
     const cards = new SettingsCardsService(root);
     new DecisionsService(root, localStorage);
+    new SpeechService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     root.provide("navigation", { open: vi.fn() } as never);
@@ -470,6 +500,7 @@ it.each([true, false])(
     provideApps(root);
     const cards = new SettingsCardsService(root);
     new DecisionsService(root, localStorage);
+    new SpeechService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     root.provide("navigation", { open: vi.fn() } as never);
@@ -690,9 +721,10 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
     inject: [...builderlab.inject, "federatedIdentity"],
   }));
   new HostService(root);
-  provideApps(root);
+  const openApp = provideRecordedApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
   root.provide("federatedIdentity", identity.service);
@@ -805,6 +837,17 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
       version: 1,
       kind: "settings",
       section: "identity",
+      part: "organization-sign-in",
+    });
+    // An app that refuses the sign-in sends you to the same place.
+    const openSignIn = openApp();
+    navigation.open.mockClear();
+    openSignIn?.();
+    expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "settings",
+      section: "identity",
+      part: "organization-sign-in",
     });
     await act(() => identity.service.signOut());
     expect(
@@ -959,6 +1002,7 @@ it.for([
   provideApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
+  new SpeechService(root, localStorage);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
   root.provide("navigation", { open: vi.fn() } as never);
@@ -1600,6 +1644,7 @@ it("opens Manage plugins from its agents' Activity tab while Agent Activity is o
   provideApps(root);
   new SettingsCardsService(root);
   new DecisionsService(root, localStorage);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   const activity = {
     status: "disabled",
@@ -1750,12 +1795,14 @@ it("uses one development-server login for the Settings account, hosting and remo
   const root = new Context();
   const runtime = new PluginRuntime(root, async () => builderlab);
   new HostService(root);
-  provideApps(root);
+  const openApp = provideRecordedApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
-  root.provide("navigation", { open: vi.fn() } as never);
+  const navigation = { open: vi.fn() };
+  root.provide("navigation", navigation as never);
   provideKnownCommunities(root, community.viewer);
   provideAgents(root, community);
   try {
@@ -1829,6 +1876,13 @@ it("uses one development-server login for the Settings account, hosting and remo
       backend: "builderlab",
       request: question,
       broker: { origin: window.location.origin, revision: "server-one" },
+    });
+    // An app that refuses the sign-in sends you back to this card.
+    openApp()?.();
+    expect(navigation.open).toHaveBeenCalledExactlyOnceWith({
+      version: 1,
+      kind: "settings",
+      section: "block.builderlab/login",
     });
     await settingsOverview();
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));

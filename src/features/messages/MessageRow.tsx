@@ -1,13 +1,19 @@
+import { snapshotAttachments } from "../relay/forwarded-message";
+import { ForwardedMessage } from "./ForwardedMessage";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
 import { ActivityOutcome } from "./ActivityOutcome";
 import { AgentResponsePreview } from "./AgentResponsePreview";
+import { useChannelActivitySubscription } from "../agents/use-channel-agent-activity";
+import { useSpringLoaded } from "./spring-loaded-drag";
 import { useActivityIndicator } from "./use-activity-indicator";
 import type { ActivityRowPresentation } from "./activity-presentation";
 import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
 import { Collapsible } from "@base-ui/react/collapsible";
-import { formatItemTimestamp } from "../../shared/datetime";
-import { useClockPreference } from "../../shared/clock-preference";
+import {
+  formatFullTimestamp,
+  formatItemTimestamp,
+} from "../../shared/datetime";
 import { ProfilePeek } from "../profiles/ProfilePeek";
 import { AgentAvatar } from "../agents/AgentAvatar";
 import {
@@ -18,6 +24,7 @@ import {
 import { breathing, localActivity } from "../agents/local-activity";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
+  CaretRightIcon,
   DotsThreeIcon,
   LightningIcon,
   RobotIcon,
@@ -37,6 +44,7 @@ import { MessageLink } from "../conversation/MessageLink";
 import {
   DayDivider,
   MessageTimestamp,
+  useMessageTimeVisible,
   MessageTimestampHint,
 } from "./MessageTimestamp";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -45,6 +53,7 @@ import { ReplySummary } from "./ReplySummary";
 import { usePresenceStatus } from "../presence/react";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useMessageDensity } from "../../shared/theme/message-density";
+import { useLocalDay } from "../../shared/use-local-day";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   memo,
@@ -53,6 +62,7 @@ import {
   useRef,
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useSyncExternalStore,
   type ReactNode,
@@ -85,6 +95,7 @@ import {
 } from "../conversation/ContributionBoundary";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
+import { AgentDeclineNotes } from "./AgentDeclineNotes";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { AttachmentView } from "../conversation/AttachmentView";
 import { AudioAttachment } from "./AudioAttachment";
@@ -92,13 +103,18 @@ import { AttachmentDownloadContext } from "./AttachmentDownloadContext";
 import { isNativeMediaSource, isProxySource } from "./attachment-source";
 import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
+import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
-import { safeMessageUrl } from "../relay/message-content";
+import { DetailsMessage } from "./DetailsMessage";
+import { useComposerScope } from "./composer-overlay";
+import {
+  safeMessageUrl,
+  projectMarkdownAttachments,
+} from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { LinkPreviews } from "./LinkPreviews";
 import { previewLinks } from "./preview-links";
 import { usesLargeEmojiPresentation } from "./emoji-size";
-import { separateChatCards } from "./chat-cards";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import {
@@ -107,11 +123,19 @@ import {
 } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { useForwardMessage } from "./ForwardMessage";
-import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
+import {
+  FlagIcon,
+  ListBulletsIcon,
+  PinIcon,
+} from "../../shared/design-system/icons";
+import { usePinnedMessages } from "./use-pins";
 import {
   MenuIcon,
   MenuItem,
   MenuSeparator,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { ReportMessageDialog } from "./ReportMessageDialog";
@@ -119,9 +143,18 @@ import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useThreadDraft } from "./draft-places";
 
-export type MessageLinkOrigin = Readonly<{ rootId: string }>;
+export type MessageLinkOrigin = Readonly<{
+  rootId: string;
+  /** The view the row reads in, when it reads in one: the conversation, or
+   * the thread with this root. An opening can become a dialog on it. */
+  view?: Readonly<{ rootId?: string | undefined }> | undefined;
+}>;
 export type MessageRowProps = {
   row: ChannelMessage;
+  /** Read-only presentations can retain their own prose highlighting. */
+  bodyContent?: ReactNode;
+  /** Narrow previews use the available width without opposite-avatar clearance. */
+  fullWidth?: boolean;
   recordedActivity?: ActivityRowPresentation | undefined;
   representedAgents?: readonly string[] | undefined;
   repliedAgents?: readonly string[] | undefined;
@@ -139,19 +172,22 @@ export type MessageRowProps = {
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   agentPubkeys?: ReadonlySet<string> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
-  media(url: string, size?: "small"): string | undefined;
+  media(url: string, size?: "small", channel?: string): string | undefined;
   /** Receives the thread the link was opened from: the row’s root, or the row. */
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
   /** Pins this row in a virtualized list; returns the release. */
   keepMounted?: ((messageId: string) => () => void) | undefined;
+  /** A details message in this row expanded or folded in place. */
+  onExpandDetails?: (() => void) | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onReply?: ((messageId: string) => void) | undefined;
   /** False: existing threads open, but the row offers none to start or reply in. */
   startsThreads?: boolean;
+  threadOpen?: boolean | undefined;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   layout?: "timeline" | "thread" | "continuation";
@@ -177,6 +213,8 @@ export type MessageRowProps = {
 
 type MessageContentProps = MessageRowProps & {
   shownRow?: ChannelMessage;
+  /** Leave out the reactions row and its controls. */
+  withoutReactions?: boolean;
   renderMessage?: (
     message: ReactNode,
     trigger: RefObject<HTMLButtonElement | null>,
@@ -188,8 +226,9 @@ function useCompletedMessageWork(
   activity: RelaySession["agentActivity"] | undefined,
   row: ChannelMessage,
 ) {
+  const subscribe = useChannelActivitySubscription(activity, row.channelId);
   const read = () => {
-    const snapshot = activity?.snapshot();
+    const snapshot = activity?.snapshot(row.channelId);
     if (!snapshot) return false;
     const published = (snapshot.local ?? []).filter(
       (work) =>
@@ -211,7 +250,7 @@ function useCompletedMessageWork(
       )
     );
   };
-  return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
+  return useSyncExternalStore(subscribe, read, read);
 }
 
 const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
@@ -228,7 +267,10 @@ const FullMessageRow = memo(function MessageRow(props: MessageContentProps) {
 });
 function MessageRowContent({
   row,
+  bodyContent,
+  fullWidth = false,
   shownRow,
+  withoutReactions = false,
   renderMessage,
   getThreadRoot,
   session,
@@ -243,9 +285,11 @@ function MessageRowContent({
   day,
   retry,
   keepMounted,
+  onExpandDetails,
   onOpenThread,
   onReply,
   startsThreads = true,
+  threadOpen,
   quickControls,
   overflowItems,
   participantProfiles,
@@ -273,6 +317,15 @@ function MessageRowContent({
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const reactions = row.reactions;
+  const interactiveReactionContext =
+    session && scope && extensions ? { session, scope, extensions } : undefined;
+  const fallbackReactions = interactiveReactionContext
+    ? undefined
+    : reactions.flatMap((reaction) => {
+        const count = new Set(reaction.events.map((event) => event.authorId))
+          .size;
+        return count > 0 ? [{ reaction, count }] : [];
+      });
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -295,9 +348,20 @@ function MessageRowContent({
     row.channelId,
     rootId,
   );
+  const composerView = useComposerScope();
+  const inView = !!composerView;
+  const viewRoot = composerView?.rootId;
   const openLink = useCallback(
-    (url: string) => onOpenLink(url, { rootId }),
-    [onOpenLink, rootId],
+    (url: string) =>
+      onOpenLink(url, {
+        rootId,
+        ...(inView && { view: { rootId: viewRoot } }),
+      }),
+    [onOpenLink, rootId, inView, viewRoot],
+  );
+  const springLoadedThread = useSpringLoaded(
+    () => onOpenThread?.(row.id, rootId),
+    threadOpen,
   );
   const channels = session?.channels;
   const listed = useListedChannel(
@@ -320,15 +384,12 @@ function MessageRowContent({
     row.channelId,
     (channel) => !!channel?.readOnly,
   );
-  const { messageTimestamps } = useClockPreference();
-  const solo = useListedChannel(
+  const dmMembers = useListedChannel(
     references?.channels,
     row.channelId,
-    (channel) => channel?.channelType === "solo",
+    (channel) => (channel?.channelType === "dm" && channel.members) || none,
   );
-  const showTime =
-    messageTimestamps === "show" ||
-    (messageTimestamps === "hide-solo" && !solo);
+  const showTime = useMessageTimeVisible(references?.channels, row.channelId);
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
@@ -384,18 +445,77 @@ function MessageRowContent({
     canViewTranscript ? session?.agentActivity : undefined,
     row,
   );
-  const activityItem = canViewActivity && (
-    <MenuItem
-      onClick={() => {
-        if (canOpenLink?.(activityView)) onOpenLink(activityView);
-      }}
-    >
-      <MenuIcon>
-        <ListBulletsIcon />
-      </MenuIcon>
-      View activity
-    </MenuItem>
+  // An agent's message opens at the turn that posted it; the viewer's own
+  // message, at the turns it began for each agent it names, or for the other
+  // member of a one-to-one DM, which wakes without a mention.
+  const own = !canViewActivity && !!viewer && row.authorId === viewer;
+  const activityAgents = canViewActivity
+    ? [row.authorId]
+    : own && row.audience !== "agents"
+      ? [
+          ...new Set([
+            ...row.mentions,
+            ...(dmMembers.length === 2
+              ? dmMembers.filter((pubkey) => pubkey !== viewer)
+              : []),
+          ]),
+        ].filter(
+          (pubkey) =>
+            agentPubkeys?.has(pubkey) ||
+            !!directory.profiles.get(pubkey)?.isAgent ||
+            directory.agents.some((item) => item.pubkey === pubkey),
+        )
+      : [];
+  const activityFocus = [row.id, ...(row.request ? [row.request] : [])];
+  const openActivity = (view: string) =>
+    canOpenLink?.(view) && openProfileTranscript(view, openLink, activityFocus);
+  const activityViews = activityAgents.flatMap((pubkey) => {
+    const view = profileActivityViewTarget(pubkey);
+    return view && canOpenLink?.(view) ? [{ pubkey, view }] : [];
+  });
+  // On the viewer's own message, say whose activity: the agent's name as the
+  // rest of the app shows it, or "Agent" when it has none.
+  const agentName = (pubkey: string) => {
+    const profile = directory.profiles.get(pubkey);
+    return resolveName(
+      pubkey,
+      directory.agents.find((item) => item.pubkey === pubkey)?.name.trim() ||
+        (profile?.nameIsFallback ? "" : profile?.name.trim()) ||
+        "Agent",
+    );
+  };
+  const activityIcon = (
+    <MenuIcon>
+      <ListBulletsIcon />
+    </MenuIcon>
   );
+  const [onlyActivity] = activityViews;
+  const activityItem =
+    activityViews.length > 1 ? (
+      // Several agents share one item, so the menu keeps its length.
+      <MenuSubmenu>
+        <MenuSubmenuTrigger>
+          {activityIcon}
+          View activity
+        </MenuSubmenuTrigger>
+        <MenuSubmenuPopup>
+          {activityViews.map(({ pubkey, view }) => (
+            <MenuItem key={pubkey} onClick={() => openActivity(view)}>
+              {agentName(pubkey)}
+            </MenuItem>
+          ))}
+        </MenuSubmenuPopup>
+      </MenuSubmenu>
+    ) : (
+      onlyActivity && (
+        <MenuItem onClick={() => openActivity(onlyActivity.view)}>
+          {activityIcon}
+          {own
+            ? `View ${agentName(onlyActivity.pubkey)}’s activity`
+            : "View activity"}
+        </MenuItem>
+      )
+    );
   const avatarShape =
     row.agentEnvelope || agentPubkeys?.has(row.authorId) || profile?.isAgent
       ? "squircle"
@@ -421,16 +541,14 @@ function MessageRowContent({
       : undefined;
   const presenceId = useId();
   const shown = shownRow ?? row;
-  const timeReply = shown.diff ? undefined : parseMediaTimeReply(shown.content);
-  const sourceRow = timeReply
-    ? { ...shown, content: timeReply.content }
-    : shown;
-  const { caption: displayRow, cards: chatCards } = useMemo(
-    () => separateChatCards(sourceRow, directory.channels),
-    [sourceRow, directory.channels],
-  );
-  const cardsOnly =
-    chatCards.length > 0 && !displayRow.content.trim() && !timeReply;
+  const timeReply =
+    shown.diff || bodyContent != null
+      ? undefined
+      : parseMediaTimeReply(row.forward?.note ?? shown.content);
+  const displayRow =
+    timeReply && !row.forward
+      ? { ...shown, content: timeReply.content }
+      : shown;
   const attachmentOnly =
     !row.content.trim() &&
     !row.diff &&
@@ -495,21 +613,24 @@ function MessageRowContent({
   // plugin player portalled elsewhere never pins the row. load() and src swaps
   // pause with only an emptied event.
   const [mediaPlaying, setMediaPlaying] = useState(false);
-  const trackMedia = (event: SyntheticEvent<HTMLDivElement>) =>
-    setMediaPlaying(playingIn(event.currentTarget));
+  const attachmentLists = useRef(new Set<HTMLDivElement>());
+  const trackMedia = (_event: SyntheticEvent<HTMLDivElement>) =>
+    setMediaPlaying([...attachmentLists.current].some(playingIn));
   // React drops the pause a player fires once removed. While one plays,
   // recheck when the list's tree changes: a player edited out, claimed by a
   // message renderer or swapped by its plugin's boundary. Whatever unmounts
   // the list itself (a claim of its last group, an agents row folding) clears
   // the flag. A stable ref, so re-renders never detach it.
   const observeAttachments = useCallback((list: HTMLDivElement) => {
+    attachmentLists.current.add(list);
     const observer = new MutationObserver(() =>
-      setMediaPlaying((playing) => playing && playingIn(list)),
+      setMediaPlaying([...attachmentLists.current].some(playingIn)),
     );
     observer.observe(list, { childList: true, subtree: true });
     return () => {
       observer.disconnect();
-      setMediaPlaying(false);
+      attachmentLists.current.delete(list);
+      setMediaPlaying([...attachmentLists.current].some(playingIn));
     };
   }, []);
   const keepAlive = reporting !== undefined || !!opened || mediaPlaying;
@@ -565,16 +686,19 @@ function MessageRowContent({
       .map((action) =>
         action.placement === "menu" && session && extensions?.actions ? (
           <ContributionBoundary key={contributionKey(action)} fallback={null}>
-            <WithTargetOpener
-              component={action.component}
-              props={{
-                message: row,
-                session,
-                close: () => setOpenAction(undefined),
-              }}
-              registry={extensions.actions}
-              entry={action}
-            />
+            {/* A list's shared menu renders this outside the row's provider. */}
+            <TargetOpenerProvider canOpen={canOpenLink} open={openLink}>
+              <WithTargetOpener
+                component={action.component}
+                props={{
+                  message: row,
+                  session,
+                  close: () => setOpenAction(undefined),
+                }}
+                registry={extensions.actions}
+                entry={action}
+              />
+            </TargetOpenerProvider>
           </ContributionBoundary>
         ) : (
           <MenuItem key={action.key} onClick={() => activateAction(action)}>
@@ -595,7 +719,7 @@ function MessageRowContent({
   // A message renderer may draw some attachments itself. Its claims count only
   // while its card is mounted, and they return to the host list while its
   // fallback shows. A remounted card starts healthy and claims again.
-  const bodyShown = !attachmentOnly && !cardsOnly;
+  const bodyShown = !attachmentOnly;
   const messageRenderer = useMessageRenderer(extensions?.messages, row);
   const [failedRenderer, setFailedRenderer] = useState<MessageRenderer>();
   const claims =
@@ -610,7 +734,7 @@ function MessageRowContent({
     !row.diff &&
     !!displayRow.content.trim() &&
     (!messageRenderer || messageRenderer === failedRenderer);
-  const editedInBody = markdownBody;
+  const editedInBody = markdownBody && !row.forward;
   const linkPreviewRegistry = extensions?.linkPreviews;
   const previewUrls = useMemo(
     () =>
@@ -652,12 +776,16 @@ function MessageRowContent({
       }
     });
   // Gallery-backed images and videos share a group, preserving sender order.
+  const copiedUrls = new Set(
+    row.forward ? snapshotAttachments(row).map(({ url }) => url) : [],
+  );
   const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
   for (const attachment of row.attachments) {
     if (!safeMessageUrl(attachment.url) || claimed(attachment)) continue;
     const previous = attachmentGroups.at(-1);
     if (
       previous?.[0] &&
+      copiedUrls.has(previous[0].url) === copiedUrls.has(attachment.url) &&
       !drawn(attachment) &&
       !drawn(previous[0]) &&
       (((attachment.kind === "image" || attachment.kind === "file") &&
@@ -669,43 +797,365 @@ function MessageRowContent({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
-  const body = row.diff ? (
-    <div>
-      <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
-      {row.diff.description && (
-        <p className="text-body-sm">{row.diff.description}</p>
-      )}
-      {/* biome-ignore lint/a11y/useSemanticElements: The raw scroll region preserves preformatted text and needs keyboard access. */}
-      <pre
-        className={styles.rawDiff}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: The raw scroll owner must support keyboard scrolling.
-        tabIndex={0}
-        role="region"
-        aria-label="Raw diff"
+  // A message's images are saved with its channel, so losing the channel
+  // forgets them.
+  const attachmentMedia = (url: string, size?: "small") =>
+    media(url, size, row.channelId);
+  const attachmentContent = (copied = false) =>
+    attachmentGroups.some(
+      (group) => copiedUrls.has(group[0]?.url ?? "") === copied,
+    ) && (
+      <div
+        className={styles.messageAttachments}
+        data-message-attachments
+        ref={observeAttachments}
+        onPlay={trackMedia}
+        onPause={trackMedia}
+        onEnded={trackMedia}
+        onEmptied={trackMedia}
+        onError={trackMedia}
       >
-        {row.content || "No diff content"}
-      </pre>
-      {row.diff.truncated && (
-        <p className="text-body-sm">
-          Diff truncated. View the full diff at the source repository.
-        </p>
-      )}
-    </div>
-  ) : (
-    <MessageMarkdown
-      directory={directory}
-      session={references}
-      scope={scope}
-      row={displayRow}
-      extensions={extensions}
-      media={media}
-      onOpenLink={openLink}
-      canOpenLink={canOpenLink}
-      participantProfiles={participantProfiles}
-      largeEmoji={emojiOnly}
-      edited={editedInBody && displayRow.edited}
-    />
+        {attachmentGroups
+          .filter((group) => copiedUrls.has(group[0]?.url ?? "") === copied)
+          .map((group) => {
+            const images =
+              group[0]?.kind === "image" || group[0]?.kind === "video";
+            const imageOnly = group.every((item) => item.kind === "image");
+            const mediaLabel = imageOnly ? "images" : "photos and videos";
+            const files = group[0]?.kind === "file";
+            // Only collapse when the host can open the complete gallery.
+            const collapsed = images && group.length > 4 && !!onOpenMediaReview;
+            const previews = collapsed ? group.slice(0, 4) : group;
+            const items = previews.map((attachment, index) => {
+              const url = safeMessageUrl(attachment.url);
+              if (!url) return null;
+              const source = attachmentMedia(url);
+              if (attachment.kind === "file") {
+                const fallback = (
+                  <FileAttachment
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    onOpenLink={openLink}
+                  />
+                );
+                return source && extensions?.attachments ? (
+                  <AttachmentView
+                    key={url}
+                    registry={extensions.attachments}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    placement="message"
+                    message={row}
+                    FileCard={FileAttachment}
+                    fallback={fallback}
+                  />
+                ) : (
+                  fallback
+                );
+              }
+              if (attachment.kind === "audio") {
+                if (
+                  source &&
+                  (isProxySource(source) || isNativeMediaSource(source))
+                )
+                  return extensions?.attachments ? (
+                    <AttachmentDownloadContext key={url} value={true}>
+                      <AttachmentView
+                        registry={extensions.attachments}
+                        attachment={{ ...attachment, url }}
+                        source={source}
+                        placement="message"
+                        message={row}
+                        fallback={
+                          <AudioAttachment
+                            attachment={{ ...attachment, url }}
+                            source={source}
+                          />
+                        }
+                      />
+                    </AttachmentDownloadContext>
+                  ) : (
+                    <AudioAttachment
+                      key={url}
+                      attachment={{ ...attachment, url }}
+                      source={source}
+                    />
+                  );
+                return (
+                  <FileAttachment
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    onOpenLink={openLink}
+                  />
+                );
+              }
+              if (attachment.kind === "image") {
+                const small = attachmentMedia(url, "small");
+                // Third-party URLs map to themselves: no thumbnail. JPEG
+                // drops alpha, so these formats use the WebP variant.
+                const alpha =
+                  /^(.+\/[0-9a-f]{64})\.(?:png|gif|webp|avif)$/.exec(url);
+                const thumbnail =
+                  small === source
+                    ? undefined
+                    : alpha
+                      ? attachmentMedia(`${alpha[1]}.thumb.webp`)
+                      : small;
+                const image = (
+                  <AttachmentImage
+                    onOpenLink={
+                      canOpenLink?.(attachment.url) ? openLink : undefined
+                    }
+                    key={url}
+                    session={session}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    thumbnail={thumbnail}
+                    cached={cached}
+                    compact={group.length >= 4}
+                    overlayCount={
+                      collapsed && index === 3 ? group.length - 3 : 0
+                    }
+                    keepMounted={keepRowMounted}
+                    label={
+                      collapsed && index === 3
+                        ? `View all ${group.length} ${mediaLabel}, starting at ${imageOnly ? "image" : "item"} 4`
+                        : group.length > 1
+                          ? `Open image ${index + 1} of ${group.length}`
+                          : "Open image attachment"
+                    }
+                    {...(onOpenMediaReview
+                      ? {
+                          onOpenReview: (item, seconds) =>
+                            onOpenMediaReview(
+                              row.id,
+                              item,
+                              seconds,
+                              row.replyCount > 0 ||
+                                (!!row.threadRootId &&
+                                  row.threadRootId !== row.id),
+                              row.attachments,
+                            ),
+                        }
+                      : {})}
+                  />
+                );
+                return source &&
+                  extensions?.attachments &&
+                  drawn(attachment) ? (
+                  <AttachmentView
+                    key={url}
+                    registry={extensions.attachments}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                    placement="message"
+                    message={row}
+                    fallback={image}
+                  />
+                ) : (
+                  image
+                );
+              }
+              return (
+                <MediaAttachment
+                  key={url}
+                  attachment={{ ...attachment, url }}
+                  media={attachmentMedia}
+                  compact={images && group.length >= 4 && !!onOpenMediaReview}
+                  overlayCount={collapsed && index === 3 ? group.length - 3 : 0}
+                  label={
+                    collapsed && index === 3
+                      ? `View all ${group.length} ${mediaLabel}, starting at item 4`
+                      : `Open video ${index + 1} of ${group.length}`
+                  }
+                  mode={mediaMode}
+                  {...(attachment.kind === "video" && mediaSeekTo !== undefined
+                    ? {
+                        seekTo: mediaSeekTo,
+                        ...(mediaSeekRequest !== undefined
+                          ? { seekRequest: mediaSeekRequest }
+                          : {}),
+                      }
+                    : {})}
+                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
+                  {...(onOpenMediaReview
+                    ? {
+                        onOpenReview: (item, seconds) =>
+                          onOpenMediaReview(
+                            row.id,
+                            item,
+                            seconds,
+                            row.replyCount > 0 ||
+                              (!!row.threadRootId &&
+                                row.threadRootId !== row.id),
+                            row.attachments,
+                          ),
+                      }
+                    : {})}
+                />
+              );
+            });
+            return images &&
+              !(group[0] && drawn(group[0])) &&
+              (imageOnly || group.length >= 4) ? (
+              <div className={styles.imageGroup} key={group[0]?.url}>
+                {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
+                <div
+                  className={`${styles.imageList} ${group.length >= 4 ? styles.imageGrid : ""}`}
+                  data-image-grid={group.length >= 4 || undefined}
+                  role="group"
+                  aria-label={`${group.length} ${imageOnly ? (group.length === 1 ? "image" : "images") : "photos and videos"}`}
+                >
+                  {items}
+                </div>
+              </div>
+            ) : files ? (
+              <div className={styles.fileGroup} key={group[0]?.url}>
+                {/* A block each, so a copied selection puts every
+                    card on its own line. */}
+                {items.map((item) => item && <div key={item.key}>{item}</div>)}
+              </div>
+            ) : (
+              items
+            );
+          })}
+      </div>
+    );
+  const forwardProjection = useMemo(
+    () =>
+      row.forward
+        ? projectMarkdownAttachments(
+            row.forward.snapshot.content,
+            new Set(row.attachments.map((attachment) => attachment.url)),
+          )
+        : undefined,
+    [row.forward, row.attachments],
   );
+  const { edited: _forwardEdited, ...forwardDisplayRow } = displayRow;
+  const forwardNote = timeReply?.content ?? row.forward?.note;
+  const body =
+    bodyContent ??
+    (row.forward ? (
+      <>
+        {forwardNote && (
+          <MessageMarkdown
+            directory={directory}
+            session={references}
+            scope={scope}
+            row={{
+              ...displayRow,
+              content: projectMarkdownAttachments(
+                forwardNote,
+                new Set(row.attachments.map(({ url }) => url)),
+              ).content,
+              attachmentSeams: [],
+            }}
+            media={media}
+            onOpenLink={openLink}
+          />
+        )}
+        <ForwardedMessage
+          snapshot={row.forward.snapshot}
+          session={session}
+          onOpenLink={openLink}
+          attachments={attachmentContent(true)}
+        >
+          <MessageMarkdown
+            directory={directory}
+            session={references}
+            scope={scope}
+            row={{
+              ...forwardDisplayRow,
+              content:
+                forwardProjection?.content ?? row.forward.snapshot.content,
+              mentions: [],
+              mentionReferences:
+                row.forward.snapshot.mentionLabels?.map(({ id }) => id) ?? [],
+              mentionLabels: row.forward.snapshot.mentionLabels ?? [],
+              emoji: row.forward.snapshot.emoji ?? [],
+              attachmentSeams: forwardProjection?.seams ?? [],
+            }}
+            media={media}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+          />
+        </ForwardedMessage>
+      </>
+    ) : row.diff ? (
+      <div>
+        <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
+        {row.diff.description && (
+          <p className="text-body-sm">{row.diff.description}</p>
+        )}
+        {/* biome-ignore lint/a11y/useSemanticElements: The raw scroll region preserves preformatted text and needs keyboard access. */}
+        <pre
+          className={styles.rawDiff}
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: The raw scroll owner must support keyboard scrolling.
+          tabIndex={0}
+          role="region"
+          aria-label="Raw diff"
+        >
+          {row.content || "No diff content"}
+        </pre>
+        {row.diff.truncated && (
+          <p className="text-body-sm">
+            Diff truncated. View the full diff at the source repository.
+          </p>
+        )}
+      </div>
+    ) : row.audience === "details" ? (
+      // Details read as their brief, which opens into their own reader.
+      <DetailsMessage
+        messageId={row.id}
+        channelId={row.channelId}
+        author={name}
+        createdAt={row.createdAt}
+        keepMounted={keepMounted}
+        onExpand={onExpandDetails}
+        preview={
+          <MessageMarkdown
+            directory={directory}
+            session={references}
+            scope={scope}
+            row={displayRow}
+            extensions={extensions}
+            media={media}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
+            edited={editedInBody && displayRow.edited}
+          />
+        }
+      >
+        <MessageMarkdown
+          directory={directory}
+          session={references}
+          scope={scope}
+          row={displayRow}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+        />
+      </DetailsMessage>
+    ) : (
+      <MessageMarkdown
+        directory={directory}
+        session={references}
+        scope={scope}
+        row={displayRow}
+        extensions={extensions}
+        media={media}
+        onOpenLink={openLink}
+        canOpenLink={canOpenLink}
+        participantProfiles={participantProfiles}
+        largeEmoji={emojiOnly}
+        edited={editedInBody && displayRow.edited}
+      />
+    ));
   const avatarSize = compactAvatar && !flat ? "small" : "default";
   const authorName = (
     <>
@@ -783,8 +1233,9 @@ function MessageRowContent({
       />
     </span>
   );
-  const messageActions = (target?: ReactElement) => (
+  const messageActions = (target?: ReactElement, withToolbar?: boolean) => (
     <MessageActionBar
+      withToolbar={withToolbar}
       rowRef={rowRef}
       menuTriggerRef={menuTrigger}
       messageId={row.id}
@@ -983,6 +1434,7 @@ function MessageRowContent({
               event.currentTarget.focus();
               onOpenThread(row.id, row.threadRootId ?? row.id);
             }}
+            {...springLoadedThread}
           >
             <ReplySummary
               hideEmptyLabel={!!activity}
@@ -1038,70 +1490,77 @@ function MessageRowContent({
     );
   };
   const reactionsInBubble =
-    !attachmentOnly &&
-    !cardsOnly &&
-    !row.huddle &&
-    !shownRow &&
-    !emojiOnly &&
-    !row.diff;
+    !attachmentOnly && !row.huddle && !shownRow && !emojiOnly && !row.diff;
   // A plugin card keeps reactions in its bubble, so its mark goes above them.
   const editedInBubble = !editedInBody && reactionsInBubble;
-  const reactionContent =
-    session && scope && extensions ? (
-      <MessageReactions
-        onFocusedRemoval={() =>
-          menuTrigger.current?.focus({ preventScroll: true })
-        }
-        row={row}
-        session={session}
-        scope={scope}
-        tools={extensions.tools}
-        inline={extensions.inline}
-        profiles={directory.profiles}
-        disabled={
-          !canReact ||
-          (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
-        }
-      />
-    ) : (
-      reactions.length > 0 && (
-        <div
-          className={`${styles.reactions} ${styles.reactionFallback}`}
-          data-message-reactions
-        >
-          {reactions.flatMap((reaction) =>
-            [...new Set(reaction.events.map((event) => event.authorId))].map(
-              (authorId) => (
-                <span
-                  key={JSON.stringify([
-                    reaction.content,
-                    reaction.emoji?.url,
-                    authorId,
-                  ])}
-                >
-                  {extensions ? (
-                    <InlineText
-                      registry={extensions.inline}
-                      content={{
-                        text: reaction.content,
-                        message: row,
-                        reaction,
-                      }}
-                      media={media}
-                    />
-                  ) : (
-                    reaction.content
-                  )}
-                </span>
-              ),
-            ),
-          )}
-        </div>
-      )
-    );
+  const reactionContent = interactiveReactionContext ? (
+    <MessageReactions
+      onFocusedRemoval={() =>
+        menuTrigger.current?.focus({ preventScroll: true })
+      }
+      row={row}
+      session={interactiveReactionContext.session}
+      scope={interactiveReactionContext.scope}
+      tools={interactiveReactionContext.extensions.tools}
+      inline={interactiveReactionContext.extensions.inline}
+      profiles={directory.profiles}
+      disabled={
+        !canReact ||
+        (!!row.delivery && !["accepted", "seen"].includes(row.delivery))
+      }
+    />
+  ) : (
+    fallbackReactions &&
+    fallbackReactions.length > 0 && (
+      // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
+      <div
+        className={`${styles.reactions} ${styles.reactionFallback}`}
+        data-message-reactions
+        role="group"
+        aria-label="Reactions"
+        data-copy-text={fallbackReactions
+          .map(({ reaction, count }) => `${reaction.content} ${count}`)
+          .join(", ")}
+      >
+        {fallbackReactions.map(({ reaction, count }) => (
+          <span
+            key={JSON.stringify([reaction.content, reaction.emoji?.url])}
+            aria-label={`${reaction.content}: ${count} ${count === 1 ? "person" : "people"}`}
+            data-reaction={reaction.content}
+            data-reaction-url={reaction.emoji?.url}
+            role="img"
+          >
+            <span
+              className={styles.reactionGlyph}
+              data-grouped=""
+              aria-hidden="true"
+            >
+              <span className={styles.reactionFallbackLabel}>
+                {extensions ? (
+                  <InlineText
+                    registry={extensions.inline}
+                    content={{
+                      text: reaction.content,
+                      message: row,
+                      reaction,
+                    }}
+                    media={media}
+                  />
+                ) : (
+                  reaction.content
+                )}
+              </span>
+              <span className={styles.reactionCount}>{count}</span>
+            </span>
+          </span>
+        ))}
+      </div>
+    )
+  );
   const message = (
     <div
       data-message-id={renderMessage ? undefined : row.id}
+      aria-current={!renderMessage && threadOpen ? true : undefined}
       data-huddle-row={row.huddle ? "" : undefined}
     >
       {day && <DayDivider createdAt={row.createdAt} />}
@@ -1109,7 +1568,9 @@ function MessageRowContent({
         ref={rowRef}
         className={styles.message}
         data-highlight-surface=""
+        data-thread-open={threadOpen || undefined}
         data-layout={layout}
+        data-full-width={fullWidth || undefined}
         data-stack-previous={stackPrevious || undefined}
         data-stack-next={stackNext || undefined}
         data-viewer-message={
@@ -1120,10 +1581,7 @@ function MessageRowContent({
             ? ""
             : undefined
         }
-        data-own={
-          (!attachmentOnly && !cardsOnly && !row.huddle && ownBubble) ||
-          undefined
-        }
+        data-own={(!attachmentOnly && !row.huddle && ownBubble) || undefined}
       >
         {!renderMessage && <span className={styles.messageGutter} />}
 
@@ -1132,8 +1590,7 @@ function MessageRowContent({
           <div
             className={styles.messageContent}
             data-bubble={
-              (!attachmentOnly && !cardsOnly && !row.huddle && !shownRow) ||
-              undefined
+              (!attachmentOnly && !row.huddle && !shownRow) || undefined
             }
           >
             {/* A live append must not remove the reader's current focus target. */}
@@ -1156,12 +1613,17 @@ function MessageRowContent({
                 !row.huddle &&
                 !renderMessage &&
                 messageActions()}
-              {/* Screen-reader text stays out of selections: the clipboard carries
-                what the reader saw, so a continuation copies without a byline. */}
+              {/* A selection holding the whole byline copies it as one line,
+                name then time (selection-copy.ts). A grouped row's byline is
+                otherwise screen-reader text that stays out of selections. */}
               <div
                 className={
                   stackPrevious ? "sr-only select-none" : styles.byline
                 }
+                data-copy-author={
+                  row.workflowOwnerId && workflowOwnerName ? "Workflow" : name
+                }
+                data-copy-time={showTime ? row.createdAt : undefined}
               >
                 {row.workflowOwnerId && workflowOwnerName ? (
                   <WorkflowByline
@@ -1244,10 +1706,7 @@ function MessageRowContent({
                     <button
                       type="button"
                       className={referenceStyles.link}
-                      onClick={() => {
-                        if (canOpenLink?.(transcriptView))
-                          openProfileTranscript(transcriptView, openLink);
-                      }}
+                      onClick={() => openActivity(transcriptView)}
                     >
                       View activity
                     </button>
@@ -1267,6 +1726,9 @@ function MessageRowContent({
                   )}
               </div>
             </div>
+            {session?.relayAuthor && !row.membership && !row.huddle && (
+              <PinnedMarker session={session} row={row} />
+            )}
             {row.sentFromThread && (
               <div className={styles.sentFromThread}>
                 Sent from{" "}
@@ -1292,32 +1754,6 @@ function MessageRowContent({
               }
               attachments={attachmentGroups.length > 0}
             >
-              {chatCards.length > 0 && (
-                <div
-                  className={styles.messageAttachments}
-                  data-solo-cards
-                  data-message-action-anchor
-                >
-                  {chatCards.map((card) => (
-                    <MessageMarkdown
-                      key={card.start}
-                      directory={directory}
-                      session={references}
-                      scope={scope}
-                      row={{
-                        ...shown,
-                        content: card.content,
-                        attachmentSeams: [],
-                      }}
-                      extensions={extensions}
-                      media={media}
-                      onOpenLink={openLink}
-                      canOpenLink={canOpenLink}
-                      participantProfiles={participantProfiles}
-                    />
-                  ))}
-                </div>
-              )}
               {bodyShown && (
                 <div
                   className={
@@ -1370,7 +1806,7 @@ function MessageRowContent({
                     body
                   )}
                   {editedInBubble && shown.edited && <EditedMarker />}
-                  {reactionsInBubble && reactionContent}
+                  {reactionsInBubble && !withoutReactions && reactionContent}
                 </div>
               )}
               {previewUrls.length > 0 && (
@@ -1379,247 +1815,25 @@ function MessageRowContent({
                   messageId={row.id}
                   registry={linkPreviewRegistry}
                   onOpenLink={openLink}
+                  settings={extensions?.settings}
                 />
               )}
-              {attachmentGroups.length > 0 && (
-                <div
-                  className={styles.messageAttachments}
-                  data-message-attachments
-                  ref={observeAttachments}
-                  onPlay={trackMedia}
-                  onPause={trackMedia}
-                  onEnded={trackMedia}
-                  onEmptied={trackMedia}
-                  onError={trackMedia}
-                >
-                  {attachmentGroups.map((group) => {
-                    const images =
-                      group[0]?.kind === "image" || group[0]?.kind === "video";
-                    const imageOnly = group.every(
-                      (item) => item.kind === "image",
-                    );
-                    const mediaLabel = imageOnly
-                      ? "images"
-                      : "photos and videos";
-                    const files = group[0]?.kind === "file";
-                    // Only collapse when the host can open the complete gallery.
-                    const collapsed =
-                      images && group.length > 4 && !!onOpenMediaReview;
-                    const previews = collapsed ? group.slice(0, 4) : group;
-                    const items = previews.map((attachment, index) => {
-                      const url = safeMessageUrl(attachment.url);
-                      if (!url) return null;
-                      const source = media(url);
-                      if (attachment.kind === "file") {
-                        const fallback = (
-                          <FileAttachment
-                            key={url}
-                            attachment={{ ...attachment, url }}
-                            source={source}
-                            onOpenLink={openLink}
-                          />
-                        );
-                        return source && extensions?.attachments ? (
-                          <AttachmentView
-                            key={url}
-                            registry={extensions.attachments}
-                            attachment={{ ...attachment, url }}
-                            source={source}
-                            placement="message"
-                            message={row}
-                            FileCard={FileAttachment}
-                            fallback={fallback}
-                          />
-                        ) : (
-                          fallback
-                        );
-                      }
-                      if (attachment.kind === "audio") {
-                        if (
-                          source &&
-                          (isProxySource(source) || isNativeMediaSource(source))
-                        )
-                          return extensions?.attachments ? (
-                            <AttachmentDownloadContext key={url} value={true}>
-                              <AttachmentView
-                                registry={extensions.attachments}
-                                attachment={{ ...attachment, url }}
-                                source={source}
-                                placement="message"
-                                message={row}
-                                fallback={
-                                  <AudioAttachment
-                                    attachment={{ ...attachment, url }}
-                                    source={source}
-                                  />
-                                }
-                              />
-                            </AttachmentDownloadContext>
-                          ) : (
-                            <AudioAttachment
-                              key={url}
-                              attachment={{ ...attachment, url }}
-                              source={source}
-                            />
-                          );
-                        return (
-                          <FileAttachment
-                            key={url}
-                            attachment={{ ...attachment, url }}
-                            source={source}
-                            onOpenLink={openLink}
-                          />
-                        );
-                      }
-                      if (attachment.kind === "image") {
-                        // biome-ignore lint/plugin: Attachment thumbnails, not avatars.
-                        const small = media(url, "small");
-                        // Third-party URLs map to themselves: no thumbnail. JPEG
-                        // drops alpha, so these formats use the WebP variant.
-                        const alpha =
-                          /^(.+\/[0-9a-f]{64})\.(?:png|gif|webp|avif)$/.exec(
-                            url,
-                          );
-                        const thumbnail =
-                          small === source
-                            ? undefined
-                            : alpha
-                              ? media(`${alpha[1]}.thumb.webp`)
-                              : small;
-                        const image = (
-                          <AttachmentImage
-                            onOpenLink={
-                              canOpenLink?.(attachment.url)
-                                ? openLink
-                                : undefined
-                            }
-                            key={url}
-                            session={session}
-                            attachment={{ ...attachment, url }}
-                            source={source}
-                            thumbnail={thumbnail}
-                            cached={cached}
-                            compact={group.length >= 4}
-                            overlayCount={
-                              collapsed && index === 3 ? group.length - 3 : 0
-                            }
-                            keepMounted={keepRowMounted}
-                            label={
-                              collapsed && index === 3
-                                ? `View all ${group.length} ${mediaLabel}, starting at ${imageOnly ? "image" : "item"} 4`
-                                : group.length > 1
-                                  ? `Open image ${index + 1} of ${group.length}`
-                                  : "Open image attachment"
-                            }
-                            {...(onOpenMediaReview
-                              ? {
-                                  onOpenReview: (item, seconds) =>
-                                    onOpenMediaReview(
-                                      row.id,
-                                      item,
-                                      seconds,
-                                      row.replyCount > 0 ||
-                                        (!!row.threadRootId &&
-                                          row.threadRootId !== row.id),
-                                      row.attachments,
-                                    ),
-                                }
-                              : {})}
-                          />
-                        );
-                        return source &&
-                          extensions?.attachments &&
-                          drawn(attachment) ? (
-                          <AttachmentView
-                            key={url}
-                            registry={extensions.attachments}
-                            attachment={{ ...attachment, url }}
-                            source={source}
-                            placement="message"
-                            message={row}
-                            fallback={image}
-                          />
-                        ) : (
-                          image
-                        );
-                      }
-                      return (
-                        <MediaAttachment
-                          key={url}
-                          attachment={{ ...attachment, url }}
-                          media={media}
-                          compact={
-                            images && group.length >= 4 && !!onOpenMediaReview
-                          }
-                          overlayCount={
-                            collapsed && index === 3 ? group.length - 3 : 0
-                          }
-                          label={
-                            collapsed && index === 3
-                              ? `View all ${group.length} ${mediaLabel}, starting at item 4`
-                              : `Open video ${index + 1} of ${group.length}`
-                          }
-                          mode={mediaMode}
-                          {...(attachment.kind === "video" &&
-                          mediaSeekTo !== undefined
-                            ? {
-                                seekTo: mediaSeekTo,
-                                ...(mediaSeekRequest !== undefined
-                                  ? { seekRequest: mediaSeekRequest }
-                                  : {}),
-                              }
-                            : {})}
-                          {...(onMediaPlayback
-                            ? { onPlayback: onMediaPlayback }
-                            : {})}
-                          {...(onOpenMediaReview
-                            ? {
-                                onOpenReview: (item, seconds) =>
-                                  onOpenMediaReview(
-                                    row.id,
-                                    item,
-                                    seconds,
-                                    row.replyCount > 0 ||
-                                      (!!row.threadRootId &&
-                                        row.threadRootId !== row.id),
-                                    row.attachments,
-                                  ),
-                              }
-                            : {})}
-                        />
-                      );
-                    });
-                    return images &&
-                      !(group[0] && drawn(group[0])) &&
-                      (imageOnly || group.length >= 4) ? (
-                      <div className={styles.imageGroup} key={group[0]?.url}>
-                        {/* biome-ignore lint/a11y/useSemanticElements: This labels related media links, not a fieldset of form controls. */}
-                        <div
-                          className={`${styles.imageList} ${group.length >= 4 ? styles.imageGrid : ""}`}
-                          data-image-grid={group.length >= 4 || undefined}
-                          role="group"
-                          aria-label={`${group.length} ${imageOnly ? (group.length === 1 ? "image" : "images") : "photos and videos"}`}
-                        >
-                          {items}
-                        </div>
-                      </div>
-                    ) : files ? (
-                      <div className={styles.fileGroup} key={group[0]?.url}>
-                        {items}
-                      </div>
-                    ) : (
-                      items
-                    );
-                  })}
-                </div>
-              )}
+              {attachmentContent()}
               {!editedInBody && !editedInBubble && shown.edited && (
                 <EditedMarker />
               )}
             </MessageTimestampHint>
           </div>
-          {!reactionsInBubble && reactionContent}
+          {!reactionsInBubble && !withoutReactions && reactionContent}
           <DeliveryNotice row={row} retry={retry} />
+          {session && scope && (
+            <AgentDeclineNotes
+              session={session}
+              scope={scope}
+              channelId={row.channelId}
+              messageId={row.id}
+            />
+          )}
           {active && session && scope && extensions?.accessories && (
             <ComposerAccessories
               registry={extensions.accessories}
@@ -1685,8 +1899,10 @@ function MessageRowContent({
       {messageActions(renderMessage(message, menuTrigger))}
       {overlays}
     </>
-  ) : (
+  ) : row.membership || row.huddle ? (
     message
+  ) : (
+    messageActions(message, true)
   );
 }
 /** Coordination between agents reads as one quiet line in time order: who
@@ -1698,11 +1914,17 @@ export const MessageRow = memo(function AudienceMessageRow(
 ) {
   const { onOpenLink, canOpenLink, row } = props;
   const rootId = row.threadRootId ?? row.id;
+  const view = useComposerScope();
   // Plugin content in this row opens targets as the row's own links do.
   return (
     <TargetOpenerProvider
       canOpen={(target) => canOpenLink?.(target) ?? false}
-      open={(target) => onOpenLink(target, { rootId })}
+      open={(target) =>
+        onOpenLink(target, {
+          rootId,
+          ...(view && { view: { rootId: view.rootId } }),
+        })
+      }
     >
       {row.notice === "execution-failure" &&
       !row.edited &&
@@ -1717,6 +1939,8 @@ export const MessageRow = memo(function AudienceMessageRow(
         ) : (
           <AgentsMessageRow {...props} failure />
         )
+      ) : row.relayedFrom?.verified ? (
+        <RelayedMessageRow {...props} />
       ) : row.audience === "agents" ? (
         <AgentsMessageRow {...props} />
       ) : (
@@ -1726,6 +1950,9 @@ export const MessageRow = memo(function AudienceMessageRow(
   );
 });
 
+// What can hold focus in an activity entry. Its line is the first.
+const focusStops =
+  "a[href], button, input, select, textarea, summary, audio[controls], video[controls], [tabindex]";
 function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   const {
     row,
@@ -1770,6 +1997,25 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   useEffect(() => {
     if (open) return keepMounted?.(row.id);
   }, [open, keepMounted, row.id]);
+  // Changing container replaces the entry. A reader whose focus was in it
+  // stays on the same stop in its replacement, or else on its line, so Tab
+  // continues from this row. Focus that had left the entry is not moved.
+  const entry = useRef<HTMLDivElement | null>(null);
+  const focused = useRef<{ entry: Element; stop: Element } | null>(null);
+  useLayoutEffect(() => {
+    void bubble;
+    const was = focused.current;
+    const now = entry.current;
+    if (!was || !now || was.stop.isConnected) return;
+    const stops = (root: Element) => [
+      ...root.querySelectorAll<HTMLElement>(focusStops),
+    ];
+    const [line, ...rest] = stops(now);
+    const same = rest[stops(was.entry).indexOf(was.stop as HTMLElement) - 1];
+    (same?.tagName === was.stop.tagName ? same : line)?.focus({
+      preventScroll: true,
+    });
+  }, [bubble]);
   const resolveName = useChannelIdentityNames(references, row.channelId);
   const directory = useReferenceDirectory(references, participantProfiles);
   const { recipients, body } = useMemo(
@@ -1890,6 +2136,18 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
               onOpenChange={setOpen}
               className={styles.audienceEntry}
               data-highlight-surface=""
+              data-thread-open={props.threadOpen || undefined}
+              aria-current={props.threadOpen ? true : undefined}
+              ref={entry}
+              onFocus={(event) => {
+                focused.current = {
+                  entry: event.currentTarget,
+                  stop: event.target,
+                };
+              }}
+              onBlur={() => {
+                focused.current = null;
+              }}
               // One stable anchor survives both animation directions. Not the
               // button: revealing an anchor takes it out of the Tab order.
               data-message-id={row.id}
@@ -1979,6 +2237,188 @@ function AgentsMessageRow(props: MessageRowProps & { failure?: boolean }) {
   );
 }
 
+/** Another agent's message that its owner relayed here from another chat. It
+ * reads as that agent's quiet line, never as the signer's own message, and
+ * opens to the text without the notice older clients show in its place. */
+function RelayedMessageRow(props: MessageRowProps) {
+  const { row, session, media, participantProfiles, agentPubkeys } = props;
+  const source = row.relayedFrom;
+  const references = props.references ?? session;
+  const [open, setOpen] = useState(false);
+  const keepMounted = props.keepMounted;
+  useEffect(() => {
+    if (open) return keepMounted?.(row.id);
+  }, [open, keepMounted, row.id]);
+  const resolveName = useChannelIdentityNames(references, row.channelId);
+  const directory = useReferenceDirectory(references, participantProfiles);
+  const showTime = useMessageTimeVisible(references?.channels, row.channelId);
+  // The button's name carries the full date, so it follows time zone changes.
+  useLocalDay();
+  const shown = useMemo(() => {
+    const content = withoutRelayNotice(row.content, row.relayedFrom?.notice);
+    const removed = row.content.length - content.length;
+    // Attachment seams are offsets into the content, so they move with it.
+    const attachmentSeams = row.attachmentSeams?.flatMap((seam) =>
+      seam >= removed ? [seam - removed] : [],
+    );
+    return {
+      ...row,
+      content,
+      ...(attachmentSeams ? { attachmentSeams } : {}),
+    };
+  }, [row]);
+  if (!source) return null;
+  const name = (pubkey: string) =>
+    resolveName(
+      pubkey,
+      (pubkey === row.authorId ? props.profile : directory.profiles.get(pubkey))
+        ?.name ?? pubkey.slice(0, 10),
+    );
+  const agent = {
+    name: name(source.agent),
+    profile: directory.profiles.get(source.agent),
+  };
+  const recipients = row.mentions
+    .filter((pubkey) => pubkey !== source.agent)
+    .map(name);
+  // Only the reader's own chats are named; anyone else sees the agent alone.
+  const chat = directory.channels.find((item) => item.id === source.channelId);
+  const chatLabel =
+    chat && `${chat.channelType === "dm" ? "" : "#"}${chat.name}`;
+  const excerpt = Array.from(
+    messagePreviewText(shown.content).replace(/\s+/g, " "),
+  );
+  const preview =
+    excerpt.length > 280
+      ? `${excerpt.slice(0, 279).join("")}…`
+      : excerpt.join("");
+  return (
+    <FullMessageRow
+      {...props}
+      shownRow={shown}
+      withoutReactions
+      alignViewer={false}
+      day={false}
+      layout="continuation"
+      stackPrevious
+      stackNext
+      renderMessage={(message, trigger) => (
+        <div
+          className={styles.relayedRow}
+          data-relayed=""
+          data-layout={props.layout ?? "timeline"}
+          data-open={open || undefined}
+        >
+          {props.day && <DayDivider createdAt={row.createdAt} />}
+          <Collapsible.Root
+            open={open}
+            onOpenChange={setOpen}
+            className={styles.relayedEntry}
+            data-highlight-surface=""
+            data-thread-open={props.threadOpen || undefined}
+            aria-current={props.threadOpen ? true : undefined}
+            data-message-id={row.id}
+          >
+            {/* The whole line opens it; only the source chat link sits above. */}
+            <div className={styles.relayedHeader} data-open={open || undefined}>
+              <Collapsible.Trigger
+                ref={trigger}
+                data-buzz-ui=""
+                className={styles.relayedTrigger}
+                aria-label={`${agent.name}${chatLabel ? ` from ${chatLabel}` : ""}: ${preview}${row.edited ? " (edited)" : ""}${row.replyCount > 0 ? `, ${row.replyCount === 1 ? "1 reply" : `${row.replyCount} replies`}` : ""}, ${formatFullTimestamp(row.createdAt)}`}
+              />
+              <span className={styles.relayedAvatar} aria-hidden="true">
+                <AgentAvatar
+                  session={session}
+                  agentPubkey={source.agent}
+                  channelId={row.channelId}
+                  src={avatarMedia(agent.profile?.picture, media)}
+                  alt=""
+                  fallback={agent.name}
+                  size="fill"
+                  shape={
+                    agentPubkeys?.has(source.agent) || agent.profile?.isAgent
+                      ? "squircle"
+                      : "circle"
+                  }
+                />
+              </span>
+              <span className={styles.relayedName} aria-hidden="true">
+                {agent.name}
+              </span>
+              {chat && (
+                <>
+                  <span
+                    className={styles.relayedSubtle}
+                    data-relayed-source=""
+                    data-relayed-from={chat.channelType === "dm" ? "dm" : ""}
+                    aria-hidden="true"
+                  >
+                    from
+                  </span>
+                  <span className={styles.relayedChat} data-relayed-source="">
+                    <MessageLink
+                      url={`buzz://channel/${encodeURIComponent(chat.id)}`}
+                      label={chatLabel}
+                      registry={props.extensions?.links}
+                      onOpenLink={(url) => props.onOpenLink(url)}
+                      session={session}
+                      scope={props.scope}
+                      channelPrivate={!!chat.private}
+                    />
+                  </span>
+                </>
+              )}
+              <span className={styles.relayedPreview} aria-hidden="true">
+                {!open && preview}
+              </span>
+              {!open && row.edited && (
+                <span aria-hidden="true">
+                  <EditedMarker />
+                </span>
+              )}
+              {/* Opening the line shows the thread control and its unread cue. */}
+              {!open && row.replyCount > 0 && (
+                <span className={styles.relayedSubtle} aria-hidden="true">
+                  {row.replyCount === 1
+                    ? "1 reply"
+                    : `${row.replyCount} replies`}
+                </span>
+              )}
+              <span className={styles.relayedTime} aria-hidden="true">
+                <MessageTimestamp
+                  createdAt={row.createdAt}
+                  visible={showTime}
+                />
+              </span>
+              <CaretRightIcon
+                className={styles.relayedCaret}
+                aria-hidden="true"
+              />
+            </div>
+            <Collapsible.Panel
+              className={styles.relayedPanel}
+              inert={!open || undefined}
+              aria-hidden={!open || undefined}
+            >
+              <div className={styles.relayedBody}>
+                {message}
+                <p className={styles.relayedFooter}>
+                  Sent as{" "}
+                  {row.authorId === (props.viewer ?? session?.viewer)
+                    ? "you"
+                    : name(row.authorId)}
+                  {recipients.length > 0 && ` · to ${recipients.join(", ")}`}
+                </p>
+              </div>
+            </Collapsible.Panel>
+          </Collapsible.Root>
+        </div>
+      )}
+    />
+  );
+}
+
 // Subscribe only for mounted thread buttons. Evidence and reading remain session-owned;
 // rendering a row must not initiate per-thread reads or acknowledge unseen replies.
 function useThreadUnread(
@@ -2038,8 +2478,12 @@ function useThreadAgents(
     get,
   );
   // Subscribe to this thread's working agents, not every activity step.
+  const subscribeWork = useChannelActivitySubscription(
+    session?.agentActivity,
+    channelId,
+  );
   const getWork = () => {
-    const activity = session?.agentActivity?.snapshot();
+    const activity = session?.agentActivity?.snapshot(channelId);
     const typers = threadWorkingAgents(
       activity,
       keys ? keys.split(",") : [],
@@ -2060,11 +2504,7 @@ function useThreadAgents(
       typers.length > 0 && typers.every((agent) => breathing(local.get(agent)));
     return `${waiting ? "waiting" : "working"}:${typers.join(",")}`;
   };
-  const work = useSyncExternalStore(
-    session?.agentActivity?.subscribe ?? noSubscribe,
-    getWork,
-    getWork,
-  );
+  const work = useSyncExternalStore(subscribeWork, getWork, getWork);
   const [state, joined = ""] = work.split(/:(.*)/s);
   const typers = joined ? joined.split(",") : [];
   const hasWork = typers.length > 0;
@@ -2079,4 +2519,24 @@ function useThreadAgents(
       library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? [],
     waiting: state === "waiting",
   };
+}
+
+/** A quiet line on a message that is pinned in its channel. */
+function PinnedMarker({
+  session,
+  row,
+}: {
+  session: RelaySession;
+  row: ChannelMessage;
+}) {
+  const pins = usePinnedMessages(session, row.channelId);
+  if (!pins.set.has(row.id)) return null;
+  return (
+    <div className={styles.pinnedMarker}>
+      <span>
+        <PinIcon size={12} aria-hidden="true" />
+        Pinned
+      </span>
+    </div>
+  );
 }

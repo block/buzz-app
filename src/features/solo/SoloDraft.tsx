@@ -1,3 +1,5 @@
+import { hostComposerProvenance } from "../messages/mention-draft";
+import { sendWithOwnerMentions } from "../relay/owner-mentions";
 import { linkedDraftKey, readLinkedChat, type LinkedChat } from "./linked-chat";
 import {
   canonicalDetailsName,
@@ -7,6 +9,7 @@ import { startingChatTitle } from "./chat-title";
 import { ChatNotStarted } from "../relay/channel-writes";
 import { DraftSettings } from "./DraftSettings";
 import { SoloDraftView } from "./SoloPresentation";
+import type { SoloDraftStart } from "../channel-navigation/solo-navigation-contract";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { GearIcon } from "../../shared/design-system/icons";
@@ -18,6 +21,7 @@ import {
 } from "./workspace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
+import { ownedSoloAgents } from "../relay/solo-admins";
 import {
   readView,
   writeView,
@@ -40,7 +44,13 @@ import { useDefaultAgent } from "./default-agent";
 import { draftLifetime } from "./default-lifetime";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
+import {
+  mentionChannel,
+  outsideMentionReferences,
+  reserveSoloMentions,
+} from "../messages/mention-admission";
 import { composerMarkdown } from "../messages/composer-markdown";
+import { draftTokens, signMessageTokens } from "../messages/message-tokens";
 import {
   addressingOnly,
   followupDraft,
@@ -102,10 +112,18 @@ export function resetNewChatProject(scope: string, projectId: string) {
   writeView(scope, `${key}:new-project`, null);
 }
 
-/** New chats share one saved draft. When it holds only tags for agents
- * other than the named one, it has no text of the person's to keep. */
-function dropOtherAgentTag(scope: string, key: string, agent?: string) {
+/** New can return typing to an open draft without replacing its editor. */
+export function soloDraftInput() {
+  return document.querySelector<HTMLElement>(
+    '#new-chat-prompt textarea, #new-chat-prompt [role="textbox"]',
+  );
+}
+
+/** A named route replaces earlier toolbar picks and legacy tag-only defaults,
+ * while authored inline mentions remain part of the person's draft. */
+function prepareNamedAgentDraft(scope: string, key: string, agent?: string) {
   if (!agent) return;
+  writeView(scope, `${key}:agents`, null);
   const saved = mentionDraft(readView<unknown>(scope, key, ""));
   if (
     addressingOnly(saved) &&
@@ -169,6 +187,8 @@ const openNewChats = new Set<{
 const restoredPrompts = new Map<string, string>();
 const REGION_UNAVAILABLE =
   "This chat's plugin is unavailable. Your draft is saved.";
+// Allow async local preparation without leaving Send stuck on a plugin.
+const PREPARE_START_TIMEOUT_MS = 3_000;
 
 export function SoloDraft({
   session,
@@ -183,10 +203,9 @@ export function SoloDraft({
   source,
   visit,
   region,
-  lead,
+  draft: regionDraft,
 }: {
-  /** This region draft starts its workspace's lead. */
-  lead?: boolean | undefined;
+  draft?: SoloDraftStart["draft"];
   /** The Solo region whose source opened this draft; its chat gets that label. */
   region?: string | undefined;
   /** The visit presenting this draft, a Back stop only once drafted. */
@@ -210,16 +229,15 @@ export function SoloDraft({
   projectId?: string | undefined;
 }) {
   const draftKey = region
-    ? regionDraftKey(region, projectId)
+    ? regionDraftKey(region, projectId, regionDraft?.key)
     : linkedId
       ? linkedDraftKey(linkedId)
       : projectId
         ? `solo:project:${projectId}`
         : "solo";
   const notify = useToastNotification();
-  // Before the composer reads it: a named agent replaces a saved draft that
-  // only tags another agent, since that tag was the earlier default.
-  useState(() => dropOtherAgentTag(scope, `${draftKey}:new-draft`, agent));
+  // Reconcile explicit route intent before the composer restores its pick.
+  useState(() => prepareNamedAgentDraft(scope, `${draftKey}:new-draft`, agent));
   // Read the source live: starting the chat consumes it.
   const linkedSource = useCallback(
     () => (source ? readLinkedChat(scope, draftKey)?.link : undefined),
@@ -273,7 +291,7 @@ export function SoloDraft({
         settingsRevision = nextSettings;
         setDraftSettings(readDraftSettings(scope, draftKey));
       }
-    });
+    }, [projectKey, settingsKey]);
   }, [scope, draftKey, projectId]);
   const prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -318,6 +336,19 @@ export function SoloDraft({
   );
   const available = session.channelWrites.available && (!region || !!owner);
   const [channelId] = useState(() => crypto.randomUUID());
+  // The first message references people as the chat's later ones do. The
+  // reservation is in place before the composer first renders, so a restored
+  // draft's references are known at once; the effect owns and releases it.
+  const reservation = useRef<() => void>(undefined);
+  reservation.current ??= reserveSoloMentions(session, channelId);
+  useEffect(() => {
+    reservation.current ??= reserveSoloMentions(session, channelId);
+    const release = reservation.current;
+    return () => {
+      release();
+      reservation.current = undefined;
+    };
+  }, [session, channelId]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const submitting = useRef(false);
@@ -348,13 +379,14 @@ export function SoloDraft({
     picks?: MentionPicks,
     draftPicks?: DraftPicks,
     draftPicksRevision?: string | null,
+    explicitRecipientIds?: readonly string[],
   ) {
     const text = composerMarkdown(draft);
     if (submitting.current || !text.trim() || !available) return;
     submitting.current = true;
     setBusy(true);
     setError(undefined);
-    const recipients = [
+    const tagged = [
       ...new Set(
         (addressed ?? mentionDraft(draft).recipients).map(
           (item) => item.pubkey,
@@ -374,6 +406,13 @@ export function SoloDraft({
     const draftModelPicksKey = soloModelPicksKey(`${draftKey}:new-draft`);
     const chatModelPicksKey = soloModelPicksKey(channelId);
     const startingDraftPicks = draftPicks ?? {};
+    // The toolbar's own selection, an emptied one included, read before the
+    // start clears it, so a refused start gives back exactly what was picked.
+    const toolbar = readView<unknown>(
+      scope,
+      `${draftKey}:new-draft:agents`,
+      null,
+    );
     try {
       if (typeof name !== "string")
         throw new Error("The chat name could not be verified.");
@@ -407,6 +446,27 @@ export function SoloDraft({
           }),
           canvas,
         });
+      // Only your agents join; anyone else tagged is a reference, which
+      // notifies nobody. Only a complete agent read can tell a name is not
+      // yours.
+      const outside = () =>
+        tagged.filter((key) =>
+          outsideMentionReferences(
+            mentionChannel(session, channelId),
+            session.agentChoices.snapshot().identities,
+            key,
+          ),
+        );
+      let references = outside();
+      if (references.length) {
+        await session.agentChoices.refresh();
+        if (!mounted.current) return;
+        references = outside();
+        if (references.length && !session.agentChoices.snapshot().complete)
+          throw new Error("Could not load your agents. Retry.");
+      }
+      const recipients = tagged.filter((key) => !references.includes(key));
+      if (!recipients.length) throw new Error("Tag an agent to send.");
       // The workspace's agents join in the create with the tagged ones.
       const members = [...new Set([...recipients, ...(setup?.agents ?? [])])];
       // The agents already listed decide at once; only an unknown one waits
@@ -425,6 +485,10 @@ export function SoloDraft({
             "Solo chats can only use your available agents. Check mentions and workspace defaults.",
           );
       }
+      const admins = [
+        ...(await ownedSoloAgents(session.profiles, session.viewer, members)),
+      ];
+      if (!mounted.current) return;
       // Read at Send: the region's source may have stopped since.
       const regionOwner = () => {
         const current = region
@@ -450,15 +514,12 @@ export function SoloDraft({
       regionOwner();
       // The region's source finds how its chat started, even after a restart.
       const startKey = region ? regionStartKey(channelId) : undefined;
-      if (
-        startKey &&
-        !writeView(scope, startKey, {
-          region,
-          ...(project ? { workspace: project } : {}),
-          // Only while it still targets the workspace it leads.
-          ...(lead && project === projectId ? { lead: true } : {}),
-        })
-      )
+      const startRecord = {
+        ...(region ? { region } : {}),
+        ...(regionDraft ? { draft: regionDraft } : {}),
+        ...(project ? { workspace: project } : {}),
+      };
+      if (startKey && !writeView(scope, startKey, startRecord))
         throw new Error(
           "This chat couldn't be saved on this device. Your draft is kept.",
         );
@@ -469,13 +530,51 @@ export function SoloDraft({
       // agents read it from the start.
       // A region files its own chats.
       if (setup?.projectId && !region)
-        void session.soloPreferences
+        void session.sidebarPreferences
           .assign(channelId, setup.projectId)
           .catch((reason) =>
             console.warn("Solo chat could not join its workspace", reason),
           );
       let starting: ReturnType<typeof session.channelWrites.start>;
       try {
+        const owner = regionOwner();
+        if (owner?.source.prepareStart) {
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              Promise.resolve(
+                owner.source.prepareStart(owner.binding, {
+                  channelId,
+                  members,
+                  start: {
+                    ...(project ? { workspace: project } : {}),
+                    draft: regionDraft ?? { context: { saved: startRecord } },
+                  },
+                }),
+              ),
+              new Promise<never>((_resolve, reject) => {
+                timeout = setTimeout(
+                  () => reject(new Error("Solo region preparation timed out")),
+                  PREPARE_START_TIMEOUT_MS,
+                );
+              }),
+            ]);
+          } catch (reason) {
+            console.warn("Solo region could not prepare its chat", reason);
+          } finally {
+            clearTimeout(timeout);
+          }
+          if (!mounted.current) {
+            if (startKey) writeView(scope, startKey, null);
+            return;
+          }
+          const current = regionOwner();
+          if (
+            current?.source !== owner.source ||
+            current?.binding !== owner.binding
+          )
+            throw new Error(REGION_UNAVAILABLE);
+        }
         starting = session.channelWrites.start(
           channelId,
           name,
@@ -490,7 +589,7 @@ export function SoloDraft({
               }
             : undefined,
           // Unguarded, so a restart can retry it like any New chat.
-          ...(region ? [{ labels: [region] }] : []),
+          { admins, ...(region ? { labels: [region] } : {}) },
         );
       } catch (reason) {
         if (startKey) writeView(scope, startKey, null);
@@ -510,23 +609,29 @@ export function SoloDraft({
         recipients,
       );
       try {
-        if (Object.keys(firstPicks).length)
-          session.messages.send(
-            channelId,
-            text,
-            recipients,
-            uploaded,
-            undefined,
-            [],
-            firstPicks,
-          );
-        else
-          session.messages.send(
-            channelId,
-            text,
-            recipients,
-            ...(uploaded.length ? [uploaded] : []),
-          );
+        signMessageTokens(draftTokens(draft), () =>
+          sendWithOwnerMentions(
+            session,
+            explicitRecipientIds?.filter((id) => recipients.includes(id)),
+            () =>
+              references.length || Object.keys(firstPicks).length
+                ? session.messages.send(
+                    channelId,
+                    text,
+                    recipients,
+                    uploaded,
+                    undefined,
+                    references,
+                    firstPicks,
+                  )
+                : session.messages.send(
+                    channelId,
+                    text,
+                    recipients,
+                    ...(uploaded.length ? [uploaded] : []),
+                  ),
+          ),
+        );
         files.clear();
         writeView(
           scope,
@@ -542,7 +647,13 @@ export function SoloDraft({
         writeView(scope, `draft:${channelId}`, draft);
         transferAttachmentDraft(
           files,
-          attachmentDraft(session, `${scope}:draft:${channelId}`, channelId),
+          attachmentDraft(
+            session,
+            `${scope}:draft:${channelId}`,
+            channelId,
+            false,
+            [scope, `draft:${channelId}:files`],
+          ),
         );
       }
       if (source) writeView(scope, draftKey, null);
@@ -695,12 +806,21 @@ export function SoloDraft({
                   missing.push("settings");
                 if (!writeView(scope, `${draftKey}:new-project`, project))
                   missing.push("workspace");
-                // The pill's agents, when it routed the send; the composer reads
-                // them as it mounts. Tags in the text carry their own.
+                // The pill's agents, as the viewer picked them, an emptied
+                // pill included; the composer reads them as it mounts. Without
+                // a pick, those the pill stood in with, beside the text's own
+                // tags (only references, when it alone routed the send).
+                // A pick made in New chat since the start cleared it is newer
+                // than this one, so it stays.
+                const typed = new Set(draft.recipients.map((p) => p.pubkey));
+                const pill = Array.isArray(toolbar)
+                  ? toolbar
+                  : (addressed?.filter((p) => !typed.has(p.pubkey)) ?? []);
                 if (
-                  addressed &&
-                  !draft.recipients.length &&
-                  !writeView(scope, `${draftKey}:new-draft:agents`, addressed)
+                  (Array.isArray(toolbar) || pill.length) &&
+                  readView(scope, `${draftKey}:new-draft:agents`, null) ===
+                    null &&
+                  !writeView(scope, `${draftKey}:new-draft:agents`, pill)
                 )
                   missing.push("agents");
                 attachmentDraft(
@@ -774,6 +894,7 @@ export function SoloDraft({
   const composer = (
     <div id="new-chat-prompt" ref={prompt}>
       <MessageComposer
+        evidenceOwner={hostComposerProvenance}
         key={restored.count}
         focusRequest={restored.focus ? restored.count : 0}
         chatPresentation
@@ -789,7 +910,7 @@ export function SoloDraft({
         defaultMention={defaultAgent}
         requireMention
         trailingTool={
-          session.soloPreferences ? (
+          session.sidebarPreferences ? (
             <WorkspaceControl
               session={session}
               value={selectedProject}
@@ -799,8 +920,8 @@ export function SoloDraft({
           ) : undefined
         }
         workspace={
-          session.soloPreferences && !busy
-            ? { preferences: session.soloPreferences, choose: chooseProject }
+          session.sidebarPreferences && !busy
+            ? { preferences: session.sidebarPreferences, choose: chooseProject }
             : undefined
         }
         submission={{
@@ -815,8 +936,24 @@ export function SoloDraft({
             unsaved.current = held;
           },
           onDraftChange: draftEdited,
-          submit: (draft, files, addressed, picks, draftPicks, revision) => {
-            void start(draft, files, addressed, picks, draftPicks, revision);
+          submit: (
+            draft,
+            files,
+            addressed,
+            picks,
+            draftPicks,
+            revision,
+            explicitRecipientIds,
+          ) => {
+            void start(
+              draft,
+              files,
+              addressed,
+              picks,
+              draftPicks,
+              revision,
+              explicitRecipientIds,
+            );
           },
         }}
       />

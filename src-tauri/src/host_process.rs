@@ -12,15 +12,17 @@ use claude_hooks::ClaudeHooks;
 use protection::ProcessProtection;
 
 use crate::credential_service::{CredentialService, Issued, ProtectedLaunch};
-use crate::host_command::{effective_path, load_login_shell_path, resolve_program};
+use crate::host_command::{
+    effective_path, load_login_shell_environment, login_shell_environment, resolve_program,
+};
 use crate::{with_manager, PluginManager};
 use buzzodz_plugins::{HostProcess, ProcessArtifact};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -389,8 +391,10 @@ enum Stream {
 /// Starts the declared process `process_id` with `args` after its declared
 /// arguments. `env` adds variables (`null` removes one) to the app's own
 /// environment, less any Buzz identity: an agent's key never leaves the app.
-/// `secrets` names native-held secrets set after `env`, each only for the
-/// processes it belongs to; a secret that is not saved is left unset.
+/// `secrets` names native-held secrets, each only for the processes it belongs
+/// to; a secret that is not saved is left unset. `agent-env`, the device's list
+/// then the local agent `env_agent`'s, is set before `env` so the harness's
+/// variables win; the others are set after it.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
@@ -409,6 +413,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     agent_credential: Option<bool>,
     protected_agent: Option<ProtectedAgent>,
     secrets: Option<Vec<String>>,
+    env_agent: Option<String>,
 ) -> Result<u64, String> {
     // Any plugin process with either ID conservatively blocks managed deletion
     // app-wide, regardless of program/path. Attachment adapters use these IDs.
@@ -418,15 +423,12 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         .transpose()?;
     let page = processes.page();
     let plugin = id.clone();
-    let (declared, registry) = with_manager(manager, move |manager| {
+    let grants_revision = revision.clone();
+    let (declared, registry, policies) = with_manager(manager, move |manager| {
         let registry = manager.storage_root().to_path_buf();
-        manager
-            .host_grants(&id, &revision)?
-            .processes
-            .into_iter()
-            .find(|process| process.id == process_id)
-            .ok_or_else(|| "Process is not declared".into())
-            .map(|declared| (declared, registry))
+        let policies = manager.managed_policy_paths();
+        declared_process(&manager, &id, &grants_revision, &process_id)
+            .map(|declared| (declared, registry, policies))
     })
     .await?;
     if args.len() > 256 || args.iter().any(|arg| arg.contains('\0')) {
@@ -442,7 +444,7 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             return Err("Use a packaged Buzz build for protected workers; development frontends are mutable".into());
         }
     }
-    load_login_shell_path().await;
+    load_login_shell_environment().await;
     let path = effective_path();
     let controls = if protected {
         Some(
@@ -485,7 +487,15 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     };
     let claude_hooks = runs_protected_claude(&plugin, &declared.id, protected);
     let mut command = if let Some(protection) = protection {
-        let protection = protection.at_home()?;
+        let mut protection = protection.at_home()?;
+        // A signed managed policy can install plugins without review. A missing file,
+        // even in missing folders, is protected by name. Only a path whose folders are
+        // all missing up to `/` can't be, and a worker can't sign a policy there.
+        protection.read_only_paths.extend(
+            policies
+                .into_iter()
+                .filter(|path| protection::protectable(path)),
+        );
         let controls = controls.ok_or("Agent controls are unavailable")?;
         std::fs::create_dir_all(&controls).map_err(|_| "Agent controls are unavailable")?;
         let executable =
@@ -511,8 +521,26 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         process_command(&program, helper.as_deref(), None, &declared.args, &args)
     };
     let environment = env.unwrap_or_default();
+    let secrets = secrets.unwrap_or_default();
+    // Only a process that asks for the list touches the agent stores.
+    let agent_env = if secrets.iter().any(|s| s == crate::agent_env::SECRET) {
+        crate::agent_env::for_spawn(
+            &app.state(),
+            &app.state(),
+            &secrets,
+            env_agent.as_deref(),
+            &declared,
+            &revision,
+            protected,
+        )
+        .await?
+    } else {
+        Default::default()
+    };
     set_environment(
         &mut command,
+        login_shell_environment(),
+        &agent_env,
         &path,
         &environment,
         &app.package_info().version.to_string(),
@@ -521,6 +549,11 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
         for name in std::env::vars_os()
             .map(|(name, _)| name)
             .chain(environment.keys().map(std::ffi::OsString::from))
+            .chain(
+                login_shell_environment()
+                    .iter()
+                    .map(|(name, _)| name.clone()),
+            )
         {
             let text = name.to_string_lossy();
             if matches!(
@@ -533,16 +566,15 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
             }
         }
     }
-    for secret in secrets.unwrap_or_default() {
-        if secret != crate::claude_key::SECRET
-            || !crate::claude_key::may_have(&plugin, &declared.id)
-        {
-            return Err("That secret is not available to this process".into());
-        }
-        if let Some(key) = app.state::<crate::claude_key::ClaudeKey>().key().await? {
-            command.env(crate::claude_key::ENV, &*key);
-        }
-    }
+    grant_secrets(
+        &mut command,
+        &secrets,
+        &plugin,
+        &declared.id,
+        &agent_env,
+        &app.state(),
+    )
+    .await?;
     if let Some(mcp) = mcp {
         command.env(
             "BUZZ_AGENT_CONNECTION",
@@ -593,24 +625,52 @@ pub(crate) async fn plugin_host_process_spawn<R: tauri::Runtime>(
     )
 }
 
-/// Sets a process's environment: the app's own, less any Buzz identity it was
-/// started with, plus the plugin's `environment` (`None` removes a variable).
+/// Sets a process's environment: the app's own, less any AppImage bundle
+/// paths, plus the `login_shell` variables it forwards and then the agent's
+/// `agent_env`, less any Buzz identity these hold, plus the plugin's
+/// `environment` (`None` removes a variable), which wins over `agent_env`
+/// except for an Anthropic API key the agent's own list sets.
 /// `BUZZ_VERSION` is always this app's version, so a command can tell it runs
 /// under Buzz.
-fn set_environment(
+pub(crate) fn set_environment(
     command: &mut Command,
+    login_shell: &[(std::ffi::OsString, std::ffi::OsString)],
+    agent_env: &crate::agent_env::Lists,
     path: &OsStr,
     environment: &HashMap<String, Option<String>>,
     version: &str,
 ) -> Result<(), String> {
-    // Never pass on an identity the app itself was started with.
-    for (name, _) in std::env::vars_os() {
+    // An AppImage's launcher points library, data and program paths into its
+    // bundle for the app alone; a host program loading the bundle's older
+    // OpenSSL fails. First, so nothing below can be undone by it.
+    let bundle = appimage_bundle();
+    if let Some(bundle) = &bundle {
+        for (name, value) in std::env::vars_os() {
+            match without_bundle_paths(&value, bundle) {
+                Some(Some(kept)) => command.env(&name, kept),
+                Some(None) => command.env_remove(&name),
+                None => command,
+            };
+        }
+    }
+    command.envs(login_shell.iter().cloned());
+    command.envs(agent_env.vars().cloned());
+    // Never pass on an identity the app was started with, even one the user
+    // asked their login shell or the agent list to forward.
+    for name in std::env::vars_os()
+        .map(|(name, _)| name)
+        .chain(login_shell.iter().map(|(name, _)| name.clone()))
+        .chain(agent_env.vars().map(|(name, _)| name.clone()))
+    {
         let text = name.to_string_lossy();
         if text.starts_with("BUZZ_") || text.starts_with("NOSTR_") {
             command.env_remove(&name);
         }
     }
-    command.env("PATH", path);
+    match bundle.and_then(|bundle| without_bundle_paths(path, &bundle)) {
+        Some(Some(kept)) => command.env("PATH", kept),
+        _ => command.env("PATH", path),
+    };
     for (name, value) in environment {
         if name.is_empty() || name.contains(['=', '\0']) {
             return Err("Invalid environment variable".into());
@@ -620,8 +680,85 @@ fn set_environment(
             None => command.env_remove(name),
         };
     }
+    // An Anthropic key saved for the agent is one the person chose for it,
+    // unlike an inherited one or the device list's, which a harness may
+    // remove: Claude does when it uses the person's own setup.
+    if let Some((name, value)) = agent_env.own_key() {
+        command.env(name, value);
+    }
     command.env("BUZZ_VERSION", version);
     Ok(())
+}
+
+/// Sets the native-held `secrets` process `process_id` of `plugin` asks for,
+/// refusing any it may not have. `agent_env`'s lists are already set.
+pub(crate) async fn grant_secrets(
+    command: &mut Command,
+    secrets: &[String],
+    plugin: &str,
+    process_id: &str,
+    agent_env: &crate::agent_env::Lists,
+    shared: &crate::claude_key::ClaudeKey,
+) -> Result<(), String> {
+    for secret in secrets {
+        if secret == crate::agent_env::SECRET {
+            continue;
+        }
+        if secret != crate::claude_key::SECRET || !crate::claude_key::may_have(plugin, process_id) {
+            return Err("That secret is not available to this process".into());
+        }
+        let shared = match agent_env.key() {
+            Some(_) => None,
+            None => shared.key().await?,
+        };
+        set_claude_key(command, agent_env, shared.as_deref().map(|key| &**key));
+    }
+    Ok(())
+}
+
+/// Sets the Anthropic key for a launch granted `claude_key::SECRET`: the
+/// agent's own list's, then the device list's, then `shared`.
+fn set_claude_key(
+    command: &mut Command,
+    agent_env: &crate::agent_env::Lists,
+    shared: Option<&str>,
+) {
+    if let Some((name, value)) = agent_env.key() {
+        command.env(name, value);
+    } else if let Some(key) = shared {
+        command.env(crate::claude_key::ENV, key);
+    }
+}
+
+/// The mounted or extracted AppImage this app runs from: `APPDIR` only when
+/// it holds this executable, not one inherited from another AppImage.
+fn appimage_bundle() -> Option<PathBuf> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let bundle = PathBuf::from(std::env::var_os("APPDIR")?);
+    // A root `APPDIR` would hold every path, so it names no bundle.
+    (bundle.is_absolute()
+        && bundle.parent().is_some()
+        && std::env::current_exe().ok()?.starts_with(&bundle))
+    .then_some(bundle)
+}
+
+/// `value`'s path list less its entries in the bundle at `appdir`, when it
+/// has any there: `Some(None)` when none of the person's own are left.
+fn without_bundle_paths(value: &OsStr, appdir: &Path) -> Option<Option<OsString>> {
+    let paths: Vec<PathBuf> = std::env::split_paths(value).collect();
+    if !paths.iter().any(|path| path.starts_with(appdir)) {
+        return None;
+    }
+    // Also drops an empty entry, which a launcher's `$APPDIR/usr/lib:$LD_LIBRARY_PATH`
+    // leaves and which would mean the current folder.
+    let kept: Vec<PathBuf> = paths
+        .into_iter()
+        .filter(|path| !path.as_os_str().is_empty() && !path.starts_with(appdir))
+        .collect();
+    let joined = std::env::join_paths(kept).ok()?;
+    Some((!joined.is_empty()).then_some(joined))
 }
 
 /// The verified target stays inside the MCP prefix and the same containment.
@@ -881,6 +1018,21 @@ fn runs_protected_claude(plugin: &str, process_id: &str, protected: bool) -> boo
 pub(crate) fn verified_artifact(mut artifact: ProcessArtifact) -> Result<PathBuf, String> {
     artifact.path = expand_home(&artifact.path)?.to_string_lossy().into_owned();
     verify_artifact(&artifact)
+}
+
+/// Process `process_id` as the grants of plugin `id` at `revision` declare it.
+pub(crate) fn declared_process(
+    manager: &buzzodz_plugins::Manager,
+    id: &str,
+    revision: &str,
+    process_id: &str,
+) -> buzzodz_plugins::Result<HostProcess> {
+    manager
+        .host_grants(id, revision)?
+        .processes
+        .into_iter()
+        .find(|process| process.id == process_id)
+        .ok_or_else(|| "Process is not declared".into())
 }
 
 /// A manifest may place an artifact under the user's home, written `~/…`.

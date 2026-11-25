@@ -1,4 +1,9 @@
-import { validDirectMessageParticipants } from "./direct-message-policy";
+import {
+  agentPolicyMessage,
+  agentPolicyRefusal,
+  NEEDS_HISTORY_CHOICE,
+  validDirectMessageParticipants,
+} from "./direct-message-policy";
 import { foldProfiles } from "./profiles";
 import type { ChannelQueries } from "./contracts";
 import type { ReadTransport } from "./transport";
@@ -6,8 +11,10 @@ import type { RelayReader } from "./reader";
 import type { Outbox } from "./outbox";
 import type { ProfileSearch } from "./profile-search";
 import type { ProfileQueries } from "./profile-directory";
-import { newer, type RelayEvent } from "./events";
+import { hasEventProof, newer, type RelayEvent } from "./events";
 import { typedPublicKey } from "../../shared/identity/public-key";
+import { attestedOwner } from "../agents/owner-attestation";
+import type { IdentityNameView } from "../identity-names/service";
 import {
   verifiedProfile,
   verifiedProfileFilter,
@@ -20,6 +27,15 @@ import {
 export const PEOPLE_SEARCH_MAX_LENGTH = 100;
 
 /** Opening is idempotent by participant set; first messages use the durable outbox. */
+/** People would join the DM: the adder chooses whether they see its
+ * history. Nothing was added. */
+export class NeedsHistoryChoice extends Error {
+  constructor() {
+    super(NEEDS_HISTORY_CHOICE);
+    this.name = "NeedsHistoryChoice";
+  }
+}
+
 export function createDirectMessages(
   transport: ReadTransport | null,
   reader: RelayReader,
@@ -32,10 +48,76 @@ export function createDirectMessages(
   verifiedAuthority: () => VerifiedProfileAuthority | undefined,
   /** The shared profile cache. A first message reads its 1:1 partner's
    * agent flag from it, and the people directory stays outside it. */
-  profiles?: Pick<ProfileQueries, "ensure">,
+  profiles?: Pick<ProfileQueries, "ensure" | "snapshot" | "event">,
+  /** Identity labels, which tell namesakes apart, for an agent's refusal. */
+  names?: Pick<IdentityNameView, "resolve">,
 ) {
   const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
   const opened = new Set<(id: string) => void>();
+  /** `error`, or, for an agent's add-policy refusal, what to show with the
+   * agent and its verified owner named, so the person knows whom to ask. A
+   * failed read still refuses, without that name. */
+  async function refused(error: unknown, adding: boolean, signal: AbortSignal) {
+    const refusal = agentPolicyRefusal(
+      error instanceof Error ? error.message : undefined,
+    );
+    if (!refusal) return error;
+    const label = (key: string) => {
+      const profile = profiles?.snapshot().get(key);
+      const name =
+        profile && !profile.nameIsFallback ? profile.name : undefined;
+      return names ? names.resolve(key, name) : name;
+    };
+    await profiles?.ensure([refusal.agent], "foreground").catch(() => {});
+    signal.throwIfAborted();
+    const head = profiles?.event?.(refusal.agent);
+    const owner =
+      refusal.policy === "owner_only" && head && hasEventProof(head)
+        ? await attestedOwner(head)
+        : undefined;
+    if (owner) await profiles?.ensure([owner], "foreground").catch(() => {});
+    signal.throwIfAborted();
+    return new Error(
+      agentPolicyMessage(
+        adding,
+        refusal,
+        label(refusal.agent),
+        owner && label(owner),
+      ),
+    );
+  }
+  /** The DM `id` as signed discovery shows it, once it holds `required`.
+   * Only signed discovery can admit it: never trust a receipt as membership. */
+  async function confirmed(
+    id: string,
+    required: readonly string[],
+    signal: AbortSignal,
+  ) {
+    if (!transport) throw new Error("Direct messages are unavailable.");
+    await reader.read(
+      [
+        {
+          kinds: [39000, 39002],
+          consistency: "strong",
+          authors: [transport.relayAuthor],
+          "#d": [id],
+          limit: 2,
+        },
+      ],
+      { signal, fresh: true },
+    );
+    signal.throwIfAborted();
+    const channel = channels.list().channels.find((item) => item.id === id);
+    if (
+      channel?.channelType !== "dm" ||
+      channel.archived ||
+      !required.every((key) => channel.members?.includes(key))
+    )
+      throw new Error(
+        "The conversation’s participants could not be confirmed. Try again.",
+      );
+    return channel.members ?? [];
+  }
   return Object.freeze({
     available,
     /** Observe relay-confirmed opens; opening also unhides the DM on the relay. */
@@ -145,40 +227,33 @@ export function createDirectMessages(
     searched(pubkey: string, authority: VerifiedProfileAuthority) {
       return searchProfiles.answered(pubkey, authority);
     },
-    async open(pubkeys: readonly string[], signal: AbortSignal) {
+    /** Open the DM of `pubkeys`. With `includeHistory`, the relay picks the
+     * DM of these people, so the caller sends to the id returned, and named
+     * agents it lacks join it and can read it. */
+    async open(
+      pubkeys: readonly string[],
+      signal: AbortSignal,
+      includeHistory = false,
+    ) {
       if (!available || !transport?.openDirectMessage)
         throw new Error("This connection cannot start direct messages.");
       if (!validDirectMessageParticipants(pubkeys, transport.viewer))
         throw new Error("Choose between one and eight other people.");
       const active = AbortSignal.any([lifetime, signal]);
       active.throwIfAborted();
-      const id = await transport.openDirectMessage(pubkeys, active);
+      const id = await transport
+        .openDirectMessage(
+          pubkeys,
+          active,
+          includeHistory ? { includeHistory } : undefined,
+        )
+        .catch(async (error: unknown) => {
+          throw await refused(error, false, active);
+        });
       active.throwIfAborted();
-      // Only signed discovery can admit the returned channel. Never trust a receipt as membership.
-      await reader.read(
-        [
-          {
-            kinds: [39000, 39002],
-            consistency: "strong",
-            authors: [transport.relayAuthor],
-            "#d": [id],
-            limit: 2,
-          },
-        ],
-        { signal: active, fresh: true },
-      );
-      active.throwIfAborted();
-      const channel = channels.list().channels.find((item) => item.id === id);
-      const expected = new Set([transport.viewer, ...pubkeys]);
-      if (
-        channel?.channelType !== "dm" ||
-        channel.archived ||
-        channel.members?.length !== expected.size ||
-        !channel.members.every((key) => expected.has(key))
-      )
-        throw new Error(
-          "The conversation’s participants could not be confirmed. Try again.",
-        );
+      // The relay may return the DM of these people with agents they did
+      // not name: it decides who is an agent, so only who is named is checked.
+      await confirmed(id, [transport.viewer, ...pubkeys], active);
       // A 1:1 DM's agent partner is woken only by a `p` tag, which `send`
       // adds from the shared profile cache. The people directory leaves that
       // cache empty, so load the partner before the first message is sent.
@@ -188,6 +263,36 @@ export function createDirectMessages(
         await profiles?.ensure(pubkeys, "foreground").catch(() => {});
       active.throwIfAborted();
       for (const listener of [...opened]) listener(id);
+      return id;
+    },
+    /** Add `pubkeys` to the DM `channelId` and return the DM they ended up
+     * in: this one; without `includeHistory`, a new DM of its people plus
+     * `pubkeys`, its agents left behind; or an existing DM of the grown set
+     * of people. With `"ask"`, the relay decides, and throws
+     * `NeedsHistoryChoice` when people would join this DM: the adder chooses,
+     * then adds again with their choice. */
+    async add(
+      channelId: string,
+      pubkeys: readonly string[],
+      includeHistory: boolean | "ask",
+      signal: AbortSignal,
+    ) {
+      if (!available || !transport?.openDirectMessage)
+        throw new Error("This connection cannot add people to messages.");
+      if (!validDirectMessageParticipants(pubkeys, transport.viewer, true))
+        throw new Error("Choose who to add to this DM.");
+      const active = AbortSignal.any([lifetime, signal]);
+      active.throwIfAborted();
+      const id = await transport
+        .openDirectMessage(pubkeys, active, { channelId, includeHistory })
+        .catch(async (error: unknown) => {
+          throw error instanceof Error && error.message === NEEDS_HISTORY_CHOICE
+            ? new NeedsHistoryChoice()
+            : await refused(error, true, active);
+        });
+      active.throwIfAborted();
+      await confirmed(id, [transport.viewer, ...pubkeys], active);
+      if (id !== channelId) for (const listener of [...opened]) listener(id);
       return id;
     },
     delivery(id: string) {

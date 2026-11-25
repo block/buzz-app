@@ -8,6 +8,7 @@ import {
   verifiedProfileDiscovery,
 } from "./verified-profile";
 import { nativeSocket } from "./native-socket";
+import { nativeIdentityEnabled } from "../identity/service";
 import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { EventTemplate } from "nostr-tools";
@@ -40,6 +41,7 @@ import {
   type PrivateRecord,
 } from "../channel-templates/model";
 import { parseEvents, type RelayWriter } from "./transport";
+import type { ChannelMedia } from "./store";
 import { communityGitRepository } from "../repos/git";
 import { validateLifecycleTemplate } from "./channel-lifecycle-protocol";
 import { validateMemberAdministrationTemplate } from "../channel-members/administration-protocol";
@@ -49,10 +51,15 @@ import { workflowHost, workflowRunsPath } from "../workflows/http";
 import { WORKFLOW_KINDS } from "../workflows/protocol";
 import { repoGitHost } from "../repos/git";
 
-import { PublishRejected } from "./outbox";
+import { OLD_EVENT_NOT_FOUND, PublishNotSent, PublishRejected } from "./outbox";
 
 import { readCoordinate, parseReadBlob } from "./read-state-model";
-import { readStateRefusal, type ReadStateSigning } from "./read-state-host";
+import {
+  followCoordinate,
+  readStateRefusal,
+  type ReadStateSigning,
+  type ThreadFollowsSigning,
+} from "./read-state-host";
 import {
   readSnapshotCommunity,
   readSnapshotFilter,
@@ -92,6 +99,7 @@ async function nativeReadInvoke<T>(
 }
 
 export const nativeWriteKinds = [
+  48103,
   30078,
   7,
   9,
@@ -104,6 +112,9 @@ export const nativeWriteKinds = [
   30178,
   30315,
   40003,
+  // Pin commands: NIP-PM is not advertised; a relay without it refuses them.
+  40010,
+  40011,
   40100,
   42000,
   45010,
@@ -154,7 +165,15 @@ export async function nativeRelayRequest(
     // The shared admission slot stays held until native work settles: at
     // once for a cancelled read, otherwise within its timeout.
     bounded.throwIfAborted();
-    return nativeResponse(result);
+    const response = nativeResponse(result);
+    // Only a signed request speaks for the session, as native decides (`send`
+    // in relay.rs signs only POST): a refused GET says nothing about it.
+    if (
+      body !== undefined &&
+      (response.status === 401 || response.status === 403)
+    )
+      await announceRefusal(community, response);
+    return response;
   } finally {
     if (id) bounded.removeEventListener("abort", cancel);
   }
@@ -172,9 +191,41 @@ function nativeResponse(result: {
 }
 
 /** Relay media through the native `buzz-media` scheme (`src-tauri/src/relay.rs`),
- * which signs each Blossom `get`, including every `Range` request. */
-export function nativeMediaUrl(url: string): string {
-  return convertFileSrc(url, "buzz-media");
+ * which signs each Blossom `get`, including every `Range` request. An image is
+ * saved with its `channel`, which forgets it when the channel's messages go. */
+export function nativeMediaUrl(url: string, channel?: string): string {
+  const source = convertFileSrc(url, "buzz-media");
+  return channel ? `${source}?channel=${encodeURIComponent(channel)}` : source;
+}
+
+/** Forgets the images the native `buzz-media` scheme saved for a community. */
+export async function clearNativeMedia(community: string) {
+  if (!nativeIdentityEnabled()) return;
+  await nativeReadInvoke("media_cache_clear", { community });
+}
+
+/** Forgets the images the native `buzz-media` scheme saved from a community's
+ * channels; undefined where images are not saved. */
+export function nativeChannelMedia(
+  community: string,
+): ChannelMedia | undefined {
+  if (!nativeIdentityEnabled()) return undefined;
+  const forget = (
+    channels: { only: readonly string[] } | { allExcept: readonly string[] },
+  ) => nativeReadInvoke<void>("media_cache_forget", { community, channels });
+  return {
+    forget: (only) => forget({ only }),
+    retain: (allExcept) => forget({ allExcept }),
+  };
+}
+
+/** Bytes of images saved for one community. Undefined where images aren't
+ * saved by the app. */
+export async function nativeMediaUsage(community: string) {
+  if (!nativeIdentityEnabled()) return undefined;
+  return nativeReadInvoke<number>("media_cache_usage", {
+    community,
+  });
 }
 
 /** Bounded IPC chunks; native code spools, hashes, signs and streams to `PUT /upload`.
@@ -350,7 +401,7 @@ export function nativeRelaySigner(community: string): Signer {
   };
 }
 
-const verifyNativeSignatures: SignatureVerifier = (claims) =>
+export const verifyNativeSignatures: SignatureVerifier = (claims) =>
   nativeReadInvoke<boolean[]>("relay_verify_signatures", { claims });
 
 /** Device evidence can be verified before any relay connection exists. */
@@ -385,6 +436,21 @@ export function relaySelf(info: Record<string, unknown>): string | undefined {
 type RefusalListener = (kind: CommunityRefusal) => void;
 const refusalListeners = new Map<string, Set<RefusalListener>>();
 let refusalEvents: Promise<unknown> | undefined;
+function notifyRefusal(community: string, kind: CommunityRefusal) {
+  for (const listener of [...(refusalListeners.get(community) ?? [])])
+    listener(kind);
+}
+/** The response itself also reports a refusal, so the community's owner hears
+ * it even when the window event never arrives (its listener failed to
+ * install). The owner takes the first report; a repeat changes nothing. */
+async function announceRefusal(community: string, response: Response) {
+  const { admission } = await readApiFailure(response.clone());
+  if (admission)
+    notifyRefusal(
+      new URL(communityDestination(community).url).origin,
+      admission,
+    );
+}
 /** Native reports a community's refusal from whichever signed request met it
  * (`observe_refusal` in relay.rs), so no command needs its own check. One
  * window listener serves every connection; it is ready before any connects. */
@@ -394,13 +460,11 @@ async function nativeRefusals(origin: string) {
     ({ payload }) => {
       const kind = payload.refusal;
       if (kind !== "sign-in" && kind !== "access") return;
-      for (const listener of [
-        ...(refusalListeners.get(payload.community) ?? []),
-      ])
-        listener(kind);
+      notifyRefusal(payload.community, kind);
     },
   ).catch(() => {
-    // Without it a refusal still fails its own request; the next connect retries.
+    // Without it the failed response still reports the refusal (see
+    // announceRefusal); the next connect retries the listener.
     refusalEvents = undefined;
   });
   await refusalEvents;
@@ -432,6 +496,9 @@ export async function connectNativeTransport(
   const channelIdentity =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-cl");
+  const soloMemberRoleUpdates =
+    Array.isArray(info.supported_extensions) &&
+    info.supported_extensions.includes("buzz-solo-member-role");
   const artifactSupport =
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("nip-ar");
@@ -576,9 +643,14 @@ export async function connectNativeTransport(
       validateLifecycleTemplate,
     ),
     channelDetails: commandWriter("channel-details", validateDetailsTemplate),
-    memberAdministration: commandWriter("member-administration", (event) =>
-      validateMemberAdministrationTemplate(event, transport.viewer ?? ""),
-    ),
+    memberAdministration: {
+      ...commandWriter("member-administration", (event) =>
+        validateMemberAdministrationTemplate(event, transport.viewer ?? ""),
+      ),
+      ...(soloMemberRoleUpdates
+        ? { soloMemberRoleUpdates: true as const }
+        : {}),
+    },
     identityArchive: commandWriter(
       "identity-archive",
       validateArchiveRequestTemplate,
@@ -590,6 +662,7 @@ export async function connectNativeTransport(
       ? {
           configArtifacts: {
             kinds: [ARTIFACT_KIND],
+            isNotSent: (error: unknown) => error instanceof PublishNotSent,
             async sign(event: EventTemplate, signal: AbortSignal) {
               if (event.kind !== ARTIFACT_KIND)
                 throw new Error("Not an artifact");
@@ -612,11 +685,25 @@ export async function connectNativeTransport(
           },
         }
       : {}),
-    async openDirectMessage(pubkeys, signal) {
+    async openDirectMessage(pubkeys, signal, history) {
       signal.throwIfAborted();
       const id = await invoke<string>("relay_direct_message", {
         community: origin,
         pubkeys,
+        ...(history
+          ? {
+              channel: history.channelId,
+              history:
+                history.includeHistory === "ask"
+                  ? "ask"
+                  : history.includeHistory
+                    ? "include"
+                    : undefined,
+            }
+          : {}),
+      }).catch((error: unknown) => {
+        // The command rejects with its refusal's words; callers expect an Error.
+        throw typeof error === "string" ? new Error(error) : error;
       });
       signal.throwIfAborted();
       if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(id))
@@ -887,6 +974,49 @@ export async function connectNativeTransport(
         signal.throwIfAborted();
         await acceptReadStatePublish(response, event.id);
       },
+      async decodeFollows(events: readonly RelayEvent[], signal: AbortSignal) {
+        signal.throwIfAborted();
+        const decoded = await nativeReadInvoke<
+          { eventId: string; payload: unknown }[]
+        >("relay_decode_thread_follows", { community: origin, events });
+        signal.throwIfAborted();
+        return decoded;
+      },
+      async signFollows(intent: ThreadFollowsSigning, signal: AbortSignal) {
+        signal.throwIfAborted();
+        const event = eventDto(
+          await nativeReadInvoke("relay_sign_thread_follows", {
+            community: origin,
+            intent,
+          }),
+        );
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        return event;
+      },
+      async publishFollows(event: RelayEvent, signal: AbortSignal) {
+        signal.throwIfAborted();
+        if (event.pubkey !== transport.viewer || !followCoordinate(event))
+          throw new Error("Invalid thread-follows event");
+        const response = await admitSignedRequest(
+          origin,
+          transport.viewer,
+          async () => {
+            const result = await nativeReadInvoke<{
+              status: number;
+              headers: Record<string, string>;
+              body: string;
+            }>("relay_publish_thread_follows", { community: origin, event });
+            return nativeResponse(result);
+          },
+          signal,
+          "foreground",
+          readStateRefusal,
+        );
+        signal.throwIfAborted();
+        await acceptReadStatePublish(response, event.id);
+      },
     },
     ...(readCommunity
       ? {
@@ -944,7 +1074,7 @@ export async function connectNativeTransport(
     },
     writer: {
       ...writer,
-      kinds: creation ? [...nativeWriteKinds, 9007] : nativeWriteKinds,
+      kinds: [...nativeWriteKinds, ...(creation ? [9007] : [])],
       async publish(event, signal) {
         // The relay rejects old events before deduplication. An explicit retry
         // can confirm the original ID, but must never silently re-date it.
@@ -962,9 +1092,7 @@ export async function connectNativeTransport(
             signal,
           );
           if (found.some((value) => value.id === event.id)) return "";
-          throw new PublishRejected(
-            "This event is too old to retry and was not found on the relay. Check the conversation before sending it again.",
-          );
+          throw new PublishRejected(OLD_EVENT_NOT_FOUND);
         }
         return (await writer.publish(event, signal)) ?? "";
       },

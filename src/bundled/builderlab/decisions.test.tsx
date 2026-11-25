@@ -25,6 +25,7 @@ const credential = (revision: string): Credential => ({
     email: "a@example.com",
     canUseRemoteAgents: true,
     canUseBuilderlabDecisions: true,
+    canUseHostedTranscription: false,
   },
 });
 const request = {
@@ -154,6 +155,7 @@ it("sends nothing to Builderlab unless the account may use decisions", async () 
       email: "a@example.com",
       canUseRemoteAgents: true,
       canUseBuilderlabDecisions: false,
+      canUseHostedTranscription: false,
     },
   }));
   await session.signIn();
@@ -180,6 +182,7 @@ it("offers Builderlab while signed in, ready only while the account may use deci
     account: {
       ...credential("first").account,
       canUseBuilderlabDecisions: allowed,
+      canUseHostedTranscription: false,
     },
   }));
   const decide = vi.fn<BuilderlabDecide>();
@@ -314,9 +317,14 @@ it.each(["settings", "request", "settings-with-choice"] as const)(
         settings?.rerender(
           <DecisionsSettings decisions={decisions} active={() => true} />,
         );
-        expect(
-          await screen.findByRole("radio", { name: /Builderlab/ }),
-        ).toBeVisible();
+        if (entry === "settings")
+          expect(
+            await screen.findByRole("combobox", { name: "Decision provider" }),
+          ).toHaveTextContent("Builderlab");
+        else
+          expect(
+            await screen.findByRole("radio", { name: /Builderlab/ }),
+          ).toBeVisible();
         if (entry === "settings-with-choice") {
           // Another provider is chosen, so nothing reads Builderlab's
           // permissions until the user picks it.

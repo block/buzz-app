@@ -38,6 +38,7 @@ import {
 } from "../../features/relay/testing";
 import type { RelayEvent } from "../../features/relay/events";
 import { setDefaultAgent } from "../../features/solo/default-agent";
+import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
 import { readView, writeView } from "../../shared/view-state";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { rememberFirstAgent } from "./FirstAgentWelcome";
@@ -68,6 +69,24 @@ vi.mock("virtua", async () => {
       }));
       return <div>{children}</div>;
     }),
+  };
+});
+
+/** The navigation Bestie hands its Members dialog. */
+const membersDialog = vi.hoisted(() => ({
+  onOpenMessage: undefined as ((link: string) => boolean) | undefined,
+}));
+vi.mock("../channels/ChannelMembersDialog", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../channels/ChannelMembersDialog")>();
+  return {
+    ...actual,
+    ChannelMembersDialog(
+      props: Parameters<typeof actual.ChannelMembersDialog>[0],
+    ) {
+      membersDialog.onOpenMessage = props.onOpenMessage;
+      return <actual.ChannelMembersDialog {...props} />;
+    },
   };
 });
 
@@ -290,8 +309,15 @@ async function fixture({
     owner.dispose();
   });
   const send = vi.fn<typeof owner.session.messages.send>(() => "d".repeat(64));
+  let channelListOverride:
+    | ReturnType<typeof owner.session.channels.list>
+    | undefined;
   const session = {
     ...owner.session,
+    channels: {
+      ...owner.session.channels,
+      list: () => channelListOverride ?? owner.session.channels.list(),
+    },
     agentChoices,
     messages: { ...owner.session.messages, send },
   };
@@ -310,7 +336,8 @@ async function fixture({
       relayListeners.add(listener);
       return () => relayListeners.delete(listener);
     },
-    retry: retryConnection,
+    retry() {},
+    tryAgain: retryConnection,
     disconnect() {},
     async clearCache() {},
   };
@@ -346,6 +373,9 @@ async function fixture({
     find: () => undefined,
   } as unknown as Agents;
   return {
+    setChannelList(next: ReturnType<typeof owner.session.channels.list>) {
+      channelListOverride = next;
+    },
     setPanels(next: readonly RegisteredPanel[]) {
       panels = next;
       for (const listener of panelListeners) listener();
@@ -422,7 +452,11 @@ it("opens the actual verified DM and sends plain text without a seeded removable
   const user = userEvent.setup();
   const view = f.mount();
   const input = await screen.findByRole("textbox", { name: "Message Pollen" });
-  expect(f.open).toHaveBeenCalledWith([pollen], expect.any(AbortSignal));
+  expect(f.open).toHaveBeenCalledWith(
+    [pollen],
+    expect.any(AbortSignal),
+    undefined,
+  );
   expect(
     f.session.channels.list().channels.find((c) => c.id === pollenDM),
   ).toMatchObject({
@@ -724,6 +758,7 @@ async function threadHistoryFixture() {
 }
 
 it("restores Bestie threads with Back and Forward and retires every explicitly closed visit", async () => {
+  setThreadPlacementPreference("side");
   const f = await threadHistoryFixture();
   const { navigator, rerender, bestie } = f;
   await userEvent.click(
@@ -781,6 +816,7 @@ it("restores Bestie threads with Back and Forward and retires every explicitly c
 });
 
 it("retires an old Bestie's thread visits instead of reading them in the replacement DM", async () => {
+  setThreadPlacementPreference("side");
   const f = await threadHistoryFixture();
   const { navigator, rerender, bestie, previous } = f;
   await userEvent.click(
@@ -904,7 +940,11 @@ it("replaces a missing saved Bestie from the chooser in place", async () => {
   expect(
     await screen.findByRole("textbox", { name: "Message Fizz" }),
   ).toBeVisible();
-  expect(f.open).toHaveBeenCalledWith([fizz], expect.any(AbortSignal));
+  expect(f.open).toHaveBeenCalledWith(
+    [fizz],
+    expect.any(AbortSignal),
+    undefined,
+  );
 });
 
 it("does not use a known-archived identity's DM during partial discovery", async () => {
@@ -944,6 +984,8 @@ it("rechecks eligibility before retrying a failed DM open", async () => {
   expect(f.open).toHaveBeenCalledTimes(attempts);
 });
 
+// Mounted without a page visit, which an inline thread needs: the thread
+// opens as a tab under the default inline placement too.
 it("keeps the welcome, DM and draft mounted beside a thread and retains the reply draft while collapsing its pane", async () => {
   const f = await fixture({ existing: true, withReply: true });
   rememberFirstAgent(f.scope, pollen);
@@ -1059,36 +1101,97 @@ it("offers the shared DM actions and channel details in Bestie", async () => {
   ).toBeInTheDocument();
 });
 
-it("opens eligible plugin menu items in the Bestie workspace", async () => {
-  const f = await fixture({ existing: true });
+it.each([
+  "legacy roster",
+  "joined without peers",
+  "denied with retained peers",
+])(
+  "opens eligible Bestie menu panels using viewer authority: %s",
+  async (membership) => {
+    const f = await fixture({ existing: true });
+    f.choose(pollen);
+    const user = userEvent.setup();
+    f.setPanels([
+      {
+        id: "canvas",
+        key: "test/canvas",
+        pluginId: "test",
+        revision: "1",
+        title: "Canvas",
+        matches: () => false,
+        channelMenu: {
+          label: "View canvas",
+          eligible: (channel) => channel.id === pollenDM,
+        },
+        component: ({ channelContext }) => (
+          <p>Canvas for {channelContext?.channelId}</p>
+        ),
+      } satisfies RegisteredPanel,
+    ]);
+    f.mount();
+    await user.click(
+      await screen.findByRole("button", { name: "Channel actions" }),
+    );
+    const action = await screen.findByRole("menuitem", { name: "View canvas" });
+    // Change only the authoritative read at click time. The rendered menu is
+    // already open, so denial must be rechecked by the Bestie handler itself.
+    const list = f.session.channels.list();
+    const current = list.channels.find((channel) => channel.id === pollenDM);
+    if (!current) throw new Error("Fixture needs the selected DM");
+    if (membership !== "legacy roster") {
+      const { members: _peers, ...withoutPeers } = current;
+      const updated =
+        membership === "joined without peers"
+          ? {
+              ...withoutPeers,
+              viewerMembership: { pubkey: f.viewer, joined: true },
+            }
+          : {
+              ...current,
+              viewerMembership: { pubkey: f.viewer, joined: false },
+            };
+      f.setChannelList({
+        ...list,
+        channels: list.channels.map((channel) =>
+          channel.id === pollenDM ? updated : channel,
+        ),
+      });
+    }
+    await user.click(action);
+    if (membership === "denied with retained peers") {
+      expect(screen.queryByText(`Canvas for ${pollenDM}`)).toBeNull();
+    } else {
+      expect(await screen.findByText(`Canvas for ${pollenDM}`)).toBeVisible();
+    }
+    expect(
+      screen.getByRole("textbox", { name: "Message Pollen" }),
+    ).toBeInTheDocument();
+  },
+);
+
+it("opens the DM an addition lands in, when Bestie's Members starts or finds another", async () => {
+  const f = await fixture();
   f.choose(pollen);
   const user = userEvent.setup();
-  f.setPanels([
-    {
-      id: "canvas",
-      key: "test/canvas",
-      pluginId: "test",
-      revision: "1",
-      title: "Canvas",
-      matches: () => false,
-      channelMenu: {
-        label: "View canvas",
-        eligible: (channel) => channel.id === pollenDM,
-      },
-      component: ({ channelContext }) => (
-        <p>Canvas for {channelContext?.channelId}</p>
-      ),
-    } satisfies RegisteredPanel,
-  ]);
   f.mount();
+  await screen.findByRole("textbox", { name: "Message Pollen" });
+  await user.click(screen.getByRole("button", { name: "Channel actions" }));
   await user.click(
-    await screen.findByRole("button", { name: "Channel actions" }),
+    await screen.findByRole("menuitem", { name: "View channel details" }),
   );
-  await user.click(
-    await screen.findByRole("menuitem", { name: "View canvas" }),
+  await user.click(await screen.findByRole("button", { name: "View members" }));
+  await waitFor(() => expect(membersDialog.onOpenMessage).toBeDefined());
+  let opened: boolean | undefined;
+  act(() => {
+    opened = membersDialog.onOpenMessage?.(
+      `buzz://channel/${encodeURIComponent(fizzDM)}`,
+    );
+  });
+  expect(opened).toBe(true);
+  await waitFor(() =>
+    expect(f.navigator.snapshot().entry.target).toMatchObject({
+      kind: "conversation",
+      channelId: fizzDM,
+    }),
   );
-  expect(await screen.findByText(`Canvas for ${pollenDM}`)).toBeVisible();
-  expect(
-    screen.getByRole("textbox", { name: "Message Pollen" }),
-  ).toBeInTheDocument();
 });

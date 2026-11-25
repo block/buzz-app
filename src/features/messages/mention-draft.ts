@@ -1,12 +1,42 @@
+import { forwardReference, type ForwardReference } from "./forward-clipboard";
 import { canonicalChatCard } from "./chat-cards";
 import {
   projectComposerDocument,
   readComposerSnapshot,
 } from "./composer-document";
 
-export type MentionRecipient = Readonly<{ pubkey: string; name: string }>;
+export type MentionRecipient = Readonly<{
+  pubkey: string;
+  name: string;
+  /** A recipient selected in the editor. Automatic and legacy spans omit it. */
+  explicit?: true;
+}>;
 export type DraftRecipient = MentionRecipient &
   Readonly<{ start: number; end: number }>;
+
+let humanMentionSelection = false;
+/** The host's own composer entry points can collect local send evidence. */
+export const hostComposerProvenance = Symbol("host composer provenance");
+/** The bundled picker and completion UI own the browser event. Plugin commands
+ * can insert recipients, but only this synchronous selection carries proof. */
+export function withHumanMentionSelection<T>(event: Event, select: () => T): T {
+  const previous = humanMentionSelection;
+  humanMentionSelection = event.isTrusted;
+  try {
+    return select();
+  } finally {
+    humanMentionSelection = previous;
+  }
+}
+
+export function editorMention({
+  pubkey,
+  name,
+}: MentionRecipient): MentionRecipient {
+  return { pubkey, name, ...(humanMentionSelection ? { explicit: true } : {}) };
+}
+
+export const hasHumanMentionSelection = () => humanMentionSelection;
 // Serializable draft metadata must not expose editor implementation types to plugins.
 export type ComposerSnapshot = { version: 1; content: unknown };
 /** A name Space committed before the chooser could decide. The editor resolves
@@ -19,6 +49,7 @@ export type PendingMention = Readonly<{
 }>;
 export type MentionDraft = {
   text: string;
+  forward?: ForwardReference | null;
   /** Chat links staged above the editor; serialized with the caption. */
   chatCards?: readonly string[];
   /** GIF image Markdown staged in the attachment row; sent after the caption. */
@@ -85,6 +116,9 @@ export function mentionDraft(value: unknown): MentionDraft {
     : record.sessionCards;
   return {
     text,
+    ...("forward" in record
+      ? { forward: forwardReference(record.forward) ?? null }
+      : {}),
     ...(Array.isArray(cards) && cards.length
       ? {
           chatCards: cards
@@ -104,7 +138,13 @@ export function mentionDraft(value: unknown): MentionDraft {
     ...(doc ? { document: document as ComposerSnapshot } : {}),
     recipients: safe
       .slice(0, 32)
-      .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
+      .map(({ pubkey, name, start, end, explicit }) => ({
+        pubkey,
+        name,
+        start,
+        end,
+        ...(explicit === true ? { explicit } : {}),
+      })),
   };
 }
 /** What counts as a draft everywhere: text, an attached chat or GIF, or `files`.
@@ -112,6 +152,7 @@ export function mentionDraft(value: unknown): MentionDraft {
  * tags of its own, and the ones earlier releases saved are not content. */
 export function hasDraftContent(value: MentionDraft, files = 0): boolean {
   return (
+    !!value.forward ||
     files > 0 ||
     !!value.chatCards?.length ||
     !!value.gifs?.length ||
@@ -127,7 +168,12 @@ export function legacyFollowupDraft(value: MentionDraft): boolean {
 /** Selected recipients and nothing else: no prose outside their spans and no
  * attached chat or GIF. */
 export function addressingOnly(value: MentionDraft): boolean {
-  if (!value.recipients.length || value.chatCards?.length || value.gifs?.length)
+  if (
+    value.forward ||
+    !value.recipients.length ||
+    value.chatCards?.length ||
+    value.gifs?.length
+  )
     return false;
   let rest = value.text;
   for (const { start, end } of [...value.recipients].sort(

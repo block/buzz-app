@@ -17,10 +17,37 @@ import {
   type TurnPick,
 } from "./claude";
 import type { AgentStore } from "../../features/agents/store";
+import type { GatewayBinding } from "../../features/agents/gateway/contract";
 
 /** A conversation's process stops after this long without a message or its
  * own activity, such as background work. */
 export const IDLE_MS = 15 * 60_000;
+/** How the host refuses a process when it runs all it allows, as the plugin
+ * bridge rejects (`host_process.rs`). */
+export const PROCESS_LIMIT = "Too many processes are running";
+/** `spawn` that, at the host's process limit, asks `room` for a place and
+ * tries again, while the process is still `wanted`. */
+export const withRoom =
+  (
+    spawn: Spawn,
+    room: (() => Promise<boolean>) | undefined,
+    wanted: () => boolean,
+  ): Spawn =>
+  async (id, options) => {
+    for (;;)
+      try {
+        return await spawn(id, options);
+      } catch (error) {
+        // Asked again after the wait: it may no longer be wanted.
+        if (
+          error !== PROCESS_LIMIT ||
+          !wanted() ||
+          !(await room?.()) ||
+          !wanted()
+        )
+          throw error;
+      }
+  };
 /** Saved sessions per agent; the least recently used are forgotten. */
 const SAVED_LIMIT = 200;
 
@@ -33,6 +60,9 @@ export type SavedSession = Readonly<{
   seen: number;
   /** Thread-local history in a shared channel session. Older saves have none. */
   threads?: Readonly<Record<string, number>>;
+  /** Its gateway binding (the Buzz session beside this harness session),
+   * once an attributed turn ran in it. Kept while the session resumes. */
+  gateway?: unknown;
   at: number;
 }>;
 export type SessionStore = {
@@ -43,9 +73,12 @@ export type SessionStore = {
 
 export type SessionsOptions = Readonly<{
   spawn: Spawn;
+  /** At the host's process limit, stops some idle conversation's process to
+   * make a place for a conversation's; false when none is idle. */
+  room?(): Promise<boolean>;
   strictResume?: boolean;
   /** Where a new conversation looks for a process already started. */
-  spare?: Spare;
+  spare?: Pick<Spare, "take">;
   store: SessionStore;
   /** How to start a process with the agent's current settings, for the
    * conversation `key` when given. */
@@ -53,11 +86,19 @@ export type SessionsOptions = Readonly<{
   /** Changes when a setting that a running process fixed has changed, for the
    * conversation `key` when given. */
   fingerprint(key?: string): string;
+  /** Changes when the base prompt's sections for the conversation `key`
+   * change. A plugin can change them at any time, so a process with
+   * background work stops for them only for a new turn, which must run on
+   * them. */
+  sections?(key?: string): string;
   now?(): number;
   newId?(): string;
   /** Told of each new session, never a resumed one, with the prompt it was
-   * started with. */
-  started?(sessionId: string, systemPrompt: string): void;
+   * started with, and the label of the one-off turn it was started for. */
+  started?(sessionId: string, systemPrompt: string, once?: string): void;
+  /** Told of each session a new process resumes, with the prompt it now
+   * runs on. */
+  resumed?(sessionId: string, systemPrompt: string): void;
   /** Called when a conversation's process starts, is sent a message, or
    * stops. */
   onChange?(): void;
@@ -69,14 +110,27 @@ type DeliveryOptions = Readonly<{
   refresh?: (fresh?: boolean) => Promise<string>;
   fresh?: () => Promise<string>;
   pick?: TurnPick;
+  /** Chooses `pick` for a turn this message starts, asked once a process
+   * would take it as a new turn (`Delivery.route`); a steer asks nothing.
+   * Undefined sends nothing. */
+  route?: () => Promise<TurnPick | undefined>;
   /** The thread whose history was supplied to a shared channel session. */
   contextRoot?: string;
   /** Rejects a turn the current settings can't start, asked after every
    * wait just before the prompt is sent. Not asked of a busy process, which
    * steers on the settings it already runs. */
   admit?: () => Promise<void>;
+  /** Sets a new turn's gateway attribution on its process, given the
+   * session's saved binding, and resolves with the binding to keep beside
+   * it. Asked when `admit` is; a steer keeps the running turn's. */
+  attribute?: Attribute;
 }> &
   ActivityReceipt;
+
+export type Attribute = (
+  process: ClaudeProcess,
+  saved: unknown,
+) => Promise<GatewayBinding | undefined>;
 
 /** A process `shutdown` can stop and wait for. */
 type Stoppable = Readonly<{ kill(): unknown; exited: Promise<unknown> }>;
@@ -85,8 +139,11 @@ type Live = {
   process: ClaudeProcess;
   submitted?: boolean;
   fingerprint: string;
+  sections?: string | undefined;
   used: number;
   timer?: ReturnType<typeof setTimeout>;
+  /** The binding its latest attributed turn ran with. */
+  binding?: GatewayBinding;
 };
 
 export class AgentSessions {
@@ -95,6 +152,8 @@ export class AgentSessions {
   private readonly once = new Map<string, Live | undefined>();
   private onceCount = 0;
   private readonly handing = new Map<string, Promise<void>>();
+  /** Conversations whose next message the runtime is still preparing. */
+  private readonly arriving = new Map<string, number>();
   private readonly opening = new Map<string, Promise<Live | Settled>>();
   private discovery:
     | {
@@ -138,6 +197,11 @@ export class AgentSessions {
   active(key: string) {
     return this.opening.has(key) || !!this.live.get(key)?.process.active;
   }
+  /** Foreground work and native background continuations have drained. */
+  async idle(key: string) {
+    await this.opening.get(key);
+    await this.live.get(key)?.process.idle();
+  }
   async forget(key: string) {
     // Commit the reset before dropping the live process; failed writes must
     // not report success and resume the old session after restarting Buzz.
@@ -155,6 +219,32 @@ export class AgentSessions {
       })),
       ...[...this.once.keys()].map((key) => ({ key, busy: true })),
     ];
+  }
+
+  /** The conversation process used longest ago that is doing nothing, with
+   * how to stop it: the runtime stops it to make room when the host is
+   * running all the processes it allows. One in a turn, running background
+   * work, still starting or about to take a message is never offered. Its saved session resumes it
+   * when the conversation is next addressed, as after the idle stop. */
+  idlest(): { used: number; stop(): Promise<unknown> } | undefined {
+    let idlest: [string, Live] | undefined;
+    for (const entry of this.live) {
+      const [key, live] = entry;
+      // A message on its way in is about to use it.
+      if (this.handing.has(key) || this.opening.has(key)) continue;
+      if (this.arriving.has(key)) continue;
+      if (!live.process.active && (!idlest || live.used < idlest[1].used))
+        idlest = entry;
+    }
+    if (!idlest) return undefined;
+    const [key, live] = idlest;
+    return {
+      used: live.used,
+      stop: () => {
+        this.drop(key, live);
+        return live.process.exited;
+      },
+    };
   }
 
   /** Read defaults without assigning the shared spare to this agent. */
@@ -219,6 +309,20 @@ export class AgentSessions {
     this.discovery = undefined;
   }
 
+  /** Marks a message for `key` as on its way, before `deliver` is called, so
+   * its idle process is not stopped to make room; the returned function
+   * unmarks it. */
+  incoming(key: string) {
+    this.arriving.set(key, (this.arriving.get(key) ?? 0) + 1);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      const left = (this.arriving.get(key) ?? 1) - 1;
+      if (left) this.arriving.set(key, left);
+      else this.arriving.delete(key);
+    };
+  }
   /** Sends `text` into the conversation `key`, and resolves when the session
    * has answered it. `steer` replaces `text` when the session is mid-turn;
    * `fresh` builds it again for a new session when the saved one is lost;
@@ -262,11 +366,16 @@ export class AgentSessions {
       refresh,
       fresh,
       pick = {},
+      route,
       contextRoot,
       admit,
+      attribute,
       step,
+      delivered: onDelivered,
       acknowledged,
+      accepted,
       superseded,
+      submitted,
       activityScope,
     }: DeliveryOptions,
     handed: () => void,
@@ -278,18 +387,21 @@ export class AgentSessions {
       if (opening) await opening;
       if (current && !current()) return { ok: true, undelivered: true };
       let live = this.live.get(key);
-      if (
-        live &&
-        (!live.process.running ||
-          (live.fingerprint !== this.options.fingerprint(key) &&
-            !live.process.busy))
-      ) {
+      if (live && (!live.process.running || this.stale(key, live, true))) {
         this.drop(key, live);
         live = undefined;
       }
       const saved = live ? undefined : this.options.store.get(key);
       if (!live) {
-        const opened = await this.open(key, saved?.id, 0);
+        // An interrupted turn makes no more room.
+        const opened = await this.open(
+          key,
+          saved?.id,
+          0,
+          undefined,
+          () => !current || current(),
+        );
+        if (current && !current()) return { ok: true, undelivered: true };
         if (!("process" in opened)) return opened;
         live = opened;
       }
@@ -305,6 +417,14 @@ export class AgentSessions {
         } catch (error) {
           return { ok: false, error: message(error), undelivered: true };
         }
+      if (attribute && !live.process.busy)
+        await this.attribute(key, live, attribute);
+      // Its model route chooses for a new turn only.
+      if (route && !live.process.busy) {
+        const chosen = await route();
+        if (!chosen) return { ok: true, undelivered: true };
+        pick = chosen;
+      }
       if (current && !current()) return { ok: true, undelivered: true };
       if (this.disposed)
         return { ok: false, error: "Claude was stopped", undelivered: true };
@@ -312,8 +432,7 @@ export class AgentSessions {
       if (
         this.live.get(key) !== live ||
         !live.process.running ||
-        (live.fingerprint !== this.options.fingerprint(key) &&
-          !live.process.busy)
+        this.stale(key, live, true)
       )
         continue;
       if (this.options.strictResume) live.submitted = true;
@@ -326,8 +445,7 @@ export class AgentSessions {
         if (
           this.live.get(key) !== live ||
           !live.process.running ||
-          (live.fingerprint !== this.options.fingerprint(key) &&
-            !live.process.busy)
+          this.stale(key, live, true)
         )
           continue;
       }
@@ -335,8 +453,11 @@ export class AgentSessions {
         ...pick,
         ...(activityScope ? { activityScope } : {}),
         ...(step ? { step } : {}),
+        ...(onDelivered ? { delivered: onDelivered } : {}),
         ...(acknowledged ? { acknowledged } : {}),
+        ...(accepted ? { accepted } : {}),
         ...(superseded ? { superseded } : {}),
+        ...(submitted ? { submitted } : {}),
       };
       const answering = this.answer(
         key,
@@ -376,6 +497,7 @@ export class AgentSessions {
           pick,
           ...(current ? { current } : {}),
           ...(admit ? { admit } : {}),
+          ...(attribute ? { attribute } : {}),
           ...(refresh ? { refresh: () => refresh(true) } : {}),
           ...(contextRoot ? { contextRoot } : {}),
           ...activity,
@@ -387,14 +509,54 @@ export class AgentSessions {
 
   /** Stops the turn running in conversation `key`, if any, once a process
    * starting for it has taken its message. */
-  async interrupt(key: string) {
+  async interrupt(key: string, killOnFailure = false) {
     await this.opening.get(key);
-    await this.live.get(key)?.process.interrupt();
+    const process = this.live.get(key)?.process;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      if (!killOnFailure) return await process?.interrupt();
+      await Promise.race([
+        Promise.all([process?.interrupt(), process?.idle()]),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Claude did not stop")),
+            15_000,
+          );
+        }),
+      ]);
+    } catch (error) {
+      if (!killOnFailure) throw error;
+      await process?.kill();
+      await process?.exited;
+    } finally {
+      clearTimeout(timer);
+    }
   }
   /** Compacts the conversation's session, resuming it when its process has
-   * stopped. Without a session there is nothing to compact. */
-  async compact(key: string): Promise<Settled> {
+   * stopped. Without a session there is nothing to compact. `attribute`
+   * sets the compaction's own attribution, as a new turn's. Once `signal`
+   * aborts before `/compact` is sent, it sends nothing and settles
+   * undelivered; an idle process has no turn for Interrupt to stop. */
+  async compact(
+    key: string,
+    attribute?: Attribute,
+    signal?: AbortSignal,
+  ): Promise<Settled> {
+    // Its process is not stopped to make room before `/compact` is sent.
+    const arrived = this.incoming(key);
+    try {
+      return await this.compacted(key, attribute, signal);
+    } finally {
+      arrived();
+    }
+  }
+  private async compacted(
+    key: string,
+    attribute?: Attribute,
+    signal?: AbortSignal,
+  ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
+    if (signal?.aborted) return { ok: true, undelivered: true };
     let live = this.live.get(key);
     const saved = this.options.store.get(key);
     if (!live && !saved) return { ok: true };
@@ -403,11 +565,16 @@ export class AgentSessions {
       if (!("process" in opened)) return opened;
       live = opened;
     }
+    if (attribute && !live.process.busy)
+      await this.attribute(key, live, attribute);
+    // Interrupt may have come while attribution read or wrote settings.
+    if (signal?.aborted) return { ok: true, undelivered: true };
     if (this.options.strictResume) {
       live.submitted = true;
       await this.touch(key, live);
       if (this.disposed || this.live.get(key) !== live || !live.process.running)
         return { ok: false, error: "Claude was stopped", undelivered: true };
+      if (signal?.aborted) return { ok: true, undelivered: true };
     }
     // Claude takes the command in stream-json input as it does in a terminal.
     const settled = await this.answer(key, live, "/compact", {});
@@ -432,11 +599,13 @@ export class AgentSessions {
    * the turn, once `signal` aborts. `prompt` is asked for the turn's text once
    * a process is ready, so a turn that should no longer run by then returns
    * undefined and sends nothing. It settles only when its process has exited,
-   * so it shows as working while it may still be working. */
+   * so it shows as working while it may still be working. `attribute` sets
+   * its attribution, with nothing saved to bind. */
   async runOnce(
     label: string,
     prompt: () => string | undefined | Promise<string | undefined>,
     signal?: AbortSignal,
+    attribute?: Attribute,
   ): Promise<Settled> {
     if (this.disposed) return { ok: false, error: "Claude was stopped" };
     if (signal?.aborted) return { ok: false, error: message(signal.reason) };
@@ -449,10 +618,16 @@ export class AgentSessions {
     let over = false;
     try {
       const live = await abortable(
-        this.start(undefined, undefined, (process) => {
-          spawned = process;
-          if (over) void process.kill();
-        }),
+        this.start(
+          undefined,
+          undefined,
+          (process) => {
+            spawned = process;
+            if (over) void process.kill();
+          },
+          label,
+          () => !over && !signal?.aborted,
+        ),
         signal,
       );
       if (this.disposed) return { ok: false, error: "Claude was stopped" };
@@ -462,6 +637,8 @@ export class AgentSessions {
       this.once.set(key, live);
       const text = await abortable(Promise.resolve(prompt()), signal);
       if (text === undefined || this.disposed) return { ok: true };
+      if (attribute)
+        await abortable(attribute(live.process, undefined), signal);
       return await abortable(live.process.send(text), signal);
     } catch (error) {
       if (signal?.aborted) return { ok: false, error: message(signal.reason) };
@@ -484,11 +661,7 @@ export class AgentSessions {
   reconfigure() {
     this.clearDiscovery();
     for (const [key, live] of this.live)
-      if (
-        live.fingerprint !== this.options.fingerprint(key) &&
-        !live.process.busy
-      )
-        this.drop(key, live);
+      if (this.stale(key, live)) this.drop(key, live);
   }
 
   async shutdown() {
@@ -522,8 +695,9 @@ export class AgentSessions {
     resume: string | undefined,
     seen: number,
     contextRoot?: string,
+    wanted?: () => boolean,
   ): Promise<Live | Settled> {
-    const opened = this.start(resume, key).then(
+    const opened = this.start(resume, key, undefined, undefined, wanted).then(
       async (live): Promise<Live | Settled> => {
         if (this.disposed) {
           if (this.opening.get(key) === opened) this.opening.delete(key);
@@ -543,9 +717,11 @@ export class AgentSessions {
       (error): Settled => {
         if (this.opening.get(key) === opened) this.opening.delete(key);
         console.warn("Claude could not start", error);
+        // Its reason, such as a conversation folder that is gone, is the
+        // owner's to act on.
         return {
           ok: false,
-          error: "Claude could not start",
+          error: `Claude could not start: ${error instanceof Error ? error.message : String(error)}`,
           undelivered: true,
         };
       },
@@ -559,25 +735,45 @@ export class AgentSessions {
     resume: string | undefined,
     key?: string,
     spawned?: (process: ClaudeProcess) => void,
+    once?: string,
+    wanted: () => boolean = () => true,
   ): Promise<Live> {
     // Read before `launch` reads the settings, so it never describes newer ones.
     const fingerprint = this.options.fingerprint(key);
+    const sections = this.options.sections?.(key);
     const launch = await this.options.launch(key);
+    const spawn = this.roomy(wanted);
     const process = resume
-      ? await ClaudeProcess.start(this.spawn, { ...launch, resume })
-      : await this.fresh(launch, spawned);
-    if (fingerprint === this.options.fingerprint(key) || this.disposed) {
-      if (!resume && process.sessionId)
-        this.options.started?.(process.sessionId, launch.systemPrompt);
-      return { process, fingerprint, used: this.now() };
+      ? await ClaudeProcess.start(spawn, { ...launch, resume })
+      : await this.fresh(launch, spawn, spawned);
+    if (
+      (fingerprint === this.options.fingerprint(key) &&
+        sections === this.options.sections?.(key)) ||
+      this.disposed
+    ) {
+      if (resume) this.options.resumed?.(resume, launch.systemPrompt);
+      else if (process.sessionId)
+        this.options.started?.(process.sessionId, launch.systemPrompt, once);
+      return { process, fingerprint, sections, used: this.now() };
     }
     // Settings saved while it started: it would work with the old ones.
     void process.kill();
-    return this.start(resume, key, spawned);
+    return this.start(resume, key, spawned, once, wanted);
+  }
+  /** `spawn` for a conversation: at the host's process limit, it makes room
+   * and tries again, while the process is still wanted. Discovery and the
+   * spare, started ahead of need, never stop a conversation. */
+  private roomy(wanted: () => boolean): Spawn {
+    return withRoom(
+      this.spawn,
+      this.options.room,
+      () => !this.disposed && wanted(),
+    );
   }
   /** A process for a new session: the spare when it fits, else a new one. */
   private async fresh(
     launch: Omit<ClaudeLaunch, "resume" | "sessionId">,
+    spawn: Spawn,
     spawned?: (process: ClaudeProcess) => void,
   ) {
     const spare =
@@ -592,7 +788,7 @@ export class AgentSessions {
       } catch {
         void spare.kill();
       }
-    const process = await ClaudeProcess.spawn(this.spawn, {
+    const process = await ClaudeProcess.spawn(spawn, {
       ...launch,
       sessionId: this.newId(),
     });
@@ -622,6 +818,17 @@ export class AgentSessions {
       if (this.live.get(key) === live) this.drop(key, live);
     });
   }
+  /** Applies a new turn's attribution and keeps the binding it ran with,
+   * which `touch` saves beside the session. */
+  private async attribute(key: string, live: Live, attribute: Attribute) {
+    const stored = this.options.store.get(key);
+    // Only the binding saved beside this very session.
+    const saved =
+      live.binding ??
+      (stored?.id === live.process.sessionId ? stored?.gateway : undefined);
+    const binding = await attribute(live.process, saved);
+    if (binding) live.binding = binding;
+  }
   private async answer(
     key: string,
     live: Live,
@@ -638,11 +845,7 @@ export class AgentSessions {
       } catch (error) {
         return { ok: false, error: message(error) };
       }
-      if (
-        live.fingerprint !== this.options.fingerprint(key) &&
-        !live.process.busy
-      )
-        this.drop(key, live);
+      if (this.stale(key, live)) this.drop(key, live);
     }
     return settled;
   }
@@ -666,6 +869,7 @@ export class AgentSessions {
         }).slice(-SAVED_LIMIT),
       );
     }
+    const gateway = live.binding ?? prior?.gateway;
     return this.options.store.set(key, {
       id,
       ...(this.options.strictResume &&
@@ -676,6 +880,7 @@ export class AgentSessions {
         : {}),
       seen: Math.max(seen ?? 0, prior?.seen ?? 0),
       ...(threads ? { threads } : {}),
+      ...(gateway ? { gateway } : {}),
       at: live.used,
     });
   }
@@ -687,6 +892,17 @@ export class AgentSessions {
       if (live.process.active) this.countdown(key, live);
       else if (this.live.get(key) === live) this.drop(key, live);
     }, IDLE_MS);
+  }
+  /** Whether the process runs on settings that changed, and can stop for
+   * them now: once no reply runs. For the sections only, a process with
+   * background work goes on, unless it is `delivering` a new turn. */
+  private stale(key: string, live: Live, delivering = false) {
+    if (live.process.busy) return false;
+    return (
+      live.fingerprint !== this.options.fingerprint(key) ||
+      (live.sections !== this.options.sections?.(key) &&
+        (delivering || !live.process.active))
+    );
   }
   private drop(key: string, live: Live) {
     clearTimeout(live.timer);
@@ -713,11 +929,14 @@ function abortable<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
-/** Where a process runs and may work, its model and effort: all a spare is
+/** Where a process runs and may work, its model, effort and compaction: all a spare is
  * started with. */
-type Where = Pick<ClaudeLaunch, "cwd" | "directories" | "model" | "effort">;
-const place = ({ cwd, directories = [], model, effort }: Where) =>
-  JSON.stringify([cwd, directories, model ?? "", effort ?? ""]);
+type Where = Pick<
+  ClaudeLaunch,
+  "cwd" | "directories" | "model" | "effort" | "compactAt"
+>;
+const place = ({ cwd, directories = [], model, effort, compactAt }: Where) =>
+  JSON.stringify([cwd, directories, model ?? "", effort ?? "", compactAt ?? 0]);
 
 /** One process started ahead of need, for whichever agent next starts a
  * conversation where it runs and with its model and effort. Starting is most
@@ -775,6 +994,22 @@ export class Spare {
 
   dispose() {
     this.warm();
+  }
+
+  /** Stops the spare so a conversation can have its place at the host's
+   * process limit; it is not started again until a conversation asks for
+   * one. Taken at once, so no later call waits on it too; resolves once it
+   * has exited, or never started. Undefined when there is none. */
+  free(): Promise<unknown> | undefined {
+    const next = this.next;
+    if (!next) return undefined;
+    this.next = undefined;
+    this.stopped = true;
+    return next.process.then((process) => {
+      if (!process) return;
+      void process.kill();
+      return process.exited;
+    });
   }
 
   private place(where: Where) {

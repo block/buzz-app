@@ -1,6 +1,8 @@
 import type { MentionDraft, MentionRecipient } from "./mention-draft";
 import type { ComposerResource } from "../conversation/contracts";
 import type { ComposerToken } from "./composer-token";
+import type { AnnotationMark } from "./composer-annotations";
+import type { AnnotationObservation } from "../conversation/contracts";
 
 export const inlineFormats = [
   {
@@ -94,12 +96,15 @@ export type ComposerLinkEdit = {
  * translates them into document positions; callers never manipulate its DOM. */
 export type ComposerInputElement = HTMLDivElement & {
   value: string;
+  /** Includes automatic prefill, staged content and the host's editing/sending state. */
+  isEmptyForShortcuts(): boolean;
   selectionStart: number;
   selectionEnd: number;
   selectionDirection: "forward" | "backward" | "none";
   disabled: boolean;
   readOnly: boolean;
   setSelectionRange(start: number, end: number, direction?: string): void;
+  /** `"typed"`: only the terminator landed; the text did not fit. */
   insertText(
     text: string,
     recipient?: MentionRecipient | readonly MentionRecipient[],
@@ -110,7 +115,7 @@ export type ComposerInputElement = HTMLDivElement & {
     terminator?: string,
     /** Automatic edits preserve focus and the current selection. */
     focus?: boolean,
-  ): boolean;
+  ): boolean | "typed";
   replaceRecipients(recipients: readonly MentionRecipient[]): boolean;
   /** Replace the typed `@name` with a chip the host is still resolving,
    * followed by the key that ended it (a space by default); the returned id
@@ -145,11 +150,34 @@ export type ComposerInputElement = HTMLDivElement & {
     range: { start: number; end: number },
   ): boolean;
   toggleFormat(format: ComposerFormat): void;
-  insertLineBreak(): boolean;
+  insertLineBreak(kind?: "paragraph" | "hard"): boolean;
   editLink(): ComposerLinkEdit | null;
+  /** Append source links and this app's copied `text/html` as a quote. Leave
+   * the caret on a new line after it; false when the draft cannot take it. */
+  insertQuote(html: string, sourceLinks?: readonly string[]): boolean;
   removeRecipient(pubkey: string): void;
   undo(redo: boolean): void;
   reset(draft: MentionDraft): void;
   /** Retain this editor's document, selection and undo state across a temporary edit. */
   checkpoint(): () => void;
+  /** The shown annotations that are actionable: none after an edit, and none
+   * of a publication once it is withdrawn or replaced. */
+  readonly shownAnnotations: readonly AnnotationMark[];
+  /** The draft annotators may mark now, or null while the editor is unfocused,
+   * not editable or composing. */
+  annotationObservation(): AnnotationObservation | null;
+  /** Underline validated marks for `revision`; an empty list clears them. */
+  showAnnotations(revision: number, marks: readonly AnnotationMark[]): boolean;
+  /** Replace a shown mark's text with one of its replacements, in one undo step. */
+  replaceAnnotation(
+    revision: number,
+    target: Readonly<{ start: number; end: number; text: string }>,
+    replacement: string,
+  ): boolean;
 };
+/** The person asked for the actions on a shown annotation. */
+export type AnnotationMenuRequest = Readonly<{
+  revision: number;
+  mark: AnnotationMark;
+  anchor: Readonly<{ getBoundingClientRect(): DOMRect }>;
+}>;

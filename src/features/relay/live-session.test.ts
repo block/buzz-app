@@ -6,6 +6,7 @@ import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
 import { headRecovering } from "./live-recovery";
 import { EMOJI_SET } from "./emoji";
+import type { SidebarPreferences } from "./sidebar-preferences";
 import { readJournal, type ReadJournal } from "./read-state-storage";
 // The real host codec, as read-state.test.ts uses it.
 import {
@@ -16,6 +17,7 @@ import {
 import {
   bounds,
   flush,
+  isNoticeRead,
   keypair,
   message,
   metadata,
@@ -464,17 +466,23 @@ function reconnectHarness(
     wire.pending.filter(
       (entry) => !entry.signal?.aborted && entry.filters[0]?.top_level === true,
     );
-  /** The one outstanding window read, after answering profile reads empty. */
+  /** The one outstanding window read, after answering byline profile reads
+   * empty. A notice read of its own stays pending. */
   const read = (channelId = "c") => {
     for (const entry of wire.pending.splice(0)) {
       if (entry.signal?.aborted) continue;
       if (entry.filters[0]?.kinds?.includes(0)) entry.respond([]);
       else wire.pending.push(entry);
     }
-    expect(wire.pending.map((entry) => entry.filters)).toMatchObject([
-      [{ "#h": [channelId], top_level: true }],
+    const reads = wire.pending.filter((entry) => !isNoticeRead(entry.filters));
+    // A head read carries its notice filter second.
+    expect(reads.map((entry) => entry.filters[0])).toMatchObject([
+      { "#h": [channelId], top_level: true },
     ]);
-    return wire.next();
+    const [entry] = reads;
+    assert(entry);
+    wire.pending.splice(wire.pending.indexOf(entry), 1);
+    return entry;
   };
   const page = (
     suffix: string,
@@ -567,6 +575,7 @@ function reconnectHarness(
   };
   return {
     owner,
+    relay,
     alice,
     wire,
     queries,
@@ -1176,6 +1185,33 @@ it("a fill whose last page lands in the tick the stream drops reports the window
   }
 });
 
+it("a stream drop that cancels an older page's aux read reads it again after the catch-up", async () => {
+  const h = reconnectHarness();
+  try {
+    const seen = message(h.alice, "c", "seen", 10),
+      old = message(h.alice, "c", "old", 5);
+    await h.reconnect(seen);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    h.owner.session.channels.loadOlder("c");
+    h.read().respond(h.page(h.cursor(seen), [old], null));
+    await flush();
+    const aux = h.read();
+    expect(aux.filters[0]).toMatchObject({ until: 10, include_aux: true });
+    // The history has no older page left to read it with.
+    await h.dropAndReplay([]);
+    expect(aux.signal?.aborted).toBe(true);
+    h.read().respond(h.page("head", [seen], seen));
+    await flush();
+    expect(h.read().filters[0]).toMatchObject({
+      until: 10,
+      include_aux: true,
+    });
+  } finally {
+    h.owner.dispose();
+  }
+});
+
 it("an older page read while the stream is down waits below a settled fill until paging reaches it", async () => {
   // Those rows are not in the drop-time snapshot, so a fill that gives up on
   // the snapshot does not drop them; the settle's cursor hides them below the
@@ -1200,6 +1236,14 @@ it("an older page read while the stream is down waits below a settled fill until
     older.respond(h.page(h.cursor(seen), [old], old));
     await flush();
     expect(h.rows()).toEqual([old.id, seen.id]);
+    // The page's aux closure follows its rows.
+    const aux = h.read();
+    expect(aux.filters[0]).toMatchObject({
+      until: seen.created_at,
+      include_aux: true,
+    });
+    aux.respond(h.page(h.cursor(seen), [old], old));
+    await flush();
     await h.dropAndReplay([]);
     let previous: (typeof missed)[number] | undefined;
     for (const row of missed) {
@@ -1450,7 +1494,9 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
   const relay = keypair(),
     viewer = keypair(),
     alice = keypair();
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    statuses: true,
+  });
   let live!: LiveCallbacks;
   let journal: ReadJournal | undefined;
   const decodeMarkers = vi.fn(async (events: readonly RelayEvent[]) =>
@@ -1671,7 +1717,31 @@ it("skips the reads a continuous global replay covers, and keeps them after a cu
     establish(false, false);
     expect(covered(await drain())).toEqual(once);
     ready();
+    // Unwatched authors stay loaded only while the profiles route is live.
+    const profiles = (status: "live" | "error") =>
+      ({
+        status: "connected",
+        routes: [{ id: "profiles", status, replay: "unknown" }],
+      }) as const;
+    const rows = async () => {
+      const unwatch = owner.session.statuses.watch([alice.pubkey]);
+      const reads = covered(await drain()).statuses;
+      unwatch();
+      return reads;
+    };
+    live.state(profiles("live"));
     stop();
+    expect(await rows()).toBe(0);
+    // The route closes after its EOSE, on the same connection: a returning
+    // row reads again, since nothing kept its status current.
+    live.state(profiles("error"));
+    expect(await rows()).toBe(1);
+    expect(await rows()).toBe(1);
+    // Re-established: loaded again once, then kept while out of view.
+    live.state(profiles("live"));
+    establish(true, true);
+    expect(await rows()).toBe(1);
+    expect(await rows()).toBe(0);
   } finally {
     owner.dispose();
   }
@@ -2065,7 +2135,9 @@ describe("a reconnect whose replay was continuous", () => {
       expect(h.window().freshness).toBe("verified");
       // The head read also asks for the newest membership notices.
       expect(
-        channelReads(h).filter((filters) => filters[0]?.kinds?.[0] === 40099),
+        channelReads(h).filter((filters) =>
+          filters.some((filter) => filter.kinds?.[0] === 40099),
+        ),
       ).toHaveLength(1);
     } finally {
       h.owner.dispose();
@@ -2236,10 +2308,24 @@ describe("a reconnect whose replay was continuous", () => {
       h.live.state({ status: "connected", routes: [] });
       h.live.established("c");
       await flush();
-      h.read().respond(h.page("head", [seen], seen));
+      // A long drop: a full page of joins lands with the catch-up's head,
+      // so their descent continues below it.
+      const joins = Array.from({ length: 500 }, (_, index) =>
+        signed(h.relay, {
+          kind: 40099,
+          content: JSON.stringify({
+            type: "member_joined",
+            actor: h.alice.pubkey,
+            target: keypair().pubkey,
+          }),
+          created_at: 11 + index,
+          tags: [["h", "c"]],
+        }),
+      );
+      h.read().respond([...h.page("head", [seen], seen), ...joins]);
       await flush();
       expect(h.window().freshness).toBe("verified");
-      // The catch-up's notice read fails: its notices are still owed.
+      // The descent's read fails: the notices below are still owed.
       const owed = notices();
       expect(owed).toHaveLength(1);
       owed[0]?.fail(new Error("Membership notices did not advance"));
@@ -2474,4 +2560,237 @@ describe("a reconnect whose replay was continuous", () => {
       }
     },
   );
+});
+
+it("reconciles own sidebar hints with full fresh reads and bounded reconnect repair", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const data = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { alpha: "work" },
+    starred: ["beta"],
+    muted: ["gamma"],
+  };
+  const decode = vi.fn(async (): Promise<SidebarPreferences> => data);
+  const owner = createRelaySession({
+    ...wire.transport,
+    decodeSidebarPreferences: decode,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const hint = signed(viewer, {
+    kind: 30078,
+    created_at: 1700000000,
+    content: "encrypted",
+    tags: [
+      ["d", "channel-sections"],
+      ["t", "channel-sections"],
+    ],
+  });
+  const preferences = owner.session.sidebarPreferences;
+  try {
+    const initial = preferences.ensure();
+    await flush();
+    wire.next().respond([]);
+    await initial;
+    const empty = { ...data, assignments: {} };
+    decode.mockResolvedValueOnce(empty);
+    live.receive([hint, hint]);
+    await flush();
+    const read = wire.next();
+    expect(read.filters).toHaveLength(5);
+    expect(
+      read.filters.every(
+        (filter) =>
+          filter.consistency === "strong" &&
+          filter.limit === 1 &&
+          filter.authors?.[0] === viewer.pubkey,
+      ),
+    ).toBe(true);
+    read.respond([]);
+    await preferences.ensure();
+    expect(preferences.snapshot().data).toEqual(empty);
+    live.receive([
+      hint,
+      signed(keypair(), { ...hint, created_at: hint.created_at + 1 }),
+      signed(viewer, { ...hint, tags: [["d", "unknown"]] }),
+      signed(viewer, {
+        ...hint,
+        tags: [
+          ["d", "channel-stars"],
+          ["d", "channel-sections"],
+        ],
+      }),
+    ]);
+    await flush();
+    expect(wire.pending).toHaveLength(0);
+    live.state({ status: "connected", routes: [] });
+    live.established(undefined, { route: "membership", continuous: true });
+    await flush();
+    // Other global owners may read; only count this complete account batch.
+    const batches = () =>
+      wire.pending.filter((entry) =>
+        entry.filters.some((f) => f["#d"]?.includes("channel-sections")),
+      );
+    expect(batches()).toHaveLength(0);
+    live.state({ status: "retrying", routes: [] });
+    live.state({ status: "connected", routes: [] });
+    live.established(undefined, { route: "membership", continuous: false });
+    await flush();
+    expect(batches()).toHaveLength(1);
+    batches()[0]?.respond([]);
+    await preferences.ensure();
+    expect(preferences.snapshot().data).toEqual(data);
+    live.established(undefined, { route: "membership", continuous: true });
+    await flush();
+    expect(decode).toHaveBeenCalledTimes(3);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("retries transient sidebar hint failures through existing preference recovery", async () => {
+  vi.useFakeTimers();
+  const viewer = keypair(),
+    relay = keypair();
+  let live!: LiveCallbacks;
+  const data = { sections: [], assignments: {}, starred: [], muted: [] };
+  const read = vi.fn(async () => []);
+  const decode = vi.fn(async () => data);
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query: read,
+    decodeSidebarPreferences: decode,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  try {
+    await owner.session.sidebarPreferences.ensure();
+    decode.mockRejectedValueOnce(new TypeError("network unavailable"));
+    live.receive([
+      signed(viewer, {
+        kind: 30078,
+        content: "encrypted",
+        tags: [["d", "channel-sections"]],
+      }),
+    ]);
+    await Promise.resolve();
+    await owner.session.sidebarPreferences.ensure();
+    expect(owner.session.sidebarPreferences.snapshot()).toMatchObject({
+      status: "error",
+      data,
+      transient: true,
+    });
+    expect(owner.session.recovery?.snapshot().recovering).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(5000);
+    await owner.session.sidebarPreferences.ensure();
+    expect(owner.session.sidebarPreferences.snapshot()).toEqual({
+      status: "ready",
+      data,
+    });
+    expect(read).toHaveBeenCalledTimes(3);
+  } finally {
+    owner.dispose();
+  }
+});
+
+describe("session recovery and the live reconnect wait", () => {
+  /** The full roster scan, as session-read-retry.test.ts matches it. */
+  const fullRoster = (filters: readonly ReadFilter[]) =>
+    !!filters[0]?.kinds?.includes(39002) &&
+    !!filters[0]["#p"] &&
+    !filters[0]["#t"] &&
+    !filters[0]["#d"];
+  const setup = () => {
+    const viewer = keypair(),
+      relay = keypair();
+    const query = vi.fn(
+      async (_filters: readonly ReadFilter[], _signal?: AbortSignal) =>
+        [] as RelayEvent[],
+    );
+    let live!: LiveCallbacks;
+    const retry = vi.fn();
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry, dispose() {} };
+      },
+    });
+    live.state({ status: "connected", routes: [] });
+    return { owner, query, retry, live };
+  };
+  afterEach(() => vi.useRealTimers());
+
+  it("the background timer retries a failed roster read but keeps the scheduled reconnect", async () => {
+    vi.useFakeTimers();
+    const { owner, query, retry, live } = setup();
+    try {
+      query.mockImplementationOnce(async (filters) => {
+        if (fullRoster(filters))
+          throw new ReadError("unavailable", "offline", 503);
+        return [];
+      });
+      owner.session.channels.refreshList?.();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(owner.session.live.snapshot().roster).toMatchObject({
+        state: "error",
+        transient: true,
+      });
+      live.state({ status: "retrying", routes: [] });
+      // Recovery ticks land 1s, 3s and 7s after the failure.
+      await vi.advanceTimersByTimeAsync(8_999);
+      expect(owner.session.live.snapshot().roster.state).toBe("verified");
+      expect(
+        query.mock.calls.filter(([filters]) => fullRoster(filters)).length,
+      ).toBeGreaterThan(1);
+      expect(retry).not.toHaveBeenCalled();
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it("a signal still skips the live reconnect wait", async () => {
+    vi.useFakeTimers();
+    const { owner, retry, live } = setup();
+    try {
+      live.state({ status: "retrying", routes: [] });
+      await vi.advanceTimersByTimeAsync(2_000);
+      owner.session.recovery?.retryNow();
+      expect(retry).toHaveBeenCalledTimes(1);
+      live.state({ status: "connected", routes: [] });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally {
+      owner.dispose();
+    }
+  });
+
+  it("Retry and credential changes skip the live reconnect wait", async () => {
+    vi.useFakeTimers();
+    const { owner, retry, live } = setup();
+    try {
+      live.state({ status: "retrying", routes: [] });
+      await vi.advanceTimersByTimeAsync(2_000);
+      owner.session.recovery?.retryAll();
+      expect(retry).toHaveBeenCalledTimes(1);
+      live.state({ status: "connected", routes: [] });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(retry).toHaveBeenCalledTimes(1);
+    } finally {
+      owner.dispose();
+    }
+  });
 });

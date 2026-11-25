@@ -7,12 +7,11 @@ import { proposeSchema } from "../features/tables/proposal";
 import {
   parseAdopted,
   proposalSlug,
-  rowSlug,
-  rowValues,
   schemaSlug,
   type TableSchema,
 } from "../features/tables/schema";
 import { nodeClient } from "./node";
+import { callTool } from "./tools";
 
 type Stored = {
   id: string;
@@ -134,40 +133,59 @@ it("an agent adopts its owner's Goals proposal and only its own entries are cano
   const buzz = session(agent);
   const [proposal, ...others] =
     (await buzz.proposals?.(proposalSlug("goals"))) ?? [];
-  if (!proposal) throw new Error("No proposal");
   expect(others).toEqual([]);
   expect(proposal).toMatchObject({ author: owner.pubkey });
-  expect(JSON.parse(proposal.body)).toEqual(goals);
 
-  await buzz.remember(
-    schemaSlug("goals"),
-    JSON.stringify({
-      ...JSON.parse(proposal.body),
-      proposal: { author: proposal.author, eventId: proposal.eventId },
-    }),
-    0,
+  // The agent discovers the table with its tools alone.
+  await expect(callTool(buzz, {}, "tables_list", {})).resolves.toBe(
+    'goals "Goals" proposed by your owner; adopt it with table_adopt',
   );
+  await expect(
+    callTool(buzz, {}, "table_row_set", { table: "goals", values: {} }),
+  ).rejects.toThrow(/adopt a proposed one first/);
+  await expect(
+    callTool(buzz, {}, "table_adopt", { table: "goals" }),
+  ).resolves.toMatch(/^adopted goals/);
+
   const fresh = session(agent);
   const adopted = parseAdopted(
     (await fresh.memories(schemaSlug("goals"))).entries[0]?.body ?? "",
   );
   expect(adopted.proposal).toEqual({
     author: owner.pubkey,
-    eventId: proposal.eventId,
+    eventId: proposal?.eventId,
   });
-  await fresh.remember(
-    rowSlug("goals", "g1"),
-    JSON.stringify({
-      version: 1,
-      values: rowValues(adopted, {
-        title: "Ship synthetic demo",
-        status: "active",
-      }),
+  const created = await callTool(fresh, {}, "table_row_set", {
+    table: "goals",
+    row: "g1",
+    values: { title: "Ship synthetic demo", status: "planned" },
+  });
+  await expect(
+    callTool(fresh, {}, "table_row_set", {
+      table: "goals",
+      row: "g1",
+      values: { status: "active" },
     }),
-    0,
+  ).rejects.toThrow(/pass its version as expected/);
+  await expect(
+    callTool(fresh, {}, "table_row_set", {
+      table: "goals",
+      values: { status: "someday" },
+    }),
+  ).rejects.toThrow(/Title is required/);
+  await callTool(fresh, {}, "table_row_set", {
+    table: "goals",
+    row: "g1",
+    values: { status: "active", target: "2027-03-31" },
+    expected: String(created).split("version ")[1],
+  });
+  await expect(
+    callTool(session(agent), {}, "table_read", { table: "goals" }),
+  ).resolves.toMatch(
+    /- status \(select: planned \| active \| done\) Status[\s\S]*g1 [0-9a-f]{16} {"title":"Ship synthetic demo","status":"active","target":"2027-03-31"}/,
   );
-  expect(() => rowValues(adopted, { status: "someday" })).toThrow(
-    /Title is required/,
+  await expect(callTool(fresh, {}, "tables_list", {})).resolves.toBe(
+    'goals "Goals" 1 rows',
   );
 
   // The owner decrypts the board: the agent-signed schema and row.

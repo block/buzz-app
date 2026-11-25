@@ -61,6 +61,10 @@ import {
   MIN_COMPACT_AT,
 } from "../features/agents/compact-at";
 import { attestedOwner } from "../features/agents/owner-attestation";
+import { memoryVersion } from "./memory-version";
+import { TABLE_HANDLERS, TABLE_TOOLS } from "./tables";
+
+export { memoryVersion };
 import type { AgentSettingsProposal } from "../features/agents/settings-proposal";
 import type {
   BuzzClient,
@@ -453,6 +457,9 @@ export const TOOLS: readonly Tool[] = [
     "Delete memory. Pass the version from your latest mem_get of it as expected. core cannot be deleted.",
     { slug: str, expected: str },
     ["slug", "expected"],
+  ),
+  ...TABLE_TOOLS.map((table) =>
+    tool(table.name, table.description, table.properties, table.required),
   ),
   tool(
     "notes_get",
@@ -1561,6 +1568,13 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     await tools.client.remember(key, null, current.createdAt);
     return `deleted ${key}`;
   },
+
+  ...Object.fromEntries(
+    Object.entries(TABLE_HANDLERS).map(([name, handler]) => [
+      name,
+      (tools: Tools, args: Args) => handler(tools.client, args),
+    ]),
+  ),
 
   async notes_get(tools, args) {
     const { client } = tools;
@@ -3273,17 +3287,6 @@ const CORE_TARGET_BYTES = 10_000;
 const SEARCH_ENTRIES = 20;
 const SEARCH_LINES = 3;
 const SEARCH_LINE_CHARS = 160;
-
-/** A memory's version: the start of the SHA-256 of its text. */
-export async function memoryVersion(body: string) {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(body),
-  );
-  return [...new Uint8Array(digest).slice(0, 8)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
 
 /** The entries whose slug or text has every word of `q`, newest first, each
  * with a few of its matching lines cut around the first match. Empty when

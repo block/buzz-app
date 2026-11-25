@@ -2527,11 +2527,11 @@
     color: var(--text-dock-count);
     box-shadow: 0 0 0 1px var(--bg-app);
   }
-  /* Corner counts on a tile in a panel: the dock's dark capsule, ringed in
+  /* Corner counts on a tile in a panel: the strong accent fill, ringed in
      the panel so it separates from the artwork beneath. */
   .buzz-count-badge[data-placement="corner"] {
-    background: var(--surface-dock-count);
-    color: var(--text-dock-count);
+    background: var(--surface-corner-count);
+    color: var(--text-corner-count);
     box-shadow: 0 0 0 1px var(--surface-panel);
   }
   .navigation-item[data-selected] .buzz-count-badge {

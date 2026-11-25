@@ -14,7 +14,7 @@ export function CountBadge({
   count: number;
   /** Spoken description, such as "5 drafts". */
   label: string;
-  /** `corner` overlays an identity tile's top-right corner in a dark capsule. */
+  /** `corner` overlays an identity tile's top-right corner in an accent capsule. */
   placement?: "row" | "corner";
 }) {
   if (count <= 0) return null;

@@ -605,6 +605,20 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-corner-count",
+        variable: "--surface-corner-count",
+        pointsAt: "accent 9",
+        use: "Strong accent corner count capsules on sidebar identity tiles; pair with text-corner-count.",
+        status: "proposed",
+      },
+      {
+        token: "text-corner-count",
+        variable: "--text-corner-count",
+        pointsAt: "accent contrast",
+        use: "Numerals on surface-corner-count.",
+        status: "proposed",
+      },
+      {
         token: "bg-surface-row-selected-detail",
         variable: "--surface-row-selected-detail",
         pointsAt: "neutral-2 light / neutral-6 dark",

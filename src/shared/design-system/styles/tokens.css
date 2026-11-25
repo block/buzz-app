@@ -1713,6 +1713,9 @@
   /* Corner counts keep a dark fill and readable accent ink in both modes. */
   --surface-dock-count: var(--mono-2-dark);
   --text-dock-count: var(--accent-link-dark);
+  /* A tile's corner count: the strong accent fill with its own ink. */
+  --surface-corner-count: var(--accent-9);
+  --text-corner-count: var(--accent-contrast);
   --text-sidebar-hover: var(--accent-12);
   --affordance-sidebar-hover: var(--accent-2);
   --affordance-accent-prominent: var(--accent-9);
@@ -1762,6 +1765,9 @@
   /* Corner counts keep a dark fill and readable accent ink in both modes. */
   --surface-dock-count: var(--mono-2-dark);
   --text-dock-count: var(--accent-link-dark);
+  /* A tile's corner count: the strong accent fill with its own ink. */
+  --surface-corner-count: var(--accent-9);
+  --text-corner-count: var(--accent-contrast);
   --text-sidebar-hover: var(--accent-12);
   --affordance-sidebar-hover: var(--accent-3);
   --affordance-accent-prominent: var(--accent-9);
@@ -2145,6 +2151,8 @@
   --color-surface-sidebar-selected: var(--surface-sidebar-selected);
   --color-surface-dock-count: var(--surface-dock-count);
   --text-color-dock-count: var(--text-dock-count);
+  --color-surface-corner-count: var(--surface-corner-count);
+  --text-color-corner-count: var(--text-corner-count);
   --color-affordance-sidebar-hover: var(--affordance-sidebar-hover);
   --text-color-message-own: var(--text-message-own);
   --text-color-message-link-own: var(--text-message-link-own);

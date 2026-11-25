@@ -3,6 +3,8 @@
   flex: none;
   /* Centered on the row's lines. */
   align-self: center;
+  /* The row's gap is sized for 16px icons; an avatar needs more room. */
+  margin-inline-end: var(--space-1);
   width: var(--space-8);
   height: var(--space-8);
 }

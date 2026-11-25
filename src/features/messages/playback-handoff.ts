@@ -23,13 +23,19 @@ type Player = {
   active(): boolean;
   /** Whether the player has left its poster for the video's own frames. */
   started(): boolean;
+  /** Leaves its poster for good: it was handed a video that has played. */
   start(): void;
+  /** Where a still of a frame it was handed lies over its video. */
+  still(): HTMLElement | null;
   /** Tells a brief whether a reader holds the playback it took from it. */
   onLent?: ((lent: boolean) => void) | undefined;
   lent?: boolean;
-  /** The position and frame it was handed and cannot show until its metadata
-   * loads. */
+  /** The position and frame it was handed, until its metadata loads and the
+   * video can be asked for them. */
   pending?: { seconds: number; started: boolean; cancel(): void };
+  /** The still of the frame it was handed, which covers its video until the
+   * video shows that frame itself. */
+  cover?: { still: HTMLCanvasElement; remove(): void };
   /** The brief a reader took over from. */
   from?: Player;
 };
@@ -54,6 +60,122 @@ function playbackOf(player: Player): Playback {
 function settle(player: Player) {
   player.pending?.cancel();
   delete player.pending;
+  player.cover?.remove();
+  delete player.cover;
+}
+
+/** The frame `video` shows, drawn no larger than it or `target` draws it. */
+function frameOf(video: HTMLVideoElement, target: HTMLVideoElement) {
+  const { videoWidth, videoHeight } = video;
+  if (
+    video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+    !videoWidth ||
+    !videoHeight
+  )
+    return undefined;
+  const drawn = Math.max(
+    ...[video, target].map((element) =>
+      Math.min(
+        element.clientWidth / videoWidth,
+        element.clientHeight / videoHeight,
+      ),
+    ),
+  );
+  const scale = drawn > 0 ? Math.min(1, drawn * (devicePixelRatio || 1)) : 1;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(videoWidth * scale));
+  canvas.height = Math.max(1, Math.round(videoHeight * scale));
+  // Opaque, so a frame the browser will not draw leaves the still dark
+  // rather than clear over whatever the video shows meanwhile.
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) return undefined;
+  try {
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  } catch {
+    return undefined;
+  }
+  return canvas;
+}
+
+/** How long a video whose seek has ended may go without reporting a frame of
+ * its position before its still is lifted anyway. A browser reports none for
+ * a video off screen, and some report none at all. */
+const unreportedFrameMs = 250;
+
+/** Calls `shown` once `video` shows a frame of the position, `seconds`, it
+ * was sent to: one it presents once that seek has ended, from no more than
+ * half a second before the position. An older frame is from before the seek,
+ * and so is a new video's first, which a browser may present while the seek
+ * is under way and report after it. */
+function whenShown(
+  video: HTMLVideoElement,
+  seconds: number,
+  shown: () => void,
+) {
+  let sent = false;
+  let frame: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const there = () =>
+    sent &&
+    !video.seeking &&
+    video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+  const stop = () => {
+    for (const name of ["seeked", "loadeddata"])
+      video.removeEventListener(name, arrived);
+    if (frame !== undefined) video.cancelVideoFrameCallback(frame);
+    clearTimeout(timer);
+  };
+  const finish = () => {
+    stop();
+    shown();
+  };
+  const watch = () => {
+    frame = video.requestVideoFrameCallback?.((_now, { mediaTime }) =>
+      there() && mediaTime > seconds - 0.5 && (mediaTime > 0 || seconds <= 0)
+        ? finish()
+        : watch(),
+    );
+  };
+  function arrived() {
+    if (there()) timer ??= setTimeout(finish, unreportedFrameMs);
+  }
+  for (const name of ["seeked", "loadeddata"])
+    video.addEventListener(name, arrived);
+  watch();
+  return {
+    /** The video has been sent to the position. */
+    sent() {
+      sent = true;
+      arrived();
+    },
+    stop,
+  };
+}
+
+/** Lays `still` over a player's video until the video shows the frame it was
+ * sent to. */
+function cover(
+  player: Player,
+  still: HTMLCanvasElement | undefined,
+  seconds: number,
+) {
+  const slot = player.still();
+  if (!still || !slot) return undefined;
+  const lift = () => {
+    if (player.cover?.still !== still) return;
+    player.cover.remove();
+    delete player.cover;
+  };
+  const watch = whenShown(player.video, seconds, lift);
+  slot.replaceChildren(still);
+  player.cover = {
+    still,
+    remove() {
+      watch.stop();
+      still.remove();
+    },
+  };
+  return watch;
 }
 
 function lend(brief: Player | undefined, lent: boolean) {
@@ -76,38 +198,68 @@ function hold(key: string, player: Player | undefined) {
 /** Moves playback as opening a video fullscreen does: the player left behind
  * pauses, and the other starts from its position. Fullscreen always plays;
  * here the play state and the sound move too. Speed needs no move: it is one
- * saved preference every player follows. */
+ * saved preference every player follows.
+ *
+ * The player taking over never shows or plays anything from before the
+ * position. Its poster goes at once. A still of the frame the other player
+ * shows lies over its video until the video shows that frame itself, however
+ * long it takes to load. And a video still to load is given the position as
+ * its start, which the browser seeks to as the metadata loads, before it
+ * presents a frame or plays. */
 function hand(from: Player, to: Player) {
   const playback = playbackOf(from);
+  // A player still under its own still passes that on: its video has yet to
+  // show the frame.
+  const still = playback.started
+    ? (from.cover?.still ?? frameOf(from.video, to.video))
+    : undefined;
   settle(from);
   from.video.pause();
   settle(to);
   const { video } = to;
   video.volume = playback.volume;
   video.muted = playback.muted;
-  const seek = () => {
-    delete to.pending;
-    if (video.currentTime !== playback.seconds) {
-      video.currentTime = playback.seconds;
-      // A paused player reports its position too.
-      video.dispatchEvent(new Event("timeupdate"));
-    }
-    if (playback.started) to.start();
-  };
-  // A position set before the metadata does not hold.
-  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) seek();
-  else {
-    video.addEventListener("loadedmetadata", seek, { once: true });
-    to.pending = {
-      seconds: playback.seconds,
-      started: playback.started,
-      cancel: () => video.removeEventListener("loadedmetadata", seek),
-    };
-  }
+  if (playback.started) to.start();
   // Started now, in the commit of the press that opened or closed the reader,
   // not when the video loads: a browser may refuse sound that starts later,
   // away from the press. One it refuses stays paused at the position.
-  if (playback.playing) void video.play().catch(() => {});
+  const play = () => {
+    if (playback.playing) void video.play().catch(() => {});
+  };
+  const seek = () => {
+    if (video.currentTime !== playback.seconds)
+      video.currentTime = playback.seconds;
+    // A paused player reports its position too.
+    video.dispatchEvent(new Event("timeupdate"));
+  };
+  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    if (video.currentTime !== playback.seconds) {
+      const shown = cover(to, still, playback.seconds);
+      seek();
+      shown?.sent();
+    }
+    play();
+    return;
+  }
+  const shown = cover(to, still, playback.seconds);
+  const loaded = () => {
+    delete to.pending;
+    // Only where the browser did not start there itself.
+    seek();
+    shown?.sent();
+  };
+  video.addEventListener("loadedmetadata", loaded, { once: true });
+  to.pending = {
+    seconds: playback.seconds,
+    started: playback.started,
+    cancel: () => video.removeEventListener("loadedmetadata", loaded),
+  };
+  // Before the position: Chromium otherwise records the stretch from 0:00 to
+  // the position as played, though it plays none of it.
+  play();
+  // With no metadata this sets where the browser starts, and what the player
+  // reports as its position meanwhile.
+  seek();
 }
 
 /** The briefs on screen, oldest first. */
@@ -175,13 +327,16 @@ export function usePlaybackHandoff(
     reader,
     active,
     started,
-    setStarted,
+    start,
+    still,
     onLent,
   }: {
     reader: boolean;
     active: boolean;
     started: boolean;
-    setStarted(started: boolean): void;
+    /** Must be stable. */
+    start(): void;
+    still: RefObject<HTMLElement | null>;
     onLent?: ((lent: boolean) => void) | undefined;
   },
 ) {
@@ -197,8 +352,9 @@ export function usePlaybackHandoff(
       reader,
       active: () => latest.current.active,
       started: () => latest.current.started,
-      start: () => setStarted(true),
+      start,
+      still: () => still.current,
       onLent,
     });
-  }, [video, key, reader, setStarted, onLent]);
+  }, [video, key, reader, start, still, onLent]);
 }

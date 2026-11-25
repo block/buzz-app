@@ -399,6 +399,7 @@ test.describe("Inline", () => {
   test("a details video plays on into the reader and back into the chat", async ({
     page,
     app,
+    browserName,
   }) => {
     // Chromium seeks only in media served by byte range.
     const bytes = await readFile(
@@ -407,7 +408,10 @@ test.describe("Inline", () => {
         import.meta.url,
       ),
     );
-    await page.route("**/api/relay/primary/media?**", (route) => {
+    // While set, the video's bytes wait, as on a slow connection.
+    let slow;
+    await page.route("**/api/relay/primary/media?**", async (route) => {
+      await slow;
       const range = /^bytes=(\d+)-(\d*)$/.exec(
         route.request().headers().range ?? "",
       );
@@ -427,8 +431,9 @@ test.describe("Inline", () => {
         body: bytes.subarray(start, last + 1),
       });
     });
-    // The clip lasts a minute. At quarter speed that is twice a journey's
-    // time limit, so playback never reaches its end here.
+    // The clip lasts a minute and is played from its twentieth second. At
+    // quarter speed the rest is longer than a journey's time limit, so
+    // playback never reaches its end here.
     await page.addInitScript(() =>
       localStorage.setItem("buzz.video.playback-speed", "0.25"),
     );
@@ -472,25 +477,156 @@ test.describe("Inline", () => {
       await page.keyboard.press("Enter");
     };
     const row = timeline.locator(`[data-message-id="${event.id}"]`);
+    // The part of the clip's picture that counts its seconds, which no
+    // control of the player lies over, as a grid of colours: of the frame a
+    // video shows, or of a screenshot of a player.
+    const picture = (video, screenshot) =>
+      video.evaluate(async (element, png) => {
+        const part = { left: 0.6, top: 0.3, width: 0.24, height: 0.4 };
+        let source = element;
+        let frame = [0, 0, element.videoWidth, element.videoHeight];
+        if (png) {
+          source = await createImageBitmap(
+            new Blob(
+              [Uint8Array.from(atob(png), (char) => char.charCodeAt(0))],
+              { type: "image/png" },
+            ),
+          );
+          // The player fits the whole frame inside its box.
+          const fit = Math.min(
+            source.width / element.videoWidth,
+            source.height / element.videoHeight,
+          );
+          const [width, height] = [
+            element.videoWidth * fit,
+            element.videoHeight * fit,
+          ];
+          frame = [
+            (source.width - width) / 2,
+            (source.height - height) / 2,
+            width,
+            height,
+          ];
+        }
+        const canvas = document.createElement("canvas");
+        [canvas.width, canvas.height] = [48, 40];
+        const context = canvas.getContext("2d");
+        context.drawImage(
+          source,
+          frame[0] + part.left * frame[2],
+          frame[1] + part.top * frame[3],
+          part.width * frame[2],
+          part.height * frame[3],
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        );
+        const { data } = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        );
+        // Each cell is the mean of a block, so that the scale a picture was
+        // drawn at does not tell.
+        const cells = Array(6 * 5 * 3).fill(0);
+        for (let index = 0; index < data.length; index += 4) {
+          const pixel = index / 4;
+          const cell =
+            Math.floor(pixel / canvas.width / 8) * 6 +
+            Math.floor((pixel % canvas.width) / 8);
+          for (let channel = 0; channel < 3; channel++)
+            cells[cell * 3 + channel] += data[index + channel] / 64;
+        }
+        return cells;
+      }, screenshot?.toString("base64"));
+    // How far apart two such pictures are, from 0 to 255.
+    const apart = (one, other) =>
+      one.reduce(
+        (sum, value, index) => sum + Math.abs(value - other[index]),
+        0,
+      ) / one.length;
     await expect
       .poll(() => brief.evaluate((video) => video.readyState))
       .toBeGreaterThanOrEqual(2);
+    // The clip as its poster shows it, in its first second.
+    const unplayed = await picture(brief);
     await brief.evaluate((video) => {
       video.volume = 0.5;
       video.muted = true;
+      video.currentTime = 20;
     });
     await press(row, "Play video");
     await expect
       .poll(async () => (await read(brief)).seconds)
-      .toBeGreaterThan(0.3);
+      .toBeGreaterThan(20.3);
+
+    // From the moment the reader's player is drawn: each position it reports,
+    // and the time in the clip of each frame it presents with nothing over
+    // the video.
+    await page.evaluate(() => {
+      const seen = { positions: [], frames: [] };
+      window.readerPlayer = seen;
+      const observer = new MutationObserver(() => {
+        const video = document.querySelector(
+          "[data-details-sheet-surface] video",
+        );
+        if (!video) return;
+        observer.disconnect();
+        const report = () => seen.positions.push(video.currentTime);
+        report();
+        for (const name of [
+          "loadedmetadata",
+          "loadeddata",
+          "seeking",
+          "seeked",
+          "playing",
+          "timeupdate",
+        ])
+          video.addEventListener(name, report);
+        const tick = () => {
+          report();
+          if (video.isConnected) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+        const present = (_now, { mediaTime }) => {
+          if (!video.parentElement.querySelector("canvas"))
+            seen.frames.push(mediaTime);
+          video.requestVideoFrameCallback(present);
+        };
+        video.requestVideoFrameCallback?.(present);
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
 
     // Expanded mid-playback, the reader's player plays on from the brief's
-    // position with its sound and speed, and the brief falls silent.
+    // position with its sound and speed, and the brief falls silent. The mute
+    // it hands over is read here: Linux WebKit unmutes any video that plays
+    // this slowly.
+    const { muted } = await read(brief);
+    let load;
+    slow = new Promise((resolve) => {
+      load = resolve;
+    });
     await clickRow(page, showMore(timeline, "Video findings"));
     await expect(reader.locator("video")).toHaveCount(1);
     await expect.poll(async () => (await read(brief)).playing).toBe(false);
     const handed = (await read(brief)).seconds;
-    expect(handed).toBeGreaterThan(0.3);
+    expect(handed).toBeGreaterThan(20.3);
+    // While its video has yet to load, however long that takes, the reader's
+    // player shows the frame the brief stopped on and not the poster.
+    const loading = await picture(
+      brief,
+      await reader.locator("video").screenshot(),
+    );
+    expect(
+      await reader.locator("video").evaluate((video) => video.readyState),
+    ).toBe(0);
+    const stopped = await picture(brief);
+    expect(apart(loading, stopped)).toBeLessThan(apart(loading, unplayed) / 4);
+    load();
+    slow = undefined;
     await expect
       .poll(async () => (await read(reader.locator("video"))).seconds)
       .toBeGreaterThan(handed);
@@ -498,18 +634,22 @@ test.describe("Inline", () => {
     expect(taken).toMatchObject({
       playing: true,
       volume: 0.5,
-      muted: true,
+      muted,
       rate: 0.25,
     });
-    // It played no frame of the start to get here, neither in place of the
-    // seek nor before it landed. A position can settle on the frame before
-    // it. Chromium's clock can run for under a millisecond of the clip
-    // before the metadata event that seeks arrives, so this allows less
-    // than one frame, of twelve a second.
-    const early = taken.played
-      .filter(([start]) => start <= handed - 0.1)
-      .reduce((seconds, [start, end]) => seconds + end - start, 0);
-    expect(early).toBeLessThan(1 / 12);
+    // It was never at the start to get here: it reported no position before
+    // the brief's and showed no frame from before it, neither in place of
+    // the seek nor before it landed. A position can settle on the frame
+    // before it, of twelve a second.
+    const seen = await page.evaluate(() => window.readerPlayer);
+    expect(Math.min(...seen.positions)).toBeGreaterThan(handed - 0.1);
+    expect(Math.min(...seen.frames)).toBeGreaterThan(handed - 0.1);
+    // Nor did it play any of the clip before that position. WebKit's own
+    // record cannot show it: a player started before its video loaded counts
+    // the clip up to its start position as played, though it presents none
+    // of it.
+    if (browserName !== "webkit")
+      expect(taken.played[0][0]).toBeGreaterThan(handed - 0.1);
     expect((await read(brief)).playing).toBe(false);
 
     // Closed, the brief plays on from the reader's position.

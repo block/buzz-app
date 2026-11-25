@@ -9,6 +9,7 @@ import {
 } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -123,6 +124,14 @@ export function MediaAttachment({
   const [currentTime, setCurrentTime] = useState(seekTo ?? 0);
   const [playing, setPlaying] = useState(false);
   const [started, setStarted] = useState(false);
+  // Handed a video that has played, it shows no poster again: its own frame,
+  // or a still of the one it was handed until then.
+  const [handed, setHanded] = useState(false);
+  const still = useRef<HTMLSpanElement>(null);
+  const takeOver = useCallback(() => {
+    setStarted(true);
+    setHanded(true);
+  }, []);
   const [failed, setFailed] = useState(false);
   const captured = source ? openingFrame(source) : undefined;
   const openingSeek = useRef<{ time: number; capture: number }>(undefined);
@@ -158,7 +167,14 @@ export function MediaAttachment({
       !element.unavailable
       ? `${handoff.messageId}\n${attachment.url}`
       : undefined,
-    { reader: !!handoff?.reader, active, started, setStarted, onLent },
+    {
+      reader: !!handoff?.reader,
+      active,
+      started,
+      start: takeOver,
+      still,
+      onLent,
+    },
   );
   const viewMedia = (seconds: number) => {
     video.current?.pause();
@@ -289,7 +305,7 @@ export function MediaAttachment({
         source && isNativeMediaSource(source) ? "anonymous" : undefined
       }
       src={videoSource}
-      poster={visiblePreview}
+      poster={handed ? undefined : visiblePreview}
       preload={compact ? "metadata" : preload}
       playsInline
       style={previewStyle}
@@ -475,6 +491,9 @@ export function MediaAttachment({
                 capturedPreview && <CapturedPoster frame={capturedPreview} />
               ))}
             {videoElement}
+            {handoff && (
+              <span ref={still} className={styles.mediaStill} aria-hidden />
+            )}
             {active && <VideoControls videoRef={video} inline />}
             <span className={styles.mediaExpand}>
               <IconButton

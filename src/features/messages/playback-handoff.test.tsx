@@ -41,6 +41,7 @@ afterEach(() => {
 
 const attachment = {
   url: "https://fixture.test/video.mp4",
+  previewUrl: "https://fixture.test/poster.jpg",
   kind: "video" as const,
 };
 
@@ -87,6 +88,9 @@ async function player({
   return {
     video,
     controls,
+    /** Whether it shows the video's poster, over the video or as its own. */
+    poster: () =>
+      !!view.container.querySelector("img") || video.hasAttribute("poster"),
     load,
     press: (name: string) =>
       settled(() => controls.getByRole("button", { name }).click()),
@@ -109,6 +113,10 @@ it.each([true, false])(
     // opened it rather than once its video loads.
     expect(brief.video.paused).toBe(true);
     expect(reader.video.paused).toBe(!playing);
+    // While its video loads, however long, it shows no poster and reports
+    // the position it was handed.
+    expect(reader.poster()).toBe(false);
+    expect(reader.controls.getByText("00:42")).toBeInTheDocument();
     await reader.load();
     expect(reader.video.currentTime).toBe(42);
     expect(reader.video.paused).toBe(!playing);
@@ -136,6 +144,16 @@ it.each([true, false])(
     expect(brief.controls.getByText("00:50")).toBeInTheDocument();
   },
 );
+
+it("opens a video that has not played on its poster", async () => {
+  const brief = await player();
+  expect(brief.poster()).toBe(true);
+  const reader = await player({ reader: true });
+  expect(reader.poster()).toBe(true);
+  await reader.load();
+  expect(reader.poster()).toBe(true);
+  expect(reader.video.paused).toBe(true);
+});
 
 // React replays a mount in development: the reader hands playback back and
 // takes it again, and the brief's play event from the hand back arrives after.

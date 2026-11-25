@@ -1537,6 +1537,24 @@ button.mediaPreview {
   object-fit: contain;
   pointer-events: none;
 }
+/* A still of the frame a player was handed, over its video until the video
+   shows that frame itself. */
+.mediaStill {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.mediaStill:empty {
+  display: none;
+}
+.mediaStill > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--surface-inverse);
+}
 .mediaPlay,
 .mediaExpand {
   position: absolute;
@@ -2790,6 +2808,7 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
 }
 
 .mediaPreview[data-video-preview] .mediaVideo,
+.mediaPreview[data-video-preview] .mediaStill,
 .mediaPreview[data-video-preview] .mediaPoster {
   border-radius: inherit;
   clip-path: var(--media-corner-clip, none);

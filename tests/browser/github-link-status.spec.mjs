@@ -53,10 +53,11 @@ test("rows below a PR link stay put when its status arrives", async ({
         let shownAt;
         const tick = () => {
           tops.push(
-            ids.map((id) =>
-              document
-                .querySelector(`[data-message-id="${id}"]`)
-                ?.getBoundingClientRect().top,
+            ids.map(
+              (id) =>
+                document
+                  .querySelector(`[data-message-id="${id}"]`)
+                  ?.getBoundingClientRect().top,
             ),
           );
           const shown = document.querySelector(
@@ -72,9 +73,9 @@ test("rows below a PR link stay put when its status arrives", async ({
   );
   status.resolve();
   const tops = await frames;
-  expect(
-    await row(pull).evaluate((node) => node.offsetHeight),
-  ).toBeGreaterThan(before);
+  expect(await row(pull).evaluate((node) => node.offsetHeight)).toBeGreaterThan(
+    before,
+  );
   // Fractional row heights and scroll offsets round to under a pixel.
   const moved = tops.flatMap((frame) =>
     frame.map((top, i) => Math.abs(top - tops[0][i])),

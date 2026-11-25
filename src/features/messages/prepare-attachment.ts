@@ -12,10 +12,30 @@ import {
   cleanPng,
   pngChunks,
   pngNeedsPixelTransform,
+  pngPixelCount,
   snapshotChunk,
   webpChunks,
   webpNeedsPixelTransform,
+  webpPixelCount,
 } from "./image-metadata";
+
+const RELAY_IMAGE_PIXELS = 25_000_000;
+// Stay below WebKit's 16,777,216-pixel canvas limit while repainting stills.
+const CANVAS_IMAGE_PIXELS = 16_000_000;
+const CANVAS_MAX_EDGE = 8192;
+
+function canvasSize(width: number, height: number) {
+  if (!width || !height) throw new Error("Image dimensions are invalid.");
+  if (width * height <= RELAY_IMAGE_PIXELS) return { width, height };
+  const scale = Math.min(
+    Math.sqrt(CANVAS_IMAGE_PIXELS / (width * height)),
+    CANVAS_MAX_EDGE / Math.max(width, height),
+  );
+  return {
+    width: Math.max(1, Math.floor(width * scale)),
+    height: Math.max(1, Math.floor(height * scale)),
+  };
+}
 
 const animatedPng = (chunks: ReturnType<typeof pngChunks>) =>
   chunks.some((c) => c.kind === "acTL");
@@ -53,13 +73,22 @@ export async function prepareAttachment(
     const chunks = pngChunks(bytes);
     snapshot = stripSnapshotMetadata ? undefined : snapshotChunk(chunks);
     const animated = animatedPng(chunks);
-    if (animated || (stripSnapshotMetadata && !pngNeedsPixelTransform(chunks)))
+    if (
+      animated ||
+      (stripSnapshotMetadata &&
+        !pngNeedsPixelTransform(chunks) &&
+        pngPixelCount(chunks) <= RELAY_IMAGE_PIXELS)
+    )
       output = cleanPng(bytes, snapshot, animated);
   }
   if (type === "image/webp") {
     const chunks = webpChunks(bytes);
     const animated = animatedWebp(chunks);
-    if (animated || !webpNeedsPixelTransform(chunks))
+    if (
+      animated ||
+      (!webpNeedsPixelTransform(chunks) &&
+        webpPixelCount(chunks) <= RELAY_IMAGE_PIXELS)
+    )
       output = cleanWebp(bytes, animated);
   }
   if (!output) {
@@ -68,26 +97,22 @@ export async function prepareAttachment(
     });
     try {
       signal.throwIfAborted();
-      if (
-        !image.width ||
-        !image.height ||
-        image.width * image.height > 25_000_000
-      )
-        throw new Error("Choose an image with at most 25 million pixels.");
+      const { width, height } = canvasSize(image.width, image.height);
       const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
+      canvas.width = width;
+      canvas.height = height;
       try {
         const context = canvas.getContext("2d");
         if (!context)
           throw new Error("Image preparation is unavailable in this browser.");
-        context.drawImage(image, 0, 0);
+        context.imageSmoothingQuality = "high";
+        context.drawImage(image, 0, 0, width, height);
         // Old Buzz writes lossless WebP; WebKit has no canvas WebP encoder.
         const target = type;
         const blob =
           type === "image/webp"
             ? await encodeWebp(
-                context.getImageData(0, 0, image.width, image.height),
+                context.getImageData(0, 0, width, height),
                 signal,
               )
             : await new Promise<Blob>((resolve, reject) =>

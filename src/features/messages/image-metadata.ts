@@ -24,6 +24,12 @@ export function pngChunks(bytes: Uint8Array): Chunk[] {
   }
   throw invalid();
 }
+export function pngPixelCount(chunks: Chunk[]): number {
+  const header = chunks[0];
+  if (header?.kind !== "IHDR" || header.payload.length !== 13) throw invalid();
+  const dimensions = view(header.payload);
+  return dimensions.getUint32(0) * dimensions.getUint32(4);
+}
 export function snapshotChunk(chunks: Chunk[]): Uint8Array | undefined {
   return chunks.find(
     ({ kind, payload }) =>
@@ -125,6 +131,27 @@ export function webpChunks(bytes: Uint8Array): Chunk[] {
   const end = view(bytes).getUint32(4, true) + 8;
   if (end < 12 || end > bytes.length) throw invalid();
   return riffChunks(bytes, 12, end);
+}
+export function webpPixelCount(chunks: Chunk[]): number {
+  const frame = chunks.find(({ kind }) =>
+    ["VP8X", "VP8 ", "VP8L"].includes(kind),
+  );
+  if (!frame) throw invalid();
+  const bytes = view(frame.payload);
+  if (frame.kind === "VP8X" && bytes.byteLength === 10) {
+    const dimension = (offset: number) =>
+      (bytes.getUint32(offset - 1, true) >>> 8) + 1;
+    return dimension(4) * dimension(7);
+  }
+  if (frame.kind === "VP8 " && bytes.byteLength >= 10)
+    return (
+      (bytes.getUint16(6, true) & 0x3fff) * (bytes.getUint16(8, true) & 0x3fff)
+    );
+  if (frame.kind === "VP8L" && bytes.byteLength >= 5) {
+    const packed = bytes.getUint32(1, true);
+    return ((packed & 0x3fff) + 1) * (((packed >>> 14) & 0x3fff) + 1);
+  }
+  throw invalid();
 }
 function riffChunk(kind: string, payload: Uint8Array): Uint8Array<ArrayBuffer> {
   const result = new Uint8Array(8 + payload.length + (payload.length & 1));

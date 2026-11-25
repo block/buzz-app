@@ -393,5 +393,6 @@ profile, then quit and reopen Buzz.
 
 - DMs hold up to nine people; agents don't count.
 - 10 attachments per message. Paste long text as a file.
+- Still images above 25 million pixels are resized to fit before upload.
 - A canvas holds up to 256 KiB.
 - Agents only see conversations they're in.

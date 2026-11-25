@@ -584,48 +584,47 @@ appTest.describe("independent workspace controls", () => {
       const roadmapCard = items.locator("[data-solo-workspace]", {
         hasText: "Roadmap",
       });
-      const roadmapId = await roadmapCard.getAttribute("data-solo-workspace");
       await expect(roadmapCard).toBeVisible();
-      // Native workspace header menu and New task work in both light and dark modes.
+      const roadmapId = await roadmapCard.getAttribute("data-solo-workspace");
+      // Native workspace header menu, Workspace settings, and New task work in both dark and light modes.
       for (const theme of ["dark", "light"]) {
         await page.emulateMedia({ colorScheme: theme });
         await expect(page.locator("html")).toHaveAttribute(
           "data-color-mode",
           theme,
         );
-        await expect(reloadedRoadmap).toBeVisible();
-      }
-      await reloadedRoadmap.hover();
-      await roadmapCard
-        .getByRole("button", { name: "Actions for Roadmap", exact: true })
-        .click();
-      await page
-        .getByRole("menuitem", { name: "Workspace settings", exact: true })
-        .click();
-      const settings = page.getByRole("dialog", {
-        name: "Workspace settings",
-        exact: true,
-      });
-      await expect(settings).toBeVisible();
-      await page.keyboard.press("Escape");
-      await expect(settings).toHaveCount(0);
-      await expect(reloadedRoadmap).toBeFocused();
-      await reloadedRoadmap.hover();
-      await roadmapCard
-        .getByRole("button", { name: "New task in Roadmap", exact: true })
-        .click();
-      await expect
-        .poll(() =>
-          page.evaluate(
-            () =>
-              window.fixtureNavigation.snapshot().entry.target.route?.params,
-          ),
-        )
-        .toEqual({
-          kind: "solo-draft",
-          region: "buzz.region:fixture.solo-region:work",
-          project: roadmapId,
+        await reloadedRoadmap.hover();
+        await roadmapCard
+          .getByRole("button", { name: "Actions for Roadmap", exact: true })
+          .click();
+        await page
+          .getByRole("menuitem", { name: "Workspace settings", exact: true })
+          .click();
+        const settings = page.getByRole("dialog", {
+          name: "Workspace settings",
+          exact: true,
         });
+        await expect(settings).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(settings).toHaveCount(0);
+        await expect(reloadedRoadmap).toBeFocused();
+        await reloadedRoadmap.hover();
+        await roadmapCard
+          .getByRole("button", { name: "New task in Roadmap", exact: true })
+          .click();
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                window.fixtureNavigation.snapshot().entry.target.route?.params,
+            ),
+          )
+          .toEqual({
+            kind: "solo-draft",
+            region: "buzz.region:fixture.solo-region:work",
+            project: roadmapId,
+          });
+      }
       await solo
         .getByRole("button", { name: "Ordinary chat", exact: true })
         .click();

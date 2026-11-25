@@ -247,7 +247,7 @@ export type SoloNavigation = Readonly<{
   version: 2;
   /** Non-composing sources receive `ui.Workspace` and `openWorkspace` routing
    * without consuming ordinary Solo chats or workspace sections. */
-  independentWorkspaces: true;
+  independentWorkspaces?: true;
   workspaces: SoloWorkspaces;
   registerSource(source: SoloRegionSource): SoloRegionHandle;
 }>;

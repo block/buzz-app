@@ -189,7 +189,7 @@ function WorkspaceNewTaskButton({
 export function RegionWorkspace(props: SoloWorkspaceProps) {
   const parts = useContext(WorkspaceCompositionContext);
   const destination = useContext(RegionDestinationContext);
-  if (!parts) return <IndependentRegionWorkspace {...props} />;
+  if (!parts) return <IndependentRegionWorkspace key={props.id} {...props} />;
   const workspace = parts.workspaces.find(
     (item) => item.id === (props.id ?? ""),
   );
@@ -247,6 +247,28 @@ export function RegionWorkspace(props: SoloWorkspaceProps) {
   );
 }
 
+function independentFallbackFocus(
+  sectionKey: string | undefined,
+  exclude?: Element | null,
+) {
+  if (!sectionKey) return null;
+  const section = document.querySelector(
+    `[data-sidebar-section="${CSS.escape(sectionKey)}"]`,
+  );
+  if (!section) return null;
+  for (const candidate of section.querySelectorAll<HTMLElement>(
+    "[data-solo-workspace-id]",
+  )) {
+    if (
+      !exclude?.contains(candidate) &&
+      !candidate.closest("[hidden], [inert]")
+    )
+      return candidate;
+  }
+  const summary = section.querySelector<HTMLElement>("summary");
+  return summary && !summary.closest("[hidden], [inert]") ? summary : null;
+}
+
 /** Native workspace chrome for an independent source without consuming ordinary chats. */
 function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
   const destination = useContext(RegionDestinationContext);
@@ -258,11 +280,18 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
     preferences?.snapshot ?? readEmptyPreferences,
   );
   useEffect(() => {
-    if (preferences && snapshot.status === "idle") void preferences.ensure();
-  }, [preferences, snapshot.status]);
+    if (preferences && snapshot.status === "idle" && destination?.active())
+      void preferences.ensure();
+  }, [preferences, snapshot.status, destination]);
   const panelId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const openingSettings = useRef(false);
+  const deletingRef = useRef(false);
+  const ownsFocusRef = useRef(false);
+  const overflowOpenRef = useRef(false);
+  const contextOpenRef = useRef(false);
+  const settingsOpenRef = useRef(false);
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -275,43 +304,82 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  settingsOpenRef.current = settingsOpen;
   const sectionKey = host?.sectionKey;
-  useLayoutEffect(() => {
-    const header = headerRef.current;
-    return () => {
-      if (!header?.contains(document.activeElement)) return;
-      queueMicrotask(() => {
-        if (document.activeElement !== document.body) return;
-        const summary = sectionKey
-          ? document.querySelector<HTMLElement>(
-              `[data-sidebar-section="${CSS.escape(sectionKey)}"] summary`,
-            )
-          : null;
-        if (summary && !summary.closest("[hidden], [inert]"))
-          summary.focus({ preventScroll: true });
-      });
-    };
-  }, [sectionKey]);
-  if (
-    !destination ||
-    !host ||
-    !preferences ||
-    !props.id ||
-    !destination.active()
-  )
-    return null;
   const order = workspaceSectionOrder(snapshot.data);
   const sections = snapshot.data?.sections ?? [];
   const groups = snapshot.data?.sectionOrder
     ? order.flatMap((key) => sections.filter(({ id }) => key === `group:${id}`))
     : sections;
-  const groupIndex = groups.findIndex((group) => group.id === props.id);
-  const section = groups[groupIndex];
-  if (!section) return null;
+  const groupIndex = props.id
+    ? groups.findIndex((group) => group.id === props.id)
+    : -1;
+  const section = groupIndex >= 0 ? groups[groupIndex] : undefined;
+  const rendered = Boolean(
+    destination &&
+      host &&
+      preferences &&
+      props.id &&
+      destination.active() &&
+      section,
+  );
+  useEffect(() => {
+    if (!section && settingsOpen) setSettingsOpen(false);
+  }, [section, settingsOpen]);
+  useLayoutEffect(() => {
+    if (!rendered) return;
+    const root = rootRef.current;
+    return () => {
+      const active = document.activeElement;
+      const inOwnRoot =
+        root?.contains(active) &&
+        !active?.closest("[data-solo-destination-root]");
+      const owned =
+        inOwnRoot ||
+        ownsFocusRef.current ||
+        overflowOpenRef.current ||
+        contextOpenRef.current ||
+        settingsOpenRef.current ||
+        deletingRef.current;
+      ownsFocusRef.current = false;
+      if (!owned) return;
+      queueMicrotask(() => {
+        if (document.activeElement !== document.body) return;
+        independentFallbackFocus(sectionKey, root)?.focus({
+          preventScroll: true,
+        });
+      });
+    };
+  }, [sectionKey, rendered]);
+  if (
+    !destination ||
+    !host ||
+    !preferences ||
+    !section ||
+    !destination.active()
+  )
+    return null;
   const title = section.name;
   const collapseKey = `${host.sectionKey}:workspace:${section.id}`;
   const open = !host.collapsed.includes(collapseKey);
-  const leading = props.headerLeading;
+  const leading = props.headerLeading
+    ? {
+        ...props.headerLeading,
+        onActivate: () => {
+          if (destination.active()) props.headerLeading?.onActivate();
+        },
+      }
+    : undefined;
+  const onSelect = props.onSelect
+    ? () => {
+        if (destination.active()) props.onSelect?.();
+      }
+    : undefined;
+  const onNewTask = props.onNewTask
+    ? () => {
+        if (destination.active()) props.onNewTask?.();
+      }
+    : undefined;
   const accessory =
     props.headerAccessory != null && typeof props.headerAccessory !== "boolean"
       ? props.headerAccessory
@@ -319,6 +387,14 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
   const hasInteractiveDecoration = !!leading || accessory != null;
   const orderWritable = preferences.sectionOrderWritable;
   const moveWorkspace = (to: number) => {
+    if (
+      !destination.active() ||
+      !orderWritable ||
+      deletingRef.current ||
+      to < 0 ||
+      to >= groups.length
+    )
+      return;
     const ids = groups
       .map((group) => group.id)
       .filter((key) => key !== section.id);
@@ -335,15 +411,27 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
       .reorderSections(`group:${section.id}`, reordered)
       .catch(() => {});
   };
-  const restoreFocus = () =>
-    headerRef.current?.querySelector<HTMLElement>("[data-solo-workspace-id]") ??
-    false;
-  const menuFinalFocus = () => {
-    if (openingSettings.current) {
-      openingSettings.current = false;
-      return false as const;
+  const restoreFocus = () => {
+    const header = headerRef.current;
+    if (header?.isConnected && !header.closest("[hidden], [inert]")) {
+      const target = header.querySelector<HTMLElement>(
+        "[data-solo-workspace-id]",
+      );
+      if (target) return target;
     }
-    return restoreFocus();
+    return independentFallbackFocus(sectionKey, rootRef.current) ?? false;
+  };
+  const menuFinalFocus = () =>
+    openingSettings.current ? (false as const) : restoreFocus();
+  const finishOpeningSettings = (isOpen: boolean) => {
+    if (isOpen || !openingSettings.current) return;
+    openingSettings.current = false;
+    if (mounted.current && destination.active() && !deletingRef.current) {
+      setSettingsOpen(true);
+      return;
+    }
+    const target = restoreFocus();
+    if (target) target.focus({ preventScroll: true });
   };
   const ownsContextTarget = ({ target, currentTarget }: SyntheticEvent) =>
     target instanceof Element &&
@@ -355,12 +443,12 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
     <>
       <WorkspaceSourceMenuActions
         leading={leading}
-        onNewTask={props.onNewTask}
+        onNewTask={onNewTask}
         headerMenuActions={props.headerMenuActions}
         runAction={destination.runAction}
       />
       <MenuItem
-        disabled={!orderWritable || groupIndex <= 0}
+        disabled={!orderWritable || deleting || groupIndex <= 0}
         onClick={() => moveWorkspace(groupIndex - 1)}
       >
         <MenuIcon>
@@ -369,7 +457,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
         Move up
       </MenuItem>
       <MenuItem
-        disabled={!orderWritable || groupIndex >= groups.length - 1}
+        disabled={!orderWritable || deleting || groupIndex >= groups.length - 1}
         onClick={() => moveWorkspace(groupIndex + 1)}
       >
         <MenuIcon>
@@ -378,11 +466,10 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
         Move down
       </MenuItem>
       <MenuItem
+        disabled={deleting}
         onClick={() => {
+          if (!destination.active() || deletingRef.current) return;
           openingSettings.current = true;
-          requestAnimationFrame(() => {
-            if (mounted.current && destination.active()) setSettingsOpen(true);
-          });
         }}
       >
         Workspace settings
@@ -392,10 +479,15 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
         data-delete-solo-project=""
         disabled={!preferences.sectionRemovalWritable || deleting}
         onClick={() => {
+          if (!destination.active() || deletingRef.current) return;
+          deletingRef.current = true;
           setDeleting(true);
           setDeleteError("");
           void preferences
             .removeSection(section.id)
+            .then(() => {
+              host.toggle(collapseKey, true);
+            })
             .catch((error: unknown) => {
               if (mounted.current)
                 setDeleteError(
@@ -405,6 +497,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
                 );
             })
             .finally(() => {
+              deletingRef.current = false;
               if (mounted.current) setDeleting(false);
             });
         }}
@@ -414,7 +507,12 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
     </>
   );
   const overflow = (
-    <MenuRoot>
+    <MenuRoot
+      onOpenChange={(next) => {
+        overflowOpenRef.current = next;
+      }}
+      onOpenChangeComplete={finishOpeningSettings}
+    >
       <MenuTrigger
         render={(triggerProps) => (
           <IconButton
@@ -445,8 +543,8 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
       onToggle={() => host.toggle(collapseKey, !open)}
     />
   );
-  const newTask = props.onNewTask && (
-    <WorkspaceNewTaskButton title={title} onNewTask={props.onNewTask} />
+  const newTask = onNewTask && (
+    <WorkspaceNewTaskButton title={title} onNewTask={onNewTask} />
   );
   return (
     <Collapsible.Root
@@ -455,7 +553,21 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
       open={open}
       onOpenChange={(next) => host.toggle(collapseKey, next)}
     >
-      <div data-solo-workspace={section.id}>
+      <div
+        ref={rootRef}
+        data-solo-workspace={section.id}
+        onFocusCapture={(event) => {
+          ownsFocusRef.current = !(
+            event.target instanceof Element &&
+            event.target.closest("[data-solo-destination-root]")
+          );
+        }}
+        onBlurCapture={(event) => {
+          const next = event.relatedTarget;
+          if (!(next instanceof Node) || !event.currentTarget.contains(next))
+            ownsFocusRef.current = false;
+        }}
+      >
         <NavigationCard
           tone="tonal"
           data-drop-target={props.dropTarget || undefined}
@@ -472,9 +584,11 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
           <ContextMenuRoot
             open={contextMenuOpen}
             onOpenChange={(next) => {
+              contextOpenRef.current = next;
               setContextMenuOpen(next);
               if (!next) setContextMenuAnchor(undefined);
             }}
+            onOpenChangeComplete={finishOpeningSettings}
           >
             <ContextMenuTrigger
               render={
@@ -485,16 +599,13 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
                 />
               }
               onContextMenu={(event) => {
-                if (hasInteractiveDecoration && !ownsContextTarget(event))
-                  event.preventBaseUIHandler();
+                if (!ownsContextTarget(event)) event.preventBaseUIHandler();
               }}
               onTouchStart={(event) => {
-                if (hasInteractiveDecoration && !ownsContextTarget(event))
-                  event.preventBaseUIHandler();
+                if (!ownsContextTarget(event)) event.preventBaseUIHandler();
               }}
               onKeyDown={(event) => {
-                if (hasInteractiveDecoration && !ownsContextTarget(event))
-                  return;
+                if (!ownsContextTarget(event)) return;
                 if (
                   event.key === "ContextMenu" ||
                   (event.shiftKey && event.key === "F10")
@@ -532,7 +643,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
                   id: section.id,
                   title,
                   selected: props.selected,
-                  onSelect: props.onSelect,
+                  onSelect,
                   leading,
                   disclosure,
                 })}
@@ -554,6 +665,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
         )}
         {settingsOpen && (
           <WorkspaceSettings
+            key={section.id}
             session={destination.session}
             scope={destination.scope}
             target={{

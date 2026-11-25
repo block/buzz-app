@@ -504,12 +504,13 @@ export class SoloNavigationService extends Service implements SoloNavigation {
       : undefined;
   }
   async openCreatedWorkspace(workspaceId: string): Promise<boolean> {
-    const region = this.value.regions.find(
+    const candidates = this.value.regions.filter(
       (item) =>
-        item.source?.openWorkspace &&
+        typeof item.source?.openWorkspace === "function" &&
         !item.hidden &&
         item.reason !== "disabled",
     );
+    const region = candidates.find((item) => !item.reason) ?? candidates[0];
     const source = region?.source;
     if (!source?.openWorkspace) return false;
     const binding = this.value.binding;

@@ -4354,7 +4354,7 @@ it("keeps the visible member page and focus stable while names arrive", async ()
     expect(within(list).getAllByText(/^Member /).length).toBeGreaterThan(0);
     await t.user.click(screen.getByRole("button", { name: "Close" }));
     await t.user.click(screen.getByRole("button", { name: "Access" }));
-    await within(memberData()).findByRole("tab", { name: /^Agents ·/ });
+    await screen.findByRole("tab", { name: /^Agents ·/ });
   } finally {
     await act(async () => release());
   }

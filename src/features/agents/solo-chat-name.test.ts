@@ -80,10 +80,16 @@ it("only the first tagged agent names an unchanged new Berd chat, once", async (
       consistency: "strong",
     },
   ]);
-  // The chat's create event, whoever signed it, read from the writer: the
-  // chat may have been created a moment ago.
+  // The create event the owner signed for this chat, read from the writer:
+  // the chat may have been created a moment ago.
   expect(read).toHaveBeenCalledWith([
-    { kinds: [9007], "#h": ["chat"], limit: 2, consistency: "strong" },
+    {
+      kinds: [9007],
+      authors: [owner],
+      "#h": ["chat"],
+      limit: 2,
+      consistency: "strong",
+    },
   ]);
   await nameSoloChat(relay, owner, first, event, "Another title");
   expect(save).toHaveBeenCalledOnce();
@@ -555,16 +561,13 @@ it.each([
 );
 
 // The chat's own create event, as the relay keeps it: the name as signed.
-const creation = (name: string, author = owner) => ({
+const creation = (name: string, author = owner, more: string[][] = []) => ({
   id: name.length.toString(16).padStart(64, "9"),
   pubkey: author,
   kind: 9007,
   created_at: 90,
   content: "",
-  tags: [
-    ["h", "chat"],
-    ["name", name],
-  ],
+  tags: [["h", "chat"], ["name", name], ...more],
 });
 
 /** A chat `stored` under a name, whose first message is `sent`. `created`
@@ -632,20 +635,13 @@ it.each([
     stored: "Plan the launch",
     created: "# Plan the launch ",
   },
-  // A chat is created by whoever signed its create event, not always its owner.
-  {
-    sent: "a prompt, in a chat someone else's key created,",
-    content: "Discuss this change",
-    stored: "Release planning",
-    author: second,
-  },
 ])(
   "names a chat started with $sent while it has the name it was created with",
-  async ({ content, stored, created = stored, author }) => {
+  async ({ content, stored, created = stored }) => {
     const chat = soloChat(
       { ...event, content } as unknown as RelayEvent,
       stored,
-      async () => [creation(created, author)],
+      async () => [creation(created)],
     );
     await chat.offer();
     expect(chat.name()).toBe("Review the clip");
@@ -657,30 +653,66 @@ it.each([
     kept: "differs from the name it was created with",
     // "Chat" is a title an earlier desktop gave a video; here a person chose it.
     stored: "Chat",
-    created: ["Video"],
+    created: [creation("Video")],
     labels: [],
   },
   {
     kept: "is marked as chosen",
     stored: "Video",
-    created: ["Video"],
+    created: [creation("Video")],
     labels: ["buzz.session.named"],
   },
   {
     kept: "has create events that disagree",
     stored: "Video",
-    created: ["Video", "Clip"],
+    created: [creation("Video"), creation("Clip")],
+    labels: [],
+  },
+  // Only the create event the owner signed for this chat alone is evidence.
+  // Any other answer is ignored, and the first message gives no such title.
+  {
+    kept: "only a create event another key signed carries",
+    stored: "Release planning",
+    created: [creation("Release planning", second)],
+    labels: [],
+  },
+  {
+    kept: "only a create event for a second chat as well carries",
+    stored: "Release planning",
+    created: [creation("Release planning", owner, [["h", "other"]])],
     labels: [],
   },
 ])("keeps a chat's name that $kept", async ({ stored, created, labels }) => {
-  const chat = soloChat(
-    videoOnly,
-    stored,
-    async () => created.map((name) => creation(name)),
-    labels,
-  );
+  const chat = soloChat(videoOnly, stored, async () => created, labels);
   await chat.offer();
   expect(chat.name()).toBe(stored);
+});
+
+it.each([
+  { listed: "as named", summary: { labels: ["buzz.session.named"] } },
+  { listed: "under the harness's title", summary: { name: "Review the clip" } },
+])("a chat listed $listed costs no relay read", async ({ summary }) => {
+  const read = vi.fn(async () => [videoOnly]);
+  const load = vi.fn();
+  const relay = connection(() => ({
+    status: "ready",
+    viewer: owner,
+    session: {
+      channels: {
+        list: () => ({
+          status: "ready",
+          channels: [
+            { id: "chat", channelType: "solo", creator: owner, ...summary },
+          ],
+        }),
+      },
+      read,
+      channelDetails: { available: true, load, save: vi.fn() },
+    },
+  }));
+  await nameSoloChat(relay, owner, first, videoOnly, "Review the clip");
+  expect(read).not.toHaveBeenCalled();
+  expect(load).not.toHaveBeenCalled();
 });
 
 it("a chat with no create event is named only while it has a title its first message gives", async () => {

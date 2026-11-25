@@ -57,9 +57,11 @@ export function isStartingChatTitle(
 const titleLength = (text: string) =>
   canonicalDetailsName([...text].slice(0, 80).join(""));
 
-/** The mobile app's title for the `text` it published: what the person wrote
- * before the attachment lines its composer appended, as written, with no
- * Markdown read. Alone, attachments and web addresses are described. */
+/** The caption case of the mobile app's title, not its whole rule: the `text`
+ * it published without the attachment lines its composer appended, as
+ * written, with no Markdown read. Alone, attachments and web addresses are
+ * described. The app also skips a leading block quote and a leading `buzz://`
+ * link; a name it derives that way is not recognized here, and is kept. */
 function captionTitle(
   text: string,
   attachments: readonly TitleAttachment[],

@@ -6,6 +6,9 @@ import {
   STOP_TIMEOUT_MS,
 } from "../../features/agent-harness/acp/process";
 
+/** How long a transcript line goes without more text before it posts. */
+export const TRANSCRIPT_QUIET_MS = 1_000;
+
 /** Goose owns turn-taking and tool delegation on this same ACP session. */
 export function openVoice(
   process: GooseProcess,
@@ -21,6 +24,15 @@ export function openVoice(
   let pending:
     | { id: string; role: "owner" | "agent"; text: string }
     | undefined;
+  let quiet: ReturnType<typeof setTimeout> | undefined;
+  /** Posts the line being built. The runner refuses one once the seat has
+   * left, so a line must post while the seat is still in the room. */
+  const post = (fail: (error: Error) => void) => {
+    clearTimeout(quiet);
+    const text = pending?.text.trim();
+    if (pending && text) void seat.transcript(pending.role, text).catch(fail);
+    pending = undefined;
+  };
   return openVoiceMedia("Goose", seat.signal, seat.output, seat.ended, {
     gatherCandidates: true,
     subscribe: (receive, fail) => {
@@ -48,8 +60,10 @@ export function openVoice(
           update.sessionUpdate === "live_voice_interaction_ended"
         ) {
           endedId = update.interactionId;
-          if (interactionId && endedId === interactionId)
+          if (interactionId && endedId === interactionId) {
+            post(fail);
             fail(new Error("Goose voice ended"));
+          }
           return;
         }
         if (
@@ -67,19 +81,19 @@ export function openVoice(
               : undefined;
         const id = update.messageId ?? update._meta.goose.messageId;
         if (!role || !id) return;
-        if (pending && pending.id !== id) {
-          if (pending.text.trim())
-            void seat.transcript(pending.role, pending.text).catch(fail);
-          pending = undefined;
-        }
+        if (pending && pending.id !== id) post(fail);
         pending ??= { id, role, text: "" };
         // Bound retained transcript text just as the harness bounds context.
         pending.text = (pending.text + update.content.text).slice(-32_768);
+        // goose marks no line's end: one gone quiet is done, as the last
+        // before someone leaves always is. A long pause splits a line.
+        clearTimeout(quiet);
+        quiet = setTimeout(() => post(fail), TRANSCRIPT_QUIET_MS);
       });
       return () => {
         closed = true;
         off();
-        pending = undefined;
+        post(fail);
       };
     },
     async start(offerSdp) {

@@ -3,7 +3,7 @@ import type { AgentVoiceSeat } from "../../features/agents/service";
 import { GooseProcess } from "./goose";
 import { fakeSpawn } from "./goose-testing";
 import { GooseVoiceSettings } from "./voice-settings";
-import { openVoice } from "./voice";
+import { openVoice, TRANSCRIPT_QUIET_MS } from "./voice";
 import {
   REQUEST_TIMEOUT_MS,
   STOP_TIMEOUT_MS,
@@ -14,6 +14,7 @@ vi.mock("../../features/huddle/voice-media", () => ({
   openVoiceMedia: media.open,
 }));
 beforeEach(() => {
+  vi.useRealTimers();
   media.open.mockReset();
 });
 function fixture() {
@@ -107,6 +108,43 @@ it("groups only marked transcript deltas, leaving delegated output to the main s
   expect(f.transcript).toHaveBeenCalledExactlyOnceWith("agent", "hello world");
   f.unsubscribe();
   expect(f.off).toHaveBeenCalledOnce();
+  expect(f.transcript).toHaveBeenLastCalledWith("agent", "later");
+});
+
+const spoken = (id: string, role: "user" | "agent", text: string) => ({
+  sessionUpdate: `${role}_message_chunk`,
+  content: { type: "text", text },
+  _meta: { goose: { messageId: id, liveTranscript: true } },
+});
+
+it("posts the last spoken line once it goes quiet, while the seat is still in the room", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  f.update(spoken("u1", "user", "what time is it"));
+  f.update(spoken("a1", "agent", "it is"));
+  await vi.advanceTimersByTimeAsync(TRANSCRIPT_QUIET_MS - 1);
+  f.update(spoken("a1", "agent", " noon "));
+  await vi.advanceTimersByTimeAsync(TRANSCRIPT_QUIET_MS - 1);
+  expect(f.transcript).toHaveBeenCalledExactlyOnceWith(
+    "owner",
+    "what time is it",
+  );
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.transcript).toHaveBeenLastCalledWith("agent", "it is noon");
+  f.unsubscribe();
+  expect(f.transcript).toHaveBeenCalledTimes(2);
+});
+
+it("posts the last spoken line when its interaction ends", async () => {
+  const f = fixture();
+  await f.signaling.start("offer");
+  f.update(spoken("a1", "agent", "goodbye"));
+  f.update(
+    { sessionUpdate: "live_voice_interaction_ended", interactionId: "voice-1" },
+    "_goose/unstable/session/update",
+  );
+  expect(f.transcript).toHaveBeenCalledExactlyOnceWith("agent", "goodbye");
+  expect(f.fail).toHaveBeenCalledOnce();
 });
 
 it("fails an interaction that ended before its start response arrived", async () => {

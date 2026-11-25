@@ -15,6 +15,7 @@ import { ClaudeDefaults } from "./defaults";
 import { ClaudeRuntime, type Config, DEFAULT_CONFIG } from "./runtime";
 import { ClaudeSetup } from "./setup";
 import { createTabs } from "./tabs";
+import type { AgentReads } from "../../features/agents/reads";
 
 const agent: Agent<Config> = {
   key: "c".repeat(64),
@@ -61,6 +62,12 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+const ownerReads = {
+  ownerReadable: () => true,
+  channelLabel: () => undefined,
+  name: () => undefined,
+} as unknown as AgentReads;
+
 it("loads full Claude history when work stops after a poll observes invalid overlap", async () => {
   vi.useFakeTimers();
   localStorage.setItem(
@@ -71,7 +78,7 @@ it("loads full Claude history when work stops after a poll observes invalid over
   );
   const runtime = new ClaudeRuntime(
     {},
-    () => undefined,
+    () => ownerReads,
     async () => undefined,
   );
   const sessions = vi

@@ -66,6 +66,11 @@ the host can wire it up. It isn't a boundary, and a plugin that wants to get
 around it can. Install only plugins from authors you'd trust with your account
 and your computer.
 
+By default, unsigned plugins can run and supplied signatures are always verified.
+Set `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures, or use a
+[plugin trust file](plugin-trust.md) to allow only signed plugins from specific
+publishers. Manage the file with `buzzodz plugin trust`.
+
 Being in the same process also means a React error boundary can't contain an
 infinite loop or undo a side effect. If a plugin freezes startup, launch with
 `BUZZODZ_SAFE_MODE=1` to pause installed plugins for that launch.

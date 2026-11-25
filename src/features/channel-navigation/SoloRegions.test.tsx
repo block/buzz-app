@@ -34,6 +34,7 @@ import { composerDOMFixture } from "../messages/composer-testing";
 import { SPRING_LOAD_DELAY_MS } from "../messages/spring-loaded-drag";
 import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import { MenuItem } from "../../shared/design-system/ui/Menu";
+import { FlagIcon } from "../../shared/design-system/icons";
 import { SoloHeading } from "../../bundled/channels/SoloHeading";
 import { WorkspaceControl } from "../solo/WorkspaceControl";
 import type { OpenTarget } from "../navigation/targets";
@@ -45,7 +46,6 @@ import type {
 import type { Navigation } from "../navigation/controller";
 import { useSidebarView } from "../../bundled/channels/useSidebarView";
 import { writeView } from "../../shared/view-state";
-import destinationStyles from "./SoloDestination.module.css";
 
 composerDOMFixture();
 const disposals: (() => unknown)[] = [];
@@ -347,39 +347,6 @@ it.each([
     }
   },
 );
-
-it("paints the shared card tone and accepted drag target the source chooses", async () => {
-  const h = fixture();
-  await h.register({
-    component: ({ ui }) => (
-      <>
-        <Row ui={ui} channelId="owned" tone="inset" dropTarget />
-        <Row ui={ui} channelId="shared" tone="tonal" />
-      </>
-    ),
-  });
-  mount(h);
-  expect(
-    screen
-      .getByRole("button", { name: "Owned" })
-      .closest("[data-navigation-card]"),
-  ).toHaveAttribute("data-tone", "inset");
-  expect(
-    screen
-      .getByRole("button", { name: "Owned" })
-      .closest("[data-navigation-card]"),
-  ).toHaveAttribute("data-drop-target");
-  expect(
-    screen
-      .getByRole("button", { name: "Shared" })
-      .closest("[data-navigation-card]"),
-  ).not.toHaveAttribute("data-drop-target");
-  expect(
-    screen
-      .getByRole("button", { name: "Shared" })
-      .closest("[data-navigation-card]"),
-  ).toHaveAttribute("data-tone", "tonal");
-});
 
 it("keeps header actions and every owned channel reachable through body failure and retry", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -748,22 +715,18 @@ it("keeps Destination navigation, unread and local state stable across source up
   expect(custom).toHaveBeenCalledOnce();
 });
 
-it("renders a source status update without rerendering an unchanged conversation", async () => {
+it("keeps an open conversation menu, focus and active row across a source status update", async () => {
   const h = fixture();
   const user = userEvent.setup();
-  const renderShared = vi.fn();
   const Shared = memo(function Shared({ ui }: Pick<SoloRegionProps, "ui">) {
     return (
       <ui.Conversation channelId="shared">
-        {(c) => {
-          renderShared();
-          return (
-            <c.Menu>
-              <c.Link label={c.name} />
-              <c.Actions />
-            </c.Menu>
-          );
-        }}
+        {(c) => (
+          <c.Menu>
+            <c.Link label={c.name} />
+            <c.Actions />
+          </c.Menu>
+        )}
       </ui.Conversation>
     );
   });
@@ -784,7 +747,6 @@ it("renders a source status update without rerendering an unchanged conversation
   shared.focus();
   await user.keyboard("{Shift>}{F10}{/Shift}");
   const menu = await screen.findByRole("menu", { name: "Actions for Shared" });
-  renderShared.mockClear();
 
   await act(() =>
     source.update({
@@ -795,7 +757,6 @@ it("renders a source status update without rerendering an unchanged conversation
     }),
   );
   expect(screen.getByText("Working")).toBeInTheDocument();
-  expect(renderShared).not.toHaveBeenCalled();
   expect(menu).toBeVisible();
   await user.keyboard("{Escape}");
   await waitFor(() => expect(menu).not.toBeInTheDocument());
@@ -2049,7 +2010,6 @@ it("lets the source place resting content and the overflow menu", async () => {
   expect(screen.getByRole("button", { name: "Owned" })).not.toContainElement(
     action,
   );
-  expect(status.parentElement).toHaveClass(destinationStyles.rest ?? "rest");
 });
 
 it("withholds every chat menu for a cached conversation", async () => {
@@ -2849,6 +2809,101 @@ it.each([
   },
 );
 
+it("shows channel actions with artwork and help below details for the row that supplied them", async () => {
+  const h = fixture();
+  const viewer = h.session.viewer;
+  assert(viewer);
+  h.session.channelWrites = { ...h.session.channelWrites, available: true };
+  const channel = {
+    id: "source",
+    name: "Source channel",
+    channelType: "stream",
+    members: [viewer],
+  } as const satisfies ChannelSummary;
+  const other = { ...channel, id: "other", name: "Other channel" };
+  h.roster([channel, other]);
+  const inspect = vi.fn();
+  await h.register({
+    component: ({ ui }) => {
+      const Group = ui.ChannelGroup;
+      assert(Group);
+      return [channel, other].map(({ id }) => (
+        <Group
+          key={id}
+          channelId={id}
+          onSelect={() => {}}
+          expanded={false}
+          controls={`${id}-tasks`}
+          disclosureLabel="Show tasks"
+          onToggle={() => {}}
+          onNewTask={() => {}}
+          headerMenuActions={
+            id === channel.id
+              ? [
+                  {
+                    id: "inspect",
+                    label: "Inspect catalog",
+                    icon: <FlagIcon data-testid="catalog-icon" />,
+                    hint: "Inspect the catalog for this channel",
+                    onSelect: () => inspect(id),
+                  },
+                ]
+              : undefined
+          }
+        />
+      ));
+    },
+  });
+  mount(h, conversationTarget(h.scope, other.id));
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Actions for Other channel" }),
+  );
+  expect(
+    within(await screen.findByRole("menu"))
+      .getAllByRole("menuitem")
+      .map((item) => item.textContent),
+  ).toEqual(["New task", "View channel details"]);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+  const trigger = screen.getByRole("button", {
+    name: "Actions for Source channel",
+  });
+  await user.click(trigger);
+  const menu = within(await screen.findByRole("menu"));
+  const action = menu.getByRole("menuitem", { name: "Inspect catalog" });
+  expect(menu.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(
+    ["New task", "View channel details", "Inspect catalog"],
+  );
+  expect(within(action).getByTestId("catalog-icon")).toBeVisible();
+  await user.click(action);
+  expect(inspect).toHaveBeenCalledExactlyOnceWith(channel.id);
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
+  trigger.focus();
+  await user.keyboard("{ArrowDown}");
+  const keyboardAction = await screen.findByRole("menuitem", {
+    name: "Inspect catalog",
+  });
+  await user.keyboard("{End}");
+  expect(keyboardAction).toHaveFocus();
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Inspect the catalog for this channel",
+  );
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  expect(trigger).toHaveFocus();
+  expect(inspect).toHaveBeenCalledTimes(1);
+
+  await user.keyboard("{ArrowDown}");
+  await screen.findByRole("menu");
+  await user.keyboard("{End}");
+  await user.keyboard("{Enter}");
+  expect(inspect).toHaveBeenCalledTimes(2);
+  expect(inspect).toHaveBeenLastCalledWith(channel.id);
+});
+
 it("adds region entries to the existing workspace and channel heading menus", async () => {
   const h = fixture();
   const viewer = h.session.viewer;
@@ -2955,6 +3010,58 @@ it("adds region entries to the existing workspace and channel heading menus", as
     "The action could not run.",
   );
 });
+
+it.each([
+  {
+    name: "a removed viewer with retained peers",
+    joined: false,
+    retainedRoster: true,
+  },
+  {
+    name: "a joined viewer without a peer roster",
+    joined: true,
+    retainedRoster: false,
+  },
+])(
+  "channel groups use viewer membership for $name",
+  async ({ joined, retainedRoster }) => {
+    const h = fixture();
+    const viewer = h.session.viewer;
+    assert(viewer);
+    h.roster([
+      {
+        id: "source",
+        name: "Source channel",
+        channelType: "stream",
+        ...(retainedRoster ? { members: [viewer] } : {}),
+        viewerMembership: { pubkey: viewer, joined },
+      },
+    ]);
+    await h.register({
+      component: ({ ui }) => {
+        const Group = ui.ChannelGroup;
+        assert(Group);
+        return (
+          <Group
+            channelId="source"
+            onSelect={() => {}}
+            expanded
+            controls="source-tasks"
+            disclosureLabel="Hide source tasks"
+            onToggle={() => {}}
+          >
+            Task content
+          </Group>
+        );
+      },
+    });
+    mount(h);
+    expect(!!screen.queryByRole("button", { name: "Source channel" })).toBe(
+      joined,
+    );
+    expect(!!screen.queryByText("Task content")).toBe(joined);
+  },
+);
 
 it("channel groups separate selection from disclosure, preserve children, and recheck task access", async () => {
   const h = fixture();

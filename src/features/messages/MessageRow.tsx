@@ -105,6 +105,8 @@ import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
+import { DetailsMessage } from "./DetailsMessage";
+import { useComposerScope } from "./composer-overlay";
 import {
   safeMessageUrl,
   projectMarkdownAttachments,
@@ -121,7 +123,12 @@ import {
 } from "./MessageManagement";
 import { MessageActionBar } from "./MessageActionBar";
 import { useForwardMessage } from "./ForwardMessage";
-import { FlagIcon, ListBulletsIcon } from "../../shared/design-system/icons";
+import {
+  FlagIcon,
+  ListBulletsIcon,
+  PinIcon,
+} from "../../shared/design-system/icons";
+import { usePinnedMessages } from "./use-pins";
 import {
   MenuIcon,
   MenuItem,
@@ -136,7 +143,12 @@ import { messageCopyLink, messageCopyText } from "./message-copy";
 import { avatarMedia } from "../../shared/avatar-source";
 import { useThreadDraft } from "./draft-places";
 
-export type MessageLinkOrigin = Readonly<{ rootId: string }>;
+export type MessageLinkOrigin = Readonly<{
+  rootId: string;
+  /** The view the row reads in, when it reads in one: the conversation, or
+   * the thread with this root. An opening can become a dialog on it. */
+  view?: Readonly<{ rootId?: string | undefined }> | undefined;
+}>;
 export type MessageRowProps = {
   row: ChannelMessage;
   /** Read-only presentations can retain their own prose highlighting. */
@@ -167,6 +179,8 @@ export type MessageRowProps = {
   retry: ((id: string) => void) | undefined;
   /** Pins this row in a virtualized list; returns the release. */
   keepMounted?: ((messageId: string) => () => void) | undefined;
+  /** A details message in this row expanded or folded in place. */
+  onExpandDetails?: (() => void) | undefined;
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
@@ -271,6 +285,7 @@ function MessageRowContent({
   day,
   retry,
   keepMounted,
+  onExpandDetails,
   onOpenThread,
   onReply,
   startsThreads = true,
@@ -324,9 +339,16 @@ function MessageRowContent({
     row.channelId,
     rootId,
   );
+  const composerView = useComposerScope();
+  const inView = !!composerView;
+  const viewRoot = composerView?.rootId;
   const openLink = useCallback(
-    (url: string) => onOpenLink(url, { rootId }),
-    [onOpenLink, rootId],
+    (url: string) =>
+      onOpenLink(url, {
+        rootId,
+        ...(inView && { view: { rootId: viewRoot } }),
+      }),
+    [onOpenLink, rootId, inView, viewRoot],
   );
   const springLoadedThread = useSpringLoaded(
     () => onOpenThread?.(row.id, rootId),
@@ -982,7 +1004,9 @@ function MessageRowContent({
               </div>
             ) : files ? (
               <div className={styles.fileGroup} key={group[0]?.url}>
-                {items}
+                {/* A block each, so a copied selection puts every
+                    card on its own line. */}
+                {items.map((item) => item && <div key={item.key}>{item}</div>)}
               </div>
             ) : (
               items
@@ -1072,6 +1096,42 @@ function MessageRowContent({
           </p>
         )}
       </div>
+    ) : row.audience === "details" ? (
+      // Details read as their brief, which opens into their own reader.
+      <DetailsMessage
+        messageId={row.id}
+        channelId={row.channelId}
+        author={name}
+        createdAt={row.createdAt}
+        keepMounted={keepMounted}
+        onExpand={onExpandDetails}
+        preview={
+          <MessageMarkdown
+            directory={directory}
+            session={references}
+            scope={scope}
+            row={displayRow}
+            extensions={extensions}
+            media={media}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
+            edited={editedInBody && displayRow.edited}
+          />
+        }
+      >
+        <MessageMarkdown
+          directory={directory}
+          session={references}
+          scope={scope}
+          row={displayRow}
+          extensions={extensions}
+          media={media}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
+          participantProfiles={participantProfiles}
+        />
+      </DetailsMessage>
     ) : (
       <MessageMarkdown
         directory={directory}
@@ -1646,6 +1706,9 @@ function MessageRowContent({
                   )}
               </div>
             </div>
+            {session?.relayAuthor && !row.membership && !row.huddle && (
+              <PinnedMarker session={session} row={row} />
+            )}
             {row.sentFromThread && (
               <div className={styles.sentFromThread}>
                 Sent from{" "}
@@ -1732,6 +1795,7 @@ function MessageRowContent({
                   messageId={row.id}
                   registry={linkPreviewRegistry}
                   onOpenLink={openLink}
+                  settings={extensions?.settings}
                 />
               )}
               {attachmentContent()}
@@ -1830,11 +1894,17 @@ export const MessageRow = memo(function AudienceMessageRow(
 ) {
   const { onOpenLink, canOpenLink, row } = props;
   const rootId = row.threadRootId ?? row.id;
+  const view = useComposerScope();
   // Plugin content in this row opens targets as the row's own links do.
   return (
     <TargetOpenerProvider
       canOpen={(target) => canOpenLink?.(target) ?? false}
-      open={(target) => onOpenLink(target, { rootId })}
+      open={(target) =>
+        onOpenLink(target, {
+          rootId,
+          ...(view && { view: { rootId: view.rootId } }),
+        })
+      }
     >
       {row.notice === "execution-failure" &&
       !row.edited &&
@@ -2429,4 +2499,24 @@ function useThreadAgents(
       library?.identities.filter(({ pubkey }) => typers.includes(pubkey)) ?? [],
     waiting: state === "waiting",
   };
+}
+
+/** A quiet line on a message that is pinned in its channel. */
+function PinnedMarker({
+  session,
+  row,
+}: {
+  session: RelaySession;
+  row: ChannelMessage;
+}) {
+  const pins = usePinnedMessages(session, row.channelId);
+  if (!pins.set.has(row.id)) return null;
+  return (
+    <div className={styles.pinnedMarker}>
+      <span>
+        <PinIcon size={12} aria-hidden="true" />
+        Pinned
+      </span>
+    </div>
+  );
 }

@@ -40,7 +40,12 @@ export interface HeadPersistence {
   ): Promise<void>;
   /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
-  writeProfiles?(events: readonly unknown[]): Promise<void>;
+  /** Saves `events`, then the `optional` events that fit in the room the
+   * startup store leaves, whole and in order; the earliest give way first. */
+  writeProfiles?(
+    events: readonly unknown[],
+    optional?: readonly unknown[],
+  ): Promise<void>;
   write(head: SavedHead): Promise<void>;
   remove(channelId: string): Promise<void>;
   retain(channelIds: readonly string[]): Promise<void>;
@@ -59,6 +64,7 @@ export const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
 const MAX_AGE = 24 * 60 * 60 * 1000;
 type RowBudget = { key: string; bytes: number; savedAt: number };
+const isMirror = (row: RowBudget) => row.key.endsWith(MIRROR);
 type Record = SavedHead & RowBudget & { scope: string };
 type ScopedRow = Pick<Record, "scope" | "channelId"> & { key: IDBValidKey };
 
@@ -164,19 +170,17 @@ export function createHeadPersistence(
       rows,
     });
   }
-  /** Keep the startup store, across identities, within its byte budget.
-   * Optional profile mirrors give way before any saved roster. */
-  function prune(
+  function readStartupBudget(
     store: IDBObjectStore,
     then: Then,
-    updated: RowBudget,
-    saved?: (kept: boolean) => void,
+    ready: (rows: RowBudget[]) => void,
+    updated?: RowBudget,
   ) {
     then(
       store.get(STARTUP_BUDGET),
       (budget: { rows: RowBudget[] } | undefined) => {
         const known = new Map(budget?.rows.map((row) => [row.key, row]));
-        known.set(updated.key, updated);
+        if (updated) known.set(updated.key, updated);
         then(store.getAllKeys(), (keys) => {
           const rows: RowBudget[] = [];
           const missing: string[] = [];
@@ -186,31 +190,32 @@ export function createHeadPersistence(
             if (row) rows.push(row);
             else missing.push(key);
           }
-          const trim = () => {
-            const mirror = (row: RowBudget) => Number(row.key.endsWith(MIRROR));
-            let total = 0;
-            const kept: RowBudget[] = [];
-            for (const row of rows.sort(
-              (a, b) => mirror(a) - mirror(b) || b.savedAt - a.savedAt,
-            )) {
-              total += row.bytes;
-              if (total > MAX_BYTES) store.delete(row.key);
-              else kept.push(row);
-            }
-            writeStartupBudget(store, kept);
-            saved?.(kept.includes(updated));
-          };
           // Import sizes once for rows written before the budget was present.
           let pending = missing.length;
-          if (pending === 0) trim();
+          if (pending === 0) ready(rows);
           for (const key of missing)
             then(store.get(key), ({ bytes, savedAt }: RowBudget) => {
               rows.push({ key, bytes, savedAt });
-              if (--pending === 0) trim();
+              if (--pending === 0) ready(rows);
             });
         });
       },
     );
+  }
+  /** Enforce the shared startup budget, keeping rosters ahead of mirrors. */
+  function pruneStartupBudget(store: IDBObjectStore, rows: RowBudget[]) {
+    let total = 0;
+    const kept: RowBudget[] = [];
+    for (const row of rows.sort(
+      (a, b) =>
+        Number(isMirror(a)) - Number(isMirror(b)) || b.savedAt - a.savedAt,
+    )) {
+      total += row.bytes;
+      if (total > MAX_BYTES) store.delete(row.key);
+      else kept.push(row);
+    }
+    writeStartupBudget(store, kept);
+    return kept;
   }
   async function transact<T>(
     mode: IDBTransactionMode,
@@ -317,7 +322,12 @@ export function createHeadPersistence(
             if (patch.discovery) version = discoveryVersion(data.discovery);
             const meta = { key: scope, bytes, savedAt: Date.now() };
             store.put({ ...meta, data });
-            prune(store, then, meta, done);
+            readStartupBudget(
+              store,
+              then,
+              (rows) => done(pruneStartupBudget(store, rows).includes(meta)),
+              meta,
+            );
           }),
         STARTUP,
       );
@@ -341,18 +351,35 @@ export function createHeadPersistence(
           then(store.get(profiles), (row) => done(row?.data ?? [])),
         STARTUP,
       ),
-    writeProfiles: (events) =>
+    writeProfiles: (events, optional = []) =>
       transact(
         "readwrite",
-        (store, done, then) => {
-          const bytes = byteSize(events);
-          if (bytes <= MAX_BYTES) {
-            const meta = { key: profiles, bytes, savedAt: Date.now() };
-            store.put({ ...meta, data: events });
-            prune(store, then, meta);
-          }
-          done(undefined);
-        },
+        (store, done, then) =>
+          readStartupBudget(store, then, (rows) => {
+            // Rows outranking this newest mirror keep their room.
+            const others = rows.filter((row) => row.key !== profiles);
+            const room =
+              MAX_BYTES -
+              others.reduce(
+                (sum, row) => (isMirror(row) ? sum : sum + row.bytes),
+                0,
+              );
+            let bytes = byteSize(events);
+            const kept: unknown[] = [];
+            for (const event of [...optional].reverse()) {
+              // Its bytes, plus a comma once the list holds any.
+              const size = byteSize(event) + (bytes > 2 ? 1 : 0);
+              if (bytes + size > room) continue;
+              bytes += size;
+              kept.push(event);
+            }
+            if (bytes <= MAX_BYTES) {
+              const row = { key: profiles, bytes, savedAt: Date.now() };
+              store.put({ ...row, data: [...events, ...kept.reverse()] });
+              pruneStartupBudget(store, [...others, row]);
+            }
+            done(undefined);
+          }),
         STARTUP,
       ),
     read: () =>

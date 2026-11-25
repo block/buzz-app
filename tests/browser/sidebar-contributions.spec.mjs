@@ -862,6 +862,60 @@ appTest.describe("Solo header accessories", () => {
   );
 
   appTest(
+    "keeps a channel menu hint hoverable and uses the action label for typeahead",
+    async ({ page, app, browserName }) => {
+      await page.clock.install();
+      await page.goto(
+        `${app.origin}/?solo-region-fixture&compose-workspaces&channel-menu-action`,
+      );
+      await openPage(page, "Messages");
+      const trigger = page
+        .locator('[data-solo-channel-group="alpha"]')
+        .getByRole("button", { name: "Actions for Alpha" });
+      const menu = page.getByRole("menu", { name: "Actions for Alpha" });
+      const action = menu.getByRole("menuitem", { name: "Inspect catalog" });
+      const hint = page.getByRole("tooltip", {
+        name: "Inspect the catalog for this channel",
+      });
+
+      await trigger.press("Enter");
+      await action.hover();
+      if (browserName === "webkit") {
+        // Playwright WebKit omits the delta Base UI uses for real movement.
+        await action.dispatchEvent("pointermove", {
+          movementX: 1,
+          pointerType: "mouse",
+        });
+        await action.dispatchEvent("mousemove", { movementX: 1 });
+      }
+      await expect(action).toBeFocused();
+      await expect(action).toHaveAccessibleDescription(
+        "Inspect the catalog for this channel",
+      );
+      await hint.hover();
+      // Let the focus reset and its deferred blur handler finish.
+      await page.clock.runFor(500);
+      await expect(action).toHaveAccessibleDescription(
+        "Inspect the catalog for this channel",
+      );
+      await page.mouse.move(0, 0);
+      await expect(hint).toBeHidden();
+      await expect(menu).toBeVisible();
+
+      await menu
+        .getByRole("menuitem", { name: "View channel details" })
+        .focus();
+      await page.keyboard.press("i");
+      await expect(action).toBeFocused();
+      await expect(hint).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(menu).toBeHidden();
+      await expect(hint).toBeHidden();
+      await expect(trigger).toBeFocused();
+    },
+  );
+
+  appTest(
     "keeps the Actions trigger visible after closing channel creation",
     async ({ page, app }) => {
       await admitNewTask(page);

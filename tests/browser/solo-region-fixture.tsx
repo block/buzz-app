@@ -98,6 +98,9 @@ export const soloRegionFixture: BundledPlugin = {
       const teamRowChannelGroup = new URL(location.href).searchParams.has(
         "team-row-channel-group",
       );
+      const channelMenuAction = new URL(location.href).searchParams.has(
+        "channel-menu-action",
+      );
       function Workspaces({
         ui,
         binding,
@@ -169,6 +172,19 @@ export const soloRegionFixture: BundledPlugin = {
             headerLeading={
               leadingHeader && id === "alpha" ? summary : undefined
             }
+            headerMenuActions={
+              channelMenuAction && id === "alpha"
+                ? [
+                    {
+                      id: "inspect-catalog",
+                      label: "Inspect catalog",
+                      icon: <span>★</span>,
+                      hint: "Inspect the catalog for this channel",
+                      onSelect: () => select(true),
+                    },
+                  ]
+                : undefined
+            }
             headerAccessory={
               (!leadingHeader && id === "alpha") ||
               (channelHeaderAccessory && id === "gamma") ? (
@@ -228,9 +244,9 @@ export const soloRegionFixture: BundledPlugin = {
           <>
             {stateFixture && <SavedState state={state} />}
             {hitTargets && <Workspaces ui={ui} binding={binding} />}
-            {(headerAccessories || teamRowChannelGroup) && (
-              <ChannelGroup ui={ui} id="alpha" />
-            )}
+            {(headerAccessories ||
+              teamRowChannelGroup ||
+              channelMenuAction) && <ChannelGroup ui={ui} id="alpha" />}
             {headerAccessories && <ChannelGroup ui={ui} id="gamma" />}
             {/* A source can retain a keyed conversation across roster changes. */}
             {(first

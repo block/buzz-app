@@ -202,7 +202,16 @@ test("startup storage batches roster updates and prunes without transferring the
         const prune = measured;
         measured = counts();
         const mirrorPruned = (await cache.readProfiles()).length === 0;
-        return { replay, prune, mirrorPruned };
+        measured = counts();
+        const statuses = ["old", "newer", "newest"].map((id) => ({
+          id,
+          content: "s".repeat(1_600_000),
+        }));
+        await cache.writeProfiles([{ id: "name" }], statuses);
+        const profileWrite = measured;
+        measured = counts();
+        const savedProfiles = (await cache.readProfiles()).map(({ id }) => id);
+        return { replay, prune, mirrorPruned, profileWrite, savedProfiles };
       },
       async finish() {
         const current = await cache.readStartup();
@@ -340,6 +349,8 @@ test("startup storage batches roster updates and prunes without transferring the
     },
     prune: { rosterReads: 0, rosterWrites: 0, bulkValueReads: 0 },
     mirrorPruned: true,
+    profileWrite: { rosterReads: 0, rosterWrites: 0, bulkValueReads: 0 },
+    savedProfiles: ["name", "newer", "newest"],
     latestSaved: true,
     immediatelyRevoked: true,
     preferencesSaved: true,

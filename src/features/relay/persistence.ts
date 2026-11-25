@@ -288,10 +288,6 @@ export function createHeadPersistence(
         const known = new Map(budget?.rows.map((row) => [row.key, row]));
         if (updated) known.set(updated.key, updated);
         then(store.getAllKeys(), (keys) => {
-          if (updated && !keys.includes(updated.key)) {
-            keys.push(updated.key);
-            keys.sort(indexedDB.cmp.bind(indexedDB));
-          }
           const rows: RowBudget[] = [];
           const missing: string[] = [];
           for (const key of keys) {
@@ -467,34 +463,45 @@ export function createHeadPersistence(
               bytes: byteSize(data),
               savedAt: superseded ? row.savedAt : Date.now(),
             };
+            const put = () => {
+              if (meta.bytes > MAX_BYTES && revoked) {
+                // An oversized replacement must still remove the revoked roster.
+                delete data.discovery;
+                meta.bytes = byteSize(data);
+              }
+              if (meta.bytes > MAX_BYTES) {
+                done("oversized");
+                return false;
+              }
+              if (patch.discovery) version = discoveryVersion(data.discovery);
+              store.put({ ...meta, data });
+              return true;
+            };
+            const prune = (rows: RowBudget[]) => {
+              const kept = pruneStartupBudget(store, rows).includes(meta);
+              if (superseded && !kept) version = null;
+              done(superseded ? undefined : kept);
+            };
+            if (!mergedGrants) {
+              if (put()) readStartupBudget(store, then, prune, meta);
+              return;
+            }
             readStartupBudget(
               store,
               then,
               (rows) => {
-                if (mergedGrants) {
-                  const room = rows.reduce(
-                    (room, row) =>
-                      row === meta || isMirror(row) ? room : room - row.bytes,
-                    MAX_BYTES,
-                  );
-                  // A grant cannot displace another roster or block a removal.
-                  if (meta.bytes > room) {
-                    if (!withRemovals) return done(undefined);
-                    data = withRemovals;
-                    meta.bytes = byteSize(data);
-                  }
-                }
-                if (meta.bytes > MAX_BYTES && revoked) {
-                  // An oversized replacement must still remove the revoked roster.
-                  delete data.discovery;
+                const room = rows.reduce(
+                  (room, row) =>
+                    row === meta || isMirror(row) ? room : room - row.bytes,
+                  MAX_BYTES,
+                );
+                // A grant cannot displace another roster or block a removal.
+                if (meta.bytes > room) {
+                  if (!withRemovals) return done(undefined);
+                  data = withRemovals;
                   meta.bytes = byteSize(data);
                 }
-                if (meta.bytes > MAX_BYTES) return done("oversized");
-                if (patch.discovery) version = discoveryVersion(data.discovery);
-                store.put({ ...meta, data });
-                const kept = pruneStartupBudget(store, rows).includes(meta);
-                if (superseded && !kept) version = null;
-                done(superseded ? undefined : kept);
+                if (put()) prune(rows);
               },
               meta,
             );

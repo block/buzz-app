@@ -1613,6 +1613,7 @@ function ThreadMessages({
     // When neither is loaded the visit opens again as it first did.
     if (openLatest) {
       positionedLatestRequest.current = latestRequest;
+      restSheet();
       targetAnchor.current = undefined;
       olderAnchor.current = undefined;
       remounted.current = undefined;
@@ -1848,6 +1849,7 @@ function ThreadMessages({
     expanded,
     expandedActivity,
     boundary,
+    restSheet,
   ]);
   // The effect above re-pins only when thread data changes. A growing composer
   // shrinks this viewport, late media grows rows and a join error grows the end

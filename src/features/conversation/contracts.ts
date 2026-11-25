@@ -535,9 +535,10 @@ export type ConversationWorkspaceProps = {
   /** A card over the bottom of the main tab's history: the channel
    * timeline, or the replies when `target` names a thread, so the page
    * already knows which. At rest its first `restHeight` pixels show below
-   * the latest message. Scrolling over the card grows it, then slides it up; `expanded` is true
-   * once it has grown. `toggle()` grows it to near the view's top, or back.
-   * Render the whole card at rest too: growing scrolls it into view. */
+   * the latest message. Scrolling over the card grows it, then slides it
+   * up; `expanded` is true once it has grown. `toggle()` grows it to near
+   * the view's top, or back. Render the whole card at rest too: growing
+   * scrolls it into view. */
   trailing?: {
     restHeight: number;
     content(state: { expanded: boolean; toggle(): void }): ReactNode;

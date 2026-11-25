@@ -107,9 +107,9 @@ before passing `trailing` to `ui.Workspace`. The Channels workspace shows that
 content as a card over the bottom of the main tab's history, in its own scroll
 layer: scrolling over the card grows it, then slides it up. When your `target`
 names a thread, the card sits over that thread's replies, so build it from the
-same `channelId` and `threadId` you passed. Render the whole card at rest too, since
-growing scrolls it into view: let `expanded` change labels, not what the card
-holds. Keep its controls in view with `position: sticky; bottom: 0` and an
+same `channelId` and `threadId` you passed. Render the whole card at rest too,
+since growing scrolls it into view: let `expanded` change labels, not what the
+card holds. Keep its controls in view with `position: sticky; bottom: 0` and an
 opaque background, and draw its outline with a box shadow rather than a bottom
 border.
 

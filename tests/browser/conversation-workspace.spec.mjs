@@ -720,7 +720,7 @@ test.describe("trailing card", () => {
   test.describe(() => {
     test.use({ productionBroker: true, presenceThreadAuthors: 14 });
 
-    test("in a thread, the card rests below the latest reply, grows over the replies, and a reply returns it to Rest", async ({
+    test("in a thread, the card rests below the latest reply, grows over the replies, and a reply or a fresh opening returns it to Rest", async ({
       page,
       app,
     }) => {
@@ -749,6 +749,12 @@ test.describe("trailing card", () => {
       await input.fill("Sent below the card");
       await input.press("Enter");
       await expect(region.getByText("Sent below the card")).toBeInViewport();
+      await expectRest(page, region);
+
+      await overCard(page);
+      await wheel(page, 150, sheet(page));
+      await expect(toggle(page)).toHaveText("Hide brief");
+      await jump(page).click();
       await expectRest(page, region);
     });
   });

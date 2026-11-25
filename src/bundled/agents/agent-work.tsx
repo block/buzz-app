@@ -14,10 +14,13 @@ import {
 } from "../../features/drafts-sent/model";
 import { plainText } from "../../features/notifications/content";
 import { channelIcon } from "../../features/channels/channel-icon";
-import { ChatCircleIcon, ThreadIcon } from "../../shared/design-system/icons";
+import {
+  ChatCircleIcon,
+  CornerDownRightIcon,
+} from "../../shared/design-system/icons";
 
 const soloIcon = <ChatCircleIcon size={16} aria-hidden="true" />;
-const threadIcon = <ThreadIcon size={16} aria-hidden="true" />;
+const threadIcon = <CornerDownRightIcon size={16} aria-hidden="true" />;
 
 /** The card shows this many conversations, as Activity's card does. */
 export const AGENT_WORK_LIMIT = 50;

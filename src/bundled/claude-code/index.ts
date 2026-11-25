@@ -425,6 +425,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           : claudeInherited(
               readFile,
               (agent.config as { workspace?: string }).workspace,
+              host.resolveDirectory?.bind(host),
             ),
     },
     ...claudeRun(runtime, async (signal, agent) => {

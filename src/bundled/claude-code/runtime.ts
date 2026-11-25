@@ -2503,6 +2503,7 @@ export class ClaudeRuntime {
                     await claudeInherited(
                       this.host.readFile?.bind(this.host),
                       cwd,
+                      resolve,
                     )
                   ).map((i) => i.name),
                 ),

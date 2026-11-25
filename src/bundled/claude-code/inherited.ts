@@ -1,6 +1,7 @@
 // The MCP servers in Claude Code's own user config, which its agents run too
 // (a strict launch never does). Claude keeps user-scope servers in
-// `~/.claude.json` and a project's in its `.mcp.json`.
+// `~/.claude.json`, local-scope ones under that file's `projects[<folder>]`,
+// and a project's in its `.mcp.json`.
 import type { McpInherited } from "../../features/agents/mcp-servers";
 
 type ReadFile = (
@@ -8,40 +9,57 @@ type ReadFile = (
   options?: Readonly<{ cwd?: string }>,
 ) => Promise<Uint8Array>;
 
-/** The `mcpServers` names in the JSON file at `path`; none when unreadable. */
-async function serversIn(
+async function json(
   readFile: ReadFile,
   path: string,
   cwd?: string,
-): Promise<readonly string[]> {
+): Promise<unknown> {
   try {
-    const text = new TextDecoder().decode(
-      await readFile(path, cwd ? { cwd } : undefined),
+    return JSON.parse(
+      new TextDecoder().decode(await readFile(path, cwd ? { cwd } : undefined)),
     );
-    const { mcpServers } = JSON.parse(text) as { mcpServers?: unknown };
-    return mcpServers && typeof mcpServers === "object"
-      ? Object.keys(mcpServers)
-      : [];
   } catch {
-    return [];
+    return undefined;
   }
 }
 
-/** The servers in `~/.claude.json` and, for a session in `cwd`, that
- * project's `.mcp.json`; a name in both is listed once, as the user's. */
+/** The `mcpServers` names in a parsed config; none when absent. */
+function serversIn(config: unknown): readonly string[] {
+  const servers = (config as { mcpServers?: unknown } | undefined)?.mcpServers;
+  return servers && typeof servers === "object" ? Object.keys(servers) : [];
+}
+
+/** The servers in `~/.claude.json` and, for a session in `cwd`, its local
+ * scope there (keyed by the folder's absolute path, which `resolve` gives)
+ * and that project's `.mcp.json`. A name in more than one is listed once,
+ * from the first: as Claude Code ranks them, local, then project, then user. */
 export async function claudeInherited(
   readFile: ReadFile | undefined,
   cwd?: string,
+  resolve?: (path: string) => Promise<string>,
 ): Promise<readonly McpInherited[]> {
   if (!readFile) return [];
-  const [user, project] = await Promise.all([
-    serversIn(readFile, "~/.claude.json"),
-    cwd ? serversIn(readFile, ".mcp.json", cwd) : [],
+  const [user, project, folder] = await Promise.all([
+    json(readFile, "~/.claude.json"),
+    cwd ? json(readFile, ".mcp.json", cwd) : undefined,
+    cwd && resolve ? resolve(cwd).catch(() => undefined) : undefined,
   ]);
-  return [
-    ...user.map((name) => ({ name, source: "From your Claude Code config" })),
-    ...project
-      .filter((name) => !user.includes(name))
-      .map((name) => ({ name, source: "From this project's .mcp.json" })),
-  ];
+  const projects = (user as { projects?: Record<string, unknown> } | undefined)
+    ?.projects;
+  const local =
+    folder && projects && Object.hasOwn(projects, folder)
+      ? projects[folder]
+      : undefined;
+  const seen = new Set<string>();
+  return (
+    [
+      [local, "From your Claude Code config for this folder"],
+      [project, "From this project's .mcp.json"],
+      [user, "From your Claude Code config"],
+    ] as const
+  ).flatMap(([config, source]) =>
+    serversIn(config).flatMap((name) =>
+      seen.has(name) ? [] : (seen.add(name), [{ name, source }]),
+    ),
+  );
 }

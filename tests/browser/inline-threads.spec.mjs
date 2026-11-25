@@ -457,10 +457,12 @@ test.describe("Inline", () => {
       video.evaluate((element) => ({
         playing: !element.paused,
         seconds: element.currentTime,
-        // Where its latest stretch of playback began.
-        from: element.played.length
-          ? element.played.start(element.played.length - 1)
-          : undefined,
+        // Each stretch of the clip it has played, oldest first, as its start
+        // and end. A seek begins a new one.
+        played: Array.from({ length: element.played.length }, (_, index) => [
+          element.played.start(index),
+          element.played.end(index),
+        ]),
         volume: element.volume,
         muted: element.muted,
         rate: element.playbackRate,
@@ -499,9 +501,15 @@ test.describe("Inline", () => {
       muted: true,
       rate: 0.25,
     });
-    // It never played from the start to get here. A position can settle on
-    // the frame before it.
-    expect(taken.from).toBeGreaterThan(handed - 0.1);
+    // It played no frame of the start to get here, neither in place of the
+    // seek nor before it landed. A position can settle on the frame before
+    // it. Chromium's clock can run for under a millisecond of the clip
+    // before the metadata event that seeks arrives, so this allows less
+    // than one frame, of twelve a second.
+    const early = taken.played
+      .filter(([start]) => start <= handed - 0.1)
+      .reduce((seconds, [start, end]) => seconds + end - start, 0);
+    expect(early).toBeLessThan(1 / 12);
     expect((await read(brief)).playing).toBe(false);
 
     // Closed, the brief plays on from the reader's position.
@@ -515,7 +523,10 @@ test.describe("Inline", () => {
         return now.playing && now.seconds > returned;
       })
       .toBe(true);
-    expect((await read(brief)).from).toBeGreaterThan(returned - 0.1);
+    // Its latest stretch: the one before the reader opened began earlier.
+    expect((await read(brief)).played.at(-1)[0]).toBeGreaterThan(
+      returned - 0.1,
+    );
   });
 
   test("Move to side panel hands the thread, its draft and the reply it answers to a tab", async ({

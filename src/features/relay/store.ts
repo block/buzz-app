@@ -2042,6 +2042,7 @@ export function createChannelStore(
     )
       return;
     const saving = { key, at: now() };
+    const removals = discovery.beginRosterSave();
     discoverySuperseded = undefined;
     savedDiscovery = saving;
     lastDiscoveryWrite = saving.at;
@@ -2056,12 +2057,14 @@ export function createChannelStore(
         },
         urgent,
         ifUnchanged,
-        urgent && ifUnchanged ? discovery.revokedRosterVersions() : undefined,
+        urgent && ifUnchanged ? removals?.removalFor : undefined,
       )
       .then(() => {
+        removals?.settle();
         if (savedDiscovery === saving) discoveryRevocationPending = false;
       })
       .catch((error) => {
+        if (error instanceof StartupRosterSuperseded) removals?.settle();
         if (savedDiscovery !== saving) return;
         // Unchanged oversized snapshots follow the normal refresh interval.
         if (!urgent && error instanceof StartupCacheOverBudget) return;
@@ -2411,6 +2414,7 @@ export function createChannelStore(
     for (const event of events) {
       const id = tag(event, event.kind === 9007 ? "h" : "d");
       const wasMember = id && discovery.authorized(id);
+      const wasRevoked = id && discovery.revoked(id);
       const firstEvidence =
         id &&
         ((event.kind === 39000 && !discovery.metadataVersion(id)) ||
@@ -2420,7 +2424,8 @@ export function createChannelStore(
       discoveryChanged ||= changed;
       if (id) {
         const isMember = discovery.authorized(id);
-        membershipRemoved ||= !!wasMember && !isMember;
+        membershipRemoved ||=
+          (!!wasMember && !isMember) || (!wasRevoked && discovery.revoked(id));
         if (!cached && isMember && !discovery.isCached(id)) {
           cacheChanged ||= changed;
           newCacheEvidence ||= changed && !!firstEvidence;

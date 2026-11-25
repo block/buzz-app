@@ -1,4 +1,5 @@
 import { byteSize } from "./budget";
+import type { RosterRemoval } from "./discovery";
 import { newer, type EventData } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
 /** Device-local resume data, never proof of current access or permission to write. */
@@ -35,7 +36,7 @@ export class StartupCacheOverBudget extends Error {
   }
 }
 
-type RevokedRosters = ReadonlyMap<string, Pick<EventData, "id" | "created_at">>;
+type RosterRemovalLookup = (channel: string) => RosterRemoval | undefined;
 
 export interface HeadPersistence {
   read(): Promise<SavedHead[]>;
@@ -46,7 +47,7 @@ export interface HeadPersistence {
     patch: SavedStartup,
     revoked?: boolean,
     ifUnchanged?: boolean,
-    revokedRosters?: RevokedRosters,
+    removalFor?: RosterRemovalLookup,
   ): Promise<void>;
   /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
@@ -119,7 +120,7 @@ function discoveryVersion(discovery: SavedStartup["discovery"]): string | null {
 
 function pruneRevokedRosters(
   discovery: NonNullable<SavedStartup["discovery"]>,
-  revoked: RevokedRosters,
+  removalFor: RosterRemovalLookup,
 ) {
   if (!Array.isArray(discovery.events)) return;
   const channelOf = (event: Partial<EventData> | null | undefined) => {
@@ -139,7 +140,7 @@ function pruneRevokedRosters(
     const channel = channelOf(event);
     if (
       channel &&
-      revoked.has(channel) &&
+      removalFor(channel) &&
       typeof event.id === "string" &&
       typeof event.created_at === "number"
     )
@@ -153,8 +154,10 @@ function pruneRevokedRosters(
   }
   const removed = new Set<string>();
   for (const [channel, peer] of peerVersions) {
-    const version = revoked.get(channel);
-    if (version && newer(version, peer) === version) removed.add(channel);
+    const removal = removalFor(channel);
+    // A complete read can omit a roster that the peer later confirms.
+    if (removal?.omitted && removal.id === peer.id) continue;
+    if (removal && newer(removal, peer) === removal) removed.add(channel);
   }
   if (!removed.size) return;
   return discovery.events.filter((value) => {
@@ -352,7 +355,7 @@ export function createHeadPersistence(
       patch,
       revoked = false,
       ifUnchanged = false,
-      revokedRosters,
+      removalFor,
     ) {
       let version: string | null | undefined;
       const saved = await transact<boolean | "oversized" | undefined>(
@@ -375,10 +378,10 @@ export function createHeadPersistence(
                 if (
                   !peer ||
                   peer.relayAuthor !== patch.discovery.relayAuthor ||
-                  !revokedRosters?.size
+                  !removalFor
                 )
                   return done(undefined);
-                const events = pruneRevokedRosters(peer, revokedRosters);
+                const events = pruneRevokedRosters(peer, removalFor);
                 if (!events) return done(undefined);
                 // Carry the revocation into the peer's row. The local snapshot
                 // lost the compare and cannot replace the peer's other entries.

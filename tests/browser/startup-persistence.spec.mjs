@@ -407,6 +407,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     const first = roster(relay, "first", [viewer]);
     const second = roster(relay, "second", [viewer]);
     const retried = roster(relay, "retried", [viewer]);
+    const omitted = roster(relay, "omitted", [viewer]);
+    const omittedMetadata = metadata(relay, "omitted", "Reconfirmed channel");
+    const pendingOmission = roster(relay, "pending-omission", [viewer]);
     const replacement = roster(relay, "peer-only", [viewer]);
     const newerGrant = roster(relay, "retried", [viewer], 1_700_000_002);
     const staleMetadata = metadata(relay, "first", "Revoked channel");
@@ -453,15 +456,33 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     let channels = openChannels(cache);
     const events = [active, first, second, retried];
     window.startupRetry = {
-      revoke: async (id) => {
+      revoke: async (id, complete) => {
         abortNext = true;
-        channels.acceptDiscovery([roster(relay, id, [], 1_700_000_001)]);
+        channels.acceptDiscovery(
+          [roster(relay, id, [], 1_700_000_001)],
+          complete && new Set(complete),
+        );
         return cachedIds();
       },
       replace: () => peer.writeStartup(startup([replacement])),
       replaceWithStaleMembership: () =>
         peer.writeStartup(
-          startup([first, staleMetadata, replacement, newerGrant]),
+          startup([
+            first,
+            staleMetadata,
+            replacement,
+            newerGrant,
+            omitted,
+            omittedMetadata,
+            pendingOmission,
+          ]),
+        ),
+      addOmissionChannels: () =>
+        channels.acceptDiscovery([omitted, omittedMetadata, pendingOmission]),
+      omitChannel: () =>
+        channels.acceptDiscovery(
+          [],
+          new Set(["active", "first", "second", "pending-omission"]),
         ),
       clear: () => peer.clear(),
       repeat: () => channels.acceptDiscovery([active]),
@@ -544,6 +565,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       originalIds: events.map((event) => event.id),
       replacementId: replacement.id,
       newerGrantId: newerGrant.id,
+      omittedIds: [omitted.id, omittedMetadata.id],
+      pendingOmissionId: pendingOmission.id,
       updatedId: updated.id,
       whilePendingId: whilePending.id,
     };
@@ -577,7 +600,22 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       window.startupRetry.cachedIds(),
     );
 
-    await page.evaluate(() => window.startupRetry.revoke("first"));
+    // Persist one omission first. The next write will combine a signed
+    // removal and a separate omission, then abort before the peer writes.
+    await page.evaluate(() => window.startupRetry.addOmissionChannels());
+    await page.clock.runFor(500);
+    expect(await page.evaluate(() => window.startupRetry.cachedIds())).toEqual(
+      expect.arrayContaining(firstRetry.omittedIds),
+    );
+    await page.evaluate(() => window.startupRetry.omitChannel());
+    expect(await page.evaluate(() => window.startupRetry.cachedIds())).toEqual([
+      ...firstRetry.originalIds.slice(0, -1),
+      firstRetry.pendingOmissionId,
+    ]);
+
+    await page.evaluate(() =>
+      window.startupRetry.revoke("first", ["active", "second"]),
+    );
     await page.evaluate(() => window.startupRetry.replaceWithStaleMembership());
     await page.evaluate(() => window.startupRetry.holdPeerWrite());
     const readsBeforeRetries = await page.evaluate(() =>
@@ -709,7 +747,12 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   expect.soft(firstRetry.clearSurvived).toBe(true);
   expect.soft(firstRetry.afterRetry).toEqual(firstRetry.originalIds);
   expect(afterRevocationRetry).toEqual(firstRetry.originalIds.slice(0, -1));
-  const retainedPeerIds = [firstRetry.replacementId, firstRetry.newerGrantId];
+  const retainedPeerIds = [
+    firstRetry.replacementId,
+    firstRetry.newerGrantId,
+    ...firstRetry.omittedIds,
+    firstRetry.pendingOmissionId,
+  ];
   expect.soft(afterReplacement).toEqual(retainedPeerIds);
   expect.soft(repeatReads).toBe(0);
   expect.soft(duringCooldown).toEqual(retainedPeerIds);

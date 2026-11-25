@@ -155,10 +155,13 @@ it("steps emoji size by ten percent within range", () => {
     </ToastProvider>,
   );
   const decrease = screen.getByRole("button", { name: "Decrease emoji size" });
-  expect(decrease).toBeDisabled();
+  // Stays focusable at the limit, so keyboard focus isn't dropped.
+  expect(decrease).toHaveAttribute("aria-disabled", "true");
+  fireEvent.click(decrease);
+  expect(appearance.snapshot().emojiSize).toBe(100);
   fireEvent.click(screen.getByRole("button", { name: "Increase emoji size" }));
   expect(appearance.snapshot().emojiSize).toBe(110);
-  expect(screen.getByRole("status", { name: "Emoji size" })).toHaveTextContent(
+  expect(screen.getByRole("group", { name: "Emoji size" })).toHaveTextContent(
     "110%",
   );
   fireEvent.click(decrease);

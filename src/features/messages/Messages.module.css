@@ -3814,8 +3814,8 @@ html[data-keyboard-navigation] .audienceEntry:has(.audienceLine:focus-visible) {
 .audienceAvatar {
   display: grid;
   flex: none;
-  inline-size: var(--space-6);
-  block-size: var(--space-6);
+  inline-size: var(--space-4);
+  block-size: var(--space-4);
 }
 .audiencePreviewText {
   min-inline-size: 0;

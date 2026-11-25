@@ -165,12 +165,37 @@ it("keeps the saved size when the pointer is cancelled", () => {
   expect(frame(handle)).not.toHaveAttribute("data-emoji-scale-preview");
 });
 
-it("saves once when capture is lost after a drag", () => {
+it("discards the preview when capture is lost before release", () => {
   glyphSize();
   const { saved, handle } = renderEmoji();
   press(handle);
   move(handle, 21, 21);
   fireEvent.lostPointerCapture(handle, { pointerId: 1 });
+  fireEvent.pointerUp(handle, { pointerId: 1 });
+  expect(saved.setEmojiSize).not.toHaveBeenCalled();
+  expect(frame(handle)).not.toHaveAttribute("data-emoji-scale-preview");
+});
+
+it("ignores keys other than Escape while dragging", () => {
+  glyphSize();
+  const { saved, handle } = renderEmoji();
+  press(handle);
+  move(handle, 21, 21);
+  fireEvent.keyDown(handle, { key: "ArrowUp" });
+  expect(saved.setEmojiSize).not.toHaveBeenCalled();
+  fireEvent.keyDown(handle, { key: "Escape" });
+  fireEvent.pointerUp(handle, { pointerId: 1 });
+  expect(saved.setEmojiSize).not.toHaveBeenCalled();
+});
+
+it("keeps the first pointer in control when another presses", () => {
+  glyphSize();
+  const { saved, handle } = renderEmoji();
+  press(handle);
+  move(handle, 21, 21);
+  fireEvent.pointerDown(handle, { pointerId: 2, button: 0 });
+  fireEvent.pointerUp(handle, { pointerId: 2 });
+  expect(scale(handle)).toBe("1.5");
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith(150);
 });

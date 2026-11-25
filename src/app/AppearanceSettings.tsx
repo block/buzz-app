@@ -378,7 +378,7 @@ export function AppearanceSettings({
             subtitle="Emoji-only messages show at this size. You can also drag the corner of one in a conversation."
             trailing={(control) => (
               <fieldset
-                aria-label="Emoji size"
+                aria-labelledby={control["aria-labelledby"]}
                 aria-describedby={control["aria-describedby"]}
                 className="m-0 flex min-w-0 flex-wrap items-center gap-3 border-0 p-0"
               >
@@ -387,14 +387,12 @@ export function AppearanceSettings({
                   size="sm"
                   aria-label="Decrease emoji size"
                   disabled={emojiSize <= MIN_EMOJI_SIZE}
+                  focusableWhenDisabled
                   onClick={() => appearance.setEmojiSize(emojiSize - 10)}
                 >
                   −
                 </Button>
-                <output
-                  aria-label="Emoji size"
-                  className="text-body-sm tabular-nums"
-                >
+                <output className="text-body-sm tabular-nums">
                   {emojiSize}%
                 </output>
                 <Button
@@ -402,6 +400,7 @@ export function AppearanceSettings({
                   size="sm"
                   aria-label="Increase emoji size"
                   disabled={emojiSize >= MAX_EMOJI_SIZE}
+                  focusableWhenDisabled
                   onClick={() => appearance.setEmojiSize(emojiSize + 10)}
                 >
                   +

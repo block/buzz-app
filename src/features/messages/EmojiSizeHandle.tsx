@@ -71,7 +71,8 @@ function EmojiSizeFrame({
     setPreview(null);
   };
   const onPointerDown = (event: PointerEvent<HTMLSpanElement>) => {
-    if (event.button !== 0) return;
+    // The first pointer keeps the drag; another press can't take it over.
+    if (event.button !== 0 || drag.current) return;
     // Keep the press from starting a text selection or focusing the row.
     event.preventDefault();
     event.stopPropagation();
@@ -111,9 +112,12 @@ function EmojiSizeFrame({
     setPreview(active.size);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
-    if (event.key === "Escape" && drag.current) {
-      event.preventDefault();
-      end(false);
+    if (drag.current) {
+      // Mid-drag, only Escape acts, so the release stays the one save.
+      if (event.key === "Escape") {
+        event.preventDefault();
+        end(false);
+      }
       return;
     }
     const next = {
@@ -141,7 +145,7 @@ function EmojiSizeFrame({
       }
     >
       {children}
-      <Tooltip content="Drag to resize emoji. Only you see this.">
+      <Tooltip content="Drag or use arrow keys to resize emoji. Only you see this.">
         <span
           className={styles.emojiSizeHandle}
           role="slider"
@@ -156,7 +160,7 @@ function EmojiSizeFrame({
           onPointerMove={onPointerMove}
           onPointerUp={(event) => end(true, event.pointerId)}
           onPointerCancel={(event) => end(false, event.pointerId)}
-          onLostPointerCapture={(event) => end(true, event.pointerId)}
+          onLostPointerCapture={(event) => end(false, event.pointerId)}
           onKeyDown={onKeyDown}
         />
       </Tooltip>

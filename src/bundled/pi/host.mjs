@@ -154,12 +154,14 @@ export function protectModels(models, inspect, conversationFor) {
 /** How Pi's own providers reach the model gateway: each by its native
  * protocol, under the gateway's root for Pi. A request keeps its model's
  * own ID, which the gateway resolves; any other provider is refused there
- * (README: "gateway mode"). */
+ * (README: "gateway mode"). An Anthropic model sends its effort once, at
+ * the top level: the gateway may serve it from a backend that takes one
+ * effort per request, which refuses Pi's per-message effort markers. */
 const PROTOCOLS = {
   anthropic: {
     api: "anthropic-messages",
     path: "anthropic",
-    compat: { sendSessionAffinityHeaders: true },
+    compat: { sendSessionAffinityHeaders: true, supportsMidConvoEffort: false },
   },
   openai: { api: "openai-responses", path: "openai/v1" },
 };

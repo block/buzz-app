@@ -822,9 +822,50 @@ appTest.describe("a visit that begins before its first verified page", () => {
   );
 });
 
+// Records the rows as painted in every frame: a task posted from the frame
+// callback runs after that frame's rendering, so a row moved by a later
+// measurement is seen where the reader saw it. Playwright's page clock fakes
+// the page's own requestAnimationFrame, so the journey keeps the native one.
+const startPaintLog = (page) =>
+  page.evaluate(() => {
+    const log = { stop: false, frames: [] };
+    const frame = () => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        const scroller = document.querySelector(
+          '[aria-label="Channel message history"]',
+        );
+        if (!scroller) return;
+        const bounds = scroller.getBoundingClientRect();
+        log.frames.push({
+          line: !!scroller.querySelector("[data-new-messages-boundary]"),
+          rows: Array.from(scroller.querySelectorAll("[data-message-id]"))
+            .map((row) => [row.dataset.messageId, row.getBoundingClientRect()])
+            .filter(
+              ([, rect]) => rect.bottom > bounds.top && rect.top < bounds.bottom,
+            )
+            .map(([id, rect]) => [id, rect.top]),
+        });
+      };
+      channel.port2.postMessage(null);
+      if (!log.stop) window.nativeFrame(frame);
+    };
+    window.nativeFrame(frame);
+    window.paintLog = log;
+  });
+const stopPaintLog = (page) =>
+  page.evaluate(() => {
+    window.paintLog.stop = true;
+    return window.paintLog.frames;
+  });
+
 // Hold the channel's head read until released: an explicit gate, so a read
 // slower than the reading dwell needs no timed delay.
-async function holdHead(page, channel) {
+// `afterFrame` lands the response just after a painted frame, so the render it
+// causes is the next frame's: where in a frame it arrives otherwise decides
+// whether a row that moves while measuring is painted.
+async function holdHead(page, channel, { afterFrame = false } = {}) {
   let release;
   let started;
   const held = new Promise((resolve) => {
@@ -847,6 +888,13 @@ async function holdHead(page, channel) {
     ) {
       started();
       await held;
+      if (afterFrame)
+        await page.evaluate(
+          () =>
+            new Promise((resolve) =>
+              window.nativeFrame(() => window.nativeFrame(resolve)),
+            ),
+        );
     }
     await route.continue().catch(() => {});
   });
@@ -893,6 +941,9 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
   appTest(
     "marks new messages when the revisit head read is slow",
     async ({ page, app }) => {
+      await page.addInitScript(() => {
+        window.nativeFrame = window.requestAnimationFrame.bind(window);
+      });
       // Installed before the app loads, so every timer is the page clock's.
       await page.clock.install();
       await open(page, app);
@@ -905,11 +956,12 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
         .poll(() => unreadIn(page, "beta", arrivals))
         .toEqual({ unread: true, status: "ready", rows: 18 });
 
-      const head = await holdHead(page, "beta");
+      const head = await holdHead(page, "beta", { afterFrame: true });
       try {
         // Past the head's 60-second freshness lease. Only the wall clock
         // moves, and it returns before anything is signed with it.
         await page.clock.setSystemTime(Date.now() + 61_000);
+        await startPaintLog(page);
         await go(page, "Beta");
         await head.reading;
         await page.clock.setSystemTime(Date.now());
@@ -924,6 +976,18 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
       }
       await expectBoundaryAt(page, arrivals);
       await expectRead(page, arrivals);
+
+      // The rows were already showing when the line arrived, and the reader
+      // is at the end: the newest message stays where it is in every frame.
+      const frames = await stopPaintLog(page);
+      const arrival = frames.findIndex((frame) => frame.line);
+      expect(arrival, "the line is painted after the rows").toBeGreaterThan(0);
+      const newest = arrivals.at(-1).id;
+      const tops = frames
+        .slice(arrival - 1)
+        .map((frame) => frame.rows.find(([id]) => id === newest)?.[1]);
+      expect(tops.every((top) => top !== undefined)).toBe(true);
+      expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(1);
     },
   );
 

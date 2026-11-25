@@ -1478,6 +1478,31 @@ function Timeline({
     reading.every(
       (id, index) => rows[rows.length - reading.length + index]?.id === id,
     );
+  // A follower's pin runs a frame after the rows change, so a new-messages line
+  // that grows a row would paint the rows below it a line lower for one frame.
+  // Virtua writes the grown height while measuring, before that frame paints:
+  // keep the same distance from the end then.
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const list = element?.querySelector("ol");
+    if (!element || !list || !follow.current || !settled.current) return;
+    const distance =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+    let height = list.style.height;
+    const pin = new MutationObserver(() => {
+      if (list.style.height === height) return;
+      height = list.style.height;
+      correctScrollTop(
+        element,
+        element.scrollHeight -
+          element.clientHeight -
+          distance -
+          element.scrollTop,
+      );
+    });
+    pin.observe(list, { attributes: true, attributeFilter: ["style"] });
+    return () => pin.disconnect();
+  }, [newMessageBoundaryId]);
   // Without shift, rows landing above the reader push them down. Scroll by
   // that height before paint, so input that follows starts from the reader's
   // row. Rows that moved keep another row's size until they measure; hold the

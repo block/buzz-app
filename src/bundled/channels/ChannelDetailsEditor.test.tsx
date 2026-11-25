@@ -1511,6 +1511,7 @@ it("holds a new channel name to the naming rules only in a listed community", as
     "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
     "https://relay.example",
   );
+  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
   const user = userEvent.setup();
   const open = async (relayUrl: string) => {
     const h = harness();
@@ -1536,7 +1537,10 @@ it("holds a new channel name to the naming rules only in a listed community", as
   expect(save()).toBeEnabled();
   fireEvent.change(name, { target: { value: "Ops Stuff" } });
   expect(save()).toBeDisabled();
-  expect(name).toHaveAttribute("aria-invalid", "true");
+  expect(screen.getByText(/Add a type word at the end/)).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "How channel names work" }),
+  ).toHaveAttribute("href", "https://go.example/x");
   fireEvent.change(name, { target: { value: "ops-team" } });
   expect(save()).toBeEnabled();
   cleanup();

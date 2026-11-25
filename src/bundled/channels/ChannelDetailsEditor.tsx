@@ -19,6 +19,7 @@ import {
 import { soloLabels } from "../../features/solo/labels";
 import { namingRulesApply } from "./channel-naming-policy";
 import { channelNameTips } from "./channel-name-tips";
+import { NamingGuidelinesLink } from "./NamingGuidelinesLink";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { ChannelDurationField } from "./ChannelDurationField";
@@ -171,10 +172,7 @@ export function ChannelDetailsEditor({
           description: normalized.description,
         }).blockers
       : [];
-  const errors =
-    baseErrors && renameBlockers.length && !baseErrors.name
-      ? { ...baseErrors, name: renameBlockers.join(" ") }
-      : baseErrors;
+  const errors = baseErrors;
   const dirty =
     !!normalized &&
     !!view.base &&
@@ -194,7 +192,8 @@ export function ChannelDetailsEditor({
     !locked &&
     canEdit &&
     dirty &&
-    !Object.values(errors ?? {}).some(Boolean);
+    !Object.values(errors ?? {}).some(Boolean) &&
+    renameBlockers.length === 0;
   const edit = (focusField: "name" | "description" = "name") => {
     if (!pending && (attempt || (!view.loading && canEdit)))
       patch({
@@ -428,6 +427,13 @@ export function ChannelDetailsEditor({
                   inputRef={nameInput}
                   value={draft.name}
                   error={errors?.name}
+                  hint={
+                    renameBlockers.length > 0 && (
+                      <>
+                        {renameBlockers.join(" ")} <NamingGuidelinesLink />
+                      </>
+                    )
+                  }
                   disabled={locked || !canEdit}
                   onChange={(name) => patch({ draft: { ...draft, name } })}
                 />

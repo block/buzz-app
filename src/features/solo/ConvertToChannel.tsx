@@ -1,4 +1,5 @@
 import { namingRulesApply } from "../../bundled/channels/channel-naming-policy";
+import { NamingGuidelinesLink } from "../../bundled/channels/NamingGuidelinesLink";
 import { channelNameTips } from "../../bundled/channels/channel-name-tips";
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { prepareSoloMove } from "../channel-navigation/solo-navigation";
@@ -389,7 +390,8 @@ export function ConvertToChannel({
       )}
       {eligible && !attempt && !converted && nameBlockers.length > 0 && (
         <p role="status">
-          Rename this chat to convert it. {nameBlockers.join(" ")}
+          Rename this chat to convert it. {nameBlockers.join(" ")}{" "}
+          <NamingGuidelinesLink />
         </p>
       )}
       {base?.canEdit && !eligible && !matchingAttempt && !canFinish && (

@@ -39,6 +39,7 @@ import {
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
 import { namingGuidelinesUrl, namingRulesApply } from "./channel-naming-policy";
+import { NamingGuidelinesLink } from "./NamingGuidelinesLink";
 import { channelNameTips, similarChannelName } from "./channel-name-tips";
 import styles from "./CreateChannelDialog.module.css";
 
@@ -477,17 +478,7 @@ function OpenCreateChannelDialog({
             hint={
               hintText && (
                 <>
-                  {hintText}{" "}
-                  {guidelinesUrl && (
-                    <a
-                      className={styles.guidelinesLink}
-                      href={guidelinesUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      How channel names work
-                    </a>
-                  )}
+                  {hintText} {guidelinesUrl && <NamingGuidelinesLink />}
                 </>
               )
             }

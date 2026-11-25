@@ -690,11 +690,15 @@ it("holds Convert to channel to the naming rules only in a listed community", as
     "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
     "https://relay.example",
   );
+  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
   relayUrl = "wss://relay.example";
   setup(true);
   expect(
     await screen.findByText(/Rename this chat to convert it/),
   ).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "How channel names work" }),
+  ).toHaveAttribute("href", "https://go.example/x");
   expect(confirm()).toBeDisabled();
   cleanup();
   relayUrl = "wss://other.example";

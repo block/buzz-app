@@ -134,6 +134,7 @@ export class DiscoveryState {
   }
   private cached = new CountedSet<string>(this.changed);
   accessRevision = 0;
+  rosterRemovalRevision = 0;
   /** A scan that drops evidence cannot certify completeness. */
   overflowRevision = 0;
   private rosters = new CountedMap<string, RelayEvent>(this.changed);
@@ -233,17 +234,19 @@ export class DiscoveryState {
     if (event.kind === 39002) {
       this.absent.delete(id);
       if (cached) this.cached.add(id);
-      if (
-        previous &&
-        hasTag(previous, "p", this.viewer) &&
-        !hasTag(event, "p", this.viewer)
-      ) {
-        this.denied.add(id);
-        this.revokedIds.add(id);
-        if (!cached) this.recordRosterRemoval(id, event, false);
-      } else if (hasTag(event, "p", this.viewer)) this.regrant(id);
-      // A signed roster without the viewer ends the start it stood in for.
-      if (!hasTag(event, "p", this.viewer)) this.starting.delete(id);
+      if (hasTag(event, "p", this.viewer)) this.regrant(id);
+      else {
+        if (
+          (previous && hasTag(previous, "p", this.viewer)) ||
+          this.pendingRemovals.has(id)
+        ) {
+          this.denied.add(id);
+          this.revokedIds.add(id);
+          if (!cached) this.recordRosterRemoval(id, event, false);
+        }
+        // A signed roster without the viewer ends the start it stood in for.
+        this.starting.delete(id);
+      }
     } else if (previous && !this.rosters.has(id) && this.open(id))
       this.regrant(id);
     if (this.authorized(id) || (event.kind === 39000 && this.open(id)))
@@ -343,6 +346,7 @@ export class DiscoveryState {
     omitted: boolean,
   ) {
     this.pendingRemovals.set(channel, { id, created_at, omitted });
+    this.rosterRemovalRevision++;
   }
   beginRosterSave() {
     if (!this.pendingRemovals.size) return;

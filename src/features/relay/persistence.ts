@@ -175,6 +175,7 @@ export function createHeadPersistence(
   let closed = false;
   let opening: Promise<IDBDatabase> | undefined;
   let observedDiscovery: string | null | undefined;
+  let observedPeer = false;
   function database() {
     if (closed || typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
@@ -345,8 +346,10 @@ export function createHeadPersistence(
         (store, done, then) =>
           then(store.get(scope), (row) => {
             const data = row?.data as SavedStartup | undefined;
-            if (observeDiscovery)
+            if (observeDiscovery) {
               observedDiscovery = discoveryVersion(data?.discovery);
+              observedPeer = false;
+            }
             done(data);
           }),
         STARTUP,
@@ -372,7 +375,12 @@ export function createHeadPersistence(
               const current = discoveryVersion(stored?.discovery);
               // Compare inside the write transaction. Settings-only changes
               // preserve the signed snapshot, but a peer can replace or clear it.
-              if (ifUnchanged && current !== observedDiscovery) {
+              // Observing a conflict does not load the peer's channels into
+              // discovery. Later removals still have to patch the peer row.
+              if (
+                ifUnchanged &&
+                (current !== observedDiscovery || (removalFor && observedPeer))
+              ) {
                 version = current;
                 const peer = stored?.discovery;
                 if (
@@ -423,13 +431,17 @@ export function createHeadPersistence(
           peerVersion
             ? () => {
                 observedDiscovery = peerVersion;
+                observedPeer = true;
               }
             : undefined,
         );
       }
       if (saved === "oversized") throw new StartupCacheOverBudget();
       if (!saved) throw new Error("Startup cache is over its byte budget");
-      if (version !== undefined) observedDiscovery = version;
+      if (version !== undefined) {
+        observedDiscovery = version;
+        observedPeer = false;
+      }
     },
     readProfiles: () =>
       transact(
@@ -565,6 +577,7 @@ export function createHeadPersistence(
         STARTUP,
       );
       observedDiscovery = null;
+      observedPeer = false;
       await transact("readwrite", (store, done, then) =>
         // Include metadata left by a point delete on an older build.
         then(store.getAll(), (rows: ScopedRow[]) => {

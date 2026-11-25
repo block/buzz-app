@@ -464,6 +464,17 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         );
         return cachedIds();
       },
+      acceptRemoval: (id, createdAt) =>
+        channels.acceptDiscovery([roster(relay, id, [], createdAt)]),
+      replaceWithNewerGrant: () =>
+        peer.writeStartup(startup([replacement, newerGrant])),
+      async seedRemovalOrder() {
+        channels.dispose();
+        await peer.writeStartup(startup([active, retried]));
+        channels = openChannels(createHeadPersistence(viewer, origin));
+        await channels.restore();
+      },
+      omitRetried: () => channels.acceptDiscovery([], new Set(["active"])),
       replace: () => peer.writeStartup(startup([replacement])),
       replaceWithStaleMembership: () =>
         peer.writeStartup(
@@ -584,6 +595,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let afterReloadRetry;
   let afterEmptyReloadAbort;
   let afterEmptyReloadRetry;
+  let afterNewerRemoval;
+  let afterOlderRemoval;
+  let afterUnrelatedRemoval;
   let repeatReads;
   let aborts;
   try {
@@ -737,10 +751,46 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     afterEmptyReloadRetry = await page.evaluate(() =>
       window.startupRetry.cachedIds(),
     );
+
+    await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.seedRemovalOrder();
+      await startup.revoke("retried");
+      await startup.replaceWithNewerGrant();
+      startup.acceptRemoval("retried", 1_700_000_003);
+      startup.repeat();
+    });
+    await page.clock.runFor(500);
+    afterNewerRemoval = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
+
+    await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.seedRemovalOrder();
+      startup.omitRetried();
+    });
+    expect(await page.evaluate(() => window.startupRetry.cachedIds())).toEqual([
+      firstRetry.originalIds[0],
+    ]);
+    await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.replaceWithNewerGrant();
+      startup.acceptRemoval("retried", 1_700_000_001);
+    });
+    afterOlderRemoval = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
+    await page.evaluate(() =>
+      window.startupRetry.acceptRemoval("active", 1_700_000_001),
+    );
+    afterUnrelatedRemoval = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
   }
-  expect(aborts).toBe(6);
+  expect(aborts).toBe(7);
   expect(firstRetry.sidebarEmpty).toBe(true);
   expect(firstRetry.restored).toBe(true);
   expect(firstRetry.failed).toBe(true);
@@ -769,4 +819,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   expect.soft(afterReloadRetry).toEqual([firstRetry.originalIds[0]]);
   expect.soft(afterEmptyReloadAbort).toEqual([firstRetry.replacementId]);
   expect.soft(afterEmptyReloadRetry).toEqual([]);
+  expect.soft(afterNewerRemoval).toEqual([firstRetry.replacementId]);
+  const newerPeerIds = [firstRetry.replacementId, firstRetry.newerGrantId];
+  expect.soft(afterOlderRemoval).toEqual(newerPeerIds);
+  expect.soft(afterUnrelatedRemoval).toEqual(newerPeerIds);
 });

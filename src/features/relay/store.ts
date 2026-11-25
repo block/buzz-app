@@ -2022,12 +2022,13 @@ export function createChannelStore(
     }
   }
   function saveDiscovery(revoked = false) {
-    const ifUnchanged = !revoked && (discoverySave?.ifUnchanged ?? false);
+    const guardedRepeat = !revoked && (discoverySave?.ifUnchanged ?? false);
     clearTimeout(discoverySave?.timer);
     discoverySave = undefined;
     if (!persistence?.writeStartup || !discovery || !transport || disposed)
       return;
-    const urgent = revoked || discoveryRevocationPending;
+    const removals = discovery.beginRosterSave();
+    const urgent = revoked || discoveryRevocationPending || !!removals;
     discoveryRevocationPending = urgent;
     const events = discovery.savedEvents();
     const key = [transport.relayAuthor, ...events.map(({ id }) => id)].join();
@@ -2042,7 +2043,6 @@ export function createChannelStore(
     )
       return;
     const saving = { key, at: now() };
-    const removals = discovery.beginRosterSave();
     discoverySuperseded = undefined;
     savedDiscovery = saving;
     lastDiscoveryWrite = saving.at;
@@ -2056,8 +2056,8 @@ export function createChannelStore(
           },
         },
         urgent,
-        ifUnchanged,
-        urgent && ifUnchanged ? removals?.removalFor : undefined,
+        guardedRepeat || !!removals,
+        removals?.removalFor,
       )
       .then(() => {
         removals?.settle();
@@ -2400,6 +2400,7 @@ export function createChannelStore(
     if (!cached) discoveryObserved = true;
     started ??= discovery.rosterVersions();
     const accessRevision = discovery.accessRevision;
+    const rosterRemovalRevision = discovery.rosterRemovalRevision;
     const overflowRevision = discovery.overflowRevision;
     if (cached) discovery.restrictToKnown();
     const previousReadable = discovery.readable();
@@ -2533,7 +2534,12 @@ export function createChannelStore(
     if (!cached) {
       if (!disposed && appliedEpoch === epoch) {
         discoveryDirty ||= cacheChanged;
-        if (revoked || membershipRemoved) saveDiscovery(true);
+        if (
+          revoked ||
+          membershipRemoved ||
+          discovery.rosterRemovalRevision !== rosterRemovalRevision
+        )
+          saveDiscovery(true);
         else {
           const age = now() - (lastDiscoveryWrite ?? 0);
           const first =

@@ -155,9 +155,12 @@ function useActionsRow(
       // shows again at its old height instead of a reserved row for a frame.
       if (!heading.getClientRects().length) return;
       heading.setAttribute("data-actions-measure", "");
+      // Actions with no box yet (an empty slot) take no row; their zero
+      // rectangle would read as wrapped above the viewport.
       const wraps =
+        actions.getClientRects().length > 0 &&
         actions.getBoundingClientRect().top >=
-        label.getBoundingClientRect().bottom - 0.5;
+          label.getBoundingClientRect().bottom - 0.5;
       heading.removeAttribute("data-actions-measure");
       heading.toggleAttribute("data-actions-row", wraps);
     };

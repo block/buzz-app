@@ -401,7 +401,8 @@ export function ActivityFeed({
   }, [failure, focusFallback]);
   const open = (row: (typeof rows)[number]) => {
     const item = destination(row);
-    setHeld({ key: row.key, seen: false });
+    // Only an unread row needs holding; a read one is already in place.
+    if (row.unread.length) setHeld({ key: row.key, seen: false });
     if (canRead && row.unread.length) void markRead(row.id, row.unread);
     onOpen?.();
     void navigator.open({
@@ -503,6 +504,9 @@ export function ActivityFeed({
                         : identity.sender
                     }
                     unread={unread}
+                    session={session}
+                    profiles={profiles}
+                    name={name}
                     selected={selected}
                     onClick={() => open(row)}
                   />

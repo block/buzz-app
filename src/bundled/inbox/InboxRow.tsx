@@ -312,6 +312,9 @@ export function CompactActivityRow({
   thread,
   sender,
   unread,
+  session,
+  profiles,
+  name,
   ...props
 }: {
   channel: ChannelSummary | undefined;
@@ -320,10 +323,24 @@ export function CompactActivityRow({
   /** Omitted where the conversation's name already says who, as in a DM. */
   sender?: string | undefined;
   unread: boolean;
+  session: RelaySession;
+  profiles: ReadonlyMap<string, Profile>;
+  name: ResolveName;
 } & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
   const Icon = thread ? CornerDownRightIcon : channelIcon(channel);
-  const place =
-    channel && channel.channelType !== "dm" ? channel.name : context;
+  const dm = channel?.channelType === "dm";
+  // A DM reads as the sidebar shows it: who it's with, by face or count.
+  const others = (dm && !thread && channel.participants) || [];
+  const peer = others.length === 1 ? others[0] : undefined;
+  const profile = peer ? profiles.get(peer) : undefined;
+  const place = dm
+    ? dmLabel(
+        channel.participants,
+        profiles,
+        name,
+        channel.name ?? "Direct message",
+      )
+    : (channel?.name ?? context);
   return (
     <NavigationItem
       {...props}
@@ -331,7 +348,23 @@ export function CompactActivityRow({
       aria-label={sender ? `Open ${place}, from ${sender}` : `Open ${place}`}
       icon={
         <span className={styles.compactIcon}>
-          <Icon size={16} aria-hidden="true" />
+          {peer ? (
+            <span className={styles.compactAvatar}>
+              <Avatar
+                src={avatarMedia(profile?.picture, session.media)}
+                alt=""
+                fallback={place}
+                size="fill"
+                shape={profile?.isAgent ? "squircle" : "circle"}
+              />
+            </span>
+          ) : others.length > 1 ? (
+            <span className={styles.compactCount} aria-hidden="true">
+              {others.length}
+            </span>
+          ) : (
+            <Icon size={16} aria-hidden="true" />
+          )}
         </span>
       }
       label={

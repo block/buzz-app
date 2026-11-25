@@ -215,18 +215,24 @@ export function InboxRowButton({
       }
       aria-describedby={previewId}
       avatar={
-        <Avatar
-          size="fill"
-          alt=""
-          fallback={sender}
-          fallbackContent={workflow ? <LightningIcon size={20} /> : undefined}
-          src={
-            workflow ? undefined : avatarMedia(profile?.picture, session.media)
-          }
-          shape={workflow || profile?.isAgent ? "squircle" : "circle"}
-        />
+        working ? (
+          <WorkerAvatar work={working} session={session} />
+        ) : (
+          <Avatar
+            size="fill"
+            alt=""
+            fallback={sender}
+            fallbackContent={workflow ? <LightningIcon size={20} /> : undefined}
+            src={
+              workflow
+                ? undefined
+                : avatarMedia(profile?.picture, session.media)
+            }
+            shape={workflow || profile?.isAgent ? "squircle" : "circle"}
+          />
+        )
       }
-      sender={sender}
+      sender={working ? workerName(working, session) : sender}
       source={
         <RowPlace
           channel={channel}
@@ -246,7 +252,7 @@ export function InboxRowButton({
       previewId={previewId}
       preview={
         working ? (
-          <WorkingLine work={working} session={session} />
+          <WorkingLine work={working} session={session} faces={false} />
         ) : (
           conversationPreview({ item, own, feed, session })
         )
@@ -494,20 +500,24 @@ export function ReactionRowButton({
       unread={unread}
       aria-labelledby={`${nameId} ${previewId}`}
       avatar={
-        <Avatar
-          size="fill"
-          alt=""
-          fallback={sender}
-          src={avatarMedia(profile?.picture, session.media)}
-          shape={profile?.isAgent ? "squircle" : "circle"}
-        />
+        working ? (
+          <WorkerAvatar work={working} session={session} />
+        ) : (
+          <Avatar
+            size="fill"
+            alt=""
+            fallback={sender}
+            src={avatarMedia(profile?.picture, session.media)}
+            shape={profile?.isAgent ? "squircle" : "circle"}
+          />
+        )
       }
       sender={
         <>
           <span id={nameId} hidden>
             {`${sender} reacted with ${emojiNames} to your message:`}
           </span>
-          {sender}
+          {working ? workerName(working, session) : sender}
         </>
       }
       source={
@@ -527,7 +537,7 @@ export function ReactionRowButton({
       previewId={previewId}
       preview={
         working ? (
-          <WorkingLine work={working} session={session} />
+          <WorkingLine work={working} session={session} faces={false} />
         ) : (
           <ReactionPreview item={item} session={session} />
         )
@@ -561,12 +571,17 @@ function workerFaces(work: ActivityWork, session: RelaySession) {
 export function WorkingLine({
   work,
   session,
+  faces: showFaces = true,
 }: {
   work: ActivityWork;
   session: RelaySession;
+  /** Off when the row's own avatar already shows who is working. */
+  faces?: boolean;
 }) {
   const faces = workerFaces(work, session);
   const step = readableStep(work);
+  if (!showFaces)
+    return <ShimmerText active={!work.waiting}>{step}</ShimmerText>;
   return (
     <span className={styles.compactPreview}>
       {faces.length === 1 && faces[0] ? (
@@ -594,6 +609,34 @@ export function WorkingLine({
     </span>
   );
 }
+
+/** While your agents work, a row with its own avatar shows the first working
+ * agent there and names them, so the face isn't repeated on the message line. */
+function WorkerAvatar({
+  work,
+  session,
+}: {
+  work: ActivityWork;
+  session: RelaySession;
+}) {
+  const [face] = workerFaces(work, session);
+  return face ? (
+    <Avatar
+      size="fill"
+      alt=""
+      fallback={face.name}
+      src={face.src}
+      shape="squircle"
+    />
+  ) : null;
+}
+
+const workerName = (work: ActivityWork, session: RelaySession) => {
+  const names = workerFaces(work, session).map((face) => face.name);
+  return names.length > 2
+    ? `${names[0]} and ${names.length - 1} others`
+    : names.join(" and ");
+};
 
 /** A one-line row has no message line, so working shows as the sidebar's
  * working dots at its end. */

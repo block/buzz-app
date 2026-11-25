@@ -244,7 +244,9 @@ it("shows who is working and their step in place of the message", () => {
   );
   const view = render(row("Reviewing the PR"));
   expect(view.getByText("Reviewing the PR")).toBeInTheDocument();
-  expect(view.getByRole("img", { name: "Morgarita" })).toBeInTheDocument();
+  // The row's own avatar and name become the working agent's.
+  expect(view.getByText("Morgarita")).toBeInTheDocument();
+  expect(view.queryByText("Sender")).not.toBeInTheDocument();
   expect(view.queryByText("the last message")).not.toBeInTheDocument();
   // Raw tool detail never reaches the row.
   view.rerender(row("f=/private/tmp/claude-501/x"));

@@ -15,6 +15,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Spawn } from "./claude";
 import { CONNECT } from "./auth";
 import { ClaudeSettings } from "./ClaudeSettings";
+import { PROCESS_LIMIT } from "./sessions";
 import { ClaudeSetup } from "./setup";
 
 const native = vi.hoisted(() => ({
@@ -56,15 +57,19 @@ afterEach(() => {
 const own = vi.hoisted(() => ({
   status: undefined as object | undefined,
   hold: undefined as (() => Promise<void> | undefined) | undefined,
+  /** The host refuses every process, as at its process limit. */
+  full: false,
 }));
 beforeEach(() => {
   own.status = undefined;
   own.hold = undefined;
+  own.full = false;
 });
 
 function fixture(active = () => true) {
   // No installed runtime: management must still work, without starting Claude.
   const spawn: Spawn = vi.fn(async (_id, options) => {
+    if (own.full) throw PROCESS_LIMIT;
     if (own.status) options?.onStdout?.(JSON.stringify(own.status));
     return {
       write: async () => {},
@@ -438,6 +443,17 @@ it("preserves a rejected replacement and blocks other actions while saving", asy
   expect(await removeKey(user)).toBeInTheDocument();
 });
 
+it("manages a saved key while the host runs all the processes it allows", async () => {
+  native.saved = true;
+  own.full = true;
+  fixture();
+  await savedKey();
+  await action("Replace");
+  expect(screen.getByLabelText("Anthropic API key")).not.toHaveAttribute(
+    "readonly",
+  );
+});
+
 it("treats a credential read failure as unknown and offers retry", async () => {
   let reject!: (reason: string) => void;
   const pending = new Promise<boolean>((_, fail) => {
@@ -546,8 +562,9 @@ it("offers replacement and confirmed removal without reading the saved key", asy
   await user.click(screen.getByRole("menuitem", { name: "Replace" }));
   expect(screen.getByLabelText("Anthropic API key")).toHaveValue("");
   expect(
-    native.invoke.mock.calls.every(
-      ([command]) => command === "claude_api_key_status",
+    native.invoke.mock.calls.every(([command]) =>
+      // Statuses only: the device list's names, never a value.
+      ["claude_api_key_status", "agent_env_status"].includes(command),
     ),
   ).toBe(true);
 });
@@ -628,8 +645,9 @@ it("discards replacement drafts when the page closes", async () => {
   expect(input).not.toHaveValue("sk-ant-draft");
   expect(input).toHaveAttribute("readonly");
   expect(
-    native.invoke.mock.calls.every(
-      ([command]) => command === "claude_api_key_status",
+    native.invoke.mock.calls.every(([command]) =>
+      // Statuses only: the device list's names, never a value.
+      ["claude_api_key_status", "agent_env_status"].includes(command),
     ),
   ).toBe(true);
   expect(await replaceKey(user)).toHaveValue("");

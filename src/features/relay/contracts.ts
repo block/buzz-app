@@ -1,3 +1,4 @@
+import type { ForwardSnapshot } from "./forwarded-message";
 import type { VerifiedProfile } from "./verified-profile";
 import type { ReadFilter } from "./events";
 import type { CustomEmoji } from "./emoji";
@@ -25,7 +26,10 @@ export type ChannelSummary = Readonly<{
   visibility?: "public" | "private" | undefined;
   /** Default for future participants; never an existing participant's role. */
   joinRole?: "member" | "guest" | undefined;
-  /** Viewer role from the relay-signed roster, independent of admission defaults. */
+  /** Viewer-scoped membership evidence; peer roster availability is independent.
+   * An explicit false outranks a retained peer roster. Cache freshness stays in cached. */
+  viewerMembership?: Readonly<{ pubkey: string; joined: boolean }>;
+  /** Viewer role from verified membership, independent of admission defaults. */
   viewerRole?: "owner" | "admin" | "member" | "guest" | "bot" | undefined;
   preview?: string | undefined;
   /** Newest verified user-visible activity for sidebar ordering, in Unix
@@ -114,6 +118,8 @@ export type Attachment = Readonly<{
 }>;
 /** Signed URL binding a timecoded reply to one attachment in a media gallery. */
 export const MEDIA_TARGET_TAG = "buzz:media";
+export const INVOCATION_INTENT_TAG = "buzz:invocation-intent";
+export const INVOCATION_INTENT_VERSION = 1;
 /** Relay-authored membership activity, not a membership grant or user message. */
 export type MembershipChange = Readonly<{
   type: "member_joined" | "member_left" | "member_removed";
@@ -137,11 +143,24 @@ export type ChannelMessage = Readonly<{
   content: string;
   /** Unprojected current body when attachment presentation removed Markdown. */
   sourceContent?: string;
+  /** Unverified forwarded copy; the ordinary content remains readable on older clients. */
+  forward?: Readonly<{ snapshot: ForwardSnapshot; note: string }>;
   /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
   agentEnvelope?: true;
   /** Signed `audience` tag of the original event: `agents` is coordination
-   * between agents, shown quietly. Absent means everyone; unknown values too. */
-  audience?: "agents";
+   * between agents, shown quietly; `details` is fuller material for people,
+   * read in its own viewer. Absent means everyone; unknown values too. */
+  audience?: "agents" | "details";
+  /** Signed `relayed-from` tag: the signer's claim that this agent wrote the
+   * text in another chat. `verified` when the signer is the author and the
+   * agent's cryptographically verified owner; only then is it drawn as the agent's. */
+  relayedFrom?: Readonly<{
+    agent: string;
+    channelId?: string;
+    /** The signed original's text before its first blank line. */
+    notice?: string;
+    verified: boolean;
+  }>;
   /** Signed `buzz:request` tag: the agent's claim of the triggering message
    * this update belongs to, separate from its flattened reply link. */
   request?: string;
@@ -166,6 +185,8 @@ export type ChannelMessage = Readonly<{
   }>;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
+  /** The edit supplying the current body; absent when unedited. */
+  editId?: string;
   /** Offsets in `content` where attachment removal joined once-separate text; a
    * bound name never spans one. */
   attachmentSeams?: readonly number[];
@@ -173,6 +194,8 @@ export type ChannelMessage = Readonly<{
   mentions: readonly string[];
   /** Signed two-field mention tags bind display only; never notification recipients. */
   mentionReferences?: readonly string[];
+  /** Frozen display labels inside a forwarded copy; never notification intent. */
+  mentionLabels?: readonly { id: string; names: readonly string[] }[];
   /** Authorized edit supplying current imeta; absent when sourced from the original. */
   attachmentSourceId?: string;
   attachments: readonly Attachment[];
@@ -273,6 +296,9 @@ export type ChannelReference =
        * open; `looking` while that lookup is queued or in flight. */
       readable?: false;
       looking?: true;
+      /** A completed lookup admitted no readable channel. Absent before the
+       * first answer or after access/cache reset; retained during rechecks. */
+      answered?: true;
     }>;
 /** Reads are side-effect-free; snapshots retain identity until their value changes.
  * Commands are idempotent requests; the store decides whether network work is needed. */
@@ -351,6 +377,13 @@ export interface ChannelQueries {
   }>;
   /** Current reference state from local evidence; never reads. */
   describe?(channelId: string): ChannelReference;
+  /** Whether the relay ended the viewer's access to this channel itself: it
+   * denied a read of the channel, or the channel's roster dropped the viewer.
+   * The channel has left `list()` by then, and unlike other missing channels
+   * it needs no complete roster read to be known gone. False for a channel a
+   * roster read only omitted, and after a refusal of the whole roster read.
+   * Local evidence; never reads. List subscribers hear the change. */
+  revoked?(channelId: string): boolean;
   /** Demand a background lookup for a reference that isn't `found`, or is
    * found but not `readable`, until the returned release. The store coalesces requests into bounded reads, keeps
    * a `withheld` answer for a few minutes, backs off after failures,
@@ -385,12 +418,23 @@ export interface ChannelQueries {
   ): void;
   /** Drops a started chat the relay did not confirm. */
   abandon?(channelId: string): void;
+  /** Reads every listed channel's newest activity, as an activity sort or
+   * filter does, until the returned release; `list().activityStatus` and
+   * each channel's `activityKnown` report progress. Absent when the session
+   * reads no activity. */
+  demandActivity?(): () => void;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;
   ensureList(): void;
   ensure(channelId: string): void;
-  loadOlder(channelId: string): void;
+  /** Read the next older page of `rows` top-level rows (default 20, at most
+   * 200). A page past the history budget slides the window down to it,
+   * detached from the head. A read `ahead` of the reader never slides: past
+   * the budget it is dropped, and read-ahead stops until the reader pages. */
+  loadOlder(channelId: string, rows?: number, ahead?: boolean): void;
+  /** Cancel the window's older read in flight. */
+  cancelOlder?(channelId: string): void;
   /** Detach the window to history at `from` (unix seconds; 0 is the channel
    * start). Resolves the first message at or after `from`, else the newest. */
   seek?(

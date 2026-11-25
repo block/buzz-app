@@ -5,24 +5,25 @@ import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/inter/wght-italic.css";
 import "@fontsource/jetbrains-mono/400.css";
 import { createRoot } from "react-dom/client";
+import { MessageMarkdown } from "../../src/features/messages/MessageMarkdown";
 import { PluginReadme } from "../../src/app/PluginReadme";
 import { CanvasEditor } from "../../src/bundled/channels/CanvasEditor";
 import { CanvasMarkdown } from "../../src/bundled/channels/CanvasView";
 import type { ChannelCanvas } from "../../src/features/channel-templates/capability";
 import { GitHubBody } from "../../src/bundled/github/GitHubBody";
-import { NoteBody } from "../../src/bundled/relay-notes/NotesPage";
-import notesStyles from "../../src/bundled/relay-notes/NotesPage.module.css";
 import { Body as RepoBody } from "../../src/bundled/repos/RepoPage";
 import { InstructionsMarkdown } from "../../src/bundled/watching/InstructionsMarkdown";
 import "../../src/bundled/watching/AttentionPage.css";
 import { ActivityTranscript } from "../../src/features/agents/ActivityTranscript";
+import { TranscriptPanel } from "../../src/features/agents/TranscriptPanel";
 import { activityTranscript } from "../../src/features/agents/activity-transcript";
 import { createAgentMemories } from "../../src/features/agents/memory";
 import { MemoryPanel } from "../../src/features/agents/MemoryPanel";
 import type { Agent } from "../../src/features/agents/service";
-import type { RelaySession } from "../../src/features/relay/session";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
+
+const LONG_INLINE = `release_${"unbroken_token_".repeat(18)}`;
 
 const SAMPLE = [
   "# Title",
@@ -30,6 +31,7 @@ const SAMPLE = [
   "### Topic",
   "#### Detail",
   "Text with `code`, ~~gone~~ and [a link](https://example.com).",
+  `A wrapping snippet: \`${LONG_INLINE}\`.`,
   "- one\n  - two\n    - three",
   "1. first\n2. second",
   "- [x] done",
@@ -39,9 +41,10 @@ const SAMPLE = [
   "```\nconst value = 1;\n```",
 ].join("\n\n");
 
-// A line that cannot wrap, a long reply, and a document too deep to render.
-const LONG_LINE = `\`\`\`\n${"abcdefghijklmnopqrstuvwxyz ".repeat(40)}\n\`\`\``;
-const LONG_CODE = `\`\`\`\n${Array.from({ length: 60 }, (_, line) => `${line} ${"x".repeat(160)}`).join("\n")}\n\`\`\``;
+// Indented, unbroken lines and a document too deep to render.
+const LONG_CODE = `\`\`\`\n${Array.from({ length: 60 }, (_, line) => `  ${line} ${"x".repeat(160)}`).join("\n")}\n\`\`\``;
+// Fits at a wide width, but wraps past the height cap in a narrow pane.
+const RESPONSIVE_CODE = `\`\`\`\n${`responsive_${"x".repeat(60)}\n`.repeat(12)}\`\`\``;
 const TOO_DEEP = `${">".repeat(120)} ${"deep ".repeat(200)}`;
 
 /** A saved Canvas holding content, with no relay behind it. */
@@ -99,6 +102,7 @@ const reply = (seq: number, text: string, messageId: string) =>
       },
     },
   });
+const working = params.has("working");
 const transcript = activityTranscript(
   [
     {
@@ -120,7 +124,9 @@ const transcript = activityTranscript(
               },
             }),
             reply(3, LONG_CODE, "m2"),
-            frame(4, "turn_completed", { outcome: "completed" }),
+            ...(working
+              ? []
+              : [frame(4, "turn_completed", { outcome: "completed" })]),
           ],
         },
       }),
@@ -140,23 +146,13 @@ const memories = createAgentMemories(
   () => true,
 );
 const memoryAgent = {
+  key: agent,
   pubkey: agent,
   name: "Ada",
   relay: "wss://current.example",
   place: "here",
 } as Agent;
 
-const note = {
-  id: "d".repeat(64),
-  pubkey: agent,
-  created_at: Math.floor(at / 1000),
-  kind: 30_023,
-  content: SAMPLE,
-  tags: [
-    ["d", "runbook"],
-    ["title", "Runbook"],
-  ],
-};
 const scope = { viewer: agent, communityOrigin: "https://current.example" };
 
 const root = document.getElementById("root");
@@ -166,11 +162,31 @@ createRoot(root).render(
     <main
       style={{
         width: Number(params.get("width") ?? 1100),
+        maxWidth: "100%",
         padding: 16,
         background: "var(--surface-panel)",
         color: "var(--text-standard)",
       }}
     >
+      <section data-screen="message" className="text-message">
+        <MessageMarkdown
+          row={{
+            id: "fixture-message",
+            channelId: "fixture-channel",
+            authorId: "fixture-author",
+            content: `${SAMPLE}\n\n${LONG_CODE}\n\n${RESPONSIVE_CODE}`,
+            createdAt: 1,
+            mentions: [],
+            participants: [],
+            attachments: [],
+            reactions: [],
+            replyCount: 0,
+            emoji: [],
+          }}
+          media={() => undefined}
+          onOpenLink={() => false}
+        />
+      </section>
       {/* The real Canvas editor, reading a local Canvas. */}
       <section data-screen="canvas">
         <CanvasEditor
@@ -182,7 +198,7 @@ createRoot(root).render(
       </section>
       <section data-screen="canvas-host">
         <CanvasEditor
-          canvas={canvasOf(LONG_LINE)}
+          canvas={canvasOf(LONG_CODE)}
           profiles={profiles}
           scope="fixture"
           channelId="22222222-2222-4222-8222-222222222222"
@@ -190,14 +206,6 @@ createRoot(root).render(
       </section>
       <section data-screen="canvas-source">
         <CanvasMarkdown content={TOO_DEEP} openLink={() => false} />
-      </section>
-      <section data-screen="notes" className={notesStyles.page}>
-        <NoteBody
-          note={note}
-          session={undefined as unknown as RelaySession}
-          openLink={() => false}
-          author="Ada"
-        />
       </section>
       <section data-screen="repo" className="repos-page text-body">
         <RepoBody text={SAMPLE} open={async () => {}} scope={scope} />
@@ -210,12 +218,25 @@ createRoot(root).render(
         />
       </section>
       <section data-screen="transcript">
-        <ActivityTranscript
-          transcript={transcript}
-          agentName="Ada"
-          state={() => "ended"}
-          follow={false}
-        />
+        {working ? (
+          <TranscriptPanel
+            agent={memoryAgent}
+            read={async () => transcript}
+            readKey="S"
+            working
+            refreshWhileWorking={false}
+            reading="Reading transcript…"
+            failed="Could not read transcript"
+            missing={null}
+          />
+        ) : (
+          <ActivityTranscript
+            transcript={transcript}
+            agentName="Ada"
+            state={() => "ended"}
+            follow={false}
+          />
+        )}
       </section>
       <section data-screen="plugin-readme">
         <PluginReadme text={SAMPLE} />

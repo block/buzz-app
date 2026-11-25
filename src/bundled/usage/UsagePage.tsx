@@ -12,6 +12,8 @@ import type {
   SessionUsage,
 } from "../../features/agents/service";
 import { relayOrigin } from "../../features/communities/destination";
+import { ownerUsage } from "../../features/agents/owner-view";
+import { ownerReads } from "../../features/agents/reads";
 import type { Navigation } from "../../features/navigation/controller";
 import {
   ArrowDownIcon,
@@ -194,7 +196,15 @@ function useUsage(agents: Agents, keys: string, reload: number) {
         ? read(agent, { since: since(now), signal: controller.signal })
         : Promise.reject(new Error("No usage"))
       ).then(
-        (sessions) => settle(agent, sessions),
+        (sessions) =>
+          settle(
+            agent,
+            ownerUsage(
+              sessions,
+              agents.conversationReads?.(agent.key) ??
+                ownerReads(agents.relay(agent.key), agent.pubkey),
+            ),
+          ),
         (error: unknown) => {
           if (controller.signal.aborted) return;
           if (!read || !retry) return settle(agent, undefined, error);
@@ -807,11 +817,14 @@ function Dashboard({
               ) : (
                 <ul className={styles.list}>
                   {result.costliest.map(({ agent, session, cost: total }) => {
+                    const channelId = session.channelId;
+                    // A watch's or timer's turn has no conversation to open.
+                    const name =
+                      session.title ??
+                      (channelId ? "Untitled session" : "No conversation");
                     const label = (
                       <span className={styles.sessionText}>
-                        <span className={styles.name}>
-                          {session.title ?? "Untitled session"}
-                        </span>
+                        <span className={styles.name}>{name}</span>
                         <span className={styles.label}>
                           {[
                             agent.name,
@@ -826,14 +839,13 @@ function Dashboard({
                         </span>
                       </span>
                     );
-                    const channelId = session.channelId;
                     return (
                       <li key={`${agent.pubkey}:${session.id}`}>
                         {channelId ? (
                           <NavigationItem
                             label={label}
                             trailing={<Amount total={total} />}
-                            aria-label={`${session.title ?? "Untitled session"}, ${agent.name}, ${costLabel(total)}. Open conversation`}
+                            aria-label={`${name}, ${agent.name}, ${costLabel(total)}. Open conversation`}
                             onClick={() =>
                               void open({
                                 version: 1,
@@ -862,6 +874,38 @@ function Dashboard({
               )}
             </section>
           </div>
+          {!progress && result.routines.length > 0 && (
+            <section className={styles.section} aria-label="By routine">
+              <InlineHeader title="By routine" />
+              <ul className={styles.list}>
+                {result.routines.map(
+                  ({ agent, wake, cost: total, sessions }) => (
+                    <li
+                      key={agent && wake ? `${agent.pubkey}:${wake}` : "other"}
+                    >
+                      <div className={styles.staticRow}>
+                        <span className={styles.sessionText}>
+                          <span className={styles.name}>{wake ?? "Other"}</span>
+                          <span className={styles.label}>
+                            {[agent?.name, count(sessions, "session")]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </span>
+                        <Amount total={total} />
+                      </div>
+                    </li>
+                  ),
+                )}
+              </ul>
+              <p className={styles.footnote} role="note">
+                <InfoIcon size="0.875rem" aria-hidden="true" />
+                Other includes Claude Code, goose and Pi turns run while Usage
+                was off, and the timers and watches of an agent with one session
+                per community.
+              </p>
+            </section>
+          )}
         </>
       )}
     </div>

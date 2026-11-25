@@ -44,6 +44,7 @@ import {
 import {
   CheckCircleIcon,
   CopyIcon,
+  RobotIcon,
 } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AgentAvatar } from "../../features/agents/AgentAvatar";
@@ -445,6 +446,8 @@ function ProfileDetails({
   const [tab, setTab] = useState<
     "info" | "activity" | "channels" | `agent:${string}`
   >(initialTab);
+  const versionHistoryPanel = useRef<HTMLDivElement>(null);
+  const [focusVersionHistory, setFocusVersionHistory] = useState(false);
   // A new transcript request shows Activity, as choosing its tab would.
   const opening = initialTranscript?.opening;
   const [asked, setAsked] = useState(opening);
@@ -481,6 +484,13 @@ function ProfileDetails({
           conversation: openedFrom(session, context),
           initialTranscript,
           close,
+          openVersionHistory:
+            tab === "agent:settings"
+              ? undefined
+              : () => {
+                  setTab("agent:settings");
+                  setFocusVersionHistory(true);
+                },
           ...(openConversation && { openConversation }),
           ...(settings.settingsHost
             ? { settingsHost: settings.settingsHost }
@@ -540,6 +550,16 @@ function ProfileDetails({
   const verifiedOwner = ownership.owner;
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
+  useEffect(() => {
+    if (!focusVersionHistory) return;
+    if (selectedTab === "agent:settings")
+      versionHistoryPanel.current
+        ?.querySelector<HTMLButtonElement>(
+          'button[aria-label="Previous versions"]',
+        )
+        ?.focus();
+    setFocusVersionHistory(false);
+  }, [focusVersionHistory, selectedTab]);
   const community = panelCommunity(scope, viewer);
   const communityOrigin = community?.communityOrigin;
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
@@ -585,13 +605,9 @@ function ProfileDetails({
     viewer,
     agent: displayAgent,
     enabled: !!scoped,
-    onOpened(channelId) {
-      void scoped?.navigation.open({
-        version: 1,
-        kind: "conversation",
-        channelId,
-        scope: scoped.scope,
-      });
+    onOpened(link) {
+      const target = scoped && buzzLinkTarget(link, scoped.scope);
+      if (target) void scoped.navigation.open(target);
     },
   });
   const canEdit = !!scoped && viewer === pubkey;
@@ -617,9 +633,11 @@ function ProfileDetails({
       aria-label="Profile details"
       tabIndex={-1}
       className={styles.root}
+      // Over a conversation, it draws to its sheet's edges, under the header.
+      data-full-bleed=""
     >
       <div className={styles.profileContents}>
-        <div className={`${hero.hero} ${hero.panelHero}`}>
+        <div className={`${hero.hero} ${hero.panelHero} ${styles.hero}`}>
           <ProfileBackdrop src={picture} />
           <div className={styles.portrait}>
             <AgentAvatar
@@ -635,7 +653,10 @@ function ProfileDetails({
             />
           </div>
           <div className={styles.identity}>
-            <h2 className="text-body-lg">{name}</h2>
+            <h2 className="text-body-lg">
+              {displayAgent && <RobotIcon className={styles.agentIcon} />}
+              {name}
+            </h2>
             {profile?.verified && (
               <p
                 className={`${styles.verifiedName} text-body-sm text-secondary`}
@@ -661,7 +682,7 @@ function ProfileDetails({
             {presence !== "unknown" && (
               <p className="text-body-sm text-primary">
                 {
-                  { online: "Active", away: "Away", offline: "Offline" }[
+                  { online: "Online", away: "Away", offline: "Offline" }[
                     presence
                   ]
                 }
@@ -724,7 +745,12 @@ function ProfileDetails({
           label="Profile sections"
           variant="panel"
           renderPanel={(selected) => (
-            <div className={styles.tabContent}>
+            <div
+              ref={
+                selected === "agent:settings" ? versionHistoryPanel : undefined
+              }
+              className={styles.tabContent}
+            >
               {selected.startsWith("agent:") ? (
                 sections.find((item) => item.value === selected)?.render()
               ) : selected === "info" ? (

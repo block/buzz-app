@@ -471,18 +471,20 @@ export function EmojiArtwork({
   emoji,
   scale,
   offset,
+  x,
   animate,
 }: {
   emoji: string;
   scale?: number | undefined;
   offset?: number | undefined;
+  x?: number | undefined;
   animate: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
     if (canvas.current)
-      paintEmojiAvatar(canvas.current, emoji, undefined, scale, offset);
-  }, [emoji, scale, offset]);
+      paintEmojiAvatar(canvas.current, emoji, undefined, scale, offset, x);
+  }, [emoji, scale, offset, x]);
   return (
     <canvas
       ref={canvas}
@@ -892,15 +894,16 @@ export function AvatarEmojiPicker({
 }) {
   const host = useRef<HTMLDivElement>(null);
   const pointer = useRef(false);
-  const callback = useRef<(value: string) => void>(() => {});
+  const callback = useRef<(value: string) => boolean>(() => false);
   callback.current = (value) => {
-    if (disabled) return;
+    if (disabled) return false;
     const fromPointer = pointer.current;
     pointer.current = false;
     const animate =
       fromPointer &&
       !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     onSelect(value, animate);
+    return true;
   };
   const [error, setError] = useState(false);
   const [{ scale, perLine }, setLayout] = useState({

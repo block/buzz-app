@@ -170,10 +170,10 @@
   }
   /* Borderless titles have no perimeter to stroke; their message carries
      validation. Keyboard focus still draws its cue. */
-  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):is(
-    [data-invalid],
-    [aria-invalid="true"]
-  ) {
+  :is(.buzz-input, .buzz-textarea):is(
+    [data-appearance="title"],
+    [data-appearance="heading"]
+  ):is([data-invalid], [aria-invalid="true"]) {
     --border: transparent;
   }
   .buzz-input:disabled,
@@ -272,7 +272,21 @@
     position: relative;
     justify-content: center;
   }
-  .buzz-radio[data-variant="tile"] {
+  .buzz-choice[data-variant="row"] {
+    position: relative;
+    padding: var(--space-2) var(--space-3);
+    padding-inline-end: var(--size-control);
+    border-radius: var(--radius-control);
+  }
+  .buzz-choice[data-variant="row"]:has([data-checked]) {
+    background: var(--interaction-selected);
+    color: var(--interaction-selected-text);
+  }
+  .buzz-choice[data-variant="row"]:not(:has([data-disabled])):hover {
+    background: var(--interaction-hover);
+  }
+  .buzz-radio[data-variant="tile"],
+  .buzz-radio[data-variant="row"] {
     position: absolute;
     inset: 0;
     width: 100%;
@@ -280,6 +294,12 @@
     border: 0;
     border-radius: inherit;
     background: transparent;
+  }
+  .buzz-radio-check {
+    position: absolute;
+    inset-inline-end: var(--space-3);
+    display: flex;
+    color: var(--interaction-selected-text);
   }
   html[data-keyboard-navigation]
     :is(
@@ -579,7 +599,7 @@
     border-radius: 0;
     background: transparent;
   }
-  .buzz-input[data-appearance="heading"] {
+  :is(.buzz-input, .buzz-textarea)[data-appearance="heading"] {
     display: block;
     @apply text-heading;
     min-height: 0;
@@ -595,14 +615,17 @@
   .buzz-input:where(
     :not([data-appearance="title"], [data-appearance="heading"])
   ):where(:focus, [data-popup-open]),
-  .buzz-textarea:where(:focus),
+  .buzz-textarea:where(:not([data-appearance="heading"])):where(:focus),
   .buzz-input-group:where(:focus-within) {
     --border: var(--interaction-border);
   }
   /* Title edits stay visually inline on pointer/autofocus entry. Keep a
      perimeter cue when navigating these borderless inputs with the keyboard. */
   html[data-keyboard-navigation]
-  .buzz-input:is([data-appearance="title"], [data-appearance="heading"]):focus {
+  :is(.buzz-input, .buzz-textarea):is(
+    [data-appearance="title"],
+    [data-appearance="heading"]
+  ):focus {
     --border: var(--interaction-border);
   }
   html[data-keyboard-navigation]

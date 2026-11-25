@@ -1,3 +1,4 @@
+import { hostComposerProvenance } from "../../features/messages/mention-draft";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { clearAttachmentDraft } from "../../features/messages/attachment-draft";
 import { MessageComposer } from "../../features/messages/MessageComposer";
@@ -60,11 +61,13 @@ export function HuddlePanel({
       openLink={(url) => context?.open(url) || openLink?.(url) || false}
       composer={
         <MessageComposer
+          evidenceOwner={hostComposerProvenance}
           session={connection.session}
           extensions={extensions}
           scope={connection.scope ?? ""}
           channelId={room}
           channelName="Huddle"
+          forwardAudience="Everyone in this Huddle"
           label="Message this Huddle"
           placeholder="Message this Huddle"
           disabled={!discussion.writable}

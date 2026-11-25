@@ -11,6 +11,7 @@ import {
   PULL_REFRESH_MS,
   PULL_RETAIN_MS,
   PULL_SLOW_REFRESH_MS,
+  PULLS_PER_READ,
 } from "./pull-states";
 
 const pull = "https://github.com/block/buzz-app/pull/7";
@@ -92,10 +93,58 @@ it("reads every watched pull request together, once, then again each minute whil
   expect(gh).toHaveBeenCalledTimes(2);
 });
 
+it("reads many pull requests in requests of a few, keeping what one GitHub failed from the rest", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  // Public reads would hold no checks; GitHub failing is not gh being
+  // unavailable, so none is made.
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const urls = Array.from(
+    { length: PULLS_PER_READ + 2 },
+    (_, i) => `https://github.com/block/buzz-app/pull/${i + 1}`,
+  );
+  const [first = "", last = ""] = [urls[0], urls.at(-1)];
+  let failing = false;
+  const gh = mockGh(async (_query: string, variables: Variables) => {
+    if (failing && variables.p0 === PULLS_PER_READ + 1)
+      throw new GitHubError("HTTP 502");
+    return Object.fromEntries(
+      Object.keys(variables)
+        .filter((key) => key.startsWith("p"))
+        .map((key) => [`r${key.slice(1)}`, rollup("OPEN", {}, "FAILURE")]),
+    );
+  });
+  const states = createPullStates(gh);
+  const stop = urls.map((url) => states.watch(url, () => {}));
+  try {
+    await vi.waitFor(() => expect(states.get(last)).toBeDefined());
+    expect(
+      gh.mock.calls.map(
+        ([, variables]) => Object.keys(variables as Variables).length,
+      ),
+    ).toEqual([PULLS_PER_READ * 3, 2 * 3]);
+    for (const url of urls)
+      expect(states.get(url)).toMatchObject({ checks: "failure" });
+
+    failing = true;
+    await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+    expect(gh).toHaveBeenCalledTimes(4);
+    // The page GitHub failed keeps what was read before, checks and all.
+    for (const url of urls)
+      expect(states.get(url)).toMatchObject({ checks: "failure" });
+    expect(states.readAt(last)?.error).toEqual(new GitHubError("HTTP 502"));
+    expect(states.readAt(first)?.error).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    for (const unwatch of stop) unwatch();
+  }
+});
+
 it("keeps the state object, and tells no one, when a poll reads the same state", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   let checks = "PENDING";
-  const gh = mockGh(async () => ({ r0: rollup("OPEN", {}, checks) }));
+  let approval = {};
+  const gh = mockGh(async () => ({ r0: rollup("OPEN", approval, checks) }));
   const states = createPullStates(gh);
   const changed = vi.fn();
   states.watch(pull, changed);
@@ -112,6 +161,11 @@ it("keeps the state object, and tells no one, when a poll reads the same state",
   expect(states.get(pull)).not.toBe(before);
   expect(states.get(pull)).toMatchObject({ checks: "success" });
   expect(changed).toHaveBeenCalledTimes(2);
+  // An approval alone, with nothing else changed, is news too.
+  approval = { reviewDecision: "APPROVED" };
+  await vi.advanceTimersByTimeAsync(PULL_REFRESH_MS);
+  expect(states.get(pull)).toMatchObject({ review: "approved" });
+  expect(changed).toHaveBeenCalledTimes(3);
 });
 
 it("keeps one reader that throws from failing the read, or keeping it from the rest", async () => {
@@ -1229,6 +1283,50 @@ it("reads how far a followed pull request is on its way to merging", async () =>
   expect(await merging({ reviewThreads: null })).not.toHaveProperty(
     "unresolved",
   );
+});
+
+it("reads what a pull request's reviews come to with its state, and asks the panel's reviews the panel's way", async () => {
+  const approved = { state: "APPROVED" };
+  const changes = { state: "CHANGES_REQUESTED" };
+  for (const [decision, reviews, review, hasNextPage] of [
+    ["APPROVED", [approved], "approved"],
+    ["CHANGES_REQUESTED", [approved, changes], "changes requested"],
+    // Stamped, but a required review, such as a code owner's, is missing:
+    // no different from not stamped at all.
+    ["REVIEW_REQUIRED", [approved, null], undefined],
+    ["REVIEW_REQUIRED", [], undefined],
+    // A repository that requires no review leaves the decision to GitHub's
+    // page, where each reviewer's latest verdict counts.
+    [null, [approved], "approved"],
+    [null, [approved, changes], "changes requested"],
+    [null, [], undefined],
+    // More verdicts than one page holds: one not read could request changes.
+    [null, [approved], undefined, true],
+    [null, [approved, changes], "changes requested", true],
+  ] as const) {
+    const answer = full();
+    const gh = ghFor(() => ({
+      r0: {
+        ...answer,
+        pullRequest: {
+          ...answer.pullRequest,
+          reviewDecision: decision,
+          latestOpinionatedReviews: {
+            nodes: reviews,
+            pageInfo: { hasNextPage: hasNextPage ?? false },
+          },
+        },
+      },
+    }));
+    const states = createPullStates(gh);
+    const { state } = await states.read(pull, { maxAge: 0, level: "details" });
+    expect(typeof state === "object" && state.review).toBe(review);
+    // GraphQL refuses one field asked twice with different arguments.
+    const query = String(gh.mock.calls[0]?.[0]);
+    expect(new Set(query.match(/latestOpinionatedReviews\([^)]*\)/g))).toEqual(
+      new Set(["latestOpinionatedReviews(first:50)"]),
+    );
+  }
 });
 
 it("reads the text of feedback it does not hold, newest first, and keeps it while listed", async () => {

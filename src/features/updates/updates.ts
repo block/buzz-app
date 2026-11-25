@@ -31,7 +31,8 @@ export const BACKGROUND_UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 // The updater does not carry the check timeout over to the download.
 export const UPDATE_CHECK_TIMEOUT_MS = 30 * 1000;
 export const UPDATE_DOWNLOAD_TIMEOUT_MS = 30 * 60 * 1000;
-const BACKGROUND_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
+// Neither a background nor a manual check replaces an update in progress.
+const CHECK_BLOCKED_STATES = new Set<UpdateStatus["state"]>([
   "checking",
   "available",
   "downloading",
@@ -67,7 +68,6 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   let installInFlight = false;
   let manualResultRequested = false;
   let inlineViews = 0;
-  let noticeDismissed = false;
   let noticeRecovery = false;
   const listeners = new Set<() => void>();
   const notify = () => {
@@ -76,8 +76,6 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
   const setStatus = (next: UpdateStatus) => {
     status = next;
     if (next.state === "ready") noticeRecovery = false;
-    if (next.state !== "ready" && next.state !== "installing")
-      noticeDismissed = false;
     notify();
   };
 
@@ -134,7 +132,7 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       }
       return;
     }
-    if (background && BACKGROUND_BLOCKED_STATES.has(status.state)) return;
+    if (CHECK_BLOCKED_STATES.has(status.state)) return;
 
     checkInFlight = true;
     manualResultRequested = false;
@@ -185,13 +183,10 @@ export function createUpdates(platform: UpdatePlatform = tauriPlatform) {
       };
     },
     inlineVisible: () => inlineViews > 0,
-    /** The ready notice stays dismissed across remounts until the update resolves. */
     dismissNotice() {
-      noticeDismissed = true;
       noticeRecovery = false;
       notify();
     },
-    noticeDismissed: () => noticeDismissed,
     /** Keep failed installs and their retry results reachable outside Settings. */
     noticeRecovery: () => noticeRecovery,
     checkForUpdate: () => runCheck(false),

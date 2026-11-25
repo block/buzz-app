@@ -1121,6 +1121,8 @@ test.each([
 test("lost publication receipt stays unknown; reconnect never automatically republishes", async () => {
   const h = await harness();
   let traffic;
+  // Draw no reconnect spread when the authenticated connection drops.
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
   try {
     browserFetch(h.base);
     const transport = await connectBrokerTransport(h.base);
@@ -1143,6 +1145,7 @@ test("lost publication receipt stays unknown; reconnect never automatically repu
     expect(h.publications).toHaveLength(1);
     expect(h.upstream.some((url) => url.endsWith("/events"))).toBe(false);
   } finally {
+    random.mockRestore();
     traffic?.dispose();
     vi.unstubAllGlobals();
     await h.close();
@@ -1153,6 +1156,8 @@ test("a reconnect's continuous channel replays cross the real HTTP boundary", as
   const h = await harness(0, undefined, { holdAuth: true });
   let traffic;
   const clock = vi.spyOn(Date, "now");
+  // Draw no reconnect spread when the authenticated connection drops.
+  const random = vi.spyOn(Math, "random").mockReturnValue(0);
   try {
     const now = Date.now();
     clock.mockReturnValue(now - 20 * 60_000);
@@ -1188,6 +1193,7 @@ test("a reconnect's continuous channel replays cross the real HTTP boundary", as
       ]),
     );
   } finally {
+    random.mockRestore();
     clock.mockRestore();
     traffic?.dispose();
     vi.unstubAllGlobals();
@@ -1987,6 +1993,71 @@ test.each([
       await h.close();
       logger.setReporters(reporters);
       setLogLevel(previousLevel);
+    }
+  },
+);
+
+test.each([
+  [40010, 400],
+  [40011, 400],
+  // Other kinds keep the unconfirmed answer.
+  [9000, 503],
+])(
+  "a relay without pins refuses kind %i, answered %i",
+  async (kind, status) => {
+    const h = await harness();
+    let traffic;
+    try {
+      browserFetch(h.base);
+      const transport = await connectBrokerTransport(h.base);
+      traffic = transport.subscribe(callbacks);
+      await until(() => h.requests.length >= 1 && !!traffic.identity());
+      const channel = "00000000-0000-4000-8000-000000000001";
+      const event = await transport.writer.sign(
+        {
+          kind,
+          content: "",
+          created_at: Math.floor(Date.now() / 1000),
+          tags:
+            kind === 9000
+              ? [
+                  ["h", channel],
+                  ["p", "a".repeat(64)],
+                ]
+              : [
+                  ["h", channel],
+                  ["e", "a".repeat(64)],
+                  ["client-id", "local"],
+                ],
+        },
+        new AbortController().signal,
+      );
+      const result = fetch(`${h.base}/api/relay/publish`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Buzz-Live-ID": traffic.identity(),
+        },
+        body: JSON.stringify(event),
+      });
+      await until(() => h.publications.length === 1);
+      await h.sockets[0].receive([
+        "OK",
+        event.id,
+        false,
+        "restricted: unknown event kind",
+      ]);
+      const response = await result;
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual(
+        status === 400
+          ? { error: "restricted: unknown event kind" }
+          : { error: "Socket publication could not be confirmed", sent: false },
+      );
+    } finally {
+      traffic?.dispose();
+      vi.unstubAllGlobals();
+      await h.close();
     }
   },
 );

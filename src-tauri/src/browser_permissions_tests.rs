@@ -85,6 +85,7 @@ fn native_command_permissions_isolate_webviews() {
         "credential_pairings_list",
         "credential_pairing_revoke",
         "credential_pairing_communities",
+        "web_inspector",
         "federated_identity_register",
         "federated_identity_unregister",
         "federated_identity_request",
@@ -116,6 +117,9 @@ fn native_command_permissions_isolate_webviews() {
         "relay_decode_read_state",
         "relay_sign_read_state",
         "relay_publish_read_state",
+        "relay_decode_thread_follows",
+        "relay_sign_thread_follows",
+        "relay_publish_thread_follows",
         "relay_http",
         "relay_http_cancel",
         "relay_verify_signatures",
@@ -144,6 +148,11 @@ fn native_command_permissions_isolate_webviews() {
         "relay_upload",
         "relay_upload_cancel",
         "media_download",
+        "media_cache_clear",
+        "media_cache_forget",
+        "media_cache_usage",
+        "media_download_status",
+        "media_download_open",
         "file_download",
         "media_copy_image",
         "media_lift_subject",
@@ -176,6 +185,12 @@ fn native_command_permissions_isolate_webviews() {
         "plugin_host_mcp_pairing",
         "plugin_host_mcp_reply",
         "plugin_host_mcp_close",
+        "plugin_host_forward_admission",
+        "plugin_host_forward_open",
+        "plugin_host_forward_associate",
+        "plugin_host_forward_register_child",
+        "plugin_host_forward_seal",
+        "plugin_host_forward_close",
         "plugin_host_read_file",
         "plugin_host_resolve_directory",
         "app_agent_list",
@@ -212,6 +227,7 @@ fn native_command_permissions_isolate_webviews() {
         "app_agent_state_load",
         "app_agent_state_set",
         "decide",
+        "speech_connect",
         "title_bar_double_click",
         "notification_show",
         #[cfg(target_os = "macos")]
@@ -294,6 +310,8 @@ fn native_command_permissions_isolate_webviews() {
     for (webview, origin, source) in [
         (&guest, local_origin, "guest webview"),
         (&main, "https://example.org", "remote content"),
+        // Its watch channel, not an event, reports a saved-download change.
+        (&huddle, local_origin, "huddle window"),
     ] {
         assert!(
             invoke_with_body(
@@ -339,8 +357,14 @@ fn native_command_permissions_isolate_webviews() {
         );
         assert_eq!(
             invoke(huddle.as_ref(), command, local_origin).is_ok(),
-            matches!(command, "media_download" | "clipboard_write_text"),
-            "huddle must only acquire bounded download and text copy: {command}"
+            matches!(
+                command,
+                "media_download"
+                    | "media_download_status"
+                    | "media_download_open"
+                    | "clipboard_write_text"
+            ),
+            "huddle must only acquire bounded downloads and text copy: {command}"
         );
         assert!(invoke(huddle.as_ref(), command, "https://example.org").is_err());
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {

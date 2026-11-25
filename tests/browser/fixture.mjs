@@ -20,6 +20,7 @@ import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";
 import { watchPageErrors } from "./page-errors.mjs";
+import { seedThreadPlacement } from "./thread-placement.mjs";
 import { validTypingTemplate } from "../../src/features/relay/typing-protocol.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -34,13 +35,23 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  openingAdminSetup: [false, { option: true }],
   enabledPlugins: [[], { option: true }],
   builderlab: [{}, { option: true }],
   /** The production broker's live setup deadline. It runs in Node, so the
    * page clock cannot hold it; a test that keeps EOSE pending sets it longer. */
   liveSetupTimeoutMs: [undefined, { option: true }],
+  // The production broker's reconnect draw (live.ts `random`). Pinned so a
+  // dropped socket returns at once; a journey can set a nonzero draw to
+  // test the spread.
+  liveDraw: [0, { option: true }],
   actionProfile: [false, { option: true }],
   agentMessageDeletion: [false, { option: true }],
+  // Open threads in: "side", "main" or "inline" (the app default). Journeys
+  // open tabs unless they opt into inline.
+  threadPlacement: ["side", { option: true }],
+  // Whether the first inline thread introduces itself; journeys skip it.
+  threadIntro: [false, { option: true }],
   profilePicture: ["", { option: true }],
   // The viewer profile's `tz`. The empty opt-out keeps launch from sharing the
   // browser's zone into it; null leaves the key out so launch shares one.
@@ -57,6 +68,8 @@ export const test = base.extend({
   openSearch: [false, { option: true }],
   searchAuthor: [false, { option: true }],
   soloChannels: [[], { option: true }],
+  // Ordinary channels whose composer sends, as Solo chats' do.
+  sendChannels: [[], { option: true }],
   sessionMembers: [{}, { option: true }],
   channelWriteKinds: [null, { option: true }],
   sidebarUnread: [false, { option: true }],
@@ -67,6 +80,7 @@ export const test = base.extend({
   sortingSidebar: [false, { option: true }],
   initialSidebarSort: [{}, { option: true }],
   channelLifecycle: [false, { option: true }],
+  memberRoleChanges: [false, { option: true }],
   leaveRosterBeforeAck: [false, { option: true }],
   guestPermalinks: [false, { option: true }],
   lifecycleRole: ["owner", { option: true }],
@@ -86,7 +100,11 @@ export const test = base.extend({
   expectedSidebarIconFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
+  // Saved communities. Each connected one holds a live stream, and this
+  // harness serves them all over one HTTP/1.1 origin; the native app does not.
+  savedCommunities: [["primary", "secondary"], { option: true }],
   dmLabels: [false, { option: true }],
+  // DM id -> its other members: indexes into the peer keys, or hex pubkeys.
   dmMembers: [{}, { option: true }],
   agentPeers: [false, { option: true }],
   inboxDm: [false, { option: true }],
@@ -97,6 +115,8 @@ export const test = base.extend({
   // Opt-in perf workload: chat-like Markdown (code, links, lists, mentions)
   // in most corpus rows instead of inert prose.
   markdownMessages: [false, { option: true }],
+  // Opt-in perf workload: chat-like one-line rows, every fifth one two lines.
+  shortMessages: [false, { option: true }],
   // Opt-in perf workload: newer activity in another joined channel fills the
   // startup unread read, so corpus history reaches the app first-seen.
   firstSeenHistory: [false, { option: true }],
@@ -109,6 +129,8 @@ export const test = base.extend({
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   // Rows sharing each history second; above the page size, pages split seconds.
   historyRowsPerSecond: [1, { option: true }],
+  // Fixed signing keys repeat event IDs, and so where pages split a second.
+  fixedKeys: [false, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   builderlabLogin: [false, { option: true, scope: "worker" }],
@@ -122,6 +144,8 @@ export const test = base.extend({
   // the app's content the next time it renders.
   startupFailureFixture: [false, { option: true, scope: "worker" }],
   companionFixture: [false, { option: true, scope: "worker" }],
+  // Off builds the production channel settings, without Diagnostics.
+  diagnostics: [true, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
     {
@@ -130,11 +154,15 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      openingAdminSetup,
       enabledPlugins,
       builderlab,
       liveSetupTimeoutMs,
+      liveDraw,
       actionProfile,
       agentMessageDeletion,
+      threadPlacement,
+      threadIntro,
       profilePicture,
       profileTimeZone,
       readState,
@@ -148,6 +176,7 @@ export const test = base.extend({
       openSearch,
       searchAuthor,
       soloChannels,
+      sendChannels,
       sessionMembers,
       channelWriteKinds,
       sidebarUnread,
@@ -158,6 +187,7 @@ export const test = base.extend({
       sortingSidebar,
       initialSidebarSort,
       channelLifecycle,
+      memberRoleChanges,
       leaveRosterBeforeAck,
       guestPermalinks,
       lifecycleRole,
@@ -172,6 +202,7 @@ export const test = base.extend({
       expectedSidebarIconFailure,
       largeSidebar,
       iconCongestion,
+      savedCommunities,
       dmLabels,
       dmMembers,
       agentPeers,
@@ -181,6 +212,7 @@ export const test = base.extend({
       inboxSoloAgent,
       tallMessages,
       markdownMessages,
+      shortMessages,
       firstSeenHistory,
       olderPageDelayMs,
       membershipActivity,
@@ -188,6 +220,7 @@ export const test = base.extend({
       launchAnimation,
       historyCounts,
       historyRowsPerSecond,
+      fixedKeys,
       channelIds,
       pluginFixtures,
       developmentReact,
@@ -198,7 +231,7 @@ export const test = base.extend({
   ) => {
     const channels = firstSeenHistory ? [...channelIds, "busy"] : channelIds;
     const key = (seed) =>
-      actionProfile
+      actionProfile || fixedKeys
         ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
         : generateSecretKey();
     const relayKey = key(1);
@@ -255,6 +288,7 @@ export const test = base.extend({
       key = relayKey,
       time = 1700000000,
     ) => finalizeEvent({ kind, tags, content, created_at: time }, key);
+    let identityArchives = sign(13535, [["-"]]);
     const profiles = new Map(
       ["primary", "secondary"].map((community) => [
         community,
@@ -272,22 +306,35 @@ export const test = base.extend({
     );
     // Kind 0 by author for keys a test creates; served on later profile reads.
     const servedProfiles = new Map();
+    // NIP-38 general statuses by author, served on later status reads.
+    const servedStatuses = new Map();
     const soloAgentKeys = [];
     const soloAgents = [...soloAgentNames, ...soloOutsideAgentNames].map(
       (name) => {
         const key = generateSecretKey();
         soloAgentKeys.push(key);
         const pubkey = getPublicKey(key);
-        // A NIP-OA owner attestation marks a real agent profile; the app reads
-        // only its shape. Outside agents belong to someone else.
-        const owner = soloAgentNames.includes(name)
-          ? viewer
-          : getPublicKey(generateSecretKey());
+        // Real ownership proofs: Admin admission verifies the delegation,
+        // independently of whether the identity appears in the library.
+        const ownerKey = soloAgentNames.includes(name)
+          ? userKey
+          : generateSecretKey();
+        const owner = getPublicKey(ownerKey);
+        const delegation = createHash("sha256")
+          .update(`nostr:agent-auth:${pubkey}:`)
+          .digest();
         servedProfiles.set(
           pubkey,
           sign(
             0,
-            [["auth", owner, "", "0".repeat(128)]],
+            [
+              [
+                "auth",
+                owner,
+                "",
+                bytesToHex(schnorr.sign(delegation, ownerKey)),
+              ],
+            ],
             JSON.stringify({ name, is_agent: true }),
             key,
           ),
@@ -296,7 +343,7 @@ export const test = base.extend({
       },
     );
     const ownerAgentKey =
-      lifecycleOwnerAgent || agentMessageDeletion
+      lifecycleOwnerAgent || agentMessageDeletion || memberRoleChanges
         ? generateSecretKey()
         : undefined;
     const ownerAgent = ownerAgentKey ? getPublicKey(ownerAgentKey) : undefined;
@@ -399,6 +446,7 @@ export const test = base.extend({
                   order: 0,
                   ...(sidebarIcons ? { icon: ":stamp:" } : {}),
                 },
+                ...(Array.isArray(savedSidebar) ? savedSidebar : []),
                 ...(sidebarIcons
                   ? [
                       {
@@ -528,7 +576,7 @@ export const test = base.extend({
                     ]
                   : []),
               ],
-              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat(shortMessages ? Number(i % 5 === 0) : (1 + (i % 7) * 3) * (tallMessages ? 5 : 1))}${syntax ? `\n${syntax}` : ""}`,
               readState ? peerKey : userKey,
               1700000100 + Math.floor(i / historyRowsPerSecond),
             );
@@ -983,6 +1031,7 @@ export const test = base.extend({
         agentPeers,
         tallMessages,
         markdownMessages,
+        shortMessages,
         firstSeenHistory,
         olderPageDelayMs,
         browserVersion: browser.version(),
@@ -1000,6 +1049,7 @@ export const test = base.extend({
       sessions: [],
       streamConnections: [],
       streamInterests: [],
+      liveAppends: [],
       errors: [],
       consoleErrors: [],
       unexpected: [],
@@ -1078,6 +1128,17 @@ export const test = base.extend({
         .map((entry) => entry.event);
     };
     const answer = (community, filter) => {
+      if (openingAdminSetup && (filter.ids || filter.kinds?.includes(9007)))
+        return [
+          report.setupCreation,
+          ...report.publications.map((item) => item.event),
+        ].filter(
+          (event) =>
+            event &&
+            (filter.ids
+              ? filter.ids.includes(event.id)
+              : filter.kinds.includes(event.kind)),
+        );
       // These ordinary fixture channels have no Huddle creation receipt.
       if (filter.kinds?.length === 1 && filter.kinds[0] === 9007) return [];
       // The real relay can return both current metadata and rosters in one query.
@@ -1121,7 +1182,7 @@ export const test = base.extend({
           authors: [getPublicKey(relayKey)],
           limit: 1,
         });
-        return [sign(13535, [["-"]])];
+        return [identityArchives];
       }
       if (filter.kinds?.includes(13534)) {
         // Relay-signed roster for archive consent; the viewer is a plain member.
@@ -1293,9 +1354,11 @@ export const test = base.extend({
                   "guest",
                 ]),
                 ...(dmMembers[id]
-                  ? dmMembers[id].map((index) => [
+                  ? dmMembers[id].map((member) => [
                       "p",
-                      participants[index],
+                      typeof member === "string"
+                        ? member
+                        : participants[member],
                       "",
                       "member",
                     ])
@@ -1427,7 +1490,9 @@ export const test = base.extend({
         });
         expect(filter.authors.length).toBeGreaterThan(0);
         expect(filter.authors.length).toBeLessThanOrEqual(100);
-        return [];
+        return [...servedStatuses.values()].filter((event) =>
+          filter.authors.includes(event.pubkey),
+        );
       }
       if (filter.kinds?.includes(30178)) {
         expect(filter).toEqual({
@@ -1599,6 +1664,29 @@ export const test = base.extend({
               ),
             ),
         ];
+      // A local agent's mention catch-up: chat events naming it anywhere.
+      if (filter["#p"] && !filter["#h"] && !filter["#p"].includes(viewer))
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([key, value]) => key === "p" && filter["#p"].includes(value),
+              ) &&
+              (filter.since === undefined ||
+                event.created_at >= filter.since) &&
+              (filter.until === undefined ||
+                event.created_at < filter.until ||
+                (event.created_at === filter.until &&
+                  (filter.before_id === undefined ||
+                    event.id > filter.before_id))),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
       if (
         filter["#p"] &&
         !filter["#h"] &&
@@ -1845,6 +1933,25 @@ export const test = base.extend({
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
           .slice(0, filter.limit);
+      // Search's person preview: their latest messages in any conversation.
+      if (
+        filter.authors?.length &&
+        !filter["#h"] &&
+        filter.search === undefined &&
+        filter.kinds?.includes(9)
+      )
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              filter.authors.includes(event.pubkey),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
       const channel = filter["#h"]?.[0];
       const history = histories.get(`${community}/${channel}`);
       if (!history)
@@ -1867,10 +1974,12 @@ export const test = base.extend({
         filter.until === undefined
           ? "head"
           : `${filter.until}:${filter.before_id}`;
-      return filter.include_aux
+      // As the relay: a window read is always bounded; aux and summaries
+      // come only when asked for.
+      return filter.top_level
         ? [
             ...events,
-            ...(actionProfile
+            ...(actionProfile && filter.include_aux
               ? targetEvents.filter((aux) =>
                   aux.tags.some(
                     ([k, id]) =>
@@ -1878,13 +1987,15 @@ export const test = base.extend({
                   ),
                 )
               : []),
-            ...threadSummaries.filter((summary) =>
-              events.some((event) =>
-                summary.tags.some(
-                  ([key, value]) => key === "e" && value === event.id,
-                ),
-              ),
-            ),
+            ...(filter.include_summaries
+              ? threadSummaries.filter((summary) =>
+                  events.some((event) =>
+                    summary.tags.some(
+                      ([key, value]) => key === "e" && value === event.id,
+                    ),
+                  ),
+                )
+              : []),
             sign(
               39006,
               [
@@ -2093,6 +2204,9 @@ export const test = base.extend({
           "channel-stars",
           "channel-sort",
           "channel-filter",
+          "channel-workspaces",
+          "channel-workspace-sort",
+          "channel-workspace-filter",
         ].includes(sidebarCoordinate) ||
         (ownSoloChannels.length > 0 &&
           sidebarCoordinate?.startsWith("buzz-me-kit-v1:"))
@@ -2119,7 +2233,23 @@ export const test = base.extend({
         });
         return;
       }
-      expect(event.tags).toContainEqual(["t", "read-state"]);
+      // Thread follow choices sync through their own slots.
+      if (event.tags.some(([k, v]) => k === "t" && v === "thread-follows")) {
+        report.followPublications ??= [];
+        report.followPublications.push({ community, event });
+        // Stored beside read state: the same snapshot reads both back.
+        readEvents
+          .get(community)
+          .set(event.tags.find(([key]) => key === "d")?.[1], event);
+        return;
+      }
+      // Read positions, or the version-2 unread record: each prefix with its tag.
+      const namespace = event.tags
+        .find(([key]) => key === "d")?.[1]
+        ?.startsWith("read-state-unread-v2:")
+        ? "read-state-unread-v2"
+        : "read-state";
+      expect(event.tags).toContainEqual(["t", namespace]);
       const blob = JSON.parse(
         nip44.v2.decrypt(
           event.content,
@@ -2127,7 +2257,8 @@ export const test = base.extend({
         ),
       );
       const coordinate = event.tags.find(([key]) => key === "d")?.[1];
-      expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
+      expect(coordinate).toMatch(/^read-state(-unread-v2)?:[0-9a-f]{32}$/);
+      expect(blob.v).toBe(namespace === "read-state" ? 1 : 2);
       const previous = readEvents.get(community).get(coordinate);
       if (
         !previous ||
@@ -2145,16 +2276,21 @@ export const test = base.extend({
           searchProfiles,
           report,
           pending,
+          olderPageDelayMs,
           // The production broker advertises read-state writes for every session,
           // not only tests opting into complete snapshot reads.
           acceptPublication: acceptReadPublication,
-          ...(actionProfile || channelLifecycle
+          ...(actionProfile || channelLifecycle || memberRoleChanges
             ? {
                 latencyMs: 40,
                 holdOlder: false,
                 acceptPublication: (community, event) => {
                   expect(verifyEvent(event)).toBe(true);
                   expect(event.pubkey).toBe(viewer);
+                  if (memberRoleChanges && event.kind === 9050) {
+                    report.publications.push({ community, event });
+                    return;
+                  }
                   if (
                     channelLifecycle &&
                     [9002, 9008, 9021, 9022, 41012].includes(event.kind)
@@ -2162,6 +2298,26 @@ export const test = base.extend({
                     return acceptReadPublication(community, event);
                   if (event.kind === 30078 || event.kind === 20002)
                     return acceptReadPublication(community, event);
+                  if (openingAdminSetup && [9000, 9].includes(event.kind)) {
+                    // This receiver's clock is independently controlled by the journey.
+                    expect(
+                      Math.abs(report.setupReceiverTime - event.created_at),
+                    ).toBeLessThanOrEqual(900);
+                    if (event.kind === 9000) {
+                      expect(
+                        event.tags.filter(([tag]) => tag === "role"),
+                      ).toEqual([
+                        [
+                          "role",
+                          report.setupCreation
+                            ? "admin"
+                            : expect.stringMatching(/^(admin|bot)$/),
+                        ],
+                      ]);
+                      report.publications.push({ community, event });
+                      return;
+                    }
+                  }
                   expect([9, 7]).toContain(event.kind);
                   const channel = event.tags.find(([k]) => k === "h")?.[1];
                   const history = histories.get(`${community}/${channel}`);
@@ -2181,9 +2337,15 @@ export const test = base.extend({
             : {}),
           discovery: (community) => ({
             self: getPublicKey(relayKey),
+            ...(openingAdminSetup ? { supported_nips: [29] } : {}),
             // Solo details publications below retain label changes as well as names.
-            ...(ownSoloChannels.length
-              ? { supported_extensions: ["nip-cl"] }
+            ...(ownSoloChannels.length || memberRoleChanges
+              ? {
+                  supported_extensions: [
+                    ...(ownSoloChannels.length ? ["nip-cl"] : []),
+                    ...(memberRoleChanges ? ["buzz-solo-member-role"] : []),
+                  ],
+                }
               : {}),
             ...(readState
               ? {
@@ -2198,7 +2360,24 @@ export const test = base.extend({
           }),
         })
       : undefined;
+    // Browser-managed downloads can bypass Playwright's page routes. Serve
+    // opted-in attachment bytes over HTTP, shared with ordinary media reads.
+    const mediaFiles = new Map();
     const middleware = async (request, response, next) => {
+      const requested = new URL(request.url, "http://fixture.local");
+      const mediaFile = mediaFiles.get(requested.searchParams.get("url"));
+      if (
+        request.method === "GET" &&
+        /^\/api\/relay\/[^/]+\/media$/.test(requested.pathname) &&
+        mediaFile
+      ) {
+        response.writeHead(200, {
+          "Content-Type": mediaFile.contentType,
+          "Content-Length": mediaFile.bytes.length,
+        });
+        response.end(mediaFile.bytes);
+        return;
+      }
       // Development-React journeys restore the shared login at startup too.
       // This synthetic host has no Builderlab account; keep its stream open
       // until the page disconnects, just like the real broker's signed-out state.
@@ -2220,10 +2399,15 @@ export const test = base.extend({
         const parts = request.url.split("/");
         const route = parts.at(-1);
         const requestedCommunity = decodeURIComponent(parts[3]);
-        const community =
-          requestedCommunity.match(
-            /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
-          )?.[1] ?? requestedCommunity;
+        // Congestion's saved communities read primary's data.
+        const saved =
+          iconCongestion &&
+          /^https:\/\/saved-\d+\.example$/.test(requestedCommunity);
+        const community = saved
+          ? "primary"
+          : (requestedCommunity.match(
+              /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
+            )?.[1] ?? requestedCommunity);
         const parsed = await fixtureBody(request, report);
         if (!parsed) return; // The client disconnected; there is no response to send.
         const { body } = parsed;
@@ -2247,14 +2431,16 @@ export const test = base.extend({
             uses_remaining: body.max_uses ?? null,
           });
         if (route === "session") {
-          report.sessions.push(community);
+          report.sessions.push(saved ? requestedCommunity : community);
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
             writeKinds:
               channelWriteKinds ??
               (soloChannels.length ? [9, 9007, 30315] : [9, 30315]),
-            relayUrl: JSON.parse(fixtureAliases)[community],
+            relayUrl: saved
+              ? requestedCommunity
+              : JSON.parse(fixtureAliases)[community],
             live: true,
           });
         }
@@ -2267,16 +2453,17 @@ export const test = base.extend({
           acceptReadPublication(community, body);
           return send(response, { accepted: true, event_id: body.id });
         }
-        if (soloChannels.length && route === "sign") {
+        const sendable = [...soloChannels, ...sendChannels];
+        if (sendable.length && route === "sign") {
           expect(body.kind).toBe(9);
           return send(response, finalizeEvent(body, userKey));
         }
-        if (soloChannels.length && route === "publish") {
+        if (sendable.length && route === "publish") {
           expect(verifyEvent(body)).toBe(true);
           expect(body.pubkey).toBe(viewer);
           expect(body.kind).toBe(9);
           const channel = body.tags.find(([key]) => key === "h")?.[1];
-          expect(soloChannels).toContain(channel);
+          expect(sendable).toContain(channel);
           histories.get(`${community}/${channel}`).push(body);
           return send(response, { accepted: true, event_id: body.id });
         }
@@ -2398,10 +2585,12 @@ export const test = base.extend({
           ).values(),
         ];
         for (const { id } of result) served.add(id);
+        // An older page's aux closure, read apart from its rows, is not held.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
-          filter["#h"]?.length
+          filter["#h"]?.length &&
+          !(filter.include_aux && !filter.include_summaries)
         ) {
           const queuedAt = performance.now();
           const receipt = {
@@ -2416,6 +2605,12 @@ export const test = base.extend({
             },
           };
           pending.push(receipt);
+          // A read the app cancels is no longer pending.
+          response.on("close", () => {
+            if (response.writableEnded) return;
+            const index = pending.indexOf(receipt);
+            if (index >= 0) pending.splice(index, 1);
+          });
           if (olderPageDelayMs !== null) {
             const timer = setTimeout(() => {
               olderPageTimers.delete(timer);
@@ -2489,7 +2684,7 @@ export const test = base.extend({
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
                   agentLibrary: () => ({ definitions: [], identities: [] }),
-                  ...(readState || channelLifecycle
+                  ...(readState || channelLifecycle || memberRoleChanges
                     ? {}
                     : {
                         authority: async () => ({
@@ -2502,6 +2697,9 @@ export const test = base.extend({
                   upstreamFetch: relay.fetch,
                   socketFactory: relay.socket,
                   liveSetupTimeoutMs,
+                  ...(liveDraw === undefined
+                    ? {}
+                    : { liveRandom: () => liveDraw }),
                 });
                 await broker.configureServer(server);
               } else server.middlewares.use(middleware);
@@ -2584,8 +2782,23 @@ export const test = base.extend({
           });
           observer.observe(document, { childList: true, subtree: true });
         });
+      if (threadPlacement !== "inline")
+        await seedThreadPlacement(page, threadPlacement);
+      if (!threadIntro)
+        await page.addInitScript((viewer) => {
+          localStorage.setItem(
+            `buzz.seen.v1:${viewer}:buzz.channels/inline-thread-intro`,
+            "1",
+          );
+        }, viewer);
       await page.addInitScript(
-        ({ viewer, profilePicture, iconCongestion, enabledPlugins }) => {
+        ({
+          viewer,
+          profilePicture,
+          iconCongestion,
+          savedCommunities,
+          enabledPlugins,
+        }) => {
           // Model fresh plugin choices before seeding an existing community.
           // Feature journeys opt in once; reloads retain later user choices.
           if (!localStorage.getItem("buzzodz.plugins.v1"))
@@ -2610,22 +2823,34 @@ export const test = base.extend({
                   ? [
                       { id: "primary", name: "Primary" },
                       { id: "secondary", name: "Secondary" },
-                      ...Array.from({ length: 6 }, (_, index) => ({
-                        id: `https://saved-${index}.example`,
-                        name: `Saved ${index}`,
-                      })),
+                      ...Array.from(
+                        {
+                          length: iconCongestion === true ? 6 : iconCongestion,
+                        },
+                        (_, index) => ({
+                          id: `https://saved-${index}.example`,
+                          name: `Saved ${index}`,
+                        }),
+                      ),
                     ]
                   : [
                       { id: "primary", name: "Primary" },
                       { id: "secondary", name: "Secondary" },
-                    ],
+                    ].filter(({ id }) => savedCommunities.includes(id)),
                 selected: "primary",
               }),
             );
         },
-        { viewer, profilePicture, iconCongestion, enabledPlugins },
+        {
+          viewer,
+          profilePicture,
+          iconCongestion,
+          savedCommunities,
+          enabledPlugins,
+        },
       );
       await use({
+        mediaFiles,
         sign: (template) => finalizeEvent(template, userKey),
         channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         // Model an owner changing visibility; production discovery consumes the
@@ -2643,6 +2868,16 @@ export const test = base.extend({
           return event;
         },
         signRelay: (template) => finalizeEvent(template, relayKey),
+        ownerAgent,
+        setArchivedIdentities(keys) {
+          identityArchives = sign(
+            13535,
+            [["-"], ...keys.map((key) => ["p", key])],
+            "",
+            relayKey,
+            identityArchives.created_at + 1,
+          );
+        },
         membershipSnapshot(role) {
           expect(["owner", "admin", "member"]).toContain(role);
           return sign(13534, [["member", viewer, role]], "", relayKey);
@@ -2793,6 +3028,48 @@ export const test = base.extend({
         serveProfile(key, body) {
           const event = sign(0, [], JSON.stringify(body), key);
           servedProfiles.set(event.pubkey, event);
+          return event;
+        },
+        // Answer later status reads for this key, like serveProfile.
+        serveStatus(key, emoji, text) {
+          const event = sign(
+            30315,
+            [
+              ["d", "general"],
+              ["emoji", emoji],
+            ],
+            text,
+            key,
+          );
+          servedStatuses.set(event.pubkey, event);
+          return event;
+        },
+        // A real, newer NIP-OA head; the client still admits it through a read.
+        transferSoloAgent(pubkey) {
+          const index = soloAgents.findIndex(
+            (agent) => agent.pubkey === pubkey,
+          );
+          expect(index).toBeGreaterThanOrEqual(0);
+          const previous = servedProfiles.get(pubkey);
+          const ownerKey = generateSecretKey();
+          const digest = createHash("sha256")
+            .update(`nostr:agent-auth:${pubkey}:`)
+            .digest();
+          const event = sign(
+            0,
+            [
+              [
+                "auth",
+                getPublicKey(ownerKey),
+                "",
+                bytesToHex(schnorr.sign(digest, ownerKey)),
+              ],
+            ],
+            previous.content,
+            soloAgentKeys[index],
+            previous.created_at + 1,
+          );
+          servedProfiles.set(pubkey, event);
           return event;
         },
         // Configure pre-existing members before opening the app. Reads stay at
@@ -2982,13 +3259,20 @@ export const test = base.extend({
             createdAt ?? (history.at(-1)?.created_at ?? 1700000900) + 1,
           );
           history.push(event);
+          // Like the relay, someone else's message unhides the viewer's DM.
+          if (!own && hiddenDmIds.delete(channel)) lifecycleTime++;
           if (relay && deliver) relay.publish(community, event);
           else if (relay) return event;
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);
+            let writes = 0;
             for (const client of streams.get(community))
-              if (client.channels.includes(channel))
+              if (client.channels.includes(channel)) {
                 client.response.write(`data: ${JSON.stringify(event)}\n\n`);
+                writes++;
+              }
+            if (deliver)
+              report.liveAppends.push({ id: event.id, channel, writes });
           }
           return event;
         },

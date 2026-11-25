@@ -1,14 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
-import { openSettings, selectSettingsSection } from "./navigation.mjs";
+import {
+  closeSettings,
+  openSettings,
+  selectSettingsSection,
+} from "./navigation.mjs";
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+const READY = "Update ready. Restart Buzz to install";
 
 // Native IPC is the boundary fixture; the updater plugin client, the
-// updates owner, Settings and the toast are production code. Plugin commands
-// are denied unless the main-window capability grants them, as Tauri's ACL does.
+// updates owner, Settings, the top-bar action and the toast are production
+// code. Plugin commands are denied unless the main-window capability grants
+// them, as Tauri's ACL does.
 async function nativeUpdater(
   page,
   { checkResults, installErrors = [], restartErrors = [], holdChecks = false },
@@ -42,6 +48,9 @@ async function nativeUpdater(
         transformCallback: () => ++nextCallback,
         unregisterCallback() {},
         invoke: async (command, args) => {
+          if (command === "plugin:app|version") return "1.0.0";
+          if (command === "get_build_identity")
+            return { revision: "b".repeat(64), state: "clean" };
           if (command === "deep_link_take") return [];
           if (command === "deep_link_watch") return;
           if (command === "plugin_catalog")
@@ -117,7 +126,7 @@ async function openUpdates(page, app) {
 const commands = (page) =>
   page.evaluate(() => window.updaterCalls.map((call) => call.command));
 
-test("update checks recover from failure, download, and restart from the toast", async ({
+test("update checks recover from failure, download, and restart from the top bar", async ({
   page,
   app,
 }, info) => {
@@ -131,9 +140,14 @@ test("update checks recover from failure, download, and restart from the toast",
 
   await expect(status).toHaveText("Check if a new version is available.");
   const action = button(page, "Check for updates");
-  const card = page
-    .getByRole("region", { name: "Software updates", exact: true })
-    .locator(".buzz-empty-state");
+  const settings = page.getByRole("region", {
+    name: "Software updates",
+    exact: true,
+  });
+  const card = settings.locator(".buzz-empty-state");
+  const disclosure = settings.getByRole("button", { name: "Build details" });
+  await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(settings.getByText(/^Native image source:/)).toHaveCount(0);
   // Browser geometry verifies the card and action fit the centered settings column.
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 900 });
@@ -156,6 +170,38 @@ test("update checks recover from failure, download, and restart from the toast",
     await page.screenshot({
       path: info.outputPath(`update-card-${width}.png`),
     });
+    await action.focus();
+    await page.keyboard.press("Tab");
+    await expect(disclosure).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    const identity = settings.getByText(
+      `Native image source: ${"b".repeat(64)} · clean`,
+    );
+    await expect(identity).toBeVisible();
+    await expect
+      .poll(async () => {
+        const bounds = await settings.boundingBox();
+        return identity.evaluate((node, bounds) => {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          return (
+            bounds &&
+            [...range.getClientRects()].every(
+              (box) =>
+                box.left >= bounds.x && box.right <= bounds.x + bounds.width,
+            )
+          );
+        }, bounds);
+      })
+      .toBe(true);
+    await expect(action).toBeInViewport({ ratio: 1 });
+    await page.screenshot({
+      path: info.outputPath(`update-build-details-${width}.png`),
+    });
+    await disclosure.click();
+    await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    await expect(disclosure).toBeFocused();
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   await action.focus();
@@ -176,23 +222,17 @@ test("update checks recover from failure, download, and restart from the toast",
       delete window.finishCheck;
     });
     await expect(status).toHaveText(result);
-    await expect(
-      page
-        .getByRole("region", { name: "Software updates", exact: true })
-        .getByRole("button"),
-    ).toBeFocused();
+    await expect(card.getByRole("button")).toBeFocused();
   }
   await expect(status).toHaveText("Downloading update…");
-  await expect(notices.getByText("Ready to update!")).toHaveCount(0);
+  await expect(button(page, READY)).toHaveCount(0);
 
   await page.evaluate(() => window.finishDownload());
   await expect(status).toHaveText("Ready to install. Buzz will restart.");
-  await button(page, "Appearance").click();
-  await expect(notices.getByText("Ready to update!")).toBeVisible();
-  await expect(notices.getByText("Click to update")).toBeVisible();
-  await notices
-    .getByRole("button", { name: "Update now", exact: true })
-    .click();
+  await closeSettings(page);
+  await expect(button(page, READY)).toHaveText("Update");
+  await expect(notices.getByRole("dialog")).toHaveCount(0);
+  await button(page, READY).click();
   await expect
     .poll(() => commands(page))
     .toEqual([
@@ -222,11 +262,8 @@ test("retry after a failed install releases native update resources before check
   const status = await openUpdates(page, app);
   await expect(status).toHaveText("Downloading update…");
   await page.evaluate(() => window.finishDownload());
-  await button(page, "Appearance").click();
-  await page
-    .getByRole("region", { name: "App notifications" })
-    .getByRole("button", { name: "Update now", exact: true })
-    .click();
+  await closeSettings(page);
+  await button(page, READY).click();
   const notices = page.getByRole("region", { name: "App notifications" });
   await expect(
     notices.getByText("Update failed", { exact: true }),
@@ -247,10 +284,11 @@ test("retry after a failed install releases native update resources before check
       expect.objectContaining({ rid: 103, timeout: 1_800_000 }),
     ],
   ]);
+  await expect(button(page, READY)).toHaveCount(0);
   await page.evaluate(() => window.finishDownload());
-  await notices
-    .getByRole("button", { name: "Update now", exact: true })
-    .click();
+  // A successful retry hands the ready update back to the top bar.
+  await expect(notices.getByRole("dialog")).toHaveCount(0);
+  await button(page, READY).click();
   await expect(notices.getByText("shutdown refused")).toBeVisible();
   await notices.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(
@@ -258,32 +296,27 @@ test("retry after a failed install releases native update resources before check
   ).toBeVisible();
 });
 
-test("the ready toast yields to Settings → Updates, which offers the same action", async ({
+test("the top-bar update action fits narrow windows and restarts from the keyboard", async ({
   page,
   app,
 }) => {
-  // Default main window size (src-tauri/tauri.conf.json).
-  await page.setViewportSize({ width: 1200, height: 800 });
   await nativeUpdater(page, { checkResults: [true] });
   const status = await openUpdates(page, app);
-  const toast = page
-    .getByRole("region", { name: "App notifications" })
-    .getByText("Ready to update!");
   await page.evaluate(() => window.finishDownload());
   await expect(status).toHaveText("Ready to install. Buzz will restart.");
-  await expect(toast).toHaveCount(0);
+  await closeSettings(page);
+  const action = button(page, READY);
+  for (const width of [1200, 760]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(action).toBeInViewport({ ratio: 1 });
+  }
+  await expect(
+    page.getByRole("region", { name: "App notifications" }).getByRole("dialog"),
+  ).toHaveCount(0);
 
-  await button(page, "Appearance").click();
-  await expect(toast).toBeVisible();
-  // Toasts layer above dialogs, so the action stays usable over Settings.
-  await page
-    .getByRole("region", { name: "App notifications" })
-    .getByRole("button", { name: "Update now", exact: true })
-    .click({ trial: true });
-  await button(page, "Software updates").click();
-  await expect(toast).toHaveCount(0);
-
-  await button(page, "Update now").click();
+  await action.focus();
+  await page.keyboard.press("Enter");
+  await expect(button(page, "Updating Buzz")).toBeFocused();
   await expect
     .poll(() => commands(page))
     .toEqual([

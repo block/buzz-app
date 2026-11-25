@@ -13,6 +13,20 @@
   max-width: 48rem;
   margin-inline: auto;
 }
+/* Borrow panel inset so the turn can clip paint beyond the disclosure outlines. */
+[data-transcript] .timeline:has(> .turn) {
+  margin-inline: calc(-1 * var(--space-3));
+}
+[data-transcript] .timeline:has(> .turn) > :not(.turn) {
+  padding-inline: var(--space-3);
+}
+[data-transcript] .turn {
+  contain: paint;
+  box-sizing: border-box;
+  max-width: calc(48rem + 2 * var(--space-3));
+  padding: var(--space-1) var(--space-3);
+  margin-block: calc(-1 * var(--space-1));
+}
 .session {
   display: flex;
   align-items: center;
@@ -208,14 +222,6 @@ html[data-keyboard-navigation] .context summary:focus-visible {
   line-height: var(--text-mono--line-height);
   letter-spacing: var(--text-mono--letter-spacing);
   font-weight: var(--text-mono--font-weight);
-}
-/* The code scrolls under the cap, so the copy action stays pinned. The
-   frame's borders sit outside the code, so the whole block stays at 24rem. */
-.markdown pre code {
-  max-height: calc(24rem - 2px);
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 .diff {
   margin: var(--space-1) 0 0;

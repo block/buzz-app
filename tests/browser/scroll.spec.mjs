@@ -12,6 +12,11 @@ import {
   edge,
 } from "./timeline.mjs";
 
+// Background communities connect after a random start delay, so their startup
+// reads can land in any window. Count only the community under test.
+const primaryQueries = (app) =>
+  app.report.queries.filter(({ community }) => community === "primary").length;
+
 test.use({ historyCounts: { alpha: 640, beta: 80 } });
 // Keep non-paging reading gestures outside the unchanged near-top read zone,
 // even with a 20-row head. The cursor journey below keeps ordinary-height rows.
@@ -154,14 +159,17 @@ readingTest(
       await settle(page);
       await expectAnchor(page, saved);
     }
-    expect(app.report.sessions).toEqual(["primary", "secondary"]);
+    expect(app.report.sessions.toSorted()).toEqual(["primary", "secondary"]);
     // Each community keeps one stream; discovered interests update that owner
     // in place. Repeated channel/community switches must not churn either.
-    expect(app.report.streamConnections).toEqual([
+    // Every joined community connects at startup, so their order is a race.
+    const byCommunity = (entries) =>
+      entries.toSorted((a, b) => a.community.localeCompare(b.community));
+    expect(byCommunity(app.report.streamConnections)).toEqual([
       { community: "primary", channels: [] },
       { community: "secondary", channels: [] },
     ]);
-    expect(app.report.streamInterests).toEqual([
+    expect(byCommunity(app.report.streamInterests)).toEqual([
       { community: "primary", channels: ["alpha", "beta"] },
       { community: "secondary", channels: ["alpha", "beta"] },
     ]);
@@ -226,7 +234,13 @@ readingTest(
       scenario: "live-appends",
       ...(await workSample(page)),
     });
-    expect(app.pending).toHaveLength(0);
+    // Visits left read-ahead reads cancelled; only the reader now at the
+    // latest message may still be reading ahead.
+    expect(
+      app.pending.filter(
+        (read) => !(read.community === "primary" && read.channel === "alpha"),
+      ),
+    ).toEqual([]);
   },
 );
 
@@ -283,19 +297,62 @@ sendTest(
   },
 );
 
+readingTest(
+  "returning to a channel read at its latest message never offers Jump to latest",
+  async ({ page, app }) => {
+    await open(page, app);
+    const visit = async (name) => {
+      await button(page, name).click();
+      await composer(page, name).waitFor();
+      await settle(page);
+    };
+    // Open both channels once, so each later visit returns to a saved latest place.
+    await visit("Beta");
+    await visit("Alpha");
+    // Register before switching: the button may show and hide within one frame.
+    await page.evaluate(() => {
+      window.jumpShown = 0;
+      new MutationObserver((records) => {
+        for (const record of records)
+          if (record.target.getAttribute("data-visible") === "true")
+            window.jumpShown++;
+      }).observe(document.body, {
+        attributes: true,
+        attributeFilter: ["data-visible"],
+        subtree: true,
+      });
+    });
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await visit("Beta");
+      await visit("Alpha");
+    }
+    await expect
+      .poll(() =>
+        history(page).evaluate(
+          (element) =>
+            element.scrollHeight - element.scrollTop - element.clientHeight,
+        ),
+      )
+      .toBeLessThan(4);
+    expect(await page.evaluate(() => window.jumpShown)).toBe(0);
+  },
+);
+
 test("cursor paging preserves visible anchors and keeps a large history virtualized", {
   tag: "@local-webkit",
 }, async ({ page, app, browserName }) => {
-  await open(page, app);
+  const ahead = await open(page, app);
   await observeWork(page);
-  let loaded = 20;
-  const cursors = new Set();
+  let loaded = 20 + ahead.reduce((rows, read) => rows + read.events.length, 0);
+  const cursors = new Set(
+    ahead.map(({ filter }) => `${filter.until}:${filter.before_id}`),
+  );
   while (loaded < historySize) {
     // A small prepend can leave us inside the prefetch zone and automatically
     // request the next page. A new gesture must not duplicate that pending read.
     expect(app.pending.length).toBeLessThanOrEqual(1);
     const alreadyPending = app.pending.length === 1;
-    const queriesBeforeWheel = app.report.queries.length;
+    const queriesBeforeWheel = primaryQueries(app);
     await edge(page, -1);
     await expect
       .poll(() => app.pending.length, {
@@ -303,8 +360,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
       })
       .toBe(1);
     expect(app.pending).toHaveLength(1);
-    if (alreadyPending)
-      expect(app.report.queries.length).toBe(queriesBeforeWheel);
+    if (alreadyPending) expect(primaryQueries(app)).toBe(queriesBeforeWheel);
     const before = await anchor(page);
     const height = await history(page).evaluate(
       (element) => element.scrollHeight,
@@ -314,13 +370,17 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     expect(pending.channel).toBe("alpha");
     expect(pending.filter.until).toBeDefined();
     expect(pending.filter.before_id).toMatch(/^[a-f0-9]{64}$/);
-    expect(pending.filter.limit).toBe(20);
+    // Pages are sized to the reader's pace, within the relay's read limit.
+    expect(pending.filter.limit).toBeGreaterThanOrEqual(20);
+    expect(pending.filter.limit).toBeLessThanOrEqual(200);
     const cursor = `${pending.filter.until}:${pending.filter.before_id}`;
     expect(cursors.has(cursor), "each older cursor is requested once").toBe(
       false,
     );
     cursors.add(cursor);
-    expect(pending.events).toHaveLength(20);
+    expect(pending.events).toHaveLength(
+      Math.min(pending.filter.limit, historySize - loaded),
+    );
     pending.release();
     loaded += pending.events.length;
     await expect
@@ -339,10 +399,15 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     await settle(page);
     expect(app.pending.length).toBeLessThanOrEqual(1);
   }
-  expect(cursors.size).toBe(31);
+  expect(loaded).toBe(historySize);
+  // Each page's aux closure is read apart from its rows.
   expect(
-    app.report.queries.filter(({ filter }) => filter.until !== undefined),
-  ).toHaveLength(31);
+    app.report.queries.filter(
+      ({ filter }) =>
+        filter.until !== undefined &&
+        !(filter.include_aux && !filter.include_summaries),
+    ),
+  ).toHaveLength(cursors.size);
   expect(app.pending).toHaveLength(0);
 
   await edge(page, -1);
@@ -403,7 +468,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     .toBeGreaterThan(beforeAppendHeight);
   await settle(page);
   await expectAnchor(page, reading);
-  const queriesBeforeTraversal = app.report.queries.length;
+  const queriesBeforeTraversal = primaryQueries(app);
   await edge(page, -1);
   const seen = new Set();
   for (let step = 0; step < 100; step++) {
@@ -427,7 +492,8 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     expect(seen.has(event.id), `retained ${event.content.split("\n")[0]}`).toBe(
       true,
     );
-  expect(app.report.queries.length).toBe(queriesBeforeTraversal);
+  expect(primaryQueries(app)).toBe(queriesBeforeTraversal);
+  // Each Beta visit's read-ahead was cancelled when the reader left.
   expect(app.pending).toHaveLength(0);
   const sample = await workSample(page);
   expect(sample.frameSamples).toBeGreaterThan(0);
@@ -457,7 +523,7 @@ editTest(
     await open(page, app);
     await end(page);
     await expectOutsidePrefetch(page);
-    const queriesBefore = app.report.queries.length;
+    const queriesBefore = primaryQueries(app);
     const event = app.append("primary", "alpha", "Short message before edit");
     const row = history(page).locator(`[data-message-id="${event.id}"]`);
     await expect(row).toBeInViewport();
@@ -551,6 +617,6 @@ editTest(
     await settle(page);
     await expectAnchor(page, saved);
     await expectOutsidePrefetch(page);
-    expect(app.report.queries.length).toBe(queriesBefore);
+    expect(primaryQueries(app)).toBe(queriesBefore);
   },
 );

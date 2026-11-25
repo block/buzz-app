@@ -745,7 +745,8 @@ it("keeps a closed channel's roster room for a while, so switching back reads no
     await vi.advanceTimersByTimeAsync(20_000);
     directory.queries.reserve?.(5)?.();
     await vi.advanceTimersByTimeAsync(9_000);
-    expect(directory.queries.limit?.()).toBe(1524);
+    // Reads size by the open views' room; the hold only keeps the names.
+    expect(directory.queries.limit?.()).toBe(1034);
     expect(directory.queries.snapshot().size).toBe(1524);
     expect(directory.queries.evictions?.()).toBe(0);
     await vi.advanceTimersByTimeAsync(1_000);
@@ -776,7 +777,7 @@ it("cancels a departing view's background reads after the task while its room is
     await vi.advanceTimersByTimeAsync(0);
     await expect(departing).resolves.toBeUndefined();
     expect(directory.queries.evictions?.()).toBe(1);
-    expect(directory.queries.limit?.()).toBe(1524);
+    expect(directory.queries.limit?.()).toBe(1024);
     // A read asked for while the room is held survives the shrink.
     directory.ensure(["next"], "background").catch(() => {});
     await vi.advanceTimersByTimeAsync(30_000);

@@ -1,3 +1,4 @@
+import { viewerMember } from "../relay/membership";
 import {
   sameLabels,
   type ChannelDetailsDraft,
@@ -23,7 +24,7 @@ export function canShareConversation(
       !channel.cached &&
       !channel.readOnly &&
       !channel.archived &&
-      channel.members?.includes(session.viewer ?? "") &&
+      viewerMember(channel, session.viewer) &&
       canAddMembers(session, channel)
     )
   );
@@ -32,7 +33,7 @@ export function canShareConversation(
 export const soloChatLink = (id: string) =>
   `buzz://channel/${encodeURIComponent(id)}`;
 export const soloChatLinkMessage = (id: string, name = id.slice(0, 8)) =>
-  `[Chat: ${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
+  `[${name.replace(/\s+/g, " ").replace(/[\\`[\]*_~<>&|]/g, "\\$&")}](${soloChatLink(id)})`;
 
 /** Link sharing is available in channels, their threads and DMs. */
 export function chatShareDestination(
@@ -64,7 +65,7 @@ export async function checkShareDestination(
     destination.cached ||
     destination.archived ||
     destination.readOnly ||
-    !destination.members?.includes(session.viewer ?? "") ||
+    !viewerMember(destination, session.viewer) ||
     !chatShareDestination(destination)
   )
     throw new Error(

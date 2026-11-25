@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  coversWorkspace,
+  joinBeneath,
   parseGitPluginSource,
   parseOpenTarget,
   targetKey,
+  withoutJoin,
   type OpenTarget,
 } from "./targets";
 const viewer = "a".repeat(64);
@@ -136,6 +139,54 @@ describe("open target boundary", () => {
       { target: "profile:x", action: "delete" },
     ])
       expect(() => parseOpenTarget({ ...conversation, detail })).toThrow();
+  });
+  it("addresses an inline thread and the layer over a view as their own visits", () => {
+    const inline = parseOpenTarget({ ...conversation, inline: "A".repeat(64) });
+    expect(inline.kind === "conversation" && inline.inline).toBe(
+      "a".repeat(64),
+    );
+    expect(targetKey(inline)).not.toBe(targetKey(conversation));
+    const layer = {
+      messageId: "B".repeat(64),
+      rootId: "A".repeat(64),
+      channelId: "beta",
+    };
+    const nested = parseOpenTarget({ ...inline, layer });
+    layer.messageId = "changed";
+    expect(nested.kind === "conversation" && nested.layer).toEqual({
+      messageId: "b".repeat(64),
+      rootId: "a".repeat(64),
+      channelId: "beta",
+    });
+    expect(
+      Object.isFrozen(nested.kind === "conversation" && nested.layer),
+    ).toBe(true);
+    expect(targetKey(nested)).not.toBe(targetKey(inline));
+    const panel = parseOpenTarget({
+      ...inline,
+      layer: {
+        target: "https://github.com/sample/project/pull/42",
+        threadId: "A".repeat(64),
+        rootId: "A".repeat(64),
+      },
+    });
+    expect(panel.kind === "conversation" && panel.layer).toEqual({
+      target: "https://github.com/sample/project/pull/42",
+      threadId: "a".repeat(64),
+      rootId: "a".repeat(64),
+    });
+    expect(targetKey(panel)).not.toBe(targetKey(nested));
+    for (const bad of [
+      { inline: "thread" },
+      { layer: {} },
+      { layer: { messageId: "b".repeat(64), target: "buzz:x" } },
+      { layer: { messageId: "b".repeat(64), threadId: "a".repeat(64) } },
+      { layer: { target: "with space" } },
+      { layer: { messageId: "b".repeat(64), rootId: "invalid" } },
+      { layer: { messageId: "b".repeat(64), channelId: "with space" } },
+      { layer: { messageId: "b".repeat(64), action: "reply" } },
+    ])
+      expect(() => parseOpenTarget({ ...conversation, ...bad })).toThrow();
   });
   it("supports local targets without account or relay and gives routes stable identity", () => {
     for (const target of [
@@ -322,6 +373,105 @@ it("keeps explicit Personal space distinct from an unspecified page scope", () =
   expect(parseOpenTarget(personal)).toEqual(personal);
   expect(targetKey(personal)).not.toBe(targetKey(page));
   expect(() => parseOpenTarget({ ...conversation, scope: null })).toThrow();
+});
+
+it("bounds a join presentation to its viewer and community address, never a code", () => {
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+  } as const;
+  const joining = parseOpenTarget({
+    ...page,
+    join: {
+      viewer: "A".repeat(64),
+      visit: "v-1",
+      community: "https://RELAY.example:443/",
+    },
+  });
+  expect(joining).toEqual({
+    ...page,
+    join: { viewer, visit: "v-1", community: "https://relay.example" },
+  });
+  expect(Object.isFrozen(joining.join)).toBe(true);
+  expect(coversWorkspace(joining)).toBe(true);
+  expect(coversWorkspace(page)).toBe(false);
+  expect(withoutJoin(joining)).toEqual(page);
+  expect(targetKey(withoutJoin(joining))).toBe(targetKey(page));
+  // Join a community from the picker has no address yet.
+  expect(
+    parseOpenTarget({ ...page, join: { viewer, visit: "v-2" } }).join,
+  ).toEqual({ viewer, visit: "v-2" });
+  // The same presentation applies over any kind, Settings included.
+  expect(
+    parseOpenTarget({
+      version: 1,
+      kind: "settings",
+      section: "appearance",
+      join: { viewer, visit: "v-3" },
+    }).join,
+  ).toEqual({ viewer, visit: "v-3" });
+  for (const join of [
+    { viewer, visit: "v", community: "https://relay.example", code: "x" },
+    { visit: "v", community: "https://relay.example" },
+    { viewer, community: "https://relay.example" },
+    { viewer, visit: "Not A Token" },
+    { viewer: "not-hex", visit: "v" },
+    { viewer, visit: "v", community: 7 },
+    { viewer, visit: "v", community: "not a url" },
+    "relay.example",
+  ])
+    expect(() => parseOpenTarget({ ...page, join })).toThrow();
+});
+
+it("keeps Settings' view beneath a join, never a card's one-shot route or a plugin import", () => {
+  const view = {
+    version: 1,
+    kind: "settings",
+    section: "block.builderlab/login",
+    scope: null,
+  } as const;
+  const join = { viewer, visit: "v-1" };
+  const routed = parseOpenTarget({
+    ...view,
+    route: { version: 1, params: "create-community" },
+    join,
+  });
+  expect(joinBeneath(routed)).toEqual(view);
+  expect(Object.isFrozen(joinBeneath(routed))).toBe(true);
+  // A plain Settings visit loses the same fields, so both match one view.
+  expect(
+    targetKey(
+      joinBeneath({
+        ...view,
+        route: { version: 1, params: "create-community" },
+      }),
+    ),
+  ).toBe(targetKey(joinBeneath(routed)));
+  // Plugin details are an addressed view, not an action: they stay.
+  const details = {
+    version: 1,
+    kind: "settings",
+    section: "plugins",
+    pluginId: "example.notes",
+  } as const;
+  expect(joinBeneath({ ...details, join })).toEqual(details);
+  const { pluginId: _pluginId, ...plugins } = details;
+  expect(
+    joinBeneath({
+      ...plugins,
+      pluginImport: { repository: "example-org/notes", reference: "main" },
+    }),
+  ).toEqual(plugins);
+  // Other kinds keep everything but the join.
+  const page = {
+    version: 1,
+    kind: "page",
+    pluginId: "buzz.channels",
+    pageId: "channels",
+  } as const;
+  expect(joinBeneath({ ...page, join })).toEqual(page);
 });
 
 it("addresses one installed plugin only within Plugins settings", () => {

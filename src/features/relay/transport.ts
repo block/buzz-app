@@ -1,3 +1,4 @@
+import { isAdminAddition } from "../channel-members/administration-protocol.ts";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -7,6 +8,7 @@ import {
   type MemoryListing,
 } from "../agents/memory";
 import { publicationRefusal } from "../developer/traffic";
+import { migrationSource } from "./migration";
 import { avatarSource } from "../../shared/avatar-source";
 import { brokerUpload, hostUpload, type AttachmentUpload } from "./attachments";
 import type { ChannelKitHost } from "../channel-templates/host";
@@ -25,6 +27,7 @@ import {
   READ_STATE_TIMESTAMP_REFUSAL,
   type ReadStateHost,
   type ReadStateSigning,
+  type ThreadFollowsSigning,
 } from "./read-state-host";
 import {
   parseReadSnapshot,
@@ -34,9 +37,12 @@ import {
 import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
+  projectWorkspaceGroups,
+  encodeLegacyWorkspaceEnvelope,
   type SidebarAssignmentMutator,
   type SidebarSectionOrderMutator,
   type SidebarSectionRenameMutator,
+  type SidebarSectionEdit,
   type SidebarSectionRemovalMutator,
   type SidebarStarMutator,
   type SidebarSortMutator,
@@ -44,6 +50,7 @@ import {
   type SidebarDecoder,
   type SidebarMuteMutator,
   type SidebarPreferences,
+  type SidebarGroups,
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
@@ -71,6 +78,7 @@ import { PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
+import { directMessageRefusal } from "./direct-message-policy";
 import {
   createEventVerifier,
   eventDto,
@@ -92,6 +100,19 @@ export interface RelayWriter {
     signal: AbortSignal,
   ): Promise<string> | Promise<void>;
 }
+/** Whether a DM command may share an existing DM's history. With
+ * `channelId`, it adds to that DM: they join it with its history only when
+ * `includeHistory`, and otherwise start a new DM of its people plus them,
+ * its agents left behind. `"ask"` lets
+ * the relay decide: agents join, and people joining a DM of two or more
+ * people are refused with `NEEDS_HISTORY_CHOICE` so the adder chooses.
+ * Without `channelId`, it opens a DM: with `includeHistory`, the DM of these
+ * people, adding any named agents to it; otherwise the DM of exactly these
+ * members. */
+export type DirectMessageHistory =
+  | { readonly channelId?: string; readonly includeHistory: boolean }
+  | { readonly channelId: string; readonly includeHistory: "ask" };
+
 export interface ReadTransport {
   /** Hear the relay refuse this account for the whole community, on any
    * request after connecting: its sign-in ended, or it has no access. One
@@ -113,17 +134,23 @@ export interface ReadTransport {
     repository: string,
   ) => Promise<{ repository: string; token: string } | null>;
   readonly uploadAttachment?: AttachmentUpload;
-  /** Host-owned idempotent DM opening. The session verifies membership before use. */
+  /** Host-owned idempotent DM opening, or with `history.channelId`, adding
+   * `pubkeys` to that DM. Returns the DM the relay settled on; the session
+   * verifies membership before use. */
   readonly openDirectMessage?: (
     pubkeys: readonly string[],
     signal: AbortSignal,
+    history?: DirectMessageHistory,
   ) => Promise<string>;
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
   /** Name/about/private-only metadata writer, separate from lifecycle and outbox. */
   readonly channelDetails?: RelayWriter;
-  readonly memberAdministration?: RelayWriter;
+  readonly memberAdministration?: RelayWriter & {
+    /** NIP-11 advertises `buzz-solo-member-role` for kind:9050 updates. */
+    readonly soloMemberRoleUpdates?: true;
+  };
   /** NIP-AR kind-45010 config artifacts only; never supplied to the outbox. */
   readonly configArtifacts?: RelayWriter;
   /** Narrow NIP-IA 9035/9036 signer/publisher; never supplied to the message outbox. */
@@ -135,6 +162,7 @@ export interface ReadTransport {
   readonly readAgentLibrary?: AgentLibraryReader;
   /** Host-only decoder of the viewer's signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
+  readonly workspaceMigration?: true;
   readonly writeSidebarSort?: SidebarSortMutator;
   readonly writeSidebarFilter?: SidebarFilterMutator;
   readonly readState?: ReadStateHost;
@@ -233,15 +261,17 @@ export interface ReadTransport {
     signal: AbortSignal,
     priority: "foreground" | "background",
   ): Promise<RelayEvent[]>;
-  /** Display URL for a media URL, or undefined when this transport cannot fetch it. */
-  media(url: string, size?: "small"): string | undefined;
+  /** Display URL for a media URL, or undefined when this transport cannot
+   * fetch it. `channel` names the channel whose message shows it. */
+  media(url: string, size?: "small", channel?: string): string | undefined;
 }
 /** Third-party https images load directly; relay-hosted media needs a signed read. */
 export function mediaUrl(
   url: string,
-  relayProxy: ((url: string) => string) | undefined,
+  relayProxy: ((url: string, channel?: string) => string) | undefined,
   relayOrigin: string | undefined,
   size?: "small",
+  channel?: string,
 ): string | undefined {
   if (url.startsWith("data:")) return avatarSource(url);
   if (url.startsWith(`${relayOrigin}/media/`)) {
@@ -255,7 +285,7 @@ export function mediaUrl(
             "/$1.thumb.webp",
           )
         : still;
-    return relayProxy?.(media);
+    return relayProxy?.(media, channel);
   }
   return /^https:\/\//.test(url) ? url : undefined;
 }
@@ -266,8 +296,9 @@ export interface Signer {
   request(url: string, body: string, signal?: AbortSignal): Promise<Response>;
   /** Native hosts sign and send `PUT /upload` for these exact bytes. */
   upload?(file: File, signal: AbortSignal): Promise<Response>;
-  /** Native hosts serve relay `/media/` URLs through an authenticated proxy. */
-  media?(url: string): string;
+  /** Native hosts serve relay `/media/` URLs through an authenticated proxy,
+   * and save images by the channel that shows them. */
+  media?(url: string, channel?: string): string;
   /** Native hosts check incoming signatures with libsecp256k1, off the main thread. */
   verifySignatures?: SignatureVerifier;
 }
@@ -530,12 +561,14 @@ export async function connectBrokerTransport(
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    sidebarWorkspaceMigration?: boolean;
     sidebarSortWrites?: boolean;
     sidebarFilterWrites?: boolean;
     channelActivity?: boolean;
     sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     channelIdentity?: boolean;
+    soloMemberRoleUpdates?: boolean;
     searchSort?: boolean;
     artifactSync?: boolean;
     sidebarPreferenceWrites?: boolean;
@@ -563,6 +596,7 @@ export async function connectBrokerTransport(
       "invalid-response",
       "Relay broker session is malformed",
     );
+  const viewer = session.viewer;
   let traffic: LiveSubscription | undefined;
   const presence = presenceObservation();
   const relayHttpUrl = relayHttpBase(session.relayHttpUrl, session.relayUrl);
@@ -572,6 +606,8 @@ export async function connectBrokerTransport(
     "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
   });
   const publish = async (event: RelayEvent, signal: AbortSignal) => {
+    if (session.memberAdministration === true && isAdminAddition(event, viewer))
+      return routeWriter("member-administration").publish(event, signal);
     const result = await fetch(`${endpoint}/publish`, {
       method: "POST",
       credentials: "same-origin",
@@ -583,6 +619,11 @@ export async function connectBrokerTransport(
     return acceptPublish(result, event.id);
   };
   const sign = async (template: EventTemplate, signal: AbortSignal) => {
+    if (
+      session.memberAdministration === true &&
+      isAdminAddition(template, viewer)
+    )
+      return routeWriter("member-administration").sign(template, signal);
     const result = await fetch(`${endpoint}/sign`, {
       method: "POST",
       credentials: "same-origin",
@@ -596,7 +637,7 @@ export async function connectBrokerTransport(
     return event;
   };
   /** Dedicated shape-limited host sign/publish routes, separate from the outbox writer. */
-  const routeWriter = (route: string): RelayWriter => ({
+  const routeWriter = (route: string) => ({
     async sign(template: EventTemplate, signal: AbortSignal) {
       const response = await fetch(`${endpoint}/${route}-sign`, {
         method: "POST",
@@ -690,16 +731,33 @@ export async function connectBrokerTransport(
           async openDirectMessage(
             pubkeys: readonly string[],
             signal: AbortSignal,
+            history?: DirectMessageHistory,
           ) {
             const result = await fetch(`${endpoint}/direct-message`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pubkeys }),
+              body: JSON.stringify(
+                history
+                  ? {
+                      pubkeys,
+                      channel: history.channelId,
+                      includeHistory: history.includeHistory,
+                    }
+                  : { pubkeys },
+              ),
               signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
             });
-            if (!result.ok)
-              throw new Error("Could not open the direct message. Try again.");
+            if (!result.ok) {
+              // The broker shows the relay's refusal as `directMessageRefusal`
+              // words it.
+              const body = await result.json().catch(() => undefined);
+              throw new Error(
+                typeof body?.error === "string"
+                  ? body.error
+                  : directMessageRefusal(!!history?.channelId, undefined),
+              );
+            }
             const value = await result.json();
             if (
               typeof value?.channelId !== "string" ||
@@ -850,12 +908,17 @@ export async function connectBrokerTransport(
           async decodeSidebarPreferences(
             events: readonly RelayEvent[],
             signal: AbortSignal,
+            legacy?: SidebarGroups,
           ): Promise<SidebarPreferences> {
             const result = await fetch(`${endpoint}/sidebar-preferences`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(events),
+              body: JSON.stringify(
+                legacy
+                  ? { events, legacy: encodeLegacyWorkspaceEnvelope(legacy) }
+                  : events,
+              ),
               signal,
             });
             if (!result.ok)
@@ -871,6 +934,9 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.channelIdentity === true
       ? { channelIdentity: true as const }
+      : {}),
+    ...(session.sidebarWorkspaceMigration
+      ? { workspaceMigration: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
     ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
@@ -954,6 +1020,56 @@ export async function connectBrokerTransport(
                 body: JSON.stringify(event),
                 signal,
               });
+              await acceptReadStatePublish(response, event.id);
+            },
+            async decodeFollows(
+              events: readonly RelayEvent[],
+              signal: AbortSignal,
+            ) {
+              const response = await fetch(
+                `${endpoint}/thread-follows-decode`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(events),
+                  signal,
+                },
+              );
+              if (!response.ok)
+                throw new Error(
+                  `Thread-follows decode failed (${response.status})`,
+                );
+              return response.json();
+            },
+            async signFollows(
+              intent: ThreadFollowsSigning,
+              signal: AbortSignal,
+            ) {
+              const response = await fetch(`${endpoint}/thread-follows-sign`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(intent),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Thread-follows signing failed (${response.status})`,
+                );
+              return eventDto(await response.json());
+            },
+            async publishFollows(event: RelayEvent, signal: AbortSignal) {
+              const response = await fetch(
+                `${endpoint}/thread-follows-publish`,
+                {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: publicationHeaders(),
+                  body: JSON.stringify(event),
+                  signal,
+                },
+              );
               await acceptReadStatePublish(response, event.id);
             },
           },
@@ -1096,7 +1212,14 @@ export async function connectBrokerTransport(
       ? { channelDetails: routeWriter("channel-details") }
       : {}),
     ...(session.memberAdministration === true
-      ? { memberAdministration: routeWriter("member-administration") }
+      ? {
+          memberAdministration: {
+            ...routeWriter("member-administration"),
+            ...(session.soloMemberRoleUpdates === true
+              ? { soloMemberRoleUpdates: true as const }
+              : {}),
+          },
+        }
       : {}),
     ...(session.channelLifecycle === true
       ? { channelLifecycle: routeWriter("channel-lifecycle") }
@@ -1106,57 +1229,61 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.sidebarSectionRemoval
       ? {
-          async removeSidebarSection(sectionId: string, signal: AbortSignal) {
+          async removeSidebarSection(
+            sectionId: string,
+            signal: AbortSignal,
+            legacy?: SidebarGroups,
+          ) {
             const response = await fetch(
               `${endpoint}/sidebar-section-removal`,
               {
                 method: "POST",
                 credentials: "same-origin",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ sectionId }),
+                body: JSON.stringify(
+                  legacy
+                    ? {
+                        intent: { sectionId },
+                        legacy: encodeLegacyWorkspaceEnvelope(legacy),
+                      }
+                    : { sectionId },
+                ),
                 signal,
               },
             );
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
-            const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return { sections, assignments };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await response.json()),
+            });
           },
         }
       : {}),
     ...(session.sidebarSectionRename
       ? {
           async renameSidebarSection(
-            intent: { sectionId: string; name: string },
+            intent: SidebarSectionEdit & Readonly<{ sectionId: string }>,
             signal: AbortSignal,
+            legacy?: SidebarGroups,
           ) {
             const response = await fetch(`${endpoint}/sidebar-section-rename`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(intent),
+              body: JSON.stringify(
+                legacy
+                  ? { intent, legacy: encodeLegacyWorkspaceEnvelope(legacy) }
+                  : intent,
+              ),
               signal,
             });
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
-            const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return { sections, assignments };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await response.json()),
+            });
           },
         }
       : {}),
@@ -1165,56 +1292,53 @@ export async function connectBrokerTransport(
           async writeSidebarSectionOrder(
             sectionIds: readonly string[],
             signal: AbortSignal,
+            legacy?: SidebarGroups,
           ) {
             const response = await fetch(`${endpoint}/sidebar-section-order`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sectionIds }),
+              body: JSON.stringify(
+                legacy
+                  ? {
+                      intent: { sectionIds },
+                      legacy: encodeLegacyWorkspaceEnvelope(legacy),
+                    }
+                  : { sectionIds },
+              ),
               signal,
             });
             if (!response.ok)
               throw new Error((await readApiFailure(response)).error);
-            const value = await response.json();
-            const { sections, assignments } = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return { sections, assignments };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await response.json()),
+            });
           },
         }
       : {}),
     ...(session.sidebarPreferenceWrites
       ? {
-          async writeSidebarAssignment(intent, signal) {
+          async writeSidebarAssignment(intent, signal, legacy) {
             const result = await fetch(`${endpoint}/sidebar-assignment`, {
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(intent),
+              body: JSON.stringify(
+                legacy
+                  ? { intent, legacy: encodeLegacyWorkspaceEnvelope(legacy) }
+                  : intent,
+              ),
               signal,
             });
             if (!result.ok) {
               const failure = await readApiFailure(result);
               throw new Error(failure.error);
             }
-            const value = (await result.json()) as SidebarPreferences;
-            const groups = projectSidebarPreferences(
-              {
-                version: 1,
-                sections: value.sections,
-                assignments: value.assignments,
-              },
-              undefined,
-            );
-            return {
-              sections: groups.sections,
-              assignments: groups.assignments,
-            };
+            return projectWorkspaceGroups({
+              version: 1,
+              ...(await result.json()),
+            });
           },
         }
       : {}),
@@ -1491,8 +1615,8 @@ export async function connectSignedTransport(
     relayHttpUrl: httpOrigin,
     viewer,
     relayAuthor,
-    media: (url, size) =>
-      mediaUrl(url, signer.media?.bind(signer), httpOrigin, size),
+    media: (url, size, channel) =>
+      mediaUrl(url, signer.media?.bind(signer), httpOrigin, size, channel),
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
@@ -1505,9 +1629,11 @@ export async function connectSignedTransport(
             profiling,
             event.id,
             principal().api,
-            "foreground",
+            event.kind === ARTIFACT_KIND ? "artifact" : "foreground",
             false,
             refusalText,
+            (event.kind === 9000 || event.kind === 9007) &&
+              migrationSource(event.tags) !== undefined,
           ).catch((error) => {
             if (error instanceof ApiPaused || error instanceof ApiNotSent)
               throw new PublishNotSent(error.message);
@@ -1573,14 +1699,22 @@ async function signedPost(
   profiling: RelayProfiler,
   id: string,
   admission: Parameters<typeof admittedApiRequest>[0],
-  priority: "foreground" | "background" = "foreground",
+  priority: Parameters<typeof admittedApiRequest>[3] = "foreground",
   optionalPresence = false,
   reason?: (body: unknown, status: number) => string | undefined,
+  migrationWrite = false,
 ) {
   const dispatch = (request: () => Promise<Response>) =>
     optionalPresence
       ? admission.prepare(request)
-      : admittedApiRequest(admission, request, signal, priority, reason);
+      : admittedApiRequest(
+          admission,
+          request,
+          signal,
+          priority,
+          reason,
+          migrationWrite,
+        );
   signal?.throwIfAborted();
   return admission.prepare(async () => {
     const body = JSON.stringify(value);
@@ -1590,7 +1724,7 @@ async function signedPost(
         signer.request(url, body, signal),
       );
     });
-  });
+  }, priority);
 }
 export async function acceptReadStatePublish(response: Response, id: string) {
   if (!response.ok) {
@@ -1627,10 +1761,16 @@ const KEPT_PREFIXES = new Set(["rate-limited", "conflict", "auth-required"]);
  * can answer the same statuses with JSON `{error}`, so only relay-shaped
  * text (a NIP-01 prefix) is kept. The prefix is a shape, not proof of origin. */
 const refusalText = (body: unknown, status: number) => {
-  const error = (body as { error?: unknown } | null)?.error;
-  return REFUSAL_STATUSES.includes(status) &&
-    typeof error === "string" &&
-    NIP01_PREFIX.test(error)
+  const { error, sent } =
+    (body as { error?: unknown; sent?: unknown } | null) ?? {};
+  if (typeof error !== "string") return;
+  if (
+    (status === 429 || status === 503) &&
+    sent === false &&
+    error.startsWith("rate-limited:")
+  )
+    return publicationRefusal(error);
+  return REFUSAL_STATUSES.includes(status) && NIP01_PREFIX.test(error)
     ? error
     : undefined;
 };

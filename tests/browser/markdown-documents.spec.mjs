@@ -58,8 +58,8 @@ const role = (page, name) =>
 // Each screen's roles for the sample's `#`, `##` and `###` headings; `null`:
 // the screen drops it.
 const ROLES = {
+  message: ["heading", "body-lg", "label"],
   canvas: ["title", "heading", "body-lg"],
-  notes: ["title", "heading", "body-lg"],
   repo: ["title", "heading", "body-lg"],
   github: ["title", "heading", "body-lg"],
   memory: ["heading", "body-lg", "label"],
@@ -70,8 +70,8 @@ const ROLES = {
 };
 // Screens whose code blocks offer copy.
 const COPY = [
+  "message",
   "canvas",
-  "notes",
   "repo",
   "memory",
   "transcript",
@@ -81,7 +81,7 @@ const CODE = "const value = 1;";
 // The fixture's long transcript reply, as its copy action writes it.
 const LONG_CODE_TEXT = Array.from(
   { length: 60 },
-  (_, line) => `${line} ${"x".repeat(160)}`,
+  (_, line) => `  ${line} ${"x".repeat(160)}`,
 ).join("\n");
 
 /** Opens the memory and transcript disclosures that hold the sample. */
@@ -100,12 +100,29 @@ async function expand(page) {
   while ((await replies.count()) > 0) await replies.first().click();
 }
 
+test("the working status row stays inside its transcript turn", async ({
+  page,
+}) => {
+  await page.goto(`${url}?working&width=419`);
+  const status = page.locator(
+    '[data-screen="transcript"] p[data-status="working"]',
+  );
+  await status.scrollIntoViewIfNeeded();
+  await expect(status).toBeInViewport();
+  const inset = await status.evaluate((row) => {
+    const turn = row.closest("article").getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    return { left: box.left - turn.left, right: turn.right - box.right };
+  });
+  expect(inset.left, "left edge").toBeGreaterThanOrEqual(0);
+  expect(inset.right, "right edge").toBeGreaterThanOrEqual(0);
+});
+
 // Layout and interaction: jsdom resolves neither type roles nor hover.
 test("document screens keep their roles, elements and code actions in their hosts", async ({
   page,
   browserName,
 }) => {
-  test.skip(browserName !== "chromium", "Screenshots are Chromium's.");
   const errors = watchPageErrors(page);
   await page.addInitScript(() => {
     window.copied = [];
@@ -184,15 +201,16 @@ test("document screens keep their roles, elements and code actions in their host
           expect(read.chip, where).not.toBe("rgba(0, 0, 0, 0)");
           expect(read.header, where).not.toBe("rgba(0, 0, 0, 0)");
           if (screen === "attention") expect(read.display, where).toBe("grid");
-          if (["canvas", "notes", "repo", "github"].includes(screen))
+          if (["canvas", "repo", "github"].includes(screen))
             expect(read.nested, where).toBe("circle");
         }
         // Screenshots come before any copy, so no notification covers them.
         await expect(page.locator(".buzz-toast")).toHaveCount(0);
-        for (const screen of Object.keys(ROLES))
-          await page.locator(`[data-screen="${screen}"]`).screenshot({
-            path: `${SHOTS}${screen}-${mode}-${width}-${scale}.png`,
-          });
+        if (browserName === "chromium")
+          for (const screen of Object.keys(ROLES))
+            await page.locator(`[data-screen="${screen}"]`).screenshot({
+              path: `${SHOTS}${screen}-${mode}-${width}-${scale}.png`,
+            });
         // Copy: the actions show on hover and on keyboard focus, and both a
         // click and the keyboard copy the code exactly.
         for (const screen of COPY) {
@@ -219,8 +237,8 @@ test("document screens keep their roles, elements and code actions in their host
             .poll(() => page.evaluate(() => window.copied), { message: where })
             .toEqual([CODE, CODE]);
         }
-        // In the real Canvas editor, a line that cannot wrap scrolls inside its
-        // block; the view panel and its article stay at the host's width.
+        // Long code wraps inside the real Canvas editor; the view panel and
+        // its article stay at the host's width.
         const host = await page
           .locator('[data-screen="canvas-host"]')
           .evaluate((section) => {
@@ -238,16 +256,17 @@ test("document screens keep their roles, elements and code actions in their host
         expect(host.panel, label).toBeLessThanOrEqual(host.host);
         expect(host.article, label).toBeLessThanOrEqual(host.host);
         expect(host.contained, label).toBe(true);
-        expect(host.scroll, label).toBeGreaterThan(host.client);
+        expect(host.scroll, label).toBeLessThanOrEqual(host.client);
         // A rejected document's source still wraps.
         const source = page.locator('[data-screen="canvas-source"] pre code');
         await expect(source).toHaveCSS("white-space", "pre-wrap");
+        await expect(source).toHaveCSS("max-height", "none");
         expect(
           await source.evaluate((code) => code.scrollWidth <= code.clientWidth),
           label,
         ).toBe(true);
-        // A long transcript reply wraps, scrolls under a 24rem block (frame
-        // included), and keeps its copy action pinned while it scrolls.
+        // A long transcript reply uses the shared cap and keeps its copy
+        // action pinned while the code scrolls.
         const longPre = page
           .locator('[data-screen="transcript"] pre')
           .filter({ hasText: "59 xxx" });
@@ -263,10 +282,7 @@ test("document screens keep their roles, elements and code actions in their host
           pre.scrollTop = pre.scrollHeight;
           const preScrolled = pre.scrollTop > 0;
           return {
-            outer: pre.getBoundingClientRect().height,
-            rem: Number.parseFloat(
-              getComputedStyle(document.documentElement).fontSize,
-            ),
+            capped: code.clientHeight < code.scrollHeight,
             wraps: code.scrollWidth <= code.clientWidth,
             scrolled: code.scrollTop > 0,
             pinned: offset() === before,
@@ -274,7 +290,7 @@ test("document screens keep their roles, elements and code actions in their host
           };
         });
         expect(long, label).toMatchObject({
-          outer: 24 * long.rem,
+          capped: true,
           wraps: true,
           scrolled: true,
           pinned: true,
@@ -290,4 +306,158 @@ test("document screens keep their roles, elements and code actions in their host
           .toEqual([LONG_CODE_TEXT]);
       }
   expect(errors.unexplained()).toEqual([]);
+});
+
+// Inline fragmentation and painted corners require a browser layout engine.
+test("inline snippets keep rounded ends and tall fenced code wraps with a partial-line scroll cue", async ({
+  page,
+}) => {
+  for (const mode of ["light", "dark"])
+    for (const width of [360, 720, 1100])
+      for (const scale of ["1", "1.5"]) {
+        await page.setViewportSize({ width: width + 32, height: 1100 });
+        await page.goto(`${url}?mode=${mode}&width=${width}&scale=${scale}`);
+        await page.evaluate(() => document.fonts.ready);
+        for (const screen of ["canvas", "message"]) {
+          const short = page
+            .locator(`[data-screen="${screen}"] pre code`)
+            .filter({ hasText: CODE });
+          await expect(short).toHaveAttribute("tabindex", "-1");
+          const snippet = page
+            .locator(`[data-screen="${screen}"] p > code`)
+            .filter({ hasText: "release_unbroken_token_" });
+          await expect(snippet).toBeVisible();
+          const shape = await snippet.evaluate((code) => {
+            const style = getComputedStyle(code);
+            const pane = code.closest("main").getBoundingClientRect();
+            const fragments = [...code.getClientRects()];
+            return {
+              fragments: fragments.length,
+              clone:
+                style.getPropertyValue("box-decoration-break") ||
+                style.getPropertyValue("-webkit-box-decoration-break"),
+              radius: Number.parseFloat(style.borderTopLeftRadius),
+              background: style.backgroundColor,
+              // Cloned padding can paint into the text column's gutter.
+              // Every fragment must stay visible without widening the page.
+              withinPane: fragments.every(
+                (r) => r.left >= pane.left && r.right <= pane.right,
+              ),
+              pageFits:
+                document.documentElement.scrollWidth ===
+                document.documentElement.clientWidth,
+            };
+          });
+          expect(shape.fragments).toBeGreaterThan(1);
+          expect(shape.clone).toBe("clone");
+          expect(shape.radius).toBeGreaterThan(0);
+          expect(shape.background).not.toBe("rgba(0, 0, 0, 0)");
+          expect(
+            shape.withinPane,
+            JSON.stringify({ mode, width, scale, screen, shape }),
+          ).toBe(true);
+          expect(shape.pageFits).toBe(true);
+        }
+        for (const screen of ["canvas-host", "message"]) {
+          const block = page
+            .locator(`[data-screen="${screen}"] pre code`)
+            .filter({ hasText: "59 xxx" });
+          await expect(block).toHaveCSS("white-space", "pre-wrap");
+          await expect(block).toHaveCSS("overflow-wrap", "anywhere");
+          await expect(block).toHaveCSS("border-radius", "0px");
+          const layout = await block.evaluate((code) => {
+            const style = getComputedStyle(code);
+            const range = document.createRange();
+            range.selectNodeContents(code);
+            const bottom = code.getBoundingClientRect().bottom;
+            const cutLine = [...range.getClientRects()].find(
+              (rect) => rect.top < bottom && rect.bottom > bottom,
+            );
+            const visibleLines =
+              (code.getBoundingClientRect().height -
+                Number.parseFloat(style.paddingTop)) /
+              Number.parseFloat(style.lineHeight);
+            code.scrollTop = code.scrollHeight;
+            return {
+              text: code.textContent,
+              wraps: code.scrollWidth <= code.clientWidth,
+              tall: code.scrollHeight > code.clientHeight,
+              visibleLines,
+              cutFraction: cutLine && (bottom - cutLine.top) / cutLine.height,
+              scrolled: code.scrollTop > 0,
+              atEnd: code.scrollTop + code.clientHeight === code.scrollHeight,
+            };
+          });
+          const label = JSON.stringify({ mode, width, scale, screen, layout });
+          expect(layout.text, label).toBe(`${LONG_CODE_TEXT}\n`);
+          expect(layout.wraps, label).toBe(true);
+          expect(layout.tall, label).toBe(true);
+          expect(layout.visibleLines, label).toBeCloseTo(16.5, 1);
+          expect(layout.cutFraction, label).toBeGreaterThan(0.2);
+          expect(layout.cutFraction, label).toBeLessThan(0.8);
+          expect(layout.scrolled, label).toBe(true);
+          expect(layout.atEnd, label).toBe(true);
+          if (screen === "message") {
+            // Native Tab/scroll behavior differs between engines; assigning
+            // scrollTop alone cannot prove keyboard access to hidden lines.
+            await page
+              .locator('[data-screen="message"] pre')
+              .filter({ hasText: CODE })
+              .getByRole("button", { name: "Copy code block" })
+              .focus();
+            await page.keyboard.press("Tab");
+            await expect(block).toBeFocused();
+            await page.keyboard.press("Home");
+            await expect
+              .poll(() => block.evaluate((code) => code.scrollTop))
+              .toBe(0);
+            await page.keyboard.press("End");
+            await expect
+              .poll(() =>
+                block.evaluate(
+                  (code) =>
+                    code.scrollTop + code.clientHeight === code.scrollHeight,
+                ),
+              )
+              .toBe(true);
+            await page.keyboard.press("Tab");
+            await expect(
+              block
+                .locator("..")
+                .getByRole("button", { name: "Copy code block" }),
+            ).toBeFocused();
+          }
+        }
+      }
+  // Resizing must add and remove the Tab stop on the same mounted scrollport.
+  for (const mode of ["light", "dark"]) {
+    await page.setViewportSize({ width: 1132, height: 1100 });
+    await page.goto(`${url}?mode=${mode}&width=1100`);
+    await page.evaluate(() => document.fonts.ready);
+    const responsive = page
+      .locator('[data-screen="message"] pre code')
+      .filter({ hasText: "responsive_" });
+    const copy = responsive
+      .locator("..")
+      .getByRole("button", { name: "Copy code block" });
+    await expect(responsive).toHaveAttribute("tabindex", "-1");
+    await copy.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(responsive).not.toBeFocused();
+
+    await page.setViewportSize({ width: 392, height: 1100 });
+    await expect(responsive).toHaveAttribute("tabindex", "0");
+    await copy.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(responsive).toBeFocused();
+    await page.keyboard.press("End");
+    await expect
+      .poll(() => responsive.evaluate((code) => code.scrollTop))
+      .toBeGreaterThan(0);
+    await page.setViewportSize({ width: 1132, height: 1100 });
+    await expect(responsive).toHaveAttribute("tabindex", "-1");
+    await expect(responsive).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(copy).toBeFocused();
+  }
 });

@@ -1,5 +1,6 @@
 use super::grant::tests::MemoryGrants;
 use super::*;
+use crate::federated_identity::protocol::now;
 use crate::federated_identity::tests::{at_adapter, record, Memory};
 
 pub(crate) struct Seen {
@@ -188,21 +189,36 @@ async fn enrollment_exchanges_the_owner_session_with_only_the_agent_proof() {
         .into_owned()
         .collect();
     let field = |name: &str| fields.iter().find(|(n, _)| n == name).unwrap().1.clone();
-    assert_eq!(fields.len(), 7);
+    assert_eq!(fields.len(), 6);
+    assert_eq!(
+        field("grant_type"),
+        "urn:ietf:params:oauth:grant-type:token-exchange"
+    );
     assert_eq!(field("subject_token"), "fixture-session-token");
+    assert_eq!(
+        field("subject_token_type"),
+        "urn:nostr:params:oauth:token-type:nip-fa-session"
+    );
     assert_eq!(field("agent_pubkey"), f.agent.pubkey);
-    assert_eq!(field("runtime"), "local");
     assert_eq!(field("owner_attestation"), f.agent.auth);
-    assert_eq!(field("requested_token_type"), GRANT_TOKEN_TYPE);
+    assert_eq!(
+        field("requested_token_type"),
+        "urn:nostr:params:oauth:token-type:nip-fi-agent-grant"
+    );
+    assert!(fields.iter().all(|(name, _)| name != "runtime"));
     for ambient in ["authorization", "cookie", "x-bb-session"] {
         assert!(wire.headers.iter().all(|(name, _)| name != ambient));
     }
     let proof = &wire
         .headers
         .iter()
-        .find(|(n, _)| n == "nostr-agent-proof")
+        .find(|(n, _)| n == "nostr-authorization")
         .unwrap()
         .1;
+    assert!(wire
+        .headers
+        .iter()
+        .all(|(name, _)| name != "nostr-agent-proof"));
     let proof: serde_json::Value =
         serde_json::from_slice(&STANDARD.decode(&proof["Nostr ".len()..]).unwrap()).unwrap();
     assert_eq!(proof["pubkey"], f.agent.pubkey.as_str());
@@ -324,7 +340,7 @@ async fn evidence_needed_for_longer_replaces_a_cached_assertion_expiring_sooner(
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let now = super::now().unwrap() as u64;
+    let now = now().unwrap() as u64;
     let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
     let long = issued(&probe, serde_json::json!({}));
     let (base, served) = issuer(vec![
@@ -370,7 +386,7 @@ async fn evidence_minted_shorter_than_needed_is_refused() {
     let key = Secret::generate().unwrap();
     let mut probe = fixture("http://unused".into()).agent;
     probe.pubkey = key.pubkey().into();
-    let now = super::now().unwrap() as u64;
+    let now = now().unwrap() as u64;
     let short = issued(&probe, serde_json::json!({ "exp": now + 60 }));
     let (base, served) = issuer(vec![(200, enrolled(&"b".repeat(64))), (200, short)]).await;
     let mut f = fixture(base);
@@ -424,7 +440,7 @@ fn agent_assertions_must_name_this_agent_owner_issuer_and_community() {
         serde_json::json!({ "iss": "https://other.example" }),
         serde_json::json!({ "aud": "https://other.example" }),
         serde_json::json!({ "exp": now + 299 }),
-        serde_json::json!({ "iat": now + 60 }),
+        serde_json::json!({ "iat": now + 121 }),
     ] {
         assert!(check(wrong).is_err());
     }
@@ -682,37 +698,92 @@ async fn a_new_account_retires_the_cached_assertion() {
 }
 
 #[tokio::test]
-async fn expiry_and_same_account_refresh_keep_the_grant_and_assertion() {
+async fn expiry_keeps_the_assertion_and_a_same_account_sign_in_remints_it() {
     let owner = "b".repeat(64);
     let (key, probe) = keyed(&owner);
     let (base, served) = issuer(vec![
         (200, enrolled(&owner)),
-        (200, issued(&probe, serde_json::json!({}))),
+        (200, issued(&probe, serde_json::json!({"jti": "before"}))),
+        (200, issued(&probe, serde_json::json!({"jti": "after"}))),
     ])
     .await;
     let mut f = fixture(base);
     (f.agent, f.key) = (probe.clone(), key);
     listing(&f);
-    assert!(f
+    let first = f
         .tokens
         .evidence(&f.agent, &f.key, 0)
         .await
         .unwrap()
-        .is_some());
+        .unwrap();
     let identity = &f.tokens.0.identity;
     identity.retire(
         crate::federated_identity::Status::ReauthenticationRequired,
         None,
     );
     identity.signal(SessionChange::Expired);
-    signed_in_again(&f, "a@example.com");
-    assert!(f
+    let expired = f
         .tokens
         .evidence(&f.agent, &f.key, 0)
         .await
         .unwrap()
-        .is_some());
-    assert_eq!(settled(served).await.len(), 2);
+        .unwrap();
+    assert_eq!(*expired, *first, "expiry alone keeps the assertion");
+    signed_in_again(&f, "a@example.com");
+    let fresh = f
+        .tokens
+        .evidence(&f.agent, &f.key, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(*fresh, *first, "a sign-in remints the assertion");
+    let reused = f
+        .tokens
+        .evidence(&f.agent, &f.key, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(*reused, *fresh);
+    assert_eq!(settled(served).await.len(), 3);
+    assert_eq!(f.grants.0.lock().unwrap().len(), 1, "the grant is kept");
+}
+
+#[tokio::test]
+async fn a_mint_in_flight_across_a_sign_in_is_not_reused_after_it() {
+    let owner = "b".repeat(64);
+    let (key, probe) = keyed(&owner);
+    let (held_tx, held) = tokio::sync::oneshot::channel();
+    let (release, release_rx) = tokio::sync::oneshot::channel();
+    let (base, served) = issuer_gated(
+        vec![
+            (200, enrolled(&owner)),
+            (200, issued(&probe, serde_json::json!({"jti": "before"}))),
+            (200, issued(&probe, serde_json::json!({"jti": "after"}))),
+        ],
+        1,
+        Some((held_tx, release_rx)),
+    )
+    .await;
+    let mut f = fixture(base);
+    (f.agent, f.key) = (probe.clone(), key);
+    listing(&f);
+    let f = Arc::new(f);
+    let call = {
+        let f = f.clone();
+        tokio::spawn(async move { f.tokens.evidence(&f.agent, &f.key, 0).await })
+    };
+    bounded(held).await.unwrap();
+    signed_in_again(&f, "a@example.com");
+    release.send(()).unwrap();
+    let overlapped = call.await.unwrap().unwrap().unwrap();
+    let next = f
+        .tokens
+        .evidence(&f.agent, &f.key, 0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(*next, *overlapped, "the next acquisition mints again");
+    assert_eq!(settled(served).await.len(), 3);
     assert_eq!(f.grants.0.lock().unwrap().len(), 1);
 }
 
@@ -1186,7 +1257,11 @@ async fn another_first_sign_in_retires_the_grant_even_once_that_session_has_expi
 async fn the_same_account_as_the_first_sign_in_after_restart_keeps_the_grant() {
     let owner = "b".repeat(64);
     let (key, probe) = keyed(&owner);
-    let (base, served) = issuer(vec![(200, issued(&probe, serde_json::json!({})))]).await;
+    let (base, served) = issuer(vec![
+        (200, issued(&probe, serde_json::json!({}))),
+        (200, issued(&probe, serde_json::json!({}))),
+    ])
+    .await;
     let mut f = fixture(base.clone());
     (f.agent, f.key) = (probe.clone(), key);
     stored(&f, "a@example.com");
@@ -1196,7 +1271,8 @@ async fn the_same_account_as_the_first_sign_in_after_restart_keeps_the_grant() {
         .await
         .unwrap()
         .is_some());
-    // Without a session, and then signed in as A, the assertion is reused.
+    // Without a session the assertion is reused; signing in as A remints it
+    // on the same grant.
     assert!(tokens
         .evidence(&f.agent, &f.key, 0)
         .await
@@ -1210,7 +1286,7 @@ async fn the_same_account_as_the_first_sign_in_after_restart_keeps_the_grant() {
         .await
         .unwrap()
         .is_some());
-    assert_eq!(settled(served).await.len(), 1);
+    assert_eq!(settled(served).await.len(), 2);
     assert!(f
         .grants
         .0
@@ -2152,6 +2228,139 @@ async fn a_server_added_once_the_first_has_a_supplier_follows_the_account() {
     let added = first.server_for("wss://buzz.race.builderlab.xyz").unwrap();
     tokens.watch(|| Ok(Vec::new()));
     assert!(tokens.for_server(&added).unwrap().0.agents.get().is_some());
+}
+
+/// An agent fixture whose issuer enrolls it, then answers each mint after its
+/// delay, stamped `skew` seconds from the real time now: an issuer ahead of
+/// or behind that time is this computer's clock behind or ahead of it.
+async fn skewed_agent(
+    mints: Vec<(Duration, i64, u64)>,
+) -> (Fixture, tokio::task::JoinHandle<Vec<String>>) {
+    use crate::federated_identity::testing::{raw, scripted_issuer};
+    let key = Secret::generate().unwrap();
+    let mut probe = fixture("http://unused".into()).agent;
+    probe.pubkey = key.pubkey().into();
+    let real = now().unwrap();
+    let mut replies = vec![(
+        Duration::ZERO,
+        raw("200 OK", "", &enrolled(&"b".repeat(64)).to_string()),
+    )];
+    for (delay, skew, lifetime) in mints {
+        let minted = (real + skew) as u64;
+        let claims = serde_json::json!({ "iat": minted, "exp": minted + lifetime });
+        replies.push((
+            delay,
+            raw("200 OK", "", &issued(&probe, claims).to_string()),
+        ));
+    }
+    let (base, served) = scripted_issuer(replies).await;
+    let mut f = fixture(base);
+    f.agent.pubkey = key.pubkey().into();
+    f.key = key;
+    (f, served)
+}
+async fn admitted(f: &Fixture) -> Result<Admission, String> {
+    f.tokens.authorize(&f.agent, &f.key, Stamp::default()).await
+}
+fn left(admission: &Admission) -> Duration {
+    admission
+        .expires_at()
+        .unwrap()
+        .saturating_duration_since(tokio::time::Instant::now())
+}
+
+#[test]
+fn an_agent_assertion_may_be_minted_120_s_ahead_but_not_121() {
+    let f = fixture("http://unused".into());
+    let grant = Grant::new(
+        f.agent.owner.clone(),
+        f.agent.pubkey.clone(),
+        "a@example.com".into(),
+        "https://issuer.example".into(),
+        "g".into(),
+    );
+    let now = now().unwrap() as u64;
+    let check = |skew| {
+        let token = jwt(&f.agent, serde_json::json!({ "iat": now + skew }));
+        validate(
+            &token,
+            &f.agent,
+            &grant,
+            "wss://relay.example",
+            now + 300,
+            now,
+        )
+    };
+    assert!(check(120).is_ok());
+    assert_eq!(check(121).unwrap_err().code, "invalid-assertion");
+    // A fractional NumericDate `iat` is valid; it rounds up, so the lifetime
+    // against the integer `exp` floors to whole seconds (299, not 299.5).
+    let token = jwt(
+        &f.agent,
+        serde_json::json!({ "iat": now as f64 + 0.5, "exp": now + 300 }),
+    );
+    let minted = validate(
+        &token,
+        &f.agent,
+        &grant,
+        "wss://relay.example",
+        now + 300,
+        now,
+    );
+    assert_eq!(minted.map_err(|e| e.code), Ok(now + 1));
+    // A fractional `exp` past the issued expiry is not rounded to match.
+    let late = jwt(
+        &f.agent,
+        serde_json::json!({ "iat": now, "exp": now as f64 + 300.5 }),
+    );
+    assert!(validate(
+        &late,
+        &f.agent,
+        &grant,
+        "wss://relay.example",
+        now + 300,
+        now
+    )
+    .is_err());
+}
+
+#[tokio::test]
+async fn an_agent_on_a_slow_or_fast_clock_keeps_only_the_issued_lifetime() {
+    for (skew, issued) in [(120, 150), (-120, 30)] {
+        let (f, _) = skewed_agent(vec![(Duration::ZERO, skew, 150)]).await;
+        let left = left(&admitted(&f).await.unwrap());
+        let issued = Duration::from_secs(issued);
+        assert!(
+            left <= issued && left > issued - Duration::from_secs(2),
+            "{skew}: {left:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_reused_agent_assertion_keeps_its_deadline() {
+    let (f, served) = skewed_agent(vec![(Duration::ZERO, 60, 300)]).await;
+    let first = admitted(&f).await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(100)).await;
+    tokio::time::resume();
+    let reused = admitted(&f).await.unwrap();
+    assert_eq!(reused.header(), first.header());
+    assert_eq!(reused.expires_at(), first.expires_at());
+    drop(f);
+    assert_eq!(bounded(served).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_zero_budget_agent_assertion_is_never_dispatched() {
+    let (f, served) = skewed_agent(vec![
+        (Duration::from_secs(2), 60, 1),
+        (Duration::ZERO, 60, 300),
+    ])
+    .await;
+    assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_err());
+    assert!(admitted(&f).await.and_then(|a| a.dispatch()).is_ok());
+    assert_eq!(bounded(served).await.unwrap().len(), 3);
 }
 
 #[tokio::test]

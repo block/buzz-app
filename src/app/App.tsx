@@ -1,8 +1,11 @@
+import { navigationOwner } from "./shell/presentation";
+import { resolveSidebarContext } from "../features/sidebar/contracts";
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
 import { AgentAvatarArtworkProvider } from "../features/agents/AgentAvatarArtworkProvider";
 import { Welcome } from "../features/identity/Welcome";
 import { NewMenu } from "./shell/NewMenu";
 import { PrimarySidebar } from "./shell/PrimarySidebar";
+import { sidebarTarget } from "../features/channel-navigation/routes";
 import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { AgentsContext } from "../features/agents/react";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
@@ -23,6 +26,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { PairingPrompt } from "../features/credential-pairing/PairingPrompt";
 import { Dialog } from "../shared/design-system/ui/Dialog";
 import { UpdateNotice } from "../features/updates/UpdateNotice";
+import { UpdateAction } from "../features/updates/UpdateAction";
 import { PluginUpdates } from "./PluginUpdates";
 import { RejectedLinkNotice } from "../features/navigation/RejectedLinkNotice";
 import { ExternalAuthorizationDialog } from "../features/agents/ExternalAuthorizationDialog";
@@ -30,10 +34,14 @@ import { MediaMenuDownloadNotice } from "../features/messages/MediaDownloadActio
 import { CreationReview } from "../bundled/agents/CreationReview";
 import { UpdateReview } from "../bundled/agents/UpdateReview";
 import { TeamUpdateReview } from "../bundled/agents/TeamUpdateReview";
+import { AppOverlays } from "../features/pages/AppOverlays";
 import { InterruptedNotice } from "../features/agents/InterruptedNotice";
+import { ShellNotices } from "../features/notices/ShellNotices";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -47,9 +55,6 @@ import { SettingsSidebar } from "./SettingsSidebar";
 import { pendingManaged } from "../plugins/managed";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
-import { OwnedContribution } from "../plugins/OwnedContribution";
-import { SidebarFrame } from "../features/channel-navigation/SidebarFrame";
-import { SidebarList } from "../features/channel-navigation/SidebarList";
 import { useAppNavigation, type PendingSettingsDeparture } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
@@ -63,8 +68,17 @@ import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
 import { ShellBackdrops } from "../features/backdrops/ShellBackdrops";
 import { PanelCard } from "../features/panels/PanelCard";
+import { targetKey } from "../features/navigation/targets";
 import { communityDestination } from "../features/communities/destination";
+import {
+  joinOpening,
+  type JoinForm,
+} from "../features/communities/invite-intent";
 import { CommunityLanding } from "../features/communities/CommunityLanding";
+import {
+  activeModal,
+  behindActiveOverlay,
+} from "../shared/design-system/overlayLayer";
 import { LegacyCommunityImport } from "../features/communities/LegacyCommunityImport";
 import {
   LaunchSignIn,
@@ -112,6 +126,17 @@ export function App({ services }: { services: AppServices }) {
       </ModalWindowDragProvider>
     </AgentAvatarArtworkProvider>
   );
+}
+
+/** Settings sections open in the selected community's scope, as the sidebar does. */
+function selectedSettingsScope(services: AppServices) {
+  const client = services.communities.snapshot();
+  return client.viewer && client.selected
+    ? {
+        viewer: client.viewer,
+        communityOrigin: communityDestination(client.selected).url,
+      }
+    : null;
 }
 
 function ConnectedApp({ services }: { services: AppServices }) {
@@ -178,9 +203,23 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
   );
   const discardSettings = useRef(false);
   const settingsEditorScope = useRef<string | undefined>(undefined);
+  // The join dialog cannot be closed while it writes; Back cannot leave it
+  // either. A finished join clears this before it navigates.
+  const [joinWriting, setJoinWriting] = useState(false);
+  const joinWrites = useRef(false);
+  const reportJoinWriting = (writing: boolean) => {
+    joinWrites.current = writing;
+    setJoinWriting(writing);
+  };
+  // One departure guard slot: the join dialog's writes, then Settings drafts.
   useLayoutEffect(() => {
-    if (!settingsUnsaved) return;
+    if (!settingsUnsaved && !joinWriting) return;
     return services.navigationHost.guardDeparture((next, decide) => {
+      if (joinWrites.current) {
+        decide(false);
+        return true;
+      }
+      if (!settingsUnsaved) return false;
       if (discardSettings.current) {
         discardSettings.current = false;
         return false;
@@ -198,7 +237,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       setConfirmSettingsDiscard(true);
       return true;
     });
-  }, [services, settingsUnsaved]);
+  }, [services, settingsUnsaved, joinWriting]);
   const keepSettings = () => {
     settingsTraversal.current?.(false);
     settingsTraversal.current = undefined;
@@ -209,21 +248,61 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     services.communities.subscribe,
     services.communities.snapshot,
   );
-  const invite = useSyncExternalStore(
-    services.invites.subscribe,
-    services.invites.snapshot,
+  // The join dialog is presentation over the current visit, for the viewer it
+  // was opened for only; its code and one-use connect live in memory.
+  const joinVisit = route.state.entry.target;
+  const join = joinVisit.join;
+  const joinState = useSyncExternalStore(services.invites.subscribe, () =>
+    services.invites.state(joinVisit, client.viewer),
   );
-  // A queued link cannot be presented under a different identity.
+  // Over Settings, the join waits for Settings to take focus: Settings opens
+  // only after launch, and a modal hides every surface already open when it
+  // takes the top layer, including a join restored with it.
+  const [settingsFocused, setSettingsFocused] = useState(false);
+  const joinShown =
+    !!join &&
+    join.viewer === client.viewer &&
+    (route.target.kind !== "settings" || settingsFocused);
+  // The opening's form as last edited (address, code, profile) survives Back
+  // and Forward; an emptied address still shows the dialog.
+  const joinForm = joinShown
+    ? joinOpening(joinState, join.community)
+    : undefined;
+  const invite = joinForm
+    ? {
+        ...joinForm,
+        submitted: joinState?.connect === true,
+        requestId: route.state.entry.id,
+      }
+    : undefined;
+  // Join a community from the picker: a visit with no address chosen yet.
+  const addresslessJoin =
+    joinShown && !joinForm ? route.state.entry.id : undefined;
+  const joinReports = {
+    onWritingChange: reportJoinWriting,
+    onFormChange: (form: JoinForm) => services.invites.edit(joinVisit, form),
+  };
+  // A failed link waiting for Retry has no visit of its own: a join visit
+  // would replace it, so Join a community opens in place there.
+  const joinViewer = client.viewer;
+  const startJoin =
+    joinViewer && !(route.state.ingress && route.state.retryable)
+      ? () => services.invites.start(joinViewer)
+      : undefined;
+  // Connecting is an opening instruction: it runs once, after the dialog's own
+  // mount started it, never again on Forward or a later presentation.
   useEffect(() => {
-    if (invite && client.viewer && invite.viewer !== client.viewer)
-      services.invites.clear();
-  }, [invite, client.viewer, services.invites]);
+    if (invite?.submitted) services.invites.consume(joinVisit);
+  }, [invite?.submitted, joinVisit, services.invites]);
+  const closeJoin = () => services.invites.close(joinVisit);
   const connection = useSyncExternalStore(
     services.relay.subscribe,
     services.relay.snapshot,
   );
   const restoring = client.status === "loading" || !!connection.restoring;
   const settings = route.target.kind === "settings";
+  // Settings must take focus again each time it opens.
+  if (settingsFocused && (!settings || launching)) setSettingsFocused(false);
   // Someone without a community starts by joining one. Having had one this
   // run keeps the shell; Personal space with memberships is unchanged.
   const [hadCommunity, setHadCommunity] = useState(false);
@@ -303,6 +382,15 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     () => setLaunchReady(launchReady, terminal),
     [launchReady, terminal],
   );
+  // In the app with a community, the launch screen gone: the one moment the
+  // notifications service may send its automatic permission request.
+  const entered =
+    !launching && !!client.viewer && client.memberships.length > 0;
+  useEffect(() => {
+    if (!entered) return;
+    services.notifications.setEntered(true);
+    return () => services.notifications.setEntered(false);
+  }, [entered, services]);
   const select = route.select;
   useEffect(
     () =>
@@ -313,9 +401,39 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           void services.navigation.open({ version: 1, kind: "settings" });
         },
         true,
+        () => services.communities.reload(),
+        services.shortcutBindings,
       ),
     [services],
   );
+  // macOS Buzz → Check for Updates… checks and shows the result in Settings.
+  // Behind a modal it does nothing, unless that modal is a navigation visit
+  // such as Settings itself.
+  useEffect(() => {
+    const check = () => {
+      const modal = activeModal(document);
+      if (
+        modal &&
+        (!modal.matches("[data-navigation-visit]") ||
+          behindActiveOverlay(modal))
+      )
+        return;
+      // A departure guard can keep the current page; then nothing is checked.
+      void services.navigation
+        .open({
+          version: 1,
+          kind: "settings",
+          section: "updates",
+          scope: selectedSettingsScope(services),
+        })
+        .then((result) => {
+          if (result.status === "opened")
+            void services.updates.checkForUpdate();
+        });
+    };
+    window.addEventListener("buzz:check-for-updates", check);
+    return () => window.removeEventListener("buzz:check-for-updates", check);
+  }, [services]);
   useEffect(
     () => registerNavigationShortcuts(services.shortcuts, services.navigation),
     [services],
@@ -370,6 +488,72 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
     (settings
       ? !!workspace.request
       : !route.failure && !route.waiting && !failedPage);
+  // A page with its own sidebar follows each request; the primary sidebar
+  // follows only the open conversation, so AppShell keeps its sidebar subtree
+  // when a thread opens or closes there.
+  const ownSidebar =
+    workspace.page?.sidebar && pageSidebarReady
+      ? { target: workspace.target, resolve: route.workspaceRequestFor }
+      : undefined;
+  const conversationKey = targetKey(sidebarTarget(workspace.target));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A change within the open conversation keeps the sidebar's target.
+  const conversationTarget = useMemo(
+    () => sidebarTarget(workspace.target),
+    [conversationKey],
+  );
+  const sidebarContexts = useSyncExternalStore(
+    services.sidebarSections.contextSubscribe,
+    services.sidebarSections.contextSnapshot,
+  );
+  const sidebarOwner = navigationOwner(route.pages, workspace.selected);
+  const sidebarAvailable =
+    !!workspace.page?.sidebar ||
+    !!resolveSidebarContext(sidebarContexts, conversationTarget, sidebarOwner);
+  const sidebar = useCallback(
+    (pageNavigation: ReactNode, creationAction: ReactNode) => {
+      const common = {
+        registry: services.sidebarSections,
+        owner: sidebarOwner,
+        scope: connection.scope ?? "disconnected",
+        children: pageNavigation,
+        creationAction,
+      };
+      return ownSidebar ? (
+        <Presented store={route.presented} resolve={ownSidebar.resolve}>
+          {(request) => (
+            <PrimarySidebar
+              {...common}
+              target={ownSidebar.target}
+              replacement={
+                workspace.page
+                  ? {
+                      page: workspace.page,
+                      registry: services.pages,
+                      resetIdentity: request,
+                    }
+                  : undefined
+              }
+            />
+          )}
+        </Presented>
+      ) : (
+        <PrimarySidebar
+          {...common}
+          target={conversationTarget}
+          pendingReplacement={!!workspace.page?.sidebar}
+        />
+      );
+    },
+    [
+      ownSidebar,
+      workspace.page,
+      route.presented,
+      conversationTarget,
+      sidebarOwner,
+      connection.scope,
+      services,
+    ],
+  );
   // Keep the parser launch surface through local bootstrap, not network refresh.
   if (!settings && restoring)
     return document.getElementById("buzz-launch") ? null : (
@@ -385,19 +569,30 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       </div>
     );
   const selectCommunity = (id: string | null) => {
-    const recovering =
-      services.navigation.snapshot().ingress &&
-      services.navigation.snapshot().retryable;
+    joinWrites.current = false;
+    const { entry, ingress, retryable } = services.navigation.snapshot();
+    const joined = id === null ? undefined : communityDestination(id).url;
+    const recovering = ingress && retryable;
     services.communities.select(id);
-    if (!recovering) select("buzz.channels/channels");
+    // The joined community's page replaces the finished join's visit, so
+    // Back returns to the view beneath the dialog. Replacing is synchronous;
+    // a native Back would land after the page opened.
+    if (!recovering)
+      select(
+        "buzz.channels/channels",
+        entry.target.join ? { replace: true } : undefined,
+      );
+    // Then no other visit may present that community's join again.
+    services.invites.complete(entry.target, joined);
   };
   if (firstRun)
     return (
       <CommunityLanding
         communities={services.communities}
         federatedIdentity={services.federatedIdentity}
-        invite={invite?.viewer === client.viewer ? invite : undefined}
-        onInviteClose={services.invites.clear}
+        invite={invite}
+        onInviteClose={closeJoin}
+        joinReports={joinReports}
         settingsCards={services.settingsCards}
         onJoined={selectCommunity}
         onCreate={() =>
@@ -411,20 +606,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       />
     );
   const openSettingsSection = (section: string, pluginId?: string) => {
-    const client = services.communities.snapshot();
     void services.navigation.open({
       version: 1,
       kind: "settings",
       section,
       ...(pluginId ? { pluginId } : {}),
-      ...(client.viewer && client.selected
-        ? {
-            scope: {
-              viewer: client.viewer,
-              communityOrigin: communityDestination(client.selected).url,
-            },
-          }
-        : { scope: null }),
+      scope: selectedSettingsScope(services),
     });
   };
   // As for pages, a timed-out reopen of the shown section keeps its editor.
@@ -627,6 +814,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
       )}
       <ChannelNavigationProvider relay={services.relay}>
         <AppShell
+          sidebarAvailable={sidebarAvailable}
           creationInSidebar={!workspace.page?.sidebar}
           creationAction={(open, onOpenChange, triggerContainer) => (
             <NewMenu
@@ -639,70 +827,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             />
           )}
           workspaceRef={setWorkspaceElement}
-          sidebar={(pageNavigation, creationAction) =>
-            workspace.page?.sidebar && pageSidebarReady ? (
-              <Presented
-                store={route.presented}
-                resolve={route.workspaceRequestFor}
-              >
-                {(request) =>
-                  workspace.page && (
-                    <OwnedContribution
-                      entry={workspace.page}
-                      registry={services.pages}
-                      resetIdentity={request}
-                      fallback={
-                        <div className="shell-sidebar-default">
-                          <SidebarFrame
-                            label={`${workspace.page.title} sidebar`}
-                          >
-                            <SidebarList>
-                              <p role="alert">
-                                This page’s sidebar is unavailable.
-                              </p>
-                              {pageNavigation}
-                            </SidebarList>
-                          </SidebarFrame>
-                        </div>
-                      }
-                    >
-                      {(entry) => {
-                        const Sidebar = entry.sidebar;
-                        return Sidebar ? (
-                          <Sidebar target={workspace.target}>
-                            {pageNavigation}
-                          </Sidebar>
-                        ) : null;
-                      }}
-                    </OwnedContribution>
-                  )
-                }
-              </Presented>
-            ) : workspace.page?.sidebar ? (
-              <div className="shell-sidebar-default">
-                <SidebarFrame label="Page navigation">
-                  <SidebarList>{pageNavigation}</SidebarList>
-                </SidebarFrame>
-              </div>
-            ) : (
-              <PrimarySidebar
-                creationAction={creationAction}
-                federatedIdentity={services.federatedIdentity}
-                memberships={client.memberships}
-                relay={services.relay}
-                navigator={services.navigation}
-                agents={services.agents}
-                chatIcons={services.conversation.chatIcons}
-                chatMenus={services.conversation.chatMenus}
-                sidebarSections={services.sidebarSections}
-                sidebarScope={services.sidebarScope}
-                sidebarRows={services.sidebarRows}
-                target={workspace.target}
-              >
-                {pageNavigation}
-              </PrimarySidebar>
-            )
-          }
+          sidebar={sidebar}
           navigationControls={
             <NavigationControls navigation={services.navigation} />
           }
@@ -710,20 +835,27 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           // A scoped Settings target selects its community on the way.
           onOpenTarget={(target) => void services.navigation.open(target)}
           communities={services.communities}
+          communityUnreads={services.communityUnreads}
           federatedIdentity={services.federatedIdentity}
-          invite={invite?.viewer === client.viewer ? invite : undefined}
-          onInviteClose={services.invites.clear}
+          invite={invite}
+          joinVisit={addresslessJoin}
+          onJoin={startJoin}
+          joinReports={joinReports}
+          onInviteClose={closeJoin}
           settingsCards={services.settingsCards}
           accountActions={services.accountActions}
           appearance={services.appearance}
           pluginRecommendations={pluginRecommendations}
           searchServices={services}
           launchers={
-            <PanelLaunchers
-              panels={launcher.available}
-              selected={selectedPanel}
-              launch={launcher.launch}
-            />
+            <>
+              <UpdateAction updates={services.updates} />
+              <PanelLaunchers
+                panels={launcher.available}
+                selected={selectedPanel}
+                launch={launcher.launch}
+              />
+            </>
           }
           backdrop={<ShellBackdrops backdrops={services.backdrops} />}
           companion={pageOwnsCompanion ? undefined : companion}
@@ -745,10 +877,12 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             relay={services.relay}
           />
           <InterruptedNotice agents={services.agents} />
+          <ShellNotices notices={services.notices} plugins={plugins} />
           <MediaMenuDownloadNotice />
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />
           <TeamUpdateReview agents={services.agents} />
+          <AppOverlays pages={services.pages} />
           {!settings && startup === "recovery" ? (
             <RecoveryScreen plugins={plugins} />
           ) : !settings &&
@@ -803,11 +937,15 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
             ),
           }}
           onOpenChange={(open) => {
-            if (open) return;
+            // A join dialog over Settings holds it while the join writes,
+            // as it holds Back and its own Close.
+            if (open || joinWrites.current) return;
             if (settingsUnsaved) setConfirmSettingsDiscard(true);
             else route.leaveSettings();
           }}
           initialFocus={() => {
+            // Settings has hidden the page beneath it; a join may now open.
+            setSettingsFocused(true);
             // A destination that already focused a setting keeps it.
             const active = document.activeElement;
             return active instanceof HTMLElement &&
@@ -847,6 +985,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
                     <Settings
                       agents={services.agents}
                       decisions={services.decisions}
+                      speech={services.speech}
                       plugins={plugins}
                       cards={services.settingsCards}
                       adminAccess={services.adminAccess}

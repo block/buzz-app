@@ -44,6 +44,10 @@ export const PULL_RETAIN_MS = 15 * 60_000;
 export const FEEDBACK_READ = 100;
 /** Characters of each feedback body kept. */
 export const BODY_CHARS = 1_000;
+/** Pull requests asked of GitHub in one request. Their checks are costly to
+ * gather: a few dozen in one can outlast GitHub's own deadline, which then
+ * answers with a gateway error rather than with any of them. */
+export const PULLS_PER_READ = 10;
 
 /** What a reader wants of a pull request. Every level has its state:
  * - `state`: its title, draft, merged or closed, checks and conflicts, as
@@ -94,6 +98,10 @@ export type PullState = Readonly<{
   /** The head commit's combined checks, when read with `gh`. */
   checks?: "success" | "failure" | "pending" | undefined;
   conflicts?: boolean | undefined;
+  /** Its reviews, when read with `gh`: approved as the repository requires,
+   * a code owner's approval too where one is required, or changes
+   * requested. */
+  review?: "approved" | "changes requested" | undefined;
   /** The head commit, when read with `gh`, as are `settled`, `running` and
    * `failed`. */
   head?: string | undefined;
@@ -209,6 +217,11 @@ export type PullStates = Readonly<{
     level?: PullLevel,
     options?: Readonly<{ polling?: Polling; wantsText?: WantsText }>,
   ): () => void;
+  /** Calls `listener` after any read records a changed state, for any pull
+   * request or issue, or a change in why reading it again failed (failing,
+   * failing otherwise, or no longer failing). Unlike `watch`, it keeps nothing current
+   * and reads nothing: an observer sees only what readers had read anyway. */
+  observe(listener: () => void): () => void;
   /** Its latest state, kept when a later read fails; `"failed"` when it was
    * never read or `url` is neither a pull request's nor an issue's, or
    * undefined before the first read. */
@@ -243,6 +256,11 @@ type StateData = {
   isDraft: boolean;
   mergeStateStatus?: string;
   headRefOid?: string;
+  reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  latestOpinionatedReviews?: {
+    nodes?: ({ state?: string } | null)[];
+    pageInfo?: { hasNextPage?: boolean };
+  };
   commits?: {
     nodes?: ({
       commit?: {
@@ -255,7 +273,6 @@ type StateData = {
   };
   reviews?: { nodes?: ({ id?: string; comments?: Ids } | null)[] };
   comments?: Ids;
-  reviewDecision?: string | null;
   isInMergeQueue?: boolean;
   autoMergeRequest?: object | null;
   reviewThreads?: {
@@ -295,7 +312,10 @@ const FAILED = new Set([
   "STALE",
 ]);
 
+// The panel reads the same reviews with its details, and GraphQL refuses one
+// field asked for twice with different arguments.
 const STATE = `state title isDraft mergeStateStatus headRefOid
+reviewDecision latestOpinionatedReviews(first:50){nodes{state} pageInfo{hasNextPage}}
 commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){totalCount nodes{
 __typename
 ... on CheckRun{name status conclusion}
@@ -351,8 +371,33 @@ function unresolvedOf(threads: StateData["reviewThreads"]) {
   return unresolved > 0 || complete ? { unresolved } : {};
 }
 
+/** What `pull`'s reviews come to. GitHub decides only where the repository
+ * requires reviews; elsewhere each reviewer's latest verdict does, as
+ * GitHub's own page shows it. */
+function reviewOf(pull: StateData): PullState["review"] {
+  const verdicts = (pull.latestOpinionatedReviews?.nodes ?? []).map(
+    (review) => review?.state,
+  );
+  switch (pull.reviewDecision) {
+    case "APPROVED":
+      return "approved";
+    case "CHANGES_REQUESTED":
+      return "changes requested";
+    case "REVIEW_REQUIRED":
+      return undefined;
+  }
+  if (verdicts.includes("CHANGES_REQUESTED")) return "changes requested";
+  /* A later page could hold a "changes requested" this one lacks. */
+  const everyVerdictRead =
+    !pull.latestOpinionatedReviews?.pageInfo?.hasNextPage;
+  return everyVerdictRead && verdicts.includes("APPROVED")
+    ? "approved"
+    : undefined;
+}
+
 /** The state in `pull`, an alias's answer, without its feedback or details. */
 function stateOf(pull: StateData): PullState {
+  const review = reviewOf(pull);
   const rollup = pull.commits?.nodes?.[0]?.commit?.statusCheckRollup;
   const contexts = (rollup?.contexts?.nodes ?? []).filter(
     (node): node is Node => !!node && typeof node === "object",
@@ -382,6 +427,7 @@ function stateOf(pull: StateData): PullState {
     title: pull.title,
     checks: checksOf(rollup?.state),
     conflicts: pull.mergeStateStatus === "DIRTY",
+    ...(review && { review }),
     ...(pull.headRefOid && {
       head: pull.headRefOid,
       settled:
@@ -474,11 +520,43 @@ type Asked = Readonly<{
   listed: readonly string[];
 }>;
 
-/** All of `urls`, canonical pull request and issue URLs, in one GitHub
- * request, and the text of feedback not yet held in another: each one's
- * state, or an error for one GitHub could not read, as is an issue's URL
- * that numbers a pull request. Throws when it answered for none. */
+/** All of `urls`, canonical pull request and issue URLs, in requests of
+ * PULLS_PER_READ at most, and the text of feedback not yet held in another:
+ * each one's state, or an error for one GitHub could not read, as is an
+ * issue's URL that numbers a pull request, or one whose request failed.
+ * Throws when it answered for none. */
 async function readStates(
+  gh: GitHubCli,
+  urls: readonly string[],
+  asks: (url: string) => Asked,
+  signal: AbortSignal,
+): Promise<(PullState | Error)[]> {
+  const pages: (readonly string[])[] = [];
+  for (let at = 0; at < urls.length; at += PULLS_PER_READ)
+    pages.push(urls.slice(at, at + PULLS_PER_READ));
+  const read = await Promise.allSettled(
+    pages.map((page) => readPage(gh, page, asks, signal)),
+  );
+  const [first] = read;
+  if (
+    first?.status === "rejected" &&
+    read.every((page) => page.status === "rejected")
+  )
+    throw first.reason;
+  const states = pages.flatMap((page, i) => {
+    const result = read[i];
+    if (result?.status === "fulfilled") return result.value;
+    const reason: unknown = result?.reason;
+    return page.map(() =>
+      reason instanceof Error ? reason : new Error(String(reason)),
+    );
+  });
+  await readText(gh, urls, states, asks, signal);
+  return states;
+}
+
+/** One request of `readStates`. */
+async function readPage(
   gh: GitHubCli,
   urls: readonly string[],
   asks: (url: string) => Asked,
@@ -547,7 +625,6 @@ async function readStates(
         }),
     };
   });
-  await readText(gh, urls, states, asks, signal);
   return states;
 }
 
@@ -671,6 +748,7 @@ const same = (a: PullState | "failed" | undefined, b: PullState | "failed") =>
     a.title === b.title &&
     a.checks === b.checks &&
     a.conflicts === b.conflicts &&
+    a.review === b.review &&
     a.head === b.head &&
     a.settled === b.settled &&
     a.running === b.running &&
@@ -768,8 +846,12 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
   let scheduled = false;
   /** How many pull requests readers asked for the read in flight has. */
   let asking = 0;
-  /** Tells whoever watches `urls` that their states were recorded. */
-  const notify = (urls: readonly string[]) => {
+  /** Those told of every change, who keep nothing read (see `observe`). */
+  const observers = new Set<() => void>();
+  /** Tells whoever watches `urls`, and every observer, that their states
+   * were recorded; observers also hear of a change in why `failing` could not
+   * be read again, which watchers do not. */
+  const notify = (urls: readonly string[], failing: readonly string[] = []) => {
     // One reader that throws neither fails the read nor keeps it from
     // the rest.
     for (const url of urls)
@@ -778,6 +860,15 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
           listener.notify();
         } catch (error) {
           console.warn("A pull request reader failed", error);
+        }
+    // Observers are other plugins' code: one that throws must not fail this
+    // read or keep the rest from hearing of it.
+    if (urls.length || failing.length)
+      for (const observer of [...observers])
+        try {
+          observer();
+        } catch (error) {
+          (globalThis.reportError ?? console.error)(error);
         }
   };
   const watchedAt = (url: string, level: PullLevel) =>
@@ -955,6 +1046,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       // One that timed out still records what it read, and what it could not.
       if (current.signal.aborted) return;
       const changed: string[] = [];
+      const failing: string[] = [];
       for (const [i, url] of reading.entries()) {
         // Those a public poll could not afford wait for the next read earned,
         // all together, so the longest unread of them takes it whenever each
@@ -982,6 +1074,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         polledAt.set(url, now);
         notBefore.delete(url);
         if (plannedAll(url)) needed.delete(url);
+        const failed = errors.get(url)?.message;
         if (error) {
           errors.set(url, error);
           unreadable.add(url);
@@ -989,6 +1082,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
           errors.delete(url);
           unreadable.delete(url);
         }
+        if (error?.message !== failed) failing.push(url);
         const at = readAt.get(url) ?? now;
         for (const { resolve } of asked.get(url)?.waiting ?? [])
           resolve({ state, readAt: at, error });
@@ -998,7 +1092,7 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         states.set(url, state);
         changed.push(url);
       }
-      notify(changed);
+      notify(changed, failing);
       reason = new GitHubRateLimited(publicEarnedTo + PUBLIC_READ_EARNED_MS);
     } catch (error) {
       reason = error;
@@ -1007,11 +1101,15 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
       // reads wait for the limit to lift.
       if (current.signal.aborted) return;
       const failure = error instanceof Error ? error : new Error(String(error));
+      const failing = reading.filter(
+        (url) => errors.get(url)?.message !== failure.message,
+      );
       for (const url of reading) {
         errors.set(url, failure);
         polledAt.set(url, now);
         if (plannedAll(url)) needed.delete(url);
       }
+      notify([], failing);
     } finally {
       // A reader not answered gets what is held, with why it was not read
       // again; only one with nothing held is refused.
@@ -1135,6 +1233,14 @@ export function createPullStates(gh: GitHubCli | undefined): PullStates {
         if (requests.size || asking) return;
         controller?.abort();
         controller = undefined;
+      };
+    },
+    observe(listener) {
+      // Its own wrapper, so one listener observing twice is two observers.
+      const observer = () => listener();
+      observers.add(observer);
+      return () => {
+        observers.delete(observer);
       };
     },
     get(url) {

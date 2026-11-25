@@ -2,6 +2,7 @@ import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { activityRow, openPage } from "./navigation.mjs";
+import { releasing } from "./reading.mjs";
 
 // Browser-only contract: actual sidebar/plugin routing -> exact thread target,
 // browser history, and responsive/light-dark CSS. Matrices stay in RTL/unread tests.
@@ -133,7 +134,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Inbox DM fixture reply");
   const dmSource = rows.first().locator("[data-inbox-source]");
-  await expect(dmSource).toHaveText("DM · Alice Fixture");
+  await expect(dmSource).toHaveText("DM");
   await expect(dmSource.locator("svg")).toHaveCount(0);
   const dmStyle = await dmSource.evaluate((element) => ({
     background: getComputedStyle(element).backgroundColor,
@@ -368,19 +369,17 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
     0,
   );
   await expect(
-    row.getByRole("button", { name: /Mark as read|Mark unread/ }),
+    row.getByRole("button", { name: /Mark as read|Mark as unread/ }),
   ).toHaveCount(0);
   await row.getByRole("button", { name: /^Open / }).click({ button: "right" });
   // A read row offers only Mark unread.
-  await expect(page.getByRole("menuitem")).toHaveText(["Mark unread"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["Mark as unread"]);
   await page.keyboard.press("Escape");
   await row.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
-  let action = page.getByRole("menuitem", { name: "Mark unread" });
+  let action = page.getByRole("menuitem", { name: "Mark as unread" });
   await expect(action).toBeVisible();
-  await expect(page.getByText("Mark unread on this device only.")).toHaveCount(
-    0,
-  );
+  await expect(page.locator('[title="Mark as unread"]')).toHaveCount(0);
   await action.click();
   await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
   await row.getByRole("button", { name: /^Open / }).click({ button: "right" });
@@ -406,7 +405,7 @@ test("Inbox opens the exact thread, shares read state, and fits the workspace", 
   await expect(sideTabs.getByRole("tab")).toHaveText(["Thread root 1"]);
   await expect(row.getByRole("img", { name: "Unread" })).toHaveCount(0);
   await row.getByRole("button", { name: /^Open / }).click({ button: "right" });
-  action = page.getByRole("menuitem", { name: "Mark unread" });
+  action = page.getByRole("menuitem", { name: "Mark as unread" });
   await action.click();
   await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
   // The DM timeline and composer must occupy one vertical column in its tab.
@@ -478,7 +477,7 @@ test.describe("signed newest-first Inbox windows", () => {
       exact: true,
     });
     const target = detail.locator(`[data-message-id="${oldest.id}"]`);
-    await expect(target).toBeInViewport();
+    await releasing(app, () => expect(target).toBeInViewport({ timeout: 100 }));
     await expect(
       detail.getByRole("textbox", { name: "Reply to thread" }),
     ).toBeVisible();

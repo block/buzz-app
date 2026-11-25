@@ -36,6 +36,7 @@ import {
 } from "./mention-draft";
 import { messageLinkParts } from "./message-link-parts";
 import { setMessageAutocorrectPreference } from "./autocorrect-preference";
+import { setMarkdownAsTypedPreference } from "./markdown-input-preference";
 import { profileMentionParts } from "./profile-mentions";
 import {
   serializeNode,
@@ -186,7 +187,7 @@ it("keeps exactly one typed colon when the conversion exceeds the limit", () => 
   act(() =>
     expect(
       h.input.insertText("too long", undefined, { start: 0, end: 2 }, ":"),
-    ).toBe(true),
+    ).toBe("typed"),
   );
   expect(h.input).toHaveValue(":x:");
   expect([h.input.selectionStart, h.input.selectionEnd]).toEqual([3, 3]);
@@ -582,6 +583,41 @@ it("converts typed **Hello** on the closing delimiter, keeps later typing plain 
   act(() => h.input.reset(saved));
   expect(h.input.querySelector("strong")).toHaveTextContent("Hello");
   expect(h.markdown()).toBe("**Hello**");
+});
+
+it("keeps typed Markdown as literal source while this device opts out of conversion, live", async () => {
+  try {
+    act(() => setMarkdownAsTypedPreference(true));
+    const h = mount();
+    await h.user.keyboard("`x` ~~y~~{Enter}- one{Enter}> q{Enter}```");
+    expect(h.input.querySelector("code, s, ul, blockquote, pre")).toBeNull();
+    expect(h.markdown()).toBe("`x` ~~y~~\n- one\n> q\n```");
+    // Formatting shortcuts do nothing, as the toolbar is hidden.
+    for (const key of ["b", "i"])
+      expect(fireEvent.keyDown(h.input, { key, ctrlKey: true })).toBe(false);
+    // The link chord isn't consumed, so app shortcuts such as Search still get it.
+    expect(fireEvent.keyDown(h.input, { key: "k", ctrlKey: true })).toBe(true);
+    await h.user.keyboard("z");
+    expect(h.input.querySelector("strong, em")).toBeNull();
+    expect(h.markdown()).toBe("`x` ~~y~~\n- one\n> q\n```z");
+    // The unclosed literal fence would make later lines code; start over.
+    act(() => h.input.reset(mentionDraft("")));
+    await h.user.keyboard("**Hello**");
+    expect(h.input.querySelector("strong")).toBeNull();
+    expect(h.markdown()).toBe("**Hello**");
+    act(() => setMarkdownAsTypedPreference(false));
+    await h.user.keyboard(" **on**");
+    expect(h.input.querySelector("strong")).toHaveTextContent("on");
+    expect(h.markdown()).toBe("**Hello** **on**");
+    // A saved draft restores its literal source literal and its marks marked.
+    const saved = JSON.parse(JSON.stringify(h.draft()));
+    act(() => h.input.reset(saved));
+    expect(h.input.querySelectorAll("strong")).toHaveLength(1);
+    expect(h.markdown()).toBe("**Hello** **on**");
+  } finally {
+    act(() => setMarkdownAsTypedPreference(false));
+    localStorage.removeItem("buzz-message-markdown-as-typed.v1");
+  }
 });
 
 it("one undo after a typed code span restores the closing backtick too", async () => {
@@ -1385,6 +1421,23 @@ describe("Mod+Shift+V pastes plain text verbatim", () => {
     paste(h.input, url);
     expect(h.markdown()).toBe(`Check the [release notes](${url})`);
   });
+});
+
+it("does not spellcheck a mention, as a chip or opened as text", () => {
+  const h = mount();
+  const honey = { pubkey: "a".repeat(64), name: "Honey" };
+  act(() => h.input.insertText("", honey));
+  expect(h.input.querySelector('[data-source="@Honey"]')).toHaveAttribute(
+    "spellcheck",
+    "false",
+  );
+  act(() => h.input.setSelectionRange(2, 2));
+  expect(h.input.querySelector('[data-source="@Honey"]')).toBeNull();
+  const text = [...h.input.querySelectorAll("span")].find(
+    (span) => span.textContent === "@Honey",
+  );
+  expect(text).toHaveAttribute("spellcheck", "false");
+  expect(h.draft().recipients).toEqual([{ ...honey, start: 0, end: 6 }]);
 });
 
 it("bolds a mention typed between delimiters and keeps its chip and recipient", async () => {
@@ -4924,6 +4977,42 @@ describe("oversized paste feedback", () => {
 });
 
 describe("quoting timeline content", () => {
+  it("adds attribution above the quote and leaves a blank reply line in the same undo step", async () => {
+    const h = mount("Draft");
+    const link = `buzz://message?channel=general&id=${"a".repeat(64)}`;
+    act(() =>
+      expect(
+        h.input.insertQuote(timelineHtml("Hello <strong>world</strong>"), [
+          link,
+        ]),
+      ).toBe(true),
+    );
+    expect(h.markdown()).toBe(
+      `Draft\n\nFrom ${link}:\n\n> Hello **world**\n\n\n`,
+    );
+    await h.user.keyboard("reply");
+    expect(h.markdown()).toBe(
+      `Draft\n\nFrom ${link}:\n\n> Hello **world**\n\n\nreply`,
+    );
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe(
+      `Draft\n\nFrom ${link}:\n\n> Hello **world**\n\n\n`,
+    );
+    act(() => h.input.undo(false));
+    expect(h.markdown()).toBe("Draft");
+  });
+
+  it("counts source links toward the limit without changing the existing draft", () => {
+    const onPasteTooLong = vi.fn();
+    const h = mount("keep", { maxLength: 20, onPasteTooLong });
+    const link = `buzz://message?channel=general&id=${"a".repeat(64)}`;
+    act(() =>
+      expect(h.input.insertQuote(timelineHtml("short"), [link])).toBe(false),
+    );
+    expect(h.markdown()).toBe("keep");
+    expect(onPasteTooLong).toHaveBeenCalledOnce();
+  });
+
   it("replaces an empty draft's line and continues below the quote", async () => {
     const h = mount();
     act(() =>

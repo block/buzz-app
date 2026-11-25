@@ -73,6 +73,10 @@ pub(crate) struct Snapshot {
     /// Signing in again waits on the browser while this session stays live;
     /// `cancel_sign_in` ends only that wait. False once it commits.
     renewing: bool,
+    /// The latest issuer or relay refusal's response `Date` minus this
+    /// clock, in seconds, when far enough off to suggest this clock is wrong
+    /// (`protocol::clock_offset`). The refusal itself is reported unchanged.
+    clock_offset: Option<i64>,
 }
 
 // No Debug, no IPC serialization. Only the secure store serializes this record.
@@ -140,6 +144,10 @@ struct State {
     /// the same lock as the change itself: derived agent credentials minted
     /// or stored under an older value are retired.
     retirements: u64,
+    /// Bumped with every installed session, under the same lock: an agent
+    /// assertion minted before a sign-in is never reused after it, because a
+    /// server-side sign-out may have cut off the tokens issued before it.
+    sign_ins: u64,
     /// Set by an explicit sign-out and kept on disk (`Inner::signed_out`):
     /// the next sign-in asks for credentials instead of finishing on the
     /// browser's session as the account just signed out. Only a completed
@@ -314,6 +322,7 @@ impl FederatedIdentity {
             expiring: false,
             cleanup: false,
             renewing: false,
+            clock_offset: None,
         };
         let (changes, _) = watch::channel(snapshot.clone());
         let (account_changes, _) = watch::channel(None);
@@ -330,6 +339,7 @@ impl FederatedIdentity {
                 restore_retry_at: None,
                 closed: false,
                 retirements: 0,
+                sign_ins: 0,
                 cancellation: CancellationToken::new(),
                 callback: None,
                 renewal: None,
@@ -488,6 +498,15 @@ impl FederatedIdentity {
     fn publish(&self, state: &State) {
         self.0.changes.send_replace(state.snapshot.clone());
     }
+    /// Records the clock offset the latest refusal's response suggested, or
+    /// clears it after an answer that suggested none.
+    pub(crate) fn note_clock_offset(&self, offset: Option<i64>) {
+        let mut state = self.state();
+        if state.snapshot.clock_offset != offset {
+            state.snapshot.clock_offset = offset;
+            self.publish(&state);
+        }
+    }
     /// A build without NIP-FI configuration.
     #[cfg(test)]
     pub(crate) fn unconfigured() -> Self {
@@ -539,6 +558,7 @@ impl FederatedIdentity {
             _ => SessionChange::Refreshed,
         };
         state.account = Some(email);
+        state.sign_ins += 1;
         self.signal(change);
     }
     /// Make `session` current and watch for its expiry. The caller publishes
@@ -548,6 +568,7 @@ impl FederatedIdentity {
         state.snapshot.revision = session.record.revision.clone();
         state.snapshot.email = session.record.email.clone();
         state.snapshot.failure = None;
+        state.snapshot.clock_offset = None;
         state.snapshot.expires_at = Some(session.record.expires_at.clone());
         state.snapshot.expiring = false;
         state.snapshot.cleanup = false;
@@ -641,6 +662,10 @@ impl FederatedIdentity {
     pub(crate) fn retirements(&self) -> u64 {
         self.state().retirements
     }
+    /// How many sessions have been installed this run.
+    pub(crate) fn sign_ins(&self) -> u64 {
+        self.state().sign_ins
+    }
     /// Whether the identity was closed for good; nothing derived acts again.
     pub(crate) fn closed(&self) -> bool {
         self.state().closed
@@ -666,6 +691,7 @@ impl FederatedIdentity {
         }
         state.snapshot.status = status;
         state.snapshot.failure = failure;
+        state.snapshot.clock_offset = None;
         state.snapshot.cleanup = false;
         self.publish(&state);
     }
@@ -677,6 +703,7 @@ impl FederatedIdentity {
         }
         state.snapshot.status = Status::Unavailable;
         state.snapshot.failure = Some(failure);
+        state.snapshot.clock_offset = None;
         state.snapshot.cleanup = true;
         self.publish(&state);
     }
@@ -700,6 +727,7 @@ impl FederatedIdentity {
         state.snapshot.status = status;
         state.snapshot.email = None;
         state.snapshot.failure = failure;
+        state.snapshot.clock_offset = None;
         state.snapshot.expires_at = None;
         state.snapshot.expiring = false;
         state.snapshot.cleanup = false;
@@ -765,9 +793,8 @@ impl FederatedIdentity {
     async fn verify(&self, record: &Record) -> Result<Option<String>, Failure> {
         if expiry(&record.expires_at)? <= now()? {
             return Err(Failure {
-                code: "reauthentication-required",
                 session_denied: true,
-                rate_limited: false,
+                ..Failure::from("reauthentication-required")
             });
         }
         #[derive(Deserialize)]

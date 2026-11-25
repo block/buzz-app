@@ -13,8 +13,16 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLayoutEffect } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type ReactNode, useEffect } from "react";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
+import { type ReactNode, useEffect, useSyncExternalStore } from "react";
 import { CreateModelChoices } from "../../features/agents/CreateModelChoices";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
@@ -28,9 +36,16 @@ import type {
   RegisteredAgentType,
 } from "../../features/agents/service";
 import {
+  croppedAvatar,
   emojiAvatar,
+  emojiAvatarScale,
   uploadAvatar,
 } from "../../features/profiles/avatar-upload";
+import { CHECK_MS } from "../../features/agents/recommended";
+import {
+  resetModelRoutesForTests,
+  setModelRouters,
+} from "../../features/agents/model-routes";
 import { AgentCreateDialog } from "./AgentCreateDialog";
 import {
   BuilderlabLogoIcon,
@@ -43,6 +58,7 @@ vi.mock("../../features/profiles/avatar-upload", async (actual) => ({
   uploadAvatar: vi.fn(),
   emojiAvatar: vi.fn(),
   paintEmojiAvatar: vi.fn(),
+  croppedAvatar: vi.fn(),
 }));
 
 // Exercise our selection callback without emoji-mart's browser-only observers.
@@ -70,6 +86,14 @@ vi.mock("motion/react", async (actual) => ({
 }));
 
 afterEach(cleanup);
+// jsdom decodes no images; each upload is a decoded square.
+vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(
+  100,
+);
+vi.spyOn(HTMLImageElement.prototype, "naturalHeight", "get").mockReturnValue(
+  100,
+);
+HTMLImageElement.prototype.decode = () => Promise.resolve();
 // jsdom has no object URLs; an upload previews its file through one.
 beforeEach(() => {
   vi.stubGlobal(
@@ -79,10 +103,13 @@ beforeEach(() => {
       revokeObjectURL: vi.fn(),
     }),
   );
+  // jsdom has no pointer capture; dragging the emoji captures the pointer.
+  Element.prototype.setPointerCapture = () => {};
 });
 // jsdom lacks both; tests that need them install stubs, removed here along
 // with stubbed frames and media queries.
 afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, "setPointerCapture");
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   Reflect.deleteProperty(Element.prototype, "animate");
   vi.unstubAllGlobals();
@@ -380,12 +407,18 @@ it("creates with a custom emoji on a chosen background", async () => {
     within(
       within(dialog).getByRole("group", { name: "Avatar background" }),
     ).getAllByRole("button"),
-  ).toHaveLength(20);
+  ).toHaveLength(21);
   await user.click(
     within(dialog).getByRole("button", { name: "Use #0090FF background" }),
   );
   await user.click(createButton());
-  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith("🤖", "#0090FF");
+  expect(emojiAvatar).toHaveBeenCalledExactlyOnceWith(
+    "🤖",
+    "#0090FF",
+    emojiAvatarScale,
+    0,
+    0,
+  );
   await waitFor(() =>
     expect(uploadAvatar).toHaveBeenCalledWith(
       file,
@@ -540,6 +573,235 @@ it("moves the hidden-scrollbar avatar dock with a vertical mouse wheel", () => {
   slot.dispatchEvent(up);
   expect(up.defaultPrevented).toBe(false);
   expect(scrollBy).toHaveBeenCalledOnce();
+});
+
+it("pans and zooms an uploaded image, then saves the framed crop", async () => {
+  const cropped = new File(["crop"], "avatar.png", { type: "image/png" });
+  vi.mocked(croppedAvatar).mockResolvedValueOnce(cropped);
+  vi.mocked(uploadAvatar)
+    .mockResolvedValueOnce("https://images.example/original.png")
+    .mockResolvedValueOnce("https://images.example/cropped.png");
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  const frame = await within(dialog).findByRole("application", {
+    name: "Image position",
+  });
+  // The preview shows once its image loads.
+  fireEvent.load(within(frame).getByAltText("Avatar preview"));
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  fireEvent.keyDown(frame, { key: "ArrowRight" });
+  fireEvent.keyDown(frame, { key: "ArrowUp" });
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        picture: "https://images.example/cropped.png",
+      }),
+    ),
+  );
+  expect(croppedAvatar).toHaveBeenCalledExactlyOnceWith(
+    within(frame).getByRole("img", { name: "Avatar preview" }),
+    { zoom: 2, x: 0.02, y: -0.02 },
+  );
+  expect(uploadAvatar).toHaveBeenLastCalledWith(
+    cropped,
+    "https://a.example",
+    expect.any(AbortSignal),
+  );
+});
+
+it("cancels a framed save when the dialog closes while the image decodes", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original.png",
+  );
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  await within(dialog).findByRole("application", { name: "Image position" });
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  let decoded = () => {};
+  vi.spyOn(HTMLImageElement.prototype, "decode").mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      decoded = resolve;
+    }),
+  );
+  const painted = vi.mocked(croppedAvatar).mock.calls.length;
+  await user.click(createButton());
+  cleanup();
+  await act(async () => decoded());
+  expect(vi.mocked(croppedAvatar).mock.calls).toHaveLength(painted);
+  expect(agents.create).not.toHaveBeenCalled();
+});
+
+it("keeps a framed save from falling back to the original when the image fails to decode", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original.png",
+  );
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  await within(dialog).findByRole("application", { name: "Image position" });
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  // The frame's image no longer decodes, so it has no size.
+  const width = vi
+    .spyOn(HTMLImageElement.prototype, "naturalWidth", "get")
+    .mockReturnValue(0);
+  onTestFinished(() => void width.mockReturnValue(100));
+  vi.spyOn(HTMLImageElement.prototype, "decode").mockRejectedValueOnce(
+    new Error("EncodingError"),
+  );
+  await user.click(createButton());
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+    "Couldn't frame the image. Try again.",
+  );
+  expect(agents.create).not.toHaveBeenCalled();
+});
+
+it("moves focus from Zoom to the image frame on a mouse press", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original.png",
+  );
+  const { dialog, user } = setup([echo], undefined, "https://a.example");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["image"], "image.png", { type: "image/png" })],
+    },
+  });
+  const frame = await within(dialog).findByRole("application", {
+    name: "Image position",
+  });
+  within(dialog).getByRole("slider", { name: "Zoom" }).focus();
+  fireEvent.pointerDown(frame, { pointerType: "mouse", pointerId: 1 });
+  expect(frame).toHaveFocus();
+});
+
+it("offers no framing for an upload this browser can't decode", async () => {
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/converted.png",
+  );
+  vi.spyOn(HTMLImageElement.prototype, "decode").mockRejectedValueOnce(
+    new Error("EncodingError"),
+  );
+  const { dialog, user } = setup([echo], undefined, "https://a.example");
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: {
+      files: [new File(["heic"], "image.heic", { type: "image/heic" })],
+    },
+  });
+  await within(dialog).findByRole("img", { name: "Selected avatar" });
+  expect(
+    within(dialog).queryByRole("application", { name: "Image position" }),
+  ).toBeNull();
+  expect(within(dialog).queryByRole("slider", { name: "Zoom" })).toBeNull();
+});
+
+it("keeps the framed image when its replacement fails to upload", async () => {
+  const cropped = new File(["crop"], "avatar.png", { type: "image/png" });
+  vi.mocked(croppedAvatar).mockResolvedValueOnce(cropped);
+  vi.mocked(uploadAvatar)
+    .mockResolvedValueOnce("https://images.example/original.png")
+    .mockRejectedValueOnce(new Error("Upload failed"))
+    .mockResolvedValueOnce("https://images.example/cropped.png");
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  const choose = (name: string) =>
+    fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+      target: { files: [new File(["image"], name, { type: "image/png" })] },
+    });
+  choose("first.png");
+  await within(dialog).findByRole("application", { name: "Image position" });
+  fireEvent.change(within(dialog).getByRole("slider", { name: "Zoom" }), {
+    target: { value: "2" },
+  });
+  choose("second.png");
+  await within(dialog).findByText("Upload failed");
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        picture: "https://images.example/cropped.png",
+      }),
+    ),
+  );
+  expect(croppedAvatar).toHaveBeenCalledExactlyOnceWith(
+    expect.any(HTMLImageElement),
+    { zoom: 2, x: 0, y: 0 },
+  );
+});
+
+it.each([
+  ["an unadjusted image", "image/png", "image", true],
+  ["a GIF, keeping its animation", "image/gif", "GIF89a", false],
+])("saves %s as uploaded", async (_, type, bytes, croppable) => {
+  vi.mocked(croppedAvatar).mockClear();
+  vi.mocked(uploadAvatar).mockResolvedValueOnce(
+    "https://images.example/original",
+  );
+  const { agents, dialog, user } = setup(
+    [echo],
+    undefined,
+    "https://a.example",
+  );
+  await user.type(within(dialog).getByLabelText("Name"), "Nova");
+  fireEvent.change(within(dialog).getByLabelText("Upload an image"), {
+    target: { files: [new File([bytes], "image", { type })] },
+  });
+  await within(dialog).findByRole(croppable ? "application" : "img", {
+    name: croppable ? "Image position" : "Selected avatar",
+  });
+  expect(!!within(dialog).queryByRole("slider", { name: "Zoom" })).toBe(
+    croppable,
+  );
+  // A square at 100% has nowhere to move.
+  if (croppable)
+    fireEvent.keyDown(
+      within(dialog).getByRole("application", { name: "Image position" }),
+      { key: "ArrowRight" },
+    );
+  await user.click(createButton());
+  await waitFor(() =>
+    expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ picture: "https://images.example/original" }),
+    ),
+  );
+  expect(croppedAvatar).not.toHaveBeenCalled();
 });
 
 it("keeps every bundled avatar available after switching from an uploaded image", async () => {
@@ -1994,6 +2256,44 @@ describe("Recommended setup", () => {
     );
   });
 
+  it("starts Custom on the Automatic route when a plugin offers one", async () => {
+    setModelRouters([
+      {
+        id: "test",
+        routes: (id) =>
+          id === "codex"
+            ? {
+                routes: [{ id: "auto-a", label: "Auto A" }],
+                automatic: "auto-a",
+              }
+            : undefined,
+        select: async () => undefined,
+      },
+    ]);
+    try {
+      const { agents, dialog, user } = setup([echo, goose, codex]);
+      await inspectModel(user, dialog, "Auto A");
+      await chooseCustom(user, dialog);
+      expect(harnessSelect(dialog)).toHaveTextContent("Codex");
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      await user.click(createButton());
+      // The route, not the candidate it would have started on.
+      expect(agents.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "test/codex",
+          config: {
+            notes: "start",
+            instructions: "Be brief.",
+            model: "route:auto-a",
+            effort: "",
+          },
+        }),
+      );
+    } finally {
+      resetModelRoutesForTests();
+    }
+  });
+
   it("lets the owner choose manually while the pick is still running, even with one harness", async () => {
     let finish = (_ready: boolean) => {};
     const slow = harness(
@@ -2082,6 +2382,338 @@ describe("Recommended setup", () => {
     await pickOption(user, harnessSelect(dialog), /^Codex/);
     expect(aiSettings(dialog)).toHaveTextContent("Custom");
     expect(within(dialog).queryByText("Hosted rows")).not.toBeInTheDocument();
+  });
+
+  describe("a harness with its own setup rows, as Claude", () => {
+    // Signed in or out on this computer, as Claude's credentials are.
+    let signedIn = true;
+    const listeners = new Set<() => void>();
+    const sign = (next: boolean) =>
+      act(() => {
+        signedIn = next;
+        for (const listener of listeners) listener();
+      });
+    const useSignedIn = () =>
+      useSyncExternalStore(
+        (listener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        () => signedIn,
+      );
+    const claude = {
+      ...harness("claude-code", "Claude", () => signedIn),
+      CreateAction: function SignIn() {
+        return useSignedIn() ? null : <button type="button">Sign in</button>;
+      },
+      CreateConfiguration: function ClaudeRows({
+        harnessControl,
+        rowsOnly,
+        onReadyChange,
+      }: {
+        harnessControl: ReactNode;
+        rowsOnly?: boolean;
+        onReadyChange?: (ready: boolean) => void;
+      }) {
+        const ready = useSignedIn();
+        useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
+        const rows = (
+          <>
+            {harnessControl}
+            <p>Claude rows</p>
+          </>
+        );
+        return rowsOnly ? rows : <SettingsGroup>{rows}</SettingsGroup>;
+      },
+    } as unknown as RegisteredAgentType;
+    const first = {
+      harness: "claude-code",
+      model: "model-c",
+      effort: "high",
+      label: "Model C",
+    };
+    beforeEach(() => {
+      signedIn = true;
+      vi.stubEnv(
+        "VITE_BUZZ_RECOMMENDED_AGENT",
+        JSON.stringify([first, ...candidates]),
+      );
+    });
+
+    it("creates it under Custom once its rows report ready", async () => {
+      const { agents, dialog, user } = setup([claude, goose, codex]);
+      await inspectModel(user, dialog, "Model C · High");
+      await chooseCustom(user, dialog);
+      expect(harnessSelect(dialog)).toHaveTextContent("Claude");
+      // Its rows sit in AI setup's group, not in one of their own.
+      const rows = within(dialog).getByText("Claude rows");
+      expect(folded(rows)).toBe(false);
+      expect(
+        rows
+          .closest(".buzz-settings-group")
+          ?.parentElement?.closest(".buzz-settings-group"),
+      ).toBeNull();
+      expect(within(dialog).queryByText("Model picker")).toBeNull();
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      expect(createButton()).toBeEnabled();
+      await user.click(createButton());
+      expect(agents.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "test/claude-code", name: "Agent A" }),
+      );
+      expect(agents.create.mock.calls[0]?.[0].config).not.toHaveProperty(
+        "preset",
+      );
+    });
+
+    it("holds it under Custom while signed out, beside its sign-in", async () => {
+      signedIn = false;
+      const { agents, dialog, user } = setup([claude, goose, codex]);
+      // Automatic skipped it for the next harness that is ready.
+      await inspectModel(user, dialog, "Model A · High");
+      await chooseCustom(user, dialog);
+      await pickOption(user, harnessSelect(dialog), /^Claude/);
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      expect(
+        within(dialog).getByRole("button", { name: "Sign in" }),
+      ).toBeVisible();
+      expect(createButton()).toBeDisabled();
+      submitForm(dialog);
+      expect(agents.create).not.toHaveBeenCalled();
+      await sign(true);
+      expect(
+        within(dialog).queryByRole("button", { name: "Sign in" }),
+      ).toBeNull();
+      expect(createButton()).toBeEnabled();
+      await user.click(createButton());
+      expect(agents.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "test/claude-code" }),
+      );
+    });
+
+    it("creates it as Automatic's pick, without opening its rows", async () => {
+      const { agents, dialog, user } = setup([claude, goose, codex]);
+      expect(createButton()).toBeDisabled();
+      await inspectModel(user, dialog, "Model C · High");
+      expect(within(dialog).queryByText("Claude rows")).toBeNull();
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      expect(createButton()).toBeEnabled();
+      await user.click(createButton());
+      expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          type: "test/claude-code",
+          name: "Agent A",
+          config: {
+            notes: "start",
+            instructions: "Be brief.",
+            preset: "recommended",
+          },
+        }),
+      );
+    });
+
+    it("never picks it for Automatic while signed out, and says what to set up", async () => {
+      signedIn = false;
+      const { agents, dialog, user } = setup([claude]);
+      expect(
+        await within(dialog).findByText("One thing to set up first"),
+      ).toBeInTheDocument();
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      expect(createButton()).toHaveAttribute("aria-disabled", "true");
+      await user.click(createButton());
+      expect(agents.create).not.toHaveBeenCalled();
+      // Custom has its sign-in, and still waits for it.
+      await chooseCustom(user, dialog);
+      expect(
+        within(dialog).getByRole("button", { name: "Sign in" }),
+      ).toBeVisible();
+      expect(createButton()).toBeDisabled();
+      await sign(true);
+      expect(createButton()).toBeEnabled();
+    });
+
+    it("picks it for Automatic after a sign-in under Custom", async () => {
+      signedIn = false;
+      const { agents, dialog, user } = setup([claude]);
+      await within(dialog).findByText("One thing to set up first");
+      await chooseCustom(user, dialog);
+      await sign(true);
+      await pickOption(user, aiSettings(dialog), /^Automatic/);
+      await waitFor(() =>
+        expect(
+          within(dialog).queryByText("One thing to set up first"),
+        ).toBeNull(),
+      );
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      expect(createButton()).toBeEnabled();
+      await user.click(createButton());
+      await waitFor(() =>
+        expect(agents.create).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            type: "test/claude-code",
+            config: expect.objectContaining({ preset: "recommended" }),
+          }),
+        ),
+      );
+    });
+
+    it("holds Automatic's pick that refuses creation, before and at submit", async () => {
+      const REASON = "Protected agents need a saved key.";
+      let answer: () => Promise<string | undefined> = async () => REASON;
+      const listeners = new Set<() => void>();
+      const gated = {
+        ...claude,
+        admitsCreation: {
+          check: () => answer(),
+          subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+        },
+      } as RegisteredAgentType;
+      const { agents, dialog, user } = setup([gated]);
+      await inspectModel(user, dialog, "Model C · High");
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      // Said and held before submit, though Automatic picked it.
+      expect(await within(dialog).findByText(REASON)).toBeVisible();
+      expect(createButton()).toBeDisabled();
+      submitForm(dialog);
+      expect(agents.create).not.toHaveBeenCalled();
+      // An answer it can't give holds it too, with a retry.
+      answer = async () => {
+        throw new Error("unreadable");
+      };
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+      await user.click(
+        await within(dialog).findByRole("button", { name: "Retry" }),
+      );
+      expect(createButton()).toBeDisabled();
+      // Allowed once it says so; then refused again at submit.
+      answer = async () => undefined;
+      await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+      await waitFor(() => expect(createButton()).toBeEnabled());
+      answer = async () => REASON;
+      await user.click(createButton());
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        REASON,
+      );
+      expect(agents.create).not.toHaveBeenCalled();
+      answer = async () => undefined;
+      act(() => {
+        for (const listener of listeners) listener();
+      });
+      await waitFor(() => expect(createButton()).toBeEnabled());
+      await user.click(createButton());
+      await waitFor(() => expect(agents.create).toHaveBeenCalledOnce());
+    });
+
+    it("opens the type's own setup from a creation refusal", async () => {
+      const READY = { readiness: "ready" };
+      let refusing = true;
+      const gated = {
+        ...claude,
+        provider: {
+          snapshot: () => READY,
+          subscribe: () => () => undefined,
+          check: () => undefined,
+          DialogBody: () => <p>Claude credentials</p>,
+        },
+        admitsCreation: {
+          check: async () => (refusing ? "Needs a saved key." : undefined),
+          subscribe: () => () => undefined,
+        },
+      } as unknown as RegisteredAgentType;
+      const { dialog, user } = setup([gated]);
+      await inspectModel(user, dialog, "Model C · High");
+      await within(dialog).findByText("Needs a saved key.");
+      await user.click(within(dialog).getByRole("button", { name: "Set up" }));
+      expect(await screen.findByText("Claude credentials")).toBeVisible();
+      // Closing it asks again.
+      refusing = false;
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(within(dialog).queryByText("Needs a saved key.")).toBeNull(),
+      );
+    });
+
+    it("offers Retry when a creation gate throws before answering", async () => {
+      const gated = {
+        ...claude,
+        admitsCreation: {
+          check: () => {
+            throw new Error("broken");
+          },
+          subscribe: () => () => undefined,
+        },
+      } as RegisteredAgentType;
+      const { agents, dialog, user } = setup([gated]);
+      await inspectModel(user, dialog, "Model C · High");
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      expect(
+        await within(dialog).findByRole("button", { name: "Retry" }),
+      ).toBeVisible();
+      expect(createButton()).toBeDisabled();
+      submitForm(dialog);
+      expect(agents.create).not.toHaveBeenCalled();
+    });
+
+    it("creates nothing when Automatic's pick was signed out since it was found", async () => {
+      const { agents, dialog, user } = setup([claude]);
+      await inspectModel(user, dialog, "Model C · High");
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      await sign(false);
+      await user.click(createButton());
+      expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+        "Claude isn’t ready on this computer.",
+      );
+      expect(agents.create).not.toHaveBeenCalled();
+      // The pick is asked again, and there is none now.
+      expect(
+        await within(dialog).findByText("One thing to set up first"),
+      ).toBeInTheDocument();
+      expect(createButton()).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("gives up on a readiness check that stalls, leaving the dialog usable", async () => {
+      let stalled = false;
+      const slow = harness("claude-code", "Claude", () =>
+        stalled ? new Promise<boolean>(() => {}) : true,
+      );
+      const { agents, dialog, user } = setup([slow]);
+      await inspectModel(user, dialog, "Model C · High");
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      stalled = true;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      onTestFinished(() => void vi.useRealTimers());
+      submitForm(dialog);
+      await act(async () => {});
+      expect(within(dialog).getByLabelText("Name")).toBeDisabled();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(CHECK_MS);
+      });
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        "Claude isn’t ready on this computer.",
+      );
+      expect(within(dialog).getByLabelText("Name")).toBeEnabled();
+      expect(agents.create).not.toHaveBeenCalled();
+    });
+
+    it("leaves Goose and Codex as they were, picked or chosen under Custom", async () => {
+      signedIn = false;
+      const { agents, dialog, user } = setup([claude, goose, codex]);
+      await inspectModel(user, dialog, "Model A · High");
+      await chooseCustom(user, dialog);
+      expect(harnessSelect(dialog)).toHaveTextContent("Codex");
+      await pickOption(user, harnessSelect(dialog), /^Goose/);
+      expect(folded(within(dialog).getByText("Model picker"))).toBe(false);
+      await user.type(within(dialog).getByLabelText("Name"), "Agent A");
+      expect(createButton()).toBeEnabled();
+      await user.click(createButton());
+      expect(agents.create).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "test/goose" }),
+      );
+    });
   });
 
   it("is absent in builds without a recommendation", async () => {

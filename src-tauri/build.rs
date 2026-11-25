@@ -1,5 +1,11 @@
 #[path = "../crates/build_env.rs"]
 mod build_env;
+#[allow(dead_code)] // This shared module also contains library-only functions.
+#[path = "../crates/build_identity.rs"]
+mod build_identity;
+#[cfg(test)]
+#[path = "../crates/build_identity_tests.rs"]
+mod build_identity_tests;
 #[path = "src/build_resources.rs"]
 mod build_resources;
 #[path = "src/enterprise_adapter_url.rs"]
@@ -16,6 +22,10 @@ mod nsec_backup_config;
 
 #[cfg_attr(test, allow(dead_code))]
 fn main() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory"),
+    );
+    build_identity::configure_native_build(&root);
     configure_nsec_backup();
     configure_federated_identity();
     configure_enterprise_auth();
@@ -119,6 +129,9 @@ fn main() {
             "relay_decode_read_state",
             "relay_sign_read_state",
             "relay_publish_read_state",
+            "relay_decode_thread_follows",
+            "relay_sign_thread_follows",
+            "relay_publish_thread_follows",
             "relay_http",
             "relay_http_cancel",
             "relay_verify_signatures",
@@ -151,12 +164,19 @@ fn main() {
             "relay_upload",
             "relay_upload_cancel",
             "media_download",
+            "media_cache_clear",
+            "media_cache_forget",
+            "media_cache_usage",
+            "media_download_status",
+            "media_download_open",
             "file_download",
             "media_copy_image",
             "media_lift_subject",
             "media_lift_subject_supported",
             "clipboard_write_text",
             "draft_diagnostics_save",
+            "web_inspector",
+            "get_build_identity",
             "media_stream_base",
             "get_os_idle_seconds",
             "system_hour_cycle",
@@ -197,6 +217,12 @@ fn main() {
             "plugin_host_mcp_pairing",
             "plugin_host_mcp_reply",
             "plugin_host_mcp_close",
+            "plugin_host_forward_admission",
+            "plugin_host_forward_open",
+            "plugin_host_forward_associate",
+            "plugin_host_forward_register_child",
+            "plugin_host_forward_seal",
+            "plugin_host_forward_close",
             "plugin_host_read_file",
             "plugin_host_resolve_directory",
             "plugin_host_repository_folders",
@@ -227,6 +253,8 @@ fn main() {
             "app_agent_remember",
             "app_agent_claim",
             "app_agent_release",
+            "agent_env_status",
+            "agent_env_set",
             "claude_api_key_status",
             "claude_api_key_set",
             "claude_api_key_clear",
@@ -236,6 +264,7 @@ fn main() {
             "app_agent_state_load",
             "app_agent_state_set",
             "decide",
+            "speech_connect",
             "title_bar_double_click",
             "notification_show",
             "notification_permission_state",

@@ -22,6 +22,23 @@ export type UploadedAttachment = Readonly<{
   dim?: string;
   voice?: Readonly<{ duration: number; waveform: readonly number[] }>;
 }>;
+/** A descriptor read back from device storage. */
+export function isUploadedAttachment(a: unknown): a is UploadedAttachment {
+  const v = a as UploadedAttachment | null;
+  return (
+    !!v &&
+    typeof v.name === "string" &&
+    typeof v.url === "string" &&
+    typeof v.type === "string" &&
+    typeof v.sha256 === "string" &&
+    Number.isFinite(v.size) &&
+    (v.voice === undefined ||
+      (!!v.voice &&
+        Number.isFinite(v.voice.duration) &&
+        Array.isArray(v.voice.waveform) &&
+        v.voice.waveform.every(Number.isFinite)))
+  );
+}
 /** Bytes of the transferred file handed to the connection so far. */
 export type UploadProgress = (sent: number, total: number) => void;
 export type AttachmentUpload = (
@@ -47,6 +64,7 @@ export const UPLOAD_FAILURES = {
     "Videos can be at most 10 minutes long. Trim this recording, then retry.",
   codec:
     "This file’s codec isn’t supported. Use H.264 video and AAC audio, then retry.",
+  type: "This file type isn’t supported.",
   rejected:
     "The server could not accept this file. Its format or metadata may not be supported.",
   denied: "You don’t have permission to upload here.",

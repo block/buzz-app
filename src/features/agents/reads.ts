@@ -1,18 +1,20 @@
 // What an agent type reads of an agent's community beyond the agent's own
 // handle: the channel a turn is in, the conversation before it, the names of
-// the people in it, and the agent's memory. The desktop app reads these
-// through the owner's connection to the community; a standalone host reads
-// them as the agent. Both give a type the same answers, so the type runs the
-// same code in either.
+// the people in it, and the agent's memory. The desktop uses the owner's
+// connection and agent-authenticated reads for conversations the owner cannot
+// read; a standalone host reads as the agent. Both give a type the same
+// answers, so the type runs the same code in either.
 import type { Memories } from "../../buzz-mcp/client";
 import type { Profile } from "../relay/contracts";
 import { validVerifiedName } from "../relay/verified-profile";
 import type { AuthorNames } from "../agent-harness/turn-records";
 import type { EventData, ReadFilter, RelayEvent } from "../relay/events";
 import type { RelayData } from "../relay/service";
-import { ownerCanvas } from "../agent-harness/project";
+import { type OwnerCanvas, ownerCanvas } from "../agent-harness/project";
 import type { ChannelLabel } from "../channels/channel-icon";
 import { soloChat } from "./solo-chat";
+import { communityDestination } from "../communities/destination";
+import { relayPartition } from "../relay/partition";
 
 /** The agent's memory entries, deleted entries' tombstones, and whether
  * some may be missing. */
@@ -35,8 +37,6 @@ export type AgentReads = Readonly<{
   connection: object;
   /** The community these reads are of; it changes when the agent's does. */
   scope: string;
-  /** That community's normalized origin, when known. */
-  origin?: string | undefined;
   /** The channel as the community lists it, or undefined when unknown. */
   channel(id: string): Promise<ChannelFacts | undefined>;
   read(
@@ -56,6 +56,9 @@ export type AgentReads = Readonly<{
   profile(pubkey: string): RelayEvent | undefined;
   /** The community's name and kind for a channel, if it lists the channel now. */
   channelLabel(id: string): ChannelLabel | undefined;
+  /** Whether the owner's own connection can read the channel, as opposed to
+   * one only the agent can. Owner-facing views show only these. */
+  ownerReadable(id: string): boolean;
   /** Tells `listener` when the community's channel list changes, so
    * `channelLabel` may answer differently. */
   subscribeChannels(listener: () => void): () => void;
@@ -69,7 +72,7 @@ export type AgentReads = Readonly<{
   /** The channel's current Canvas text when `owner`, or an agent they
    * attest, wrote it; undefined when it has none, someone else wrote it, or
    * the reader cannot read Canvas. */
-  canvas?(channelId: string, owner: string): Promise<string | undefined>;
+  canvas?(channelId: string, owner: string): Promise<OwnerCanvas | undefined>;
   /** Whether a mention in this channel continues `owner`'s Solo chat. Only the
    * owner's own connection can tell; other readers answer false. */
   soloChat(
@@ -92,7 +95,6 @@ export function ownerReads(
   return Object.freeze({
     connection: session,
     scope: snapshot.scope ?? "",
-    origin: snapshot.origin,
     channel: async (id: string) => {
       const summary =
         session.channels.list().channels.find((item) => item.id === id) ??
@@ -131,6 +133,9 @@ export function ownerReads(
         }
       );
     },
+    ownerReadable: (id: string) =>
+      session.channels.list().channels.some((item) => item.id === id) ||
+      !!session.channels.get?.(id),
     subscribeChannels: (listener: () => void) =>
       session.channels.subscribeList(listener),
     workflowAuthority: () => session.workflowAuthority,
@@ -146,6 +151,168 @@ export function ownerReads(
       ),
     memoryListing: (signal: AbortSignal, slug?: string) =>
       session.agentMemories.read(pubkey, signal, slug),
+  });
+}
+
+/** Whether a mention says a workflow wrote it, rather than the owner. The
+ * marker only decides whether a turn waits for its community; the permission
+ * check still decides whether it runs. */
+export function workflowMarked(event: RelayEvent, owner: string) {
+  return (
+    event.pubkey !== owner &&
+    event.tags.some(
+      ([name, value]) => name === "buzz:workflow" && value === "true",
+    )
+  );
+}
+
+const OWN_RETRY_MS = 1_000;
+const OWN_RETRY_MAX_MS = 15_000;
+
+/** `ownerReads` of the agent's own community and owner, once the community is
+ * ready, has listed its channels and knows the kind of `channelId`, which a
+ * turn needs to tell where to answer: now when it has, or after the reconnect
+ * under way, through a new session in the same community and owner if that
+ * replaces the old one. A channel the owner cannot see is read through the
+ * agent's own reads as they are at each check, which it asks, with backoff,
+ * to resolve the channel while they do not know its kind. Rejects when the community ends up another one or another owner's, is
+ * disconnected or fails in a way the service does not recover from by itself,
+ * or when `signal` aborts first. It waits for the service's own notifications
+ * and never reconnects. Its errors name what waits, `what`. */
+export function readyOwnerReads(
+  relay: RelayData | undefined,
+  agent: Readonly<{ relay: string; owner: string; pubkey: string }>,
+  signal: AbortSignal,
+  channelId?: string,
+  what = "Workflow request",
+  agentReads?: () => AgentReads | undefined,
+): Promise<AgentReads> {
+  const unavailable = () =>
+    new Error(`${what} could not start: its community is no longer connected.`);
+  let origin: string;
+  try {
+    origin = communityDestination(agent.relay).url;
+  } catch {
+    return Promise.reject(unavailable());
+  }
+  const scope = relayPartition(origin, agent.owner);
+  // The reads, `pending` while the community reconnects or lists its
+  // channels, or undefined when it will not become ready here.
+  const pending = Symbol();
+  const settled = (): AgentReads | undefined | typeof pending => {
+    const snapshot = relay?.snapshot();
+    if (!relay || !snapshot) return undefined;
+    if (snapshot.status === "ready" && !snapshot.cached) {
+      if (
+        snapshot.origin !== origin ||
+        snapshot.viewer !== agent.owner ||
+        snapshot.scope !== scope
+      )
+        return undefined;
+      const { channels } = snapshot.session;
+      const { status, channels: listed } = channels.list();
+      if (status === "idle" || status === "loading") return pending;
+      // A list restored from disk or still paging can lack the destination's
+      // kind, and an unknown one would answer a DM in a thread.
+      if (
+        channelId &&
+        !(
+          listed.find((item) => item.id === channelId) ??
+          channels.get?.(channelId)
+        )?.channelType
+      )
+        return own(channelId) ?? pending;
+      return ownerReads(relay, agent.pubkey);
+    }
+    if (
+      snapshot.status === "connecting" ||
+      (snapshot.status === "ready" && snapshot.cached) ||
+      (snapshot.status === "error" && snapshot.retrying && !snapshot.denied)
+    )
+      return pending;
+    return undefined;
+  };
+  let stopOwn = () => {};
+  let watched: AgentReads | undefined;
+  let asking = false;
+  let finished = false;
+  let askAgain = OWN_RETRY_MS;
+  let retryOwn: ReturnType<typeof setTimeout> | undefined;
+  let check = () => {};
+  /** The agent's current reads once they know the channel's kind; until then
+   * they are watched and asked to resolve it, one lookup at a time and again,
+   * backing off until the deadline, after one that left it unknown: whichever
+   * reads are current then, so a reader made afresh at each check cannot ask
+   * any faster. */
+  const own = (id: string) => {
+    const reads = agentReads?.();
+    if (!reads) return undefined;
+    if (reads.channelLabel(id)?.channelType) return reads;
+    if (reads !== watched) {
+      stopOwn();
+      watched = reads;
+      stopOwn = reads.subscribeChannels(() => check());
+    }
+    if (!asking && retryOwn === undefined) {
+      asking = true;
+      const unresolved = () => {
+        asking = false;
+        if (finished) return;
+        if (signal.aborted || reads.channelLabel(id)?.channelType) return;
+        retryOwn = setTimeout(() => {
+          retryOwn = undefined;
+          check();
+        }, askAgain);
+        askAgain = Math.min(askAgain * 2, OWN_RETRY_MAX_MS);
+      };
+      void reads
+        .channel(id)
+        .then(unresolved, unresolved)
+        .finally(() => check());
+    }
+    return undefined;
+  };
+  return new Promise((resolve, reject) => {
+    let stop = () => {};
+    let stopList = () => {};
+    let listed: object | undefined;
+    const finish = () => {
+      stop();
+      stopList();
+      finished = true;
+      stopOwn();
+      clearTimeout(retryOwn);
+      signal.removeEventListener("abort", aborted);
+    };
+    const aborted = () => {
+      finish();
+      reject(
+        new Error(
+          `${what} could not start: its community did not reconnect before the delivery deadline.`,
+          { cause: signal.reason },
+        ),
+      );
+    };
+    check = () => {
+      if (finished) return;
+      const reads = settled();
+      if (reads !== pending) {
+        finish();
+        return reads ? resolve(reads) : reject(unavailable());
+      }
+      // Listen to the channel list of the session the community has now.
+      const session = relay?.snapshot().session;
+      if (session && session !== listed) {
+        stopList();
+        listed = session;
+        stopList = session.channels.subscribeList(check);
+      }
+    };
+    if (signal.aborted) return aborted();
+    signal.addEventListener("abort", aborted, { once: true });
+    // Subscribe before reading, so a change in between is not missed.
+    stop = relay?.subscribe(check) ?? stop;
+    check();
   });
 }
 

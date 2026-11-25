@@ -25,6 +25,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
           "buzz.mentions": false,
           "buzz.reminders": false,
           "buzz.workflows": false,
+          "buzz.relay-notes": true,
         },
       }),
     ],
@@ -59,13 +60,61 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     );
     assert.notEqual(services.accountActions.snapshot()[0], firstFeedback);
     await settle();
-    assert.equal(services.pages.snapshot().length, 4);
+    const docsId = "com.squareup.docs";
+    const docsPage = () =>
+      services.pages.snapshot().find((page) => page.pluginId === docsId);
+    const docsPanel = () =>
+      services.panels.snapshot().find((panel) => panel.pluginId === docsId);
+    const docsTools = () =>
+      services.agents.tools().filter(({ name }) => name.startsWith("doc_"));
+    assert.equal(docsPage(), undefined);
+    assert.equal(docsPanel(), undefined);
+    assert.deepEqual(docsTools(), []);
+    await services.plugins.change("enable", docsId);
+    await vi.waitFor(() => assert.ok(docsPage()));
+    const documents = docsPage();
+    assert.equal(documents.title, "Docs");
+    assert.equal(documents.placement, "dock");
+    assert.match(
+      renderToStaticMarkup(createElement(documents.component)),
+      /Connect to your community to open docs/,
+    );
+    assert.equal(docsPanel()?.key, "com.squareup.docs/doc");
+    assert.equal(docsPanel()?.addressable, true);
+    assert.ok(docsTools().some(({ name }) => name === "doc_get"));
+    await services.plugins.change("disable", docsId);
+    assert.equal(docsPage(), undefined);
+    assert.equal(docsPanel(), undefined);
+    assert.deepEqual(docsTools(), []);
     const { bundledPlugins } = await vite.ssrLoadModule(
       "/src/bundled/index.ts",
     );
     const { pluginCategoryDefinitions } = await vite.ssrLoadModule(
       "/src/app/plugin-categories.ts",
     );
+    // A previously enabled reader is retired; its built-in agent tools survive.
+    assert.equal(
+      services.plugins
+        .snapshot()
+        .configuration.catalog.plugins.some(
+          (plugin) => plugin.manifest.id === "buzz.relay-notes",
+        ),
+      false,
+    );
+    assert.equal(
+      services.pages
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.relay-notes"),
+      false,
+    );
+    const { sessionTools } = await vite.ssrLoadModule(
+      "/src/buzz-mcp/session-tools.ts",
+    );
+    const toolNames = sessionTools(services.agents.tools()).map(
+      (tool) => tool.name,
+    );
+    for (const name of ["notes_get", "notes_set", "notes_rm"])
+      assert.ok(toolNames.includes(name), name);
     const categories = new Set(pluginCategoryDefinitions.map(({ id }) => id));
     for (const plugin of bundledPlugins) {
       assert.ok(
@@ -84,18 +133,18 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(
         plugin.enabledByDefault,
         ![
+          "com.squareup.docs",
           "buzz.pi",
-          "buzz.todos",
           "buzz.usage",
-          "buzz.relay-notes",
           "buzz.reminders",
           "buzz.workflows",
           "buzz.mesh-compute",
           "buzz.focus",
+          "buzz.finder",
           "buzz.charts",
-          "buzz.file-viewer",
           "buzz.drafts-and-sent",
           "buzz.changesets",
+          "buzz.performance-diagnostics",
         ].includes(plugin.manifest.id),
         plugin.manifest.id,
       );
@@ -110,6 +159,45 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         false,
       );
     }
+    const { respondExternal } = await vite.ssrLoadModule(
+      "/src/buzz-mcp/external.ts",
+    );
+    const performancePlugin = "buzz.performance-diagnostics";
+    const snapshot = "performance_snapshot";
+    const hasSnapshot = () =>
+      services.agents.tools().some(({ name }) => name === snapshot);
+    const callSnapshot = (scopes) =>
+      respondExternal(
+        {},
+        {
+          id: 1,
+          method: "tools/call",
+          params: { name: snapshot, arguments: { duration_ms: 999 } },
+        },
+        () => {},
+        scopes,
+        services.agents.tools,
+      );
+
+    assert.equal(hasSnapshot(), false);
+    assert.match(
+      (await callSnapshot(["agent"])).result.content[0].text,
+      /no tool performance_snapshot/i,
+    );
+    await services.plugins.change("enable", performancePlugin);
+    await vi.waitFor(() => assert.equal(hasSnapshot(), true));
+    const denied = await callSnapshot(["read"]);
+    assert.equal(
+      denied.result._meta["buzz/error"].code,
+      "authorization_required",
+    );
+    assert.match(
+      (await callSnapshot(["agent"])).result.content[0].text,
+      /duration_ms must be an integer from 1000 to 10000/,
+    );
+    await services.plugins.change("disable", performancePlugin);
+    assert.equal(hasSnapshot(), false);
+
     await services.plugins.change("enable", "buzz.reminders");
     await vi.waitFor(() =>
       assert.ok(
@@ -229,38 +317,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .find((card) => card.key === "buzz.pairing/mobile"),
       pairingCard,
     );
-    assert.equal(
-      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
-      false,
-    );
-    const canvas = services.relay.snapshot().session.canvas;
-    await services.plugins.change("enable", "buzz.todos");
-    await vi.waitFor(() =>
-      assert.ok(
-        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos")
-          ?.channelLauncher,
-      ),
-    );
-    const firstTodos = services.panels
-      .snapshot()
-      .find((p) => p.pluginId === "buzz.todos");
-    await services.plugins.change("disable", "buzz.todos");
-    assert.equal(
-      services.panels.snapshot().some((p) => p.pluginId === "buzz.todos"),
-      false,
-    );
-    assert.equal(services.relay.snapshot().session.canvas, canvas);
-    await services.plugins.change("enable", "buzz.todos");
-    await vi.waitFor(() =>
-      assert.ok(
-        services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
-      ),
-    );
-    assert.notEqual(
-      services.panels.snapshot().find((p) => p.pluginId === "buzz.todos"),
-      firstTodos,
-    );
-    await services.plugins.change("disable", "buzz.todos");
     assert.deepEqual(
       services.settingsCards
         .snapshot()

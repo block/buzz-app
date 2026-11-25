@@ -4,10 +4,12 @@ import type { ComposerSession } from "./composer-session";
 import {
   UPLOAD_MAX_BYTES,
   UploadError,
+  isUploadedAttachment,
   type UploadedAttachment,
   type UploadProgress,
 } from "../relay/attachments";
 import { prepareAttachment } from "./prepare-attachment";
+import { clearView, readView, writeView } from "../../shared/view-state";
 
 export type DraftAttachment = Readonly<{
   id: string;
@@ -16,6 +18,8 @@ export type DraftAttachment = Readonly<{
   status: "queued" | "preparing" | "uploading" | "ready" | "error";
   uploaded?: UploadedAttachment;
   error?: string | undefined;
+  /** The relay refused this file's type, so the same bytes cannot upload. */
+  unsupported?: true | undefined;
   /** Host-reported bytes for the current prepared transfer. */
   transfer?: Readonly<{ sent: number; total: number }> | undefined;
 }>;
@@ -24,8 +28,12 @@ export type AttachmentDraft = {
   subscribe(listener: () => void): () => void;
   /** Admits the files that fit, in order. A lone file that does not fit throws
    * why; otherwise one sentence per reason names the first files left out
-   * and counts the rest. */
-  add(files: readonly File[], recording?: VoiceRecording): readonly string[];
+   * and counts the rest. `folders` are the files a drop found to be folders. */
+  add(
+    files: readonly File[],
+    recording?: VoiceRecording,
+    folders?: ReadonlySet<File>,
+  ): readonly string[];
   addUploaded(attachment: UploadedAttachment): void;
   adopt(files: readonly DraftAttachment[]): boolean;
   prepareForSend(signal: AbortSignal): Promise<readonly UploadedAttachment[]>;
@@ -100,14 +108,43 @@ export const MAX_ATTACHMENT_FILES = 10;
 const MAX_RETAINED_BYTES = 2 * UPLOAD_MAX_BYTES;
 /** A refusal names this many files, then counts the rest. */
 const NAMED_REFUSALS = 3;
+const FOLDER = "Folders can’t be attached.";
+const listed = (names: readonly string[]) =>
+  names.length > NAMED_REFUSALS
+    ? `${names.slice(0, NAMED_REFUSALS).join(", ")} and ${names.length - NAMED_REFUSALS} more`
+    : names.join(", ");
+/** One sentence for the files the relay refused for their type. */
+export const unsupportedTypes = (names: readonly string[]) =>
+  `${listed(names)} ${names.length === 1 ? "isn’t a supported file type" : "aren’t supported file types"}.`;
 
-/** Tab-local files survive navigation, not reload. Delivery remains outbox-owned.
- * A new chat's draft uploads before its channel exists. */
+/** A composer's view scope and key for its uploaded files. */
+type SavedFiles = readonly [scope: string, key: string];
+
+const uploadedItem = (attachment: UploadedAttachment): DraftAttachment => ({
+  id: crypto.randomUUID(),
+  file: new File([], attachment.name, { type: attachment.type }),
+  status: "ready",
+  uploaded: attachment,
+  ...(attachment.voice ? { voice: attachment.voice } : {}),
+});
+
+function restoreFiles([scope, key]: SavedFiles) {
+  const saved: unknown = readView(scope, key, []);
+  return (Array.isArray(saved) ? saved : [])
+    .filter(isUploadedAttachment)
+    .slice(0, MAX_ATTACHMENT_FILES)
+    .map(uploadedItem);
+}
+
+/** Tab-local files survive navigation. With `saved`, uploaded files also
+ * survive reload; local bytes still upload in this tab only. Delivery remains
+ * outbox-owned. A new chat's draft uploads before its channel exists. */
 export function attachmentDraft(
   session: ComposerSession,
   key: string,
   channelId: string,
   newChat = false,
+  saved?: SavedFiles,
 ): AttachmentDraft {
   let partition = drafts.get(session);
   if (!partition) {
@@ -117,14 +154,32 @@ export function attachmentDraft(
   const existing = partition.get(key);
   if (existing) return existing;
   const owners = partition;
-  let items: readonly DraftAttachment[] = [];
+  let items: readonly DraftAttachment[] = saved ? restoreFiles(saved) : [];
   const listeners = new Set<() => void>();
   let paused = false;
   let active = new Map<string, UploadTask>();
   let pending = new Map<string, Promise<UploadedAttachment>>();
-  let count = 0;
+  const uploadedFiles = () =>
+    items.flatMap((item) => (item.uploaded ? [item.uploaded] : []));
+  // Save only this store's changes, so a stale window cannot rewrite a clear.
+  let savedFiles = JSON.stringify(uploadedFiles());
+  const save = () => {
+    if (!saved) return;
+    const files = uploadedFiles();
+    const revision = JSON.stringify(files);
+    if (revision === savedFiles) return;
+    savedFiles = revision;
+    try {
+      if (files.length) writeView(...saved, files);
+      else clearView(...saved);
+    } catch {
+      /* Storage unavailable; the files remain in this tab. */
+    }
+  };
+  let count = items.length;
   const emit = () => {
     for (const listener of listeners) listener();
+    save();
     if (items.length === count) return;
     count = items.length;
     for (const listener of countListeners.get(session) ?? []) listener();
@@ -251,6 +306,9 @@ export function attachmentDraft(
             error instanceof Error
               ? error.message
               : "Upload failed. Retry or remove this file.",
+          unsupported:
+            (error instanceof UploadError && error.code === "type") ||
+            undefined,
         });
       throw error;
     } finally {
@@ -295,7 +353,11 @@ export function attachmentDraft(
         }
       };
     },
-    add(files: readonly File[], recording?: VoiceRecording) {
+    add(
+      files: readonly File[],
+      recording?: VoiceRecording,
+      folders?: ReadonlySet<File>,
+    ) {
       if (recording) {
         validateRecording(recording);
         if (files.length !== 1 || files[0] !== recording.file)
@@ -306,39 +368,42 @@ export function attachmentDraft(
         .flatMap((owner) => owner.snapshot())
         .reduce((sum, item) => sum + item.file.size, 0);
       const admitted: File[] = [];
-      // Reason → the files it left out. Empty files share the "" reason.
+      // Reason → the files it left out. Folders share the FOLDER reason and
+      // empty files the "" reason.
       const refused = new Map<string, string[]>();
       for (const file of files) {
-        const reason = !file.size
-          ? new Error(`${file.name} is empty.`)
-          : items.length + admitted.length >= MAX_ATTACHMENT_FILES
-            ? new Error(
-                `Attach at most ${MAX_ATTACHMENT_FILES} files per message.`,
-              )
-            : file.size > UPLOAD_MAX_BYTES
-              ? new UploadError("size")
-              : retained + file.size > MAX_RETAINED_BYTES
-                ? new Error(
-                    "Attachment drafts are full (1,000 MiB). Send or remove some files first.",
-                  )
-                : undefined;
+        const folder = folders?.has(file);
+        const reason = folder
+          ? new Error(`${file.name} is a folder. ${FOLDER}`)
+          : !file.size
+            ? new Error(`${file.name} is empty.`)
+            : items.length + admitted.length >= MAX_ATTACHMENT_FILES
+              ? new Error(
+                  `Attach at most ${MAX_ATTACHMENT_FILES} files per message.`,
+                )
+              : file.size > UPLOAD_MAX_BYTES
+                ? new UploadError("size")
+                : retained + file.size > MAX_RETAINED_BYTES
+                  ? new Error(
+                      "Attachment drafts are full (1,000 MiB). Send or remove some files first.",
+                    )
+                  : undefined;
         if (!reason) {
           admitted.push(file);
           retained += file.size;
         } else if (files.length === 1) throw reason;
         else {
-          const key = file.size ? reason.message : "";
+          const key = folder ? FOLDER : file.size ? reason.message : "";
           refused.set(key, [...(refused.get(key) ?? []), file.name]);
         }
       }
       const left = Array.from(refused, ([reason, names]) => {
-        const listed =
-          names.length > NAMED_REFUSALS
-            ? `${names.slice(0, NAMED_REFUSALS).join(", ")} and ${names.length - NAMED_REFUSALS} more`
-            : names.join(", ");
-        return reason
-          ? `${listed}: ${reason}`
-          : `${listed} ${names.length === 1 ? "is" : "are"} empty.`;
+        const one = names.length === 1;
+        return reason === FOLDER
+          ? `${listed(names)} ${one ? "is a folder" : "are folders"}. ${FOLDER}`
+          : reason
+            ? `${listed(names)}: ${reason}`
+            : `${listed(names)} ${one ? "is" : "are"} empty.`;
       });
       if (!admitted.length) return left;
       items = [
@@ -375,15 +440,7 @@ export function attachmentDraft(
           `Attach at most ${MAX_ATTACHMENT_FILES} files per message.`,
         );
       // No local bytes are retained. Send reuses the already uploaded descriptor.
-      items = [
-        ...items,
-        {
-          id: crypto.randomUUID(),
-          file: new File([], attachment.name, { type: attachment.type }),
-          status: "ready",
-          uploaded: attachment,
-        },
-      ];
+      items = [...items, uploadedItem(attachment)];
       owners.set(key, store);
       emit();
     },
@@ -428,7 +485,12 @@ export function attachmentDraft(
     retry(id: string) {
       if (!items.some((item) => item.id === id && item.status === "error"))
         return;
-      replace(id, { status: "queued", error: undefined, transfer: undefined });
+      replace(id, {
+        status: "queued",
+        error: undefined,
+        transfer: undefined,
+        unsupported: undefined,
+      });
       paused = false;
       pump();
     },
@@ -486,10 +548,11 @@ export function useAttachmentDraft(
   key: string,
   channelId: string,
   newChat = false,
+  saved?: SavedFiles,
 ) {
   // Composer's destination key remounts this hook on a session/channel/thread change.
   const [store] = useState(() =>
-    attachmentDraft(session, key, channelId, newChat),
+    attachmentDraft(session, key, channelId, newChat, saved),
   );
   const items = useSyncExternalStore(
     store.subscribe,

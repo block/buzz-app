@@ -241,19 +241,27 @@ export async function readApiFailure(
 }
 
 type Ticket = {
-  priority: "foreground" | "background";
+  priority: "foreground" | "background" | "artifact";
   signal?: AbortSignal | undefined;
   start(): void;
   reject(error: Error): void;
   abort(): void;
 };
-/** One host/principal API lane, bounded like the broker's six-request ceiling.
+/** Requests one API lane runs at once, like the browser broker's ceiling. */
+export const API_ACTIVE_LIMIT = 10;
+/** One host/principal API lane, bounded like the broker's ten-request ceiling.
  * Available capacity dispatches immediately; only server cooldowns pause starts.
  * Cooldowns reject queued work rather than spending a read's 10s deadline. */
 export function createApiAdmission() {
+  const activeLimit = API_ACTIVE_LIMIT;
+  const artifactActiveLimit = 4;
+  const queuedLimit = 128;
+  const artifactQueuedLimit = 120;
   let pausedUntil = 0,
     active = 0,
+    activeArtifacts = 0,
     preparing = 0,
+    preparingArtifacts = 0,
     presenceBusy = false,
     presenceNext = 0;
   const queue: Ticket[] = [];
@@ -273,8 +281,14 @@ export function createApiAdmission() {
       }
       return;
     }
-    while (active < 6 && queue.length) {
-      const ticket = queue.find((t) => t.priority === "foreground") ?? queue[0];
+    while (active < activeLimit && queue.length) {
+      const ticket =
+        queue.find((entry) => entry.priority === "foreground") ??
+        queue.find(
+          (entry) =>
+            entry.priority !== "artifact" ||
+            activeArtifacts < artifactActiveLimit,
+        );
       if (!ticket) return;
       remove(ticket);
       ticket.start();
@@ -298,14 +312,24 @@ export function createApiAdmission() {
     /** Retain bounded ownership across asynchronous auth and its final dispatch.
      * A cancelled unabortable signer keeps its slot until it settles: repeatedly
      * cancelling must not admit an unbounded number of outstanding sign prompts. */
-    async prepare<T>(work: () => Promise<T>): Promise<T> {
+    async prepare<T>(
+      work: () => Promise<T>,
+      priority: Ticket["priority"] = "foreground",
+    ): Promise<T> {
       if (performance.now() < pausedUntil) throw pauseError();
-      if (preparing >= 128) throw new ApiCapacity();
+      const artifact = priority === "artifact";
+      if (
+        preparing >= queuedLimit ||
+        (artifact && preparingArtifacts >= artifactQueuedLimit)
+      )
+        throw new ApiCapacity();
       preparing++;
+      if (artifact) preparingArtifacts++;
       try {
         return await work();
       } finally {
         preparing--;
+        if (artifact) preparingArtifacts--;
       }
     },
     idle: () =>
@@ -329,15 +353,22 @@ export function createApiAdmission() {
     ): Promise<T> {
       if (signal?.aborted) return Promise.reject(signal.reason);
       if (performance.now() < pausedUntil) return Promise.reject(pauseError());
-      if (queue.length >= 128) return Promise.reject(new ApiCapacity());
+      const artifact = priority === "artifact";
+      if (
+        queue.length >= queuedLimit ||
+        (artifact && queue.length >= artifactQueuedLimit)
+      )
+        return Promise.reject(new ApiCapacity());
       return new Promise((resolve, reject) => {
         const ticket: Ticket = {
           priority,
           signal,
           start() {
             active++;
+            if (artifact) activeArtifacts++;
             const finish = () => {
               active--;
+              if (artifact) activeArtifacts--;
               pump();
             };
             try {
@@ -376,13 +407,20 @@ export async function admittedApiRequest(
     body: unknown,
     status: number,
   ) => string | Pick<ApiFailure, "error" | "code"> | undefined,
+  migrationWrite = false,
 ): Promise<Response> {
   return lane.run(
     async () => {
       const response = await request();
       if (response.ok) return response;
       const failure = await readApiFailure(response, reason);
-      if (failure.quota === "api" && failure.retryAfterMs !== undefined)
+      // The relay adds Retry-After to the migration budget's refusals. The
+      // shared API quota response has no such header, even for a tagged write.
+      if (
+        failure.quota === "api" &&
+        failure.retryAfterMs !== undefined &&
+        !(migrationWrite && response.headers.has("retry-after"))
+      )
         lane.pause(failure.retryAfterMs);
       const headers = new Headers(response.headers);
       headers.delete("content-length");

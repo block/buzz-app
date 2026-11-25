@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelMessage } from "../relay/contracts";
+import { useChannelActivitySubscription } from "../agents/use-channel-agent-activity";
 import type { RelaySession } from "../relay/session";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { continuesMessageGroup } from "./message-grouping";
@@ -43,53 +44,6 @@ export type ActivityRowPresentation = {
   showAuthor?: boolean;
   container: "history" | "bubble" | "standalone";
 };
-const noSubscribe = () => () => {};
-
-const sameItems = <T>(a: readonly T[], b: readonly T[]) =>
-  a.length === b.length && a.every((item, index) => item === b[index]);
-/** Whether two snapshots agree on everything a request projection in these
- * channels reads: their records, turns and local work, status and trimming. */
-function sameChannelActivity(
-  a: Snapshot | undefined,
-  b: Snapshot | undefined,
-  channels: ReadonlySet<string>,
-) {
-  if (a === b) return true;
-  if (!a || !b || a.status !== b.status || a.trimmed !== b.trimmed)
-    return false;
-  const records = (snapshot: Snapshot) =>
-    snapshot.records.filter((record) =>
-      record.channelIds.some((id) => channels.has(id)),
-    );
-  const local = (snapshot: Snapshot) =>
-    (snapshot.local ?? []).filter((work) => channels.has(work.channelId));
-  const turns = (snapshot: Snapshot) =>
-    JSON.stringify(
-      snapshot.turns.filter(
-        (turn) => !!turn.channelId && channels.has(turn.channelId),
-      ),
-    );
-  return (
-    sameItems(records(a), records(b)) &&
-    sameItems(local(a), local(b)) &&
-    turns(a) === turns(b)
-  );
-}
-/** The activity snapshot, changing only when these channels' evidence does:
- * work elsewhere in the session does not re-render this conversation. */
-export function useChannelActivitySnapshot(
-  activity: Activity | undefined,
-  channels: ReadonlySet<string>,
-) {
-  const held = useRef<Snapshot | undefined>(undefined);
-  const read = () => {
-    const live = activity?.snapshot();
-    if (!sameChannelActivity(held.current, live, channels)) held.current = live;
-    return held.current;
-  };
-  return useSyncExternalStore(activity?.subscribe ?? noSubscribe, read, read);
-}
-
 /** Requests whose local run published each row: exact causal evidence that
  * the root-flattened reply link of a thread reply cannot carry. */
 function publishedRequests(
@@ -406,17 +360,43 @@ export function activityPresentation(
     bubbleAnchors,
   };
 }
+/** Live typing belongs to the indicators. History groups only use request evidence. */
+export function useActivityHistorySnapshot(
+  activity: Activity | undefined,
+  channelId: string | undefined,
+) {
+  const subscribe = useChannelActivitySubscription(activity, channelId);
+  const read = useMemo(() => {
+    let previous: Snapshot | undefined;
+    return () => {
+      const next =
+        channelId === undefined ? undefined : activity?.snapshot(channelId);
+      if (
+        next !== previous &&
+        (!next ||
+          !previous ||
+          previous.records !== next.records ||
+          previous.turns !== next.turns ||
+          (previous.local !== next.local &&
+            (previous.local?.length || next.local?.length)) ||
+          previous.status !== next.status ||
+          previous.trimmed !== next.trimmed ||
+          !!previous.turnsTrimmed !== !!next.turnsTrimmed)
+      )
+        previous = next;
+      return previous;
+    };
+  }, [activity, channelId]);
+  return useSyncExternalStore(subscribe, read, read);
+}
+
 export function useActivityPresentation(
   rows: readonly ChannelMessage[],
   activity: Activity | undefined,
   agents: ReadonlySet<string> | undefined,
   rootId?: string,
 ) {
-  const channels = useMemo(
-    () => new Set(rows.map((row) => row.channelId)),
-    [rows],
-  );
-  const snapshot = useChannelActivitySnapshot(activity, channels);
+  const snapshot = useActivityHistorySnapshot(activity, rows[0]?.channelId);
   return useMemo(
     () => activityPresentation(rows, snapshot, agents, rootId),
     [rows, snapshot, agents, rootId],
@@ -424,8 +404,9 @@ export function useActivityPresentation(
 }
 
 /** Each activity projection allocates fresh row values. Reuse the previous ones
- * while they are equal, so memoized rows skip unrelated activity updates. */
-export function useStableRowActivity() {
+ * while they are equal, so memoized rows skip unrelated activity updates. Once
+ * `rows` changes, values for rows it no longer has (trimmed from history) go. */
+export function useStableRowActivity(rows?: readonly { id: string }[]) {
   const [stable] = useState(() => {
     const activities = new Map<string, ActivityRowPresentation>();
     const agents = new Map<string, readonly string[]>();
@@ -469,7 +450,15 @@ export function useStableRowActivity() {
         agents.set(id, next);
         return next;
       },
+      keep(ids: ReadonlySet<string>) {
+        for (const values of [activities, agents])
+          for (const id of values.keys())
+            if (!ids.has(id.replace(/^replied:/, ""))) values.delete(id);
+      },
     };
   });
+  useEffect(() => {
+    if (rows) stable.keep(new Set(rows.map((row) => row.id)));
+  }, [rows, stable]);
   return stable;
 }

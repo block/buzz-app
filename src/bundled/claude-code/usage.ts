@@ -66,11 +66,14 @@ export function buzzStart(entries: readonly Json[]) {
   const field = (name: string) =>
     context?.match(new RegExp(`^${name}: (.*)$`, "m"))?.[1]?.trim();
   const channel = field("Channel");
-  if (!channel) return undefined;
+  if (!channel && field("Session scope") !== "community") return undefined;
   const root = field("Session scope") === "thread" && field("Thread root");
   return {
     agent: field("Agent"),
-    channelId: channel.match(/\(#([^)]+)\)$/)?.[1] ?? channel,
+    ...(field("Session scope") === "community" ? { community: true } : {}),
+    ...(channel
+      ? { channelId: channel.match(/\(#([^)]+)\)$/)?.[1] ?? channel }
+      : {}),
     ...(root ? { root } : {}),
   };
 }
@@ -255,16 +258,19 @@ async function digestPages(spawn: Spawn, path: string) {
 }
 
 /** A session's usage from its file's digest and its subagents' by name
- * (undefined when one is gone), when Buzz started it for `agent`. */
+ * (undefined when one is gone), when Buzz started it for `agent`. A one-off
+ * turn's `standalone` session opens with no context, so only the app's record
+ * of it says it is the agent's, and it has no channel. */
 function combine(
   id: string,
   main: Digest,
   subagents: ReadonlyMap<string, Digest | undefined>,
   agent: string,
   saved: boolean,
+  standalone: boolean,
 ): Omit<SessionUsage, "revision"> | undefined {
-  const { start } = main;
-  if (!start || (start.agent ? start.agent !== agent : !saved))
+  const start = standalone ? undefined : main.start;
+  if (!standalone && (!start || (start.agent ? start.agent !== agent : !saved)))
     return undefined;
   const all = [main];
   const gaps: string[] = [];
@@ -287,9 +293,11 @@ function combine(
       seen.set(key ?? `${seen.size}`, observation);
   return {
     id,
-    channelId: start.channelId,
-    ...(start.root ? { root: start.root } : {}),
-    ...(main.title ? { title: main.title } : {}),
+    ...(start?.channelId ? { channelId: start.channelId } : {}),
+    ...(start?.root ? { root: start.root } : {}),
+    // A community session's generated title may describe any channel it
+    // served, not only the one it started in.
+    ...(main.title && !start?.community ? { title: main.title } : {}),
     startedAt: Math.min(...times.map((time) => time.first)),
     lastAt: Math.max(...times.map((time) => time.last)),
     gaps,
@@ -301,13 +309,14 @@ function combine(
  * one is gone), when Buzz started it for `agent`. A subagent the session
  * recorded spawning without a file is gone too. A saved session also counts
  * when its prompt does not name an agent, as prompts did before agents were
- * named. */
+ * named; a `standalone` one counts whatever its prompt says. */
 export function sessionUsage(
   id: string,
   file: string,
   subagents: ReadonlyMap<string, string | undefined>,
   agent: string,
   saved: boolean,
+  standalone = false,
 ): Omit<SessionUsage, "revision"> | undefined {
   return combine(
     id,
@@ -320,6 +329,7 @@ export function sessionUsage(
     ),
     agent,
     saved,
+    standalone,
   );
 }
 
@@ -338,7 +348,8 @@ const gone = (error: unknown) => {
 };
 
 /** The agent's Buzz sessions in its workspace's Claude Code history, active
- * since `since`. `saved` are the session ids this app saved for it. */
+ * since `since`. `saved` are the session ids this app saved for it, and
+ * `standalone` those it recorded for its one-off turns. */
 export async function readUsage(
   host: UsageHost,
   workspace: SessionsPlace,
@@ -346,6 +357,7 @@ export async function readUsage(
   saved: readonly string[],
   since: number,
   signal: AbortSignal,
+  standalone: readonly string[] = [],
 ): Promise<SessionUsage[]> {
   const { spawn } = host;
   const project = await workspaceProject(spawn, workspace, signal);
@@ -357,9 +369,10 @@ export async function readUsage(
   const named = [...current.starts]
     .filter(([, start]) => start.agent === agent)
     .map(([name]) => name);
-  const savedNames = new Set(
-    saved.filter((id) => /^[\w-]+$/.test(id)).map((id) => `${id}.jsonl`),
-  );
+  const names = (ids: readonly string[]) =>
+    new Set(ids.filter((id) => /^[\w-]+$/.test(id)).map((id) => `${id}.jsonl`));
+  const savedNames = names(saved);
+  const standaloneNames = names(standalone);
   const read = (path: string) => {
     let pending = current.digests.get(path);
     if (pending) return pending;
@@ -383,7 +396,7 @@ export async function readUsage(
     return pending;
   };
   const found: SessionUsage[] = [];
-  const queue = [...new Set([...savedNames, ...named])];
+  const queue = [...new Set([...savedNames, ...standaloneNames, ...named])];
   // One file at a time per worker: a read stopped takes no more files, and
   // ones it started still fill the cache.
   const worker = async () => {
@@ -400,7 +413,14 @@ export async function readUsage(
           await read(path),
         );
       }
-      const session = combine(id, main, subagents, agent, savedNames.has(name));
+      const session = combine(
+        id,
+        main,
+        subagents,
+        agent,
+        savedNames.has(name),
+        standaloneNames.has(name),
+      );
       if (session && session.lastAt >= since)
         found.push(await withRevision(session));
     }

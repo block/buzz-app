@@ -37,6 +37,10 @@ export type SessionSnapshot = Readonly<{
   /** Signing in again waits on the browser while this session stays
    * signed in; `cancelSignIn` ends only that wait. */
   renewing?: boolean;
+  /** The latest issuer or relay refusal's response `Date` minus this
+   * computer's clock, in seconds, when far enough off to suggest the clock
+   * is wrong. The refusal keeps its own meaning; this only adds a hint. */
+  clockOffset?: number | null;
 }>;
 /** First run's sign-in choices (`FirstRunIdentity`); plugins see `signIn()`. */
 export type SignInOptions = Readonly<{

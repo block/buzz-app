@@ -59,6 +59,7 @@ const bundledIcons = new Map<string, typeof BrowserIcon>([
   ["buzz.agents/agents", RobotIcon],
   ["buzz.workflows/workflows", LightningIcon],
   ["buzz.relay-notes/notes", NoteIcon],
+  ["com.squareup.docs/docs", NoteIcon],
 ]);
 /** Resolve host navigation policy once, independently of icons and registrations. */
 export function pagePlacement(page: RegisteredPage) {
@@ -116,4 +117,15 @@ export function pagePresentation(page: RegisteredPage): PagePresentation {
     tone,
     ...(page.icon === undefined ? {} : { image: page.icon }),
   };
+}
+
+/** Visibility compatibility for callers of AppShell predating registered sidebar contexts. */
+export function legacySidebarAvailable(
+  pages: readonly RegisteredPage[],
+  selected: string,
+) {
+  return (
+    navigationOwner(pages, selected) === "buzz.channels/channels" ||
+    pages.some((page) => page.key === selected && !!page.sidebar)
+  );
 }

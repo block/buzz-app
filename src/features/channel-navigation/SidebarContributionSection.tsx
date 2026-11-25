@@ -7,7 +7,7 @@ import {
 } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { SpringLoadedNavigationItem } from "./SpringLoadedNavigationItem";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
 import styles from "../../bundled/channels/Channels.module.css";
 import type { Navigation } from "../navigation/controller";
@@ -17,6 +17,7 @@ import type {
   SidebarSections,
 } from "./sidebar-sections-service";
 import { DroppableSidebarSection } from "./ChannelSidebarDnd";
+import { sidebarTarget } from "./routes";
 
 function isSelectedDestination(destination: OpenTarget, target: OpenTarget) {
   const selectedKey = targetKey(target);
@@ -165,6 +166,13 @@ function SectionContents({
   );
   const snapshot = useCallback(() => entry.rows.snapshot(), [entry.rows]);
   const rows = useSyncExternalStore(subscribe, snapshot, snapshot);
+  // The sidebar's target names only the open conversation; a row may name a
+  // message or thread in it. Elsewhere, as under Settings, keep the target:
+  // there a conversation's rows stay current, but a message's do not.
+  const current = useSyncExternalStore(navigator.subscribe, () => {
+    const open = navigator.snapshot().entry.target;
+    return targetKey(sidebarTarget(open)) === targetKey(target) ? open : target;
+  });
   // The external-store update rerenders this child, not the reveal owner.
   useLayoutEffect(() => {
     onRowsCommitted?.();
@@ -248,7 +256,7 @@ function SectionContents({
         const destination = entry.select(row);
         return (
           <div key={row.id} className={styles.contributionNavigationItem}>
-            <NavigationItem
+            <SpringLoadedNavigationItem
               label={row.label}
               icon={row.icon}
               trailing={
@@ -258,8 +266,14 @@ function SectionContents({
                   </span>
                 ) : undefined
               }
-              selected={isSelectedDestination(destination, target)}
+              selected={isSelectedDestination(destination, current)}
               onClick={() => select(destination)}
+              // Only a conversation has a composer for the dragged files.
+              onSpring={
+                destination.kind === "conversation"
+                  ? () => select(destination)
+                  : undefined
+              }
             />
           </div>
         );

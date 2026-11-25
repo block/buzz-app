@@ -831,7 +831,7 @@ async fn corrupt_storage_is_unavailable_and_public_snapshots_have_no_secret() {
         state.snapshot.status = Status::SignedIn;
     }
     let public = serde_json::to_value(host.snapshot()).unwrap();
-    assert_eq!(public.as_object().unwrap().len(), 9);
+    assert_eq!(public.as_object().unwrap().len(), 10);
     assert!(!public.to_string().contains("fixture-session-token"));
 }
 
@@ -1937,4 +1937,28 @@ async fn a_renewal_ended_after_saving_puts_back_the_session_it_replaced() {
     assert!(host.state().session.is_none());
     // The other copy's record is back, not this copy's old one.
     assert_eq!(store.raw.lock().unwrap().as_deref(), Some(&*other.raw));
+}
+
+#[test]
+fn speech_signs_in_at_the_server_of_the_community_it_bills() {
+    // The built-in server, as a build with no descriptor has.
+    let first = config::compiled(None, None, None)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert!(first.is_built_in());
+    let build = with_customers(first, Vec::new(), true);
+    let server = |community: &str| crate::speech::community_server(&build, community);
+    // A Builderlab customer's community transcribes at its own server.
+    let block = server("wss://buzz.block.builderlab.xyz").unwrap();
+    let config = block.config().unwrap();
+    assert_eq!(config.id, "bb-block");
+    assert_eq!(config.identity_origin, "https://block.builderlab.xyz");
+    assert_eq!(config.api_base_path, "/api/goose/");
+    // Any other community stays with the build's server.
+    let other = server("wss://relay.example").unwrap();
+    assert!(other.is(&build));
+    // Not a relay URL: no server.
+    assert!(server("not a relay").is_none());
 }

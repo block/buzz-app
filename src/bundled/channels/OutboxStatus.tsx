@@ -1,12 +1,21 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { isWorkflowOperation } from "../../features/workflows/protocol";
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
 import { PRODUCT_FEEDBACK_KIND } from "../../features/relay/product-feedback";
 import { HELD_RETRY_REFUSED, type Outbox } from "../../features/relay/outbox";
 import type { RelaySession } from "../../features/relay/session";
 import { isBatchAddition } from "../../features/channel-members/members";
+import { soloAdminSetup } from "../../features/relay/solo-admins";
+import {
+  AbandonAdminSetupDialog,
+  abandonableSetup,
+  type AbandonableSetup,
+} from "../../features/solo/AdminSetupRecovery";
+import { migrationSource } from "../../features/relay/migration";
+import { refusedPinCommand, type PinSource } from "../../features/relay/pins";
+import { RefusedPin } from "../../features/messages/RefusedPin";
 
 /** A batch names everyone its Retry re-adds. */
 function additionLabel(tags: readonly (readonly string[])[]) {
@@ -21,21 +30,33 @@ export function OutboxStatus({
   outbox,
   profiling,
   memberAdditions,
+  pins,
 }: {
   outbox: Outbox;
   profiling: RelayProfiler;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
+  /** Reads a pin list again after its command is refused as too old. */
+  pins?: PinSource | undefined;
 }) {
   const operations = useSyncExternalStore(
     outbox.subscribe,
     outbox.snapshot,
     outbox.snapshot,
-  ).filter((item) => item.event.kind !== PRODUCT_FEEDBACK_KIND);
+  )
+    .filter((item) => item.event.kind !== PRODUCT_FEEDBACK_KIND)
+    .map((item) => ({
+      ...item,
+      setup: soloAdminSetup(item),
+      abandonSetup: abandonableSetup(item),
+    }));
   const [error, setError] = useState<string>();
+  const [abandon, setAbandon] = useState<AbandonableSetup>();
+  const summary = useRef<HTMLElement>(null);
+  const abandonButton = useRef<HTMLButtonElement>(null);
 
   return (
     <details>
-      <summary>Outbox · {operations.length} items</summary>
+      <summary ref={summary}>Outbox · {operations.length} items</summary>
       <p>Removing an item from the outbox does not delete a sent message.</p>
       <ul
         style={{
@@ -47,9 +68,11 @@ export function OutboxStatus({
         {operations.map((item) => (
           <li key={item.event.id}>
             <span>
-              {item.event.kind === 9000
-                ? additionLabel(item.event.tags)
-                : item.event.content.slice(0, 100)}{" "}
+              {item.setup
+                ? "Opening agent admin setup"
+                : item.event.kind === 9000
+                  ? additionLabel(item.event.tags)
+                  : item.event.content.slice(0, 100)}{" "}
               ·{" "}
               {
                 {
@@ -64,6 +87,7 @@ export function OutboxStatus({
             {!isWorkflowOperation(item.event) &&
               !item.guarded &&
               !item.held &&
+              !refusedPinCommand(item) &&
               (item.delivery === "failed" ||
                 item.delivery === "unknown" ||
                 // A kept batch still names someone unsettled.
@@ -92,17 +116,22 @@ export function OutboxStatus({
                         // admission, so each person is checked again. A guest
                         // addition is retried as one, so it never sends a
                         // writing role. A single addition finishes only its own
-                        // receipt. A batch is never resumed, so each person it
-                        // names is added again; it clears once all are settled.
+                        // receipt. Retry a batch through Add for each person
+                        // so the session rechecks the roster before writing.
                         const guest = item.event.tags.some(
                           ([tag, value]) => tag === "role" && value === "guest",
                         );
                         const batch = isBatchAddition(item);
+                        const migration = migrationSource(item.event.tags);
                         const results = await Promise.allSettled(
                           pubkeys.map((pubkey) =>
                             memberAdditions.add(channelId, pubkey, {
                               ...(guest ? { role: "guest" as const } : {}),
                               ...(batch ? {} : { retry: true as const }),
+                              ...(migration === undefined ? {} : { migration }),
+                              ...(batch && migration !== undefined
+                                ? { batchReceipt: item.event.id }
+                                : {}),
                             }),
                           ),
                         );
@@ -131,34 +160,61 @@ export function OutboxStatus({
               (item.delivery === "failed" || item.delivery === "unknown") && (
                 <span>{HELD_RETRY_REFUSED}</span>
               )}{" "}
-            {item.delivery !== "sending" && (
-              <Button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const shareReceipt =
-                      item.event.kind === 9 &&
-                      // Share receipts, including those of earlier flows.
-                      /^(snapshot-share:(agent|team)|solo-share-link:[^:]+|agent-share:[^:]+):.+$/.test(
-                        item.recovery?.key ?? "",
-                      ) &&
-                      (item.delivery === "accepted" ||
-                        item.delivery === "seen");
-                    if (shareReceipt) await outbox.acknowledge(item.event.id);
-                    await outbox.dismiss(item.event.id);
-                    setError(undefined);
-                  } catch (reason) {
-                    setError(String(reason));
-                  }
-                }}
-              >
-                Remove from outbox
-              </Button>
-            )}
+            {refusedPinCommand(item) && (
+              <RefusedPin source={pins} item={item} />
+            )}{" "}
+            {(!item.setup || item.abandonSetup || item.delivery === "failed") &&
+              item.delivery !== "sending" && (
+                <Button
+                  type="button"
+                  onClick={async (event) => {
+                    try {
+                      if (item.abandonSetup) {
+                        abandonButton.current = event.currentTarget;
+                        setError(undefined);
+                        setAbandon({
+                          id: item.event.id,
+                          recovery: item.abandonSetup,
+                        });
+                        return;
+                      }
+                      const shareReceipt =
+                        item.event.kind === 9 &&
+                        // Share receipts, including those of earlier flows.
+                        /^(snapshot-share:(agent|team)|solo-share-link:[^:]+|agent-share:[^:]+):.+$/.test(
+                          item.recovery?.key ?? "",
+                        ) &&
+                        (item.delivery === "accepted" ||
+                          item.delivery === "seen");
+                      if (shareReceipt) await outbox.acknowledge(item.event.id);
+                      await outbox.dismiss(item.event.id);
+                      setError(undefined);
+                    } catch (reason) {
+                      setError(String(reason));
+                    }
+                  }}
+                >
+                  {item.abandonSetup
+                    ? "Abandon admin setup"
+                    : "Remove from outbox"}
+                </Button>
+              )}
           </li>
         ))}
       </ul>
-      {error && <p role="alert">{error}</p>}
+      {abandon && (
+        <AbandonAdminSetupDialog
+          outbox={outbox}
+          setup={abandon}
+          finalFocus={() =>
+            abandonButton.current?.isConnected
+              ? abandonButton.current
+              : summary.current
+          }
+          onClose={() => setAbandon(undefined)}
+        />
+      )}
+      {!abandon && error && <p role="alert">{error}</p>}
       <RelayTimings profiling={profiling} />
     </details>
   );

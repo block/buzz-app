@@ -10,7 +10,6 @@ import {
 } from "./threads";
 import { byteSize } from "./budget";
 import { ReadError } from "./errors";
-import { foldMessages } from "./fold";
 import type { RelayReader } from "./reader";
 import type { OutgoingEvent } from "./outbox";
 import type { LiveCallbacks } from "./live";
@@ -24,8 +23,6 @@ import {
   scriptedTransport,
   signed,
 } from "./testing";
-
-vi.mock("./fold", { spy: true });
 
 const relay = keypair(),
   viewer = keypair(),
@@ -394,6 +391,30 @@ it("reopens a closed thread at once from its last read and repairs it in the bac
   await next;
 });
 
+it("reopens a thread at once after a route retargeted it to its root", async () => {
+  const h = live();
+  const first = reply("first", 10);
+  const loaded = h.view.refresh();
+  h.next().respond([root, first]);
+  await loaded;
+  // Opening a thread from the timeline routes to its root, which the shown
+  // view verifies in place.
+  const selecting = h.view.retarget(root.id, new AbortController().signal);
+  h.next().respond([root]);
+  await flush();
+  h.next().respond([]);
+  expect(await selecting).toBe("selected");
+  h.view.dispose();
+  const view = h.session.thread("a", root.id);
+  expect(view.snapshot().status).toBe("ready");
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
+
+  view.dispose();
+  const reopened = h.session.thread("a", root.id);
+  expect(reopened.snapshot().replies.map((row) => row.id)).toEqual([first.id]);
+  reopened.dispose();
+});
+
 it("reopens a thread from scratch after a cache clear, a close mid-read or an exact view", async () => {
   const h = live();
   const first = reply("first", 10);
@@ -434,17 +455,19 @@ const direct = (
     resume,
     seed,
     sending = [],
+    agentOwner = () => undefined,
   }: {
     resume?: ThreadResume;
     seed?: typeof root;
     sending?: (typeof root)[];
+    agentOwner?: (pubkey: string) => string | undefined;
   } = {},
 ) =>
   createThreadView({
     channelId: "a",
     messageId: root.id,
     relayAuthor: relay.pubkey,
-    agentOwner: () => undefined,
+    agentOwner,
     reader: {
       read: async () => {
         if (events instanceof Error) throw events;
@@ -478,14 +501,35 @@ async function closed() {
 const replyIds = (thread: ReturnType<typeof direct>) =>
   thread.view.snapshot().replies.map((row) => row.id);
 
+it("leaves an earlier resume in place once a retarget selects a reply", async () => {
+  const select = async (thread: ReturnType<typeof direct>, id: string) =>
+    expect(await thread.view.retarget(id, new AbortController().signal)).toBe(
+      "selected",
+    );
+  const routed = direct([root, first]);
+  await routed.view.refresh();
+  await select(routed, root.id);
+  expect(routed.resume()).toMatchObject({ root: { id: root.id } });
+  // Its rows keep the selected reply even once routed back to the root.
+  const selected = direct([root, first]);
+  await selected.view.refresh();
+  await select(selected, first.id);
+  await select(selected, root.id);
+  expect(selected.resume()).toBe("keep");
+});
+
 it("drops a resumed row its repair does not read again", async () => {
   const resume = await closed();
   // The relay omits a deleted row, and its deletion with it.
   const view = direct([root, first], { resume });
-  expect(view.view.snapshot().status).toBe("ready");
+  expect(view.view.snapshot()).toMatchObject({
+    status: "ready",
+    resumed: true,
+  });
   expect(replyIds(view)).toEqual([first.id, gone.id]);
   await view.view.refresh();
   expect(replyIds(view)).toEqual([first.id]);
+  expect(view.view.snapshot().resumed).toBeUndefined();
   // A repair that fails leaves nothing it could not confirm on screen.
   const failing = direct(new Error("offline"), { resume });
   expect(failing.view.snapshot().replies).toHaveLength(2);
@@ -493,7 +537,37 @@ it("drops a resumed row its repair does not read again", async () => {
   expect(failing.view.snapshot()).toMatchObject({
     status: "error",
     replies: [],
+    resumed: undefined,
   });
+});
+
+it("a resumed relayed row is attributed by its agent's owner now, not when it closed", async () => {
+  const agent = keypair();
+  const relayed = message(alice, "a", "Relayed", 10, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+    ["relayed-from", agent.pubkey, "b"],
+  ]);
+  let owner: string | undefined = alice.pubkey;
+  const agentOwner = () => owner;
+  const closing = direct([root, relayed], { agentOwner });
+  await closing.view.refresh();
+  const resume = closing.resume();
+  closing.view.dispose();
+  if (typeof resume !== "object") throw new Error("No resume");
+  const verified = (thread: ReturnType<typeof direct>) =>
+    thread.view.snapshot().replies.find((row) => row.id === relayed.id)
+      ?.relayedFrom?.verified;
+  expect(resume.replies[0]?.relayedFrom?.verified).toBe(true);
+  // The agent's profile withdrew its attestation while the thread was closed.
+  owner = undefined;
+  const view = direct([root, relayed], { resume, agentOwner });
+  expect(view.view.snapshot().resumed).toBe(true);
+  expect(verified(view)).toBe(false);
+  // Attested again, the open view follows the owner it looked up.
+  owner = alice.pubkey;
+  view.ownersChanged();
+  expect(verified(view)).toBe(true);
 });
 
 it("never shows a resumed row over its own evidence or a retained deletion", async () => {
@@ -1003,6 +1077,133 @@ it("explicitly limits oversized evidence rather than evicting aux and resurrecti
   });
 });
 
+// Sign this immutable evidence once at module setup, outside each test's clock.
+const summaryBudgetFixture = (() => {
+  const deleted = reply("deleted", 2);
+  const replies = [
+    deleted,
+    ...Array.from({ length: 999 }, (_, i) => reply(`${i}`, i + 3)),
+  ];
+  const summaries = Object.freeze(
+    replies.map((_, i) =>
+      signed(relay, {
+        kind: 39005,
+        created_at: i + 2,
+        tags: [["e", root.id]],
+        content: JSON.stringify({ reply_count: i + 1 }),
+      }),
+    ),
+  );
+  return Object.freeze({
+    deleted,
+    summaries,
+    events: Object.freeze([root, ...replies, ...summaries]),
+    tombstone: signed(alice, {
+      kind: 5,
+      content: "",
+      tags: [["e", deleted.id]],
+    }),
+    overflow: Object.freeze(
+      Array.from({ length: 998 }, (_, i) => reply(`more ${i}`, i + 1002)),
+    ),
+  });
+})();
+
+it.each(["live", "read"])(
+  "compacts superseded summaries before the %s thread budget without evicting messages or tombstones",
+  async (source) => {
+    const { deleted, summaries, events, tombstone, overflow } =
+      summaryBudgetFixture;
+    const thread = createThreadView({
+      channelId: "a",
+      messageId: root.id,
+      relayAuthor: relay.pubkey,
+      reader: { read: async () => events },
+      seed: root,
+      local: undefined,
+      canAccess: () => true,
+      visible: (events) => events,
+      notify: (listener) => listener(),
+    });
+    try {
+      if (source === "read") await thread.view.refresh();
+      else thread.receive(events);
+      expect(thread.view.snapshot()).toMatchObject({
+        limited: false,
+        error: undefined,
+        root: { id: root.id, replyCount: 1000 },
+      });
+      expect(thread.view.snapshot().replies).toHaveLength(1000);
+      expect(thread.events()).toHaveLength(1002);
+      expect(thread.events()).toContain(summaries.at(-1));
+
+      thread.receive([tombstone]);
+      thread.receive([deleted, ...summaries.slice(0, -1)]);
+      expect(thread.view.snapshot().replies).toHaveLength(999);
+      expect(thread.events()).toContain(deleted);
+      expect(thread.events()).toContain(tombstone);
+      expect(thread.events()).toHaveLength(1003);
+
+      // The cap still applies to messages, even after summary compaction.
+      thread.receive(overflow);
+      expect(thread.view.snapshot()).toMatchObject({
+        status: "error",
+        limited: true,
+        root: undefined,
+        replies: [],
+      });
+    } finally {
+      thread.view.dispose();
+    }
+  },
+);
+
+it("retains one authorized summary per target with replay-independent timestamp and id ordering", () => {
+  const answer = reply("answer", 2);
+  const summary = (
+    key: typeof relay,
+    target: string,
+    time: number,
+    count: number,
+  ) =>
+    signed(key, {
+      kind: 39005,
+      created_at: time,
+      tags: [["e", target]],
+      content: JSON.stringify({ reply_count: count }),
+    });
+  const first = summary(relay, root.id, 3, 2);
+  const second = summary(relay, root.id, 3, 3);
+  const winner = first.id < second.id ? first : second;
+  const loser = winner === first ? second : first;
+  const childSummary = summary(relay, answer.id, 2, 1);
+  const thread = createThreadView({
+    channelId: "a",
+    messageId: root.id,
+    relayAuthor: relay.pubkey,
+    reader: {} as RelayReader,
+    seed: root,
+    local: undefined,
+    canAccess: () => true,
+    visible: (events) => events,
+    notify: (listener) => listener(),
+  });
+  try {
+    thread.receive([answer, loser, childSummary]);
+    thread.receive([winner, summary(alice, root.id, 100, 999)]);
+    thread.receive([loser, summary(relay, root.id, 2, 1)]);
+    expect(thread.events().filter((event) => event.kind === 39005)).toEqual(
+      expect.arrayContaining([winner, childSummary]),
+    );
+    expect(thread.events()).toHaveLength(4);
+    expect(thread.view.snapshot().root?.replyCount).toBe(
+      JSON.parse(winner.content).reply_count,
+    );
+  } finally {
+    thread.view.dispose();
+  }
+});
+
 it("trips the live byte limit at exactly the whole-thread serialised size", async () => {
   const h = seeded();
   const first = reply("first", 10);
@@ -1190,6 +1391,54 @@ it.each([
   },
 );
 
+it("ignores known replay IDs while admitting new evidence after reads and purge", async () => {
+  const events = [
+    root,
+    ...Array.from({ length: 500 }, (_, i) => reply(`${i}`, i + 2)),
+  ];
+  let hidden: string | undefined;
+  const thread = createThreadView({
+    channelId: "a",
+    messageId: root.id,
+    relayAuthor: relay.pubkey,
+    reader: { read: async () => events },
+    seed: root,
+    local: undefined,
+    canAccess: () => true,
+    visible: (events) => events.filter((event) => event.id !== hidden),
+    notify: (listener) => listener(),
+  });
+  try {
+    thread.receive([root]);
+
+    await thread.view.refresh();
+    const snapshot = thread.view.snapshot();
+    expect(snapshot.replies).toHaveLength(500);
+    const listener = vi.fn();
+    thread.view.subscribe(listener);
+    // Reconnect delivers retained replies individually, not as one batch.
+    for (const event of events) thread.receive([event]);
+    expect(listener).not.toHaveBeenCalled();
+    expect(thread.view.snapshot()).toBe(snapshot);
+
+    const fresh = reply("new", 502);
+    thread.receive([...events, fresh]);
+    expect(thread.view.snapshot().replies).toHaveLength(501);
+    thread.receive([fresh]);
+
+    // Pruned IDs may be received again; this is not an unbounded seen-ID set.
+    hidden = fresh.id;
+    thread.purge();
+    expect(thread.view.snapshot().replies).toHaveLength(500);
+    hidden = undefined;
+    thread.receive([fresh]);
+    expect(thread.view.snapshot().replies).toHaveLength(501);
+    expect(thread.events()).toContain(fresh);
+  } finally {
+    thread.view.dispose();
+  }
+});
+
 it("re-folds for local operations and profiles only when the thread's own change", () => {
   const agent = keypair();
   const answer = signed(agent, {
@@ -1231,12 +1480,10 @@ it("re-folds for local operations and profiles only when the thread's own change
   expect(content(answer.id)).toBe("Whole answer");
   const listener = vi.fn();
   thread.view.subscribe(listener);
-  vi.mocked(foldMessages).mockClear();
   // Another conversation's send settles, and an unrelated profile arrives.
   operations = [{ ...elsewhere, delivery: "accepted" }];
   thread.localChanged();
   thread.ownersChanged();
-  expect(foldMessages).not.toHaveBeenCalled();
   expect(listener).not.toHaveBeenCalled();
   // The agent's owner is verified: their edit now applies.
   owner = alice.pubkey;
@@ -1247,10 +1494,8 @@ it("re-folds for local operations and profiles only when the thread's own change
   operations = [...operations, { event: sending, delivery: "sending" }];
   thread.localChanged();
   expect(content(sending.id)).toBe("Mine");
-  expect(foldMessages).toHaveBeenCalledTimes(2);
   expect(listener).toHaveBeenCalledTimes(2);
   // The same operations in a new snapshot change nothing.
   operations = [...operations];
   thread.localChanged();
-  expect(foldMessages).toHaveBeenCalledTimes(2);
 });

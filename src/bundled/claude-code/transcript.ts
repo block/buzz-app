@@ -26,6 +26,11 @@ export type ClaudeTranscript = Transcript & {
   incomplete?: string;
 };
 
+/** The last complete working turn and file boundary from an accepted read. */
+export type WorkingPoll = {
+  cursor?: { path: string; offset: number; turn: TranscriptTurn; last: number };
+};
+
 type Json = Record<string, unknown>;
 /** A person's display name, if known. */
 type Names = (pubkey: string) => string | undefined;
@@ -41,6 +46,7 @@ export type Conversation = Readonly<{
   /** The agent's membership key, as its turn prompts name it. */
   agent: string;
   sessionId?: string;
+  community?: true;
   channelId: string;
   root?: string;
 }>;
@@ -81,7 +87,10 @@ function prompt(
   at: number,
   raw: string,
   name?: Names,
-): TranscriptItem {
+): {
+  item: Extract<TranscriptItem, { type: "prompt" }>;
+  hasMessage: boolean;
+} {
   let sections = promptSections(raw);
   const steer = sections.find((section) => section.tag === STEER);
   // An older steer wraps a whole turn.
@@ -89,24 +98,31 @@ function prompt(
     sections = promptSections(steer.body);
   const { text, author, authorPubkey } = promptMessage(sections, name);
   return {
-    id,
-    at,
-    type: "prompt",
-    text: text || raw,
-    ...(author ? { author } : {}),
-    ...(authorPubkey ? { authorPubkey } : {}),
-    sections,
-    steer: !!steer,
+    item: {
+      id,
+      at,
+      type: "prompt",
+      text: text || raw,
+      ...(author ? { author } : {}),
+      ...(authorPubkey ? { authorPubkey } : {}),
+      sections,
+      steer: !!steer,
+    },
+    hasMessage: !!(text || author || authorPubkey),
   };
 }
 
-/** Transcript lines as turns, each opened by a prompt. Claude Code's own
- * entries (metadata, subagents, attachments) are left out. */
+export { withNotices } from "../../features/agents/activity-transcript";
+
+/** Transcript lines as turns, each opened by a prompt. Claude Code records
+ * some Buzz steers as queued-command attachments within the active turn. */
 export function claudeTurns(
   file: string,
   conversation: Session,
   working: boolean,
   name?: Names,
+  tail?: { uncertain: boolean; last?: number; opener?: number },
+  prior?: TranscriptTurn,
 ): TranscriptTurn[] {
   const turns: TranscriptTurn[] = [];
   const tools = new Map<string, ToolItem>();
@@ -118,7 +134,17 @@ export function claudeTurns(
       message: { posted?: boolean; messageId?: string };
     }
   >();
-  let last = 0;
+  if (prior) {
+    const items = prior.items.map((item) => {
+      if (item.type !== "tool" || item.status !== "in_progress") return item;
+      const copy = { ...item };
+      tools.set(copy.toolCallId, copy);
+      return copy;
+    });
+    turns.push({ ...prior, items });
+  }
+  let last = tail?.last ?? 0;
+  let position = 0;
   const turn = (id: string, at: number, partial: boolean) => {
     const current = turns.at(-1);
     if (current) current.endedAt = Math.max(last, current.startedAt);
@@ -138,6 +164,8 @@ export function claudeTurns(
     return next;
   };
   for (const line of file.split("\n")) {
+    const start = position;
+    position += line.length + 1;
     let entry: Json | undefined;
     try {
       entry = object(JSON.parse(line));
@@ -145,22 +173,32 @@ export function claudeTurns(
       continue;
     }
     if (!entry || entry.isSidechain || entry.isMeta) continue;
-    const message = object(entry.message);
     const id = str(entry.uuid);
-    const at = Date.parse(str(entry.timestamp)) || last;
-    if (
-      !message ||
-      !id ||
-      (entry.type !== "user" && entry.type !== "assistant")
-    )
+    if (!id) continue;
+    const timestamp = Date.parse(str(entry.timestamp));
+    const at = timestamp || last;
+    if (entry.type === "attachment") {
+      const attachment = object(entry.attachment);
+      if (attachment?.type !== "queued_command") continue;
+      const { item, hasMessage } = prompt(id, at, str(attachment.prompt), name);
+      if (item.steer && hasMessage) {
+        (turns.at(-1) ?? turn(id, at, true)).items.push(item);
+        last = at;
+      }
+      continue;
+    }
+    const message = object(entry.message);
+    if (!message || (entry.type !== "user" && entry.type !== "assistant"))
       continue;
     const results = blocks(message.content).filter(
       (block) => block.type === "tool_result",
     );
     if (entry.type === "user" && !results.length) {
-      const item = prompt(id, at, text(message.content), name);
-      const current =
-        item.type === "prompt" && item.steer ? turns.at(-1) : undefined;
+      const { item } = prompt(id, at, text(message.content), name);
+      const current = item.steer ? turns.at(-1) : undefined;
+      if (tail && (!timestamp || (item.steer && (!current || current.partial))))
+        tail.uncertain = true;
+      if (tail && !current) tail.opener = start;
       (current ?? turn(id, at, false)).items.push(item);
       last = at;
       continue;
@@ -180,7 +218,10 @@ export function claudeTurns(
         });
       }
       const tool = tools.get(str(result.tool_use_id));
-      if (!tool) continue;
+      if (!tool) {
+        if (tail && !sent && !current.partial) tail.uncertain = true;
+        continue;
+      }
       tool.output = text(result.content);
       tool.status = result.is_error ? "failed" : "completed";
       tool.completedAt = at;
@@ -243,7 +284,8 @@ export function claudeTurns(
   const current = turns.at(-1);
   if (current && !working) current.endedAt = Math.max(last, current.startedAt);
   // A session file holds the whole session, from its start.
-  if (turns[0] && !turns[0].partial) turns[0].newSession = true;
+  if (tail) tail.last = last;
+  if (!prior && turns[0] && !turns[0].partial) turns[0].newSession = true;
   return turns;
 }
 
@@ -273,11 +315,15 @@ export function startedFor(file: string, conversation: Conversation) {
     const agent = field("Agent");
     return (
       (agent === undefined || agent === conversation.agent) &&
-      !!field("Channel")?.endsWith(`(#${conversation.channelId})`) &&
-      (conversation.root
-        ? field("Session scope") === "thread" &&
-          field("Thread root") === conversation.root
-        : field("Session scope") !== "thread")
+      (conversation.community
+        ? field("Session scope") === "community"
+        : field("Session scope") !== "community" &&
+          !!field("Channel")?.endsWith(`(#${conversation.channelId})`)) &&
+      (conversation.community ||
+        (conversation.root
+          ? field("Session scope") === "thread" &&
+            field("Thread root") === conversation.root
+          : field("Session scope") !== "thread"))
     );
   }
   return false;
@@ -288,10 +334,13 @@ export function startedFor(file: string, conversation: Conversation) {
  * the first prompt once the file is read. */
 const indexedFor = (start: Start, conversation: Conversation) =>
   (start.agent === undefined || start.agent === conversation.agent) &&
-  start.channelId === conversation.channelId &&
-  (conversation.root
-    ? start.scope === "thread" && start.root === conversation.root
-    : start.scope !== "thread");
+  (conversation.community
+    ? start.scope === "community"
+    : start.scope !== "community" &&
+      start.channelId === conversation.channelId &&
+      (conversation.root
+        ? start.scope === "thread" && start.root === conversation.root
+        : start.scope !== "thread"));
 
 /** How long finding the agent's workspace may take. */
 const WORKSPACE_TIMEOUT_MS = 10_000;
@@ -364,6 +413,7 @@ async function sizeOf(spawn: Spawn, path: string, signal: AbortSignal) {
 
 /** MiB read from the end of a session for its latest turns. */
 const LATEST_MIB = 2;
+const MIB = 1 << 20;
 
 /** Each workspace's project, found once for the latest-turn reads. */
 const projects = new Map<string, string | undefined>();
@@ -374,10 +424,92 @@ export const OVERSIZED_READ_MS = 30_000;
 /** When each such session was last left to a full read. */
 const oversized = new Map<string, number>();
 
+async function readTail(
+  spawn: Spawn,
+  path: string,
+  signal: AbortSignal,
+  size: number,
+  from = Math.max(0, Math.ceil(size / MIB) - LATEST_MIB),
+  count = LATEST_MIB,
+) {
+  const bytes = await readFile(
+    spawn,
+    "~/.claude/projects",
+    path,
+    signal,
+    undefined,
+    "read-page",
+    [String(from), String(count)],
+  );
+  const start = from ? bytes.indexOf(10) + 1 : 0;
+  return {
+    from,
+    bytes,
+    get text() {
+      return from && !start ? undefined : decode(bytes.subarray(start));
+    },
+  };
+}
+
+export async function readTranscriptPreview(
+  spawn: Spawn,
+  workspace: SessionsPlace,
+  conversation: Conversation,
+  working: boolean,
+  signal: AbortSignal,
+  nameOf?: Names,
+) {
+  const { sessionId, channelId, root } = conversation;
+  if (!sessionId || !/^[\w-]+$/.test(sessionId)) return undefined;
+  try {
+    const project = await workspaceProject(spawn, workspace, signal);
+    if (!project) return undefined;
+    const path = `./${project}/${sessionId}.jsonl`;
+    const size = await sizeOf(spawn, path, signal);
+    if (size <= LATEST_MIB * (1 << 20)) return undefined;
+    const { from, text } = await readTail(spawn, path, signal, size);
+    signal.throwIfAborted();
+    if (!text) return undefined;
+    const boundary = { uncertain: false };
+    const turns = claudeTurns(
+      text,
+      { sessionId, channelId, ...(root ? { root } : {}) },
+      working,
+      nameOf,
+      boundary,
+    );
+    const first = turns[0];
+    if (
+      boundary.uncertain ||
+      (first?.partial &&
+        first.items.some((item) => item.type === "prompt" && item.steer))
+    )
+      return undefined;
+    const whole = turns.filter((turn) => !turn.partial);
+    const firstWhole = whole[0];
+    if (
+      !firstWhole ||
+      whole.some(
+        (turn, index) => turn.startedAt < (whole[index - 1]?.startedAt ?? 0),
+      )
+    )
+      return undefined;
+    if (from) firstWhole.newSession = false;
+    return {
+      turns: whole.slice(-TURN_LIMIT),
+      more: true,
+    } satisfies ClaudeTranscript;
+  } catch {
+    signal.throwIfAborted();
+    return undefined;
+  }
+}
+
 /** The whole turns in the last {@link LATEST_MIB} MiB of the conversation's
  * saved session, oldest first; undefined with no saved session. While a turn
  * is larger than that, none, so what is shown stays, except undefined every
- * {@link OVERSIZED_READ_MS} to read it in full. */
+ * {@link OVERSIZED_READ_MS} to read it in full. The same fallback recovers
+ * delivered steers when the window omits their turn's opening prompt. */
 export async function readLatestTurns(
   spawn: Spawn,
   workspace: SessionsPlace,
@@ -385,6 +517,7 @@ export async function readLatestTurns(
   working: boolean,
   signal: AbortSignal,
   nameOf?: Names,
+  poll?: WorkingPoll,
 ): Promise<TranscriptTurn[] | undefined> {
   // A folder's project is known without a lookup to keep.
   if (typeof workspace === "string" && !projects.has(workspace))
@@ -397,27 +530,44 @@ export async function readLatestTurns(
   if (!project || !sessionId) return undefined;
   const path = `./${project}/${sessionId}.jsonl`;
   const size = await sizeOf(spawn, path, signal);
-  const from = Math.max(0, Math.floor((size - 1) / (1 << 20)) - LATEST_MIB + 1);
-  const bytes = await readFile(
-    spawn,
-    "~/.claude/projects",
-    path,
-    signal,
-    undefined,
-    "read-page",
-    [String(from), String(LATEST_MIB)],
-  );
+  const cursor = working && poll?.cursor;
+  if (cursor) {
+    if (path !== cursor.path || size < cursor.offset) return undefined;
+    if (size === cursor.offset) return [];
+    const page = Math.floor(cursor.offset / MIB);
+    const count = Math.ceil(size / MIB) - page;
+    if (count > PAGE_MIB) return undefined;
+    const { bytes } = await readTail(spawn, path, signal, size, page, count);
+    const start = cursor.offset - page * MIB;
+    if (bytes.length < start) return undefined;
+    const end = bytes.lastIndexOf(10) + 1;
+    if (end <= start) return [];
+    const state = { uncertain: false, last: cursor.last };
+    const turns = claudeTurns(
+      decode(bytes.subarray(start, end)),
+      { ...conversation, sessionId },
+      true,
+      nameOf,
+      state,
+      cursor.turn,
+    );
+    const turn = turns[0];
+    if (state.uncertain || turns.length !== 1 || !turn) return undefined;
+    poll.cursor = { path, offset: page * MIB + end, turn, last: state.last };
+    return turns;
+  }
+  const { from, text } = await readTail(spawn, path, signal, size);
   const tooLarge = () => {
+    if (!working) return undefined;
     const last = oversized.get(path);
     if (last !== undefined && Date.now() - last < OVERSIZED_READ_MS) return [];
     oversized.set(path, Date.now());
     return undefined;
   };
-  // A chunk from partway through starts partway through a line.
-  const start = from ? bytes.indexOf(10) + 1 : 0;
-  if (from && !start) return tooLarge();
+  if (text === undefined) return tooLarge();
+  const boundary = from && !working ? { uncertain: false } : undefined;
   const turns = claudeTurns(
-    decode(bytes.subarray(start)),
+    text,
     {
       sessionId,
       channelId: conversation.channelId,
@@ -425,11 +575,24 @@ export async function readLatestTurns(
     },
     working,
     nameOf,
-  ).filter((turn) => !turn.partial);
-  if (from && turns[0]) turns[0].newSession = false;
-  if (from && !turns.length) return tooLarge();
-  oversized.delete(path);
-  return turns;
+    boundary,
+  );
+  if (boundary?.uncertain) return undefined;
+  const first = turns[0];
+  const whole = turns.filter((turn) => !turn.partial);
+  if (
+    from &&
+    (!whole.length ||
+      (first?.partial &&
+        first.items.some((item) => item.type === "prompt" && item.steer)))
+  ) {
+    const fallback = tooLarge();
+    if (!fallback || !whole.length) return fallback;
+  } else {
+    oversized.delete(path);
+  }
+  if (from && whole[0]) whole[0].newSession = false;
+  return whole;
 }
 
 /** A session file in `~/.claude/projects`. One too large to read whole is
@@ -454,8 +617,9 @@ async function readSession(
       args,
     );
   try {
-    const text = decode(await read());
-    return { text, cut: false, start: async () => text };
+    const bytes = await read();
+    const text = decode(bytes);
+    return { text, end: bytes.length, cut: false, start: async () => text };
   } catch (error) {
     signal.throwIfAborted();
     if (!/larger than 50 MB/.test(error instanceof Error ? error.message : ""))
@@ -464,6 +628,7 @@ async function readSession(
   const size = await sizeOf(spawn, path, signal);
   let page = Math.floor((size - 1) / (PAGE_MIB << 20));
   let text = "";
+  let end = 0;
   // A page starts partway through a line, which ends the page before it.
   let rest = new Uint8Array();
   for (let pages = 1; page >= 0; page--, pages++) {
@@ -472,6 +637,7 @@ async function readSession(
       String(page * PAGE_MIB),
       String(PAGE_MIB),
     );
+    if (pages === 1) end = page * (PAGE_MIB << 20) + chunk.length;
     const bytes = new Uint8Array(chunk.length + rest.length);
     bytes.set(chunk);
     bytes.set(rest, chunk.length);
@@ -483,6 +649,7 @@ async function readSession(
   const cut = page > 0;
   return {
     text,
+    end,
     cut,
     start: async () => (cut ? decode(await read("read-page", "0", "4")) : text),
   };
@@ -536,6 +703,7 @@ export async function readTranscript(
   working: boolean,
   signal: AbortSignal,
   nameOf?: Names,
+  poll?: WorkingPoll,
 ): Promise<ClaudeTranscript | undefined> {
   const project = await workspaceProject(spawn, workspace, signal);
   if (!project) return undefined;
@@ -592,12 +760,36 @@ export async function readTranscript(
     if (name !== saved && !startedFor(await file.start(), conversation))
       continue;
     found = true;
+    const state =
+      working && name === saved && poll && file.text.endsWith("\n")
+        ? { uncertain: false, last: 0, opener: -1 }
+        : undefined;
     const own = claudeTurns(
       file.text,
       session,
       working && name === saved,
       nameOf,
+      state,
     );
+    const active = own.at(-1);
+    if (poll && state && state.opener >= 0 && active && !active.partial) {
+      const from = Math.ceil(file.end / MIB) - LATEST_MIB;
+      const room = file.end - from * MIB;
+      if (
+        from > 0 &&
+        (file.text.length - state.opener >= room ||
+          new TextEncoder().encode(file.text.slice(state.opener)).length >=
+            room)
+      ) {
+        poll.cursor = {
+          path: `./${project}/${name}`,
+          offset: file.end,
+          turn: active,
+          last: state.last,
+        };
+        oversized.delete(poll.cursor.path);
+      }
+    }
     cut ||= file.cut;
     if (file.cut) {
       // Its first kept turn did not start the session, and with none kept

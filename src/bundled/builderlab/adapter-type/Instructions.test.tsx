@@ -86,6 +86,7 @@ async function fixture(signedIn = true, openIdentity?: () => void) {
       email,
       canUseRemoteAgents,
       canUseBuilderlabDecisions: false,
+      canUseHostedTranscription: false,
     },
   }));
   const release = vi.fn();
@@ -286,6 +287,7 @@ it.each(["cancel", "timeout"] as const)(
           email: "a@example.com",
           canUseRemoteAgents: true,
           canUseBuilderlabDecisions: false,
+          canUseHostedTranscription: false,
         },
       });
       h.session.dispose();
@@ -711,6 +713,7 @@ it("recovers an unloaded no-access account through logout and normal sign-in, re
             email: "a@example.com",
             canUseRemoteAgents: true,
             canUseBuilderlabDecisions: false,
+            canUseHostedTranscription: false,
           },
         }),
       );
@@ -1030,7 +1033,12 @@ it("opens Activity without login and keeps Identity's login running after leavin
     await signIn.mock.results[0]?.value;
   });
   expect(h.session.snapshot().status).toBe("signed-in");
-  expect(h.request).not.toHaveBeenCalled();
+  // Signed in, Activity reads only the agent's stored session list.
+  await waitFor(() =>
+    expect(
+      h.request.mock.calls.map(([input]) => input.url.split("/").at(-1)),
+    ).toEqual(["list-agents", "list-agent-sessions"]),
+  );
   expect(screen.queryByRole("textbox", { name: "Instructions" })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));
   expect(await loadedInstructions()).toHaveValue("First instructions.");
@@ -1098,6 +1106,7 @@ it("shows the remote execution hint only while the shared account is signed in",
           email: "a@example.com",
           canUseRemoteAgents: true,
           canUseBuilderlabDecisions: false,
+          canUseHostedTranscription: false,
         },
       });
       await signIn.mock.results[0]?.value;
@@ -1239,7 +1248,9 @@ it("keeps hosted instructions on cancellation and resets a confirmed discard", a
   expect(runtime.closest(".buzz-settings-group")).toHaveTextContent(
     "Workspace",
   );
-  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent("Sessions");
+  expect(runtime.closest(".buzz-settings-group")).toHaveTextContent(
+    "Session scope",
+  );
   expect(screen.queryByRole("button", { name: /^Model:/ })).toBeNull();
   expect(screen.queryByRole("combobox", { name: "Thinking" })).toBeNull();
   await user.click(screen.getByRole("tab", { name: "Identity" }));

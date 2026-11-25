@@ -1,3 +1,4 @@
+import { viewerMember } from "../relay/membership";
 import {
   REPLY_CORRELATION_MS,
   type LocalAgentSource,
@@ -81,7 +82,7 @@ export function notificationAuthorized(
           channel.id === target.channelId &&
           !channel.huddle &&
           !channel.metadataPending &&
-          channel.members?.includes(scope.viewer),
+          viewerMember(channel, scope.viewer),
       )
   );
 }
@@ -196,10 +197,13 @@ export function bindMessageNotifications(
             // Explicit mentions bypass channel mute, as in the legacy policy —
             // including p-tagged messages in DM channels, whose category is
             // "direct". Unknown preferences must not briefly release ordinary
-            // alerts at startup.
+            // alerts at startup; a display-only saved copy cannot cancel them.
             if (!attention.mentioned) {
               const preferences = owned.sidebarPreferences.snapshot();
-              if (preferences.data?.muted.includes(message.channelId))
+              if (
+                !preferences.cached &&
+                preferences.data?.muted.includes(message.channelId)
+              )
                 return false;
               if (
                 preferences.status !== "ready" &&

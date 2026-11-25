@@ -1,3 +1,7 @@
+import {
+  COMMUNITY_SESSION,
+  sessionScope,
+} from "../../features/agent-harness/session-scope";
 import { ModelDiscoveryRecovery } from "../../features/agents/ModelDiscoveryRecovery";
 // goose's New agent choices and agent settings. Providers, their keys and
 // their models are goose's own: listed from it, and saved into its config.
@@ -12,9 +16,14 @@ import {
 import { ProviderDialogActions } from "../../features/agents/ProviderDialogActions";
 import activityStyles from "../../features/agents/ActivityLayout.module.css";
 import { TranscriptPanel } from "../../features/agents/TranscriptPanel";
-import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
+import {
+  AgentSaveButton,
+  ClearModelOverrides,
+} from "../../features/agents/AgentSaveButton";
 import { AgentInstructions } from "../../features/agents/AgentInstructions";
 import { AISettings, runsOnDetails } from "../../features/agents/AISettings";
+import { CompactionField } from "../../features/agents/Compaction";
+import { withCompactAt } from "../../features/agents/compact-at";
 import {
   candidatesFor,
   offRecommended,
@@ -27,6 +36,13 @@ import {
   type ModelChoice,
   ModelPicker,
 } from "../../features/agents/ModelPicker";
+import {
+  activeRoute,
+  routeModel,
+  routeOf,
+  useInitialRoute,
+  useModelRoutes,
+} from "../../features/agents/model-routes";
 import {
   OpenedConversation,
   useOpenTranscript,
@@ -79,6 +95,7 @@ const SCOPES = [
     options: [
       { value: "thread", label: "One session per thread" },
       { value: "channel", label: "One session per channel" },
+      { value: "community", label: "One session per community" },
     ],
   },
 ];
@@ -129,12 +146,15 @@ type Row = Readonly<{
   sessionId: string;
   title: string;
   channelId: string;
+  community?: true;
   root?: string;
   at?: number;
   /** The goose sessions saved for its place. */
   sessions?: readonly string[];
   /** Its channel's name, when the community lists it. */
   name?: string;
+  /** Started outside any conversation, such as a watch's or timer's turn. */
+  standalone?: true;
 }>;
 const placeOf = (key: string): Place => {
   const [channelId = key, root] = key.split("/");
@@ -153,6 +173,7 @@ export function activityRows(
     conversation?: string | null;
   }[],
   label: (channelId: string) => { name?: string } | undefined = () => undefined,
+  source: (key: string) => Place = placeOf,
 ) {
   const running = new Map(
     live.flatMap((session) =>
@@ -170,7 +191,7 @@ export function activityRows(
     .map(([key, { at, sessions }]): Row => {
       const id = running.get(key)?.sessionId;
       const ids = [...new Set([...(id ? [id] : []), ...sessions])];
-      const place = placeOf(key);
+      const place = source(key);
       return {
         key,
         sessionId: ids[0] ?? "",
@@ -187,7 +208,16 @@ export function activityRows(
   const standalone = starts
     .flatMap(({ id, at, title = "", conversation }): Row[] =>
       conversation === null && at !== undefined
-        ? [{ key: id, sessionId: id, title, at, channelId: "" }]
+        ? [
+            {
+              key: id,
+              sessionId: id,
+              title,
+              at,
+              channelId: "",
+              standalone: true as const,
+            },
+          ]
         : [],
     )
     .reverse()
@@ -544,6 +574,7 @@ export function createTabs({
         {!hideModel && provider && (provider.configured || rows) && (
           <ModelPicker
             key={`models:${id}`}
+            harness="goose"
             groupByFamily
             modelLabelPrefixes={
               id.startsWith("databricks")
@@ -555,6 +586,7 @@ export function createTabs({
             models={models.value ?? []}
             loading={models.status === "loading"}
             value={value.model}
+            defaultModel={modelDefault}
             defaultLabel={modelDefault || "Provider model"}
             {...(!provider.configured
               ? { description: `Available once ${provider.name} is set up.` }
@@ -657,8 +689,13 @@ export function createTabs({
     disabled?: boolean;
     onChange(effort: string): void;
   }>) {
+    // A route picks each turn's level itself.
+    const routed = Boolean(routeOf(choice.model));
     const [efforts, retry] = useRead(
-      () => setup.efforts(choice),
+      () =>
+        routed
+          ? Promise.resolve({ current: "", levels: [] })
+          : setup.efforts(choice),
       `${choice.provider}\u0000${choice.model.trim()}:${revision}`,
     );
     const failed =
@@ -679,13 +716,20 @@ export function createTabs({
         variant={compact ? "compact" : "preference"}
         {...(compact && { align: "end" as const })}
         value={value}
-        {...(!value
+        {...(routed
           ? {
-              valueLabel: fallback ?? "Default",
-              ...(compact && fallback ? { valueSuffix: " · Default" } : {}),
+              valueLabel: "Auto",
+              ...(!compact && {
+                description: "Chosen for each conversation's turns",
+              }),
             }
-          : {})}
-        disabled={disabled}
+          : !value
+            ? {
+                valueLabel: fallback ?? "Default",
+                ...(compact && fallback ? { valueSuffix: " · Default" } : {}),
+              }
+            : {})}
+        disabled={routed || disabled}
         {...(failed && !compact ? { description: failed } : {})}
         groups={[
           {
@@ -861,20 +905,41 @@ export function createTabs({
       const transcript = await history.transcript(
         {
           agent: agent.key,
-          workspace,
+          // Where the conversation's sessions ran.
+          workspace: runtime.folders(agent.key).get(row.key) ?? workspace,
           ...(row.sessionId ? { sessionId: row.sessionId } : {}),
           ...(row.sessions ? { sessions: row.sessions } : {}),
-          ...(row.channelId ? { place: placeOf(row.key) } : {}),
+          ...(row.channelId
+            ? {
+                place: {
+                  channelId: row.channelId,
+                  ...(row.root ? { root: row.root } : {}),
+                  ...(row.community ? { community: true } : {}),
+                },
+              }
+            : {}),
           ...(working ? { working } : {}),
         },
         signal,
         (pubkey) => runtime.name(agent.key, pubkey),
         reuse,
+        runtime.notices(agent.key),
       );
       return (
         transcript && {
           ...transcript,
-          turns: runtime.prompts(agent.key).shown(transcript.turns),
+          turns: runtime.prompts(agent.key).shown(
+            row.standalone
+              ? transcript.turns
+              : // Without a known place, each turn shows only by its own source.
+                runtime.readableTurns(
+                  agent.key,
+                  row.channelId
+                    ? row
+                    : { ...row, channelId: "", community: true },
+                  transcript.turns,
+                ),
+          ),
         }
       );
     };
@@ -936,12 +1001,14 @@ export function createTabs({
       () => runtime.prompts(agent.key).sessions(),
       [agent.key, live],
     );
-    const { conversations, standalone } = activityRows(
+    const { conversations: all, standalone } = activityRows(
       saved,
       live,
       starts,
       (id) => runtime.channelLabel(agent.key, id),
+      (key) => runtime.source(agent.key, key),
     );
+    const conversations = runtime.readableRows(agent.key, all);
     // The opened conversation's session: a thread's saved or live one, else
     // its channel's, read again each render so a first save is picked up.
     // With neither, its transcript finds the place's sessions by their goose
@@ -949,18 +1016,29 @@ export function createTabs({
     const match = (channelId: string, root?: string) =>
       conversations.find(
         (row) =>
-          row.sessionId && row.channelId === channelId && row.root === root,
+          !row.community &&
+          row.sessionId &&
+          row.channelId === channelId &&
+          row.root === root,
       );
     const here =
       conversation &&
       (() => {
         const { channelId, rootId } = conversation;
-        const found = (rootId && match(channelId, rootId)) || match(channelId);
+        const shared = readConfig(agent.config).scope === "community";
+        const found = shared
+          ? conversations.find((row) => row.community)
+          : (rootId && match(channelId, rootId)) || match(channelId);
         if (found) return found;
         const root =
-          readConfig(agent.config).scope === "channel" ? undefined : rootId;
+          readConfig(agent.config).scope !== "thread" ? undefined : rootId;
         return {
-          key: root ? `${channelId}/${root}` : channelId,
+          key: shared
+            ? COMMUNITY_SESSION
+            : root
+              ? `${channelId}/${root}`
+              : channelId,
+          ...(shared ? { community: true as const } : {}),
           sessionId: "",
           title: "",
           channelId,
@@ -975,9 +1053,11 @@ export function createTabs({
       return working === undefined ? undefined : working ? "Working" : "Idle";
     };
     const label = (row: Row) =>
-      row.title
-        ? titled(agent.name, row.title)
-        : `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
+      row.community
+        ? "Community session"
+        : row.title
+          ? titled(agent.name, row.title)
+          : `${row.name || row.channelId.slice(0, 8)} · ${row.root ? `thread ${row.root.slice(0, 8)}` : "channel"}`;
     const { open, show, back } = useOpenTranscript(
       conversation,
       label,
@@ -1160,6 +1240,7 @@ export function createTabs({
   }
 
   function CreateModel({
+    agent,
     config,
     onChange,
     onReadyChange,
@@ -1170,6 +1251,12 @@ export function createTabs({
     // A pick here takes the agent off Recommended, from what it runs on.
     const resolved = useRecommended(onRecommended(config));
     const current = offRecommended(running(config, resolved));
+    useInitialRoute(
+      "goose",
+      !agent && !onRecommended(config),
+      current.model,
+      (model) => onChange({ ...current, model, effort: "" }),
+    );
     const [open, setOpen] = useState(false);
     const [listing, reload] = useRead(() => setup.providers(), "providers");
     const provider = current.provider || listing.value?.defaults.provider || "";
@@ -1194,7 +1281,7 @@ export function createTabs({
     useEffect(() => onReadyChange?.(ready), [onReadyChange, ready]);
     const [thinking] = useRead(
       () =>
-        provider && selectedModel
+        provider && selectedModel && !routeOf(selectedModel)
           ? setup.efforts({ provider, model: selectedModel })
           : Promise.resolve({ current: "", levels: [] }),
       `${provider}\u0000${selectedModel}`,
@@ -1229,6 +1316,7 @@ export function createTabs({
         >
           <ModelPicker
             compact
+            harness="goose"
             groupByFamily
             includeDefault={false}
             resetLabel="Use Goose default"
@@ -1344,6 +1432,9 @@ export function createTabs({
     // Inert in a build that recommends nothing for goose.
     const following = onRecommended(draft) && candidatesFor("goose").length > 0;
     const resolved = useRecommended(following);
+    // The route Automatic runs on, while a plugin offers one.
+    useModelRoutes("goose");
+    const automaticRoute = activeRoute("goose", "", true);
     const manual = (
       <>
         {settingsHost?.typeControl?.(configChanged)}
@@ -1353,7 +1444,14 @@ export function createTabs({
           rows
           value={draft}
           onChange={(choice) =>
-            setDraft(offRecommended({ ...draft, ...choice }))
+            setDraft(
+              offRecommended({
+                ...draft,
+                ...choice,
+                // A route picks each turn's level itself.
+                ...(routeOf(choice.model) ? { effort: "" } : {}),
+              }),
+            )
           }
         />
         <ThinkingField
@@ -1372,6 +1470,35 @@ export function createTabs({
         if (!validWorkspace(workspace))
           throw new Error("Enter an absolute or ~/… workspace path.");
         const next = { ...draft, model: draft.model.trim(), workspace };
+        if (
+          settingsHost?.proposedModelOrEffort &&
+          (next.model || next.effort)
+        ) {
+          if (agent.executionBinding)
+            throw new Error(
+              "Clear the model and thinking overrides to use the target’s defaults.",
+            );
+          if (next.model && !routeOf(next.model)) {
+            const provider =
+              next.provider || (await setup.providers()).defaults.provider;
+            if (
+              !provider ||
+              !(await setup.models(provider)).some(
+                (model) => model.id === next.model,
+              )
+            )
+              throw new Error(
+                "Choose an available Goose model or clear the model and thinking overrides.",
+              );
+          }
+          if (
+            next.effort &&
+            !(await setup.efforts(next)).levels.includes(next.effort)
+          )
+            throw new Error(
+              "Choose a thinking level this Goose model supports or use Default.",
+            );
+        }
         // A Custom agent's save drops a mark left from before, which a later
         // blank synced model would otherwise turn back on.
         await save(onRecommended(next) ? next : offRecommended(next));
@@ -1410,13 +1537,23 @@ export function createTabs({
                   {...runsOnDetails(
                     { title: "Goose", icon: GooseLogoIcon },
                     resolved,
+                    automaticRoute,
                   )}
                   onChange={(on) =>
-                    // Manual starts from the recommendation it ran on.
+                    // Manual starts from the recommendation it ran on, or
+                    // from its Automatic route on that provider.
                     setDraft(
                       on
                         ? readConfig(withRecommended(draft))
-                        : offRecommended(running(draft, resolved)),
+                        : offRecommended(
+                            automaticRoute
+                              ? {
+                                  ...running(draft, resolved),
+                                  model: routeModel(automaticRoute.id),
+                                  effort: "",
+                                }
+                              : running(draft, resolved),
+                          ),
                     )
                   }
                 >
@@ -1425,6 +1562,11 @@ export function createTabs({
               ) : (
                 manual
               )}
+              <CompactionField
+                value={draft.compactAt}
+                disabled={saving}
+                onChange={(value) => setDraft(withCompactAt(draft, value))}
+              />
             </SettingsGroup>
             <AgentInstructions
               value={draft.instructions}
@@ -1449,19 +1591,29 @@ export function createTabs({
               />
             </Field>
             <Select
-              label="Sessions"
+              label="Session scope"
+              description="Choose how your agent uses sessions to keep context."
               variant="preference"
               value={draft.scope}
               groups={SCOPES}
               onValueChange={(value) =>
                 setDraft({
                   ...draft,
-                  scope: value === "channel" ? "channel" : "thread",
+                  scope: sessionScope(value),
                 })
               }
             />
           </>
         )}
+        {settingsHost?.proposedModelOrEffort &&
+          (draft.model || draft.effort) && (
+            <ClearModelOverrides
+              disabled={saving}
+              onClick={() =>
+                setDraft(offRecommended({ ...draft, model: "", effort: "" }))
+              }
+            />
+          )}
         <AgentSaveButton form={form} saving={saving} disabled={!changed} />
         {settingsSection !== "identity" && settingsContent}
       </form>

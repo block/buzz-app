@@ -4,6 +4,14 @@ import type { JsonValue, OpenTarget } from "../navigation/targets";
 import { splitPartition } from "../relay/partition";
 import { regionLabels } from "../solo/region-labels";
 import type { SoloDraftStart } from "./solo-navigation-contract";
+import { newMessage } from "./new-message-route";
+
+export {
+  type MessageIntent,
+  newMessage,
+  newMessageTarget,
+  nextMessageIntent,
+} from "./new-message-route";
 
 /** An unsent Solo conversation: nothing exists on the relay until its first send. */
 export type SoloDraft = Readonly<{
@@ -92,7 +100,7 @@ export function soloDraft(
 
 export function isChannelRoute(params: JsonValue) {
   return (
-    params === "new-message" ||
+    newMessage(params) !== undefined ||
     params === "empty" ||
     soloDraft(params) !== undefined
   );
@@ -145,6 +153,14 @@ export function conversationTarget(
   const parts = splitPartition(scope);
   if (!parts) throw new Error("Invalid conversation destination");
   return { version: 1, kind: "conversation", scope: parts, channelId };
+}
+
+/** The sidebar reads only which conversation is open, never what is open
+ * within it: a thread, message, panel or detail there is not a destination. */
+export function sidebarTarget(target: OpenTarget): OpenTarget {
+  if (target.kind !== "conversation") return target;
+  const { version, kind, scope, channelId } = target;
+  return { version, kind, scope, channelId };
 }
 
 /** A reopened conversation must still belong to this community and viewer. */

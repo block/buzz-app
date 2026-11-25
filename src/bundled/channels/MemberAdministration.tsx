@@ -14,10 +14,12 @@ import {
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import {
-  canManageMember,
+  canSetMemberRole,
   canRemoveMember,
+  canTransferOwnership,
   editableMemberRoles,
   type MemberChange,
+  transferRefusal,
 } from "../../features/channel-members/administration-protocol";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -26,6 +28,7 @@ import {
   createMenuHandle,
   type MenuHandle,
   MenuItem,
+  MenuNote,
   MenuPopup,
   MenuRoot,
   MenuTrigger,
@@ -256,6 +259,8 @@ export function MemberRow({
   channelId,
   pubkey,
   name,
+  agent,
+  profiled,
   verifiedOwner,
   onChange,
   returnFocus,
@@ -272,6 +277,9 @@ export function MemberRow({
   channelId: string;
   pubkey: string;
   name: string;
+  agent: boolean;
+  /** Only a loaded profile shows the heir isn't an agent. */
+  profiled: boolean;
   verifiedOwner?: string | undefined;
   onChange(change: MemberChange): void;
   returnFocus: React.RefObject<HTMLElement | null>;
@@ -280,7 +288,7 @@ export function MemberRow({
   onSendMessage?: (() => void) | undefined;
   messagePending?: boolean | undefined;
   /** Names the conversation in actions: Remove from chat or channel. */
-  place: "chat" | "channel";
+  place: "chat" | "channel" | "DM";
   invitationAction?: ReactNode;
   /** The search highlight, for rows a picker can choose with Enter. */
   highlight?:
@@ -301,14 +309,31 @@ export function MemberRow({
   const openingConfirmation = useRef(false);
   const [menuOpen, setMenuOpen] = useState<"button" | "context">();
   const rowId = useId();
+  const transferReason = useId();
   const menus = useContext(RowMenus);
   if (!menus) throw new Error("MemberRow renders inside MemberMenus");
   const openingProfile = useRef(false);
   const role = state.authority.roles[pubkey] ?? "unknown";
   const permitted =
     !invitationAction && capability.available && state.status === "ready";
-  const canEdit =
-    permitted && canManageMember(state.authority, session.viewer ?? "", pubkey);
+  const currentAccess = role === "bot" ? "member" : role;
+  const roleChanges = permitted
+    ? editableMemberRoles.filter(
+        (next) =>
+          next !== currentAccess &&
+          canSetMemberRole(
+            state.authority,
+            session.viewer ?? "",
+            pubkey,
+            next,
+            verifiedOwner,
+          ),
+      )
+    : [];
+  const canEdit = roleChanges.length > 0;
+  const canTransfer =
+    permitted &&
+    canTransferOwnership(state.authority, session.viewer ?? "", pubkey, agent);
   const canRemove =
     permitted &&
     canRemoveMember(
@@ -354,31 +379,49 @@ export function MemberRow({
           Send message
         </MenuItem>
       )}
-      {(canEdit || canRemove) && !locked && (
+      {(canEdit || canTransfer || canRemove) && !locked && (
         <>
           <MenuSeparator />
           {canEdit && (
             <MenuRadioGroup
-              value={role === "bot" ? "member" : role}
+              value={currentAccess}
               onValueChange={(next) => {
-                const target = editableMemberRoles.find(
-                  (value) => value === next,
-                );
-                if (target && target !== role) {
+                const target = roleChanges.find((value) => value === next);
+                if (target) {
                   // The shared popup outlives the choice; the confirmation takes over.
                   menus.close();
                   choose(target);
                 }
               }}
             >
-              {editableMemberRoles.map((next) => (
-                <MenuRadioItem key={next} value={next}>
-                  {memberAccessLabel(next)}
-                </MenuRadioItem>
-              ))}
+              {editableMemberRoles
+                .filter(
+                  (next) =>
+                    next === currentAccess || roleChanges.includes(next),
+                )
+                .map((next) => (
+                  <MenuRadioItem key={next} value={next}>
+                    {memberAccessLabel(next)}
+                  </MenuRadioItem>
+                ))}
             </MenuRadioGroup>
           )}
           {canEdit && <MenuSeparator />}
+          {canTransfer && (
+            <>
+              <MenuItem
+                disabled={!profiled}
+                aria-describedby={profiled ? undefined : transferReason}
+                onClick={() => choose("owner")}
+              >
+                Transfer ownership
+              </MenuItem>
+              {!profiled && (
+                <MenuNote id={transferReason}>{transferRefusal}</MenuNote>
+              )}
+              {canRemove && <MenuSeparator />}
+            </>
+          )}
           {canRemove && (
             <MenuItem tone="danger" onClick={() => choose("remove")}>
               Remove from {place}

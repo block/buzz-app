@@ -1584,13 +1584,13 @@ it("replaces memory only at the version it was shown, newer than the entry it re
   ).resolves.toBe(`saved; version ${await memoryVersion("new")}`);
   expect(client.remember).toHaveBeenCalledWith("mem/notes", "new", 50);
   // Every read is of the one entry by its slug, not the whole listing; the
-  // write is read back.
+  // write is read back. The checks around a write read from the writer.
   expect(vi.mocked(client.memories).mock.calls).toEqual([
     ["mem/notes"],
-    ["mem/notes"],
-    ["mem/notes"],
-    ["mem/notes"],
-    ["mem/notes"],
+    ["mem/notes", true],
+    ["mem/notes", true],
+    ["mem/notes", true],
+    ["mem/notes", true],
   ]);
   // Another session's write of the same version replaced this one.
   vi.mocked(client.remember).mockImplementationOnce(async () => {
@@ -1662,8 +1662,9 @@ it("deletes memory only at the version it was shown, and never core", async () =
       expected: await memoryVersion("old"),
     }),
   ).resolves.toBe("deleted mem/notes");
-  // A tombstone, dated after the entry it deletes.
+  // A tombstone, dated after the entry it deletes, checked against the writer.
   expect(client.remember).toHaveBeenCalledWith("mem/notes", null, 50);
+  expect(client.memories).toHaveBeenLastCalledWith("mem/notes", true);
   vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: true });
   await expect(
     callTool(client, {}, "mem_rm", { slug: "gone", expected: "0".repeat(16) }),

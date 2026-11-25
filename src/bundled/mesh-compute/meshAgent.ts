@@ -112,6 +112,7 @@ export type MeshAgentDeps = Readonly<{
     agent: string,
     signal: AbortSignal,
     slug?: string,
+    strong?: boolean,
   ): Promise<Memories>;
   coreMemory?(
     agent: string,

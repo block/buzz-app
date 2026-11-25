@@ -3660,8 +3660,8 @@ export class CodexRuntime {
         check,
         signal,
         callSignal: signal,
-        memories: async (slug) => {
-          const listing = await this.memories(owner, signal, slug);
+        memories: async (slug, strong) => {
+          const listing = await this.memories(owner, signal, slug, strong);
           check();
           return listing;
         },
@@ -3749,13 +3749,20 @@ export class CodexRuntime {
     request: Pick<Request, "scope" | "agent">,
     signal: AbortSignal,
     slug?: string,
+    strong?: boolean,
   ) {
     const { key, pubkey } = request.agent;
     const reads = this.reads(key);
     if (reads?.scope !== request.scope)
       throw new Error("Buzz is not connected to this community");
     const { connection } = reads;
-    const listing = await this.memoryReads.read(reads, pubkey, signal, slug);
+    const listing = await this.memoryReads.read(
+      reads,
+      pubkey,
+      signal,
+      slug,
+      strong,
+    );
     signal.throwIfAborted();
     const current = this.reads(key);
     if (current?.scope !== request.scope || current.connection !== connection)

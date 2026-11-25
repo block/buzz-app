@@ -1641,6 +1641,7 @@ it.each(["chat", "agent"])(
           agent,
           expect.any(AbortSignal),
           undefined,
+          undefined,
         );
         expect(inline).toHaveBeenCalledWith(
           expect.objectContaining({

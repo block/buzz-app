@@ -1505,7 +1505,10 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       );
     // A write must be dated after the entry it replaces, so it waits for a
     // read that finds the entry or confirms there is none.
-    const { entries, deleted, partial } = await tools.client.memories(key);
+    const { entries, deleted, partial } = await tools.client.memories(
+      key,
+      true,
+    );
     const current = entries.find((entry) => entry.slug === key);
     if (!current && partial)
       throw new Error(`Memory ${key} could not be read; try again.`);
@@ -1534,7 +1537,9 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // The relay keeps the newest write without checking the version, so only
     // a read shows whether another session's write replaced this one. A read
     // that fails, or still shows the entry this one replaced, cannot tell.
-    const readBack = await tools.client.memories(key).catch(() => undefined);
+    const readBack = await tools.client
+      .memories(key, true)
+      .catch(() => undefined);
     const now = readBack?.entries.find((entry) => entry.slug === key)?.body;
     if (now !== undefined && now !== body && now !== current?.body)
       throw new Error(
@@ -1561,7 +1566,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     // NIP-AE has no tombstone for core; only a write replaces it.
     if (key === "core")
       throw new Error("core cannot be deleted; replace it with mem_set.");
-    const { entries, partial } = await tools.client.memories(key);
+    const { entries, partial } = await tools.client.memories(key, true);
     const current = entries.find((entry) => entry.slug === key);
     if (!current && partial)
       throw new Error(`Memory ${key} could not be read; try again.`);

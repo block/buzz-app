@@ -496,7 +496,7 @@ export function harnessKit(sources: Sources): HarnessKit {
               options.read
                 ? options.read(path)
                 : Promise.reject(new Error(`This agent cannot read ${path}`)),
-            memories: (slug) => {
+            memories: (slug, strong) => {
               const found = reads();
               if (!found)
                 return Promise.reject(new Error("Buzz is not connected"));
@@ -505,6 +505,7 @@ export function harnessKit(sources: Sources): HarnessKit {
                 pubkey,
                 AbortSignal.timeout(READ_TIMEOUT_MS),
                 slug,
+                strong,
               );
             },
             remembered: () => {

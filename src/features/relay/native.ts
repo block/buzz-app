@@ -829,6 +829,7 @@ export async function connectNativeTransport(
       signal: AbortSignal,
       slug?: string,
       onPage?: (page: MemoryListing) => void,
+      strong?: boolean,
     ): Promise<MemoryListing> {
       if (!memoryAgent(agent, transport.viewer))
         throw new Error("Invalid memory target");
@@ -850,6 +851,7 @@ export async function connectNativeTransport(
           community: origin,
           agent,
           slug: slug ?? null,
+          strong: strong ?? false,
           id,
           onPage: onPage
             ? new Channel<unknown>((page) => {

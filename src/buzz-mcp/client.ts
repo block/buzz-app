@@ -191,8 +191,9 @@ export interface BuzzClient {
   gitAuth?(owner: string, repo: string): Promise<GitAuth>;
   /** A local file's bytes, for tools that take a `path`. */
   read(path: string): Promise<Uint8Array>;
-  /** The agent's memory entries, decrypted; only entry `slug` when given. */
-  memories(slug?: string): Promise<Memories>;
+  /** The agent's memory entries, decrypted; only entry `slug` when given.
+   * `strong` reads from the writer, for a check before or after a write. */
+  memories(slug?: string, strong?: boolean): Promise<Memories>;
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
    * a `null` body deletes it. */
   remember(slug: string, body: string | null, after: number): Promise<void>;

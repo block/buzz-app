@@ -173,13 +173,20 @@ export const apply: PluginModule["apply"] = (ctx) => {
       agent: string,
       signal: AbortSignal,
       slug?: string,
+      strong?: boolean,
     ) => {
       const snapshot = agents.relay(agent)?.snapshot();
       if (snapshot?.status !== "ready")
         throw new Error("Buzz is not connected to this community");
       const source = ownerReads(agents.relay(agent), pubkeyOf(agent));
       if (!source) throw new Error("Buzz is not connected to this community");
-      const listing = await memoryReads.read(source, agent, signal, slug);
+      const listing = await memoryReads.read(
+        source,
+        agent,
+        signal,
+        slug,
+        strong,
+      );
       if (agents.relay(agent)?.snapshot() !== snapshot)
         throw new Error("Community changed during memory read");
       return listing;

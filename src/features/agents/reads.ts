@@ -68,7 +68,11 @@ export type AgentReads = Readonly<{
   relayAuthor?(): string | undefined;
   /** The agent's memory, or only entry `slug` when given; `partial` when the
    * entries may be incomplete. `signal` stops the read. */
-  memoryListing(signal: AbortSignal, slug?: string): Promise<MemoryListing>;
+  memoryListing(
+    signal: AbortSignal,
+    slug?: string,
+    strong?: boolean,
+  ): Promise<MemoryListing>;
   /** The channel's current Canvas text when `owner`, or an agent they
    * attest, wrote it; undefined when it has none, someone else wrote it, or
    * the reader cannot read Canvas. */
@@ -149,8 +153,8 @@ export function ownerReads(
         channelId,
         session.channelWrites.startingCanvas(channelId),
       ),
-    memoryListing: (signal: AbortSignal, slug?: string) =>
-      session.agentMemories.read(pubkey, signal, slug),
+    memoryListing: (signal: AbortSignal, slug?: string, strong?: boolean) =>
+      session.agentMemories.read(pubkey, signal, slug, strong),
   });
 }
 

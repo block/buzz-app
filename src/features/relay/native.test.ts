@@ -1539,6 +1539,7 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
       community,
       agent: agent.pubkey,
       slug: null,
+      strong: false,
       id: expect.any(String),
       onPage: null,
     });
@@ -1548,6 +1549,18 @@ it("exposes purpose-bound agent readers and fences obsolete observer decoding", 
     entries: [],
     partial: true,
   });
+  // A check around a write asks for a read from the writer.
+  dispatch.mockImplementationOnce(async (_, args) => {
+    expect(args).toMatchObject({ slug: "mem/notes", strong: true });
+    return { entries: [], partial: false };
+  });
+  await transport.readAgentMemories?.(
+    agent.pubkey,
+    signal,
+    "mem/notes",
+    undefined,
+    true,
+  );
   await expect(
     transport.readAgentMemories?.(viewer.pubkey, signal),
   ).rejects.toThrow("Invalid memory target");

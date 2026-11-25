@@ -253,10 +253,8 @@ test("asks the relay even when a full page of device matches has every word apar
   await tick(SEARCH_DEBOUNCE_MS);
   expect(reads).toHaveLength(1);
   // The exact phrase, older than the index, would outrank every device row.
-  // The device rows after the first five follow it.
   expect(options("More from all of Buzz")).toEqual([
     expect.stringContaining("api draft"),
-    ...Array(45).fill(expect.stringContaining("api unrelated")),
   ]);
 });
 
@@ -437,86 +435,5 @@ test("losing a channel removes its rows from an open Finder at once", async () =
   );
   expect(props.openMessage).toHaveBeenCalledWith(
     expect.objectContaining({ id: "kept" }),
-  );
-});
-
-test("All of Buzz shows five device rows, then the relay's, then the rest of the device's; This channel shows them all", async () => {
-  const { Finder, click, control, corpus, events, viewer } = await fixture();
-  events.push(message(viewer, "crew", "zebra from the relay", 1_700_000_050));
-  control.fail = true;
-  corpus.add(
-    Array.from({ length: 8 }, (_, n) => ({
-      ...local(`z${n}`, `zebra note ${n}`),
-      createdAt: 1_700_000_100 + n,
-    })),
-  );
-  render(<Finder />);
-  type("zebra");
-  await tick(SEARCH_DEBOUNCE_MS);
-  // The rest of the device rows wait for the relay's first answer, through a
-  // failure and a pending Retry, so they never move.
-  const tail = () =>
-    within(screen.getByRole("group", { name: "More from all of Buzz" }))
-      .queryAllByRole("option")
-      .filter((row) => row.textContent?.includes("zebra note"));
-  expect(tail()).toEqual([]);
-  control.fail = false;
-  let release = () => {};
-  control.hold = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  try {
-    await click(screen.getByRole("button", { name: "Retry" }));
-    await tick(1000);
-    expect(screen.getByRole("status")).toHaveTextContent("Searching Buzz…");
-    expect(tail()).toEqual([]);
-  } finally {
-    release();
-  }
-  await tick(0);
-  expect(options("Matches")).toHaveLength(5);
-  expect(options("More from all of Buzz")).toEqual([
-    expect.stringContaining("zebra from the relay"),
-    ...[2, 1, 0].map((n) => expect.stringContaining(`zebra note ${n}`)),
-  ]);
-  await click(screen.getByRole("tab", { name: "This channel" }));
-  // With the relay's hit, now in the index.
-  expect(options("Matches")).toHaveLength(9);
-});
-
-test("rows already shown keep their places: More messages always adds below", async () => {
-  const { Finder, click, corpus, events, viewer } = await fixture();
-  const said = (text: string, at: number) =>
-    message(viewer, "crew", text, 1_700_000_000 + at);
-  events.push(
-    // Newest first, 20 a page. The second page ranks below the third.
-    ...Array.from({ length: 20 }, (_, n) => said(`yak first ${n}`, 100 + n)),
-    ...Array.from({ length: 20 }, (_, n) => said(`(yak) second ${n}`, 50 + n)),
-    ...Array.from({ length: 5 }, (_, n) => said(`yak third ${n}`, n)),
-  );
-  corpus.add(
-    Array.from({ length: 7 }, (_, n) => local(`y${n}`, `yak note ${n}`)),
-  );
-  render(<Finder />);
-  type("yak");
-  await tick(SEARCH_DEBOUNCE_MS);
-  const relayed = () => options("More from all of Buzz");
-  expect(relayed()).toHaveLength(22);
-  expect(relayed().slice(20)).toEqual([
-    expect.stringContaining("yak note"),
-    expect.stringContaining("yak note"),
-  ]);
-  const more = async () => {
-    const before = relayed();
-    await click(screen.getByRole("button", { name: "More messages" }));
-    await tick(0);
-    expect(relayed().slice(0, before.length)).toEqual(before);
-    return relayed().slice(before.length);
-  };
-  expect(await more()).toEqual(
-    Array(20).fill(expect.stringContaining("(yak) second")),
-  );
-  expect(await more()).toEqual(
-    Array(5).fill(expect.stringContaining("yak third")),
   );
 });

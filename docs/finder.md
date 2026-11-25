@@ -47,16 +47,15 @@ Settings → Shortcuts.
   when it searched the whole channel. Closing or switching stops the read.
   Reopening resumes where it left off. Join a public preview before searching
   its history here.
-- **All of Buzz** shows matches from this device at once. Once the last word has
-  three letters, only the best 5 stay on top, and after a short pause in typing
-  it also asks the relay, which searches every message you can read, including
-  public channels you haven't joined. The relay's hits follow, under **More from
-  all of Buzz**, ranked the same way, then the rest of the device matches once
-  the relay answers. **More messages** adds the relay's next page below those.
-  Rows you're looking at never move: each keeps the place it was first shown in
-  until you change the text. Relay rows for earlier text clear as soon as you
-  change it, so Enter can't open one while the new search loads. Use **Retry**
-  after a failed read, or **More messages** for the next page.
+- **All of Buzz** shows matches from this device at once. After a short pause
+  in typing, with at least three letters in the last word, it also asks the
+  relay, which searches every message you can read, including public channels
+  you haven't joined. Those hits appear below, under **More from all of Buzz**,
+  ranked the same way. Rows you're looking at never move: once relay rows show,
+  the device rows above them hold still until you change the text. Relay rows
+  for earlier text clear as soon as you change it, so Enter can't open one
+  while the new search loads. Use **Retry** after a failed read, or **More
+  messages** for the next page.
 
 Older channel messages stay in the index for this session. Relay hits from
 joined channels join it when you close Finder. Public previews stay out; their

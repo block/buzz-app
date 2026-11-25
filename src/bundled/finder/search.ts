@@ -15,9 +15,6 @@ import {
 } from "./sync";
 
 const PAGE = 50;
-/** Device rows above the relay's in All of Buzz. More would push the relay's
- * best hits out of sight; the rest of the page follows the relay's. */
-const DEVICE_ROWS = 5;
 
 /** Relay hits held until Finder closes, then added to the index, so the
  * device rows above them never change while you read. */
@@ -112,10 +109,6 @@ export function useFinderAll({
     session: RelaySession;
     results: FinderResults;
   }>(undefined);
-  // Always asked: a page of device rows with every word can still rank below
-  // an unindexed message that has them together.
-  const search = useSearchMessages(session, query);
-  const asked = !search.tooShort && !!query.trim();
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision names the corpus contents.
   const fresh = useMemo(
     () => corpus.search(query, PAGE),
@@ -129,14 +122,13 @@ export function useFinderAll({
       : fresh;
   kept.current = { query, session, results: steady };
   // Rows held still still leave when you lose the channel they're from.
-  const readable = steady.hits.filter(
-    ({ doc }) => !lost(session, doc.channelId),
-  );
   const local: FinderResults = {
     ...steady,
-    hits: asked ? readable.slice(0, DEVICE_ROWS) : readable,
+    hits: steady.hits.filter(({ doc }) => !lost(session, doc.channelId)),
   };
-  const rest = asked ? readable.slice(DEVICE_ROWS) : [];
+  // Always asked: a page of device rows with every word can still rank below
+  // an unindexed message that has them together.
+  const search = useSearchMessages(session, query);
   const [previous, setPrevious] = useState<{
     session: RelaySession;
     query: string;
@@ -163,7 +155,7 @@ export function useFinderAll({
     previous.query === query
       ? previous.messages
       : search.messages;
-  const shown = new Set(readable.map(({ doc }) => doc.id));
+  const shown = new Set(local.hits.map(({ doc }) => doc.id));
   const docs = messages
     .filter((message) => {
       const channel = session.channels.get?.(message.channelId);
@@ -196,37 +188,16 @@ export function useFinderAll({
     return ranked.search(query, docs.length || 1);
   }, [docsKey, query]);
   const matched = new Set(results.hits.map(({ doc }) => doc.id));
-  const ordered = [
-    ...results.hits,
-    ...docs
-      .filter((doc) => !matched.has(doc.id))
-      .map((doc) => ({ doc, score: 0, positions: [] })),
-  ];
-  // A row keeps the place it was first shown in: the relay's first page,
-  // then the rest of the device page, then whatever arrives later (More
-  // messages, a channel that finishes loading), each batch ranked on its own.
-  // The rest of the device page waits for the relay's first answer, so a
-  // failure and Retry can't move it.
-  const placed = useRef<{
-    session: RelaySession;
-    query: string;
-    ids: string[];
-  }>(undefined);
-  if (placed.current?.session !== session || placed.current.query !== query)
-    placed.current = undefined;
-  if (!placed.current && !search.loading && !search.error)
-    placed.current = { session, query, ids: [] };
-  const tail = placed.current ? rest : [];
-  const rows = [...ordered, ...tail];
-  let hits = rows;
-  if (placed.current) {
-    const { ids } = placed.current;
-    const known = new Set(ids);
-    for (const { doc } of rows) if (!known.has(doc.id)) ids.push(doc.id);
-    const byId = new Map(rows.map((hit) => [hit.doc.id, hit]));
-    hits = ids.flatMap((id) => byId.get(id) ?? []);
-  }
-  const relay: FinderResults = { total: docs.length + tail.length, hits };
-  holding.current = asked && (search.loading || docs.length > 0);
+  const relay: FinderResults = {
+    total: docs.length,
+    hits: [
+      ...results.hits,
+      ...docs
+        .filter((doc) => !matched.has(doc.id))
+        .map((doc) => ({ doc, score: 0, positions: [] })),
+    ],
+  };
+  const asked = !search.tooShort && !!query.trim();
+  holding.current = asked && (search.loading || relay.hits.length > 0);
   return { local, relay, search, asked };
 }

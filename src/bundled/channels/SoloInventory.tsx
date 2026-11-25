@@ -426,6 +426,7 @@ export function SoloInventory({
         compose={compose}
         renderChatMenu={renderChatMenu}
         navigator={navigator}
+        open={selected}
         drafts={listedDrafts.flatMap((destination) => {
           const route =
             destination.kind === "page"

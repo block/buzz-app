@@ -137,8 +137,11 @@ export function SoloWorkspaces({
   sidebarRows = emptyRows,
   compose,
   workspaceComposition,
+  open,
 }: {
   compose?: ComposeWorkspaces | undefined;
+  /** The open chat keeps its unreads-first place until you leave it. */
+  open?: string | undefined;
   workspaceComposition?: WorkspaceSidebarComposition | undefined;
   drafts?: readonly {
     id: string;
@@ -328,7 +331,7 @@ export function SoloWorkspaces({
   const waiting = useWaitingChannels(
     session.unread,
     snapshot.data?.muted,
-    undefined,
+    open,
   );
   const assigned = snapshot.data?.assignments ?? {};
   const assignmentFor = (item: ChatListItem) =>

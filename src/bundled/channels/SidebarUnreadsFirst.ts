@@ -91,7 +91,7 @@ export function useWaitingChannels(
     );
     if (held.current.open !== open)
       held.current = { open, held: !!open && waiting.has(open) };
-    if (open && held.current.held) waiting.add(open);
+    if (open && held.current.held && !quiet.has(open)) waiting.add(open);
     return waiting;
   }, [inbox, muted, open]);
 }

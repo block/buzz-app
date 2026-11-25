@@ -32,7 +32,6 @@ import { PluginMenu } from "./PluginMenu";
 import { Tooltip } from "../shared/design-system/ui/Tooltip";
 import { SurfaceButton } from "../shared/design-system/ui/SurfaceButton";
 import { IconButton } from "../shared/design-system/ui/IconButton";
-import { ChoiceRow } from "../shared/design-system/ui/ChoiceRow";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Tabs } from "../shared/design-system/ui/Tabs";
 import { SearchField } from "../shared/design-system/ui/SearchField";
@@ -1083,6 +1082,9 @@ export function Settings({
   const pluginSection = useRef<HTMLElement>(null);
   const layout = useRef<HTMLDivElement>(null);
   const detailsClose = useRef<HTMLButtonElement>(null);
+  const coveredCatalogPlace = useRef<{ port: HTMLElement; top: number }>(
+    undefined,
+  );
   // Opening or closing details can resize the catalog column and reflow rows
   // above the chosen one. Browser scroll anchoring does not reliably hold it
   // (it can jump on close), so keep the chosen row where the user saw it.
@@ -1095,7 +1097,8 @@ export function Settings({
   const selectedPlugin = catalog?.plugins.find(
     (plugin) => plugin.manifest.id === selectedPluginId,
   );
-  const showingDetails = selected === "plugins" && !!selectedPlugin;
+  const detailsPluginId =
+    selected === "plugins" ? selectedPlugin?.manifest.id : undefined;
   const visibleReturn = (target: HTMLElement | null) =>
     covered(pluginSection.current) ? (detailsClose.current ?? target) : target;
   useEffect(() => {
@@ -1104,26 +1107,6 @@ export function Settings({
       addressedPlugin.current = closingVisit.current = false;
     }
   }, [selected]);
-  useEffect(() => {
-    const element = layout.current;
-    if (!showingDetails || !element) return;
-    // Resizing can hide the focused catalog control; keep focus in details.
-    // A hidden control's focus falls back to a container: the page, or the
-    // Settings modal that hosts this layout.
-    const observer = new ResizeObserver(() => {
-      const active = document.activeElement;
-      const details = detailsClose.current?.closest("aside");
-      if (
-        covered(pluginSection.current) &&
-        active &&
-        (active.contains(element) ||
-          (element.contains(active) && !details?.contains(active)))
-      )
-        detailsClose.current?.focus({ preventScroll: true });
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [showingDetails]);
   useEffect(() => {
     if (selectedPluginId && catalog && !selectedPlugin) {
       pluginSection.current?.focus();
@@ -1153,7 +1136,7 @@ export function Settings({
     showPluginDetails(id);
   };
   const closePluginDetails = () => {
-    holdPluginRow(pluginTrigger.current);
+    if (!covered(pluginSection.current)) holdPluginRow(pluginTrigger.current);
     restorePluginFocus.current = true;
     setReviewPluginId(undefined);
     showPluginDetails(undefined);
@@ -1174,6 +1157,52 @@ export function Settings({
         : 0;
     if (port && shift) port.scrollTop += shift;
   });
+  useLayoutEffect(() => {
+    if (!detailsPluginId) {
+      const saved = coveredCatalogPlace.current;
+      coveredCatalogPlace.current = undefined;
+      if (saved && selected === "plugins") saved.port.scrollTop = saved.top;
+      return;
+    }
+    const element = layout.current;
+    if (!element) return;
+
+    // With stacked navigation, the list may have scrolled far past the
+    // inspector header in the shared scrollport. Reveal it and keep the list's
+    // original position for when the inspector closes.
+    const reveal = () => {
+      const close = detailsClose.current;
+      const port = scrollport(element);
+      if (!close || !port || !covered(pluginSection.current)) return;
+      const button = close.getBoundingClientRect();
+      const viewport = port.getBoundingClientRect();
+      if (button.top >= viewport.top && button.bottom <= viewport.bottom)
+        return;
+      coveredCatalogPlace.current ??= { port, top: port.scrollTop };
+      close.scrollIntoView({ block: "nearest" });
+    };
+    reveal();
+    let width = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (width !== element.clientWidth) {
+        width = element.clientWidth;
+        reveal();
+      }
+      // A resize can hide the focused catalog control. Focus falls back to
+      // the page or Settings modal, so send it into the inspector.
+      const active = document.activeElement;
+      const details = detailsClose.current?.closest("aside");
+      if (
+        covered(pluginSection.current) &&
+        active &&
+        (active.contains(element) ||
+          (element.contains(active) && !details?.contains(active)))
+      )
+        detailsClose.current?.focus({ preventScroll: true });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [selected, detailsPluginId]);
   useLayoutEffect(() => {
     if (!selectedPlugin && restorePluginFocus.current) {
       restorePluginFocus.current = false;
@@ -1302,9 +1331,6 @@ export function Settings({
                       }
                       type="button"
                       data-plugin-id={id}
-                      data-access-state={
-                        plugin.enabled && accessReason ? "" : undefined
-                      }
                       className={styles.pluginRow}
                       data-enabled={plugin.enabled}
                       aria-label={`View ${plugin.manifest.name} details`}
@@ -1338,41 +1364,38 @@ export function Settings({
                           Essential
                         </span>
                       )}
+                      <PluginIcon plugin={plugin} />
+                      {name}
                       {core ? (
-                        <>
-                          <PluginIcon plugin={plugin} />
-                          {name}
-                          <span
-                            id={`plugin-description-${id}`}
-                            className={styles.pluginCoreDescription}
-                          >
-                            {plugin.manifest.description}
-                          </span>
-                        </>
+                        <span
+                          id={`plugin-description-${id}`}
+                          className={styles.pluginCoreDescription}
+                        >
+                          {plugin.manifest.description}
+                        </span>
                       ) : (
-                        <ChoiceRow
-                          leading={<PluginIcon plugin={plugin} />}
-                          label={name}
-                          description={
-                            plugin.manifest.description ? (
-                              <span
-                                id={`plugin-description-${id}`}
-                                className={styles.pluginRowDescription}
-                              >
-                                {plugin.manifest.description}
-                              </span>
-                            ) : undefined
-                          }
-                        />
-                      )}
-                      {plugin.source === "external" && (
-                        <span id={`plugin-publisher-${id}`}>
-                          <PluginProvenance
-                            source={plugin.source}
-                            publisher={plugin.publisher}
-                            managedBy={managedLabel(managedBy(managed, id))}
-                            className={styles.pluginRowAuthor}
-                          />
+                        <span className={styles.pluginRowSummary}>
+                          {plugin.manifest.description && (
+                            <span
+                              id={`plugin-description-${id}`}
+                              className="text-body-sm text-subtle"
+                            >
+                              {plugin.manifest.description}
+                            </span>
+                          )}
+                          {plugin.source === "external" && (
+                            <span
+                              id={`plugin-publisher-${id}`}
+                              className="min-w-0 max-w-full"
+                            >
+                              <PluginProvenance
+                                source={plugin.source}
+                                publisher={plugin.publisher}
+                                managedBy={managedLabel(managedBy(managed, id))}
+                                className={styles.pluginRowAuthor}
+                              />
+                            </span>
+                          )}
                         </span>
                       )}
                     </Target>
@@ -1921,7 +1944,7 @@ export function Settings({
           </section>
         </div>
       </div>
-      {showingDetails && selectedPlugin && catalog && (
+      {detailsPluginId && selectedPlugin && catalog && (
         <PluginDetails
           key={`${selectedPlugin.manifest.id}:${requestedPluginId ? navigation?.entryId : ""}`}
           plugin={selectedPlugin}
@@ -1967,7 +1990,7 @@ export function Settings({
         <div
           ref={layout}
           className={styles.layout}
-          data-plugin-detail={showingDetails ? "" : undefined}
+          data-plugin-detail={detailsPluginId ? "" : undefined}
         >
           {detail}
         </div>
@@ -1980,7 +2003,7 @@ export function Settings({
         <div
           ref={layout}
           className={styles.layout}
-          data-plugin-detail={showingDetails ? "" : undefined}
+          data-plugin-detail={detailsPluginId ? "" : undefined}
         >
           <aside className={styles.sidebar}>
             <div className={styles.sidebarHeader}>

@@ -1216,11 +1216,12 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
     const trigger = button(page, "View GitHub details");
     await trigger.focus();
+    await expect(trigger).toBeInViewport();
     await page.keyboard.press("Enter");
     const pane = page.getByRole("complementary", { name: "GitHub details" });
-    await expect(
-      pane.getByRole("button", { name: "Close plugin details" }),
-    ).toBeFocused();
+    const close = pane.getByRole("button", { name: "Close plugin details" });
+    await expect(close).toBeFocused();
+    await expect(close).toBeInViewport();
     await expect(trigger).toBeHidden();
     // The covered catalog is hidden from AT; its live feedback must stay exposed.
     await expect(page.getByRole("alert")).toHaveCSS("visibility", "visible");
@@ -1245,7 +1246,7 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
     await page.keyboard.press("Escape");
     await expect(pane).toHaveCount(0);
     await expect(trigger).toBeFocused();
-    await expect(trigger).toBeVisible();
+    await expect(trigger).toBeInViewport();
   }
 });
 

@@ -23,8 +23,10 @@
   background: var(--surface-panel);
 }
 .plus {
-  z-index: 2;
   display: flex;
+  flex: none;
+  align-items: center;
+  align-self: center;
 }
 .quiet {
   position: absolute;

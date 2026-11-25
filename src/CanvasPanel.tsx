@@ -215,41 +215,34 @@ export function CanvasPanel({
   }, []);
 
   // The "+" belongs beside the tabs, in the host's strip above this panel. A
-  // plugin has no place of its own there, so the button is laid over the
-  // strip, just past the last tab. Without a strip it stays in the view's row.
+  // plugin has no place of its own there, so the button's element is moved
+  // into the strip, after the last tab, and moved back before it is hidden or
+  // removed. Without a strip it stays in the view's row.
   const plus = useRef<HTMLSpanElement>(null);
   useEffect(() => {
     const element = plus.current;
+    const home = element?.parentElement;
     const canvas = root.current;
-    if (!element || !canvas || !shown) return;
+    if (!element || !home || !canvas || !shown) return;
     let strip: Element | null = null;
     for (let up = canvas.parentElement; up && !strip; up = up.parentElement)
       strip = up.querySelector('[role="tablist"]');
     if (!strip) return;
+    const tabs = strip;
     const place = () => {
-      const last = strip.lastElementChild ?? strip;
-      const end = last.getBoundingClientRect();
-      const row = strip.getBoundingClientRect();
-      element.style.position = "fixed";
-      element.style.left = `${end.right + 4}px`;
-      element.style.top = `${row.top + (row.height - element.offsetHeight) / 2}px`;
+      // Past every tab; another tab's "+" may briefly be here too.
+      let after = element.parentElement === tabs ? element.nextElementSibling : tabs;
+      while (after && after !== tabs && after.hasAttribute("data-canvas-plus"))
+        after = after.nextElementSibling;
+      if (after) tabs.append(element);
     };
     place();
-    const resized = new ResizeObserver(place);
-    resized.observe(strip);
-    resized.observe(document.body);
+    // The host adds tabs at the end: stay after them.
     const changed = new MutationObserver(place);
-    changed.observe(strip, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-    });
-    window.addEventListener("resize", place);
+    changed.observe(tabs, { childList: true });
     return () => {
-      resized.disconnect();
       changed.disconnect();
-      window.removeEventListener("resize", place);
-      element.removeAttribute("style");
+      home.prepend(element);
     };
   }, [shown]);
 
@@ -326,11 +319,9 @@ export function CanvasPanel({
       </p>
       {TabTitle && item && <TabTitle label={titleOf(item)} />}
       <div ref={buttons} className={styles.buttons}>
-        {shown && menu.length > 0 && (
-          <span ref={plus} className={styles.plus}>
-            <AddMenu label="Views" items={menu} />
-          </span>
-        )}
+        <span ref={plus} className={styles.plus} data-canvas-plus="">
+          {shown && menu.length > 0 && <AddMenu label="Views" items={menu} />}
+        </span>
         {led && (
           <Button
             variant={following ? "outline" : "ghost"}

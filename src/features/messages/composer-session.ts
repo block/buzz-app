@@ -65,7 +65,10 @@ export type ComposerSession = Pick<
    * only. Without `add`, an agent tagged in a DM does not join it. */
   directMessages: Pick<RelaySession["directMessages"], "people"> &
     Partial<
-      Pick<RelaySession["directMessages"], "verified" | "available" | "add">
+      Pick<
+        RelaySession["directMessages"],
+        "verified" | "available" | "add" | "agentsInPlace"
+      >
     >;
   memberAdditions: Pick<RelaySession["memberAdditions"], "add">;
   channelWrites: Pick<

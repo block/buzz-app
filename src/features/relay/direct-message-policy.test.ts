@@ -107,16 +107,8 @@ describe("an agent's add-policy refusal", () => {
 });
 
 describe("an agents-only add's refusal", () => {
-  it("passes on the relay's refusal, and words a relay from before it", () => {
+  it("passes on the relay's refusal", () => {
     expect(directMessageRefusal(true, ONLY_AGENTS_JOIN)).toBe(ONLY_AGENTS_JOIN);
-    expect(
-      directMessageRefusal(
-        true,
-        'invalid: history must be "include", got "agents"',
-      ),
-    ).toBe(
-      "Couldn’t add them. This community can’t add agents to a DM from a mention yet.",
-    );
     expect(directMessageRefusal(false, ONLY_AGENTS_JOIN)).toBe(
       "Could not open the direct message. Try again.",
     );

@@ -271,7 +271,7 @@ it("offers the owner's agents from other communities in a DM that adds agents", 
         channels: [{ id: "c", name: "C", channelType: "dm", members }],
       }),
     },
-    directMessages: { available: true, add: vi.fn() },
+    directMessages: { available: true, agentsInPlace: true, add: vi.fn() },
   });
   const far = rows(undefined, session).find(
     (row) => row.recipient.pubkey === key(7),

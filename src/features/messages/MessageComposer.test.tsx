@@ -11186,7 +11186,11 @@ it("sends someone outside a DM as a reference without asking", async () => {
   expect(add).not.toHaveBeenCalled();
 });
 
-function mountGrowableDm(members: string[], directMessages: object) {
+function mountGrowableDm(
+  members: string[],
+  directMessages: object,
+  agentsInPlace = true,
+) {
   const h = mount();
   const memberAdd = vi.fn();
   const list = {
@@ -11198,10 +11202,30 @@ function mountGrowableDm(members: string[], directMessages: object) {
     channels: { list: () => list, subscribeList: () => () => {} },
     memberAdditions: { add: memberAdd },
     outbox: { ...h.session.outbox, supports: () => true },
-    directMessages: { available: true, ...directMessages },
+    directMessages: { available: true, agentsInPlace, ...directMessages },
   });
   return { ...h, memberAdd };
 }
+
+it("never invites into a DM on a relay that does not add agents in place", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add }, false);
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => h.commands().insertMention(first));
+  fireEvent.submit(screen.getByRole("form"));
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent(
+    "You cannot add people to this DM. You can still send without inviting them.",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Invite" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+  expect(add).not.toHaveBeenCalled();
+  expect(h.messages.send.mock.calls[0]?.[2]).not.toContain(first.pubkey);
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+});
 
 it("adds an agent tagged in a DM once its sender invites it, then sends", async () => {
   const add = vi.fn(async () => "channel");
@@ -11455,7 +11479,7 @@ it("brings the owner's agent from another community into a DM, then adds it ther
     viewer: "d".repeat(64),
     scope: `https://relay.example.test:${"d".repeat(64)}`,
     channels: { list: () => list, subscribeList: () => () => {} },
-    directMessages: { available: true, add },
+    directMessages: { available: true, agentsInPlace: true, add },
   });
   h.messages.send.mockImplementation(() => {
     calls.push("send");

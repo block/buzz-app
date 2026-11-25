@@ -399,9 +399,6 @@ fn direct_message_refusal(adding: bool, reason: Option<&str>) -> String {
             "needs-choice: history"
         }
         Some(reason @ "invalid: only agents join this DM in place") if adding => reason,
-        Some(r#"invalid: history must be "include", got "agents""#) if adding => {
-            "Couldn’t add them. This community can’t add agents to a DM from a mention yet."
-        }
         Some(reason) if reason.contains("at most 9 people") => {
             if adding {
                 "Couldn’t add them. A DM holds up to 9 people, not counting agents."
@@ -1247,18 +1244,10 @@ mod direct_message_tests {
             ),
             "Couldn’t add them. Try again."
         );
-        // An agents-only add refused for naming someone else passes on as is;
-        // a relay from before it says it cannot add agents from a mention.
+        // An agents-only add refused for naming someone else passes on as is.
         assert_eq!(
             direct_message_refusal(true, Some("invalid: only agents join this DM in place")),
             "invalid: only agents join this DM in place"
-        );
-        assert_eq!(
-            direct_message_refusal(
-                true,
-                Some(r#"invalid: history must be "include", got "agents""#)
-            ),
-            "Couldn’t add them. This community can’t add agents to a DM from a mention yet."
         );
         assert_eq!(
             direct_message_refusal(true, Some("invalid: DM supports at most 9 people")),

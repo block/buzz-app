@@ -177,6 +177,11 @@ export interface ReadTransport {
   /** The relay advertises `buzz-search-sort`: bridge search accepts
    * `search_sort: "newest"`. Older relays silently rank by relevance. */
   readonly searchSort?: true;
+  /** The relay advertises `buzz-dm-agents`: kind:41011 with
+   * `["history","agents"]` adds agents to this DM in place or changes
+   * nothing. Older relays ignore the tag and may start another DM, so
+   * without it the tag is never sent. */
+  readonly directMessageAgents?: true;
   /** The relay advertises NIP-AR sync (`artifacts.sync.version` 1 in NIP-11):
    * a REQ with `"artifact": "current"` streams a complete set, then live heads. */
   readonly artifactSync?: true;
@@ -572,6 +577,7 @@ export async function connectBrokerTransport(
     channelIdentity?: boolean;
     soloMemberRoleUpdates?: boolean;
     searchSort?: boolean;
+    directMessageAgents?: boolean;
     artifactSync?: boolean;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
@@ -941,6 +947,9 @@ export async function connectBrokerTransport(
       ? { workspaceMigration: true as const }
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
+    ...(session.directMessageAgents === true
+      ? { directMessageAgents: true as const }
+      : {}),
     ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
     ...(session.channelKit
       ? {

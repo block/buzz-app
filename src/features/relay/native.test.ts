@@ -264,6 +264,20 @@ it.each([
   },
 );
 it.each([
+  [{}, undefined],
+  [{ supported_extensions: ["nip-cl"] }, undefined],
+  [{ supported_extensions: "buzz-dm-agents" }, undefined],
+  [{ supported_extensions: ["buzz-dm-agents"] }, true],
+])(
+  "adds agents to a DM in place only where its relay says so: %o",
+  async (extensions, expected) => {
+    discovery = extensions;
+    expect((await connectNativeTransport(community)).directMessageAgents).toBe(
+      expected,
+    );
+  },
+);
+it.each([
   {},
   { supported_extensions: null },
   { supported_extensions: [] },

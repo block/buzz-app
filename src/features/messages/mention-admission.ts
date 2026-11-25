@@ -51,6 +51,8 @@ export function directMessageAddsAgents(
     channel?.channelType === "dm" &&
     channel.id !== fixed &&
     !!session.directMessages.add &&
+    // Only a relay that says so adds agents alone; never on a guess.
+    session.directMessages.agentsInPlace === true &&
     canAddToDirectMessage(
       {
         viewer: session.viewer,

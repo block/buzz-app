@@ -18,8 +18,8 @@ const id = () => crypto.randomUUID().replaceAll("-", "").repeat(2);
 
 /** One community's records for this pair: what the agent signed, and what
  * its owner proposed to it. */
-function community() {
-  const signed = new Map<string, MemoryEntry>();
+function community(seed: readonly MemoryEntry[] = []) {
+  const signed = new Map(seed.map((entry) => [entry.slug, entry]));
   const proposed = new Map<string, MemoryEntry>();
   const listing = (entries: Map<string, MemoryEntry>, slug?: string) => ({
     entries: [...entries.values()].filter(
@@ -59,12 +59,23 @@ function community() {
         author: owner,
       })),
   } as unknown as BuzzClient;
-  return { owners, tools };
+  return { owners, tools, signed };
 }
 
 it("a person defines Goals, the agent discovers and fills a row, and reopening shows it", async () => {
   const user = userEvent.setup();
-  const { owners, tools } = community();
+  // An existing Task on the same board, which tables leave as it is.
+  const task: MemoryEntry = {
+    slug: "mem/tasks/8f6a3c1e-2b4d-4e5f-9a7b-1c2d3e4f5a6b",
+    body: JSON.stringify({
+      version: 6,
+      title: "Synthetic follow-up",
+      state: "open",
+    }),
+    eventId: "d".repeat(64),
+    createdAt: 1_799_000_000,
+  };
+  const { owners, tools, signed } = community([task]);
   const panel = () => (
     <TablesPanel agent={agent} memories={owners.capability} />
   );
@@ -97,6 +108,11 @@ it("a person defines Goals, the agent discovers and fills a row, and reopening s
     values: { title: "Publish the synthetic demo", target_date: "2027-03-31" },
   });
 
+  expect(signed.get(task.slug)).toBe(task);
+  await expect(callTool(tools, {}, "tables_list", {})).resolves.toBe(
+    'goals "Goals" 1 rows',
+  );
+
   unmount();
   // Reopening repeatedly reads through a fresh view each time, and the last
   // one shows the agent's row.
@@ -109,6 +125,7 @@ it("a person defines Goals, the agent discovers and fills a row, and reopening s
       screen.getByRole("cell", { name: "2027-03-31" }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Waiting for the agent/)).toBeNull();
+    expect(screen.queryByText(/Synthetic follow-up/)).toBeNull();
     view.unmount();
   }
 });

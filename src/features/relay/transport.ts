@@ -861,9 +861,9 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.agentMemories === true && community
-      ? {
-          readAgentMemories: async (
-            agent: string,
+      ? (() => {
+          const listing = async (
+            body: Readonly<{ agent: string; proposals?: true }>,
             signal: AbortSignal,
           ): Promise<MemoryListing> => {
             // Bounds the request and its body, so a stalled read ends in error.
@@ -875,7 +875,7 @@ export async function connectBrokerTransport(
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ agent }),
+              body: JSON.stringify(body),
               signal: bounded,
             });
             if (!response.ok) {
@@ -885,13 +885,49 @@ export async function connectBrokerTransport(
                 error.name = "MemoryDenied";
               throw error;
             }
-            const listing = JSON.parse(
+            const read = JSON.parse(
               await memoryResponseText(response),
             ) as MemoryListing;
             bounded.throwIfAborted();
-            return listing;
-          },
-        }
+            return read;
+          };
+          return {
+            readAgentMemories: (agent: string, signal: AbortSignal) =>
+              listing({ agent }, signal),
+            tableProposals: {
+              read: (agent: string, signal: AbortSignal) =>
+                listing({ agent, proposals: true }, signal),
+              async propose(
+                agent: string,
+                table: string,
+                schema: string,
+                after: number,
+              ) {
+                const response = await fetch(`${endpoint}/table-propose`, {
+                  method: "POST",
+                  credentials: "same-origin",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ agent, table, schema, after }),
+                });
+                if (!response.ok) throw new Error("Table proposal failed");
+                const result = (await response.json()) as {
+                  eventId?: unknown;
+                  createdAt?: unknown;
+                };
+                if (
+                  typeof result.eventId !== "string" ||
+                  !/^[0-9a-f]{64}$/.test(result.eventId) ||
+                  !Number.isSafeInteger(result.createdAt)
+                )
+                  throw new Error("Invalid table proposal");
+                return {
+                  eventId: result.eventId,
+                  createdAt: result.createdAt as number,
+                };
+              },
+            } satisfies ProposalSource,
+          };
+        })()
       : {}),
     ...(session.agentLibrary
       ? {

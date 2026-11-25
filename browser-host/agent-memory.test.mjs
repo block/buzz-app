@@ -6,7 +6,11 @@ import {
   nip44,
   finalizeEvent,
 } from "nostr-tools";
-import { decodeAgentMemory, memoryFilter } from "./agent-memory.mjs";
+import {
+  decodeAgentMemory,
+  memoryFilter,
+  tableProposal,
+} from "./agent-memory.mjs";
 import {
   MEMORY_EVENT_LIMIT,
   MEMORY_WIRE_BYTES,
@@ -225,4 +229,43 @@ it("rejects lossy UTF-8 and unpaired JSON surrogates before head selection", asy
     expect(result.partial).toBe(false);
     expect(result.entries[0]?.body).toBe(value);
   }
+});
+it("reads and signs only the viewer's own table proposals to the agent", async () => {
+  expect(memoryFilter({ agent: author, proposals: true }, viewer)).toEqual([
+    { kinds: [30174], authors: [viewer], "#p": [author], limit: 256 },
+  ]);
+  const schema = JSON.stringify({
+    version: 1,
+    name: "Goals",
+    fields: [{ key: "title", label: "Title", type: "text" }],
+  });
+  const proposal = tableProposal(
+    { agent: author, table: "goals", schema, after: 0 },
+    owner,
+    viewer,
+  );
+  expect(proposal.pubkey).toBe(viewer);
+  expect(() =>
+    tableProposal(
+      { agent: author, table: "Goals!", schema, after: 0 },
+      owner,
+      viewer,
+    ),
+  ).toThrow();
+  const own = (events) =>
+    decodeAgentMemory(events, owner, viewer, author, signal(), true);
+  await expect(
+    own([
+      proposal,
+      event({ slug: "mem/notes", value: "x" }, {}, owner, author),
+    ]),
+  ).resolves.toMatchObject({
+    entries: [{ slug: "mem/proposals/tables/goals", body: schema }],
+    partial: true,
+  });
+  // The agent's memory, as the owner reads it, never includes a proposal.
+  await expect(decode([proposal])).resolves.toMatchObject({
+    entries: [],
+    partial: true,
+  });
 });

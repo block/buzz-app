@@ -7,4 +7,10 @@ export function decodeAgentMemory(
   viewer: string,
   agent: string,
   signal: AbortSignal,
+  own?: boolean,
 ): Promise<MemoryListing>;
+export function tableProposal(
+  body: unknown,
+  secret: Uint8Array,
+  viewer: string,
+): import("nostr-tools").VerifiedEvent;

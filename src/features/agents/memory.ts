@@ -436,10 +436,20 @@ export function createAgentMemories(
       if (!usable()) throw new Error("Proposals unavailable");
       return listing;
     },
+    /** A write cannot be recalled once sent, so it is refused unless the
+     * session is current when it is sent, and its result is not reported
+     * to a session invalidated meanwhile. */
     async propose(agent: string, table: string, schema: string, after: number) {
-      if (closed || !memoryAgent(agent, viewer) || !available())
-        throw new Error("Proposals unavailable");
-      return proposals.propose(agent, table, schema, after);
+      const admitted = generation;
+      const usable = () =>
+        admitted === generation &&
+        !closed &&
+        memoryAgent(agent, viewer) &&
+        available();
+      if (!usable()) throw new Error("Proposals unavailable");
+      const result = await proposals.propose(agent, table, schema, after);
+      if (!usable()) throw new Error("Proposals unavailable");
+      return result;
     },
   };
   return {

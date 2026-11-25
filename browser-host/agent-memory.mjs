@@ -8,23 +8,52 @@ import {
   MEMORY_EVENT_LIMIT,
   MEMORY_TEXT_BYTES,
 } from "../src/features/agents/memory.ts";
+import { proposeSchema } from "../src/features/tables/proposal.ts";
+import { parseSchema, tableId } from "../src/features/tables/schema.ts";
+
+const PROPOSALS = "mem/proposals/tables/";
+const PROPOSAL_BYTES = 60_000;
 
 /** No owner, relay, filter or budget is caller-selectable. */
 export function memoryFilter(body, viewer) {
+  const keys = Object.keys(body ?? {});
+  const own = body?.proposals === true;
   if (
     !body ||
-    Object.keys(body).length !== 1 ||
+    keys.length !== (own ? 2 : 1) ||
     !memoryAgent(body.agent, viewer)
   )
     throw new Error("Invalid memory target");
   return [
     {
       kinds: [30174],
-      authors: [body.agent],
-      "#p": [viewer],
+      authors: [own ? viewer : body.agent],
+      "#p": [own ? body.agent : viewer],
       limit: MEMORY_EVENT_LIMIT,
     },
   ];
+}
+
+/** The viewer's signed proposal of a table schema to `agent`; see
+ * `proposeSchema`. */
+export function tableProposal(body, secret, viewer) {
+  if (
+    !body ||
+    Object.keys(body).length !== 4 ||
+    !memoryAgent(body.agent, viewer) ||
+    typeof body.schema !== "string" ||
+    body.schema.length > PROPOSAL_BYTES ||
+    !Number.isSafeInteger(body.after) ||
+    body.after < 0
+  )
+    throw new Error("Invalid table proposal");
+  return proposeSchema(
+    secret,
+    body.agent,
+    tableId(body.table),
+    parseSchema(body.schema),
+    Math.max(Math.floor(Date.now() / 1000), body.after + 1),
+  );
 }
 
 // JSON.parse validates grammar; the token walk additionally rejects duplicate names
@@ -52,8 +81,17 @@ function uniqueJson(text) {
   return value;
 }
 
-/** Verified NIP-AE only; no keys or arbitrary decrypted payloads cross the host. */
-export async function decodeAgentMemory(events, secret, viewer, agent, signal) {
+/** Verified NIP-AE only; no keys or arbitrary decrypted payloads cross the host.
+ * With `own`, the viewer's own table proposals to `agent` instead. */
+export async function decodeAgentMemory(
+  events,
+  secret,
+  viewer,
+  agent,
+  signal,
+  own = false,
+) {
+  const [author, counterparty] = own ? [viewer, agent] : [agent, viewer];
   if (getPublicKey(secret) !== viewer || !memoryAgent(agent, viewer))
     throw new Error("Memory viewer changed");
   if (!Array.isArray(events) || events.length > MEMORY_EVENT_LIMIT)
@@ -74,10 +112,10 @@ export async function decodeAgentMemory(events, secret, viewer, agent, signal) {
         d = ds[0]?.[1];
         if (
           event.kind !== 30174 ||
-          event.pubkey !== agent ||
+          event.pubkey !== author ||
           ds.length !== 1 ||
           ps.length !== 1 ||
-          ps[0][1] !== viewer ||
+          ps[0][1] !== counterparty ||
           !/^[0-9a-f]{64}$/.test(d ?? "") ||
           event.content.length > 87472
         )
@@ -91,7 +129,8 @@ export async function decodeAgentMemory(events, secret, viewer, agent, signal) {
           throw new Error("Noncanonical memory plaintext");
         body = uniqueJson(text);
         const slug = body?.slug;
-        if (!memorySlug(slug)) throw new Error("Invalid memory slug");
+        if (!memorySlug(slug) || (own && !slug.startsWith(PROPOSALS)))
+          throw new Error("Invalid memory slug");
         const expected = createHmac("sha256", key)
           .update("agent-memory/v1/d-tag\0")
           .update(slug)

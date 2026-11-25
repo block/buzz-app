@@ -690,6 +690,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       ? ` · ${placeText(entry.where.destination)}${entry.where.elsewhere ? " · asks elsewhere" : ""}`
       : "";
     if (entry.status === "picked") {
+      // A watch turn already took the message: the agent is on it, where
+      // its watch answers, not where Jev would have put it.
+      if (entry.wake === "dropped: watched")
+        return `→ ${entry.agent} ${pct(entry.probability)} · woken by its watch`;
       const undelivered =
         entry.wake && !["delivered", "waking", "retrying"].includes(entry.wake);
       return `→ ${entry.agent} ${pct(entry.probability)}${where}${entry.wake === "retrying" ? " · retrying…" : undelivered ? " · not delivered" : ""}`;

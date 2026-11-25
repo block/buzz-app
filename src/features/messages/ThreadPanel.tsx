@@ -50,6 +50,7 @@ import type { RelaySession } from "../relay/session";
 import {
   threadFailure,
   type ThreadRetarget,
+  type ThreadSnapshot,
   type ThreadView,
 } from "../relay/threads";
 import { useProfileGeneration, useRowProfiles } from "../relay/react";
@@ -152,6 +153,23 @@ export type ThreadPanelProps = {
 
 // Read errors are diagnostics, not copy; the notice says what happened.
 const THREAD_FAILED = "This thread didn’t load.";
+
+/** Whether replies new to this snapshot can be counted as live arrivals. A
+ * strict window holds the newest replies from its first read, and still holds
+ * them while an older page loads or has failed. A refresh may replace the
+ * rows, and a view over its memory limit or missing its root has dropped them. */
+function countsArrivals(snapshot: ThreadSnapshot) {
+  if (snapshot.direction !== "older")
+    return snapshot.status === "ready" && !snapshot.canLoadMore;
+  if (snapshot.resumed) return false;
+  return (
+    snapshot.status === "ready" ||
+    (snapshot.readKind === "older" &&
+      !snapshot.limited &&
+      !!snapshot.root &&
+      (snapshot.status === "loading" || snapshot.status === "error"))
+  );
+}
 
 /** The ids of the folded group, activity or relayed, that holds a reply. */
 function foldedGroupOf(tree: ReturnType<typeof replyTree>, id: string) {
@@ -875,7 +893,7 @@ function ThreadMessages({
       0,
       ...snapshot.replies.map((reply) => reply.createdAt),
     ),
-    complete: snapshot.status === "ready" && !snapshot.canLoadMore,
+    complete: countsArrivals(snapshot),
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -1507,7 +1525,7 @@ function ThreadMessages({
   }, [view, snapshot]);
   useLayoutEffect(() => {
     const previous = previousReplies.current;
-    const complete = snapshot.status === "ready" && !snapshot.canLoadMore;
+    const complete = countsArrivals(snapshot);
     // Initial traversal has no baseline. Once complete, retain the last
     // observed replies through reconnect loading so recovery can reconcile them.
     if (!complete && !previous.complete) return;
@@ -1530,7 +1548,7 @@ function ThreadMessages({
       };
     if (arrivals > 0 && !follow.current)
       setNewMessageCount((count) => count + arrivals);
-  }, [snapshot.status, snapshot.canLoadMore, snapshot.replies]);
+  }, [snapshot]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;

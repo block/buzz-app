@@ -1,7 +1,6 @@
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
   type CollisionDetection,
   pointerWithin,
   useDndContext,
@@ -26,6 +25,7 @@ import { frame, motion, useReducedMotion } from "motion/react";
 import { SidebarSection } from "../../bundled/channels/SidebarSection";
 import type { SidebarRowKind } from "../../bundled/channels/sidebar-sections";
 import { PlusIcon } from "../../shared/design-system/icons";
+import { PressAwarePointerSensor } from "../../shared/lib/press-aware-pointer-sensor";
 import styles from "../../bundled/channels/Channels.module.css";
 
 const Writable = createContext(false);
@@ -109,7 +109,9 @@ export function ChannelSidebarDnd({
   children: ReactNode;
 }) {
   const [dragging, setDragging] = useState<{ id: string; group: boolean }>();
-  const sensors = useSensors(useSensor(PointerSensor, pointerSensorOptions));
+  const sensors = useSensors(
+    useSensor(PressAwarePointerSensor, pointerSensorOptions),
+  );
   return (
     <DndContext
       sensors={sensors}

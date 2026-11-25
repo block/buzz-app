@@ -1651,10 +1651,11 @@ export function serve({
   /** Starts the agent's MCP servers when their approval or values changed
    * since the last open, one change at a time. The old ones close first,
    * which ends their calls still running in the agent's other
-   * conversations. */
+   * conversations. Servers that finish connecting after the agent began
+   * closing are closed at once, never installed. */
   function startMcp(opened, { key, cwd, servers }) {
     opened.mcpUse = (opened.mcpUse ?? Promise.resolve()).then(async () => {
-      if ((opened.mcp?.key ?? "") === key) return;
+      if (opened.closing || (opened.mcp?.key ?? "") === key) return;
       if (servers.length && protectedAgent)
         throw new Error("Protected Pi does not run MCP servers");
       const old = opened.mcp;
@@ -1665,6 +1666,10 @@ export function serve({
       }
       if (!servers.length) return;
       const { clients, extension } = await mcpExtension(servers, cwd);
+      if (opened.closing) {
+        await closeMcp(clients, MCP_CLOSE_MS);
+        return;
+      }
       opened.install(extension);
       opened.mcp = { key, clients, extension };
     });
@@ -3012,8 +3017,11 @@ export function serve({
     if (!opened) return;
     if (!opened.closing)
       opened.closing = (async () => {
-        // At once, with the storage's close, inside the host's last moments.
-        const servers = closeMcp(opened.mcp?.clients ?? [], MCP_CLOSE_MS);
+        // At once, with the storage's close, inside the host's last moments;
+        // a change still connecting closes its own servers when it ends.
+        const servers = Promise.resolve(opened.mcpUse)
+          .catch(() => undefined)
+          .then(() => closeMcp(opened.mcp?.clients ?? [], MCP_CLOSE_MS));
         for (const watched of opened.watched.values())
           (await watched.catch(() => undefined))?.observation.detach();
         await opened.harness.close(context);

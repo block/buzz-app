@@ -308,6 +308,9 @@ export class PiRuntime {
    * approval and value saves they came from: read from the keychain only
    * when either changes. */
   private readonly mcpSent = new Map<AgentKey, PiMcp>();
+  /** Each agent's opens, one after another, so an older one's MCP list can't
+   * reach Pi after a newer one's. */
+  private readonly opening = new Map<AgentKey, Promise<void>>();
   /** Each agent's conversations as Pi's storage and this app run's
    * deliveries know them, by key; read from storage once, when first asked. */
   private readonly known = new Map<
@@ -418,6 +421,7 @@ export class PiRuntime {
       entry.closed = true;
     }
     this.agents.delete(pubkey);
+    this.mcpSent.delete(pubkey);
     await this.pi.retire(pubkey);
   }
 
@@ -727,6 +731,7 @@ export class PiRuntime {
       entry.closed = true;
     }
     this.agents.clear();
+    this.mcpSent.clear();
     void this.pi.dispose();
   }
 
@@ -1720,7 +1725,20 @@ export class PiRuntime {
     await this.adopted(entry, agent, { again: true });
   }
 
-  private async open(agent: AgentKey) {
+  private open(agent: AgentKey): Promise<void> {
+    const done = (this.opening.get(agent) ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.openNow(agent));
+    this.opening.set(agent, done);
+    void done
+      .finally(() => {
+        if (this.opening.get(agent) === done) this.opening.delete(agent);
+      })
+      .catch(() => undefined);
+    return done;
+  }
+
+  private async openNow(agent: AgentKey) {
     const entry = this.agents.get(agent);
     const handle = entry?.handle ?? this.handle(agent);
     const tokens = compactAt(entry?.config.compactAt);
@@ -1745,9 +1763,13 @@ export class PiRuntime {
     entry: Entry,
     handle: AgentHandle,
   ): Promise<PiMcp> {
-    if (handle.protection) return { key: "", servers: [] };
-    const { servers } = startList(entry.config, handle);
-    if (!servers.length) return { key: "", servers: [] };
+    const { servers } = handle.protection
+      ? { servers: [] }
+      : startList(entry.config, handle);
+    if (!servers.length) {
+      this.mcpSent.delete(agent);
+      return { key: "", servers: [] };
+    }
     const cwd = entry.config.workspace;
     const key = JSON.stringify([
       approvalId(entry.config, handle),

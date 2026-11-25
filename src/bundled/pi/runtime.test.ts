@@ -31,6 +31,15 @@ import { VECTOR_PROFILE } from "../../features/agents/gateway/vectors";
 import { turnContext } from "../../features/agents/gateway/turn";
 import { deferred, fakeHost, type Handler, PI_UPSTREAM } from "./pi-testing";
 import { type Config, DEFAULT_CONFIG, PiRuntime } from "./runtime";
+
+/** The agent's MCP values: none, as outside Tauri, unless a test holds them. */
+const values = vi.hoisted(() => ({
+  read: (): Promise<Readonly<Record<string, string>>> => Promise.resolve({}),
+}));
+vi.mock("../../features/agents/mcp-servers", async (original) => ({
+  ...(await original<typeof import("../../features/agents/mcp-servers")>()),
+  mcpValues: () => values.read(),
+}));
 import type { GatewayRoute, GatewaySeam } from "./gateway";
 
 type MemoryStorage = ReturnType<typeof memoryStorage>;
@@ -5643,6 +5652,84 @@ it("gives Pi the agent's approved MCP servers, again only when they change", asy
     );
     expect(f.host.requests("open")).toHaveLength(3);
   } finally {
+    vi.unstubAllGlobals();
+    await f.runtime.dispose();
+  }
+});
+
+it("keeps a newer MCP list sent while an older one's values were read", async () => {
+  const { finalizeEvent, generateSecretKey, getPublicKey } = await import(
+    "nostr-tools"
+  );
+  const { approvalTemplate } = await import(
+    "../../features/agents/mcp-servers"
+  );
+  const kept = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => kept.get(key) ?? null,
+    setItem: (key: string, value: string) => kept.set(key, value),
+  });
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "Done" }),
+  });
+  const owner = generateSecretKey();
+  f.agent.owner = getPublicKey(owner);
+  const list = {
+    servers: [
+      {
+        name: "old",
+        enabled: true,
+        slot: "00000000000000a1",
+        transport: "stdio" as const,
+        command: "old-mcp",
+        args: [],
+        env: ["TOKEN"],
+      },
+    ],
+    disabledInherited: [],
+  };
+  const signed = (seq: number, body = list) =>
+    finalizeEvent(approvalTemplate(self, seq, body), owner);
+  const use = (mcpServers: unknown) =>
+    f.runtime.sync([
+      { key: self, pubkey: self, config: { ...DEFAULT_CONFIG, mcpServers } },
+    ] as never);
+  const open = () =>
+    (f.runtime as unknown as { open(agent: string): Promise<void> }).open(self);
+  const read = values.read;
+  try {
+    const first = signed(1);
+    const delivered = f.deliver(
+      {
+        type: "mention",
+        event: { ...reply("2", "@Pi 2"), pubkey: f.agent.owner },
+      },
+      { config: { ...DEFAULT_CONFIG, mcpServers: first } },
+    );
+    use(first);
+    await delivered.run;
+    await f.settled(delivered);
+    // The older open reads its values slowly; the list empties meanwhile.
+    const slow = deferred<Readonly<Record<string, string>>>();
+    const reading = deferred();
+    values.read = () => {
+      reading.resolve();
+      return slow.promise;
+    };
+    use(signed(2));
+    const older = open();
+    await reading.promise;
+    use(signed(3, { servers: [], disabledInherited: [] }));
+    const newer = open();
+    slow.resolve({});
+    await Promise.all([older, newer]);
+    const opens = f.host.requests("open");
+    expect(opens.at(-1)?.params.mcp).toEqual({ key: "", servers: [] });
+    expect(
+      (opens.at(-2)?.params.mcp as { servers?: unknown[] })?.servers,
+    ).toHaveLength(1);
+  } finally {
+    values.read = read;
     vi.unstubAllGlobals();
     await f.runtime.dispose();
   }

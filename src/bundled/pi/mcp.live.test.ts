@@ -96,6 +96,52 @@ console.log(JSON.stringify(out));
 process.exit(0);
 `;
 
+/** A local server that writes its PID, then answers nothing for a while. */
+const SLOW = `
+import { writeFileSync } from "node:fs";
+writeFileSync(process.argv[2], String(process.pid));
+process.stdin.resume();
+setTimeout(() => {}, 60_000);
+`;
+
+/** Closes the agent while its server is still connecting, through the host. */
+const CLOSING = `
+import { existsSync, readFileSync } from "node:fs";
+import { PassThrough } from "node:stream";
+import { createInterface } from "node:readline";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { serve } from "./host.mjs";
+const input = new PassThrough(), output = new PassThrough();
+const pending = new Map();
+let id = 0;
+createInterface({ input: output }).on("line", (line) => {
+  const message = JSON.parse(line);
+  const call = message.id !== undefined && pending.get(message.id);
+  if (!call) return;
+  pending.delete(message.id);
+  if (message.error) call.reject(new Error(message.error));
+  else call.resolve(message.result);
+});
+const rpc = (method, params) => new Promise((resolve, reject) => {
+  pending.set(++id, { resolve, reject });
+  input.write(JSON.stringify({ id, method, params }) + "\\n");
+});
+const data = process.cwd() + "/data";
+serve({ data, models: createModels(), dir: data, input, output, exit: () => {} });
+const agent = "c".repeat(64);
+const pidFile = process.cwd() + "/slow.pid";
+const opening = rpc("open", { agent, tools: [], mcp: { key: "k", cwd: process.cwd(), servers: [
+  { name: "slow", transport: "stdio", command: process.execPath, args: [process.cwd() + "/slow.mjs", pidFile], env: {} },
+] } }).then(() => "opened", (e) => e.message);
+while (!existsSync(pidFile)) await new Promise((r) => setTimeout(r, 20));
+const pid = Number(readFileSync(pidFile, "utf8"));
+await rpc("close", { agent });
+const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+for (let i = 0; i < 50 && alive(); i++) await new Promise((r) => setTimeout(r, 100));
+console.log(JSON.stringify({ alive: alive(), opening: await opening }));
+process.exit(0);
+`;
+
 const folders: string[] = [];
 afterAll(() =>
   Promise.all(folders.map((f) => rm(f, { recursive: true, force: true }))),
@@ -156,4 +202,23 @@ describe.skipIf(!DEPS)("the Pi host's MCP client", () => {
     // Its error output never reaches the host's.
     expect(stderr).not.toContain("SECRET-IN-LOGS");
   }, 90_000);
+
+  it("leaves no server running when the agent closes while it connects", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "buzz-pi-mcp-"));
+    folders.push(folder);
+    await symlink(
+      join(DEPS ?? "", "node_modules"),
+      join(folder, "node_modules"),
+    );
+    await writeFile(join(folder, "host.mjs"), host);
+    await writeFile(join(folder, "slow.mjs"), SLOW);
+    await writeFile(join(folder, "driver.mjs"), CLOSING);
+    const { stdout } = await run(
+      process.execPath,
+      ["--disable-warning=ExperimentalWarning", join(folder, "driver.mjs")],
+      { cwd: folder, timeout: 60_000 },
+    );
+    const out = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
+    expect(out.alive).toBe(false);
+  }, 60_000);
 });

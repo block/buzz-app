@@ -1481,31 +1481,33 @@ function Timeline({
   // A follower's pin runs a frame after the rows change, so a new-messages line
   // that grows a row would paint the rows below it a line lower for one frame.
   // Virtua writes the grown height while measuring, before that frame paints:
-  // keep the same distance from the end then.
+  // align the end then, once, as that pin does. Rows arriving with the line
+  // still hold estimated heights, and the scroller's own end can sit a pixel
+  // past Virtua's, which the two pins would trade.
+  const lastRow = useRef(0);
+  lastRow.current = rows.length - 1;
   // biome-ignore lint/correctness/useExhaustiveDependencies: a placed line is what grows the row.
   useLayoutEffect(() => {
-    const element = scroller.current;
-    const list = element?.querySelector("ol");
-    if (!element || !list || !follow.current || !settled.current) return;
-    const distance =
-      element.scrollHeight - element.scrollTop - element.clientHeight;
-    let height = list.style.height;
+    const list = scroller.current?.querySelector("ol");
+    if (!list || !follow.current || !settled.current) return;
+    const height = list.style.height;
     const pin = new MutationObserver(() => {
-      // A reader who has left the end is the reader hold's to keep.
-      if (!follow.current || !settled.current) return pin.disconnect();
       if (list.style.height === height) return;
-      height = list.style.height;
-      correctScrollTop(
-        element,
-        element.scrollHeight -
-          element.clientHeight -
-          distance -
-          element.scrollTop,
-      );
+      pin.disconnect();
+      // A reader who has left the end is the reader hold's to keep.
+      if (!follow.current || !settled.current || !handle.current) return;
+      layoutCorrection.current = true;
+      const tailHeight =
+        (activityTail.current?.getBoundingClientRect().height ?? 0) +
+        restSpaceHeight();
+      handle.current.scrollToIndex(lastRow.current, {
+        align: "end",
+        ...(tailHeight ? { offset: tailHeight } : {}),
+      });
     });
     pin.observe(list, { attributes: true, attributeFilter: ["style"] });
     return () => pin.disconnect();
-  }, [newMessageBoundaryId]);
+  }, [newMessageBoundaryId, restSpaceHeight]);
   // Without shift, rows landing above the reader push them down. Scroll by
   // that height before paint, so input that follows starts from the reader's
   // row. Rows that moved keep another row's size until they measure; hold the

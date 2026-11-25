@@ -1,22 +1,29 @@
 import { viewerMember } from "../../features/relay/membership";
 import type { ChannelSummary } from "../../features/relay/contracts";
 
-/** The verified one-to-one DM with this Bestie. Solo chats stay separate. */
+/** The verified one-to-one DM with this Bestie. Solo chats stay separate.
+ * The DM `shown` stays the chat while the viewer and the Bestie are both in
+ * it, so someone joining it never takes the chat, or a send in it, away. */
 export function bestieChat(
   channels: readonly ChannelSummary[],
   viewer: string | undefined,
   bestie: string | undefined,
+  shown?: string,
 ) {
   if (!viewer || !bestie) return;
-  return channels
-    .filter(
-      (channel) =>
-        channel.channelType === "dm" &&
-        !channel.cached &&
-        !channel.archived &&
-        viewerMember(channel, viewer) &&
-        onlyOther(channel.members, viewer) === bestie,
-    )
+  const live = channels.filter(
+    (channel) =>
+      channel.channelType === "dm" &&
+      !channel.cached &&
+      !channel.archived &&
+      viewerMember(channel, viewer),
+  );
+  const kept = live.find(
+    (channel) => channel.id === shown && channel.members?.includes(bestie),
+  );
+  if (kept) return kept;
+  return live
+    .filter((channel) => onlyOther(channel.members, viewer) === bestie)
     .sort(
       (a, b) =>
         recency(b) - recency(a) ||

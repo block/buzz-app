@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AgentPortrait } from "../agents/AgentCard";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
@@ -56,14 +56,17 @@ export function PinnedBestie({
     ? choices.selectable.find((choice) => choice.pubkey === saved)
     : undefined;
   const channels = useChannelList(session.channels);
+  // The chat on screen, which stays it while the Bestie is still in it.
+  const shown = useRef<string>(undefined);
   // Match promotion: incomplete discovery cannot strand a verified existing DM.
   // Only a selectable agent below may open a conversation that is missing.
   const channel =
     saved &&
     !choices.archives.archived.includes(saved) &&
     (agent || choices.status !== "ready" || !choices.complete)
-      ? bestieChat(channels.channels, viewer, saved)
+      ? bestieChat(channels.channels, viewer, saved, shown.current)
       : undefined;
+  shown.current = channel?.id;
   const identity = agent ?? known;
   const name = identity ? (identity.managedName ?? identity.name) : "Bestie";
   const icon = identity ? (

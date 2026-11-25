@@ -3488,7 +3488,13 @@ function Composer({
           const elsewhere = new Map(
             (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
           );
-          const bring = captured.recipients.flatMap((person) => {
+          // One entry per person, however often the draft names them.
+          const named = [
+            ...new Map(
+              captured.recipients.map((person) => [person.pubkey, person]),
+            ).values(),
+          ];
+          const bring = named.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
             return agent && !channel.members?.includes(person.pubkey)
               ? [agent]
@@ -3507,7 +3513,7 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          let missing = captured.recipients.filter(
+          let missing = named.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),

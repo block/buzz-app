@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -309,6 +310,7 @@ async function fixture({
     owner.dispose();
   });
   const send = vi.fn<typeof owner.session.messages.send>(() => "d".repeat(64));
+  const listListeners = new Set<() => void>();
   let channelListOverride:
     | ReturnType<typeof owner.session.channels.list>
     | undefined;
@@ -317,6 +319,14 @@ async function fixture({
     channels: {
       ...owner.session.channels,
       list: () => channelListOverride ?? owner.session.channels.list(),
+      subscribeList: (listener: () => void) => {
+        listListeners.add(listener);
+        const stop = owner.session.channels.subscribeList(listener);
+        return () => {
+          listListeners.delete(listener);
+          stop();
+        };
+      },
     },
     agentChoices,
     messages: { ...owner.session.messages, send },
@@ -373,8 +383,14 @@ async function fixture({
     find: () => undefined,
   } as unknown as Agents;
   return {
-    setChannelList(next: ReturnType<typeof owner.session.channels.list>) {
+    /** Replace the list; `publish` also tells its readers, as a live
+     * roster update does. */
+    setChannelList(
+      next: ReturnType<typeof owner.session.channels.list>,
+      publish = false,
+    ) {
       channelListOverride = next;
+      if (publish) for (const listener of [...listListeners]) listener();
     },
     setPanels(next: readonly RegisteredPanel[]) {
       panels = next;
@@ -1194,4 +1210,29 @@ it("opens the DM an addition lands in, when Bestie's Members starts or finds ano
       channelId: fizzDM,
     }),
   );
+});
+
+it("keeps its chat, and a send in it, when someone joins the DM", async () => {
+  const f = await fixture({ existing: true });
+  f.choose(pollen);
+  f.mount();
+  const input = await screen.findByRole("textbox", { name: "Message Pollen" });
+  fireEvent.change(input, { target: { value: "Still here?" } });
+  const list = f.session.channels.list();
+  act(() =>
+    f.setChannelList(
+      {
+        ...list,
+        channels: list.channels.map((channel) =>
+          channel.id === pollenDM
+            ? { ...channel, members: [...(channel.members ?? []), fizz] }
+            : channel,
+        ),
+      },
+      true,
+    ),
+  );
+  // The same composer, not a new one-to-one chat's.
+  expect(screen.getByRole("textbox", { name: "Message Pollen" })).toBe(input);
+  expect(input).toHaveValue("Still here?");
 });

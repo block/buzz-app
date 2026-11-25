@@ -11203,7 +11203,7 @@ it("adds an agent tagged in a DM once its sender invites it, then sends", async 
   const dialog = await screen.findByRole("dialog");
   expect(dialog).toHaveTextContent("Mention agents outside this DM?");
   expect(dialog).toHaveTextContent(
-    "Honey is not in this DM. Invite them to the DM, or send without inviting them.",
+    "Honey is not in this DM. Invite it to the DM, where it can read earlier messages, or send without inviting it.",
   );
   fireEvent.click(screen.getByRole("button", { name: "Invite" }));
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
@@ -11249,6 +11249,29 @@ it("keeps a person tagged in a DM a reference beside an agent it adds", async ()
   );
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([person.pubkey]);
+});
+
+it("asks about and adds an agent tagged twice in a DM once, keeping both tags", async () => {
+  const add = vi.fn(async () => "channel");
+  const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
+  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(first);
+  });
+  fireEvent.submit(screen.getByRole("form"));
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
+    /^Mention agents outside this DM\?Honey is not in this DM\./,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(add).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    [first.pubkey],
+    "ask",
+    expect.any(AbortSignal),
+  );
+  expect(h.messages.send.mock.calls[0]?.[1]).toBe("@Honey @Honey ");
 });
 
 it("sends an agent tagged in a DM as a reference when its sender does nothing", async () => {
@@ -11420,6 +11443,11 @@ it("brings the owner's agent from another community into a DM, then adds it ther
     "Bring Honey into relay.example.test?",
   );
   expect(screen.getByRole("dialog")).not.toHaveTextContent("will not be added");
+  // Said before anything joins: bringing it also lets it read this DM.
+  expect(screen.getByRole("dialog")).toHaveTextContent(
+    "It also joins this DM and can read its earlier messages.",
+  );
+  expect(join).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Bring it here" }));
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
   expect(calls).toEqual(["join", "add", "send"]);

@@ -159,7 +159,11 @@ function describe(
   const verb = people.length === 1 ? "is" : "are";
   return `${names} ${verb} not in this ${place}. ${
     canAdd
-      ? `Invite them to the ${place}, or send without inviting them.`
+      ? place === "DM"
+        ? people.length === 1
+          ? "Invite it to the DM, where it can read earlier messages, or send without inviting it."
+          : "Invite them to the DM, where they can read earlier messages, or send without inviting them."
+        : `Invite them to the ${place}, or send without inviting them.`
       : `You cannot add people to this ${place}. You can still send without inviting them.`
   }`;
 }

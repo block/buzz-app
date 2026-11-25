@@ -163,7 +163,7 @@ export function useBringAgents(
             : `Bring ${named(pending.agents)} into ${here}?`)
         }
         description={
-          pending && describe(pending.agents, canAdd, !!pending.reviewed)
+          pending && describe(pending.agents, canAdd, !!pending.reviewed, dm)
         }
         preventClose={!!pending?.busy}
         // Bringing an agent changes who is in the channel, so Enter starts on
@@ -223,6 +223,7 @@ function describe(
   agents: readonly Agent[],
   canAdd: boolean,
   reviewed: boolean,
+  dm: boolean,
 ) {
   const many = agents.length > 1;
   if (reviewed)
@@ -239,8 +240,10 @@ function describe(
       ? `They are in ${other}. Bringing them here adds the same agents. ${sameAgent(true)}`
       : `${agents[0]?.name} is in ${other}. Bringing it here adds the same agent. ${sameAgent()}`
   }${
-    canAdd
-      ? ""
-      : ` You cannot add people to this channel, so ${many ? "they" : "it"} will not be added to it.`
+    !canAdd
+      ? ` You cannot add people to this channel, so ${many ? "they" : "it"} will not be added to it.`
+      : dm
+        ? ` ${many ? "They" : "It"} also ${many ? "join" : "joins"} this DM and can read its earlier messages.`
+        : ""
   }`;
 }

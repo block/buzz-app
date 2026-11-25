@@ -362,6 +362,14 @@ test.describe("Inline", () => {
     await expect(profile(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(profile(page)).toHaveCount(0);
+    // Closing the profile draws the thread again, inert until it shows; its
+    // reply box takes focus as it does.
+    await expect(
+      thread(page).getByRole("textbox", {
+        name: "Reply to thread",
+        exact: true,
+      }),
+    ).toBeFocused();
     // A press in the top sheet closes nothing; each press on the conversation
     // around the sheets closes the top one. The sheet is still moving when its
     // heading shows, so the click waits for it to come to rest.

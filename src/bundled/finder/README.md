@@ -36,10 +36,11 @@ where it was said.
   opening. **Keep going** allows another 5,000. It remembers its place for this
   session and stops when you close or switch scope. Join a public preview to
   search its history here.
-- **All of Buzz** shows matches from this device at once, then asks the relay
-  after you pause typing. Its hits appear below, under **More from all of
-  Buzz**, and the rows above them don't move. Use **Retry** if a read fails, or
-  **More messages** for the next page. Hits from joined channels join the
-  local index when you close Finder. Public previews stay out.
+- **All of Buzz** shows matches from this device at once; once the last word has
+  three letters, the best 5 stay on top, and it asks the relay after you pause
+  typing. Its hits appear below, under **More from all of Buzz**, then the rest
+  of the device matches, and rows already shown don't move. Use **Retry** if a
+  read fails, or **More messages** for the next page. Hits from joined channels
+  join the local index when you close Finder. Public previews stay out.
 - ⌘⇧P doesn't open Finder while you type in a text field: there it's Spoiler.
 - Change the shortcuts in **Settings → Shortcuts**.

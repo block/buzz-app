@@ -1082,10 +1082,6 @@ function ThreadMessages({
     id?: string | null;
     failed?: true;
     shown?: string | null | undefined;
-    // The line is above the thread's first reply: every reply is unread, so
-    // the opening reads from the latest one, as a read thread's does, and the
-    // line only marks where the unread run starts.
-    atStart?: true;
   }>(() => ({ opening }));
   // A route can arrive after its opening already showed a line; keep that line
   // on screen until the new decision replaces it, rather than blinking it out.
@@ -1236,20 +1232,7 @@ function ThreadMessages({
           : new Set([...current, ...ancestors]),
       );
     }
-    // The first reply is itself unread, and the loaded rows start at the
-    // thread's first reply: a forward walk's always do, an older read's once
-    // it has nothing older left.
-    const atStart =
-      !!first &&
-      !revealed &&
-      session.unread.attention(channelId, first.id, since).unread &&
-      (snapshot.direction === "forward" || !snapshot.canLoadMore) &&
-      first === tree.children.get(undefined)?.[0];
-    setBoundary({
-      ...boundary,
-      id: first?.id ?? null,
-      ...(atStart ? { atStart } : {}),
-    });
+    setBoundary({ ...boundary, id: first?.id ?? null });
   }, [
     boundary,
     active,
@@ -1767,8 +1750,7 @@ function ThreadMessages({
       !openLatest && placing && unreadBoundary
         ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
         : null;
-    // A line above the first reply opens at the latest one instead.
-    if (line && !boundary.atStart) {
+    if (line) {
       // Below any header the reader scrolls under, as a thread sheet's, by
       // the line's own scroll margin.
       const cover =
@@ -1785,8 +1767,6 @@ function ThreadMessages({
         element.scrollHeight - element.clientHeight - element.scrollTop < 1;
       lineTop.current = element.scrollTop;
       atLine.current = true;
-    }
-    if (line) {
       // Like a revealed message, the line is where a first opening's reading
       // starts, so content-focused navigation moves focus in: from where the
       // opening or navigation left it, not from where the person has since

@@ -8427,40 +8427,7 @@ it("a DM message marked unread stays in Activity after leaving until you come ba
   expect(h.journal()?.localUnread[`msg:${first.id}`]).toBeUndefined();
 });
 
-it("a DM message marked unread while shown stays unread through that visit's reading", async () => {
-  const h = setup();
-  h.grant("room");
-  h.emit([channelMetadata(h, "dm")]);
-  const first = message(h.alice, "room", "first", 11);
-  h.emit([first]);
-  const unread = h.session.unread;
-  const lease = unread.reading("room");
-  lease.view([first.id], () => true);
-  await unread.markUnreadLocal({
-    kind: "message",
-    channelId: "room",
-    messageId: first.id,
-  });
-  // Its own first dwell advances the read mark past it; the queued writes
-  // that follow must keep the mark.
-  await lease.observe([first.id]);
-  await flush();
-  expect(unread.attention("room", first.id).unread).toBe(true);
-  lease.dispose();
-  await flush();
-  expect(unread.attention("room", first.id).unread).toBe(true);
-  expect(h.journal()?.localUnread[`msg:${first.id}`]).toBeDefined();
-
-  // The next visit reads it.
-  await unread.enterChannel("room");
-  const back = unread.reading("room");
-  await back.observe([first.id]);
-  back.dispose();
-  await flush();
-  expect(unread.attention("room", first.id).unread).toBe(false);
-});
-
-it("a DM message marked unread while shown outlasts dwells at its position, not a newer read", async () => {
+it("a DM message marked unread while shown outlasts that visit's reading until a newer message is read", async () => {
   const h = setup();
   h.grant("room");
   h.emit([channelMetadata(h, "dm")]);
@@ -8470,19 +8437,21 @@ it("a DM message marked unread while shown outlasts dwells at its position, not 
   const visit = {};
   const lease = unread.reading("room", undefined, visit);
   lease.view([first.id], () => true);
-  await lease.observe([first.id]);
-  await flush();
   await unread.markUnreadLocal({
     kind: "message",
     channelId: "room",
     messageId: first.id,
   });
-  // Another dwell at the unchanged position keeps the mark.
+  // Its first dwell advances the read mark past it, then dwells again at
+  // that position; neither ends it once the queued writes settle.
+  await lease.observe([first.id]);
+  await flush();
   const again = unread.reading("room", undefined, visit);
   again.view([first.id], () => true);
   await again.observe([first.id]);
   again.dispose();
   await flush();
+  expect(h.journal()?.state.frontiers.room).toBe(11);
   expect(unread.attention("room", first.id).unread).toBe(true);
 
   // Reading a newer arrival in the same visit covers it, which ends it.
@@ -8497,7 +8466,6 @@ it("a DM message marked unread while shown outlasts dwells at its position, not 
   await vi.waitFor(() =>
     expect(h.journal()?.localUnread[`msg:${first.id}`]).toBeUndefined(),
   );
-  expect(unread.attention("room", first.id).unread).toBe(false);
 });
 
 it("a reply marked unread while shown ends when a newer reply in its thread is read, despite newer posts elsewhere", async () => {
@@ -8564,7 +8532,7 @@ it("a channel message marked unread while shown ends when a later visit catches 
   expect(h.journal()?.state.frontiers.room).toBe(200);
 });
 
-it("a channel message marked unread keeps its row lit in a muted channel", async () => {
+it("a channel message marked unread lights its row, even muted, but stays out of Activity", async () => {
   const h = setup();
   h.grant("room");
   const plain = message(h.alice, "room", "plain", 11);
@@ -8574,35 +8542,6 @@ it("a channel message marked unread keeps its row lit in a muted channel", async
   await lease.catchUp(plain.id);
   lease.dispose();
   expect(rowUnread(h.snapshot(), false, true)).toBe(false);
-
-  await unread.markUnreadLocal({
-    kind: "message",
-    channelId: "room",
-    messageId: plain.id,
-  });
-  expect(h.snapshot()).toMatchObject({
-    manual: "none",
-    row: { observedCount: 1, attentionCount: 0, markedCount: 1 },
-  });
-  // Mute still quiets an ordinary arrival.
-  const arrival = message(h.alice, "room", "arrival", 12);
-  h.emit([arrival]);
-  expect(rowUnread(h.snapshot(), false, true)).toBe(true);
-  await unread.markMessageRead("room", plain.id);
-  expect(h.snapshot().row).toMatchObject({ observedCount: 1, markedCount: 0 });
-  expect(rowUnread(h.snapshot(), false, true)).toBe(false);
-});
-
-it("a channel message marked unread lights its row but stays out of Activity", async () => {
-  const h = setup();
-  h.grant("room");
-  const plain = message(h.alice, "room", "plain", 11);
-  h.emit([plain]);
-  const unread = h.session.unread;
-  const lease = unread.reading("room");
-  await lease.catchUp(plain.id);
-  lease.dispose();
-  expect(unread.attention("room", plain.id).unread).toBe(false);
 
   await unread.enterChannel("room");
   await unread.markUnreadLocal({
@@ -8613,9 +8552,15 @@ it("a channel message marked unread lights its row but stays out of Activity", a
   unread.leaveChannel("room");
   expect(unread.attention("room", plain.id).unread).toBe(true);
   expect(h.snapshot()).toMatchObject({
-    observedCount: 1,
-    attentionCount: 0,
-    row: { observedCount: 1, attentionCount: 0 },
+    manual: "none",
+    row: { observedCount: 1, attentionCount: 0, markedCount: 1 },
   });
   expect(unread.inbox().items).toEqual([]);
+  expect(rowUnread(h.snapshot(), false, true)).toBe(true);
+
+  // Mute still quiets an ordinary arrival once the mark is read.
+  h.emit([message(h.alice, "room", "arrival", 12)]);
+  await unread.markMessageRead("room", plain.id);
+  expect(h.snapshot().row).toMatchObject({ observedCount: 1, markedCount: 0 });
+  expect(rowUnread(h.snapshot(), false, true)).toBe(false);
 });

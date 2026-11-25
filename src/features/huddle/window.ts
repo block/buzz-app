@@ -282,126 +282,123 @@ export function createHuddleWindow(
     opening = (async () => {
       await updates.catch(() => {});
       try {
-        await bridge.open(
-          next,
-          (id, action, text) => {
-            const call = huddles.snapshot();
-            const accepting =
-              call.phase === "connecting" &&
-              !!call.requester &&
-              call.room === id &&
-              opened === id;
-            if (
-              disposed ||
-              revision !== version ||
-              (call.id !== id &&
-                !(
-                  accepting &&
-                  (action === "closed" ||
-                    action === "minimize" ||
-                    action === "decline")
-                ))
-            )
-              return;
-            if (action === "closed" || action === "minimize") {
-              if (opened !== id) return;
-              if (accepting) attempted = call.id;
-              opened = undefined;
-              closeDiscussion();
-              stopProfiles?.();
-              stopProfiles = undefined;
-              updates = updates
-                .catch(() => {})
-                .then(() => bridge.update(id, null));
-              void updates.catch(() => {});
-              publish(false);
-            } else if (huddles.snapshot().phase === "incoming") {
-              const request = huddles.snapshot();
-              if (action === "decline") void huddles.leave();
-              else if (action === "join" && request.destination && request.room)
-                void huddles.join(request.destination, request.room);
-            } else if (action === "mute") huddles.mute();
-            else if (action === "leave" || (accepting && action === "decline"))
-              void huddles.leave();
-            else if (action === "refreshAudio") huddles.refreshAudioSettings();
-            else if (
-              (action === "inputDevice" || action === "outputDevice") &&
-              typeof text === "string"
-            )
-              huddles.selectAudioDevice(
-                action === "inputDevice" ? "input" : "output",
-                text,
-              );
-            else if (action === "thread") {
-              publish(true);
-              try {
-                const call = huddles.snapshot();
-                if (discussion) closeDiscussion();
-                else if (
-                  call.room &&
-                  call.destination &&
-                  call.phase === "connected"
-                ) {
-                  const session = relay.snapshot().session;
-                  const roomDiscussion = createHuddleDiscussion(
-                    session,
-                    call.room,
-                    call.destination.channelId,
-                    () => {
-                      composer?.refresh();
-                      sync();
-                    },
-                  );
-                  discussion = roomDiscussion;
-                  composer = createHuddleComposerOwner(
-                    session,
-                    call.room,
-                    call.destination.channelId,
-                    extensions,
-                    () =>
-                      !disposed &&
-                      opened === id &&
-                      relay.snapshot().session === session &&
-                      huddles.snapshot().id === id,
-                    roomDiscussion.available,
-                    agents,
-                  );
-                }
-              } catch (error) {
-                closeDiscussion();
-                publish(
-                  true,
-                  false,
-                  `Couldn’t open Huddle chat: ${String(error).slice(0, 500)}`,
+        const act = (id: string, action: HuddleWindowAction, text?: string) => {
+          const call = huddles.snapshot();
+          const accepting =
+            call.phase === "connecting" &&
+            !!call.requester &&
+            call.room === id &&
+            opened === id;
+          if (
+            disposed ||
+            revision !== version ||
+            (call.id !== id &&
+              !(
+                accepting &&
+                (action === "closed" ||
+                  action === "minimize" ||
+                  action === "decline")
+              ))
+          )
+            return;
+          if (action === "closed" || action === "minimize") {
+            if (opened !== id) return;
+            if (accepting) attempted = call.id;
+            opened = undefined;
+            closeDiscussion();
+            stopProfiles?.();
+            stopProfiles = undefined;
+            updates = updates
+              .catch(() => {})
+              .then(() => bridge.update(id, null));
+            void updates.catch(() => {});
+            publish(false);
+          } else if (huddles.snapshot().phase === "incoming") {
+            const request = huddles.snapshot();
+            if (action === "decline") void huddles.leave();
+            else if (action === "join" && request.destination && request.room)
+              void huddles.join(request.destination, request.room);
+          } else if (action === "mute") huddles.mute();
+          else if (action === "leave" || (accepting && action === "decline"))
+            void huddles.leave();
+          else if (action === "refreshAudio") huddles.refreshAudioSettings();
+          else if (
+            (action === "inputDevice" || action === "outputDevice") &&
+            typeof text === "string"
+          )
+            huddles.selectAudioDevice(
+              action === "inputDevice" ? "input" : "output",
+              text,
+            );
+          else if (action === "thread") {
+            publish(true);
+            try {
+              const call = huddles.snapshot();
+              if (discussion) closeDiscussion();
+              else if (
+                call.room &&
+                call.destination &&
+                call.phase === "connected"
+              ) {
+                const session = relay.snapshot().session;
+                const roomDiscussion = createHuddleDiscussion(
+                  session,
+                  call.room,
+                  call.destination.channelId,
+                  () => {
+                    composer?.refresh();
+                    sync();
+                  },
+                );
+                discussion = roomDiscussion;
+                composer = createHuddleComposerOwner(
+                  session,
+                  call.room,
+                  call.destination.channelId,
+                  extensions,
+                  () =>
+                    !disposed &&
+                    opened === id &&
+                    relay.snapshot().session === session &&
+                    huddles.snapshot().id === id,
+                  roomDiscussion.available,
+                  agents,
                 );
               }
-              sync();
-            } else if (
-              action === "openLink" &&
-              text &&
-              isBuzzLink(text) &&
-              text.length <= 8192
-            ) {
-              const connection = relay.snapshot();
-              if (
-                call.phase === "connected" &&
-                connection.status === "ready" &&
-                connection.scope === call.destination?.scope &&
-                connection.viewer === call.destination?.viewer
-              )
-                openLink?.(text);
-            } else if (action === "send" && typeof text === "string")
-              void discussion?.send(text);
-            else if (action === "older") discussion?.older();
-            else if (action === "retry") discussion?.retry();
-            else if (
-              (action === "retryMessage" || action === "discardMessage") &&
-              text
+            } catch (error) {
+              closeDiscussion();
+              publish(
+                true,
+                false,
+                `Couldn’t open Huddle chat: ${String(error).slice(0, 500)}`,
+              );
+            }
+            sync();
+          } else if (
+            action === "openLink" &&
+            text &&
+            isBuzzLink(text) &&
+            text.length <= 8192
+          ) {
+            const connection = relay.snapshot();
+            if (
+              call.phase === "connected" &&
+              connection.status === "ready" &&
+              connection.scope === call.destination?.scope &&
+              connection.viewer === call.destination?.viewer
             )
-              discussion?.recover(text, action === "discardMessage");
-          },
-          requested,
-        );
+              openLink?.(text);
+          } else if (action === "send" && typeof text === "string")
+            void discussion?.send(text);
+          else if (action === "older") discussion?.older();
+          else if (action === "retry") discussion?.retry();
+          else if (
+            (action === "retryMessage" || action === "discardMessage") &&
+            text
+          )
+            discussion?.recover(text, action === "discardMessage");
+        };
+        await bridge.open(next, act, requested);
       } catch (error) {
         // Include partial-creation cleanup in the promise disposal waits for.
         try {

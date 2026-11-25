@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactElement,
   type RefObject,
 } from "react";
 import type { Navigation } from "../../features/navigation/controller";
@@ -18,10 +19,9 @@ import {
   useProfileGeneration,
 } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
-import { ChecksIcon, EnvelopeOpenIcon } from "../../shared/design-system/icons";
+import { ChecksIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
-import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { shortRelativeTimestamp } from "../../shared/relative-timestamp";
@@ -39,7 +39,7 @@ import { withMentionedIds } from "../../features/messages/PreviewText";
 import { activityConversation, useActivityMutes } from "./useActivityMutes";
 import type { InboxItem } from "../../features/relay/inbox";
 import { useOwnActivity, withOwnActivity } from "./own-activity";
-import listRowStyles from "../../features/messages/MessageListRow.module.css";
+import { ActivityRowMenu, type ActivityRowMessage } from "./ActivityRowMenu";
 import styles from "./InboxPreview.module.css";
 
 /** Rows a compact feed renders and enriches; the Activity page holds the rest. */
@@ -229,6 +229,36 @@ export function ActivityFeed({
       group.unread.push(row.item);
     groups.set(key, group);
   }
+  /** The message a thread row shows, which its menu acts on. */
+  const rowMessage = (
+    row: (typeof activity)[number],
+    threadRootId: string,
+  ): ActivityRowMessage | undefined => {
+    if (row.kind === "reaction")
+      return {
+        channelId: row.item.channelId,
+        messageId: row.item.message.id,
+        threadRootId,
+        text: row.item.message.content,
+      };
+    // A row showing your newer message acts on it.
+    const own = row.own;
+    if (own)
+      return {
+        channelId: own.channelId,
+        messageId: own.messageId,
+        threadRootId,
+        text: own.preview.content,
+      };
+    if (row.kind !== "conversation") return undefined;
+    const { item } = row;
+    return {
+      channelId: item.channelId,
+      messageId: item.previewMessageId ?? item.latestMessageId,
+      threadRootId,
+      text: item.previewMentions.content,
+    };
+  };
   const destination = (row: (typeof activity)[number]): FeedDestination =>
     row.kind === "reaction"
       ? {
@@ -337,23 +367,9 @@ export function ActivityFeed({
   const listRef = useRef<HTMLUListElement>(null);
   const [reading, setReading] = useState<ReadonlySet<string>>(new Set());
   const canRead = sync.capability === "frontier-sync";
-  /** Mark as read keeps focus in the list when its action leaves: on its
-   * row, which stays read, or when Unread only drops the row, on a neighbor. */
-  const feedRows = () => [
-    ...(listRef.current?.querySelectorAll<HTMLElement>("[data-preview-row]") ??
-      []),
-  ];
   /** Reads every unread message in the conversation a row stands for. */
   const markRead = async (rowId: string, items: readonly InboxItem[]) => {
     if (reading.has(rowId)) return;
-    const before = feedRows();
-    const held = before.some(
-      (row) =>
-        row.dataset.previewRow === rowId &&
-        row.contains(document.activeElement),
-    );
-    const order = before.map((row) => row.dataset.previewRow);
-    const index = order.indexOf(rowId);
     setReading((current) => new Set(current).add(rowId));
     try {
       for (const item of items) await readRow(session, item);
@@ -366,23 +382,6 @@ export function ActivityFeed({
         return next;
       });
     }
-    if (!held) return;
-    requestAnimationFrame(() => {
-      // Only focus the action took with it when it left: a failed read keeps
-      // its action, and focus elsewhere stays where the user put it. When
-      // Unread only empties the list, the fallback takes focus.
-      const focused = document.activeElement;
-      if (focused && focused !== document.body) return;
-      const current = feedRows();
-      const row = [rowId, order[index + 1], order[index - 1]]
-        .map((id) =>
-          current
-            .find((entry) => entry.dataset.previewRow === id)
-            ?.querySelector<HTMLElement>("button"),
-        )
-        .find(Boolean);
-      (row ?? focusFallback?.current)?.focus({ preventScroll: true });
-    });
   };
   const retryFocus = useRef(false);
   const retryButton = useCallback((button: HTMLButtonElement | null) => {
@@ -457,21 +456,28 @@ export function ActivityFeed({
           {rows.map((row) => {
             const selected = isOpen?.(destination(row)) ?? false;
             const unread = row.unread.length > 0;
-            const readAction = (label: string) =>
-              canRead &&
-              unread && (
-                <span className={listRowStyles.unreadAction}>
-                  <IconButton
-                    size="sm"
-                    variant="ghost"
-                    loading={reading.has(row.id)}
-                    aria-label={`Mark as read ${label}`}
-                    title="Mark as read"
-                    onClick={() => void markRead(row.id, row.unread)}
-                    icon={<EnvelopeOpenIcon size={16} aria-hidden="true" />}
-                  />
-                </span>
+            // Right-click is the row's menu: its message's in a thread,
+            // otherwise its conversation's sidebar menu.
+            const rowMenu = (item: ReactElement) => {
+              const where = destination(row);
+              return (
+                <ActivityRowMenu
+                  key={row.id}
+                  channel={channelOf(where.channelId)}
+                  message={
+                    where.rootId ? rowMessage(row, where.rootId) : undefined
+                  }
+                  onOpen={() => open(row)}
+                  onRead={
+                    canRead && unread
+                      ? () => void markRead(row.id, row.unread)
+                      : undefined
+                  }
+                >
+                  {item}
+                </ActivityRowMenu>
               );
+            };
             if (compact) {
               const channelId =
                 row.kind === "own" ? row.own.channelId : row.item.channelId;
@@ -485,10 +491,9 @@ export function ActivityFeed({
               const own =
                 row.kind === "own" ||
                 (row.kind === "conversation" && !!row.own);
-              return (
+              return rowMenu(
                 <li
                   key={row.id}
-                  className={listRowStyles.unreadActionHost}
                   data-preview-row={row.id}
                   // A sidebar card counts these rows for its resize grip.
                   data-card-row=""
@@ -517,15 +522,13 @@ export function ActivityFeed({
                     selected={selected}
                     onClick={() => open(row)}
                   />
-                  {readAction(`${identity.sender} in ${identity.context}`)}
-                </li>
+                </li>,
               );
             }
             if (row.kind === "reaction")
-              return (
+              return rowMenu(
                 <li
                   key={row.id}
-                  className={listRowStyles.unreadActionHost}
                   data-preview-row={row.id}
                   // A sidebar card counts these rows for its resize grip.
                   data-card-row=""
@@ -543,16 +546,12 @@ export function ActivityFeed({
                     selected={selected}
                     onClick={() => open(row)}
                   />
-                  {readAction(
-                    `reactions in ${channelOf(row.item.channelId)?.name ?? "this conversation"}`,
-                  )}
-                </li>
+                </li>,
               );
             if (row.kind === "own")
-              return (
+              return rowMenu(
                 <li
                   key={row.id}
-                  className={listRowStyles.unreadActionHost}
                   data-preview-row={row.id}
                   // A sidebar card counts these rows for its resize grip.
                   data-card-row=""
@@ -574,20 +573,16 @@ export function ActivityFeed({
                     selected={selected}
                     onClick={() => open(row)}
                   />
-                  {readAction(
-                    `your message in ${channelOf(row.own.channelId)?.name ?? "this conversation"}`,
-                  )}
-                </li>
+                </li>,
               );
             const item = row.item;
             const channel = channelOf(item.channelId);
             const identity = row.own
               ? ownIdentity(scope.viewer, channel, profiles, name)
               : rowIdentity(item, channel, profiles, name);
-            return (
+            return rowMenu(
               <li
                 key={row.id}
-                className={listRowStyles.unreadActionHost}
                 data-preview-row={row.id}
                 // A sidebar card counts these rows for its resize grip.
                 data-card-row=""
@@ -603,8 +598,7 @@ export function ActivityFeed({
                   selected={selected}
                   onClick={() => open(row)}
                 />
-                {readAction(`${identity.sender} in ${identity.context}`)}
-              </li>
+              </li>,
             );
           })}
           {more && onSeeAll && (

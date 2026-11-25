@@ -64,15 +64,23 @@ export function messageCopyLink(
       ...(row.threadRootId ? { threadRootId: row.threadRootId } : {}),
     });
     if (target.kind !== "conversation" || !target.messageId) return undefined;
-    // Buzz links carry no community or identity: they bind to the recipient's
-    // selected community, so the sender's scope is deliberately left out.
-    const params = new URLSearchParams({
-      channel: target.channelId,
-      id: target.messageId,
-      ...(target.threadRootId ? { thread: target.threadRootId } : {}),
-    });
-    return `buzz://message?${params}`;
+    return messageLink({ ...target, messageId: target.messageId });
   } catch {
     return undefined;
   }
+}
+
+/** Buzz links carry no community or identity: they bind to the recipient's
+ * selected community, so the sender's scope is deliberately left out. */
+export function messageLink(target: {
+  channelId: string;
+  messageId: string;
+  threadRootId?: string | undefined;
+}) {
+  const params = new URLSearchParams({
+    channel: target.channelId,
+    id: target.messageId,
+    ...(target.threadRootId ? { thread: target.threadRootId } : {}),
+  });
+  return `buzz://message?${params}`;
 }

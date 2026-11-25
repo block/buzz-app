@@ -1245,7 +1245,7 @@ export function ChannelInventory({
     surface?: ChannelMenuSurface,
   ) => {
     const actions: ReactNode[] = [];
-    if (!surface && channel.channelType === "solo") {
+    if ((!surface || surface.complete) && channel.channelType === "solo") {
       actions.push(
         <SoloChatMenuItems
           key="chat-tools"
@@ -1460,7 +1460,7 @@ export function ChannelInventory({
     actions.push(
       <ChannelCopyLinkMenuItem key="copy-link" channelId={channel.id} />,
     );
-    if (!surface && !channel.archived) {
+    if ((!surface || surface.complete) && !channel.archived) {
       actions.push(
         <ChannelLifecycleMenu
           key="lifecycle"

@@ -1027,6 +1027,7 @@ it("pages past an own or individually read reply until history or a thread-wide 
 it("leaves focus the person moved while the first unread reply loads", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread } = unreadReplies(h);
+  const read = reply("read", 2);
   const first = reply("first unread", 3);
   unread.add(first.id);
   h.snapshot.direction = "older";
@@ -1045,6 +1046,7 @@ it("leaves focus the person moved while the first unread reply loads", () => {
   h.snapshot.status = "ready";
   h.snapshot.readKind = undefined;
   h.snapshot.canLoadMore = false;
+  h.snapshot.replies = [read, first];
   h.render();
   expect(screen.getByRole("separator", { name: "New messages" })).toBeVisible();
   expect(h.element.scrollTop).toBe(300);
@@ -1054,6 +1056,7 @@ it("leaves focus the person moved while the first unread reply loads", () => {
 it("decides the line once a hidden reader is shown, and again for each ordinary opening", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread } = unreadReplies(h);
+  const read = reply("read", 1);
   const [first, later] = [reply("first unread", 2), reply("later", 3)];
   unread.add(first.id);
   // A covered tab keeps its layout but is inert and not visible.
@@ -1064,7 +1067,7 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   });
   h.props.active = false;
   h.snapshot.direction = "older";
-  h.snapshot.replies = [first, later];
+  h.snapshot.replies = [read, first, later];
   h.render();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
   expect(h.element.scrollTop).toBe(0);
@@ -1072,7 +1075,7 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   const pane = h.element.parentElement as HTMLElement;
   pane.setAttribute("inert", "");
   visible.mockReturnValue(true);
-  h.snapshot.replies = [first, later];
+  h.snapshot.replies = [read, first, later];
   h.render();
   expect(screen.queryByRole("separator", { name: "New messages" })).toBeNull();
 
@@ -1091,7 +1094,7 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
   unread.clear();
   const arrival = reply("arrival", 4);
   unread.add(arrival.id);
-  h.snapshot.replies = [first, later, arrival];
+  h.snapshot.replies = [read, first, later, arrival];
   h.render();
   h.element.scrollTop = 100;
   Object.assign(h.props, { navigation: ordinaryNavigation() });
@@ -1108,6 +1111,27 @@ it("decides the line once a hidden reader is shown, and again for each ordinary 
     ) & Node.DOCUMENT_POSITION_PRECEDING,
   ).toBeTruthy();
   expect(h.element.scrollTop).toBe(300);
+});
+it("opens a thread unread from its first reply at its latest reply, below its line", () => {
+  const h = messagesHarness(ordinaryNavigation());
+  const { reply, unread } = unreadReplies(h);
+  const [first, later] = [reply("first unread", 2), reply("later", 3)];
+  unread.add(first.id);
+  unread.add(later.id);
+  h.snapshot.direction = "older";
+  h.snapshot.replies = [first, later];
+  h.render();
+  const line = screen.getByRole("separator", { name: "New messages" });
+  expect(
+    line.compareDocumentPosition(
+      h.element.querySelector(`[data-message-id="${first.id}"]`) as Node,
+    ) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  // The line would sit under the root: the latest reply starts the view.
+  expect(h.element.scrollTop).toBe(
+    h.element.scrollHeight - h.element.clientHeight,
+  );
+  expect(h.element).toHaveFocus();
 });
 it("keeps the day divider above a relayed group that starts a day, open or closed", () => {
   const h = messagesHarness();

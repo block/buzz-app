@@ -179,6 +179,47 @@ test.describe("Inline", () => {
     await expect.poll(() => display(conversationJump)).not.toBe("none");
   });
 
+  test("a thread unread from its first reply opens at its latest reply, below its line", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const [root] = roots(app);
+    for (let index = 0; index < 8; index++)
+      app.append(
+        "primary",
+        "alpha",
+        `Later ${index}\n\n${filler}`,
+        true,
+        false,
+        root.id,
+      );
+    await clickRow(page, viewThread(page, root));
+    await expect(sheet(page)).toHaveAttribute("data-revealed", "");
+    // The line still marks where the unread run starts, but with every reply
+    // unread it sits under the root, so the thread opens at the latest reply,
+    // as a read one does.
+    const history = sheet(page).locator("[data-message-scroller]");
+    await expect(
+      sheet(page).getByRole("separator", { name: "New messages" }),
+    ).toBeAttached();
+    await expect(history).not.toHaveAttribute("data-positioning");
+    expect(
+      await history.evaluate(
+        (element) => element.scrollHeight - element.clientHeight,
+      ),
+    ).toBeGreaterThan(200);
+    await expect
+      .poll(() =>
+        history.evaluate(
+          (element) =>
+            element.scrollHeight - element.clientHeight - element.scrollTop,
+        ),
+      )
+      .toBeLessThan(1);
+    await expect(sheet(page).getByText("Later 7")).toBeInViewport();
+  });
+
   test("details in the inline thread expand in place: Back closes the thread", async ({
     page,
     app,

@@ -317,8 +317,13 @@ test.describe("Inline", () => {
     await expect(thread(page)).toHaveAttribute("data-tall", "true");
     // Opening the profile draws the thread again; it takes input once drawn.
     await expect(thread(page)).toHaveAttribute("data-revealed", "");
-    // From the thread, the pull request replaces the profile.
-    await activate(pullLink(thread(page)));
+    // From the thread, the pull request replaces the profile. The thread may
+    // still be redrawing from the profile's remount, inert until it shows.
+    await expect(async () => {
+      await pullLink(thread(page)).focus();
+      await expect(pullLink(thread(page))).toBeFocused({ timeout: 500 });
+    }).toPass();
+    await pullLink(thread(page)).press("Enter");
     await expect(pullHeading(github(page))).toBeVisible();
     await expect(profile(page)).toHaveCount(0);
     await expect(thread(page)).toBeVisible();

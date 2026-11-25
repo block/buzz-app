@@ -587,6 +587,81 @@ function lostFocus(control: HTMLElement) {
 }
 
 /** Supported props for installed plugins reusing the host member picker. */
+function preserveMemberListOffset(list: HTMLElement, offset: number) {
+  if (offset === 0) {
+    list.scrollTop = 0;
+    return;
+  }
+  const property = "--member-scroll-reserve";
+
+  let reserve = 0;
+  let maxOffset = 0;
+  let clientHeight = 0;
+  let resize: ResizeObserver | undefined;
+  let children: MutationObserver | undefined;
+
+  function stop() {
+    resize?.disconnect();
+    children?.disconnect();
+    list.removeEventListener("scroll", rememberOffset);
+    list.style.removeProperty(property);
+  }
+  function rememberOffset() {
+    // A shrink can clamp scrollTop and fire scroll before ResizeObserver.
+    // Keep the last user offset until we have measured the new layout.
+    if (
+      list.clientHeight === clientHeight &&
+      list.scrollHeight - clientHeight === maxOffset
+    )
+      offset = list.scrollTop;
+  }
+  function update() {
+    const top = list.getBoundingClientRect().top + list.clientTop;
+    const contentBottom = Math.max(
+      0,
+      ...Array.from(list.children)
+        .filter((child) => child.getClientRects().length)
+        .map(
+          (child) =>
+            child.getBoundingClientRect().bottom - top + list.scrollTop,
+        ),
+    );
+    const padding = Number.parseFloat(getComputedStyle(list).paddingBottom);
+    const naturalEnd = contentBottom + padding - reserve;
+    const needed = Math.max(0, offset + list.clientHeight - naturalEnd);
+    if (needed === 0) {
+      stop();
+    } else if (Math.abs(needed - reserve) > 0.001) {
+      // Computed padding can round a fractional CSS pixel.
+      reserve = needed;
+      list.style.setProperty(property, `${needed}px`);
+    }
+    if (list.scrollTop !== offset) list.scrollTop = offset;
+    clientHeight = list.clientHeight;
+    maxOffset = list.scrollHeight - clientHeight;
+    return needed;
+  }
+  function observeContent() {
+    if (!resize) return;
+    resize.disconnect();
+    resize.observe(list, { box: "border-box" });
+    for (const child of list.children)
+      resize.observe(child, { box: "border-box" });
+  }
+
+  if (update() > 0) {
+    resize = new ResizeObserver(update);
+    children = new MutationObserver(() => {
+      observeContent();
+      update();
+    });
+    list.addEventListener("scroll", rememberOffset, { passive: true });
+    children.observe(list, { childList: true });
+    observeContent();
+  }
+  return stop;
+}
+
 export type ChannelMembersDialogProps = {
   session: RelaySession;
   channelId: string;
@@ -1384,25 +1459,8 @@ export function ChannelMembersDialog({
     const list = scrollport.current;
     const offset = pendingMemberTab.current;
     pendingMemberTab.current = null;
-    if (!list) return;
-    list.style.removeProperty("--member-scroll-reserve");
-    if (!showTabs || offset === null) return;
-    const top = list.getBoundingClientRect().top + list.clientTop;
-    const bottom = Math.max(
-      top,
-      ...Array.from(list.children)
-        .filter((child) => child.getClientRects().length > 0)
-        .map((child) => child.getBoundingClientRect().bottom),
-    );
-    const contentEnd =
-      bottom -
-      top +
-      list.scrollTop +
-      Number.parseFloat(getComputedStyle(list).paddingBottom);
-    const reserve = Math.max(0, offset + list.clientHeight - contentEnd);
-    if (offset > 0 && reserve > 0)
-      list.style.setProperty("--member-scroll-reserve", `${reserve}px`);
-    list.scrollTop = offset;
+    if (list && showTabs && offset !== null)
+      return preserveMemberListOffset(list, offset);
   }, [memberGroup, showTabs, pages, text, accessFilter]);
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {

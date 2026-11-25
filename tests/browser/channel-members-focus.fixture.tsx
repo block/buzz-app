@@ -93,10 +93,14 @@ const lastPageAlone = new URLSearchParams(location.search).has(
   "last-page-alone",
 );
 const shortPanel = new URLSearchParams(location.search).has("short-panel");
+const changingRoster = new URLSearchParams(location.search).has(
+  "changing-roster",
+);
 const searchScale =
   new URLSearchParams(location.search).has("search-scale") ||
   lastPageAlone ||
-  shortPanel;
+  shortPanel ||
+  changingRoster;
 const idleOverlap = new URLSearchParams(location.search).has("idle-overlap");
 const managed =
   searchScale || idleOverlap
@@ -137,7 +141,11 @@ const members = [
   ...(visitor ? [] : [viewer.pubkey]),
   ...(administration && !solo && !plugin ? [person.pubkey] : []),
   ...scrollMembers.map(({ key }) => key.pubkey),
-  ...(idleOverlap ? [] : managed.map(({ key }) => key.pubkey)),
+  ...(idleOverlap
+    ? []
+    : (changingRoster ? managed.slice(0, 1) : managed).map(
+        ({ key }) => key.pubkey,
+      )),
 ];
 const scrollProfiles = scrollMembers.map(({ key, name }) =>
   profile(key, { name }),
@@ -433,6 +441,23 @@ createRoot(root).render(<Fixture />);
 // The test controls when confirmation arrives; no relay or member is contacted.
 Object.assign(window, {
   focusFixture: {
+    ...(changingRoster && {
+      async updateAgents(count: number) {
+        const people = members.filter(
+          (key) => !managed.some((agent) => agent.key.pubkey === key),
+        );
+        members.splice(
+          0,
+          members.length,
+          ...people,
+          ...managed.slice(0, count).map(({ key }) => key.pubkey),
+        );
+        clock++;
+        await session.read([{ kinds: [39002], "#d": [channelId], limit: 1 }], {
+          fresh: true,
+        });
+      },
+    }),
     searchWork,
     published,
     namesRequested: () => namesRequested,

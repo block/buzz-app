@@ -828,7 +828,10 @@ test.describe("DM preview wiring", () => {
 
     // Check the painted cue against the sidebar centerline and the New button.
     const resize = page.getByRole("separator", { name: "Resize sidebar" });
-    const action = sidebar(page).getByRole("button", { name: "New options" });
+    const action = sidebar(page).getByRole("button", {
+      name: "New options",
+      exact: true,
+    });
     await expect(action).toBeVisible();
     const geometry = () =>
       below.evaluate((button) => {
@@ -938,7 +941,10 @@ test.describe("DM preview wiring", () => {
     await page
       .getByRole("button", { name: "Show navigation", exact: true })
       .click();
-    const action = sidebar(page).getByRole("button", { name: "New options" });
+    const action = sidebar(page).getByRole("button", {
+      name: "New options",
+      exact: true,
+    });
     const below = cue(page, "below");
     const firstUnread = row(page, "beta");
     // Place Beta just beyond the visible frame. Oversized nav padding would

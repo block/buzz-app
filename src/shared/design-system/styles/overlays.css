@@ -829,13 +829,23 @@ html[data-keyboard-navigation]
 }
 
 @layer components {
+  /* Search is a workspace of its own: it sits high and fills most of the
+     window, leaving the same margin below as above. */
   .buzz-dialog[data-presentation="search"] {
+    --dialog-top: 3rem;
+    --dialog-available-height: calc(100dvh - 2 * var(--dialog-top));
+    width: min(84rem, calc(100% - 4rem));
     --dialog-padding: var(--space-3);
     --search-palette-radius: calc(var(--radius-panel) + var(--space-1));
     border-radius: var(--search-palette-radius);
     padding-top: 0;
     corner-shape: squircle;
     background: var(--surface-panel);
+  }
+  @media (max-height: 40rem) {
+    .buzz-dialog[data-presentation="search"] {
+      --dialog-top: 1rem;
+    }
   }
   .buzz-dialog[data-presentation="search"] > .buzz-dialog-body {
     /* Keep the focus perimeter inside the body scrollport. */

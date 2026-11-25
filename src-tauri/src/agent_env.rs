@@ -108,6 +108,10 @@ fn write_index(
         slots: slots.clone(),
     })
     .map_err(|e| e.to_string())?;
+    // The index is one item too, under the same limit.
+    if text.encode_utf16().count() * 2 > SIZE_LIMIT {
+        return Err("This agent has too many MCP servers to save. Remove some.".into());
+    }
     store.replace(&text)
 }
 /// Erases every slot item the index lists, each id leaving the index only

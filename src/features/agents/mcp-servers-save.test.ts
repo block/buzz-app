@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { beforeEach, expect, it, vi } from "vitest";
 
 // A credential store of value names, as the native commands keep it.
@@ -16,7 +17,9 @@ vi.mock("@tauri-apps/api/core", () => ({
   }),
 }));
 
-const { envName, saveMcp } = await import("./mcp-servers");
+const { accept, approvalTemplate, approved, envName, saveMcp } = await import(
+  "./mcp-servers"
+);
 type McpList = import("./mcp-servers").McpList;
 type Approval = import("./mcp-servers").Approval;
 
@@ -89,4 +92,43 @@ it("deletes nothing when the publish fails", async () => {
     ),
   ).rejects.toThrow("offline");
   expect(store.has(envName(OLD, "TOKEN"))).toBe(true);
+});
+
+it("keeps a newer list accepted while an older save publishes, and its values", async () => {
+  localStorage.clear();
+  const owner = generateSecretKey();
+  const OWNER = getPublicKey(owner);
+  const sign = (seq: number, l: McpList) =>
+    finalizeEvent(approvalTemplate(AGENT, seq, l), owner);
+  accept(AGENT, sign(1, list(OLD)));
+  const mine = sign(2, list(NEXT));
+  const peer = sign(3, { ...list(NEWER), disabledInherited: ["github"] });
+  let release = () => {};
+  const published = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  // As the service does: publish, then record what it published.
+  const saving = saveMcp(
+    AGENT,
+    list(NEXT),
+    [{ name: envName(NEXT, "TOKEN"), value: "v" }],
+    async () => {
+      await published;
+      accept(AGENT, mine);
+    },
+    // A settings save that leaves the list out falls back to the kept one.
+    () => approved(undefined, OWNER, AGENT),
+  );
+  // Another device's newer list arrives and is accepted meanwhile.
+  expect(approved(peer, OWNER, AGENT).ok).toBe(true);
+  release();
+  await saving;
+  expect(approved(undefined, OWNER, AGENT)).toMatchObject({
+    ok: true,
+    id: peer.id,
+    list: { disabledInherited: ["github"] },
+  });
+  expect(approved(mine, OWNER, AGENT).ok).toBe(false);
+  expect(store.has(envName(NEWER, "TOKEN"))).toBe(true);
+  expect(store.has(envName(OLD, "TOKEN"))).toBe(false);
 });

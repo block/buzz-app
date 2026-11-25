@@ -423,7 +423,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
       inherited: async (agent) => {
         if (agent.protection) return { servers: [] };
         // One read of each file serves the list and the comparison.
-        const workspace = (agent.config as { workspace?: string }).workspace;
+        // Saved or not, the folder its processes start in.
+        const { workspace } = config(agent.config);
         const user = readFile && claudeUserConfig(readFile);
         const listing = claudeSnapshot(
           readFile,
@@ -435,7 +436,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           listing,
           runtime.nativeMcpChanged(
             agent.key,
-            user && workspace
+            user
               ? {
                   user,
                   folders: new Map([[workspace, listing.then((s) => s.print)]]),

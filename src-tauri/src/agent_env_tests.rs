@@ -418,6 +418,30 @@ async fn every_slot_item_is_in_the_index_first() {
     assert!(stored(&stores, &format!("mcp:{ADA}")).is_none());
 }
 
+/// An index past the item limit is refused with a clear error, and the
+/// slot it couldn't take gets no value.
+#[tokio::test]
+async fn too_many_slots_for_the_index_is_a_clear_error() {
+    let (envs, stores) = envs();
+    let slot = |n: usize| format!("{n:016X}");
+    let rows: Vec<_> = (1..=65)
+        .map(|n| set(&mcp_name(&slot(n), "T"), "v"))
+        .collect();
+    envs.mcp_set(ADA, rows, vec![], || Ok(true)).await.unwrap();
+    let error = envs
+        .mcp_set(
+            ADA,
+            vec![set(&mcp_name(&slot(66), "T"), "v")],
+            vec![],
+            || Ok(true),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("too many MCP servers"), "{error}");
+    assert!(stored(&stores, &format!("mcp:{ADA}:{}", slot(66))).is_none());
+    assert_eq!(envs.mcp_values(ADA).await.unwrap().len(), 65);
+}
+
 /// A damaged index, an older layout's item included, is an error, never
 /// an agent with no values.
 #[tokio::test]

@@ -165,9 +165,15 @@ const UNREADABLE =
   "This device can't read the MCP servers it used for this agent. Reset them to continue.";
 
 /** Records `event` as the approval this device uses for `agent`: the owner's
- * own newest, once published. It replaces an unreadable record, which is how
- * Reset recovers one. */
+ * own newest, once published, unless one accepted meanwhile is newer. It
+ * replaces an unreadable record, which is how Reset recovers one. */
 export function accept(agent: string, event: RelayEvent) {
+  // Never back: a newer one, or the preferred one at its `seq`, accepted
+  // meanwhile stays.
+  const last = seen(agent);
+  const seq = seqOf(event);
+  if (last && (last.seq > seq || (last.seq === seq && last.id < event.id)))
+    return;
   localStorage.setItem(
     SEEN_PREFIX + agent,
     JSON.stringify({ seq: seqOf(event), id: event.id, event }),

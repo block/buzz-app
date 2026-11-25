@@ -609,6 +609,10 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         ]);
         return this.removeFromFullRoster();
       },
+      async saveEarlierMembership() {
+        await peer.writeStartup(startup([active, retried])).catch(() => {});
+        return cachedIds();
+      },
       replace: () => peer.writeStartup(startup([replacement])),
       replaceWithStaleMembership: () =>
         peer.writeStartup(
@@ -745,6 +749,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let afterRemovalFromFullPeerRoster;
   let restoredHuddle;
   let afterOversizedRemoval;
+  let afterEarlierMembership;
   let oversizedRetryReads;
   const huddleParent = "00000000-0000-4000-8000-000000000001";
   let afterRemovalFromMatchingFullRoster;
@@ -1024,6 +1029,13 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         await window.startupRetry.cachedIds();
         return window.startupRetry.writeReads();
       })) - readsAfterOversizedRemoval;
+    afterEarlierMembership = await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.seedRemovalOrder();
+      startup.omitRetried();
+      const removal = await startup.removeFromOversizedRoster();
+      return { ...removal, peer: await startup.saveEarlierMembership() };
+    });
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
   }
@@ -1103,4 +1115,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     .soft(afterOversizedRemoval.after)
     .toEqual(afterOversizedRemoval.before);
   expect.soft(oversizedRetryReads).toBe(0);
+  expect.soft(afterEarlierMembership).toEqual({
+    before: [firstRetry.originalIds[0]],
+    after: [firstRetry.originalIds[0]],
+    peer: [firstRetry.originalIds[0]],
+  });
 });

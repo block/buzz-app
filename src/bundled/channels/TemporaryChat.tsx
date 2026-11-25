@@ -8,6 +8,7 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import type { ConversationInteractions } from "../../features/conversation/ConversationHost";
 import { useAgentChoices } from "../../features/agents/use-choices";
 import {
+  ComposerScopeProvider,
   composerHost,
   useComposerDock,
   useComposerScope,
@@ -194,8 +195,9 @@ export function PostBackMenuItem({
   );
 }
 
-/** The open temporary chat, as a sheet over its source conversation's
- * composer with its own composer in that one's place. Closing it leaves
+/** The open temporary chat, as a sheet over the composer of the view it
+ * covers (the conversation, or its open inline thread) with its own
+ * composer in that one's place. Closing it leaves
  * the chat; its source reopens it until it archives. */
 export function TemporaryChatSheet({
   session,
@@ -245,12 +247,17 @@ export function TemporaryChatSheet({
           channel={chat}
         >
           {() => (
-            <div className={styles.chat} data-temporary-chat={chat.id}>
-              <div className={styles.history}>
-                <ChannelBody cached={false} viewer={session.viewer} />
+            // Its own view, which the address never names: its composer
+            // docks here, not in the view it covers, and its details
+            // messages open in place.
+            <ComposerScopeProvider local>
+              <div className={styles.chat} data-temporary-chat={chat.id}>
+                <div className={styles.history}>
+                  <ChannelBody cached={false} viewer={session.viewer} />
+                </div>
+                <ConversationComposer autoFocus />
               </div>
-              <ConversationComposer autoFocus />
-            </div>
+            </ComposerScopeProvider>
           )}
         </ConfirmedChannel>
       </ConversationChannel>

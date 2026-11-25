@@ -2867,6 +2867,25 @@ function ChannelWorkspace({
       !fullscreenMedia,
     contentReadyChannel === currentId,
   );
+  // The open temporary chat from this conversation, over the composer of
+  // what is on top: the conversation, or its inline thread.
+  const temporarySheet =
+    temporaryChat &&
+    current &&
+    temporaryChat.source.channelId === current.id ? (
+      <TemporaryChatSheet
+        key={temporaryChat.chatId}
+        session={queries}
+        scope={scope}
+        extensions={extensions}
+        interactions={{
+          onOpenLink: openLink,
+          canOpenLink,
+          onOpenMediaReview: openMediaReview,
+        }}
+        open={temporaryChat}
+      />
+    ) : undefined;
   // The conversation: full width for Solo, or the first main-pane tab.
   const body = (
     <div className={styles.conversationBody}>
@@ -3048,33 +3067,21 @@ function ChannelWorkspace({
           messageId={addressed?.inlineMessage}
           // A layer over the thread grows the thread to fit it.
           tall={
-            !!layerTarget &&
-            layerTarget.rootId === inlineThread &&
-            !layerTarget.channelId
+            !!temporarySheet ||
+            (!!layerTarget &&
+              layerTarget.rootId === inlineThread &&
+              !layerTarget.channelId)
           }
           seen={seen}
           close={() => closeInline(inlineThread)}
           moveToTab={() => moveInlineToTab(inlineThread)}
           onResolvedRoot={(root) => resolveInlineRoot(inlineThread, root)}
+          // An open thread covers the conversation, so a temporary chat
+          // stacks on the thread's reply box.
+          over={temporarySheet}
         />
       )}
-      {temporaryChat &&
-        current &&
-        !inlineThread &&
-        temporaryChat.source.channelId === current.id && (
-          <TemporaryChatSheet
-            key={temporaryChat.chatId}
-            session={queries}
-            scope={scope}
-            extensions={extensions}
-            interactions={{
-              onOpenLink: openLink,
-              canOpenLink,
-              onOpenMediaReview: openMediaReview,
-            }}
-            open={temporaryChat}
-          />
-        )}
+      {!inlineThread && temporarySheet}
       {current && <LayerReader channelId={current.id} />}
     </div>
   );

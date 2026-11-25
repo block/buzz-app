@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useState } from "react";
+import { type ReactNode, startTransition, useEffect, useState } from "react";
 import { ConfirmedChannel } from "../../features/conversation/ConfirmedChannel";
 import { ConversationThread } from "../../features/conversation/Conversation";
 import {
@@ -45,6 +45,7 @@ export function InlineThreadSheet({
   close,
   moveToTab,
   onResolvedRoot,
+  over,
 }: {
   session: RelaySession;
   /** The open conversation, which may still be listed from saved membership. */
@@ -63,6 +64,9 @@ export function InlineThreadSheet({
   /** The thread's verified root, which a link to one of its replies names
    * only once the reply is read. */
   onResolvedRoot?: ((rootId: string) => void) | undefined;
+  /** A sheet stacked over the thread's reply box, such as a temporary chat
+   * opened from one of its rows. */
+  over?: ReactNode;
 }) {
   const view = useComposerScope();
   const dock = useComposerDock(view?.handle);
@@ -125,6 +129,7 @@ export function InlineThreadSheet({
                   onResolvedRoot={onResolvedRoot}
                 />
                 <LayerReader channelId={confirmed.id} />
+                {over}
               </ComposerScopeProvider>
             )}
           </ConfirmedChannel>

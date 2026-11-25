@@ -102,6 +102,7 @@ class CountedMap<K, V> extends Map<K, V> {
 
 export type RosterRemoval = Pick<RelayEvent, "id" | "created_at"> & {
   omitted: boolean;
+  signed: boolean;
 };
 
 /** NIP-29 discovery: relay-authored replaceable metadata (39000) and rosters (39002). */
@@ -349,11 +350,16 @@ export class DiscoveryState {
   }
   private recordRosterRemoval(
     channel: string,
-    { id, created_at }: RelayEvent,
+    event: RelayEvent,
     omitted: boolean,
   ) {
     this.pendingGrants.delete(channel);
-    this.pendingRemovals.set(channel, { id, created_at, omitted });
+    this.pendingRemovals.set(channel, {
+      id: event.id,
+      created_at: event.created_at,
+      omitted,
+      signed: !hasTag(event, "p", this.viewer),
+    });
     this.rosterRemovalRevision++;
   }
   beginRosterSave() {
@@ -376,6 +382,19 @@ export class DiscoveryState {
     };
     return {
       removalFor: removals.size ? removalFor : undefined,
+      signedRemovals: removals.size
+        ? function* () {
+            for (const channel of removals.keys()) {
+              const removal = removalFor(channel);
+              if (removal?.signed)
+                yield {
+                  channel,
+                  id: removal.id,
+                  created_at: removal.created_at,
+                };
+            }
+          }
+        : undefined,
       includesGrant: grants.size ? includesGrant : undefined,
       settle: () => {
         for (const channel of removals.keys()) {

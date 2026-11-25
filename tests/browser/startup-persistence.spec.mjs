@@ -413,6 +413,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     const replacement = roster(relay, "peer-only", [viewer]);
     const newerGrant = roster(relay, "retried", [viewer], 1_700_000_002);
     const freshGrant = roster(relay, "fresh", [viewer]);
+    const laterFreshGrant = roster(relay, "fresh", [viewer], 1_700_000_002);
     const freshMetadata = metadata(relay, "fresh", "New channel");
     const staleMetadata = metadata(relay, "first", "Revoked channel");
     const startup = (events) => ({
@@ -472,17 +473,41 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         peer.writeStartup(startup([replacement, newerGrant])),
       async seedRemovalOrder() {
         channels.dispose();
+        await peer.clear();
         await peer.writeStartup(startup([active, retried]));
         channels = openChannels(createHeadPersistence(viewer, origin));
         await channels.restore();
         channels.acceptDiscovery([active, retried]);
       },
       omitRetried: () => channels.acceptDiscovery([], new Set(["active"])),
-      grantAndOmit: () =>
+      grantAndOmit: (later = false) =>
         channels.acceptDiscovery(
-          [freshGrant, freshMetadata],
+          [later ? laterFreshGrant : freshGrant, freshMetadata],
           new Set(["active", "fresh"]),
         ),
+      async peerRemovesFresh() {
+        await peer.writeStartup(
+          startup([replacement, newerGrant, freshGrant, freshMetadata]),
+        );
+        const peerChannels = openChannels(
+          createHeadPersistence(viewer, origin),
+        );
+        try {
+          await peerChannels.restore();
+          peerChannels.acceptDiscovery([
+            replacement,
+            newerGrant,
+            freshGrant,
+            freshMetadata,
+          ]);
+          peerChannels.acceptDiscovery([
+            roster(relay, "fresh", [], 1_700_000_001),
+          ]);
+          return await cachedIds();
+        } finally {
+          peerChannels.dispose();
+        }
+      },
       replace: () => peer.writeStartup(startup([replacement])),
       replaceWithStaleMembership: () =>
         peer.writeStartup(
@@ -585,6 +610,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       replacementId: replacement.id,
       newerGrantId: newerGrant.id,
       freshIds: [freshGrant.id, freshMetadata.id],
+      laterFreshIds: [laterFreshGrant.id, freshMetadata.id],
       omittedIds: [omitted.id, omittedMetadata.id],
       pendingOmissionId: pendingOmission.id,
       updatedId: updated.id,
@@ -610,6 +636,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let afterSettledRemoval;
   let afterGrantAndOmit;
   let afterGrantAndClear;
+  let afterStalePeerGrant;
+  let afterNewerPeerGrant;
   let repeatReads;
   let aborts;
   try {
@@ -820,6 +848,20 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       startup.grantAndOmit();
       return startup.cachedIds();
     });
+    afterStalePeerGrant = await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.seedRemovalOrder();
+      const before = await startup.peerRemovesFresh();
+      startup.grantAndOmit();
+      return { before, after: await startup.cachedIds() };
+    });
+    afterNewerPeerGrant = await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.seedRemovalOrder();
+      const before = await startup.peerRemovesFresh();
+      startup.grantAndOmit(true);
+      return { before, after: await startup.cachedIds() };
+    });
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
   }
@@ -861,4 +903,12 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     .soft(afterGrantAndOmit)
     .toEqual([...newerPeerIds, ...firstRetry.freshIds]);
   expect.soft(afterGrantAndClear).toBeUndefined();
+  expect.soft(afterStalePeerGrant).toEqual({
+    before: newerPeerIds,
+    after: newerPeerIds,
+  });
+  expect.soft(afterNewerPeerGrant).toEqual({
+    before: newerPeerIds,
+    after: [...newerPeerIds, ...firstRetry.laterFreshIds],
+  });
 });

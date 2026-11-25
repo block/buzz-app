@@ -2,12 +2,18 @@ import { byteSize } from "./budget";
 import type { RosterRemoval } from "./discovery";
 import { newer, type EventData } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
+
+type RosterVersion = Pick<EventData, "id" | "created_at">;
+type SignedRemovalVersion = RosterVersion & { channel: string };
+
 /** Device-local resume data, never proof of current access or permission to write. */
 export type SavedStartup = {
   discovery?: {
     savedAt: number;
     relayAuthor: string;
     events: unknown[];
+    /** Versions of signed exclusions, with no roster payload or member list. */
+    removals?: SignedRemovalVersion[];
   };
   /** The verified-profile authority last observed, `null` once disabled, so
    * a cached session can show saved verified names before discovery. */
@@ -38,6 +44,7 @@ export class StartupCacheOverBudget extends Error {
 
 type RosterChanges = {
   removalFor: ((channel: string) => RosterRemoval | undefined) | undefined;
+  signedRemovals: (() => Iterable<SignedRemovalVersion>) | undefined;
   includesGrant: ((channel: string) => boolean) | undefined;
 };
 
@@ -118,6 +125,7 @@ function discoveryVersion(discovery: SavedStartup["discovery"]): string | null {
           typeof event?.id === "string" ? event.id : null,
         )
       : null,
+    discovery.removals,
   ]);
 }
 
@@ -133,7 +141,9 @@ function channelOf(event: Partial<EventData> | null | undefined) {
 
 function pruneRevokedRosters(
   discovery: NonNullable<SavedStartup["discovery"]>,
-  removalFor: NonNullable<RosterChanges["removalFor"]>,
+  removalFor: (
+    channel: string,
+  ) => (RosterVersion & { omitted?: boolean }) | undefined,
 ) {
   const peerVersions = new Map<string, Pick<EventData, "id" | "created_at">>();
   for (const value of discovery.events) {
@@ -167,6 +177,29 @@ function pruneRevokedRosters(
     const channel = channelOf(value as Partial<EventData> | null);
     return !channel || !removed.has(channel);
   });
+}
+
+function signedRemovalVersions(
+  stored: SignedRemovalVersion[] | undefined,
+  incoming: Iterable<SignedRemovalVersion>,
+) {
+  const versions = new Map<string, SignedRemovalVersion>();
+  if (Array.isArray(stored))
+    for (const removal of stored)
+      if (
+        typeof removal?.channel === "string" &&
+        typeof removal.id === "string" &&
+        Number.isFinite(removal.created_at)
+      )
+        versions.set(removal.channel, removal);
+  let changed = false;
+  for (const removal of incoming) {
+    const previous = versions.get(removal.channel);
+    if (newer(previous, removal) === previous) continue;
+    versions.set(removal.channel, removal);
+    changed = true;
+  }
+  return { versions, changed };
 }
 
 function mergeGrantedRosters(
@@ -409,13 +442,33 @@ export function createHeadPersistence(
           then(store.get(scope), (row) => {
             const stored = row?.data as SavedStartup | undefined;
             let data: SavedStartup = { ...stored, ...patch };
+            let local = patch.discovery;
+            const peer = stored?.discovery;
+            const removals = local
+              ? signedRemovalVersions(
+                  peer?.relayAuthor === local.relayAuthor
+                    ? peer.removals
+                    : undefined,
+                  changes?.signedRemovals?.() ?? [],
+                )
+              : undefined;
+            if (local && removals?.versions.size) {
+              // Keep the signed exclusion even when a later save omits the
+              // channel. A stale grant may arrive from another tab's read.
+              local = {
+                ...local,
+                events:
+                  pruneRevokedRosters(local, (channel) =>
+                    removals.versions.get(channel),
+                  ) ?? local.events,
+                removals: [...removals.versions.values()],
+              };
+              data.discovery = local;
+            }
             let withRemovals: SavedStartup | undefined;
             let mergedGrants = false;
             let superseded = false;
-            if (
-              patch.discovery &&
-              (ifUnchanged || observedDiscovery === undefined)
-            ) {
+            if (local && (ifUnchanged || observedDiscovery === undefined)) {
               const current = discoveryVersion(stored?.discovery);
               // Compare inside the write transaction. Settings-only changes
               // preserve the signed snapshot, but a peer can replace or clear it.
@@ -426,10 +479,9 @@ export function createHeadPersistence(
                 (current !== observedDiscovery || (removalFor && observedPeer))
               ) {
                 version = current;
-                const peer = stored?.discovery;
                 if (
                   !peer ||
-                  peer.relayAuthor !== patch.discovery.relayAuthor ||
+                  peer.relayAuthor !== local.relayAuthor ||
                   !changes ||
                   !Array.isArray(peer.events)
                 )
@@ -440,19 +492,32 @@ export function createHeadPersistence(
                   changes.includesGrant &&
                   mergeGrantedRosters(
                     pruned ?? peer.events,
-                    patch.discovery.events,
+                    local.events,
                     changes.includesGrant,
                   );
-                const events = granted ?? pruned;
-                if (!events) return done(undefined);
+                if (!granted && !pruned && !removals?.changed)
+                  return done(undefined);
+                const peerDiscovery = {
+                  ...peer,
+                  ...(local.removals && { removals: local.removals }),
+                };
                 // The local snapshot lost the compare. Apply only new evidence
                 // to the peer's row, which may contain other channels.
                 superseded = true;
-                data = { ...stored, discovery: { ...peer, events } };
-                if (granted && pruned)
+                data = {
+                  ...stored,
+                  discovery: {
+                    ...peerDiscovery,
+                    events: granted ?? pruned ?? peer.events,
+                  },
+                };
+                if (granted && (pruned || removals?.changed))
                   withRemovals = {
                     ...stored,
-                    discovery: { ...peer, events: pruned },
+                    discovery: {
+                      ...peerDiscovery,
+                      events: pruned ?? peer.events,
+                    },
                   };
                 mergedGrants = !!granted;
               }

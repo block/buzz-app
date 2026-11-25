@@ -1250,6 +1250,31 @@ test("narrow plugin details moves focus, skips covered rows, and restores the tr
   }
 });
 
+test("closing plugin details after widening Settings reveals the focused catalog row", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 480, height: 650 });
+  await page.goto(app.origin);
+  await openSettings(page);
+  await selectSettingsSection(page, "Manage plugins");
+  const trigger = button(page, "View Usage details");
+  await trigger.focus();
+  await expect(trigger).toBeInViewport({ ratio: 0.95 });
+  await page.keyboard.press("Enter");
+  const pane = page.getByRole("complementary", { name: "Usage details" });
+  const close = pane.getByRole("button", { name: "Close plugin details" });
+  await expect(close).toBeFocused();
+  await expect(close).toBeInViewport();
+
+  await page.setViewportSize({ width: 900, height: 650 });
+  await expect(trigger).toBeHidden();
+  await page.keyboard.press("Escape");
+  await expect(pane).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toBeInViewport({ ratio: 0.95 });
+});
+
 // Browser-only: the inspector narrows the catalog beside it, which reflows the
 // rows above. The chosen row must stay where it was in the catalog's real
 // scrollport on open and close; browser scroll anchoring alone can move it.

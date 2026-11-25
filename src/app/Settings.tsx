@@ -1212,9 +1212,19 @@ export function Settings({
             plugin.manifest.id === pluginTrigger.current?.dataset.pluginId,
         ),
       );
-      (visible ? pluginTrigger.current : pluginSection.current)?.focus({
-        preventScroll: true,
-      });
+      const target = visible ? pluginTrigger.current : pluginSection.current;
+      target?.focus({ preventScroll: true });
+      // A resize can move the catalog into a different scrollport while
+      // details are open. Reveal a clipped row after restoring the offset.
+      if (visible && target) {
+        const viewport = scrollport(target)?.getBoundingClientRect();
+        const row = target.getBoundingClientRect();
+        if (
+          viewport &&
+          (row.top < viewport.top || row.bottom > viewport.bottom)
+        )
+          target.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
     }
   }, [selectedPlugin, coreGroup, pluginGroups]);
   const selectedRunning = selectedPlugin

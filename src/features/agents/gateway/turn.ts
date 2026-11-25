@@ -1,4 +1,5 @@
 import { threadReference } from "../../relay/thread-reference";
+import type { MentionPlacement } from "../mention-placement";
 import type { ConversationWake, Delivery, Trigger } from "../service";
 import { isBuzzUuid, turnErrors, type TurnContext } from "./contract";
 
@@ -12,6 +13,8 @@ export type TurnPlace = Readonly<{
   /** Whether the delivery channel is flat (a DM of any size or a Solo
    * chat), so the turn has no thread. */
   flat: (channelId: string) => boolean;
+  /** Where a plugin placed a mention (`Delivery.placement`). */
+  placement?: MentionPlacement | undefined;
 }>;
 
 /** Where this turn happened and the signed event that caused it, frozen at
@@ -36,7 +39,7 @@ export const turnContext = (delivery: Pick<Delivery, "gateway">) =>
 
 function describe(
   trigger: Trigger,
-  { channelId, wake, flat }: TurnPlace,
+  { channelId, wake, flat, placement }: TurnPlace,
 ): TurnContext {
   const uuid = (value: string | undefined) =>
     value !== undefined && isBuzzUuid(value) ? value : null;
@@ -53,11 +56,12 @@ function describe(
   switch (trigger.type) {
     case "mention": {
       const { event } = trigger;
+      const root =
+        placement && "topLevel" in placement
+          ? undefined
+          : (placement?.root ?? threadReference(event)?.rootId ?? event.id);
       return {
-        ...where(
-          channelId ?? channelOf(event),
-          threadReference(event)?.rootId ?? event.id,
-        ),
+        ...where(channelId ?? channelOf(event), root),
         message_id: event.id.toLowerCase(),
       };
     }

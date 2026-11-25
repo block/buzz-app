@@ -38,6 +38,7 @@ import type {
 import type { RoutedPick, TurnPick } from "./model-routes";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
 import type { MentionRefusal } from "./owner-attestation";
+import type { MentionPlacement } from "./mention-placement";
 import { threadReference } from "../relay/thread-reference";
 import {
   hasEventProof,
@@ -123,7 +124,10 @@ import {
 import {
   interruptedChannels,
   type Interrupted,
+  type InterruptedMention,
   type InterruptedTurns,
+  interruptedMentionOf,
+  interruptedNative,
 } from "./interrupted";
 import type { DeviceSettings } from "../../shared/device-settings";
 import {
@@ -151,8 +155,48 @@ const SEEN_LIMIT = 2_048;
 /** Watched events each agent keeps while their channel's roster is only the one
  * saved on disk, until the relay confirms it. */
 const HELD_LIMIT = 256;
-/** Delivered mentions remembered per agent. */
+/** Delivered mentions, and watched messages, remembered per agent. */
 const DELIVERED_LIMIT = 2000;
+const remember = (ids: Set<string>, id: string) => {
+  ids.add(id);
+  if (ids.size > DELIVERED_LIMIT)
+    ids.delete(ids.values().next().value as string);
+};
+/** `handle` for one turn whose own `notes` come first, whatever
+ * conversation its harness asks for, and come back to it, not to that
+ * conversation, when the harness puts them back. */
+function withNotes(handle: AgentHandle, notes: readonly string[]) {
+  // A plugin's note cannot pose as the turn's event or steer section.
+  let pending = notes.map(unframed);
+  let taken: string[] = [];
+  return Object.freeze({
+    ...handle,
+    notes: (channelId: string, root?: string) => {
+      const own = pending;
+      pending = [];
+      taken = [...taken, ...own];
+      return [...own, ...(handle.notes?.(channelId, root) ?? [])];
+    },
+    restoreNotes: (
+      channelId: string,
+      back: readonly string[],
+      root?: string,
+    ) => {
+      const others: string[] = [];
+      const own: string[] = [];
+      for (const text of back) {
+        const at = taken.indexOf(text);
+        if (at < 0) others.push(text);
+        else {
+          taken.splice(at, 1);
+          own.push(text);
+        }
+      }
+      pending = [...own, ...pending];
+      handle.restoreNotes?.(channelId, others, root);
+    },
+  });
+}
 /** Replayed events each agent keeps until it has room for them. A replay sends
  * minutes of traffic at once, which the queue and rate limit would otherwise
  * drop; past this, one is left unseen, so a later replay or catch-up can still
@@ -238,7 +282,13 @@ export type MentionDelivery =
   | Readonly<{ status: "delivered" }>
   | Readonly<{
       status: "dropped";
-      reason: "unavailable" | "not-owner" | "tagged" | "delivered" | "busy";
+      reason:
+        | "unavailable"
+        | "not-owner"
+        | "tagged"
+        | "delivered"
+        | "watched"
+        | "busy";
     }>;
 type WakeDropReason = Extract<WakeOutcome, { status: "dropped" }>["reason"];
 type Job = {
@@ -250,6 +300,9 @@ type Job = {
   /** Private text a plugin added to a mention it delivered
    * (`Agents.deliverMention`), for that turn. */
   note?: string;
+  /** A resumed mention's place and notes, as its first turn was given
+   * them; the placer is not asked again. */
+  placed?: InterruptedMention;
   /** For a watch or timer: the object and attention epoch it was matched or
    * found due under. It runs only while both are still current, so a watch or
    * timer edited, disabled, rearmed, replaced or turned off and on again since
@@ -379,8 +432,11 @@ type Runner = {
    * gave. */
   readonly mentioned: Map<string, number>;
   /** Owner messages plugins delivered as mentions (`deliverMention`), so
-   * each reaches the agent once. */
+   * each reaches the agent once, and never also as a watch. */
   readonly delivered: Set<string>;
+  /** Messages a watch woke the agent for, which a plugin then can't also
+   * deliver as a mention. */
+  readonly watched: Set<string>;
   /** Replayed events waiting, oldest first, until the agent has room for the
    * jobs each makes. */
   readonly backlog: PendingEvent[];
@@ -1045,17 +1101,21 @@ export class AgentRunners {
       return { status: "dropped", reason: "tagged" };
     if (runner.mentioned.has(event.id) || runner.delivered.has(event.id))
       return { status: "dropped", reason: "delivered" };
-    runner.delivered.add(event.id);
-    if (runner.delivered.size > DELIVERED_LIMIT)
-      runner.delivered.delete(runner.delivered.values().next().value as string);
+    // A watch already woke it for this message.
+    if (runner.watched.has(event.id))
+      return { status: "dropped", reason: "watched" };
     const queued = this.enqueue(runner, {
       trigger: { type: "mention", event },
       channelId,
       ...(note ? { note } : {}),
     });
-    return queued
-      ? { status: "delivered" }
-      : { status: "dropped", reason: "busy" };
+    // Refused: a later try may still deliver it.
+    if (!queued) {
+      runner.mentioned.delete(event.id);
+      return { status: "dropped", reason: "busy" };
+    }
+    remember(runner.delivered, event.id);
+    return { status: "delivered" };
   }
   /** Where an addressed turn lives, by `placeOf`; undefined when it has no
    * conversation, or the channel's kind can't be read and the harness is
@@ -1476,6 +1536,7 @@ export class AgentRunners {
       seenIn: new Map(),
       mentioned: new Map(),
       delivered: new Set(),
+      watched: new Set(),
       backlog: [],
       working: 0,
       typing: new Map(),
@@ -2175,12 +2236,14 @@ export class AgentRunners {
           if (channel === undefined) continue;
           if (!this.hasSeen(runner, event.id, channelOf(event)))
             this.markSeen(runner, event.id, channelOf(event));
+          const mention = interruptedMentionOf(left[event.id]);
           const queued = this.enqueue(runner, {
             trigger: { type: "mention", event, resumed: true },
             ...(channel ? { channelId: channel } : {}),
-            ...(typeof left[event.id] === "string"
+            ...(interruptedNative(left[event.id])
               ? { nativePlacement: true }
               : {}),
+            ...(mention ? { placed: mention } : {}),
           });
           if (queued) kept.add(event.id);
         }
@@ -2965,6 +3028,8 @@ export class AgentRunners {
       return CHAT_KINDS.includes(event.kind)
         ? { triggers: [{ type: "mention", event }] }
         : { triggers: [] };
+    // Nor does one a plugin delivered as a mention.
+    if (runner.delivered.has(event.id)) return { triggers: [] };
     // An agent whose Attention waits for startup holds what it would hear.
     const waiting = !agent.attentionEnabled && this.starting();
     if (!agent.attentionEnabled && !waiting) return { triggers: [] };
@@ -2992,12 +3057,12 @@ export class AgentRunners {
         ? this.host.member(agent, { tags: [["h", watch.channel]] })
         : true,
     );
+    const triggers = matches.flatMap((match, index) =>
+      destinations[index] ? [{ type: "watch" as const, event, ...match }] : [],
+    );
+    if (triggers.length) remember(runner.watched, event.id);
     return {
-      triggers: matches.flatMap((match, index) =>
-        destinations[index]
-          ? [{ type: "watch" as const, event, ...match }]
-          : [],
-      ),
+      triggers,
       discarded: matches.flatMap(({ slug }, index) =>
         destinations[index] === false ? [slug] : [],
       ),
@@ -3289,6 +3354,8 @@ export class AgentRunners {
                   : trigger,
               ...(job.channelId ? { channelId: job.channelId } : {}),
               ...(job.nativePlacement ? { nativePlacement: true } : {}),
+              ...(job.note ? { note: job.note } : {}),
+              ...(job.placed ? { placed: job.placed } : {}),
             })
         : undefined,
       trigger.type === "mention"
@@ -3505,12 +3572,7 @@ export class AgentRunners {
       };
     }
     if (!route.harnesses.includes(harness)) return {};
-    const { trigger } = job;
-    const turn = turnContextFor(trigger, {
-      channelId: job.channelId,
-      wake: anchor,
-      flat: (channelId) => this.host.flat(agent, channelId),
-    });
+    const turn = this.gatewayTurn(agent, job, anchor);
     return { gateway: Object.freeze({ route, turn, upstream }) };
   }
 
@@ -3589,7 +3651,9 @@ export class AgentRunners {
             "Invocation routing is unavailable for this agent. Restore it and retry.",
           );
       }
-      // Asked while the turn starts; the harness reads it on delivery.
+      // Asked while the turn starts; the harness reads it on delivery. A
+      // resumed mention keeps what its first turn was given, and a Solo
+      // chat's turns are at its top level, wherever a plugin would put them.
       const mentionChannel =
         trigger.type === "mention" &&
         !trigger.resumed &&
@@ -3597,7 +3661,10 @@ export class AgentRunners {
           ? (job.channelId ?? channelOf(trigger.event))
           : undefined;
       const placing =
-        trigger.type === "mention" && mentionChannel && this.host.placeMention
+        trigger.type === "mention" &&
+        mentionChannel &&
+        this.host.placeMention &&
+        this.host.flatChannel?.(agent, mentionChannel) !== true
           ? this.host
               .placeMention(agent, mentionChannel, trigger.event, signal)
               .catch(() => ({}))
@@ -3697,33 +3764,52 @@ export class AgentRunners {
             }
           : undefined;
       };
-      const { placement, note }: import("./mention-placement").PlacedMention =
+      const asked: import("./mention-placement").PlacedMention =
         (await placing) ?? {};
       signal.throwIfAborted();
+      const placement = job.placed
+        ? job.placed.placement
+        : trigger.type === "mention" && mentionChannel
+          ? await this.placedIn(
+              runner,
+              mentionChannel,
+              trigger.event,
+              asked.placement,
+            )
+          : undefined;
+      signal.throwIfAborted();
+      // The turn's own notes: they go with this delivery, wherever the
+      // harness keys its conversation, and never to another request.
+      const notes = job.placed
+        ? (job.placed.notes ?? [])
+        : [job.note, asked.note].filter((text): text is string => !!text);
       // Where the turn lives, decided once here for every harness: they take
       // their session, context and default `send` target from it. Left to
       // the harness (`turnOf`, by the same rule) when the channel's kind
       // can't be read.
       const place = await this.placeTurn(agent, job, placement, signal);
       signal.throwIfAborted();
-      working.placed(place);
-      // Notes go to the conversation the placed turn takes notes in.
-      const notes = [job.note, note].filter((text): text is string => !!text);
-      const noteChannel =
-        place?.channel ??
-        (trigger.type === "mention" ? mentionChannel : undefined);
-      if (notes.length && noteChannel && trigger.type === "mention")
-        for (const text of notes)
-          this.note(
-            agent.key,
-            noteChannel,
-            text,
-            place
-              ? "root" in place
-                ? place.root
-                : undefined
-              : (threadReference(trigger.event)?.rootId ?? trigger.event.id),
-          );
+      working.placed(
+        place,
+        placement || notes.length
+          ? {
+              ...(placement ? { placement } : {}),
+              ...(notes.length ? { notes } : {}),
+            }
+          : undefined,
+      );
+      const turnHandle = notes.length ? withNotes(handle, notes) : handle;
+      // The gateway's context names the conversation the turn moved to.
+      const routed =
+        placement && routing.gateway
+          ? {
+              ...routing,
+              gateway: Object.freeze({
+                ...routing.gateway,
+                turn: this.gatewayTurn(agent, job, anchor, placement),
+              }),
+            }
+          : routing;
       const routingTrigger = addressed(job.trigger) ? job.trigger : anchor;
       const routeConversation = this.host.routeConversation;
       const delivery = Object.freeze({
@@ -3762,8 +3848,8 @@ export class AgentRunners {
         ...(place ? { place } : {}),
         ...(placement ? { placement } : {}),
         ...(job.channelId ? { channelId: job.channelId } : {}),
-        ...routing,
-        agent: handle,
+        ...routed,
+        agent: turnHandle,
         config: start.config,
         revisions: start.revisions,
         ...(start.synced && { synced: start.synced }),
@@ -4294,18 +4380,23 @@ export class AgentRunners {
       trigger.type === "mention" && runner.type?.resumes
         ? trigger.event.id
         : undefined;
-    if (resumable)
-      this.mark(
-        runner.key,
-        resumable,
-        nativePlacement
-          ? (channel ?? "")
-          : { channel: channel ?? "", placement: "pending" },
-      );
     let savedNative: Promise<void> | undefined;
     let typing: (() => void) | undefined;
     // The turn's place, once the run has worked it out.
     let place: TurnPlace | undefined;
+    // What a plugin gave it, saved with it so it resumes with them.
+    let given: InterruptedMention | undefined;
+    const entry = (native: boolean): InterruptedTurns[string] =>
+      given
+        ? {
+            channel: channel ?? "",
+            ...(native ? {} : { placement: "pending" as const }),
+            mention: given,
+          }
+        : native
+          ? (channel ?? "")
+          : { channel: channel ?? "", placement: "pending" };
+    if (resumable) this.mark(runner.key, resumable, entry(!!nativePlacement));
     const beginTyping = () => {
       if (typing || !event || !channel) return;
       // Where the turn lives, when the run decided it; otherwise read the
@@ -4388,12 +4479,22 @@ export class AgentRunners {
       }
     };
     return {
-      placed: (decided: TurnPlace | undefined) => {
+      placed: (
+        decided: TurnPlace | undefined,
+        mention: InterruptedMention | undefined,
+      ) => {
         place = decided;
+        given = mention;
+        if (mention && resumable && holds > 0)
+          this.mark(
+            runner.key,
+            resumable,
+            entry(!!nativePlacement || savedNative !== undefined),
+          );
       },
       pinNativePlacement: () => {
         if (holds <= 0 || !resumable || nativePlacement) return;
-        savedNative ??= this.mark(runner.key, resumable, channel ?? "");
+        savedNative ??= this.mark(runner.key, resumable, entry(true));
         return savedNative;
       },
       ok: () => outcome.ok && !outcome.stopped,
@@ -4482,6 +4583,59 @@ export class AgentRunners {
         .catch((error) =>
           console.warn(`Agent ${pubkey} was not released`, error),
         );
+    });
+  }
+
+  /** A placer's thread as the agent can read it: the thread of a message
+   * in the mention's channel, by that thread's root. Anything else keeps
+   * the native place. */
+  private async placedIn(
+    runner: Runner,
+    channel: string,
+    event: RelayEvent,
+    placement: MentionPlacement | undefined,
+  ): Promise<MentionPlacement | undefined> {
+    if (!placement || !("root" in placement)) return placement;
+    try {
+      const [found] = (
+        await this.require().query(runner.member, [
+          {
+            ids: [placement.root],
+            kinds: [9, 40002],
+            "#h": [channel],
+            limit: 1,
+          },
+        ])
+      ).filter(
+        (root) =>
+          root.id === placement.root &&
+          [9, 40002].includes(root.kind) &&
+          channelOf(root) === channel,
+      );
+      const root = (
+        found &&
+        (threadReference(found)?.rootId ?? found.id)
+      )?.toLowerCase();
+      return root && root !== event.id ? { root } : undefined;
+    } catch (error) {
+      console.warn("A placed mention's thread could not be read", error);
+      return undefined;
+    }
+  }
+
+  /** The gateway's context for this turn, in the conversation a plugin
+   * placed the mention in when it did. */
+  private gatewayTurn(
+    agent: Agent,
+    job: Job,
+    anchor: ConversationWake | undefined,
+    placement?: MentionPlacement,
+  ) {
+    return turnContextFor(job.trigger, {
+      channelId: job.channelId,
+      wake: anchor,
+      flat: (channelId) => this.host.flat(agent, channelId),
+      ...(placement ? { placement } : {}),
     });
   }
 

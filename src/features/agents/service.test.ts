@@ -11524,6 +11524,52 @@ describe("a turn closing or reloading the app stopped", () => {
     expect(third.run).not.toHaveBeenCalled();
   });
 
+  it("resumes a placed mention in the place, and with the notes, its first turn was given", async () => {
+    const first = await setup({ identities: [echo], resumes: true });
+    await first.ctx
+      .extend({ pluginOwner: { id: "where", revision: "one" } })
+      .plugin((plugin) => {
+        plugin.agents.registerMentionPlacement?.({
+          id: "where",
+          place: async () => ({ topLevel: true, note: "Answer up top." }),
+        });
+      })
+      .await();
+    first.run.mockImplementationOnce(({ workingUntil }) =>
+      workingUntil(working()),
+    );
+    const asked = { ...mention(), pubkey: viewer };
+    proven.add(asked);
+    first.emit({ events: [asked], channelId: channel });
+    await vi.waitFor(() => expect(first.run).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(readInterrupted(first.storage)[bot]?.[asked.id]).toMatchObject({
+        mention: { placement: { topLevel: true }, notes: ["Answer up top."] },
+      }),
+    );
+    // It shows typing where it answers: the top level.
+    await vi.waitFor(async () =>
+      expect(
+        (await published(first.native, 20002)).map(({ tags }) => tags),
+      ).toEqual([[["h", channel]]]),
+    );
+    first.connect(false);
+    // No placer this time: the saved answer is the turn's.
+    const second = await setup({
+      storage: reopen(first.storage),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    second.service.resumeInterrupted();
+    await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+    const delivery = second.run.mock.calls[0]?.[0];
+    expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    expect(delivery?.place).toEqual({ channel, topLevel: true });
+    expect(delivery?.agent.notes?.(channel)).toEqual(["Answer up top."]);
+  });
+
   it("hands the owner's top-level mention the place and note a plugin chose, and never asks about a thread reply or someone else's mention", async () => {
     const app = await setup({ identities: [echo] });
     const place = vi.fn(async () => ({
@@ -11585,8 +11631,10 @@ describe("a turn closing or reloading the app stopped", () => {
 
   it("delivers the owner's own message to an agent as a mention a plugin asked for, once, and placed like any other", async () => {
     const app = await setup({ identities: [echo] });
-    const place = vi.fn(async () => ({ root: earlierId }));
-    const earlierId = "e".repeat(64);
+    // The plugin names a reply in an earlier thread; the turn goes to that
+    // thread's root, once the agent reads it in this channel.
+    let answer: { root: string } = { root: "f".repeat(64) };
+    const place = vi.fn(async () => answer);
     let deliver!: NonNullable<Agents["deliverMention"]>;
     await app.ctx
       .extend({ pluginOwner: { id: "router", revision: "one" } })
@@ -11605,6 +11653,58 @@ describe("a turn closing or reloading the app stopped", () => {
       proven.add(event);
       return event;
     };
+    const earlier = owned("Did the deploy finish?");
+    const followUp = owned("And the build?", [["e", earlier.id, "", "reply"]]);
+    const elsewhere = {
+      ...followUp,
+      id: "f".repeat(64),
+      tags: [["h", "private"]],
+    };
+    app.native.query.mockImplementation(async (_member, filters) =>
+      [earlier, followUp, elsewhere].filter((event) =>
+        (filters as { ids?: string[] }[])[0]?.ids?.includes(event.id),
+      ),
+    );
+    // Its lane full: refused, and still deliverable once it has room.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    app.run.mockImplementationOnce(({ workingUntil }) => workingUntil(held));
+    const busy = owned("Busy");
+    await expect(deliver(bot, busy)).resolves.toEqual({ status: "delivered" });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    // A root in another channel keeps the native place.
+    expect(app.run.mock.calls[0]?.[0].place).toEqual({
+      channel,
+      root: busy.id,
+    });
+    const queued: RelayEvent[] = [];
+    let refused: RelayEvent | undefined;
+    for (let i = 0; i < 40 && !refused; i++) {
+      const next = owned(`Queued ${i}`);
+      const result = await deliver(bot, next);
+      if (result.status === "delivered") queued.push(next);
+      else {
+        expect(result).toEqual({ status: "dropped", reason: "busy" });
+        refused = next;
+      }
+    }
+    if (!refused) throw new Error("Expected a full lane");
+    release();
+    await vi.waitFor(() =>
+      expect(app.run).toHaveBeenCalledTimes(queued.length + 1),
+    );
+    await expect(deliver(bot, refused)).resolves.toEqual({
+      status: "delivered",
+    });
+    await vi.waitFor(() =>
+      expect(app.run).toHaveBeenCalledTimes(queued.length + 2),
+    );
+    app.run.mockClear();
+    answer = { root: followUp.id };
+    let done!: () => void;
+    app.run.mockImplementationOnce(({ workingUntil }) =>
+      workingUntil(new Promise<void>((resolve) => (done = resolve))),
+    );
     const asked = owned("Is the build green?");
     await expect(
       deliver(bot, asked, { note: "Smart routing picked you." }),
@@ -11614,11 +11714,25 @@ describe("a turn closing or reloading the app stopped", () => {
     if (!delivery) throw new Error("Expected a delivery");
     // An ordinary mention: the owner's request, asked about and placed.
     expect(delivery.trigger).toEqual({ type: "mention", event: asked });
-    expect(place).toHaveBeenCalledOnce();
-    expect(delivery.place).toEqual({ channel, root: earlierId });
-    expect(delivery.agent.notes?.(channel, earlierId)).toEqual([
+    expect(place).toHaveBeenCalledWith(
+      expect.objectContaining({ event: asked }),
+      expect.any(AbortSignal),
+    );
+    expect(delivery.place).toEqual({ channel, root: earlier.id });
+    // The note is the turn's own, whatever conversation its harness keys,
+    // and never another request's.
+    expect(delivery.agent.notes?.(channel, asked.id)).toEqual([
       "Smart routing picked you.",
     ]);
+    expect(delivery.agent.notes?.(channel, earlier.id)).toEqual([]);
+    // It shows typing in the thread it answers in.
+    await vi.waitFor(async () =>
+      expect((await published(app.native, 20002)).at(-1)?.tags).toEqual([
+        ["h", channel],
+        ["e", earlier.id, "", "reply"],
+      ]),
+    );
+    done();
     // Once only, never for an agent the message tags, and only the owner's
     // verified messages.
     await expect(deliver(bot, asked)).resolves.toEqual({
@@ -11646,6 +11760,31 @@ describe("a turn closing or reloading the app stopped", () => {
     await expect(
       app.ctx.agents.deliverMention?.(bot, owned("No plugin")),
     ).rejects.toThrow("Only an enabled plugin");
+    // One message is one turn: a watch's, or the delivered mention's.
+    app.run.mockClear();
+    await app.service.save(bot, {
+      attentionEnabled: true,
+      attention: everything,
+    });
+    const watched = owned("Anyone around?");
+    app.emit({ events: [watched], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+    expect(app.run.mock.calls[0]?.[0].trigger.type).toBe("watch");
+    await expect(deliver(bot, watched)).resolves.toEqual({
+      status: "dropped",
+      reason: "watched",
+    });
+    const first = owned("Delivered first");
+    await expect(deliver(bot, first)).resolves.toEqual({
+      status: "delivered",
+    });
+    app.emit({ events: [first], channelId: channel });
+    await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(app.run.mock.calls.map(([input]) => input.trigger.type)).toEqual([
+      "watch",
+      "mention",
+    ]);
   });
 
   it.each([false, true])(

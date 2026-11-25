@@ -1806,10 +1806,14 @@ export type Agents = {
    * answered: the top level, or the thread of a message such as an earlier
    * one the mention follows up on, plus an optional private note for that
    * turn. Asked when the mention is delivered, for at most a second; no
-   * answer keeps a thread on the message. A mention
-   * inside a thread stays there, and with two plugins registered neither
-   * decides. Every harness answers a placed mention as it would a wake with
-   * that `topLevel` or `root` (`deliveryPlace`). Feature-detect. */
+   * answer keeps a thread on the message. A `root` must be a message the
+   * agent can read in the mention's channel; a reply stands for its
+   * thread's root. A mention inside a thread stays there, a Solo chat's are
+   * at its top level and aren't asked about, and with two plugins
+   * registered neither decides. Every harness answers a placed mention as
+   * it would a wake with that `topLevel` or `root` (`deliveryPlace`). A
+   * reload that stops the turn resumes it in the same place, with the same
+   * notes. Feature-detect. */
   registerMentionPlacement?(placer: MentionPlacer): void;
   registerExecution(provider: AgentExecutionProvider): void;
   /** Select the adapter while the agent is idle. This is write-once. */
@@ -2005,8 +2009,11 @@ export type Agents = {
    * other. The agent sees the owner's request, not a plugin's data; `note`
    * is private text a plugin adds to that turn, such as why it delivered it.
    * Only for an agent this copy runs, from a plugin while it is enabled. It
-   * does nothing for an agent the message tags, or one it was already
-   * delivered to. Feature-detect. */
+   * does nothing for an agent the message tags, one it was already
+   * delivered to, or one a watch already woke for it (`watched`); one
+   * refused as `busy` can be tried again. The event needs the owner's valid
+   * signature, not a relay record: a plugin can publish as the owner
+   * anyway. Feature-detect. */
   deliverMention?(
     agent: AgentKey,
     event: RelayEvent,

@@ -351,6 +351,21 @@ it("names joined channels a link reads as, as the conversation does", () => {
   );
   cleanup();
   expect(shown(true)).toHaveTextContent("see #Beta, #Beta,");
+  cleanup();
+  // A protected entity or mention right after a link ends it, as in the
+  // conversation, and still reads after the channel's name.
+  const adjacent =
+    "buzz://channel/beta&#58;x, buzz://channel/beta&#46; and <buzz://channel/beta>@tomb";
+  const view = render(
+    <PreviewText
+      text={messagePreview(adjacent)}
+      mentions={{ content: adjacent, mentions: [tomb] }}
+      session={joined}
+      channelId="room"
+    />,
+  ).container;
+  expect(view).toHaveTextContent("#Beta:x, #Beta. and #Betatomb");
+  expect(chips(view)).toEqual(["tomb"]);
 });
 
 it("reads named identities before the optional mentioned ones, within budget", () => {

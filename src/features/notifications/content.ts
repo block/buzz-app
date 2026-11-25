@@ -37,18 +37,21 @@ type TextNode = {
 type LinkText = (url: string) => string | undefined;
 
 /** `value` with each bare URL in it through `link`, as the conversation splits
- * text into links. */
+ * text into links. A caller's placeholders are private-use characters, and
+ * each ends a URL, as the protected part it holds does in the conversation. */
 function textLinks(value: string, link: LinkText) {
   let result = "";
   let at = 0;
-  messageLinkParts(value, undefined, (start, end, url) => {
-    // Only a URL that reads as itself; a labelled or wrapped one keeps its text.
-    if (value.slice(start, end) !== url) return;
-    const text = link(url);
-    if (text === undefined) return;
-    result += value.slice(at, start) + text;
-    at = end;
-  });
+  for (const { 0: run, index: offset } of value.matchAll(/[^-￼]+/g))
+    messageLinkParts(run, undefined, (start, end, url) => {
+      // Only a URL that reads as itself; a labelled or wrapped one keeps its
+      // text.
+      if (run.slice(start, end) !== url) return;
+      const text = link(url);
+      if (text === undefined) return;
+      result += value.slice(at, offset + start) + text;
+      at = offset + end;
+    });
   return result + value.slice(at);
 }
 

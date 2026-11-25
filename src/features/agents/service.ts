@@ -2010,7 +2010,8 @@ export type Agents = {
    * is private text a plugin adds to that turn, such as why it delivered it.
    * Only for an agent this copy runs, from a plugin while it is enabled. It
    * does nothing for an agent the message tags, one it was already
-   * delivered to, or one a watch already woke for it (`watched`); one
+   * delivered to, or one a watch turn was already queued for (`watched`),
+   * which then answers it; one
    * refused as `busy` can be tried again. The event needs the owner's valid
    * signature, not a relay record: a plugin can publish as the owner
    * anyway. Feature-detect. */

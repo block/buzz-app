@@ -10439,6 +10439,57 @@ async function classifiedAgent(jev: FakeJev) {
   return { ...harness, typesafe };
 }
 
+it("delivers a message its watch's classifier turned down, or one it still classifies, as a plugin's mention, and runs it once", async () => {
+  const jev = fakeJev();
+  const app = await classifiedAgent(jev);
+  await vi.waitFor(() => expect(app.service.classifier()).toBe("available"));
+  let deliver!: NonNullable<Agents["deliverMention"]>;
+  await app.ctx
+    .extend({ pluginOwner: { id: "router", revision: "one" } })
+    .plugin((plugin) => {
+      const bound = plugin.agents.deliverMention;
+      if (!bound) throw new Error("Expected deliverMention");
+      deliver = bound.bind(plugin.agents);
+    })
+    .await();
+  const owned = (content: string) => {
+    const event = {
+      ...eventDto(message(author, channel, content, nowSeconds())),
+      pubkey: viewer,
+    };
+    proven.add(event);
+    return event;
+  };
+  jev.decide.mockResolvedValueOnce(answered(0.1));
+  const turnedDown = owned("What's for lunch?");
+  app.emit({ events: [turnedDown], channelId: channel });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledOnce());
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(app.run).not.toHaveBeenCalled();
+  await expect(deliver(bot, turnedDown)).resolves.toEqual({
+    status: "delivered",
+  });
+  await vi.waitFor(() => expect(app.run).toHaveBeenCalledOnce());
+  // Delivered while its classifier still thinks: the watch doesn't run it.
+  let answer!: (result: DecisionResult) => void;
+  jev.decide.mockImplementationOnce(
+    () => new Promise((resolve) => (answer = resolve)),
+  );
+  const pending = owned("Is the deploy done?");
+  app.emit({ events: [pending], channelId: channel });
+  await vi.waitFor(() => expect(jev.decide).toHaveBeenCalledTimes(2));
+  await expect(deliver(bot, pending)).resolves.toEqual({
+    status: "delivered",
+  });
+  answer(yes);
+  await vi.waitFor(() => expect(app.run).toHaveBeenCalledTimes(2));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(app.run.mock.calls.map(([input]) => input.trigger.type)).toEqual([
+    "mention",
+    "mention",
+  ]);
+});
+
 it("runs a watch's classifier after its selectors and passes the event with each answer", async () => {
   const jev = fakeJev();
   const { service, run, emit } = await classifiedAgent(jev);

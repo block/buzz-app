@@ -434,7 +434,7 @@ type Runner = {
   /** Owner messages plugins delivered as mentions (`deliverMention`), so
    * each reaches the agent once, and never also as a watch. */
   readonly delivered: Set<string>;
-  /** Messages a watch woke the agent for, which a plugin then can't also
+  /** Messages a watch turn was queued for, which a plugin then can't also
    * deliver as a mention. */
   readonly watched: Set<string>;
   /** Replayed events waiting, oldest first, until the agent has room for the
@@ -3060,7 +3060,6 @@ export class AgentRunners {
     const triggers = matches.flatMap((match, index) =>
       destinations[index] ? [{ type: "watch" as const, event, ...match }] : [],
     );
-    if (triggers.length) remember(runner.watched, event.id);
     return {
       triggers,
       discarded: matches.flatMap(({ slug }, index) =>
@@ -3238,6 +3237,11 @@ export class AgentRunners {
 
   /** Queues `job`, or drops it when the lane is full; returns whether queued. */
   private enqueue(runner: Runner, job: Job) {
+    // One message is one turn: a watch's, or the mention a plugin delivered
+    // (`deliverMention`), whichever is queued first.
+    const watched =
+      job.trigger.type === "watch" ? job.trigger.event.id : undefined;
+    if (watched && runner.delivered.has(watched)) return true;
     if (job.trigger.type === "mention")
       runner.mentioned.set(job.trigger.event.id, job.trigger.event.created_at);
     const now = Date.now();
@@ -3273,6 +3277,7 @@ export class AgentRunners {
     rate.admitted++;
     if (runner.activityClaimed) this.showWork(runner, job);
     queue.push(job);
+    if (watched) remember(runner.watched, watched);
     void this.drain(runner);
     return true;
   }

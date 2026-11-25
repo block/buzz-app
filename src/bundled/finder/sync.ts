@@ -6,7 +6,7 @@ import type {
   RelayEvent,
 } from "../../features/relay/events";
 import { deletionApplies } from "../../features/relay/fold";
-import { isRetryableRead } from "../../features/relay/read-retry";
+import { readErrorKind } from "../../features/relay/errors";
 import type { RelaySession } from "../../features/relay/session";
 import { threadReference } from "../../features/relay/thread-reference";
 import type { FinderCorpus, FinderDoc } from "./corpus.ts";
@@ -127,7 +127,14 @@ const nameOf = (session: RelaySession, pubkey: string) =>
  * their previews stay readable. */
 export function lost(session: RelaySession, channelId: string) {
   const found = session.channels.get?.(channelId);
-  if (!found) return session.channels.list().status === "ready";
+  if (!found) {
+    const list = session.channels.list();
+    // A capped roster read's omissions don't prove removal; a revocation does.
+    return (
+      list.status === "ready" &&
+      (list.coverage !== "partial" || !!session.channels.revoked?.(channelId))
+    );
+  }
   return (
     !!found.private &&
     !!found.readOnly &&
@@ -418,8 +425,11 @@ export function startFinderSync({
           { signal, priority: "background" },
         );
       } catch (error) {
-        // A refusal won't change by asking again; the caller decides.
-        if (signal.aborted || !isRetryableRead(error)) throw error;
+        // A refusal won't change by asking again; the caller decides. The
+        // session cancels reads when access changes; those are asked again.
+        const kind = readErrorKind(error);
+        if (signal.aborted || kind === "denied" || kind === "invalid-response")
+          throw error;
         await sleep(delay + Math.random() * 1000, signal);
         delay = Math.min(delay * 2, BACKOFF_CAP_MS);
         continue;
@@ -487,6 +497,12 @@ export function startFinderSync({
     }
   }
 
+  /** A later rejoin reads this channel's history from the start. */
+  function forget(channelId: string) {
+    for (const [key, progress] of fills)
+      if (progress.channelIds?.includes(channelId)) fills.delete(key);
+  }
+
   async function fill() {
     // Start at a random moment, so a fleet reconnecting at once spreads out.
     await sleep(Math.random() * 3000, signal);
@@ -504,6 +520,7 @@ export function startFinderSync({
         revoked.delete(id);
       } catch (error) {
         if (signal.aborted) throw error;
+        forget(id);
       }
     }
     publish({ phase: "ready" });
@@ -580,10 +597,13 @@ export function startFinderSync({
   const evict = () => {
     const list = session.channels.list();
     if (list.status === "ready") {
+      // ponytail: walks every doc per list change (live traffic too); keep a
+      // per-channel doc count if large indexes make that show.
+      const ids = new Set([...docs.values()].map((doc) => doc.channelId));
       const gone = new Set(
-        [...docs.values()]
-          .filter((doc) => !relevant(doc.channelId))
-          .map((doc) => doc.channelId),
+        [...ids].filter(
+          (id) => !relevant(id) && (!!channel(id) || lost(session, id)),
+        ),
       );
       if (gone.size) {
         for (const [id, doc] of docs)
@@ -595,9 +615,7 @@ export function startFinderSync({
         for (const id of gone) {
           cursors.delete(id);
           revoked.add(id);
-          // A later rejoin reads this channel's history from the start.
-          for (const [key, progress] of fills)
-            if (progress.channelIds?.includes(id)) fills.delete(key);
+          forget(id);
         }
         publish({});
       }

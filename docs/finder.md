@@ -51,11 +51,12 @@ Settings → Shortcuts.
   short pause in typing, with at least three letters in the last word, it also
   asks the relay, which searches every message you can read, including public
   channels you haven't joined. Those hits appear below, under **More from all of
-  Buzz**, ranked the same way. Rows you're looking at never move: once relay
-  rows show, the device rows above them hold still until you change the text.
-  Relay rows for earlier text clear as soon as you change it, so Enter can't
-  open one while the new search loads. Use **Retry** after a failed read, or
-  **More messages** for the next page.
+  Buzz**, ranked the same way, followed by the rest of the device matches once
+  the relay answers. Rows you're looking at never move: once relay rows show,
+  the device rows above them hold still until you change the text. Relay rows
+  for earlier text clear as soon as you change it, so Enter can't open one while
+  the new search loads. Use **Retry** after a failed read, or **More messages**
+  for the next page.
 
 Older channel messages stay in the index for this session. Relay hits from
 joined channels join it when you close Finder. Public previews stay out; their
@@ -113,11 +114,12 @@ channel, its messages leave the index and the results right away; if you
 rejoin it, the next reconnect reads your history in that channel again. If the
 relay still refuses that read, the rest of the index finishes, and the channel
 is tried again at the following reconnect. A deleted message (kind 5 or 9005)
-leaves the index too, and stays out if a later read brings it back.
+leaves the index too, once the app has seen the deletion, and stays out if a
+later read brings it back.
 
-Direct messages are read 50 at a time. If your list of DMs changes, a group of
-50 that changed is read again from 90 days back. It costs a few extra reads,
-and only then.
+Direct messages are read 50 at a time, in the order of your DM list. When that
+list changes, every group of 50 from the change onward is read again from 90
+days back. A new DM early in the list can re-read most of them.
 
 ## How it stays current
 

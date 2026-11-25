@@ -26,7 +26,7 @@ import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { LoadingRegion } from "../../shared/design-system/ui/LoadingRegion";
 import type { FinderCorpus, FinderDoc, FinderResults } from "./corpus.ts";
 import { useFinderAll, useFinderChannel, useFinderHeld } from "./search.ts";
-import { type FinderSync, lost } from "./sync";
+import type { FinderSync } from "./sync";
 
 export type FinderScope = "channel" | "buzz";
 
@@ -347,8 +347,6 @@ function Choices({
         mentioned: { content: doc.text, mentions: [] },
       },
       run: () => {
-        // Access can go between drawing a row and choosing it.
-        if (session && lost(session, doc.channelId)) return;
         onOpenChange(false);
         openMessage(doc);
       },

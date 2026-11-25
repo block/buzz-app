@@ -16,7 +16,7 @@ import {
 
 const PAGE = 50;
 /** Device rows above the relay's in All of Buzz. More would push the relay's
- * best hits out of sight; This channel still shows a full page. */
+ * best hits out of sight; the rest of the page follows the relay's. */
 const DEVICE_ROWS = 5;
 
 /** Relay hits held until Finder closes, then added to the index, so the
@@ -118,8 +118,8 @@ export function useFinderAll({
   const asked = !search.tooShort && !!query.trim();
   // biome-ignore lint/correctness/useExhaustiveDependencies: revision names the corpus contents.
   const fresh = useMemo(
-    () => corpus.search(query, asked ? DEVICE_ROWS : PAGE),
-    [corpus, query, revision, asked],
+    () => corpus.search(query, PAGE),
+    [corpus, query, revision],
   );
   const steady =
     holding.current &&
@@ -129,10 +129,14 @@ export function useFinderAll({
       : fresh;
   kept.current = { query, session, results: steady };
   // Rows held still still leave when you lose the channel they're from.
+  const readable = steady.hits.filter(
+    ({ doc }) => !lost(session, doc.channelId),
+  );
   const local: FinderResults = {
     ...steady,
-    hits: steady.hits.filter(({ doc }) => !lost(session, doc.channelId)),
+    hits: asked ? readable.slice(0, DEVICE_ROWS) : readable,
   };
+  const rest = asked ? readable.slice(DEVICE_ROWS) : [];
   const [previous, setPrevious] = useState<{
     session: RelaySession;
     query: string;
@@ -159,7 +163,7 @@ export function useFinderAll({
     previous.query === query
       ? previous.messages
       : search.messages;
-  const shown = new Set(local.hits.map(({ doc }) => doc.id));
+  const shown = new Set(readable.map(({ doc }) => doc.id));
   const docs = messages
     .filter((message) => {
       const channel = session.channels.get?.(message.channelId);
@@ -183,7 +187,7 @@ export function useFinderAll({
   }, [session, search.loading, search.error, freshKey]);
   // Ranked again only when the hits or their labels change.
   const docsKey = docs
-    .map((doc) => `${doc.id} ${doc.author} ${doc.place}`)
+    .map((doc) => `${doc.id} ${doc.author} ${doc.place} ${doc.text}`)
     .join("\n");
   // biome-ignore lint/correctness/useExhaustiveDependencies: docsKey names the docs.
   const results = useMemo(() => {
@@ -192,13 +196,17 @@ export function useFinderAll({
     return ranked.search(query, docs.length || 1);
   }, [docsKey, query]);
   const matched = new Set(results.hits.map(({ doc }) => doc.id));
+  // The rest of the device page follows once the relay answers, so it
+  // doesn't move down when the relay's rows arrive.
+  const tail = search.loading ? [] : rest;
   const relay: FinderResults = {
-    total: docs.length,
+    total: docs.length + tail.length,
     hits: [
       ...results.hits,
       ...docs
         .filter((doc) => !matched.has(doc.id))
         .map((doc) => ({ doc, score: 0, positions: [] })),
+      ...tail,
     ],
   };
   holding.current = asked && (search.loading || relay.hits.length > 0);

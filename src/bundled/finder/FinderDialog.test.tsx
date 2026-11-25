@@ -253,8 +253,10 @@ test("asks the relay even when a full page of device matches has every word apar
   await tick(SEARCH_DEBOUNCE_MS);
   expect(reads).toHaveLength(1);
   // The exact phrase, older than the index, would outrank every device row.
+  // The device rows after the first five follow it.
   expect(options("More from all of Buzz")).toEqual([
     expect.stringContaining("api draft"),
+    ...Array(45).fill(expect.stringContaining("api unrelated")),
   ]);
 });
 
@@ -397,7 +399,7 @@ test.each(["close", "scope", "session"])(
   },
 );
 
-test("losing a channel removes its rows at once and they can't be opened", async () => {
+test("losing a channel removes its rows from an open Finder at once", async () => {
   const { Finder, props, corpus, events, relay, viewer } = await fixture();
   events.push(
     metadata(relay, "lab", "lab", 1_700_000_000, [["private"]]),
@@ -438,8 +440,9 @@ test("losing a channel removes its rows at once and they can't be opened", async
   );
 });
 
-test("All of Buzz shows five device rows, so the relay's hits stay in sight; This channel shows them all", async () => {
-  const { Finder, click, corpus } = await fixture();
+test("All of Buzz shows five device rows, then the relay's, then the rest of the device's; This channel shows them all", async () => {
+  const { Finder, click, corpus, events, viewer } = await fixture();
+  events.push(message(viewer, "crew", "zebra from the relay", 1_700_000_050));
   corpus.add(
     Array.from({ length: 8 }, (_, n) => ({
       ...local(`z${n}`, `zebra note ${n}`),
@@ -450,6 +453,11 @@ test("All of Buzz shows five device rows, so the relay's hits stay in sight; Thi
   type("zebra");
   await tick(SEARCH_DEBOUNCE_MS);
   expect(options("Matches")).toHaveLength(5);
+  expect(options("More from all of Buzz")).toEqual([
+    expect.stringContaining("zebra from the relay"),
+    ...[2, 1, 0].map((n) => expect.stringContaining(`zebra note ${n}`)),
+  ]);
   await click(screen.getByRole("tab", { name: "This channel" }));
-  expect(options("Matches")).toHaveLength(8);
+  // With the relay's hit, now in the index.
+  expect(options("Matches")).toHaveLength(9);
 });

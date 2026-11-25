@@ -1535,19 +1535,21 @@ function MessageRowContent({
               data-grouped=""
               aria-hidden="true"
             >
-              {extensions ? (
-                <InlineText
-                  registry={extensions.inline}
-                  content={{
-                    text: reaction.content,
-                    message: row,
-                    reaction,
-                  }}
-                  media={media}
-                />
-              ) : (
-                reaction.content
-              )}
+              <span className={styles.reactionFallbackLabel}>
+                {extensions ? (
+                  <InlineText
+                    registry={extensions.inline}
+                    content={{
+                      text: reaction.content,
+                      message: row,
+                      reaction,
+                    }}
+                    media={media}
+                  />
+                ) : (
+                  reaction.content
+                )}
+              </span>
               <span className={styles.reactionCount}>{count}</span>
             </span>
           </span>

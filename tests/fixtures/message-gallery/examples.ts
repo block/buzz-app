@@ -131,6 +131,19 @@ const readOnlyReactions = [
     events: reactionEvents("party-text", readOnlyReactionAuthors.slice(0, 1)),
   },
   {
+    content:
+      ":celebrating_the_quarterly_release_readiness_milestone_together_:",
+    emoji: {
+      shortcode:
+        "celebrating_the_quarterly_release_readiness_milestone_together_",
+      url: "https://fixture.test/media/long-shortcode-unavailable",
+    },
+    events: reactionEvents(
+      "long-shortcode",
+      readOnlyReactionAuthors.slice(0, 5),
+    ),
+  },
+  {
     content: "✅",
     events: reactionEvents("check", readOnlyReactionAuthors),
   },

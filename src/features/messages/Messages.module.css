@@ -398,10 +398,16 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   justify-content: center;
   gap: var(--space-half);
   min-width: var(--size-control-sm);
+  max-width: 100%;
   padding-inline: var(--space-2);
   height: calc(var(--size-control-sm) - var(--space-1));
   font-size: var(--text-caption);
   --inline-emoji-size: 0.75rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.reactionFallbackLabel {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -439,8 +445,13 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   max-width: none;
   gap: var(--space-1);
 }
+.reactionFallback .reactionGlyph[data-grouped] {
+  min-width: 0;
+  max-width: 100%;
+}
 .reactionCount {
   @apply text-caption;
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
 .reactionItem [data-reaction] {

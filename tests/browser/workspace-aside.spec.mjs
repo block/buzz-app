@@ -366,7 +366,7 @@ test.describe("in a thread", () => {
     historyCounts: { alpha: 40, beta: 3 },
   });
 
-  test("a thread target docks the aside over the thread's end edge", async ({
+  test("a thread target docks the aside over the thread's end edge, with its trailing card beside it", async ({
     page,
     app,
   }) => {
@@ -374,7 +374,10 @@ test.describe("in a thread", () => {
     const root = app.histories
       .get("primary/alpha")
       .find((row) => row.content === "Thread root 1");
-    await openAside(page, { threadId: root.id });
+    await openAside(page, { threadId: root.id, trailing: "short" });
+    await expect(
+      page.getByRole("article", { name: "Fixture card" }),
+    ).toBeVisible();
     const thread = aside(page)
       .locator("xpath=preceding-sibling::*[1]")
       .locator("[data-message-scroller]");
@@ -393,6 +396,7 @@ test.describe("in a thread", () => {
         ),
         aside: box(widget),
         reader: box(widget.previousElementSibling),
+        card: box(document.querySelector('[aria-label="Fixture card"]')),
       };
     });
     expect(at.aside.width).toBe(320);
@@ -403,6 +407,7 @@ test.describe("in a thread", () => {
     ).toBeLessThanOrEqual(1);
     expect(at.aside.top).toBeGreaterThanOrEqual(at.thread.top - 1);
     expect(at.composer.right).toBeLessThanOrEqual(at.aside.left + 1);
+    expect(at.card.right).toBeLessThanOrEqual(at.aside.left + 1);
     expect(at.aside.bottom).toBeLessThanOrEqual(at.reader.bottom + 1);
   });
 });

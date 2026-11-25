@@ -2500,7 +2500,10 @@ export class ClaudeRuntime {
                   entry.config,
                   handle,
                   (
-                    await claudeInherited(this.host.readFile?.bind(this.host))
+                    await claudeInherited(
+                      this.host.readFile?.bind(this.host),
+                      cwd,
+                    )
                   ).map((i) => i.name),
                 ),
               }

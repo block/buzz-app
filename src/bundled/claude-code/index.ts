@@ -420,7 +420,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     mcpServers: {
       transports: ["stdio", "http"],
       inherited: (agent) =>
-        agent.protection ? Promise.resolve([]) : claudeInherited(readFile),
+        agent.protection
+          ? Promise.resolve([])
+          : claudeInherited(
+              readFile,
+              (agent.config as { workspace?: string }).workspace,
+            ),
     },
     ...claudeRun(runtime, async (signal, agent) => {
       // A remote target runs Recommended on its own default.

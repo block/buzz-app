@@ -200,7 +200,7 @@ if that desktop app is up and running.
   signed, so another member of the agent's config channel can't add a
   command to it. **Approved** shows when you signed the list in use.
   Protected agents and security reviews run no MCP servers but Buzz's own.
-- The servers in a harness's own config, such as `~/.codex/config.toml` or
+- The servers in a harness's own config, such as `~/.codex/config.toml`, Claude Code's `~/.claude.json` and a project's `.mcp.json`, or
   goose's extensions, run for its agents too and are listed with a switch.
   Turning one off keeps the agent from using it: Claude Code denies its tools
   and Codex and Goose don't load it. On Goose, the agent can turn it back on

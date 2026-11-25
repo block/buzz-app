@@ -112,9 +112,29 @@ holds. Keep its controls in view with `position: sticky; bottom: 0` and an
 opaque background, and draw its outline with a box shadow rather than a bottom
 border.
 
-A desktop plugin can open audio on an owned local agent with `ctx.agents.openSessionVoice?.(agent.key, place, options)`. The provider must support session voice. Buzz uses the conversation selected by session controls, waits for any interrupted turn to end, and publishes final agent transcripts there. The plugin owns the microphone and the human transcript. Give it 48 kHz mono audio, use the optional provider speaking callback to track reply audio, and abort the supplied signal when the conversation closes. Inline excerpts are bounded and passed to the voice model as reference dialogue.
+Check `ctx.conversation.workspaceSlots?.aside === true` before passing `aside`
+to `ui.Workspace`. The host places it in a box of `asideWidth` (default 320)
+over the history's end edge, left of its scrollbar. Docked, it runs from the
+history's top to the reader's bottom, and the history's rows and the composer
+keep to the width beside it; when the reader would get too narrow, it floats
+over the history instead, above the composer. The box
+draws nothing in either mode: draw your own card, let it size to its content,
+and scroll inside it when it is taller than the box. Only your content takes
+pointer input, so the wheel beside or below it scrolls the history. A popover
+escapes over the history only from a portal, as `ui.Menu`'s does.
+Drive it from your own header control with `asideOpen` and
+`onAsideOpenChange`: docked, it shows by default; floating, it shows only once
+opened. The host closes it as it floats, restores the docked state when the
+reader widens, and closes the overlay on Escape or a press elsewhere in the
+reader, reporting each change. Without that control a floating aside stays
+closed. `onAsideFloatingChange` tells you whether it floats, for example to
+close it after a pick. Messages under the overlay are not marked read.
 
 For `ctx.agents.ui.Transcript`, give each turn a unique `turnId` that stays the same across reads. Return a new turn when it changes. Leave previously returned turns and their items untouched.
+
+## Agent session voice
+
+A desktop plugin can open audio on an owned local agent with `ctx.agents.openSessionVoice?.(agent.key, place, options)`. The provider must support session voice. Buzz uses the conversation selected by session controls, waits for any interrupted turn to end, and publishes final agent transcripts there. The plugin owns the microphone and the human transcript. Give it 48 kHz mono audio, use the optional provider speaking callback to track reply audio, and abort the supplied signal when the conversation closes. Inline excerpts are bounded and passed to the voice model as reference dialogue.
 
 ## Migration writes
 

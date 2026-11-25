@@ -2586,11 +2586,12 @@ export const test = base.extend({
         ];
         for (const { id } of result) served.add(id);
         // An older page's aux closure, read apart from its rows, is not held.
+        // A thread window page carries aux too, but it is the page itself.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
           filter["#h"]?.length &&
-          !(filter.include_aux && !filter.include_summaries)
+          !(filter.top_level && filter.include_aux && !filter.include_summaries)
         ) {
           const queuedAt = performance.now();
           const receipt = {

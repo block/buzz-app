@@ -621,10 +621,15 @@ export function policyRelay({
         )
           return holdProfile(result);
         // An older page's aux closure, read apart from its rows, is not held.
+        // A thread window page carries aux too, but it is the page itself.
         if (
           filter.search === undefined &&
           filter.until !== undefined &&
-          !(filter.include_aux && !filter.include_summaries) &&
+          !(
+            filter.top_level &&
+            filter.include_aux &&
+            !filter.include_summaries
+          ) &&
           holdOlder
         )
           return new Promise((resolve, reject) => {

@@ -173,6 +173,7 @@ import { normalizeName } from "../search/person-match";
 import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
+import { ComposerLinkMenu } from "./ComposerLinkMenu";
 import { ComposerFormattingTools } from "./ComposerFormattingTools";
 import { useMarkdownAsTypedPreference } from "./markdown-input-preference";
 import { AgentsContext, useSessionState } from "../agents/react";
@@ -4401,7 +4402,14 @@ function Composer({
                 }}
               />
             )}
-            <div className={styles.composerInput}>
+            <ComposerLinkMenu
+              active={presented}
+              editor={input}
+              className={styles.composerInput}
+              panels={extensions?.linkPanels}
+              canOpenLink={canOpenLink}
+              onOpenLink={onOpenLink}
+            >
               <RichComposerInput
                 isEmptyForShortcuts={isEmptyForShortcuts}
                 ref={input}
@@ -4612,7 +4620,7 @@ function Composer({
                   <ChannelIcon className={channelIconClass(ChannelIcon)} />
                 </span>
               )}
-            </div>
+            </ComposerLinkMenu>
           </div>
           {!editing.target &&
             threadRootId &&

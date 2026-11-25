@@ -6,6 +6,7 @@ import type { Attachment, ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ComposerSession } from "../messages/composer-session";
 import type { OutgoingMessage } from "../messages/outgoing-message";
+import type { Panels } from "../panels/service";
 
 /**
  * Opens a target, such as a plugin panel URL, where the conversation host
@@ -324,6 +325,7 @@ export type ConversationExtensions = Readonly<{
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
   links?: ContributionReader<LinkRenderer>;
+  linkPanels?: Pick<Panels, "resolve" | "subscribe"> | undefined;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   /** Plugin Settings cards by `plugin/card` key, for a link preview's setup card. */
   settings?: LinkPreviewSettings | undefined;

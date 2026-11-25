@@ -19,5 +19,11 @@ export function namingRulesApply(community: string | undefined): boolean {
 
 /** The page the create dialog's "How channel names work" link opens, if the build sets one. */
 export function namingGuidelinesUrl(): string | undefined {
-  return import.meta.env.VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL || undefined;
+  const url = import.meta.env.VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL;
+  // Rendered as a link, so only a secure web address is accepted.
+  try {
+    return url && new URL(url).protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
 }

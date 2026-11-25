@@ -261,7 +261,8 @@ release build: `BUZZ_BUILDERLAB_URL`, `BUZZ_BUILDERLAB_APPS_DOMAIN`,
 `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE`, `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG`,
 `BUZZ_BUILD_REPOSITORY_ACCESS`, `BUZZ_EXTERNAL_MCP_COMMUNITIES`,
 `BUZZ_DEFAULT_COMMUNITY_URL`, `BUZZ_NSEC_BACKUP_SERVICE_URL` and
-`BUZZ_NSEC_BACKUP_NAMESPACE` (see [configuration](docs/configuration.md)). If
+`BUZZ_NSEC_BACKUP_NAMESPACE`, `BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES` and
+`BUZZ_CHANNEL_NAMING_GUIDELINES_URL` (see [configuration](docs/configuration.md)). If
 one is missing, add a generic setting; never hardcode the value or special-case
 a host or organization.
 

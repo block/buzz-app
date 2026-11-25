@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { channelNameTips } from "./channel-name-tips";
+import { channelNameTips, similarChannelName } from "./channel-name-tips";
 
 const base = {
   name: "",
@@ -119,5 +119,17 @@ describe("normalization and wording", () => {
     expect(check("x-proj")).toContain(
       "Move proj- to the start, like proj-checkout.",
     );
+  });
+});
+
+describe("similarChannelName", () => {
+  const existing = [{ name: "proj-checkout" }, { name: "Ops Team" }];
+  it("matches ignoring case, spaces and underscores", () => {
+    expect(similarChannelName("Proj Checkout", existing)).toBe("proj-checkout");
+    expect(similarChannelName("ops_team", existing)).toBe("Ops Team");
+  });
+  it("does not match a different name or an empty one", () => {
+    expect(similarChannelName("proj-checkouts", existing)).toBeUndefined();
+    expect(similarChannelName("  ", existing)).toBeUndefined();
   });
 });

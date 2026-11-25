@@ -36,9 +36,12 @@ export function ChannelDetailsEditor({
   capability,
   channel,
   scope,
+  relayUrl,
   renderSurface,
 }: {
   scope: string;
+  /** The community's relay address, for the channel naming rules. */
+  relayUrl?: string | undefined;
   capability: ChannelDetailsCapability;
   channel: ChannelSummary;
   renderSurface?(
@@ -161,7 +164,7 @@ export function ChannelDetailsEditor({
     view.base &&
     normalized.name !== view.base.name &&
     !soloLabels(view.base.labels) &&
-    namingRulesApply(scope)
+    namingRulesApply(relayUrl)
       ? channelNameTips({
           name: normalized.name,
           temporary: normalized.ttlSeconds !== undefined,

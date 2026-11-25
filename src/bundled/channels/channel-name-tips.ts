@@ -22,15 +22,22 @@ const PREFIXES = ["proj", "prod", "ext", "tmp"];
 /** Every accepted type word, for messages that cannot link to the guide. */
 export const TYPE_WORDS_HELP = `Suffixes: ${SUFFIXES.map((w) => `-${w}`).join(" ")}. Prefixes: ${PREFIXES.map((w) => `${w}-`).join(" ")}.`;
 
+/** A name's identity for matching: case, spaces, underscores and doubled
+ * hyphens don't tell channels apart. */
+const similarKey = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+
 /** An existing channel whose name matches, ignoring case and spacing. */
 export function similarChannelName(
   name: string,
   existing: readonly { name: string }[],
 ): string | undefined {
-  const key = name.trim().toLowerCase();
+  const key = similarKey(name);
   if (!key) return undefined;
-  return existing.find((channel) => channel.name.trim().toLowerCase() === key)
-    ?.name;
+  return existing.find((channel) => similarKey(channel.name) === key)?.name;
 }
 
 export type NameTipInput = {

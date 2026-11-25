@@ -248,7 +248,7 @@ function OpenCreateChannelDialog({
   const hintText = blockers.length
     ? noWrap(`To create: ${blockers.join(" ")}`)
     : similar
-      ? `A channel named #${similar} already exists. Join it instead?`
+      ? `A channel named #${similar} already exists. Find it in the channel list and join it instead?`
       : tips[0];
   const hygieneBlocked = blockers.length > 0;
   const invalid =

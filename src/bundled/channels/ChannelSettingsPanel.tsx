@@ -258,6 +258,7 @@ export function ChannelSettingsPanel({
       channel={channel}
       capability={details}
       scope={scope}
+      relayUrl={session?.relayUrl}
       renderSurface={renderPanel}
     />
   ) : (

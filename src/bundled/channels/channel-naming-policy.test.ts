@@ -21,4 +21,8 @@ it("reads the guidelines link from the build", () => {
   expect(namingGuidelinesUrl()).toBeUndefined();
   vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
   expect(namingGuidelinesUrl()).toBe("https://go.example/x");
+  for (const bad of ["javascript:alert(1)", "http://go.example/x", "go/x"]) {
+    vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", bad);
+    expect(namingGuidelinesUrl(), bad).toBeUndefined();
+  }
 });

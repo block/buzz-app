@@ -182,6 +182,16 @@ it("deduplicates in this running session and routes clicks through existing navi
   expect(t.navigation.navigation.snapshot().entry.target).toEqual(target);
   expect(t.navigation.navigation.snapshot().status).toBe("opening");
 });
+it("with message text off, the OS gets the title and no body", async () => {
+  const t = setup();
+  t.service.updatePreferences({ showText: false });
+  expect(await t.submit()).toBe(true);
+  await flush();
+  expect(vi.mocked(t.platform.show).mock.calls[0]?.[0]).toMatchObject({
+    title: "Buzz",
+    body: "",
+  });
+});
 it("more than 256 sequential alerts do not fill a persistent inbox or pause delivery", async () => {
   const t = setup();
   for (let i = 0; i < 300; i++) {

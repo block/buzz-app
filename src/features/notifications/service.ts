@@ -545,6 +545,7 @@ export class NotificationsService extends Service implements Notifications {
           {
             id: crypto.randomUUID(),
             ...item.text(),
+            ...(this.state.preferences.showText ? {} : { body: "" }),
           },
           () => {
             if (this.closed || generation !== this.generation) return;

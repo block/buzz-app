@@ -13,6 +13,10 @@ const stored = {
   categories: { mention: true, direct: true, thread: false },
 };
 
+it("values saved before the message text setting keep showing text", () => {
+  expect(parsePreferences(stored).showText).toBe(true);
+  expect(parsePreferences({ ...stored, showText: false }).showText).toBe(false);
+});
 it("values saved before per-category sounds restore with the defaults", () => {
   expect(parsePreferences(stored).sounds).toEqual(
     DEFAULT_NOTIFICATION_PREFERENCES.sounds,
@@ -82,7 +86,11 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   const service = createNotificationPreferences(host);
   service.selectViewer(viewer);
   expect(service.snapshot()).toEqual({
-    preferences: { ...stored, sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds },
+    preferences: {
+      ...stored,
+      showText: true,
+      sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
+    },
     error: null,
   });
   expect(setItem).not.toHaveBeenCalled();
@@ -90,6 +98,7 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   expect(service.update({})).toBe(true);
   expect(JSON.parse(store.get(key) ?? "")).toEqual({
     ...stored,
+    showText: true,
     sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
   });
   service.dispose();

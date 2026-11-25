@@ -30,7 +30,7 @@ fn slots<'a>(paths: &Paths, vault: &'a Vault, wait: Duration) -> Slots<'a> {
     let peer = peer(paths, &Arc::default());
     let mut slots = vault.slots_waiting(BUDGET, wait);
     slots.continuity = Some(Box::new(move || {
-        secrets::continuity::establish(&scope, &root, store.as_ref(), peer)
+        secrets::continuity::qualify(&scope, &root, store.as_ref(), peer)
     }));
     slots
 }
@@ -1021,4 +1021,248 @@ fn production_peer_scope_is_the_other_identifiers_recipe_with_its_own_backup_hom
         assert!(peer.homes.contains(home), "{home:?}");
     }
     assert_ne!(peer, own);
+}
+
+#[test]
+fn erase_rechecks_the_other_builds_custody_at_boot_deletion() {
+    for enrolled in [true, false] {
+        let (_dir, paths) = fixture();
+        let vault = Vault::new(paths.plugin_inventory().unwrap());
+        let identities: &[&str] = if enrolled { &[BOB] } else { &[] };
+        let other = install_other(&paths, identities);
+        let parked = park_other(&paths);
+        failed_setup(&paths, &vault, &other);
+        *vault.store.add_denied.lock().unwrap() = true;
+        let instance = boot_fixed(&paths, &vault, &other);
+        *vault.store.add_denied.lock().unwrap() = false;
+        assert!(instance.partial);
+        // Admitted while the other build has no custody in any wiped home.
+        remove(&instance, &paths, WIPE).unwrap();
+        assert!(paths.marker.exists());
+        drop(instance);
+        // It enrolls there before this restart owns cleanup.
+        expose_other(parked);
+        let evidence = other_evidence(&paths, &other);
+        let removed = std::cell::Cell::new(0);
+        let booted = boot(
+            &paths,
+            Some(fixed_slots(&paths, &vault, &other)),
+            |_| panic!("no agent keys are removed"),
+            || {
+                removed.set(removed.get() + 1);
+                Ok(())
+            },
+        );
+        if enrolled {
+            assert_eq!(booted.err(), Some(PEER_CUSTODY.into()));
+            assert_eq!(removed.get(), 0);
+            assert!(paths.marker.exists(), "intent is kept");
+            assert!(paths.app_data.join("archive.sqlite3").exists());
+        } else {
+            booted.unwrap();
+            assert_eq!(removed.get(), 1);
+            assert!(!paths.marker.exists());
+        }
+        assert_eq!(other_evidence(&paths, &other), evidence);
+    }
+}
+
+#[test]
+fn own_setup_beside_an_independent_boot_unknown_never_becomes_removable() {
+    let (_dir, paths) = fixture();
+    let vault = Vault::new(paths.plugin_inventory().unwrap());
+    let other = install_other(&paths, &[]);
+    let exact = other.items.lock().unwrap()[WITNESS].clone();
+    failed_setup(&paths, &vault, &other);
+    // The other build's witness no longer matches its pair: boot can't
+    // qualify the scope, whatever this build's own intent looks like.
+    let mut value: serde_json::Value = serde_json::from_slice(&exact).unwrap();
+    value["id"] = "00000000-0000-4000-8000-000000000000".into();
+    other
+        .items
+        .lock()
+        .unwrap()
+        .insert(WITNESS.into(), serde_json::to_vec(&value).unwrap());
+    let before = fs::read(vault.root.join("state.json")).unwrap();
+    let instance = boot_fixed(&paths, &vault, &other);
+    assert!(instance.h1_unknown() && !instance.partial);
+    assert_eq!(installation(&vault)["committed"], false);
+    // Resolving the other build's problem doesn't requalify this launch.
+    other
+        .items
+        .lock()
+        .unwrap()
+        .insert(WITNESS.into(), exact.clone());
+    vault.calls();
+    assert_eq!(remove(&instance, &paths, PLAIN), Err(refuse(H1_UNKNOWN)));
+    assert!(!paths.marker.exists());
+    assert_eq!(fs::read(vault.root.join("state.json")).unwrap(), before);
+    assert!(vault.calls().is_empty(), "nothing cancelled");
+    drop(instance);
+    // A launch whose only failure is this build's own add can.
+    *vault.store.add_denied.lock().unwrap() = true;
+    let instance = boot_fixed(&paths, &vault, &other);
+    *vault.store.add_denied.lock().unwrap() = false;
+    assert!(instance.h1_unknown() && instance.partial);
+    remove(&instance, &paths, PLAIN).unwrap();
+    assert!(paths.marker.exists());
+}
+
+/// Boot with a pending plain removal, asserting no witness add precedes it.
+fn boot_removing<'a>(
+    paths: &Paths,
+    vault: &'a Vault,
+    slots: Slots<'a>,
+    removed: &std::cell::Cell<usize>,
+) -> Result<Instance, String> {
+    boot(paths, Some(slots), no_agents, || {
+        let calls = vault.store.log.lock().unwrap().clone();
+        assert!(!calls.iter().any(|c| c.starts_with("add ")), "{calls:?}");
+        removed.set(removed.get() + 1);
+        Ok(())
+    })
+}
+
+fn adds(vault: &Vault) -> usize {
+    vault
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("add "))
+        .count()
+}
+
+#[test]
+fn pending_removal_with_no_own_inventory_initializes_only_after_it() {
+    for (legacy, peer) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (_dir, mut paths) = fixture();
+        let vault = Vault::new(paths.plugin_inventory().unwrap());
+        let other = if peer {
+            install_other(&paths, &[])
+        } else {
+            Arc::default()
+        };
+        mark(&paths, false, false);
+        if legacy {
+            let source = paths.lock.parent().unwrap().join("legacy-marker");
+            fs::rename(&paths.marker, &source).unwrap();
+            paths.moves = vec![(source, paths.marker.clone())];
+        }
+        let removed = std::cell::Cell::new(0);
+        let slots = fixed_slots(&paths, &vault, &other);
+        let instance = boot_removing(&paths, &vault, slots, &removed).unwrap();
+        let case = format!("legacy={legacy} peer={peer}");
+        assert_eq!(removed.get(), 1, "{case}");
+        assert!(!paths.marker.exists(), "{case}");
+        assert!(!instance.h1_unknown(), "{case}");
+        assert_eq!(installation(&vault)["committed"], true, "{case}");
+        assert_eq!(adds(&vault), 1, "{case}");
+    }
+}
+
+#[test]
+fn malformed_or_unreadable_legacy_intent_refuses_before_any_setup() {
+    for case in ["malformed", "folder", "dangling"] {
+        let (_dir, mut paths) = fixture();
+        let vault = Vault::new(paths.plugin_inventory().unwrap());
+        let source = paths.lock.parent().unwrap().join("legacy-marker");
+        match case {
+            "malformed" => fs::write(&source, b"{\"wipe\":").unwrap(),
+            "folder" => fs::create_dir(&source).unwrap(),
+            _ => std::os::unix::fs::symlink(source.with_extension("gone"), &source).unwrap(),
+        }
+        paths.moves = vec![(source.clone(), paths.marker.clone())];
+        let booted = boot(
+            &paths,
+            Some(fixed_slots(&paths, &vault, &Arc::default())),
+            |_| panic!("no removal"),
+            || panic!("no removal"),
+        );
+        assert_eq!(booted.err(), Some(FAILED.into()), "{case}");
+        assert!(!vault.root.exists(), "{case}: nothing set up");
+        assert!(vault.calls().is_empty(), "{case}");
+        assert!(fs::symlink_metadata(&source).is_ok() && !paths.marker.exists());
+    }
+}
+
+#[test]
+fn fresh_setup_failing_after_removal_leaves_it_complete() {
+    for stall in [false, true] {
+        let (_dir, paths) = fixture();
+        let vault = Vault::new(paths.plugin_inventory().unwrap());
+        let other = Arc::<Fake>::default();
+        failed_setup(&paths, &vault, &other);
+        *vault.store.add_denied.lock().unwrap() = true;
+        let instance = boot_fixed(&paths, &vault, &other);
+        let intent = installation(&vault);
+        remove(&instance, &paths, PLAIN).unwrap();
+        drop(instance);
+        vault.calls();
+        let mut slots = fixed_slots(&paths, &vault, &other);
+        let held = stall.then(|| {
+            *vault.store.add_denied.lock().unwrap() = false;
+            slots.wait = Duration::from_millis(300);
+            let (started, entered) = mpsc::channel();
+            let (release, released) = mpsc::channel();
+            *vault.store.add_stall.lock().unwrap() = Some((started, released));
+            (entered, release)
+        });
+        let removed = std::cell::Cell::new(0);
+        let booted = boot_removing(&paths, &vault, slots, &removed);
+        // Removal finished before setup was asked for, whatever it does.
+        assert_eq!(removed.get(), 1, "stall={stall}");
+        assert!(!paths.marker.exists(), "stall={stall}");
+        assert_eq!(adds(&vault), 1, "one attempt, stall={stall}");
+        match held {
+            None => {
+                let instance = booted.unwrap();
+                assert!(instance.h1_unknown() && instance.partial);
+                assert!(instance.plugin_inventory().is_none());
+                let fresh = installation(&vault);
+                assert_eq!(fresh["committed"], false);
+                assert_ne!(fresh["installation"], intent["installation"]);
+                assert!(vault.saved().is_empty(), "no witness, old or new");
+            }
+            Some((entered, release)) => {
+                // Timed out: this launch stops, its worker keeps the locks.
+                assert_eq!(booted.err(), Some(SAVING.into()));
+                assert_eq!(entered.recv_timeout(BUDGET).unwrap(), Step::Stalled);
+                assert!(!exclusive(&paths.key_lock) && !exclusive(&paths.lock));
+                release.send(()).unwrap();
+                released_lock(&paths.key_lock);
+                released_lock(&paths.lock);
+                assert!(!paths.marker.exists());
+                let instance = boot_fixed(&paths, &vault, &other);
+                assert!(!instance.h1_unknown());
+                assert_eq!(adds(&vault), 0, "the late setup is not repeated");
+            }
+        }
+        *vault.store.add_denied.lock().unwrap() = false;
+    }
+}
+
+#[test]
+fn empty_state_write_failing_before_rename_refuses_then_retries() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_dir, paths) = fixture();
+    let vault = Vault::new(paths.plugin_inventory().unwrap());
+    let other = Arc::<Fake>::default();
+    failed_setup(&paths, &vault, &other);
+    *vault.store.add_denied.lock().unwrap() = true;
+    let instance = boot_fixed(&paths, &vault, &other);
+    *vault.store.add_denied.lock().unwrap() = false;
+    assert!(instance.partial);
+    let before = fs::read(vault.root.join("state.json")).unwrap();
+    let permissions = |mode| fs::set_permissions(&vault.root, fs::Permissions::from_mode(mode));
+    permissions(0o555).unwrap();
+    // The fixture really stops new files here, as the atomic write needs.
+    let probe = fs::write(vault.root.join("probe"), b"").unwrap_err();
+    assert_eq!(probe.kind(), ErrorKind::PermissionDenied);
+    let refused = remove(&instance, &paths, PLAIN);
+    permissions(0o755).unwrap();
+    assert_eq!(refused, Err(refuse(H1_UNKNOWN)));
+    assert!(!paths.marker.exists());
+    assert_eq!(fs::read(vault.root.join("state.json")).unwrap(), before);
+    remove(&instance, &paths, PLAIN).unwrap();
+    assert!(paths.marker.exists());
+    assert_eq!(installation(&vault), serde_json::Value::Null);
 }

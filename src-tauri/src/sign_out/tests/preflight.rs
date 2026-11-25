@@ -20,7 +20,7 @@ fn fallback_prepare_refuses_before_marker_closure_or_shutdown() {
                 remove_agents: false,
             },
             || async { Ok(()) },
-            None,
+            Admission::Scanner,
             || panic!("must not close"),
             || async { panic!("must not stop") },
         ));
@@ -235,7 +235,7 @@ fn scanner_error_prevents_prepare_and_pending_deletion_not_launch() {
         &paths,
         PLAIN,
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || panic!("no closure"),
         || async { panic!("no shutdown") },
     ));
@@ -281,7 +281,7 @@ fn a_seed_discard_cannot_turn_unknown_into_destructive_permission() {
                 &paths,
                 PLAIN,
                 || async { Ok(()) },
-                None,
+                Admission::Scanner,
                 || panic!("no closure"),
                 || async { panic!("no shutdown") },
                 || async { panic!("precommit refusal, no exit") },
@@ -307,7 +307,7 @@ fn stray_profiles_refuse_plain_and_erase_before_marker_or_key_deletion() {
                 remove_agents: false,
             },
             || async { Ok(()) },
-            None,
+            Admission::Scanner,
             || panic!("no closure"),
             || async { panic!("no shutdown") },
             || async { panic!("no exit") },
@@ -338,7 +338,7 @@ fn linked_data_ancestor_preserves_launch_but_refuses_plain_sign_out() {
             &linked,
             PLAIN,
             || async { Ok(()) },
-            None,
+            Admission::Scanner,
             || panic!("no closure"),
             || async { panic!("no shutdown") },
             || async { panic!("no exit") }
@@ -359,7 +359,7 @@ fn reviewer_prepare_only_unknown_must_survive_a_clean_retry() {
         &paths,
         PLAIN,
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || panic!("first refusal must not close"),
         || async { panic!("first refusal must not shut down") },
         || async { panic!("first refusal must not exit") },
@@ -375,7 +375,7 @@ fn reviewer_prepare_only_unknown_must_survive_a_clean_retry() {
         &paths,
         PLAIN,
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || closes.set(closes.get() + 1),
         || async { Ok(()) },
         || async { panic!("no fenced failure") },
@@ -469,7 +469,7 @@ fn prepare_uncertainty_is_rechecked_at_shared_admission() {
         &paths,
         PLAIN,
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || panic!("no closure"),
         || async { panic!("no shutdown") },
         || async { panic!("no exit") },
@@ -481,7 +481,10 @@ fn prepare_uncertainty_is_rechecked_at_shared_admission() {
     // Direct boundaries exercise the locked recheck, as if an earlier adapter
     // check saw false before prepare recorded uncertainty and reopened admission.
     assert_eq!(instance.creator().err().as_deref(), Some(H1_UNKNOWN));
-    assert_eq!(instance.begin(PLAIN, None), Err(refuse(H1_UNKNOWN)));
+    assert_eq!(
+        instance.begin(PLAIN, Admission::Scanner),
+        Err(refuse(H1_UNKNOWN))
+    );
     assert!(!instance.shared.gate.lock().unwrap().closed);
     assert!(!paths.marker.exists());
 }

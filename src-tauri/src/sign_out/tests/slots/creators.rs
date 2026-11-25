@@ -27,7 +27,10 @@ fn native_journal_adapter_borrows_modes_and_preserves_cancelled_commit() {
         assert!(paths.marker.exists());
         assert!(secrets::sign_out_pending(&root).unwrap());
         assert!(held_alone(&paths.key_lock));
-        assert_eq!(instance.begin(choices, None), Err(refuse(ALREADY)));
+        assert_eq!(
+            instance.begin(choices, Admission::Scanner),
+            Err(refuse(ALREADY))
+        );
     }
 }
 
@@ -98,7 +101,10 @@ fn native_adapter_partial_commit_and_marker_failure_stay_fenced_for_retry() {
             );
             assert!(exited.get() && vault.pending());
             assert!(held_alone(&paths.key_lock));
-            assert_eq!(instance.begin(PLAIN, None), Err(refuse(ALREADY)));
+            assert_eq!(
+                instance.begin(PLAIN, Admission::Scanner),
+                Err(refuse(ALREADY))
+            );
             assert!(
                 !paths.marker.exists(),
                 "journal does not invent destructive authority"
@@ -126,7 +132,10 @@ fn unread_identity_after_handoff_refuses_before_native_journal_admission() {
         admit: &|| Ok(()),
     };
     // Initial same-key upgrade refuses; identity changes during handoff.
-    assert_eq!(instance.begin(PLAIN, Some(&journal)), Err(refuse(OTHERS)));
+    assert_eq!(
+        instance.begin(PLAIN, Admission::Journal(&journal)),
+        Err(refuse(OTHERS))
+    );
     assert_eq!(
         run(attempt_native(
             &instance,
@@ -174,7 +183,10 @@ fn post_begin_identity_change_fences_before_journal_and_keeps_owned_modes() {
         assert!(exited.get());
         assert!(!root.exists() && !paths.marker.exists());
         assert!(held_alone(&paths.key_lock));
-        assert_eq!(instance.begin(choices, None), Err(refuse(ALREADY)));
+        assert_eq!(
+            instance.begin(choices, Admission::Scanner),
+            Err(refuse(ALREADY))
+        );
     }
 }
 
@@ -198,13 +210,16 @@ fn observe_blocked_on_manager_global_holds_creator_lease_until_save_returns() {
             assert!(start.elapsed() < LIMIT);
             std::thread::yield_now();
         }
-        assert_eq!(instance.begin(PLAIN, None), Err(refuse(SAVING)));
+        assert_eq!(
+            instance.begin(PLAIN, Admission::Scanner),
+            Err(refuse(SAVING))
+        );
         assert!(!exclusive(&paths.other_key_lock));
         drop(global);
         observing.join().unwrap().unwrap();
     });
     assert!(root.join("state.json").exists());
-    assert_eq!(instance.begin(PLAIN, None), Ok(()));
+    assert_eq!(instance.begin(PLAIN, Admission::Scanner), Ok(()));
 }
 
 #[test]
@@ -276,7 +291,7 @@ fn reviewer_prepare_only_unknown_must_block_all_native_creators() {
             &paths,
             PLAIN,
             || async { Ok(()) },
-            None,
+            Admission::Scanner,
             || panic!("no closure on initial refusal"),
             || async { panic!("no shutdown on initial refusal") },
             || async { panic!("no exit on initial refusal") },
@@ -323,7 +338,8 @@ fn negative_slots(root: &Path) -> Slots<'_> {
     Slots {
         continuity: None,
         cancel: None,
-        cancellable: Box::new(|| false),
+        depart: None,
+        departable: Box::new(|| false),
         inventory: Some(root),
         pending: Box::new(|| secrets::sign_out_pending(root)),
         cleanup: None,
@@ -616,7 +632,10 @@ fn h1_2di_postbegin_revalidation_is_fenced_with_exact_recorded_copy() {
     PHASES.with_borrow(|phases| assert_eq!(phases, &["begin", "commit"]));
     assert!(!root.exists() && !paths.marker.exists());
     assert!(held_alone(&paths.key_lock));
-    assert_eq!(instance.begin(PLAIN, None), Err(refuse(ALREADY)));
+    assert_eq!(
+        instance.begin(PLAIN, Admission::Scanner),
+        Err(refuse(ALREADY))
+    );
 }
 
 #[test]

@@ -1981,8 +1981,12 @@ tab, asks **Discard changes?** first; **Keep editing** keeps them.
   stop an ordinary launch or the existing storage migration/copy.
   An interrupted saved-credential setup of this build's own, with nothing saved
   in it, doesn't stop sign-out: **Remove from device** cancels it and signs out
-  as usual, and after the restart saved credentials are set up again. Buzz also
-  retries such a setup once at an ordinary launch. Other causes stay refused.
+  as usual. After the restart Buzz tries one fresh setup; if that fails, sign-out
+  has still finished, but saved credentials stay unavailable until a later launch
+  sets them up. Buzz also retries such a setup once at an ordinary launch. Other
+  causes stay refused. An older Buzz that predates this cancellation keeps saved
+  credentials unavailable and can refuse a pending sign-out until you reopen the
+  newer Buzz.
 - The installed and development builds of Buzz keep separate saved plugin
   credentials in the same data. Each signs out only its own; erasing is refused
   while the other build still keeps credentials in data it would erase. On macOS,

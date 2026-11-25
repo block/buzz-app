@@ -270,11 +270,75 @@ fn witness(bytes: &[u8]) -> Result<Installation> {
     serde_json::from_slice(bytes).map_err(|_| FAILED.into())
 }
 
+/// What qualification found: this build's committed pair, or its own exact
+/// setup intent or empty state left unfinished only by its own witness work.
+pub enum Setup {
+    Established(Established),
+    Unfinished(Unfinished),
+}
+
+/// This build's own exact setup intent or empty state, after the whole
+/// declared scope classified around it and only an OS read, delete or add of
+/// its own witness failed. Any other failure is unknown and never becomes
+/// this. A later cancellation may start from it; it is not credential-use
+/// authority.
+pub struct Unfinished {
+    build: Build,
+    root: PathBuf,
+    peer: Peer,
+}
+impl Unfinished {
+    /// Filesystem only: still exactly cancellable, and a peer not already
+    /// observed refuses.
+    pub fn inspect(&self, scope: &Scope) -> Result<()> {
+        let own = cancellable(self.build, &self.root, &binding(scope, &self.root)?)?;
+        inspect(
+            self.build,
+            scope,
+            &self.root,
+            own.expect(),
+            &self.peer,
+            PeerRead::Cached,
+        )
+    }
+}
+
+/// Why a qualification stopped: only this build's own witness work, after the
+/// scope classified, or anything else.
+pub(super) enum Stop {
+    Own(Box<Peer>),
+    Other,
+}
+impl From<String> for Stop {
+    fn from(_: String) -> Self {
+        Self::Other
+    }
+}
+impl From<&str> for Stop {
+    fn from(_: &str) -> Self {
+        Self::Other
+    }
+}
+
 /// Read/create/delete OS work is synchronous so its caller can retain the
 /// existing native creator lease through worker completion, even after a
 /// bounded wait. No R/G/I metadata lock spans an OS call. This build's own
 /// exact empty partial setup is cancelled, never finished, before one fresh
 /// attempt; other partial or unknown evidence is never repaired.
+pub fn qualify(scope: &Scope, root: &Path, store: &dyn SecretStore, peer: Peer) -> Result<Setup> {
+    let build = Build::THIS;
+    match qualify_or_stop(build, scope, root, store, peer) {
+        Ok(established) => Ok(Setup::Established(established)),
+        Err(Stop::Own(peer)) => Ok(Setup::Unfinished(Unfinished {
+            build,
+            root: root.to_owned(),
+            peer: *peer,
+        })),
+        Err(Stop::Other) => Err(FAILED.into()),
+    }
+}
+
+/// [`qualify`], when only a committed pair will do.
 pub fn establish(
     scope: &Scope,
     root: &Path,
@@ -291,14 +355,24 @@ pub(super) fn establish_as(
     store: &dyn SecretStore,
     peer: Peer,
 ) -> Result<Established> {
+    qualify_or_stop(build, scope, root, store, peer).map_err(|_| FAILED.into())
+}
+
+fn qualify_or_stop(
+    build: Build,
+    scope: &Scope,
+    root: &Path,
+    store: &dyn SecretStore,
+    peer: Peer,
+) -> std::result::Result<Established, Stop> {
     if cfg!(not(unix)) {
-        return Err(UNSUPPORTED.into());
+        return Err(Stop::Other);
     }
     let expected_scope = binding(scope, root)?;
     let found = match store.read(ACCOUNT) {
         Ok(bytes) => Some(witness(&bytes)?),
         Err(Error::Absent) => None,
-        _ => return Err(FAILED.into()),
+        _ => return Err(Stop::Other),
     };
     let existing = state(root, build.this)?;
     match (existing, found) {
@@ -313,7 +387,7 @@ pub(super) fn establish_as(
                 || record.installation != found
                 || found.scope != expected_scope
             {
-                return Err(FAILED.into());
+                return Err(Stop::Other);
             }
             let observed = Established {
                 build,
@@ -336,7 +410,7 @@ pub(super) fn establish_as(
             initialize(build, scope, root, store, peer, Expect::Absent, writer)
         }
         (Some(_), _) => {
-            let empty = cancel_as(build, scope, root, store, peer)?;
+            let empty = cancel_or_stop(build, scope, root, store, peer)?;
             inspect(
                 build,
                 scope,
@@ -355,7 +429,7 @@ pub(super) fn establish_as(
                 empty._writer,
             )
         }
-        _ => Err(FAILED.into()),
+        _ => Err(Stop::Other),
     }
 }
 
@@ -369,7 +443,7 @@ fn initialize(
     peer: Peer,
     from: Expect,
     _writer: Held,
-) -> Result<Established> {
+) -> std::result::Result<Established, Stop> {
     let expected_scope = binding(scope, root)?;
     let inventory = Inventory { root };
     let record = Record {
@@ -394,7 +468,7 @@ fn initialize(
             Expect::Record(_) => false,
         };
         if !unchanged {
-            return Err(FAILED.into());
+            return Err(Stop::Other);
         }
         let mut state = State {
             installation: Some(record.clone()),
@@ -403,8 +477,12 @@ fn initialize(
         inventory.save_state(&mut state)?;
     }
     let bytes = Zeroizing::new(serde_json::to_vec(&record.installation).map_err(|_| FAILED)?);
-    store.add(ACCOUNT, &bytes).map_err(|_| FAILED)?;
-    commit(build, scope, root, record, peer)
+    // The intent is durable and the scope classified: a failed add leaves
+    // only this build's own unfinished setup.
+    if store.add(ACCOUNT, &bytes).is_err() {
+        return Err(Stop::Own(Box::new(peer)));
+    }
+    Ok(commit(build, scope, root, record, peer)?)
 }
 
 /// Cancel this build's own exact empty setup intent into the explicit empty
@@ -425,40 +503,49 @@ pub(super) fn cancel_as(
     store: &dyn SecretStore,
     peer: Peer,
 ) -> Result<Empty> {
+    cancel_or_stop(build, scope, root, store, peer).map_err(|_| FAILED.into())
+}
+
+fn cancel_or_stop(
+    build: Build,
+    scope: &Scope,
+    root: &Path,
+    store: &dyn SecretStore,
+    peer: Peer,
+) -> std::result::Result<Empty, Stop> {
     if cfg!(not(unix)) {
-        return Err(UNSUPPORTED.into());
+        return Err(Stop::Other);
     }
     let expected_scope = binding(scope, root)?;
     let before = cancellable(build, root, &expected_scope)?;
     // The initializer holds this through its OS add; a late one refuses here.
     let writer = try_lock(&root.join("installation.lock"))?.ok_or(BUSY)?;
     if cancellable(build, root, &expected_scope)? != before {
-        return Err(FAILED.into());
+        return Err(Stop::Other);
     }
-    let expect = match &before {
-        Own::Intent(record) => Expect::Record(record),
-        Own::Empty => Expect::Empty,
-    };
+    let expect = before.expect();
     inspect(build, scope, root, expect, &peer, PeerRead::Allowed)?;
-    match store.read(ACCOUNT) {
-        Err(Error::Absent) => {}
+    // The scope classified: a failed read or delete of this build's own exact
+    // witness leaves only its own unfinished setup. A mismatched one does not.
+    let cleared = match store.read(ACCOUNT) {
+        Err(Error::Absent) => true,
         Ok(bytes) => match &before {
             Own::Intent(record) if witness(&bytes)? == record.installation => {
-                store.delete(ACCOUNT).map_err(|_| FAILED)?;
-                if !matches!(store.read(ACCOUNT), Err(Error::Absent)) {
-                    return Err(FAILED.into());
-                }
+                store.delete(ACCOUNT).is_ok() && matches!(store.read(ACCOUNT), Err(Error::Absent))
             }
-            _ => return Err(FAILED.into()),
+            _ => return Err(Stop::Other),
         },
-        Err(_) => return Err(FAILED.into()),
+        Err(_) => false,
+    };
+    if !cleared {
+        return Err(Stop::Own(Box::new(peer)));
     }
     inspect(build, scope, root, expect, &peer, PeerRead::Cached)?;
     {
         let inventory = Inventory { root };
         let _g = inventory.global()?;
         if cancellable(build, root, &expected_scope)? != before {
-            return Err(FAILED.into());
+            return Err(Stop::Other);
         }
         let mut state = state(root, build.this)?.ok_or(FAILED)?;
         state.installation = None;
@@ -472,19 +559,102 @@ pub(super) fn cancel_as(
     })
 }
 
-/// Read-only: whether this build's own state is exactly a cancellable setup
-/// intent or the explicit empty state. Not authority to delete anything; a
-/// caller must still `cancel` and rely only on the returned `Empty`.
-pub fn cancellable_setup(scope: &Scope, root: &Path) -> bool {
-    binding(scope, root)
-        .and_then(|expected_scope| cancellable(Build::THIS, root, &expected_scope))
-        .is_ok()
+/// This build's inventory and its OS witness, both positively absent, with the
+/// rest of the declared scope classified. Nothing is created: a pending
+/// removal holds this instead of initializing, and a later setup refuses it.
+pub struct Absent {
+    build: Build,
+    root: PathBuf,
+    peer: Peer,
+}
+impl Absent {
+    /// Filesystem only: still absent, and a peer not already observed refuses.
+    pub fn inspect(&self, scope: &Scope) -> Result<()> {
+        binding(scope, &self.root)?;
+        inspect(
+            self.build,
+            scope,
+            &self.root,
+            Expect::Absent,
+            &self.peer,
+            PeerRead::Cached,
+        )
+    }
+}
+
+/// What a pending removal holds, instead of initializing, until it finishes:
+/// this build's cancelled setup, or its positively absent inventory.
+pub enum Departing {
+    Empty(Empty),
+    Absent(Absent),
+}
+impl Departing {
+    /// Filesystem only, as [`Empty::inspect`] or [`Absent::inspect`].
+    pub fn inspect(&self, scope: &Scope) -> Result<()> {
+        match self {
+            Self::Empty(empty) => empty.inspect(scope),
+            Self::Absent(absent) => absent.inspect(scope),
+        }
+    }
+    /// As [`Established::peer_custody_in`].
+    pub fn peer_custody_in(&self, homes: &[PathBuf]) -> Result<bool> {
+        let (build, peer) = match self {
+            Self::Empty(empty) => (empty.build, &empty.peer),
+            Self::Absent(absent) => (absent.build, &absent.peer),
+        };
+        peer_custody_in(build, peer, homes)
+    }
+}
+
+/// For a pending removal: observe this build's absent inventory, or cancel
+/// its own exact empty setup. Never initializes.
+pub fn depart(
+    scope: &Scope,
+    root: &Path,
+    store: &dyn SecretStore,
+    peer: Peer,
+) -> Result<Departing> {
+    let build = Build::THIS;
+    if cfg!(not(unix)) {
+        return Err(UNSUPPORTED.into());
+    }
+    binding(scope, root)?;
+    if state(root, build.this)?.is_some() {
+        return cancel_as(build, scope, root, store, peer).map(Departing::Empty);
+    }
+    if !matches!(store.read(ACCOUNT), Err(Error::Absent)) {
+        return Err(FAILED.into());
+    }
+    inspect(build, scope, root, Expect::Absent, &peer, PeerRead::Allowed)?;
+    Ok(Departing::Absent(Absent {
+        build,
+        root: root.to_owned(),
+        peer,
+    }))
+}
+
+/// Read-only: whether this build's own inventory is absent or exactly a
+/// cancellable setup intent or empty state. Not authority to delete or skip
+/// anything; a caller must still `depart` and rely only on what it returns.
+pub fn departable_setup(scope: &Scope, root: &Path) -> bool {
+    binding(scope, root).is_ok_and(|expected_scope| {
+        matches!(state(root, Build::THIS.this), Ok(None))
+            || cancellable(Build::THIS, root, &expected_scope).is_ok()
+    })
 }
 
 #[derive(PartialEq, Eq)]
 enum Own {
     Intent(Record),
     Empty,
+}
+impl Own {
+    fn expect(&self) -> Expect<'_> {
+        match self {
+            Self::Intent(record) => Expect::Record(record),
+            Self::Empty => Expect::Empty,
+        }
+    }
 }
 
 /// This build's exact uncommitted record or explicit empty state, with

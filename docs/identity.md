@@ -903,10 +903,16 @@ still keeps saved plugin credentials in data it would erase. Either build's plai
 sign-out cleans only its own saved plugin credentials. When this build's own
 saved-credential setup was interrupted and holds nothing else, **Remove from
 device** cancels it into an empty setup, then signs out as usual. After the key is
-removed at the next launch, that launch sets up saved credentials afresh once, with
-a new installation, so the next sign-in can save credentials without another
-restart. An ordinary launch that finds such a setup does the same: it cancels it
-and tries one fresh setup. Unknown or nonempty storage still refuses.
+removed at the next launch, that launch tries one fresh setup with a new
+installation, so the next sign-in can save credentials without another restart.
+If that setup fails, the sign-out is still complete and saved credentials stay
+unavailable until a later launch sets them up. A pending removal with no own
+setup at all defers fresh setup the same way until the key is removed. An
+ordinary launch that finds such a setup does the same: it cancels it and tries
+one fresh setup. Unknown or nonempty storage, or an unreadable pending removal,
+still refuses. An older build that predates this cancellation rejects the empty
+setup, keeping saved credentials unavailable, and can refuse a pending removal
+until the newer build is reopened: a fail-closed downgrade, not recovery.
 
 Every running instance, debug or release under any identifier, holds two locks
 shared in the user data folder (created first if a first launch finds none)

@@ -48,12 +48,15 @@ fn creator_before_establishment_blocks_begin_without_releasing_instance() {
         let (dir, paths) = fixture();
         let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
         let lease = instance.creator().unwrap();
-        assert_eq!(instance.begin(choices, None), Err(refuse(SAVING)));
+        assert_eq!(
+            instance.begin(choices, Admission::Scanner),
+            Err(refuse(SAVING))
+        );
         assert!(!exclusive(&paths.key_lock));
         assert!(!exclusive(&paths.lock));
         assert!(!dir.path().join("inventory").exists());
         drop(lease);
-        assert_eq!(instance.begin(choices, None), Ok(()));
+        assert_eq!(instance.begin(choices, Admission::Scanner), Ok(()));
     }
 }
 
@@ -85,7 +88,7 @@ fn creators_and_plain_journals_try_the_other_variant_before_metadata() {
         );
         let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
         let signing_out = boot(&other, None, no_agents, || panic!("no marker")).unwrap();
-        signing_out.begin(PLAIN, None).unwrap();
+        signing_out.begin(PLAIN, Admission::Scanner).unwrap();
         assert!(
             instance.creator().is_err(),
             "other K exclusive refuses a creator"
@@ -103,7 +106,7 @@ fn creators_and_plain_journals_try_the_other_variant_before_metadata() {
                 &paths,
                 PLAIN,
                 || async { Ok(()) },
-                Some(&journal),
+                Admission::Journal(&journal),
                 || {},
                 || async { panic!("no shutdown") },
                 || async { panic!("no exit") }
@@ -137,7 +140,7 @@ fn first_observe_is_admitted_before_it_can_create_inventory() {
     let (dir, paths) = fixture();
     let root = dir.path().join("inventory");
     let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
-    instance.begin(PLAIN, None).unwrap();
+    instance.begin(PLAIN, Admission::Scanner).unwrap();
     assert!(instance.observe_sign_outs(Some(&root)).is_err());
     assert!(!root.exists());
     drop(instance);
@@ -178,7 +181,8 @@ fn boot_plain_cleanup_always_owns_all_buzz_shared() {
             Some(Slots {
                 continuity: None,
                 cancel: None,
-                cancellable: Box::new(|| false),
+                depart: None,
+                departable: Box::new(|| false),
                 inventory: None,
                 pending: Box::new(pending),
                 cleanup: Some(Box::new(cleanup)),
@@ -206,7 +210,7 @@ fn erase_journal_borrows_exclusive_all_without_acquiring_other_key() {
         pending: &pending,
         admit: &|| Ok(()),
     };
-    instance.begin(WIPE, Some(&journal)).unwrap();
+    instance.begin(WIPE, Admission::Journal(&journal)).unwrap();
     // It is legal to open the other K independently while A is exclusive;
     // the erase transaction itself must not acquire it, even shared.
     let other = paths_for(paths.lock.parent().unwrap(), OTHER_KEY).key_lock;
@@ -279,7 +283,8 @@ fn migration_observes_only_under_all_exclusive_without_taking_key() {
         Some(Slots {
             continuity: None,
             cancel: None,
-            cancellable: Box::new(|| false),
+            depart: None,
+            departable: Box::new(|| false),
             inventory: None,
             pending: Box::new(pending),
             cleanup: None,

@@ -173,10 +173,11 @@ function pruneRevokedRosters(
     if (removal && newer(removal, peer) === removal) removed.add(channel);
   }
   if (!removed.size) return;
-  return discovery.events.filter((value) => {
+  const events = discovery.events.filter((value) => {
     const channel = channelOf(value as Partial<EventData> | null);
     return !channel || !removed.has(channel);
   });
+  return { events, removed };
 }
 
 function signedRemovalVersions(
@@ -444,23 +445,25 @@ export function createHeadPersistence(
             let data: SavedStartup = { ...stored, ...patch };
             let local = patch.discovery;
             const peer = stored?.discovery;
+            const sameRelay = peer && peer.relayAuthor === local?.relayAuthor;
             const removals = local
               ? signedRemovalVersions(
-                  peer?.relayAuthor === local.relayAuthor
-                    ? peer.removals
-                    : undefined,
+                  sameRelay ? peer.removals : undefined,
                   changes?.signedRemovals?.() ?? [],
                 )
               : undefined;
+            const filteredEvents =
+              local && removals?.versions.size
+                ? pruneRevokedRosters(local, (channel) =>
+                    removals.versions.get(channel),
+                  )
+                : undefined;
             if (local && removals?.versions.size) {
               // Keep the signed exclusion even when a later save omits the
               // channel. A stale grant may arrive from another tab's read.
               local = {
                 ...local,
-                events:
-                  pruneRevokedRosters(local, (channel) =>
-                    removals.versions.get(channel),
-                  ) ?? local.events,
+                events: filteredEvents?.events ?? local.events,
                 removals: [...removals.versions.values()],
               };
               data.discovery = local;
@@ -468,34 +471,42 @@ export function createHeadPersistence(
             let withRemovals: SavedStartup | undefined;
             let mergedGrants = false;
             let superseded = false;
-            if (local && (ifUnchanged || observedDiscovery === undefined)) {
+            let prunedPeer: ReturnType<typeof pruneRevokedRosters>;
+            // A filtered grant can have a newer replacement in the peer row.
+            const preservePeer = sameRelay && !!filteredEvents;
+            if (
+              local &&
+              (ifUnchanged || preservePeer || observedDiscovery === undefined)
+            ) {
               const current = discoveryVersion(stored?.discovery);
               // Compare inside the write transaction. Settings-only changes
               // preserve the signed snapshot, but a peer can replace or clear it.
               // Observing a conflict does not load the peer's channels into
               // discovery. Later removals still have to patch the peer row.
               if (
-                ifUnchanged &&
-                (current !== observedDiscovery || (removalFor && observedPeer))
+                preservePeer ||
+                (ifUnchanged &&
+                  (current !== observedDiscovery ||
+                    (removalFor && observedPeer)))
               ) {
                 version = current;
                 if (
                   !peer ||
-                  peer.relayAuthor !== local.relayAuthor ||
+                  !sameRelay ||
                   !changes ||
                   !Array.isArray(peer.events)
                 )
                   return done(undefined);
-                const pruned =
+                prunedPeer =
                   removalFor && pruneRevokedRosters(peer, removalFor);
                 const granted =
                   changes.includesGrant &&
                   mergeGrantedRosters(
-                    pruned ?? peer.events,
+                    prunedPeer?.events ?? peer.events,
                     local.events,
                     changes.includesGrant,
                   );
-                if (!granted && !pruned && !removals?.changed)
+                if (!granted && !prunedPeer && !removals?.changed)
                   return done(undefined);
                 const peerDiscovery = {
                   ...peer,
@@ -508,15 +519,15 @@ export function createHeadPersistence(
                   ...stored,
                   discovery: {
                     ...peerDiscovery,
-                    events: granted ?? pruned ?? peer.events,
+                    events: granted ?? prunedPeer?.events ?? peer.events,
                   },
                 };
-                if (granted && (pruned || removals?.changed))
+                if (granted && (prunedPeer || removals?.changed))
                   withRemovals = {
                     ...stored,
                     discovery: {
                       ...peerDiscovery,
-                      events: pruned ?? peer.events,
+                      events: prunedPeer?.events ?? peer.events,
                     },
                   };
                 mergedGrants = !!granted;
@@ -547,7 +558,7 @@ export function createHeadPersistence(
               if (superseded && !kept) version = null;
               done(superseded ? undefined : kept);
             };
-            if (!mergedGrants) {
+            if (!superseded || (!mergedGrants && !removals?.changed)) {
               if (put()) readStartupBudget(store, then, prune, meta);
               return;
             }
@@ -560,10 +571,22 @@ export function createHeadPersistence(
                     row === meta || isMirror(row) ? room : room - row.bytes,
                   MAX_BYTES,
                 );
-                // A grant cannot displace another roster or block a removal.
-                if (meta.bytes > room) {
-                  if (!withRemovals) return done(undefined);
+                // Grants and extra removal versions must fit beside existing
+                // rosters. Removing a stale peer grant takes priority.
+                if (meta.bytes > room && withRemovals) {
                   data = withRemovals;
+                  meta.bytes = byteSize(data);
+                }
+                if (meta.bytes > room) {
+                  if (!prunedPeer || !peer || !data.discovery)
+                    return done(undefined);
+                  const required = signedRemovalVersions(
+                    peer.removals,
+                    [...(removals?.versions.values() ?? [])].filter((removal) =>
+                      prunedPeer?.removed.has(removal.channel),
+                    ),
+                  );
+                  data.discovery.removals = [...required.versions.values()];
                   meta.bytes = byteSize(data);
                 }
                 if (put()) prune(rows);

@@ -376,7 +376,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   await page.clock.install({ time: start });
   await page.clock.pauseAt(start + 60_000);
   const firstRetry = await page.evaluate(async () => {
-    const { createHeadPersistence } = await import(
+    const { createHeadPersistence, MAX_BYTES } = await import(
       "/src/features/relay/persistence.ts"
     );
     const { createProfileDirectory } = await import(
@@ -508,6 +508,31 @@ test("startup retries honor the roster read before an abort and preserve peer wr
           peerChannels.dispose();
         }
       },
+      async acceptStaleGrantAfterPeerRegrant() {
+        await this.seedRemovalOrder();
+        await this.peerRemovesFresh();
+        await peer.writeStartup(startup([replacement, laterFreshGrant]));
+        channels.acceptDiscovery([freshGrant, freshMetadata]);
+      },
+      async removeFromFullPeerRoster() {
+        await this.seedRemovalOrder();
+        const snapshot = startup([
+          replacement,
+          metadata(relay, "peer-only", ""),
+        ]);
+        const bytes = new TextEncoder().encode(JSON.stringify(snapshot)).length;
+        // The name appears in both the content and tags. Leave less room
+        // than a signed removal version needs.
+        snapshot.discovery.events[1] = metadata(
+          relay,
+          "peer-only",
+          "p".repeat(Math.floor((MAX_BYTES - bytes - 64) / 2)),
+        );
+        await peer.writeStartup(snapshot);
+        const before = await cachedIds();
+        this.acceptRemoval("retried", 1_700_000_001);
+        return { before, after: await cachedIds() };
+      },
       replace: () => peer.writeStartup(startup([replacement])),
       replaceWithStaleMembership: () =>
         peer.writeStartup(
@@ -638,6 +663,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let afterGrantAndClear;
   let afterStalePeerGrant;
   let afterNewerPeerGrant;
+  let afterStaleGrantAfterPeerRegrant;
+  let afterRemovalFromFullPeerRoster;
   let repeatReads;
   let aborts;
   try {
@@ -862,6 +889,16 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       startup.grantAndOmit(true);
       return { before, after: await startup.cachedIds() };
     });
+    await page.evaluate(() =>
+      window.startupRetry.acceptStaleGrantAfterPeerRegrant(),
+    );
+    await page.clock.runFor(500);
+    afterStaleGrantAfterPeerRegrant = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
+    afterRemovalFromFullPeerRoster = await page.evaluate(() =>
+      window.startupRetry.removeFromFullPeerRoster(),
+    );
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
   }
@@ -911,4 +948,11 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     before: newerPeerIds,
     after: [...newerPeerIds, ...firstRetry.laterFreshIds],
   });
+  expect
+    .soft(afterStaleGrantAfterPeerRegrant)
+    .toEqual([firstRetry.replacementId, firstRetry.laterFreshIds[0]]);
+  expect(afterRemovalFromFullPeerRoster.before).toHaveLength(2);
+  expect(afterRemovalFromFullPeerRoster.after).toEqual(
+    afterRemovalFromFullPeerRoster.before,
+  );
 });

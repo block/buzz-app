@@ -1253,12 +1253,12 @@ async fn claude_child_key(
     let agent_env = lists.for_process(Some(ADA)).await;
     let removed = HashMap::from([("ANTHROPIC_API_KEY".to_owned(), None)]);
     let inherited = [("ANTHROPIC_API_KEY".into(), "sk-ant-inherited".into())];
-    let mut command = Command::new("/usr/bin/printenv");
+    let mut command = Command::new("printenv");
     set_environment(
         &mut command,
         &inherited,
         &agent_env,
-        OsStr::new("/usr/bin:/bin"),
+        &std::env::var_os("PATH").unwrap_or_default(),
         &removed,
         "0",
     )

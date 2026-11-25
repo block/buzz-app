@@ -23,12 +23,15 @@ import {
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { ShimmerText } from "../../shared/design-system/ui/ShimmerText";
+import { TypingDots } from "../../shared/design-system/ui/TypingDots";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
 import styles from "./Inbox.module.css";
 import { MessageListRow } from "../../features/messages/MessageListRow";
 import { PreviewText } from "../../features/messages/PreviewText";
 import type { OwnActivity } from "./own-activity";
+import type { ActivityWork } from "./ActivityWorking";
 
 type ResolveName = (
   key: string,
@@ -183,6 +186,7 @@ export function InboxRowButton({
   time,
   previewId,
   unread: unreadOverride,
+  working,
   ...props
 }: (
   | { item: InboxItem; own?: OwnActivity | undefined }
@@ -195,6 +199,7 @@ export function InboxRowButton({
   previewId?: string | undefined;
   /** Unread for the whole conversation the row stands for. */
   unread?: boolean | undefined;
+  working?: ActivityWork | undefined;
 } & Omit<
     ComponentProps<typeof NavigationItem>,
     "icon" | "label" | "trailing" | "aria-label"
@@ -239,7 +244,13 @@ export function InboxRowButton({
       }
       unread={unread}
       previewId={previewId}
-      preview={conversationPreview({ item, own, feed, session })}
+      preview={
+        working ? (
+          <WorkingLine work={working} session={session} />
+        ) : (
+          conversationPreview({ item, own, feed, session })
+        )
+      }
     />
   );
 }
@@ -297,6 +308,7 @@ export function CompactActivityRow({
   session,
   profiles,
   name,
+  working,
   ...props
 }: {
   channel: ChannelSummary | undefined;
@@ -314,6 +326,9 @@ export function CompactActivityRow({
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile>;
   name: ResolveName;
+  /** Your agents working here: a two-line row shows them in place of the
+   * message, a one-line row ends with working dots. */
+  working?: ActivityWork | undefined;
 } & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
   const Icon = thread ? CornerDownRightIcon : channelIcon(channel);
   const dm = channel?.channelType === "dm";
@@ -409,13 +424,25 @@ export function CompactActivityRow({
               className={`text-body-sm ${styles.compactPreview}`}
               data-unread={unread || undefined}
             >
-              {!dm && faceArt}
-              <span className={styles.compactPreviewText}>{preview}</span>
+              {working ? (
+                <WorkingLine work={working} session={session} />
+              ) : (
+                <>
+                  {!dm && faceArt}
+                  <span className={styles.compactPreviewText}>{preview}</span>
+                </>
+              )}
             </span>
           </span>
         )
       }
-      trailing={preview === undefined && !dm ? faceArt : undefined}
+      trailing={
+        preview !== undefined ? undefined : working ? (
+          <WorkingDots work={working} />
+        ) : !dm ? (
+          faceArt
+        ) : undefined
+      }
     />
   );
 }
@@ -428,6 +455,7 @@ export function ReactionRowButton({
   channel,
   time = relativeTimestamp(item.createdAt),
   unread = false,
+  working,
   ...props
 }: {
   item: InboxReaction;
@@ -438,6 +466,7 @@ export function ReactionRowButton({
   profiles: ReadonlyMap<string, Profile>;
   name: ResolveName;
   channel: ChannelSummary | undefined;
+  working?: ActivityWork | undefined;
 } & Pick<ComponentProps<typeof NavigationItem>, "selected" | "onClick">) {
   const reactionName = useReactionName();
   // Its name reads the preview as shown, with mention chips' labels.
@@ -496,13 +525,90 @@ export function ReactionRowButton({
         )
       }
       previewId={previewId}
-      preview={<ReactionPreview item={item} session={session} />}
+      preview={
+        working ? (
+          <WorkingLine work={working} session={session} />
+        ) : (
+          <ReactionPreview item={item} session={session} />
+        )
+      }
     />
   );
 }
 
 /** A conversation row's latest message: yours when `own` is newer, else the
  * row's preview, or a notice while its edits are still settling. */
+/** A step only when it reads as words; raw tool detail, such as a file path
+ * or an argument, says Working instead. */
+function readableStep({ step, waiting }: ActivityWork) {
+  return step && !/[/\\=]/.test(step) ? step : waiting ? "Waiting" : "Working";
+}
+
+function workerFaces(work: ActivityWork, session: RelaySession) {
+  return work.agents.map((id) => {
+    const profile = work.profiles.get(id);
+    return {
+      id,
+      name: profile?.name ?? formatPublicKey(id) ?? "Agent",
+      src: avatarMedia(profile?.picture, session.media),
+      shape: "squircle" as const,
+    };
+  });
+}
+
+/** While your agents work, a row's message line is who is working and what
+ * the first of them is doing, with a live sheen. */
+export function WorkingLine({
+  work,
+  session,
+}: {
+  work: ActivityWork;
+  session: RelaySession;
+}) {
+  const faces = workerFaces(work, session);
+  const step = readableStep(work);
+  return (
+    <span className={styles.compactPreview}>
+      {faces.length === 1 && faces[0] ? (
+        <span className={styles.compactAvatar}>
+          <Avatar
+            src={faces[0].src}
+            alt={faces[0].name}
+            fallback={faces[0].name}
+            size="fill"
+            shape="squircle"
+          />
+        </span>
+      ) : (
+        <span
+          className={styles.compactTrailing}
+          role="img"
+          aria-label={faces.map((face) => face.name).join(", ")}
+        >
+          <AvatarStack items={faces} />
+        </span>
+      )}
+      <span className={styles.compactPreviewText}>
+        <ShimmerText active={!work.waiting}>{step}</ShimmerText>
+      </span>
+    </span>
+  );
+}
+
+/** A one-line row has no message line, so working shows as the sidebar's
+ * working dots at its end. */
+function WorkingDots({ work }: { work: ActivityWork }) {
+  return (
+    <span
+      className={styles.compactTrailing}
+      role="img"
+      aria-label={`${work.waiting ? "Waiting" : "Working"}: ${readableStep(work)}`}
+    >
+      <TypingDots state={work.waiting ? "waiting" : "working"} />
+    </span>
+  );
+}
+
 export function conversationPreview({
   item,
   own,

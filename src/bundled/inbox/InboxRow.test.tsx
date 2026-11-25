@@ -209,3 +209,44 @@ it.each([
     expect(view.getByText(context)).toBeInTheDocument();
   },
 );
+
+it("shows who is working and their step in place of the message", () => {
+  const agent = "d".repeat(64);
+  const item = {
+    id: "row",
+    authorId: "a".repeat(64),
+    createdAt: 1,
+    messageIds: [],
+    preview: "the last message",
+    previewMentions: { content: "the last message", mentions: [] },
+    unreadCount: 0,
+    manual: false,
+  } as unknown as InboxItem;
+  const row = (step: string | undefined) => (
+    <InboxRowButton
+      item={item}
+      identity={{
+        sender: "Sender",
+        context: "Channel",
+        profile: undefined,
+        channel: undefined,
+      }}
+      session={{ media: () => undefined } as unknown as RelaySession}
+      feed={{ incomplete: [] } as unknown as InboxFeedSnapshot}
+      time="now"
+      working={{
+        agents: [agent],
+        profiles: new Map([[agent, { name: "Morgarita" }]]),
+        waiting: false,
+        step,
+      }}
+    />
+  );
+  const view = render(row("Reviewing the PR"));
+  expect(view.getByText("Reviewing the PR")).toBeInTheDocument();
+  expect(view.getByRole("img", { name: "Morgarita" })).toBeInTheDocument();
+  expect(view.queryByText("the last message")).not.toBeInTheDocument();
+  // Raw tool detail never reaches the row.
+  view.rerender(row("f=/private/tmp/claude-501/x"));
+  expect(view.getByText("Working")).toBeInTheDocument();
+});

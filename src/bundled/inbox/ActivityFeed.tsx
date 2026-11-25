@@ -42,6 +42,7 @@ import { activityConversation, useActivityMutes } from "./useActivityMutes";
 import type { InboxItem } from "../../features/relay/inbox";
 import { useOwnActivity, withOwnActivity } from "./own-activity";
 import { ActivityRowMenu, type ActivityRowMessage } from "./ActivityRowMenu";
+import { ActivityWorking, type ActivityWork } from "./ActivityWorking";
 import styles from "./InboxPreview.module.css";
 
 /** Rows a compact feed renders and enriches; the Activity page holds the rest. */
@@ -465,24 +466,35 @@ export function ActivityFeed({
             const unread = row.unread.length > 0;
             // Right-click is the row's menu: its message's in a thread,
             // otherwise its conversation's sidebar menu.
-            const rowMenu = (item: ReactElement) => {
+            const rowMenu = (
+              item: (working: ActivityWork | undefined) => ReactElement,
+            ) => {
               const where = destination(row);
+              const channel = channelOf(where.channelId);
               return (
-                <ActivityRowMenu
+                <ActivityWorking
                   key={row.id}
-                  channel={channelOf(where.channelId)}
-                  message={
-                    where.rootId ? rowMessage(row, where.rootId) : undefined
-                  }
-                  onOpen={() => open(row)}
-                  onRead={
-                    canRead && unread
-                      ? () => void markRead(row.id, row.unread)
-                      : undefined
-                  }
+                  session={session}
+                  channelId={where.channelId}
+                  rootId={where.rootId}
                 >
-                  {item}
-                </ActivityRowMenu>
+                  {(working) => (
+                    <ActivityRowMenu
+                      channel={channel}
+                      message={
+                        where.rootId ? rowMessage(row, where.rootId) : undefined
+                      }
+                      onOpen={() => open(row)}
+                      onRead={
+                        canRead && unread
+                          ? () => void markRead(row.id, row.unread)
+                          : undefined
+                      }
+                    >
+                      {item(working)}
+                    </ActivityRowMenu>
+                  )}
+                </ActivityWorking>
               );
             };
             if (compact) {
@@ -498,7 +510,7 @@ export function ActivityFeed({
               const own =
                 row.kind === "own" ||
                 (row.kind === "conversation" && !!row.own);
-              return rowMenu(
+              return rowMenu((working) => (
                 <li
                   key={row.id}
                   data-preview-row={row.id}
@@ -506,6 +518,7 @@ export function ActivityFeed({
                   data-card-row=""
                 >
                   <CompactActivityRow
+                    working={working}
                     channel={channel}
                     context={identity.context}
                     thread={!!destination(row).rootId}
@@ -541,11 +554,11 @@ export function ActivityFeed({
                     selected={selected}
                     onClick={() => open(row)}
                   />
-                </li>,
-              );
+                </li>
+              ));
             }
             if (row.kind === "reaction")
-              return rowMenu(
+              return rowMenu((working) => (
                 <li
                   key={row.id}
                   data-preview-row={row.id}
@@ -553,6 +566,7 @@ export function ActivityFeed({
                   data-card-row=""
                 >
                   <ReactionRowButton
+                    working={working}
                     item={row.item}
                     session={session}
                     profiles={profiles}
@@ -565,10 +579,10 @@ export function ActivityFeed({
                     selected={selected}
                     onClick={() => open(row)}
                   />
-                </li>,
-              );
+                </li>
+              ));
             if (row.kind === "own")
-              return rowMenu(
+              return rowMenu((working) => (
                 <li
                   key={row.id}
                   data-preview-row={row.id}
@@ -576,6 +590,7 @@ export function ActivityFeed({
                   data-card-row=""
                 >
                   <InboxRowButton
+                    working={working}
                     own={row.own}
                     identity={ownIdentity(
                       scope.viewer,
@@ -592,14 +607,14 @@ export function ActivityFeed({
                     selected={selected}
                     onClick={() => open(row)}
                   />
-                </li>,
-              );
+                </li>
+              ));
             const item = row.item;
             const channel = channelOf(item.channelId);
             const identity = row.own
               ? ownIdentity(scope.viewer, channel, profiles, name)
               : rowIdentity(item, channel, profiles, name);
-            return rowMenu(
+            return rowMenu((working) => (
               <li
                 key={row.id}
                 data-preview-row={row.id}
@@ -607,6 +622,7 @@ export function ActivityFeed({
                 data-card-row=""
               >
                 <InboxRowButton
+                  working={working}
                   item={item}
                   own={row.own}
                   identity={identity}
@@ -617,8 +633,8 @@ export function ActivityFeed({
                   selected={selected}
                   onClick={() => open(row)}
                 />
-              </li>,
-            );
+              </li>
+            ));
           })}
           {more && onSeeAll && (
             <li>

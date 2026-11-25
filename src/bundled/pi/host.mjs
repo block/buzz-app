@@ -1664,7 +1664,7 @@ export function serve({
         opened.registry.uninstall(old.extension);
         await closeMcp(old.clients, MCP_CLOSE_MS);
       }
-      if (!servers.length) return;
+      if (opened.closing || !servers.length) return;
       const { clients, extension } = await mcpExtension(servers, cwd);
       if (opened.closing) {
         await closeMcp(clients, MCP_CLOSE_MS);

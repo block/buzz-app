@@ -1742,6 +1742,9 @@ export class PiRuntime {
     const entry = this.agents.get(agent);
     const handle = entry?.handle ?? this.handle(agent);
     const tokens = compactAt(entry?.config.compactAt);
+    const mcp = entry && handle && (await this.mcp(agent, entry, handle));
+    // Retired or disposed while its values were read: nothing opens it now.
+    if (entry?.closed) return;
     await this.pi.request("open", {
       agent,
       // Pi resumes an unfinished run with it, before any turn brings it.
@@ -1750,7 +1753,7 @@ export class PiRuntime {
       ...(handle && { as: { pubkey: handle.pubkey, relay: handle.relay } }),
       tools: sessionTools(this.added()),
       hint: sessionHint(this.added()),
-      ...(entry && handle && { mcp: await this.mcp(agent, entry, handle) }),
+      ...(mcp && { mcp }),
     });
   }
 
@@ -1779,6 +1782,7 @@ export class PiRuntime {
     const sent = this.mcpSent.get(agent);
     if (sent?.key === key) return sent;
     const values = await mcpValues(handle.pubkey);
+    if (entry.closed) return { key: "", servers: [] };
     const mcp = {
       key,
       cwd,

@@ -5728,6 +5728,26 @@ it("keeps a newer MCP list sent while an older one's values were read", async ()
     expect(
       (opens.at(-2)?.params.mcp as { servers?: unknown[] })?.servers,
     ).toHaveLength(1);
+    // Retired while its values are read, it is neither kept nor opened.
+    const later = deferred<Readonly<Record<string, string>>>();
+    const waiting = deferred();
+    values.read = () => {
+      waiting.resolve();
+      return later.promise;
+    };
+    use(signed(4));
+    const sent = opens.length;
+    const retired = open();
+    await waiting.promise;
+    await f.runtime.retire(self);
+    later.resolve({});
+    await retired;
+    expect(f.host.requests("open")).toHaveLength(sent);
+    expect(
+      (f.runtime as unknown as { mcpSent: Map<string, unknown> }).mcpSent.has(
+        self,
+      ),
+    ).toBe(false);
   } finally {
     values.read = read;
     vi.unstubAllGlobals();

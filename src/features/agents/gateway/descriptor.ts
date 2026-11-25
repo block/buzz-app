@@ -27,12 +27,15 @@ export type GatewayDescriptor = Readonly<{
 }>;
 
 /** Harness names a descriptor may give an upstream base. An absent entry
- * opts that harness out: it keeps the user's own configuration. */
+ * opts that harness out: it keeps the user's own configuration.
+ * `pi-databricks` is Pi's Databricks provider: a pass-through for its own
+ * Databricks requests, apart from `pi`'s base for its built-in models. */
 export const UPSTREAM_KEYS = Object.freeze([
   "claude-code",
   "goose",
   "codex",
   "pi",
+  "pi-databricks",
 ] as const);
 export type UpstreamKey = (typeof UPSTREAM_KEYS)[number];
 

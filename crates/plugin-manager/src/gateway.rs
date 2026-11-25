@@ -37,7 +37,8 @@ pub const FIELDS: [&str; 8] = [
 ];
 const PREFIX_LIMIT: usize = 4;
 /// The stable capability names an upstream may be configured for.
-const CAPABILITIES: [&str; 4] = ["claude-code", "codex", "goose", "pi"];
+/// `pi-databricks` is Pi's Databricks provider, apart from `pi`'s base.
+const CAPABILITIES: [&str; 5] = ["claude-code", "codex", "goose", "pi", "pi-databricks"];
 /// The capabilities native forwarding serves.
 pub const FORWARDED: [&str; 2] = ["claude-code", "goose"];
 /// Headers the descriptor may neither name nor strip: the connection's own,

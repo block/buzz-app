@@ -163,6 +163,11 @@ const PROTOCOLS = {
   },
   openai: { api: "openai-responses", path: "openai/v1" },
 };
+/** Pi providers whose requests the gateway passes through as they are, each
+ * under its own root (the build's descriptor names it): the provider's own
+ * client, paths and model IDs, with the gateway's origin and credential in
+ * place of the provider's. */
+const PASS_THROUGH = new Set(["databricks"]);
 /** A header name as the gateway compares it: ASCII lowercase, `_` as `-`. */
 const fold = (name) => name.toLowerCase().replaceAll("_", "-");
 /** Whether only Buzz may set `name` under the build's header profile: one
@@ -214,14 +219,34 @@ function gatewayCatalog() {
   return catalog;
 }
 
+const unavailable = (model) =>
+  new Error(
+    `${model?.provider ?? "This provider"}/${model?.id ?? "this model"} isn't available through the model gateway. Choose an Anthropic, OpenAI or Databricks model in the agent's Identity tab.`,
+  );
+
+/** Whether the gateway takes `model`: one of Pi's built-in Anthropic or
+ * OpenAI ones, or a pass-through provider's. */
+export function gatewayTakes(model) {
+  const protocol = PROTOCOLS[model?.provider];
+  if (
+    protocol ? model.api !== protocol.api : !PASS_THROUGH.has(model?.provider)
+  )
+    throw unavailable(model);
+}
+
+/** `model`, a pass-through provider's, as the gateway serves it under
+ * `root`: the same model, its base's path under the gateway's root. */
+export function passThroughModel(model, root) {
+  if (!root || !PASS_THROUGH.has(model?.provider)) throw unavailable(model);
+  const { pathname } = new URL(model.baseUrl);
+  return { ...model, baseUrl: `${root}${pathname.replace(/\/+$/, "")}` };
+}
+
 /** `model`, one of Pi's built-in ones, as the gateway serves it under
  * `root`: its own ID, limits and protocol, at the gateway. */
 export function gatewayModel(model, root) {
   const protocol = PROTOCOLS[model?.provider];
-  if (!protocol || model.api !== protocol.api)
-    throw new Error(
-      `${model?.provider ?? "This provider"}/${model?.id ?? "this model"} isn't available through the model gateway. Choose an Anthropic or OpenAI model in the agent's Identity tab.`,
-    );
+  if (!protocol || model.api !== protocol.api) throw unavailable(model);
   return {
     ...model,
     provider: GATEWAY,
@@ -374,7 +399,7 @@ export function routeModels(models, gatewayOf, denied) {
           const caller = options.transformHeaders;
           const own = { ...options };
           for (const name of PROVIDER_ONLY) delete own[name];
-          return gateway[stream](gatewayModel(model, admitted.root), input, {
+          const routing = {
             ...own,
             transformHeaders: async (assembled) =>
               composeGateway(
@@ -393,7 +418,28 @@ export function routeModels(models, gatewayOf, denied) {
               if (refused(response)) await denied(revision);
               return response;
             },
-          });
+          };
+          // A pass-through provider's own client sends it, with the
+          // gateway's credential in place of the provider's. pi-ai's Google
+          // client takes no custom fetch, so a refusal there fails the turn
+          // without dropping the route's access.
+          if (PASS_THROUGH.has(model?.provider)) {
+            const { fetch, ...unfetched } = routing;
+            return Reflect.get(target, stream).call(
+              target,
+              passThroughModel(model, admitted.passThrough?.[model.provider]),
+              input,
+              {
+                ...(model.api === "google-generative-ai" ? unfetched : routing),
+                apiKey: GATEWAY_KEY,
+              },
+            );
+          }
+          return gateway[stream](
+            gatewayModel(model, admitted.root),
+            input,
+            routing,
+          );
         });
         return stream === name ? streamed : streamed.result();
       };
@@ -1290,6 +1336,7 @@ export function serve({
           bundle: record.bundle,
           revision: admitted.revision,
           root: admitted.root,
+          passThrough: admitted.passThrough,
           profile: admitted.profile,
         };
       };
@@ -1799,7 +1846,7 @@ export function serve({
     if (gatewayTurn && !record) {
       // A model the gateway doesn't take binds nothing; an owner's
       // compaction keeps the model its conversation has.
-      if (!manual) gatewayModel((await choose(turn)).found, "");
+      if (!manual) gatewayTakes((await choose(turn)).found);
       const bound = await call("gateway", {
         op: "bind",
         agent: opened.agent,

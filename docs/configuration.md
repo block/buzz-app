@@ -82,7 +82,10 @@ descriptor is public routing data, version 2:
   incoming header matching these names or `reserved_prefixes` (up to 4) before
   adding its own.
 - `upstreams`: a base path per harness (`claude-code`, `goose`, `codex`, `pi`).
-  A harness without one keeps the user's own setup.
+  A harness without one keeps the user's own setup. `pi-databricks` is a
+  pass-through for Pi's Databricks provider: Pi sends that provider's own
+  requests, paths and model IDs under it. Without it, a Pi gateway turn on a
+  Databricks model fails.
 
 The shared validation cases are in
 `src/features/agents/gateway/descriptor-vectors.json`, and the request

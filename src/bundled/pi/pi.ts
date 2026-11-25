@@ -77,6 +77,9 @@ export type PiGatewayAnswer =
       /** Where an admitted request goes: the gateway's root for Pi, ahead
        * of each protocol's path, and the build's header profile. */
       root?: string;
+      /** The gateway's root for each pass-through provider, ahead of the
+       * provider's own paths. */
+      passThrough?: Readonly<Record<string, string>>;
       profile?: GatewayProfile;
       /** Whether a refusal dropped the route's current access. */
       applied?: boolean;

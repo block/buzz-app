@@ -18,6 +18,8 @@ const driver = String.raw`import assert from 'node:assert/strict';
 import {PassThrough} from 'node:stream';
 import {createInterface} from 'node:readline';
 import {builtinModels} from '@earendil-works/pi-ai/providers/all';
+import {createProvider} from '@earendil-works/pi-ai';
+import {googleGenerativeAIApi} from '@earendil-works/pi-ai/api/google-generative-ai.lazy';
 import {fauxProvider,fauxAssistantMessage} from '@earendil-works/pi-ai/providers/faux';
 import {Harness,defineDoc} from '@earendil-works/pi-durable';
 import {BACKGROUND_CONTEXT as context,withTelemetry} from '@earendil-works/chord/context';
@@ -207,6 +209,24 @@ assert.deepEqual(gatewayModel(models.getModel(GPT.provider,GPT.model),ROOT),{...
  assert.deepEqual([claude.id,claude.api,claude.baseUrl,claude.compat.sendSessionAffinityHeaders],[CLAUDE.model,'anthropic-messages',ROOT+'/anthropic',true]);}
 for(const model of [models.getModel('faux','faux-1'),models.getModel('google','gemini-2.5-pro'),{...models.getModel(GPT.provider,GPT.model),api:'openai-completions'},undefined])
  assert.throws(()=>gatewayModel(model,ROOT),/isn't available through the model gateway/);
+// A Databricks model, Gemini here, goes by its provider's own client, path and
+// ID under the gateway's Pi Databricks root, with the gateway's credential in
+// place of the provider's. Without that root it fails visibly, sending nothing.
+{const own=builtinModels(), DATABRICKS=ORIGIN+'/upstream/pi-databricks';
+ const carbon={...own.getModel('google','gemini-2.5-pro'),provider:'databricks',id:'system.ai.gemini-4-carbon',baseUrl:'https://workspace.test/ai-gateway/gemini/v1beta'};
+ own.setProvider(createProvider({id:'databricks',name:'Databricks',models:[carbon],api:{'google-generative-ai':googleGenerativeAIApi()},auth:{apiKey:{name:'Databricks',resolve:async()=>({auth:{apiKey:'workspace-token'},source:'test'})}}}));
+ const admitted=passThrough=>async()=>({bundle:{[H.launcher_client]:'buzz'},profile:P,root:ROOT,passThrough,revision:1});
+ const ask=routed=>routed.stream(carbon,{messages:[{role:'user',content:'hi',timestamp:0}]},{telemetry:requestTelemetry('r'),sessionId:'s1'}).result();
+ const from=requests.length;
+ replies.push(()=>new Response('data: '+JSON.stringify({candidates:[{content:{role:'model',parts:[{text:'carbon'}]},finishReason:'STOP'}]})+'\n\n',{headers:{'content-type':'text/event-stream'}}));
+ const answer=await ask(routeModels(own,admitted({databricks:DATABRICKS}),()=>{}));
+ assert.equal(answer.stopReason,'stop',answer.errorMessage);
+ const [sent]=requests.slice(from);
+ assert.equal(sent.url,DATABRICKS+'/ai-gateway/gemini/v1beta/models/system.ai.gemini-4-carbon:streamGenerateContent?alt=sse');
+ assert.deepEqual([sent.headers['x-goog-api-key'],sent.headers[H.launcher_client],sent.headers['x-session-affinity']],['buzz-gateway','buzz','s1']);
+ assert.match((await ask(routeModels(own,admitted(undefined),()=>{}))).errorMessage,/isn't available through the model gateway/);
+ assert.equal(requests.length,from+1);
+ requests.length=from;}
 result.composition=true;// The shared gateway vectors, through this copy of its composer.
 {const bare=h=>{const {'x-session-affinity':a,...rest}=h;assert.equal(a,'s1');return rest;};
  for(const c of V.COMPOSE_VECTORS)assert.deepEqual(bare(composeGateway(P,c.assembled,c.bundle,'s1')),c.composed,c.name);

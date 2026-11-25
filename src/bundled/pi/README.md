@@ -79,9 +79,16 @@ retries a request on another protocol:
 pi-ai's Anthropic client sends Messages through the SDK's beta resource, so
 its path is `anthropic/v1/messages?beta=true`.
 
+A Databricks model (such as Gemini) goes through the descriptor's
+`pi-databricks` upstream instead: a pass-through under which Pi's Databricks
+provider sends its own requests, with its own client, path and model ID, and
+the gateway's credential in place of the provider's. pi-ai's Google client
+takes no custom fetch, so a gateway refusal on a Gemini request fails that
+turn but doesn't end the route's access. Without a `pi-databricks` upstream, a
+gateway turn on a Databricks model fails visibly at its first request.
+
 A gateway turn on any other provider's model fails visibly before it binds.
-Models the gateway serves only over MLflow chat completions (such as
-gpt-oss, Qwen and GLM) can't be reached from Pi. Which models an agent may
+Which models an agent may
 use is the gateway's policy: a request for one it doesn't serve fails
 visibly with the gateway's answer.
 

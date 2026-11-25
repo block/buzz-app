@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -273,7 +274,8 @@ it("tells the viewer when the system opener refuses, until they leave the conver
   const notice = "Couldn’t open the link in your browser.";
   expect(await screen.findByText(notice)).toBeTruthy();
   rerender(view(false));
-  expect(screen.queryByText(notice)).toBeNull();
+  // The toast plays its exit animation before it leaves the page.
+  await waitFor(() => expect(screen.queryByText(notice)).toBeNull());
   rerender(view(true));
   expect(screen.queryByText(notice)).toBeNull();
 });

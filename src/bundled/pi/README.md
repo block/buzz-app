@@ -68,7 +68,7 @@ notice on the prompt. The saved
 choice is never rewritten. A request already bound to the gateway keeps that
 mode when asked again and is never resent without it.
 
-Each provider uses one protocol, with pi-ai 1.5.0's own client. Nothing
+Each provider uses one protocol, with pi-ai 1.6.1's own client. Nothing
 retries a request on another protocol:
 
 | Pi provider | Protocol under the base | pi-ai API |

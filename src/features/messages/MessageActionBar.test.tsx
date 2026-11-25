@@ -271,6 +271,26 @@ it.each([
   },
 );
 
+it("returns a selected message's menu focus to the message, not its first control", async () => {
+  const user = userEvent.setup();
+  render(
+    <MessageActionBar copyText={() => "Message"}>
+      <div data-message-id="m1">
+        <div data-layout="timeline" tabIndex={-1} data-testid="selected">
+          <button type="button">Author</button>
+        </div>
+      </div>
+    </MessageActionBar>,
+  );
+  const message = screen.getByTestId("selected");
+  message.focus();
+  await user.keyboard("{ContextMenu}");
+  await screen.findByRole("menuitem", { name: "Copy message" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  await waitFor(() => expect(document.activeElement).toBe(message));
+});
+
 it("defers desktop controls until row interaction and retains them after leaving", () => {
   pointerMedia();
   render(

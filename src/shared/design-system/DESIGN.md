@@ -128,6 +128,21 @@ Build these from `useCopyFeedback`, which hands back that status, and
 Some older copy buttons confirm in a hint or in their own way. Don't copy their
 feedback into new work; converting one is its own change.
 
+A field marked `data-field-selected` has focus but isn't being edited, as a
+keyboard plugin's normal mode leaves it. It shows the keyboard ring and no
+caret. Only such a plugin sets it.
+
+## Menus
+
+A shared `Menu` marks the element that had focus when it opened with
+`data-menu-origin` until it closes, so the row that opened it leaves its keys
+to the menu.
+
+Menu letters are off until a caller turns them on with `enableMenuLetters`.
+While they're on, every item shows a key at its trailing edge that runs it.
+Keys come from the item's label; a `letter` prop fixes one. Don't add
+per-menu shortcut hints or key handlers.
+
 ## Identity shapes
 
 Humans are circles and agents are squircles: `Avatar shape="circle"` or

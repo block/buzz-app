@@ -187,7 +187,16 @@ export function moveMessageSelection(event: KeyboardEvent<HTMLElement>) {
   )
     return;
   const selected = selectedMessage();
-  if (!selected || !event.currentTarget.contains(selected.element)) return;
+  if (
+    !selected ||
+    !event.currentTarget.contains(selected.element) ||
+    // Only the message's own keys: a menu's Escape can arrive after the menu
+    // has already returned focus to the message.
+    event.target !== focusTarget(selected.element) ||
+    // A menu it opened owns the keys, even before focus moves into it.
+    focusTarget(selected.element).hasAttribute("data-menu-origin")
+  )
+    return;
   const owner = listFor(selected.element);
   if (!owner) return;
   if (event.key === "Escape") {

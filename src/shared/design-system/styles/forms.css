@@ -6,9 +6,18 @@
   .buzz-input:not([readonly]),
   .buzz-textarea:not([readonly]),
   [contenteditable="true"][role="textbox"]
-):focus {
+):not([data-field-selected]):focus {
   /* biome-ignore lint/complexity/noImportantStyles: Central text-field policy must override layered recipes and unlayered editor outlines without deleting them. */
   outline: none !important;
+}
+
+/* A selected field holds keyboard focus without being edited, as a keyboard
+   plugin's normal mode leaves it: the read-only keyboard ring, and no caret
+   until editing starts. Inert unless something sets data-field-selected. */
+html[data-keyboard-navigation] [data-field-selected]:focus {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  caret-color: transparent;
 }
 
 @layer components {

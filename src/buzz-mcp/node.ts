@@ -23,6 +23,7 @@ import type {
   BuzzEvent,
   Media,
   Memory,
+  Proposal,
   Template,
   Upload,
 } from "./client";
@@ -166,6 +167,67 @@ export function nodeClient(
     if (!owner) throw new Error("Memory needs BUZZ_AUTH_TAG");
     return getConversationKey(secret, owner);
   };
+
+  /** NIP-AE heads `author` wrote for this pair; only entry `slug` when given. */
+  async function entries(
+    author: string,
+    slug?: string,
+    purpose: "memory" | "proposal" = "memory",
+  ) {
+    const key = conversation();
+    const events = eventsDto(
+      await request(
+        "/query",
+        JSON.stringify([
+          {
+            kinds: [30174],
+            authors: [author],
+            "#p": [author === pubkey ? (owner as string) : pubkey],
+            ...(slug ? { "#d": [memoryAddress(key, slug)] } : {}),
+            limit: MEMORY_LIMIT,
+          },
+        ]),
+      ),
+    );
+    const heads = new Map<string, BuzzEvent>();
+    for (const event of events) {
+      const d = event.tags.find((tag) => tag[0] === "d")?.[1];
+      if (!d || event.pubkey !== author) continue;
+      const head = heads.get(d);
+      if (
+        !head ||
+        head.created_at < event.created_at ||
+        (head.created_at === event.created_at && event.id < head.id)
+      )
+        heads.set(d, event);
+    }
+    const found: (Memory | Proposal)[] = [];
+    const deleted: { slug: string; createdAt: number }[] = [];
+    for (const [d, event] of heads) {
+      try {
+        const entry = JSON.parse(decrypt(event.content, key));
+        if (typeof entry.slug !== "string") continue;
+        if (purpose === "proposal" && memoryAddress(key, entry.slug) !== d)
+          continue;
+        const body = entry.slug === "core" ? entry.profile : entry.value;
+        if (typeof body === "string")
+          found.push({
+            slug: entry.slug,
+            body,
+            createdAt: event.created_at,
+            ...(purpose === "proposal" ? { author, eventId: event.id } : {}),
+          });
+        // A write that recreates a deleted slug must follow its tombstone.
+        else if (body === null && entry.slug !== "core")
+          deleted.push({ slug: entry.slug, createdAt: event.created_at });
+      } catch {}
+    }
+    return {
+      entries: found.sort((a, b) => a.slug.localeCompare(b.slug)),
+      ...(deleted.length ? { deleted } : {}),
+      partial: events.length >= MEMORY_LIMIT,
+    };
+  }
 
   return {
     pubkey,
@@ -333,58 +395,11 @@ export function nodeClient(
         throw new Error(`${path} is outside ${options.root}`);
       return new Uint8Array(await readFile(full));
     },
-    async memories(slug) {
-      const key = conversation();
-      const events = eventsDto(
-        await request(
-          "/query",
-          JSON.stringify([
-            {
-              kinds: [30174],
-              authors: [pubkey],
-              "#p": [owner],
-              ...(slug ? { "#d": [memoryAddress(key, slug)] } : {}),
-              limit: MEMORY_LIMIT,
-            },
-          ]),
-        ),
-      );
-      const heads = new Map<string, BuzzEvent>();
-      for (const event of events) {
-        const d = event.tags.find((tag) => tag[0] === "d")?.[1];
-        if (!d) continue;
-        const head = heads.get(d);
-        if (
-          !head ||
-          head.created_at < event.created_at ||
-          (head.created_at === event.created_at && event.id < head.id)
-        )
-          heads.set(d, event);
-      }
-      const entries: Memory[] = [];
-      const deleted: { slug: string; createdAt: number }[] = [];
-      for (const event of heads.values()) {
-        try {
-          const entry = JSON.parse(decrypt(event.content, key));
-          const body = entry.slug === "core" ? entry.profile : entry.value;
-          if (typeof entry.slug !== "string") continue;
-          if (typeof body === "string")
-            entries.push({
-              slug: entry.slug,
-              body,
-              createdAt: event.created_at,
-            });
-          // A write that recreates a deleted slug must follow its tombstone.
-          else if (body === null && entry.slug !== "core")
-            deleted.push({ slug: entry.slug, createdAt: event.created_at });
-        } catch {}
-      }
-      return {
-        entries: entries.sort((a, b) => a.slug.localeCompare(b.slug)),
-        ...(deleted.length ? { deleted } : {}),
-        partial: events.length >= MEMORY_LIMIT,
-      };
-    },
+    memories: (slug) => entries(pubkey, slug),
+    // Owner-signed proposals addressed to this agent, under the same
+    // conversation key; only the registered owner's are read or kept.
+    proposals: async (slug) =>
+      (await entries(owner as string, slug, "proposal")).entries as Proposal[],
     async remember(slug, body, after) {
       const key = conversation();
       const d = memoryAddress(key, slug);

@@ -101,6 +101,15 @@ export type Memory = Readonly<{
   createdAt: number;
 }>;
 
+/** An entry the agent's owner signed and encrypted to it: a proposal the
+ * agent may adopt into its own memory, never canonical by itself. */
+export type Proposal = Memory &
+  Readonly<{
+    /** The verified signer: always the agent's registered owner. */
+    author: string;
+    eventId: string;
+  }>;
+
 export interface BuzzClient {
   /** Cancellation for this call, or its owning turn or connection when the
    * host only supplies a lifetime signal. Keep it across waits. */
@@ -196,6 +205,9 @@ export interface BuzzClient {
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
    * a `null` body deletes it. */
   remember(slug: string, body: string | null, after: number): Promise<void>;
+  /** Entries the agent's owner proposed to it; only `slug` when given. Only
+   * where the host can verify the agent's owner. */
+  proposals?(slug?: string): Promise<readonly Proposal[]>;
   /** The owner's sidebar workspaces, in a local run: their list, defaults,
    * one-use placement of a newly published conversation, and moves. */
   workspaces?: Readonly<{

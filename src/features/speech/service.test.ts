@@ -1,12 +1,10 @@
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { flush } from "../relay/testing";
-import { type Connect, listenHosted, listenOnDevice } from "./listen";
+import { type Connect, listenHosted } from "./listen";
 import {
-  ON_DEVICE_SPEECH,
   SPEECH_PROVIDER_KEY,
   SpeechService,
-  type OnDevice,
   type SpeechProvider,
   type SpeechProviderStatus,
 } from "./service";
@@ -14,12 +12,10 @@ import {
 vi.mock("./listen", async (original) => ({
   ...(await original<typeof import("./listen")>()),
   listenHosted: vi.fn(() => ({ stop() {}, cancel() {} })),
-  listenOnDevice: vi.fn(() => ({ stop() {}, cancel() {} })),
 }));
 
 beforeEach(() => {
   vi.mocked(listenHosted).mockClear();
-  vi.mocked(listenOnDevice).mockClear();
 });
 afterEach(() => vi.useRealTimers());
 
@@ -33,17 +29,13 @@ function memory(initial: Record<string, string> = {}) {
     values,
   } as unknown as Storage & { values: Map<string, string> };
 }
-const device = (available: boolean): OnDevice => ({
-  available: async () => available,
-  prepare: vi.fn(),
-});
-async function setup(storage: Storage = memory(), onDevice = device(true)) {
+async function setup(storage: Storage = memory()) {
   const root = new Context();
   root.provide("pluginStatus", {
     isActive: () => true,
     subscribe: () => () => {},
   });
-  const service = new SpeechService(root, storage, onDevice);
+  const service = new SpeechService(root, storage);
   const plugin = async (id: string, provider: Partial<SpeechProvider>) => {
     const fiber = root
       .extend({ pluginOwner: { id, revision: "one" } })
@@ -73,31 +65,33 @@ function lastConnect(): Connect {
   return call[1];
 }
 
-it("listens on this Mac until a default provider can, and reports none otherwise", async () => {
+it("listens with Builderlab by default, and reports none without it", async () => {
   const { service, plugin } = await setup();
-  expect(service.backend()).toBe(ON_DEVICE_SPEECH);
-  service.listen({ onText() {}, onEnd() {} });
-  expect(listenOnDevice).toHaveBeenCalledOnce();
+  expect(service.backend()).toBeUndefined();
+  expect(service.status()).toBe("unavailable");
+  const onError = vi.fn();
+  const onState = vi.fn();
+  service.listen({ onText() {}, onEnd() {}, onError, onState });
+  await flush();
+  expect(onError).toHaveBeenCalledWith("unavailable", expect.any(String));
+  expect(onState).toHaveBeenCalledWith("idle");
+  expect(listenHosted).not.toHaveBeenCalled();
+
+  // Another provider never listens without the user's choice.
+  await plugin("example.speech", { label: "Example", order: -1 });
+  expect(service.backend()).toBeUndefined();
 
   await plugin("block.builderlab", { id: "builderlab", label: "Builderlab" });
   expect(service.backend()).toBe(BUILDERLAB);
   expect(service.providers().map((each) => each.key)).toEqual([
+    "example.speech/main",
     BUILDERLAB,
-    ON_DEVICE_SPEECH,
   ]);
-
-  const none = await setup(memory(), device(false));
-  expect(none.service.backend()).toBeUndefined();
-  expect(none.service.status()).toBe("unavailable");
-  const onError = vi.fn();
-  const onState = vi.fn();
-  none.service.listen({ onText() {}, onEnd() {}, onError, onState });
-  await flush();
-  expect(onError).toHaveBeenCalledWith("unavailable", expect.any(String));
-  expect(onState).toHaveBeenCalledWith("idle");
+  service.listen({ onText() {}, onEnd() {} });
+  expect(listenHosted).toHaveBeenCalledOnce();
 });
 
-it("skips a default that needs setup, and waits for one that is checking", async () => {
+it("follows the default provider's status", async () => {
   let status: SpeechProviderStatus = "checking";
   const listeners = new Set<() => void>();
   const { service, plugin } = await setup();
@@ -109,27 +103,29 @@ it("skips a default that needs setup, and waits for one that is checking", async
       return () => void listeners.delete(listener);
     },
   });
-  // On-device can listen, so a checking Builderlab doesn't hold it.
-  expect(service.backend()).toBe(ON_DEVICE_SPEECH);
+  expect(service.status()).toBe("checking");
   status = "needs-setup";
   const changed = vi.fn();
   service.subscribe(changed);
   for (const listener of listeners) listener();
   expect(changed).toHaveBeenCalled();
-  expect(service.backend()).toBe(ON_DEVICE_SPEECH);
+  expect(service.status()).toBe("needs-setup");
   status = "ready";
+  expect(service.status()).toBe("ready");
   expect(service.backend()).toBe(BUILDERLAB);
 });
 
 it("keeps the user's choice, and never sends speech elsewhere while it is missing", async () => {
   const storage = memory();
   const first = await setup(storage);
+  await first.plugin("block.builderlab", { id: "builderlab" });
   const fiber = await first.plugin("example.speech", { label: "Example" });
   first.service.setBackend("example.speech/main");
   expect(storage.getItem(SPEECH_PROVIDER_KEY)).toBe("example.speech/main");
   first.service.setBackend("nobody/else");
   expect(first.service.backend()).toBe("example.speech/main");
 
+  // Builderlab, the default, does not take over.
   fiber.dispose();
   await flush();
   expect(first.service.backend()).toBeUndefined();
@@ -137,23 +133,16 @@ it("keeps the user's choice, and never sends speech elsewhere while it is missin
 
   // After a reload, the saved choice holds once its plugin registers again.
   const second = await setup(storage);
+  await second.plugin("block.builderlab", { id: "builderlab" });
   expect(second.service.backend()).toBeUndefined();
   await second.plugin("example.speech", {});
   expect(second.service.backend()).toBe("example.speech/main");
-
-  // A default holds too: On this Mac never falls through to a hosted one.
-  const local = await setup(
-    memory({ [SPEECH_PROVIDER_KEY]: ON_DEVICE_SPEECH }),
-    device(false),
-  );
-  await local.plugin("block.builderlab", { id: "builderlab" });
-  expect(local.service.backend()).toBeUndefined();
-  expect(local.service.status()).toBe("unavailable");
 });
 
-it("falls back to the defaults after a plugin retires its saved provider", async () => {
+it("falls back to the default after a plugin retires its saved provider", async () => {
   const storage = memory({ [SPEECH_PROVIDER_KEY]: "example.speech/old" });
-  const { root, service } = await setup(storage);
+  const { root, service, plugin } = await setup(storage);
+  await plugin("block.builderlab", { id: "builderlab" });
   expect(service.backend()).toBeUndefined();
   const scoped = root.extend({ pluginOwner: { id: "other", revision: "1" } });
   scoped.speech.retireProvider("old");
@@ -164,18 +153,8 @@ it("falls back to the defaults after a plugin retires its saved provider", async
   expect(() => owner.speech.retireProvider("a/b")).toThrow();
   owner.speech.retireProvider("old");
   expect(storage.getItem(SPEECH_PROVIDER_KEY)).toBeNull();
-  expect(service.backend()).toBe(ON_DEVICE_SPEECH);
+  expect(service.backend()).toBe(BUILDERLAB);
   expect(() => root.speech.retireProvider("old")).toThrow();
-});
-
-it("warms on-device speech only when it listens", async () => {
-  const onDevice = device(true);
-  const { service, plugin } = await setup(memory(), onDevice);
-  service.prepare();
-  expect(onDevice.prepare).toHaveBeenCalledOnce();
-  await plugin("block.builderlab", { id: "builderlab" });
-  service.prepare();
-  expect(onDevice.prepare).toHaveBeenCalledOnce();
 });
 
 it("asks for a call length only when the caller sets a valid one, and returns the granted cap", async () => {

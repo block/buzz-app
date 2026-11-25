@@ -1,9 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import { SettingsSectionLink } from "../features/navigation/SettingsSectionLink";
-import {
-  ON_DEVICE_SPEECH,
-  type SpeechService,
-} from "../features/speech/service";
+import type { SpeechService } from "../features/speech/service";
 import { useDictation } from "../features/speech/use-dictation";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import { Button } from "../shared/design-system/ui/Button";
@@ -12,8 +9,7 @@ import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 
 /** Chooses the provider that turns speech into text on this device, shows
- * its settings, and lets the person try it. Hosted providers are plugins;
- * on-device speech is built in. */
+ * its settings, and lets the person try it. Providers are plugins. */
 export function SpeechSettings({
   speech,
   community,
@@ -29,9 +25,8 @@ export function SpeechSettings({
     | "providers"
     | "statusOf"
     | "listen"
-    | "prepare"
   >;
-  /** The selected community's relay URL, which a hosted try bills. */
+  /** The selected community's relay URL, which a try bills. */
   community?: string | undefined;
   active(): boolean;
   onSection?: ((section: string) => void) | undefined;
@@ -68,7 +63,6 @@ export function SpeechSettings({
     if (listening) return dictation.stop();
     setHeard("");
     setProblem("");
-    speech.prepare();
     dictation.start(community ? { community } : {});
   };
   return (
@@ -79,8 +73,7 @@ export function SpeechSettings({
         subtitle={
           <>
             Features that listen turn what you say into text with this provider.
-            A hosted provider receives the audio while you speak; on-device
-            speech keeps it on this Mac.
+            It receives the audio while you speak.
           </>
         }
       />
@@ -123,17 +116,12 @@ export function SpeechSettings({
               </RadioGroup>
             </Field>
           </div>
-          {shown?.entry?.Settings && (
+          {shown?.Settings && (
             <div className="w-full">
               <InlineHeader title={shown.label} />
               <OwnedContribution
-                entry={shown.entry}
-                registry={{
-                  snapshot: () =>
-                    providers.flatMap((provider) =>
-                      provider.entry ? [provider.entry] : [],
-                    ),
-                }}
+                entry={shown}
+                registry={{ snapshot: () => providers }}
                 fallback={
                   <p role="alert" className="text-body-sm text-secondary">
                     {shown.label} settings are unavailable. You can turn its
@@ -162,26 +150,24 @@ export function SpeechSettings({
                 !listening &&
                 (status === "unavailable" ||
                   status === "needs-setup" ||
-                  (backend !== ON_DEVICE_SPEECH && !community))
+                  !community)
               }
               onClick={tryIt}
             >
               {listening ? "Stop" : "Start listening"}
             </Button>
-            {backend !== ON_DEVICE_SPEECH && !community && (
+            {!community && (
               <p className="m-0 text-body-sm text-secondary">
-                Select a community to try a hosted provider. It bills that
+                Select a community to try speech to text. It bills that
                 community.
               </p>
             )}
             {(heard || listening) && (
               <p role="status" aria-live="polite" className="m-0 text-body-sm">
                 {heard ||
-                  (dictation.state === "downloading"
-                    ? "Downloading the speech model…"
-                    : dictation.state === "listening"
-                      ? "Listening…"
-                      : "Starting…")}
+                  (dictation.state === "listening"
+                    ? "Listening…"
+                    : "Starting…")}
               </p>
             )}
             {problem && (

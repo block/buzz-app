@@ -22,7 +22,6 @@ import type { BrowserViewProps } from "../../features/browser/api";
 import { DecisionsService } from "../../features/decisions/service";
 import { SpeechService } from "../../features/speech/service";
 
-const noOnDevice = { available: async () => false, prepare() {} };
 import {
   AgentsService,
   type Agent,
@@ -207,7 +206,7 @@ it.each([undefined, "", "http://builderlab.example"])(
     provideApps(root);
     const cards = new SettingsCardsService(root);
     const decisions = new DecisionsService(root, localStorage);
-    new SpeechService(root, localStorage, noOnDevice);
+    new SpeechService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     root.provide("navigation", { open: vi.fn() } as never);
@@ -275,7 +274,7 @@ it("a build with neither NIP-FI nor the development broker has no Builderlab", a
   provideApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
-  new SpeechService(root, localStorage, noOnDevice);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
   root.provide("navigation", { open: vi.fn() } as never);
@@ -336,7 +335,7 @@ it.each([undefined, false, true])(
     provideApps(root);
     const cards = new SettingsCardsService(root);
     new DecisionsService(root, localStorage);
-    new SpeechService(root, localStorage, noOnDevice);
+    new SpeechService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     root.provide("navigation", { open: vi.fn() } as never);
@@ -501,7 +500,7 @@ it.each([true, false])(
     provideApps(root);
     const cards = new SettingsCardsService(root);
     new DecisionsService(root, localStorage);
-    new SpeechService(root, localStorage, noOnDevice);
+    new SpeechService(root, localStorage);
     const community = communityFixture(null);
     root.provide("relay", community.relay as never);
     root.provide("navigation", { open: vi.fn() } as never);
@@ -725,7 +724,7 @@ it("signs in through the native NIP-FI session in an FI build, with no OAuth or 
   const openApp = provideRecordedApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
-  new SpeechService(root, localStorage, noOnDevice);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
   root.provide("federatedIdentity", identity.service);
@@ -1003,7 +1002,7 @@ it.for([
   provideApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
-  new SpeechService(root, localStorage, noOnDevice);
+  new SpeechService(root, localStorage);
   const community = communityFixture();
   root.provide("relay", community.relay as never);
   root.provide("navigation", { open: vi.fn() } as never);
@@ -1645,7 +1644,7 @@ it("opens Manage plugins from its agents' Activity tab while Agent Activity is o
   provideApps(root);
   new SettingsCardsService(root);
   new DecisionsService(root, localStorage);
-  new SpeechService(root, localStorage, noOnDevice);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   const activity = {
     status: "disabled",
@@ -1799,7 +1798,7 @@ it("uses one development-server login for the Settings account, hosting and remo
   const openApp = provideRecordedApps(root);
   const cards = new SettingsCardsService(root);
   const decisions = new DecisionsService(root, localStorage);
-  new SpeechService(root, localStorage, noOnDevice);
+  new SpeechService(root, localStorage);
   const community = communityFixture(null);
   root.provide("relay", community.relay as never);
   const navigation = { open: vi.fn() };

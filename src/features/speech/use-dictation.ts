@@ -26,7 +26,7 @@ export function useDictation(
   const cancel = useCallback(() => run.current?.cancel(), []);
   useEffect(() => cancel, [cancel]);
   const start = useCallback(
-    (options: { hints?: readonly string[]; community?: string } = {}) => {
+    (options: { community?: string } = {}) => {
       if (run.current || !speech) return;
       // Set before listening starts: a listen can end before it returns.
       const token = { stop() {}, cancel() {} };

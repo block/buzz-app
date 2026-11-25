@@ -1,29 +1,14 @@
 // @vitest-environment jsdom
-import { invoke } from "@tauri-apps/api/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   type Connect,
   type ListenOptions,
   listenHosted,
-  listenOnDevice,
   transcriptItems,
 } from "./listen";
 
-type Send = (event: unknown) => void;
-let send: Send = () => {};
-
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(),
-  Channel: class {
-    constructor(onmessage: Send) {
-      send = onmessage;
-    }
-  },
-}));
-
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.mocked(invoke).mockReset();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -331,48 +316,4 @@ it("maps a denied microphone to denied", async () => {
   );
   await r.start();
   expect(r.onError).toHaveBeenCalledWith("denied", expect.any(String));
-});
-
-it("streams on-device words, pauses at 600 ms, and ends with the final words", async () => {
-  let answer!: (session: number) => void;
-  vi.mocked(invoke).mockImplementation(async (command) => {
-    if (command !== "speech_on_device_start") return undefined;
-    return new Promise<number>((resolve) => (answer = resolve));
-  });
-  const c = callbacks();
-  const listening = listenOnDevice({ ...c.options, hints: ["buzz security"] });
-  expect(vi.mocked(invoke).mock.calls[0]?.[1]).toMatchObject({
-    hints: ["buzz security"],
-  });
-  answer(7);
-  await vi.advanceTimersByTimeAsync(0);
-  send({ kind: "listening" });
-  send({ kind: "text", text: "buzz" });
-  vi.advanceTimersByTime(600);
-  expect(c.onPause.mock.calls).toEqual([["buzz"]]);
-  send({ kind: "text", text: "buzz security" });
-  listening.stop();
-  expect(vi.mocked(invoke)).toHaveBeenCalledWith("speech_on_device_finish", {
-    session: 7,
-  });
-  send({ kind: "ended", text: "buzz security" });
-  expect(c.onEnd.mock.calls).toEqual([["buzz security"]]);
-  expect(c.onState.mock.calls.map(([state]) => state)).toEqual([
-    "starting",
-    "listening",
-    "idle",
-  ]);
-});
-
-it("reports denied on-device access with native's message", async () => {
-  vi.mocked(invoke).mockResolvedValue(3);
-  const c = callbacks();
-  listenOnDevice(c.options);
-  await vi.advanceTimersByTimeAsync(0);
-  send({ kind: "denied", message: "Turn on speech recognition" });
-  expect(c.onError).toHaveBeenCalledWith(
-    "denied",
-    "Turn on speech recognition",
-  );
-  expect(c.onState).toHaveBeenLastCalledWith("idle");
 });

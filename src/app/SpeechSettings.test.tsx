@@ -3,20 +3,19 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import {
-  ON_DEVICE_SPEECH,
-  type ListenOptions,
-  type SpeechChoice,
+import type {
+  ListenOptions,
+  RegisteredSpeechProvider,
 } from "../features/speech/service";
 import { SpeechSettings } from "./SpeechSettings";
 
 afterEach(cleanup);
 
-const HOSTED = "example.speech/main";
-const choices: SpeechChoice[] = [
-  { key: HOSTED, label: "Example", description: "A hosted provider." },
-  { key: ON_DEVICE_SPEECH, label: "On this Mac", description: "On device." },
-];
+const EXAMPLE = "example.speech/main";
+const OTHER = "other.speech/main";
+const provider = (key: string, label: string) =>
+  ({ key, label, description: `${label} speech.` }) as RegisteredSpeechProvider;
+const choices = [provider(EXAMPLE, "Example"), provider(OTHER, "Other")];
 
 /** The speech service as Settings uses it, with the listen held for the
  * test to drive. */
@@ -38,7 +37,6 @@ function fake(initial: string | undefined, providers = choices) {
     }),
     providers: () => providers,
     statusOf: () => "ready" as const,
-    prepare: vi.fn(),
     listen: vi.fn((next: ListenOptions) => {
       options = next;
       return { stop, cancel: vi.fn() };
@@ -53,7 +51,7 @@ function fake(initial: string | undefined, providers = choices) {
 
 it("chooses the provider, and tries it with the community it bills", async () => {
   const user = userEvent.setup();
-  const { speech, listen, stop } = fake(ON_DEVICE_SPEECH);
+  const { speech, listen, stop } = fake(OTHER);
   render(
     <SpeechSettings
       speech={speech}
@@ -61,20 +59,19 @@ it("chooses the provider, and tries it with the community it bills", async () =>
       active={() => true}
     />,
   );
-  expect(screen.getByRole("radio", { name: /On this Mac/ })).toBeChecked();
+  expect(screen.getByRole("radio", { name: /Other/ })).toBeChecked();
   await user.click(screen.getByRole("radio", { name: /Example/ }));
-  expect(speech.setBackend).toHaveBeenCalledWith(HOSTED);
+  expect(speech.setBackend).toHaveBeenCalledWith(EXAMPLE);
   expect(screen.getByRole("radio", { name: /Example/ })).toBeChecked();
 
   await user.click(screen.getByRole("button", { name: "Start listening" }));
-  expect(speech.prepare).toHaveBeenCalledOnce();
   expect(speech.listen).toHaveBeenCalledWith(
     expect.objectContaining({ community: "wss://relay.example.org" }),
   );
   act(() => listen().onState?.("listening"));
   expect(screen.getByRole("status")).toHaveTextContent("Listening…");
   // The listen keeps its provider, so the choice waits for Stop.
-  await user.click(screen.getByRole("radio", { name: /On this Mac/ }));
+  await user.click(screen.getByRole("radio", { name: /Other/ }));
   expect(speech.setBackend).toHaveBeenCalledOnce();
   act(() => listen().onText("hello"));
   expect(screen.getByRole("status")).toHaveTextContent("hello");
@@ -86,14 +83,20 @@ it("chooses the provider, and tries it with the community it bills", async () =>
   });
   expect(screen.getByRole("status")).toHaveTextContent("Hello.");
   expect(screen.getByRole("button", { name: "Start listening" })).toBeEnabled();
-  await user.click(screen.getByRole("radio", { name: /On this Mac/ }));
-  expect(speech.setBackend).toHaveBeenLastCalledWith(ON_DEVICE_SPEECH);
+  await user.click(screen.getByRole("radio", { name: /Other/ }));
+  expect(speech.setBackend).toHaveBeenLastCalledWith(OTHER);
 });
 
 it("shows why a try failed", async () => {
   const user = userEvent.setup();
-  const { speech, listen } = fake(ON_DEVICE_SPEECH);
-  render(<SpeechSettings speech={speech} active={() => true} />);
+  const { speech, listen } = fake(EXAMPLE);
+  render(
+    <SpeechSettings
+      speech={speech}
+      community="wss://relay.example.org"
+      active={() => true}
+    />,
+  );
   await user.click(screen.getByRole("button", { name: "Start listening" }));
   act(() => {
     listen().onError?.("denied", "Allow the microphone.");
@@ -102,8 +105,8 @@ it("shows why a try failed", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("Allow the microphone.");
 });
 
-it("needs a community to try a hosted provider", () => {
-  const { speech } = fake(HOSTED);
+it("needs a community to try a provider", () => {
+  const { speech } = fake(EXAMPLE);
   render(<SpeechSettings speech={speech} active={() => true} />);
   expect(
     screen.getByRole("button", { name: "Start listening" }),

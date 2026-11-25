@@ -157,10 +157,7 @@ it("offers Builderlab while signed in, and listens with it while the account may
     isActive: () => true,
     subscribe: () => () => {},
   });
-  const speech = new SpeechService(root, undefined, {
-    available: async () => true,
-    prepare() {},
-  });
+  const speech = new SpeechService(root, undefined);
   let allowed = false;
   const session = createTestSession(async () => credential("first", allowed));
   const offer = (native: BuilderlabSpeechConnect | undefined) =>
@@ -171,25 +168,27 @@ it("offers Builderlab while signed in, and listens with it while the account may
   await fiber.await();
   await flush();
   const keys = () => speech.providers().map((provider) => provider.key);
-  expect(keys()).toEqual(["on-device"]);
+  expect(keys()).toEqual([]);
+  expect(speech.status()).toBe("unavailable");
   await session.signIn();
-  expect(keys()).toEqual(["block.builderlab/builderlab", "on-device"]);
-  // Signed in without access: speech stays on this Mac.
-  expect(speech.backend()).toBe("on-device");
+  expect(keys()).toEqual(["block.builderlab/builderlab"]);
+  // Signed in without access: Builderlab needs setup, and nothing listens.
+  expect(speech.backend()).toBe("block.builderlab/builderlab");
+  expect(speech.status()).toBe("needs-setup");
   session.signOut();
   allowed = true;
   await session.signIn();
-  expect(speech.backend()).toBe("block.builderlab/builderlab");
+  expect(speech.status()).toBe("ready");
   session.signOut();
-  expect(keys()).toEqual(["on-device"]);
-  expect(speech.backend()).toBe("on-device");
+  expect(keys()).toEqual([]);
+  expect(speech.status()).toBe("unavailable");
   await session.signIn();
   await fiber.dispose();
-  expect(keys()).toEqual(["on-device"]);
+  expect(keys()).toEqual([]);
   const browser = offer(undefined);
   await browser.await();
   await flush();
-  expect(keys()).toEqual(["on-device"]);
+  expect(keys()).toEqual([]);
 });
 
 it("listens with the sign-in of the community in view, a Builderlab customer's own", async () => {

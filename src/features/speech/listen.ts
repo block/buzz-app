@@ -1,15 +1,13 @@
-// One listen, from the microphone to a finished transcript. Hosted providers
-// transcribe over WebRTC: this side holds the peer connection and its
-// `oai-events` data channel, and the provider only answers the offer.
-// On-device speech runs natively and sends its events on a channel. Both
-// report the transcript as it changes, a short pause while listening goes
-// on, and the end, after a long pause or `stop`.
-import { Channel, invoke } from "@tauri-apps/api/core";
+// One listen, from the microphone to a finished transcript. Providers
+// transcribe over WebRTC: this side holds the microphone, the peer connection
+// and its `oai-events` data channel, and the provider only answers the offer.
+// A listen reports the transcript as it changes, a short pause while
+// listening goes on, and the end, after a long pause or `stop`.
 
 /**
  * - `unavailable`: no provider can listen, or this device can't.
- * - `denied`: microphone or speech recognition access is off, so the person
- *   has to allow it in System Settings.
+ * - `denied`: microphone access is off, so the person has to allow it in
+ *   System Settings.
  * - `missing_credentials`: the provider has no sign-in.
  * - `unauthorized`: the provider refused this account or community.
  * - `rate_limited`: the community has used its speech for now.
@@ -41,22 +39,18 @@ export const SPEECH_FAILURES: readonly SpeechFailure[] = [
 export const isCallSeconds = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
-/** `downloading`: the on-device model is being fetched, the first time only. */
-export type ListenState = "starting" | "downloading" | "listening" | "idle";
+export type ListenState = "starting" | "listening" | "idle";
 
 export type ListenOptions = Readonly<{
-  /** Words the speech may contain, such as names. Only on-device speech
-   * uses them. */
-  hints?: readonly string[];
-  /** The Buzz community (its relay URL) the speech is for. Hosted providers
-   * that bill the community need it. */
+  /** The Buzz community (its relay URL) the speech is for. Providers that
+   * bill the community, such as Builderlab, need it. */
   community?: string;
-  /** How long a hosted call may last, in whole seconds, for speech longer
+  /** How long the call may last, in whole seconds, for speech longer
    * than a command. Without it the provider's default applies (30 seconds
    * on Builderlab), so a forgotten microphone cannot run long. The provider
    * may grant less; see `onCallLimit`. */
   maxSeconds?: number;
-  /** The cap a hosted provider granted this call, in seconds, once it
+  /** The cap the provider granted this call, in seconds, once it
    * answers. It hangs up then, and listening ends with what was heard. */
   onCallLimit?(maxSeconds: number): void;
   /** The transcript so far, each time it changes. */
@@ -79,14 +73,9 @@ export type Listening = Readonly<{
   cancel(): void;
 }>;
 
-/** Speech that stops producing text this long has paused: reported, but
- * listening goes on. On-device recognition revises its words about every
- * 200–300 ms while someone speaks; across 20 fluent phrases its longest gap
- * mid-phrase was about 500 ms, and its words settle about 200 ms after speech
- * stops. So 600 ms waits out fluent speech and reports a pause about 0.8 s
- * after the last word. */
-const ON_DEVICE_PAUSE_MS = 600;
-const HOSTED_PAUSE_MS = 800;
+/** Speech that stops producing text this long has paused: reported, and
+ * committed, but listening goes on. */
+const PAUSE_MS = 800;
 /** Speech that stops producing text this long has ended. */
 const END_MS = 3_000;
 /** Nothing heard this long after starting ends the attempt. */
@@ -107,128 +96,6 @@ const MESSAGES: Readonly<Record<SpeechFailure, string>> = {
   invalid_response: "Speech to text got an unreadable answer.",
 };
 export const speechMessage = (failure: SpeechFailure) => MESSAGES[failure];
-
-/** Shared bookkeeping for one listen: timers, state, the end. */
-function session(options: ListenOptions, pauseMs: number) {
-  let text = "";
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let pause: ReturnType<typeof setTimeout> | undefined;
-  let paused = false;
-  const self = {
-    ended: false,
-    ending: false,
-    text: () => text,
-    state(state: ListenState) {
-      if (!self.ended) options.onState?.(state);
-    },
-    /** Waits `ms`, then runs `then`, replacing any earlier wait. */
-    wait(ms: number, then: () => void) {
-      clearTimeout(timer);
-      timer = setTimeout(then, ms);
-    },
-    close(report: boolean, heard = text, release = () => {}) {
-      if (self.ended) return;
-      self.ended = true;
-      clearTimeout(timer);
-      clearTimeout(pause);
-      release();
-      options.onState?.("idle");
-      if (report && heard.trim()) options.onEnd(heard.trim());
-    },
-    fail(failure: SpeechFailure, message = MESSAGES[failure]) {
-      if (self.ended) return false;
-      options.onError?.(failure, message);
-      return true;
-    },
-    /** New text. `settled` text is the provider's final word on speech that
-     * already paused: reported as the same pause, and it never extends
-     * listening. */
-    heard(next: string, finish: () => void, settled = false) {
-      if (next === text) return;
-      text = next;
-      options.onText(text.trim());
-      if (self.ending || self.ended) return;
-      if (settled && paused) {
-        options.onPause?.(text.trim());
-        return;
-      }
-      paused = false;
-      clearTimeout(pause);
-      pause = setTimeout(() => {
-        paused = true;
-        self.onPaused();
-        options.onPause?.(text.trim());
-      }, pauseMs);
-      self.wait(END_MS, finish);
-    },
-    onPaused: () => {},
-  };
-  return self;
-}
-
-type NativeEvent =
-  | { kind: "listening" }
-  | { kind: "text"; text: string }
-  | { kind: "ended"; text: string }
-  | { kind: "error"; message: string }
-  | { kind: "downloading" }
-  | { kind: "denied"; message: string };
-
-/** On-device speech: native code listens and sends its events. */
-export function listenOnDevice(options: ListenOptions): Listening {
-  const run = session(options, ON_DEVICE_PAUSE_MS);
-  let id: number | undefined;
-  const finish = () => {
-    if (run.ended || run.ending) return;
-    run.ending = true;
-    if (id !== undefined)
-      void invoke("speech_on_device_finish", { session: id }).catch(() => {});
-    // Native sends a final transcript; report what was heard if it doesn't.
-    run.wait(FINAL_MS, () => run.close(true));
-  };
-  const cancel = () => {
-    if (run.ended) return;
-    if (id !== undefined)
-      void invoke("speech_on_device_cancel", { session: id }).catch(() => {});
-    run.close(false);
-  };
-  const fail = (failure: SpeechFailure, message?: string) => {
-    if (run.fail(failure, message)) run.close(false);
-  };
-  run.state("starting");
-  const onEvent = new Channel<NativeEvent>((event) => {
-    if (run.ended) return;
-    if (event.kind === "error") return fail("service_error", event.message);
-    if (event.kind === "denied") return fail("denied", event.message);
-    if (event.kind === "downloading") {
-      if (!run.ending) run.state("downloading");
-      return;
-    }
-    if (event.kind === "ended")
-      return run.close(true, event.text || run.text());
-    if (event.kind === "listening") {
-      run.state("listening");
-      if (!run.ending && !run.text()) run.wait(SILENCE_MS, finish);
-      return;
-    }
-    run.heard(event.text, finish);
-  });
-  void invoke<number>("speech_on_device_start", {
-    hints: options.hints ?? [],
-    onEvent,
-  }).then(
-    (started) => {
-      id = started;
-      // Stopped or cancelled before native code answered.
-      if (run.ended)
-        void invoke("speech_on_device_cancel", { session: id }).catch(() => {});
-      else if (run.ending)
-        void invoke("speech_on_device_finish", { session: id }).catch(() => {});
-    },
-    () => fail("unavailable"),
-  );
-  return { stop: finish, cancel };
-}
 
 const DELTA = "conversation.item.input_audio_transcription.delta";
 const COMPLETED = "conversation.item.input_audio_transcription.completed";
@@ -298,26 +165,41 @@ export type Connect = (
   | Readonly<{ outcome: "failed"; reason: SpeechFailure }>
 >;
 
-/** A hosted provider: OpenAI Realtime transcription over WebRTC, with the
- * offer answered by `connect`. Turn detection is the caller's: each pause
- * and the end commit the audio sent since the last commit, which finalizes
- * its words and lets the provider meter what was transcribed. The provider
- * answers every commit, with its item or as empty, so the end waits for
- * those answers and the items' final words. */
+/** One listen through a provider: OpenAI Realtime transcription over
+ * WebRTC, with the offer answered by `connect`. Turn detection is the
+ * caller's: each pause and the end commit the audio sent since the last
+ * commit, which finalizes its words and lets the provider meter what was
+ * transcribed. The provider answers every commit, with its item or as empty,
+ * so the end waits for those answers and the items' final words. */
 export function listenHosted(
   options: ListenOptions,
   connect: Connect,
 ): Listening {
-  const run = session(options, HOSTED_PAUSE_MS);
   const items = transcriptItems();
   const abort = new AbortController();
   let stream: MediaStream | undefined;
   let peer: RTCPeerConnection | undefined;
   let channel: RTCDataChannel | undefined;
+  let ended = false;
+  let ending = false;
+  /** The transcript last reported. */
+  let text = "";
+  /** The pause or end the listen waits for, and the short pause. */
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pause: ReturnType<typeof setTimeout> | undefined;
+  let paused = false;
   /** Words arrived since the last commit. */
   let uncommitted = false;
   /** Commits the provider has not answered yet. */
   let unanswered = 0;
+  const state = (next: ListenState) => {
+    if (!ended) options.onState?.(next);
+  };
+  /** Waits `ms`, then runs `then`, replacing any earlier wait. */
+  const wait = (ms: number, then: () => void) => {
+    clearTimeout(timer);
+    timer = setTimeout(then, ms);
+  };
   /** Commits the audio sent since the last commit: only once words arrived,
    * so silence isn't metered, unless `always`. */
   const commit = (always = false) => {
@@ -329,42 +211,73 @@ export function listenHosted(
   const stopMicrophone = () => {
     for (const track of stream?.getTracks() ?? []) track.stop();
   };
-  const release = () => {
+  const close = (report: boolean) => {
+    if (ended) return;
+    ended = true;
+    clearTimeout(timer);
+    clearTimeout(pause);
     abort.abort();
     channel?.close();
     peer?.close();
     stopMicrophone();
+    options.onState?.("idle");
+    if (report && text.trim()) options.onEnd(text.trim());
   };
-  const close = (report: boolean) => run.close(report, run.text(), release);
   /** Ending, and every word is in: report them. */
   const settle = () => {
-    if (run.ending && unanswered <= 0 && items.settled()) close(true);
+    if (ending && unanswered <= 0 && items.settled()) close(true);
   };
   /** Ends listening once the last commit's words are in. Stop commits
    * even before the first word, so speech cut short still counts. */
   const end = (stopped: boolean) => {
-    if (run.ended || run.ending) return;
-    run.ending = true;
+    if (ended || ending) return;
+    ending = true;
     stopMicrophone();
     commit(stopped);
-    run.wait(FINAL_MS, () => close(true));
+    wait(FINAL_MS, () => close(true));
     settle();
   };
   const finish = () => end(false);
   const cancel = () => close(false);
-  const fail = (failure: SpeechFailure, message?: string) => {
-    if (run.fail(failure, message)) close(false);
+  const fail = (failure: SpeechFailure, message = MESSAGES[failure]) => {
+    if (ended) return;
+    options.onError?.(failure, message);
+    close(false);
   };
-  run.onPaused = () => commit();
-  const heard = (event: RealtimeEvent) => {
+  /** New words. Words `settled` by the provider's final text on speech that
+   * already paused are reported as the same pause, and never extend
+   * listening. */
+  const heard = (settled: boolean) => {
+    const next = items.text();
+    if (next === text) return;
+    text = next;
+    options.onText(text);
+    if (ending || ended) return;
+    if (settled && paused) return options.onPause?.(text);
+    paused = false;
+    clearTimeout(pause);
+    pause = setTimeout(() => {
+      paused = true;
+      commit();
+      options.onPause?.(text);
+    }, PAUSE_MS);
+    wait(END_MS, finish);
+  };
+  const receive = (event: RealtimeEvent) => {
+    if (event.type === "error" && event.error?.code === COMMIT_EMPTY) {
+      unanswered -= 1;
+      return settle();
+    }
+    if (event.type === "error" || event.type === FAILED)
+      return fail("service_error", event.error?.message);
     if (event.type === COMMITTED) unanswered -= 1;
     if (items.apply(event)) {
       if (event.type === DELTA) uncommitted = true;
-      run.heard(items.text(), finish, event.type === COMPLETED);
+      heard(event.type === COMPLETED);
     }
     settle();
   };
-  run.state("starting");
+  state("starting");
   void (async () => {
     try {
       // The offer needs no microphone: asking for it and connecting run
@@ -378,38 +291,25 @@ export function listenHosted(
       channel = peer.createDataChannel("oai-events");
       // Transcripts arrive here, so listening starts once it opens.
       channel.addEventListener("open", () => {
-        run.state("listening");
-        if (!run.ending && !run.text()) run.wait(SILENCE_MS, finish);
+        state("listening");
+        if (!ending && !text) wait(SILENCE_MS, finish);
       });
       channel.addEventListener("message", (message) => {
-        if (run.ended) return;
+        if (ended) return;
         let event: RealtimeEvent;
         try {
           event = JSON.parse(String(message.data));
         } catch {
           return;
         }
-        if (!event || typeof event !== "object") return;
-        if (event.type === "error" && event.error?.code === COMMIT_EMPTY) {
-          unanswered -= 1;
-          return settle();
-        }
-        if (event.type === "error" || event.type === FAILED) {
-          return fail(
-            "service_error",
-            event.error?.message ?? MESSAGES.service_error,
-          );
-        }
-        heard(event);
+        if (event && typeof event === "object") receive(event);
       });
       // The provider hangs up at its call limit: report what was heard.
-      channel.addEventListener("close", () => {
-        if (!run.ended) close(true);
-      });
+      channel.addEventListener("close", () => close(true));
       const offer = await peer.createOffer();
-      if (run.ended) return;
+      if (ended) return;
       await peer.setLocalDescription(offer);
-      if (run.ended) return;
+      if (ended) return;
       const microphone = navigator.mediaDevices
         .getUserMedia({
           audio: {
@@ -421,7 +321,7 @@ export function listenHosted(
         .then((media) => {
           stream = media;
           // Stopped meanwhile: release the microphone at once.
-          if (run.ended || run.ending)
+          if (ended || ending)
             for (const track of media.getTracks()) track.stop();
           return media;
         });
@@ -429,12 +329,12 @@ export function listenHosted(
         microphone,
         connect(offer.sdp ?? "", abort.signal),
       ]);
-      if (run.ended) return;
+      if (ended) return;
       if (answer.outcome === "failed") return fail(answer.reason);
       if (answer.maxSeconds !== undefined)
         options.onCallLimit?.(answer.maxSeconds);
       await sender.replaceTrack(media.getAudioTracks()[0] ?? null);
-      if (run.ended) return;
+      if (ended) return;
       await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
     } catch (error) {
       const exception = error instanceof Error || error instanceof DOMException;

@@ -1,11 +1,11 @@
-// Speech to text for app code and plugins. A caller listens; the provider
-// this device chose in Settings transcribes. Hosted providers are plugins:
-// each registers with `ctx.speech.registerProvider` and answers a WebRTC
-// offer. On-device recognition is built in and free. The host owns the
-// choice, the microphone, the call, the transcript and its pauses, so every
-// provider reports the same events and fails for the same reasons.
+// Speech to text for app code and plugins. A caller listens with
+// `ctx.speech.listen`; the provider this device chose in Settings
+// transcribes. Providers are plugins: each registers with
+// `ctx.speech.registerProvider` and answers a WebRTC offer, and Builderlab
+// is the bundled one. The host owns the choice, the microphone, the call,
+// the transcript and its pauses, so every provider reports the same events
+// and fails for the same reasons.
 import { Service, type Context } from "@deepseek-ai/cordis";
-import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { ComponentType } from "react";
 import {
   createContributions,
@@ -15,7 +15,6 @@ import {
   SPEECH_FAILURES,
   isCallSeconds,
   listenHosted,
-  listenOnDevice,
   type ListenOptions,
   type Listening,
 } from "./listen";
@@ -60,7 +59,7 @@ export type SpeechConnectReply =
   | Readonly<{ outcome: "answered"; sdp: string; maxSeconds?: number }>
   | Readonly<{ outcome: "failed"; reason: SpeechFailure }>;
 
-/** A hosted speech provider, as a plugin registers it. It answers the host's
+/** A speech provider, as a plugin registers it. It answers the host's
  * offer with a transcription session's SDP answer; audio then streams peer to
  * peer and transcripts arrive on the data channel as Realtime events. */
 export type SpeechProvider = Readonly<{
@@ -85,29 +84,17 @@ export type SpeechProvider = Readonly<{
 
 export type RegisteredSpeechProvider = Contribution<SpeechProvider>;
 
-/** One choice in Settings: a registered provider, or on-device speech. */
-export type SpeechChoice = Readonly<{
-  key: string;
-  label: string;
-  description: string;
-  /** The registered provider; undefined for on-device speech. */
-  entry?: RegisteredSpeechProvider;
-}>;
-
 /** What plugins get as `ctx.speech`. */
 export interface Speech {
   /** Starts listening with the provider this device uses. Failures arrive
    * on `onError`; it never throws. */
   listen(options: ListenOptions): Listening;
-  /** Warms the recognizer ahead of a listen, such as on-device speech's
-   * language model. */
-  prepare(): void;
   /** The key of the provider that listens, or undefined when none can. */
   backend(): string | undefined;
   /** That provider's status, or `unavailable` when there is none. */
   status(): SpeechProviderStatus | "unavailable";
   subscribe(listener: () => void): () => void;
-  /** Offers a hosted provider while the calling plugin runs, or until the
+  /** Offers a provider while the calling plugin runs, or until the
    * returned function removes it. The user chooses it in Settings. */
   registerProvider(provider: SpeechProvider): () => void;
   /** Clears a saved choice for a retired provider owned by this plugin. */
@@ -120,21 +107,9 @@ declare module "@deepseek-ai/cordis" {
 }
 
 export const SPEECH_PROVIDER_KEY = "buzz-speech-provider.v1";
-/** On-device speech's key. It has no slash, so no plugin's key can match. */
-export const ON_DEVICE_SPEECH = "on-device";
-/** Providers that listen, in this order, while the user has not chosen one.
- * The first that can listen does. */
-export const DEFAULT_SPEECH_PROVIDERS: readonly string[] = [
-  "block.builderlab/builderlab",
-  ON_DEVICE_SPEECH,
-];
+/** The provider that listens while the user has not chosen one. */
+export const DEFAULT_SPEECH_PROVIDER = "block.builderlab/builderlab";
 const CONNECT_TIMEOUT_MS = 20_000;
-
-const ON_DEVICE: SpeechChoice = Object.freeze({
-  key: ON_DEVICE_SPEECH,
-  label: "On this Mac",
-  description: "Apple speech recognition. Free, and audio stays on this Mac.",
-});
 
 const orderOf = (provider: SpeechProvider) =>
   Number.isFinite(provider.order) ? (provider.order as number) : 0;
@@ -151,31 +126,14 @@ export const speechStatusOf = (
   }
 };
 
-/** Whether on-device recognition runs here: `undefined` until known. */
-export type OnDevice = Readonly<{
-  available(): Promise<boolean>;
-  prepare(): void;
-}>;
-const nativeOnDevice = (): OnDevice | undefined =>
-  isTauri()
-    ? {
-        available: () =>
-          invoke<boolean>("speech_on_device_available").catch(() => false),
-        prepare: () => void invoke("speech_on_device_prepare").catch(() => {}),
-      }
-    : undefined;
-
-/** Audio goes to the provider the user chose, or the first default that can
- * listen until they choose. Speech can be private, so no other provider gets
- * it without that choice: while the chosen provider can't listen, speech is
- * unavailable rather than sent somewhere else. */
+/** Audio goes to the provider the user chose, or the default until they
+ * choose. Speech can be private, so no other provider gets it without that
+ * choice: while the chosen provider can't listen, speech is unavailable
+ * rather than sent somewhere else. */
 export class SpeechService extends Service implements Speech {
   private readonly registry;
   private chosen: string | undefined;
   private sorted: readonly RegisteredSpeechProvider[] = [];
-  private choices: readonly SpeechChoice[] = [];
-  /** Whether on-device speech runs here; undefined while checking. */
-  private onDevice: boolean | undefined;
   private readonly listeners = new Set<() => void>();
   constructor(
     ctx: Context,
@@ -183,7 +141,6 @@ export class SpeechService extends Service implements Speech {
     "undefined"
       ? undefined
       : window.localStorage,
-    private readonly device: OnDevice | undefined = nativeOnDevice(),
   ) {
     super(ctx, "speech");
     this.registry = createContributions<SpeechProvider>(ctx);
@@ -192,12 +149,6 @@ export class SpeechService extends Service implements Speech {
     } catch {
       // Unreadable storage means no choice.
     }
-    if (!device) this.onDevice = false;
-    else
-      void device.available().then((available) => {
-        this.onDevice = available;
-        this.refresh();
-      });
     let stops: (() => void)[] = [];
     const watch = () => {
       for (const stop of stops) stop();
@@ -209,7 +160,7 @@ export class SpeechService extends Service implements Speech {
           return () => {};
         }
       });
-      this.refresh();
+      this.notify();
     };
     ctx.effect(() => {
       const stop = this.registry.subscribe(watch);
@@ -220,20 +171,6 @@ export class SpeechService extends Service implements Speech {
         stops = [];
       };
     });
-  }
-  private refresh() {
-    this.choices = Object.freeze([
-      ...this.sorted.map((entry) =>
-        Object.freeze({
-          key: entry.key,
-          label: entry.label,
-          description: entry.description,
-          entry,
-        }),
-      ),
-      ...(this.onDevice ? [ON_DEVICE] : []),
-    ]);
-    this.notify();
   }
   registerProvider(provider: SpeechProvider): () => void {
     return this.registry.register(this.ctx, provider);
@@ -248,47 +185,28 @@ export class SpeechService extends Service implements Speech {
     this.chosen = undefined;
     this.notify();
   }
-  /** Host-only: every choice, in Settings order. */
-  providers = (): readonly SpeechChoice[] => this.choices;
-  /** Host-only: a choice's status. */
+  /** Host-only: every provider, in Settings order. */
+  providers = (): readonly RegisteredSpeechProvider[] => this.sorted;
+  /** Host-only: a provider's status. */
   statusOf = (key: string): SpeechProviderStatus | undefined => {
-    if (key === ON_DEVICE_SPEECH)
-      return this.onDevice === undefined
-        ? "checking"
-        : this.onDevice
-          ? "ready"
-          : undefined;
     const entry = this.sorted.find((provider) => provider.key === key);
     return entry && speechStatusOf(entry);
   };
+  /** The chosen provider, or the default until the user chooses: never
+   * another, even while that one can't listen. */
   private route():
     | Readonly<{ key: string; status: SpeechProviderStatus }>
     | undefined {
-    const known = (key: string) => {
-      const status = this.statusOf(key);
-      return status === undefined ? undefined : { key, status };
-    };
-    if (this.chosen !== undefined) return known(this.chosen);
-    const defaults = DEFAULT_SPEECH_PROVIDERS.flatMap((key) => {
-      const route = known(key);
-      return route ? [route] : [];
-    });
-    const listening = defaults.find(
-      ({ status }) => status === "ready" || status === "unconfirmed",
-    );
-    if (listening) return listening;
-    const fallback = defaults[0];
-    if (!fallback) return undefined;
-    return defaults.some(({ status }) => status === "checking")
-      ? { key: fallback.key, status: "checking" }
-      : fallback;
+    const key = this.chosen ?? DEFAULT_SPEECH_PROVIDER;
+    const status = this.statusOf(key);
+    return status === undefined ? undefined : { key, status };
   }
   backend = (): string | undefined => this.route()?.key;
   status = (): SpeechProviderStatus | "unavailable" =>
     this.route()?.status ?? "unavailable";
   /** Host-only: Settings chooses the provider. Not part of `Speech`. */
   setBackend(key: string): void {
-    if (!this.choices.some((choice) => choice.key === key)) return;
+    if (!this.sorted.some((provider) => provider.key === key)) return;
     const before = this.backend();
     this.chosen = key;
     try {
@@ -305,12 +223,8 @@ export class SpeechService extends Service implements Speech {
     this.listeners.add(listener);
     return () => void this.listeners.delete(listener);
   };
-  prepare(): void {
-    if (this.backend() === ON_DEVICE_SPEECH) this.device?.prepare();
-  }
   listen(options: ListenOptions): Listening {
     const key = this.backend();
-    if (key === ON_DEVICE_SPEECH) return listenOnDevice(options);
     const provider = this.sorted.find((entry) => entry.key === key);
     if (!provider) {
       queueMicrotask(() => {

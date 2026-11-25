@@ -169,6 +169,18 @@ export type {
 } from "../features/decisions/service";
 
 export type {
+  Speech,
+  SpeechProvider,
+  SpeechProviderStatus,
+  SpeechConnectRequest,
+  SpeechConnectReply,
+  SpeechFailure,
+  ListenOptions,
+  Listening,
+  ListenState,
+} from "../features/speech/service";
+
+export type {
   Navigation,
   NavigationSnapshot,
   OpenResult,

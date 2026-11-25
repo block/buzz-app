@@ -17,7 +17,10 @@ import type {
   RegisteredProvider,
 } from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
-import type { SpeechChoice, SpeechService } from "../features/speech/service";
+import type {
+  RegisteredSpeechProvider,
+  SpeechService,
+} from "../features/speech/service";
 import { SpeechSettings } from "./SpeechSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
@@ -279,7 +282,7 @@ const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
 const noProviders: readonly RegisteredProvider[] = [];
 const noDecisionProviders = () => noProviders;
-const noSpeechChoices: readonly SpeechChoice[] = [];
+const noSpeechChoices: readonly RegisteredSpeechProvider[] = [];
 const noSpeechProviders = () => noSpeechChoices;
 /** The plugin whose details a Manage plugins visit shows, for Back/Forward. */
 const PLUGIN_DETAILS = "settings.pluginDetails";
@@ -1193,8 +1196,7 @@ export function Settings({
             )
           : section.id === "speech"
             ? speechProviders.some(
-                (provider) =>
-                  provider.entry?.pluginId === selectedPlugin.manifest.id,
+                (provider) => provider.pluginId === selectedPlugin.manifest.id,
               )
             : contributed.some(
                 (card) =>

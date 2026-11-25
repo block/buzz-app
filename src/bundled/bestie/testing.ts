@@ -353,10 +353,7 @@ export async function bestieFixture(
   // Builderlab's Apps panel; no native browser here.
   new BrowserService(root, { available: false } as BrowserPlatform);
   new DecisionsService(root, localStorage);
-  new SpeechService(root, localStorage, {
-    available: async () => false,
-    prepare() {},
-  });
+  new SpeechService(root, localStorage);
   root.provide("knownCommunities", {
     ...reader,
     pending: () => [],

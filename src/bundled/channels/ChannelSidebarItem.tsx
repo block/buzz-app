@@ -219,6 +219,62 @@ function ChannelSidebarItemCore({
   useLayoutEffect(() => {
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
+  // The row re-renders on each unread, activity and selection change. Its
+  // closed menu keeps the same element, so React skips the menu's subtree.
+  const menuAction = useMemo(
+    () =>
+      menuEnabled &&
+      (channelActions || channel.channelType === "solo") && (
+        <MenuRoot
+          open={menuOpen && present && actionsOpen}
+          onOpenChange={(open) => {
+            if (open && sectionKey && actions.current)
+              onOpenMenu?.(channel, sectionKey, actions.current);
+            else if (!open && actionsOpen) onCloseMenu?.();
+          }}
+          onOpenChangeComplete={(open) => {
+            if (!open) onMenuClosed?.(channel.id);
+          }}
+        >
+          <MenuTrigger
+            ref={actions}
+            render={(props) => (
+              <IconButton
+                {...props}
+                variant="bare"
+                size="compact"
+                aria-label={menuLabel}
+                data-channel-row-action={channelActions ? "" : undefined}
+                data-solo-row-action={channelActions ? undefined : ""}
+                icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
+              />
+            )}
+          />
+          <MenuPopup
+            align="end"
+            aria-label={menuLabel}
+            finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
+          >
+            {menuContent ?? lastMenuContent.current}
+          </MenuPopup>
+        </MenuRoot>
+      ),
+    [
+      menuEnabled,
+      channelActions,
+      channel,
+      menuOpen,
+      present,
+      actionsOpen,
+      sectionKey,
+      onOpenMenu,
+      onCloseMenu,
+      onMenuClosed,
+      menuLabel,
+      menuFinalFocus,
+      menuContent,
+    ],
+  );
   const Icon = channelIcon(channel);
   const plainRow = (
     <ChannelSidebarRow
@@ -234,44 +290,7 @@ function ChannelSidebarItemCore({
           />
         ) : undefined
       }
-      menuAction={
-        menuEnabled &&
-        (channelActions || channel.channelType === "solo") && (
-          <MenuRoot
-            open={menuOpen && present && actionsOpen}
-            onOpenChange={(open) => {
-              if (open && sectionKey && actions.current)
-                onOpenMenu?.(channel, sectionKey, actions.current);
-              else if (!open && actionsOpen) onCloseMenu?.();
-            }}
-            onOpenChangeComplete={(open) => {
-              if (!open) onMenuClosed?.(channel.id);
-            }}
-          >
-            <MenuTrigger
-              ref={actions}
-              render={(props) => (
-                <IconButton
-                  {...props}
-                  variant="bare"
-                  size="compact"
-                  aria-label={menuLabel}
-                  data-channel-row-action={channelActions ? "" : undefined}
-                  data-solo-row-action={channelActions ? undefined : ""}
-                  icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
-                />
-              )}
-            />
-            <MenuPopup
-              align="end"
-              aria-label={menuLabel}
-              finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
-            >
-              {menuContent ?? lastMenuContent.current}
-            </MenuPopup>
-          </MenuRoot>
-        )
-      }
+      menuAction={menuAction}
       sharedDescription={
         onShareChat && channel.channelType === "solo"
           ? soloSharedMarkId(channel.id)

@@ -3612,6 +3612,17 @@ it("restores focus to the row when its menu closes", async () => {
     expect(screen.queryByRole("menu", { name: "Actions for beta" })).toBeNull(),
   );
   await waitFor(() => expect(beta).toHaveFocus());
+
+  // The row's Actions button opens the same items.
+  fireEvent.click(screen.getByRole("button", { name: "Actions for beta" }));
+  const actions = await screen.findByRole("menu", { name: "Actions for beta" });
+  const item = within(actions).getByRole("menuitem", { name: "Copy link" });
+  item.focus();
+  fireEvent.keyDown(item, { key: "Escape" });
+  await waitFor(() =>
+    expect(screen.queryByRole("menu", { name: "Actions for beta" })).toBeNull(),
+  );
+  await waitFor(() => expect(beta).toHaveFocus());
 });
 
 it("decorates live host rows and closes menus only when their row is hidden", async () => {

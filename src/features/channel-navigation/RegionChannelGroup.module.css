@@ -75,11 +75,17 @@
     opacity: 0;
   }
 
-  /* Keep the native Actions button at the edge when the task action is present. */
+  /* Keep the native Actions button at the edge when the task action is present.
+     The task action sits right beside it: Actions is the row's compact action
+     size, inset by the row fill's end. */
   .teamRow:has(> :first-child > [data-channel-row-action])
     > .teamRowSlot
     > [data-solo-channel-new-task] {
-    inset-inline-end: calc(var(--space-2) + var(--size-control-sm));
+    inset-inline-end: calc(
+      var(--channel-row-fill-end, 0%) +
+      var(--space-6) +
+      var(--space-1)
+    );
   }
 
   /* On the row's pill the action darkens instead of gaining its own fill. */

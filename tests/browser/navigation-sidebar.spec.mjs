@@ -190,11 +190,10 @@ test.describe("workspace heading resize", () => {
     await heading.hover();
     await expect(caret).toHaveCSS("opacity", "1");
     await expect(disclosure).toHaveJSProperty("open", true);
-    const bounds = await caret.boundingBox();
-    await page.mouse.click(
-      bounds.x + bounds.width / 2,
-      bounds.y + bounds.height / 2,
-    );
+    // The caret follows the title on every card, so a truncated title's caret
+    // sits under the revealed actions; the title start still toggles it.
+    const label = await heading.getByText(title, { exact: true }).boundingBox();
+    await page.mouse.click(label.x + 4, label.y + label.height / 2);
     await expect(disclosure).toHaveJSProperty("open", false);
     await arrow.click();
     await expect(

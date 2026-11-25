@@ -223,7 +223,7 @@ export function startFinderSync({
     const found = channel(channelId);
     return (
       !!found &&
-      !found.huddle &&
+      !found.unlisted &&
       !found.cached &&
       (!found.readOnly || found.viewerRole === "guest")
     );

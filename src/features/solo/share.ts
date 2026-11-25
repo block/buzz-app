@@ -19,7 +19,7 @@ export function canShareConversation(
     canShareSoloChat(session, channel) ||
     !!(
       channel &&
-      !channel.huddle &&
+      !channel.unlisted &&
       !channel.metadataPending &&
       !channel.cached &&
       !channel.readOnly &&
@@ -60,7 +60,7 @@ export async function checkShareDestination(
   if (
     !fresh ||
     !destination ||
-    destination.huddle ||
+    destination.unlisted ||
     destination.metadataPending ||
     destination.cached ||
     destination.archived ||

@@ -83,7 +83,7 @@ export function createInboxFeed({
           .channels.some(
             (channel) =>
               channel.id === hs[0]?.[1] &&
-              !channel.huddle &&
+              !channel.unlisted &&
               !channel.cached &&
               viewerMember(channel, viewer),
           ))

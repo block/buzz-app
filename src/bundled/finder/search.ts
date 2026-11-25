@@ -162,7 +162,7 @@ export function useFinderAll({
       return (
         !shown.has(message.id) &&
         channel &&
-        !channel.huddle &&
+        !channel.unlisted &&
         !channel.metadataPending &&
         !lost(session, message.channelId)
       );

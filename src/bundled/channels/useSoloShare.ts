@@ -151,7 +151,7 @@ export function useSoloShare({
     .filter(
       (item) =>
         item.id !== channelId &&
-        !item.huddle &&
+        !item.unlisted &&
         !item.metadataPending &&
         !item.readOnly &&
         !item.cached &&

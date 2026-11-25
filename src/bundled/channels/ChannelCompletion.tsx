@@ -22,7 +22,7 @@ function referable(channel: ChannelSummary) {
   return (
     !!channel.name.trim() &&
     !/[\r\n]/.test(channel.name) &&
-    !channel.huddle &&
+    !channel.unlisted &&
     !channel.metadataPending &&
     !channel.archived &&
     !channel.hidden &&

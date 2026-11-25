@@ -30,7 +30,7 @@ export function privateChannels(
     .filter(
       (channel) =>
         !channel.archived &&
-        !channel.huddle &&
+        !channel.unlisted &&
         (channel.channelType === "stream" || channel.channelType === "forum") &&
         channel.private &&
         viewerMember(channel, viewer),

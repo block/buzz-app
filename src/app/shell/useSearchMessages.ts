@@ -168,7 +168,7 @@ async function readPage(
       !hitChannelId ||
       (channelId && hitChannelId !== channelId) ||
       !hitChannel ||
-      hitChannel.huddle
+      hitChannel.unlisted
     )
       return [];
     // Search returns original indexed events, not an auxiliary edit fold.
@@ -243,7 +243,7 @@ export function useSearchMessages(
       const channel = session.channels.get?.(id);
       return (
         !!channel &&
-        !channel.huddle &&
+        !channel.unlisted &&
         (includePending || !channel.metadataPending)
       );
     },

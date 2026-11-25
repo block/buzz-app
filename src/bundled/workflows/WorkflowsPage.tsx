@@ -82,7 +82,7 @@ export function WorkflowCommunity({
   const capability = session.workflows;
   const channels = useChannelList(session.channels);
   const eligible = channels.channels.filter(
-    (item) => !item.huddle && !item.metadataPending,
+    (item) => !item.unlisted && !item.metadataPending,
   );
   // Archived channels stay eligible, so their workflows can still be found,
   // turned off and deleted, and an open editor keeps its draft.
@@ -138,7 +138,8 @@ export function WorkflowCommunity({
       !selected ||
       channel ||
       (!channels.channels.some(
-        (item) => item.id === selected && (item.huddle || item.metadataPending),
+        (item) =>
+          item.id === selected && (item.unlisted || item.metadataPending),
       ) &&
         (channels.status !== "ready" || channels.coverage === "partial"))
     )

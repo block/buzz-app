@@ -80,7 +80,7 @@ export function notificationAuthorized(
       .channels.some(
         (channel) =>
           channel.id === target.channelId &&
-          !channel.huddle &&
+          !channel.unlisted &&
           !channel.metadataPending &&
           viewerMember(channel, scope.viewer),
       )

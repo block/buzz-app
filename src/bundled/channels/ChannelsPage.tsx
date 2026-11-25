@@ -540,7 +540,7 @@ function ChannelWorkspace({
     list.channels.filter(
       (channel) =>
         // Wait for metadata so temporary rooms never flash as unnamed channels.
-        !channel.huddle && !channel.metadataPending,
+        !channel.unlisted && !channel.metadataPending,
     ),
     queries.profiles,
     queries.names,
@@ -650,7 +650,7 @@ function ChannelWorkspace({
     resolvingMembership ||
     (list.status !== "error" && !!requestedDestination?.metadataPending);
   const current =
-    requestedDestination?.huddle || requestedDestination?.metadataPending
+    requestedDestination?.unlisted || requestedDestination?.metadataPending
       ? undefined
       : requestedDestination;
   useLayoutEffect(() => {
@@ -694,7 +694,7 @@ function ChannelWorkspace({
           (channel) =>
             channel.id === requestedChannel &&
             !channel.cached &&
-            !channel.huddle &&
+            !channel.unlisted &&
             !channel.metadataPending &&
             channel.channelType !== "solo" &&
             channel.channelType !== "dm",

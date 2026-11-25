@@ -1078,9 +1078,10 @@ mod tests {
         let interpreter = directory.path().join("fixture-runtime");
         crate::test_executable::write_executable(&interpreter, "#!/bin/sh\nexec /bin/sh \"$@\"\n");
         let tool = directory.path().join("tool");
+        let env = crate::test_executable::on_path("env");
         crate::test_executable::write_executable(
             &tool,
-            "#!/usr/bin/env fixture-runtime\nprintf 'ready\\n'\n",
+            format!("#!{} fixture-runtime\nprintf 'ready\\n'\n", env.display()),
         );
         let path =
             std::env::join_paths([Path::new("/usr/bin"), Path::new("/bin"), directory.path()])

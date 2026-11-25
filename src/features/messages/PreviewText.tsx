@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChannelIdentityNames } from "../identity-names/react";
+import { parseBuzzLink } from "../navigation/buzz-links";
 import { spoilerText } from "../notifications/content";
 import { profileKey } from "../profiles/target";
 import { PROFILE_CACHE_BASE } from "../relay/budget";
@@ -10,7 +11,12 @@ import { preparedMarkdown, recentResults } from "./markdown-preparation";
 import { placeholderPattern, protectInlineContent } from "./MessageMarkdown";
 import type { AgentLibrary } from "../agents/library";
 import { profileMentionNames } from "./profile-mentions";
-import { ProfileMention, useReferenceDirectory } from "./ReferenceText";
+import {
+  channelLinkLabel,
+  ProfileMention,
+  useReferenceDirectory,
+} from "./ReferenceText";
+import styles from "../../shared/InlineReference.module.css";
 
 /** A message as its previews bind it: its body as its conversation shows
  * it, attachments already projected out, and its signed identities. */
@@ -70,6 +76,10 @@ const flatChip = (text: string) => {
   return `${chars[0]}${flatSpaces(chars.slice(1, -1).join(""))}${chars.at(-1)}`;
 };
 
+/** A link that names a channel or a message in one, which previews show by
+ * the channel's name as the conversation does. */
+const channelLink = (url: string) => parseBuzzLink(url)?.format === "legacy";
+
 /** Whether `text` can show a chip for `labels`: one reads as its name, or
  * with a namesake qualifier, which may differ in case. */
 const mayName = (text: string, labels: Labels) =>
@@ -95,8 +105,9 @@ const LONGEST_BODY = 16_384;
  * The body bound as its conversation binds it, flattened as preview text
  * is: the conversation's protected body, with each mention, emoji and
  * literal held in a placeholder, flattened once, and each placeholder read
- * back as its text. Undefined when the conversation renders the body as
- * plain text or it binds no one.
+ * back as its text. A channel link that reads as its URL, outside code, is a
+ * part too. Undefined when the conversation renders the body as plain text
+ * or it binds no one and links no channel.
  */
 function flatParts(
   content: string,
@@ -118,12 +129,20 @@ function flatParts(
     [],
     prepared.spoilerDelimiters,
   );
-  if (!protectedContent.parts.some((part) => part.target)) return undefined;
   const flat = spoilerText(
     protectedContent.content,
     `<${protectedContent.prefix}spoiler\uE002>`,
-    { limit: Number.POSITIVE_INFINITY },
+    {
+      limit: Number.POSITIVE_INFINITY,
+      // The part reads as the URL, as the surface's own flattened text does.
+      link: (url) => {
+        if (!channelLink(url)) return undefined;
+        protectedContent.parts.push({ text: url, target: url });
+        return `${protectedContent.prefix}${protectedContent.parts.length - 1}\uE002`;
+      },
+    },
   );
+  if (!protectedContent.parts.some((part) => part.target)) return undefined;
   const parts: Part[] = [];
   let [plain, at] = ["", 0];
   for (const match of flat.matchAll(placeholderPattern(protectedContent))) {
@@ -191,10 +210,11 @@ function previewParts(
 }
 
 /** Flattened preview text with its signed mentions as chips, bound and
- * labelled as its message binds them. `text` shows `full` (itself by
- * default) from `start`, as `previewParts` describes. `matches` are the code
- * points MatchedLabel marks in `text`; a chip holding one is marked whole,
- * since its label can differ from its text. */
+ * labelled as its message binds them, and its links to joined channels by
+ * their names. `text` shows `full` (itself by default) from `start`, as
+ * `previewParts` describes. `matches` are the code points MatchedLabel marks
+ * in `text`; a chip holding one is marked whole, since its label can differ
+ * from its text. */
 export function PreviewText({
   text,
   full = text,
@@ -222,14 +242,17 @@ export function PreviewText({
     mentionLabels(mentionedIds(mentions), directory.profiles, directory.agents),
   );
   // Binding parses the body's Markdown, and only for previews on or near the
-  // screen whose text can show a name.
+  // screen whose text can show a name or a channel link. Channel links come
+  // from the body's text, not its signed tags, so an edited body keeps them.
   const parts = useMemo(() => {
-    if (!shown.near || edited || labels === "[]") return [{ text }];
-    const parsed: Labels = JSON.parse(labels);
-    if (!mayName(text, parsed)) return [{ text }];
-    const key = JSON.stringify([labels, seams, content, full, text, start]);
+    if (!shown.near) return [{ text }];
+    const parsed: Labels = edited ? [] : JSON.parse(labels);
+    const named = parsed.length > 0 && mayName(text, parsed);
+    if (!named && !text.includes("buzz://")) return [{ text }];
+    const bound = named ? parsed : [];
+    const key = JSON.stringify([bound, seams, content, full, text, start]);
     return recentParts(key, () => {
-      const flat = flatParts(content, seams, parsed);
+      const flat = flatParts(content, seams, bound);
       return (flat && previewParts(flat, full, text, start)) ?? [{ text }];
     });
   }, [shown.near, edited, labels, content, seams, full, text, start]);
@@ -242,11 +265,20 @@ export function PreviewText({
     const positions = matches
       ?.filter((at) => at >= start && at < start + length)
       .map((at) => at - start);
-    if (!part.target || !profileKey(part.target))
+    const channel =
+      part.target && !profileKey(part.target)
+        ? channelLinkLabel(part.target, directory.channels)
+        : undefined;
+    if (!part.target || (!profileKey(part.target) && !channel))
       return (
         <MatchedLabel key={start} label={part.text} positions={positions} />
       );
-    const chip = (
+    // A row is its own control, so a channel name is text, not a link.
+    const chip = channel ? (
+      <span key={start} className={styles.link}>
+        {channel}
+      </span>
+    ) : (
       <ProfileMention
         key={start}
         text={part.text}

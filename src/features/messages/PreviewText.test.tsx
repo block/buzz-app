@@ -317,12 +317,40 @@ it("keeps chips beside a repaired wrapped link", () => {
   );
 });
 
-it("does not prepare a body without signed mentions", () => {
+it("does not prepare a body without signed mentions or channel links", () => {
   vi.mocked(renderedProfileMentionParts).mockClear();
-  const body = `**${"x ".repeat(5000)}** @tomb`;
+  const body = `**${"x ".repeat(5000)}** @tomb https://example.org/buzz`;
   const view = preview(body, { mentions: [] }, { text: messagePreview(body) });
   expect(chips(view)).toEqual([]);
   expect(renderedProfileMentionParts).not.toHaveBeenCalled();
+});
+
+it("names joined channels a link reads as, as the conversation does", () => {
+  const joined = {
+    ...session,
+    channels: {
+      list: () => ({
+        channels: [{ id: "beta", name: "Beta", channelType: "stream" }],
+      }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const body =
+    "see buzz://channel/beta, <buzz://channel/beta>, `buzz://channel/beta`, [label](buzz://channel/beta), buzz://channel/gone";
+  const shown = (edited?: true) =>
+    render(
+      <PreviewText
+        text={messagePreview(body)}
+        mentions={{ content: body, mentions: [], ...(edited && { edited }) }}
+        session={joined}
+        channelId="room"
+      />,
+    ).container;
+  expect(shown()).toHaveTextContent(
+    "see #Beta, #Beta, buzz://channel/beta, label, buzz://channel/gone",
+  );
+  cleanup();
+  expect(shown(true)).toHaveTextContent("see #Beta, #Beta,");
 });
 
 it("reads named identities before the optional mentioned ones, within budget", () => {

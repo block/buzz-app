@@ -1315,6 +1315,7 @@ export class PiRuntime {
             conversation: call.conversation,
           }),
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
+        relayUrl: this.reads(call.agent)?.relayUrl?.(),
         signingAuthority: relayKeyOf(this.reads(call.agent)),
         read: (path) => {
           // Relative to where the asking run works: its conversation's latest

@@ -28,6 +28,7 @@ token or other secret in one**. Open-source builds leave them all unset.
 | `BUZZ_RECOMMENDED_AGENT` | The [recommended agent](#recommended-agent) setup offered as **Automatic**. |
 | `BUZZ_BUILD_FEDERATED_IDENTITY_CONFIG` | [Sign-in servers](#federated-identity-build-input) added to the built-in one. Empty means none. |
 | `BUZZ_BUILDERLAB_URL` | Whether the build keeps the built-in Builderlab; see [Builderlab](#builderlab). |
+| `BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES` | Frontend build: space-separated secure community origins whose channels must follow the naming rules (a type word, `proj-` first) in the create dialog, agent `channel_create` and Convert to channel. Empty applies no rules; an invalid origin fails the build. `BUZZ_CHANNEL_NAMING_GUIDELINES_URL` optionally sets the "How channel names work" link (`https:` only; anything else is ignored). |
 | `BUZZ_BUILDERLAB_APPS_DOMAIN` | The Apps cookie domain for in-app SSO, for Builderlab deployments other than the public one. Empty disables SSO. |
 | `BUZZ_BUILDERLAB_APPS_CONTROL_PLANE` | The Apps control plane origin, for deployments the built-in table doesn't list. |
 | `BUZZ_BUILD_MANAGED_PLUGINS_URL` | An `https` URL of a version 1 [managed plugin policy](managed-plugins.md#packaged-policy), used when no `managed-plugins.json` exists. |

@@ -4807,6 +4807,7 @@ export class AgentsService extends Service implements Agents {
           const client = appClient(handle, {
             signal,
             relayAuthor: source.relayAuthor?.(),
+            relayUrl: source.relayUrl?.(),
             signingAuthority: source.workflowAuthority() ?? null,
             check: () => {
               handle.attention.enabled();
@@ -5380,6 +5381,7 @@ export class AgentsService extends Service implements Agents {
             signal,
             check,
             relayAuthor: source.relayAuthor?.(),
+            relayUrl: source.relayUrl?.(),
             signingAuthority: source.workflowAuthority() ?? null,
             // Where the agent's type reads them outside its turns, if it can.
             read: async (path) => {

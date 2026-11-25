@@ -38,6 +38,7 @@ export function appClient(
      * directory. */
     read(path: string): Promise<Uint8Array>;
     relayAuthor?: string | undefined;
+    relayUrl?: string | undefined;
     /** As `BuzzClient.signingAuthority`; undefined when unknown. */
     signingAuthority?: string | null | undefined;
     memories(slug?: string): Promise<Memories>;
@@ -190,6 +191,7 @@ export function appClient(
     key: agent.key,
     owner: agent.owner,
     relayAuthor: options.relayAuthor,
+    relayUrl: options.relayUrl,
     // Absent when the host can't learn the relay's key.
     ...(options.signingAuthority !== undefined
       ? { signingAuthority: options.signingAuthority }

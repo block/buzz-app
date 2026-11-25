@@ -25,8 +25,11 @@ const key = new Uint8Array(32).fill(2),
 const viewer = getPublicKey(key),
   relayAuthor = getPublicKey(relayKey);
 const dispose: (() => void)[] = [];
+let relayUrl: string | undefined;
 afterEach(() => {
   cleanup();
+  relayUrl = undefined;
+  vi.unstubAllEnvs();
   for (const close of dispose.splice(0)) close();
 });
 function setup(
@@ -104,6 +107,7 @@ function setup(
   const projectsRefresh = vi.fn(async () => {});
   const session = {
     ...owner.session,
+    ...(relayUrl ? { relayUrl } : {}),
     channelDetails: details.capability,
     sidebarPreferences: {
       ...owner.session.sidebarPreferences,
@@ -621,4 +625,27 @@ it("serializes metadata recovery across two mounted forms", async () => {
     await act(async () => release());
   }
   await waitFor(() => expect(h.convertedCallback).toHaveBeenCalledOnce());
+});
+
+it("holds Convert to channel to the naming rules only in a listed community", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
+  relayUrl = "wss://relay.example";
+  setup(true);
+  expect(
+    await screen.findByText(/Rename this chat to convert it/),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "How channel names work" }),
+  ).toHaveAttribute("href", "https://go.example/x");
+  expect(confirm()).toBeDisabled();
+  cleanup();
+  relayUrl = "wss://other.example";
+  setup(true);
+  await ready();
+  expect(screen.queryByText(/Rename this chat to convert it/)).toBeNull();
+  expect(confirm()).toBeEnabled();
 });

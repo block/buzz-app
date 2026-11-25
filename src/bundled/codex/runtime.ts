@@ -3647,6 +3647,7 @@ export class CodexRuntime {
           });
         },
         relayAuthor: this.reads(agent.key)?.relayAuthor?.(),
+        relayUrl: this.reads(agent.key)?.relayUrl?.(),
         signingAuthority: relayKeyOf(this.reads(agent.key)),
         read: (path) =>
           this.target

@@ -395,3 +395,10 @@ profile, then quit and reopen Buzz.
 - 10 attachments per message. Paste long text as a file.
 - A canvas holds up to 256 KiB.
 - Agents only see conversations they're in.
+- Some communities enforce channel naming rules, set by the build, not in the
+  app. There, a new or renamed channel needs a type word (a suffix like
+  `-team` or `-help`, or a prefix like `proj-` or `tmp-`) and lowercase
+  letters, numbers and single hyphens. The New channel dialog, channel
+  settings rename and Convert to channel say what to fix, and agents' channel
+  create and rename calls return the same error. Solo chats, system channels
+  and DMs are exempt, and existing channels keep their names.

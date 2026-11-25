@@ -169,6 +169,7 @@ export function nodeClient(
 
   return {
     pubkey,
+    relayUrl: options.relay,
     key: pubkey,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),

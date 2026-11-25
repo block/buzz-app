@@ -157,6 +157,8 @@ export interface BuzzClient {
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
   readonly relayAuthor?: string | undefined;
+  /** The relay this client talks to, when known. */
+  readonly relayUrl?: string | undefined;
   /** Without `relayAuthor`: learns the relay's key when a people search first
    * needs it for verified names, so no other tool waits for it. `undefined`
    * when the relay has no key; rejects when the key cannot be learned. */

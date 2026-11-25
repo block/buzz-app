@@ -1777,6 +1777,7 @@ export class GooseRuntime {
             return JSON.parse(data);
           },
           relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
+          relayUrl: this.relay(agent)?.snapshot().session.relayUrl,
           signingAuthority: relayKeyOf(
             ownerReads(this.relay(agent), pubkeyOf(agent)),
           ),

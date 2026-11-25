@@ -16,6 +16,10 @@ import {
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "../../features/relay/channel-details-protocol";
+import { soloLabels } from "../../features/solo/labels";
+import { namingRulesApply } from "./channel-naming-policy";
+import { channelNameTips } from "./channel-name-tips";
+import { NamingGuidelinesLink } from "./NamingGuidelinesLink";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { ChannelDurationField } from "./ChannelDurationField";
@@ -33,9 +37,12 @@ export function ChannelDetailsEditor({
   capability,
   channel,
   scope,
+  relayUrl,
   renderSurface,
 }: {
   scope: string;
+  /** The community's relay address, for the channel naming rules. */
+  relayUrl?: string | undefined;
   capability: ChannelDetailsCapability;
   channel: ChannelSummary;
   renderSurface?(
@@ -152,6 +159,20 @@ export function ChannelDetailsEditor({
     name: canonicalDetailsName(draft.name),
   };
   const errors = normalized ? detailsDraftErrors(normalized) : undefined;
+  // A new name follows the channel naming rules. An unchanged name is left
+  // alone, so a channel created before the rules can still edit its other details.
+  const renameBlockers =
+    normalized &&
+    view.base &&
+    normalized.name !== view.base.name &&
+    !soloLabels(view.base.labels) &&
+    namingRulesApply(relayUrl)
+      ? channelNameTips({
+          name: normalized.name,
+          temporary: normalized.ttlSeconds !== undefined,
+          description: normalized.description,
+        }).blockers
+      : [];
   const dirty =
     !!normalized &&
     !!view.base &&
@@ -171,7 +192,8 @@ export function ChannelDetailsEditor({
     !locked &&
     canEdit &&
     dirty &&
-    !Object.values(errors ?? {}).some(Boolean);
+    !Object.values(errors ?? {}).some(Boolean) &&
+    renameBlockers.length === 0;
   const edit = (focusField: "name" | "description" = "name") => {
     if (!pending && (attempt || (!view.loading && canEdit)))
       patch({
@@ -404,6 +426,13 @@ export function ChannelDetailsEditor({
                   inputRef={nameInput}
                   value={draft.name}
                   error={errors?.name}
+                  hint={
+                    renameBlockers.length > 0 && (
+                      <>
+                        {renameBlockers.join(" ")} <NamingGuidelinesLink />
+                      </>
+                    )
+                  }
                   disabled={locked || !canEdit}
                   onChange={(name) => patch({ draft: { ...draft, name } })}
                 />

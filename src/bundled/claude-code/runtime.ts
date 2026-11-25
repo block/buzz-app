@@ -2305,6 +2305,7 @@ export class ClaudeRuntime {
               return entry.sessions.captureProtectionContext(conversation);
             },
             relayAuthor: this.reads(agent)?.relayAuthor?.(),
+            relayUrl: this.reads(agent)?.relayUrl?.(),
             signingAuthority: relayKeyOf(this.reads(agent)),
             read: (path) =>
               this.target

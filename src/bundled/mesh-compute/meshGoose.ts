@@ -71,7 +71,11 @@ export class MeshGoose {
     private readonly deps: Pick<
       MeshAgentDeps,
       "spawn" | "resolveDirectory" | "current" | "memories" | "remembered"
-    > & { serve: ServeMcp },
+    > & {
+      serve: ServeMcp;
+      /** The agent's relay address, so channel naming rules can apply. */
+      relayUrl?: (agent: string) => string | undefined;
+    },
   ) {}
 
   dispose() {
@@ -123,6 +127,7 @@ export class MeshGoose {
       },
     };
     const client = appClient(guarded, {
+      relayUrl: this.deps.relayUrl?.(delivery.agent.key),
       read: (path) => readFile(this.deps.spawn, cwd, path, signal),
       signal,
       check: () => {

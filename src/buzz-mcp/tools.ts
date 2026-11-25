@@ -6,6 +6,11 @@ import { messageAuthor } from "../features/relay/fold";
 import { bytesToHex } from "nostr-tools/utils";
 import { decode, npubEncode } from "nostr-tools/nip19";
 import buzzHelp from "../../docs/buzz-help.md?raw";
+import { namingRulesApply } from "../bundled/channels/channel-naming-policy";
+import {
+  channelNameTips,
+  TYPE_WORDS_HELP,
+} from "../bundled/channels/channel-name-tips";
 import { CANVAS_HISTORY_PAGE } from "../features/channel-templates/canvas-limits";
 import {
   canonicalDetailsName,
@@ -2336,6 +2341,19 @@ class Tools {
     if (args.solo !== undefined && typeof args.solo !== "boolean")
       throw new Error("solo must be true or false.");
     const solo = args.solo === true;
+    // Solo chats are private working spaces and system channels are
+    // infrastructure, so the naming rules are for ordinary channels.
+    if (!solo && type !== "system" && namingRulesApply(this.client.relayUrl)) {
+      const { blockers } = channelNameTips({
+        name,
+        temporary: ttl !== undefined && ttl > 0,
+        description: about ?? "",
+      });
+      if (blockers.length)
+        throw new Error(
+          `Channel name "${name}" needs a fix: ${blockers.join(" ")} Examples: payments-team, checkout-help, proj-checkout. ${TYPE_WORDS_HELP}`,
+        );
+    }
     const members = keys(args, "members").filter(
       (key) => key !== this.client.pubkey,
     );
@@ -2574,8 +2592,28 @@ class Tools {
     const metadata = await this.metadata(channel);
     if (!metadata) throw unseen(channel);
     const wanted: [string, string][] = [];
-    if (args.name !== undefined)
-      wanted.push(["name", canonicalDetailsName(required(args, "name"))]);
+    if (args.name !== undefined) {
+      const name = canonicalDetailsName(required(args, "name"));
+      // A new name follows the naming rules; an unchanged one is left alone.
+      const current = metadata.tags.find((tag) => tag[0] === "name")?.[1];
+      if (
+        name !== current &&
+        !soloChannelMetadata(metadata as RelayEvent) &&
+        !metadata.tags.some((tag) => tag[0] === "t" && tag[1] === "system") &&
+        namingRulesApply(this.client.relayUrl)
+      ) {
+        const { blockers } = channelNameTips({
+          name,
+          temporary: false,
+          description: "",
+        });
+        if (blockers.length)
+          throw new Error(
+            `Channel name "${name}" needs a fix: ${blockers.join(" ")} Examples: payments-team, checkout-help, proj-checkout. ${TYPE_WORDS_HELP}`,
+          );
+      }
+      wanted.push(["name", name]);
+    }
     for (const key of ["about", "topic", "purpose"]) {
       const value = optional(args, key);
       if (value !== undefined) wanted.push([key, value]);

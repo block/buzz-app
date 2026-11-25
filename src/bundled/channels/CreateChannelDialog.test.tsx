@@ -35,6 +35,7 @@ const setupProps = () => ({
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   localStorage.clear();
   store.dispose();
@@ -1223,4 +1224,72 @@ it("creates a plain channel from a template that adds nothing here", async () =>
       },
     }),
   );
+});
+
+it("applies the naming rules and guidelines link only in a listed community", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
+  const user = userEvent.setup();
+  const block = {
+    ...store.session,
+    relayUrl: "wss://relay.example",
+  };
+  const { unmount } = render(
+    <CreateChannelDialog
+      {...setupProps()}
+      session={block}
+      open
+      onOpenChange={() => {}}
+      onCreate={vi.fn(async () => {})}
+    />,
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  expect(screen.getByRole("button", { name: "Create channel" })).toBeDisabled();
+  expect(
+    screen.getByRole("link", { name: "How channel names work" }),
+  ).toBeVisible();
+  unmount();
+  render(
+    <CreateChannelDialog
+      {...setupProps()}
+      session={{ ...store.session, relayUrl: "wss://other.example" }}
+      open
+      onOpenChange={() => {}}
+      onCreate={vi.fn(async () => {})}
+    />,
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  expect(screen.getByRole("button", { name: "Create channel" })).toBeEnabled();
+  expect(
+    screen.queryByRole("link", { name: "How channel names work" }),
+  ).toBeNull();
+});
+
+it("enables Create for a well-formed name and keeps the suggested name copyable", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  const user = userEvent.setup();
+  render(
+    <CreateChannelDialog
+      {...setupProps()}
+      session={{ ...store.session, relayUrl: "wss://relay.example" }}
+      open
+      onOpenChange={() => {}}
+      onCreate={vi.fn(async () => {})}
+    />,
+  );
+  const name = screen.getByRole("textbox", { name: "Name" });
+  await user.type(name, "Proj Checkout");
+  expect(screen.getByRole("button", { name: "Create channel" })).toBeDisabled();
+  // The suggestion uses a plain hyphen, so a copy of it passes the rules.
+  expect(document.body.textContent).toContain("like proj-checkout");
+  expect(document.body.textContent).not.toContain("proj\u2011checkout");
+  await user.clear(name);
+  await user.type(name, "ops-team");
+  expect(screen.getByRole("button", { name: "Create channel" })).toBeEnabled();
 });

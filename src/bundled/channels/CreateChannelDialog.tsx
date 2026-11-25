@@ -43,6 +43,9 @@ import {
 } from "../../features/relay/channel-details-protocol";
 import { Switch } from "../../shared/design-system/ui/Switch";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../../features/relay/channel-writes";
+import { namingGuidelinesUrl, namingRulesApply } from "./channel-naming-policy";
+import { NamingGuidelinesLink } from "./NamingGuidelinesLink";
+import { channelNameTips, similarChannelName } from "./channel-name-tips";
 import styles from "./CreateChannelDialog.module.css";
 
 export type CreateChannelInput = ChannelCreationInput;
@@ -276,9 +279,40 @@ function OpenCreateChannelDialog({
     description,
     visibility: privateChannel ? "private" : "public",
   });
+  const namingRules = namingRulesApply(session.relayUrl);
+  const guidelinesUrl = namingRules ? namingGuidelinesUrl() : undefined;
+  const { tips, blockers } = namingRules
+    ? channelNameTips({
+        name: normalizedName,
+        temporary: lifetime === "temporary",
+        description,
+      })
+    : { tips: [], blockers: [] };
+  const similar = namingRules
+    ? similarChannelName(
+        normalizedName,
+        roster.channels.filter(
+          (channel) =>
+            channel.channelType === "stream" || channel.channelType === "forum",
+        ),
+      )
+    : undefined;
+  // Non-breaking hyphens keep "-help" and "proj-" from wrapping mid-word. A
+  // hyphen inside a name (the suggestion to copy) stays a plain one.
+  const noWrap = (text: string) =>
+    text
+      .replace(/(^|[\s(])-(?=[a-z])/g, "$1\u2011")
+      .replace(/\b(proj|tmp)-(?![\p{L}\p{N}])/gu, "$1\u2011");
+  const hintText = blockers.length
+    ? noWrap(`To create: ${blockers.join(" ")}`)
+    : similar
+      ? `A channel named #${similar} already exists. Find it in the channel list and join it instead?`
+      : tips[0];
+  const hygieneBlocked = blockers.length > 0;
   const invalid =
     Object.values(errors).some(Boolean) ||
     unresolved ||
+    hygieneBlocked ||
     (chosenTemplate === undefined && (loadingDefaults || !!defaultsError));
 
   const dirty =
@@ -503,6 +537,13 @@ function OpenCreateChannelDialog({
             inputRef={input}
             value={name}
             error={name ? errors.name : undefined}
+            hint={
+              hintText && (
+                <>
+                  {hintText} {guidelinesUrl && <NamingGuidelinesLink />}
+                </>
+              )
+            }
             onChange={(value) => {
               setName(value);
               setError("");

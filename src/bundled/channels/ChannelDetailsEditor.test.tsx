@@ -23,6 +23,7 @@ import { createRelaySession } from "../../features/relay/session";
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   localStorage.clear();
 });
 const channel = {
@@ -1504,4 +1505,47 @@ it("keeps invited-only Read access intact when editing details", async () => {
     { ...current, description: `${current.description} updated` },
     expect.any(AbortSignal),
   );
+});
+
+it("holds a new channel name to the naming rules only in a listed community", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  vi.stubEnv("VITE_BUZZ_CHANNEL_NAMING_GUIDELINES_URL", "https://go.example/x");
+  const user = userEvent.setup();
+  const open = async (relayUrl: string) => {
+    const h = harness();
+    render(
+      <ChannelDetailsEditor
+        scope="community:viewer"
+        relayUrl={relayUrl}
+        capability={h.capability}
+        channel={channel}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Edit details" }),
+    );
+    return screen.getByRole("textbox", { name: "Name" });
+  };
+  const save = () => screen.getByRole("button", { name: "Save changes" });
+  let name = await open("wss://relay.example");
+  // An unchanged name that predates the rules stays editable.
+  fireEvent.change(screen.getByRole("textbox", { name: "Description" }), {
+    target: { value: "New words" },
+  });
+  expect(save()).toBeEnabled();
+  fireEvent.change(name, { target: { value: "Ops Stuff" } });
+  expect(save()).toBeDisabled();
+  expect(screen.getByText(/Add a type word at the end/)).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "How channel names work" }),
+  ).toHaveAttribute("href", "https://go.example/x");
+  fireEvent.change(name, { target: { value: "ops-team" } });
+  expect(save()).toBeEnabled();
+  cleanup();
+  name = await open("wss://other.example");
+  fireEvent.change(name, { target: { value: "Ops Stuff" } });
+  expect(save()).toBeEnabled();
 });

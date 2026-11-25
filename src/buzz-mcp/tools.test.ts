@@ -5985,6 +5985,76 @@ it("addresses a new reaction to the actual message author and fails before publi
   expect(published).toHaveLength(1);
 });
 
+it("holds channel_create to the naming rules only in a listed community", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  const { client } = relay();
+  const block = Object.assign(Object.create(client), {
+    relayUrl: "wss://relay.example",
+  });
+  await expect(
+    callTool(block, {}, "channel_create", { name: "ops", visibility: "open" }),
+  ).rejects.toThrow(/needs a fix/);
+  await expect(
+    callTool(client, {}, "channel_create", { name: "ops", visibility: "open" }),
+  ).resolves.toMatch(/^created /);
+  vi.unstubAllEnvs();
+});
+
+it("leaves system channels and Solo chats out of the naming rules", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  const { client } = relay();
+  const block = Object.assign(Object.create(client), {
+    relayUrl: "wss://relay.example",
+  });
+  await expect(
+    callTool(block, {}, "channel_create", {
+      name: "config",
+      visibility: "private",
+      type: "system",
+    }),
+  ).resolves.toMatch(/^created /);
+  await expect(
+    callTool(block, {}, "channel_create", {
+      name: "payments--team",
+      visibility: "open",
+    }),
+  ).rejects.toThrow(/single hyphens/);
+  vi.unstubAllEnvs();
+});
+
+it("holds channel_update renames to the naming rules, and leaves an unchanged name alone", async () => {
+  vi.stubEnv(
+    "VITE_BUZZ_CHANNEL_NAMING_ENFORCED_COMMUNITIES",
+    "https://relay.example",
+  );
+  const { client, published } = relay();
+  const block = Object.assign(Object.create(client), {
+    relayUrl: "wss://relay.example",
+  });
+  const context = { channel: room };
+  await expect(
+    callTool(block, context, "channel_update", { name: "Ops Stuff" }),
+  ).rejects.toThrow(/needs a fix/);
+  expect(published).toEqual([]);
+  // "plans" predates the rules: its other details stay editable.
+  await expect(
+    callTool(block, context, "channel_update", { name: "plans", about: "x" }),
+  ).resolves.toBe(`updated ${room}`);
+  await expect(
+    callTool(block, context, "channel_update", { name: "plans-team" }),
+  ).resolves.toBe(`updated ${room}`);
+  await expect(
+    callTool(client, context, "channel_update", { name: "Ops Stuff" }),
+  ).resolves.toBe(`updated ${room}`);
+  vi.unstubAllEnvs();
+});
+
 it.each(["send", "reply_in_subthread"])(
   "%s carries exact snapshot-matching attachment hints only out of band",
   async (name) => {

@@ -24,7 +24,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 function fixture(
-  onVerify?: (body: { claims: unknown[] }) => Promise<Response>,
+  onVerify?: (
+    body: { claims: unknown[] },
+    signal?: AbortSignal | null,
+  ) => Promise<Response>,
 ) {
   const headers: ReturnType<typeof deferred<Response>>[] = [];
   const controls: ReturnType<typeof deferred<Response>>[] = [];
@@ -66,7 +69,7 @@ function fixture(
       if (url.endsWith("/verify-signatures")) {
         const body = JSON.parse(String(init.body)) as { claims: unknown[] };
         return onVerify
-          ? onVerify(body)
+          ? onVerify(body, init.signal)
           : Promise.resolve(Response.json(nativeSignatureChecks(body)));
       }
       if (url.endsWith("/stream")) {
@@ -1169,11 +1172,12 @@ it("retries instead of stalling when a recoverable abort fires while draining on
   vi.useFakeTimers();
   const gates: {
     body: { claims: unknown[] };
+    signal: AbortSignal | null | undefined;
     gate: ReturnType<typeof deferred<Response>>;
   }[] = [];
-  const f = fixture((body) => {
+  const f = fixture((body, signal) => {
     const gate = deferred<Response>();
-    gates.push({ body, gate });
+    gates.push({ body, signal, gate });
     return gate.promise;
   });
   const author = keypair();
@@ -1192,9 +1196,11 @@ it("retries instead of stalling when a recoverable abort fires while draining on
     f.close(0);
     await tick();
     expect(gates).toHaveLength(1);
+    expect(gates[0]?.signal?.aborted).toBe(false);
     // Heartbeat aborts `owned` while EOF awaits `drainPromise`.
     await vi.advanceTimersByTimeAsync(45_000);
     await tick();
+    expect(gates[0]?.signal?.aborted).toBe(true);
     expect(f.callbacks.receive).not.toHaveBeenCalled();
     expect(f.snapshots.at(-1)).toMatchObject({
       status: "retrying",

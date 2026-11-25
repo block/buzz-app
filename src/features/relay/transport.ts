@@ -341,7 +341,7 @@ export async function parseEvents(
     prepared.push(...batch);
     if (index + 12 < raw.length) await yieldToHost();
   }
-  const events = await verify.settle(prepared);
+  const events = await verify.settle(prepared, signal);
   if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
   if (!events.every((event) => event !== undefined))
     throw new ReadError(
@@ -518,8 +518,9 @@ function brokerRefusals() {
 }
 
 const BROKER_VERIFY_BATCH = 1024;
+const BROKER_VERIFY_TIMEOUT_MS = 15_000;
 function brokerVerifySignatures(base: string): SignatureVerifier {
-  return async (claims) => {
+  return async (claims, signal) => {
     if (!claims.length) return [];
     const results: boolean[] = [];
     for (
@@ -527,23 +528,34 @@ function brokerVerifySignatures(base: string): SignatureVerifier {
       offset < claims.length;
       offset += BROKER_VERIFY_BATCH
     ) {
+      signal?.throwIfAborted();
       const slice = claims.slice(offset, offset + BROKER_VERIFY_BATCH);
+      const bounded = signal
+        ? AbortSignal.any([
+            signal,
+            AbortSignal.timeout(BROKER_VERIFY_TIMEOUT_MS),
+          ])
+        : AbortSignal.timeout(BROKER_VERIFY_TIMEOUT_MS);
       const response = await fetch(`${base}/api/relay/verify-signatures`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ claims: slice }),
+        signal: bounded,
       });
       if (!response.ok) {
         const failure = await readApiFailure(response);
+        // The local verifier never checks channel membership; a 401/403 here is
+        // a host failure, not channel access revocation.
         throw new ReadError(
-          failure.denied ? "denied" : "unavailable",
+          "unavailable",
           failure.error,
           response.status,
           failure.retryAfterMs,
         );
       }
       const checked: unknown = await response.json();
+      bounded.throwIfAborted();
       if (
         !Array.isArray(checked) ||
         checked.length !== slice.length ||

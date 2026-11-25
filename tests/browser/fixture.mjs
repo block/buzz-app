@@ -15,10 +15,8 @@ import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import {
-  relayBrokerPlugin,
-  verifySignatureClaims,
-} from "../../browser-host/relay-broker.mjs";
+import { relayBrokerPlugin } from "../../browser-host/relay-broker.mjs";
+import { verifySignatureClaims } from "../../browser-host/verify-signatures.mjs";
 import { policyRelay } from "./policy-relay.mjs";
 import { buildApp } from "./build.mjs";
 import { fixtureBody } from "./fixture-body.mjs";

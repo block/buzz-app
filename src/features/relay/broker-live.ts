@@ -513,7 +513,10 @@ export function subscribeBrokerTraffic(
               }
               const events = new Map<IncomingFrame, RelayEvent | undefined>();
               if (prepared.size) {
-                const checked = await verify.settle([...prepared.values()]);
+                const checked = await verify.settle(
+                  [...prepared.values()],
+                  owned.signal,
+                );
                 if (!valid()) return;
                 let index = 0;
                 for (const frame of prepared.keys())

@@ -120,6 +120,7 @@ import {
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
 } from "./sidebar-preferences.mjs";
+import { createSignatureVerifierPool } from "./verify-signatures.mjs";
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
 import { relayKlipySearchPath } from "../src/features/relay/gif-capability.ts";
 import {
@@ -185,48 +186,10 @@ const MAX_FILTERS = 4,
   MAX_INFLIGHT = 10,
   MAX_VERIFY_CLAIMS = 4096,
   MAX_VERIFY_BYTES = 2 * 1024 * 1024,
-  VERIFY_YIELD_CHUNK = 64,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
-/** Mirror `relay_verify_signatures` / `signs()` in `src-tauri/src/relay.rs`. */
-function verifySignatureClaim(claim) {
-  if (
-    !claim ||
-    typeof claim !== "object" ||
-    typeof claim.id !== "string" ||
-    typeof claim.pubkey !== "string" ||
-    typeof claim.sig !== "string" ||
-    !/^[0-9a-f]{64}$/i.test(claim.id) ||
-    !/^[0-9a-f]{64}$/i.test(claim.pubkey) ||
-    !/^[0-9a-f]{128}$/i.test(claim.sig)
-  )
-    return false;
-  try {
-    return schnorr.verify(
-      Buffer.from(claim.sig, "hex"),
-      Buffer.from(claim.id, "hex"),
-      Buffer.from(claim.pubkey, "hex"),
-    );
-  } catch {
-    return false;
-  }
-}
-
-export async function verifySignatureClaims(claims, signal) {
-  signal?.throwIfAborted();
-  const results = new Array(claims.length);
-  for (let i = 0; i < claims.length; i++) {
-    if (i > 0 && i % VERIFY_YIELD_CHUNK === 0) {
-      await new Promise((resolve) => setImmediate(resolve));
-      signal?.throwIfAborted();
-    }
-    results[i] = verifySignatureClaim(claims[i]);
-  }
-  return results;
-}
-
-async function handleVerifySignatures(req, res, cancel) {
+async function handleVerifySignatures(req, res, cancel, verifier) {
   let raw = "";
   let bytes = 0;
   req.setEncoding("utf8");
@@ -251,7 +214,14 @@ async function handleVerifySignatures(req, res, cancel) {
       error: "Signature verification request has too many claims",
     });
   cancel.signal.throwIfAborted();
-  const checked = await verifySignatureClaims(parsed.claims, cancel.signal);
+  let checked;
+  try {
+    checked = await verifier.verify(parsed.claims, cancel.signal);
+  } catch (error) {
+    if (error?.code === "VERIFY_BUSY")
+      return json(res, 503, { error: "Signature verifier is busy" });
+    throw error;
+  }
   cancel.signal.throwIfAborted();
   return json(res, 200, checked);
 }
@@ -1130,6 +1100,7 @@ export function relayBrokerPlugin({
       const sidebarMutations = new Map();
       const streams = new Map();
       const admissions = createHostAdmission();
+      const verifier = createSignatureVerifierPool();
       const builderlab = createBuilderlab({
         key: () => key,
         ...builderlabOptions,
@@ -1138,6 +1109,7 @@ export function relayBrokerPlugin({
         builderlab.signOut();
         for (const { close } of streams.values()) close();
         archive?.close();
+        verifier.close();
         key.fill(0);
 
         void upstream.close();
@@ -1374,7 +1346,7 @@ export function relayBrokerPlugin({
             url.pathname === "/api/relay/verify-signatures" &&
             req.method === "POST"
           )
-            return await handleVerifySignatures(req, res, cancel);
+            return await handleVerifySignatures(req, res, cancel, verifier);
           const parts = url.pathname.split("/").filter(Boolean);
           const scoped = parts.length === 4;
           let id;
@@ -2395,7 +2367,7 @@ export function relayBrokerPlugin({
                     interestRevision: stream.interestRevision,
                   }),
               },
-              verifySignatureClaims,
+              (claims, signal) => verifier.verify(claims, signal),
               socketFactory,
               principal.live,
               undefined,

@@ -22,7 +22,11 @@ import {
   nip44,
   generateSecretKey,
 } from "nostr-tools";
-import { relayBrokerPlugin, verifySignatureClaims } from "./relay-broker.mjs";
+import { relayBrokerPlugin } from "./relay-broker.mjs";
+import {
+  createSignatureVerifierPool,
+  verifySignatureClaims,
+} from "./verify-signatures.mjs";
 import {
   CANVAS_MAX_EVENT_BYTES,
   LIVE_CANVAS_BYTES,
@@ -4817,6 +4821,57 @@ test("verifySignatureClaims yields to the event loop every 64 claims and aborts 
     verifySignatureClaims(abortBatch, controller.signal),
   ).rejects.toThrow("client disconnected");
   expect(tailRead).toBe(false);
+});
+
+test("createSignatureVerifierPool verifies multi-chunk batches across workers, aborts cleanly, and shuts down", async () => {
+  const pool = createSignatureVerifierPool({ threads: 2, chunkSize: 4 });
+  try {
+    const key = generateSecretKey();
+    const validA = finalizeEvent(
+      { kind: 9, content: "pool-a", created_at: 1700000010, tags: [] },
+      key,
+    );
+    const validB = finalizeEvent(
+      { kind: 9, content: "pool-b", created_at: 1700000011, tags: [] },
+      key,
+    );
+    const claimA = { id: validA.id, pubkey: validA.pubkey, sig: validA.sig };
+    const claimB = { id: validB.id, pubkey: validB.pubkey, sig: validB.sig };
+    const claims = [
+      claimA,
+      { ...claimA, sig: "0".repeat(128) },
+      null,
+      { id: 1, pubkey: null, sig: {} },
+      claimB,
+      { ...claimB, id: "a".repeat(64) },
+      claimA,
+      claimB,
+      { id: "zz", pubkey: claimA.pubkey, sig: claimA.sig },
+    ];
+    expect(await pool.verify(claims)).toEqual([
+      true,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+    ]);
+    expect(await pool.verify([])).toEqual([]);
+
+    const controller = new AbortController();
+    const pending = pool.verify(
+      Array.from({ length: 32 }, () => claimA),
+      controller.signal,
+    );
+    controller.abort(new Error("cancelled mid-batch"));
+    await expect(pending).rejects.toThrow("cancelled mid-batch");
+  } finally {
+    pool.close();
+  }
+  await expect(pool.verify([null])).rejects.toThrow(/closed/);
 });
 
 test("broker transport verifies query, verifyStored, and presenceSnapshot through /verify-signatures", async () => {

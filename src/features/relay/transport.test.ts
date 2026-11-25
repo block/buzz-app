@@ -952,8 +952,13 @@ it("broker transport chunks /verify-signatures requests, exposes verifyStored, a
   const verifyCalls: {
     claims: unknown[];
     credentials: RequestCredentials | undefined;
+    signal: AbortSignal | null | undefined;
   }[] = [];
-  let verifyResponse: (body: { claims: unknown[] }) => Response = (body) =>
+  let queryReply: unknown[] = [];
+  let verifyResponse: (
+    body: { claims: unknown[] },
+    signal?: AbortSignal | null,
+  ) => Response | Promise<Response> = (body) =>
     Response.json(nativeSignatureChecks(body));
   vi.stubGlobal(
     "fetch",
@@ -970,9 +975,11 @@ it("broker transport chunks /verify-signatures requests, exposes verifyStored, a
         verifyCalls.push({
           claims: body.claims,
           credentials: init?.credentials,
+          signal: init?.signal,
         });
-        return verifyResponse(body);
+        return verifyResponse(body, init?.signal);
       }
+      if (url.endsWith("/query")) return Response.json(queryReply);
       if (url.endsWith("/presence-snapshot")) return Response.json([presence]);
       throw new Error(`unexpected fetch ${url}`);
     }),
@@ -1016,4 +1023,40 @@ it("broker transport chunks /verify-signatures requests, exposes verifyStored, a
       kind: "invalid-response",
     });
   }
+
+  // A 403 from the local verifier must surface as unavailable, never as channel denial.
+  queryReply = [fresh()];
+  verifyResponse = () =>
+    Response.json({ error: "Origin rejected" }, { status: 403 });
+  await expect(
+    transport.query([{ kinds: [9], limit: 1 }], new AbortController().signal),
+  ).rejects.toMatchObject({
+    name: "ReadError",
+    kind: "unavailable",
+    status: 403,
+  });
+
+  // Cancelling a query aborts an in-flight /verify-signatures request immediately.
+  queryReply = [fresh()];
+  const queryCancel = new AbortController();
+  let verifySignal: AbortSignal | null | undefined;
+  verifyResponse = (_body, signal) => {
+    verifySignal = signal;
+    return new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener(
+        "abort",
+        () =>
+          reject(signal.reason ?? new DOMException("Aborted", "AbortError")),
+        { once: true },
+      );
+    });
+  };
+  const pending = transport.query(
+    [{ kinds: [9], limit: 1 }],
+    queryCancel.signal,
+  );
+  await vi.waitFor(() => expect(verifySignal).toBeDefined());
+  queryCancel.abort(new DOMException("Read cancelled", "AbortError"));
+  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(verifySignal?.aborted).toBe(true);
 });

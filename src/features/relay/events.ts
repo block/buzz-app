@@ -71,6 +71,7 @@ export function eventsDto(value: unknown): RelayEvent[] {
 /** Checks that each `sig` is a BIP-340 signature over `id` by `pubkey`; one result per claim. */
 export type SignatureVerifier = (
   claims: readonly Readonly<Pick<Event, "id" | "pubkey" | "sig">>[],
+  signal?: AbortSignal,
 ) => Promise<readonly boolean[]>;
 
 /** One owner's bounded proof memo (an HTTP connection, or a live subscription
@@ -99,13 +100,17 @@ export function createEventVerifier(
   };
   const settle = async (
     events: readonly PreparedEvent[],
+    signal?: AbortSignal,
   ): Promise<(RelayEvent | undefined)[]> => {
+    signal?.throwIfAborted();
     const pending = events.filter((event) => !proven(event));
     const valid = pending.length
       ? await signatures(
           pending.map(({ id, pubkey, sig }) => ({ id, pubkey, sig })),
+          signal,
         )
       : [];
+    signal?.throwIfAborted();
     if (valid.length !== pending.length) throw invalidEvent();
     const rejected = new Set(
       pending.filter((_, index) => valid[index] !== true),
@@ -128,7 +133,10 @@ export type PreparedEvent = Event & { readonly [prepared]: true };
 export type EventVerifier = Readonly<{
   prepare(value: unknown): PreparedEvent;
   /** One result per input; invalid signatures have no proof. Host failures reject. */
-  settle(events: readonly PreparedEvent[]): Promise<(RelayEvent | undefined)[]>;
+  settle(
+    events: readonly PreparedEvent[],
+    signal?: AbortSignal,
+  ): Promise<(RelayEvent | undefined)[]>;
 }>;
 
 const invalidEvent = () =>

@@ -345,6 +345,25 @@ test("a narrow reader floats the aside over the history while the page opens it"
     .locator("form")
     .click({ position: { x: 40, y: 20 } });
   await expect(plan(page)).toBeHidden();
+  // And so does focus leaving it for the row, so a draft's Send, which it
+  // covers, is uncovered when Shift+Tab reaches it.
+  const composer = region.locator("xpath=..").locator("form");
+  await composer.locator('[contenteditable="true"]').click();
+  await page.keyboard.type("A draft");
+  await show.focus();
+  await page.keyboard.press("Enter");
+  await expect(aside(page)).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(plan(page)).toBeHidden();
+  const send = composer.getByRole("button", { name: "Send message" });
+  await expect(send).toBeFocused();
+  const sent = await send.boundingBox();
+  expect(
+    await send.evaluate(
+      (element, { x, y }) => element.contains(document.elementFromPoint(x, y)),
+      { x: sent.x + sent.width / 2, y: sent.y + sent.height / 2 },
+    ),
+  ).toBe(true);
 
   // Widening docks it again, restoring the docked state.
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -459,10 +478,14 @@ test.describe("beside a narrow dock", () => {
     const row = region.locator(`[data-message-id="${root.id}"]`);
     await row.scrollIntoViewIfNeeded();
     await row.hover({ position: { x: 24, y: 8 } });
-    // A click alone, as a press on the history would close the overlay.
+    // A click alone that keeps focus in the overlay, as a press or focus on
+    // the history would close it.
     await row
       .getByRole("button", { name: /^View thread:/ })
-      .dispatchEvent("click");
+      .evaluate((button) => {
+        button.focus = () => {};
+        button.click();
+      });
     const dock = page.locator("[data-panel-dock]");
     await expect(dock).toBeVisible();
     await dock.evaluate((element) =>

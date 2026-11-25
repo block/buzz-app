@@ -163,7 +163,9 @@ export function WorkspaceRow({
     };
   }, [shown, floating]);
 
-  // A nested surface: Escape and a press elsewhere in the row close only it.
+  // A nested surface: Escape, and a press or focus elsewhere in the row,
+  // close only it. Focus leaving it would otherwise land on composer
+  // controls it covers.
   const previous = useRef<HTMLElement | null>(null);
   useEffect(() => {
     const element = box.current;
@@ -177,13 +179,17 @@ export function WorkspaceRow({
           : null;
       element.focus({ preventScroll: true });
     }
-    const pointerdown = (event: PointerEvent) => {
+    const outside = (event: Event) => {
       const target = event.target as Node;
       if (container.contains(target) && !element.contains(target))
         change(false);
     };
-    document.addEventListener("pointerdown", pointerdown, true);
-    return () => document.removeEventListener("pointerdown", pointerdown, true);
+    document.addEventListener("pointerdown", outside, true);
+    container.addEventListener("focusin", outside);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      container.removeEventListener("focusin", outside);
+    };
   }, [floating]);
   // After the aside's own controls, which may take Escape first; a portaled
   // popover's Escape is its own.

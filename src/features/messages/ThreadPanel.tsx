@@ -2331,6 +2331,43 @@ function ThreadMessages({
     captureOlderAnchor(element);
     void view.loadMore();
   };
+  // A first window shorter than its reader leaves the root drawn right above
+  // the newest replies, with the earlier ones missing between them until a
+  // scroll asks for them. Read the next page before the thread is drawn,
+  // still following the latest reply, so a first open looks like a later one.
+  const filling = useRef(false);
+  const fills = useRef(0);
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    if (filling.current) {
+      if (snapshot.status === "loading") return;
+      filling.current = false;
+      delete element.dataset.filling;
+    }
+    if (
+      snapshot.direction !== "older" ||
+      snapshot.status !== "ready" ||
+      !snapshot.canLoadMore ||
+      snapshot.seeking ||
+      olderAnchor.current ||
+      revealSelected ||
+      fills.current >= 2 ||
+      // For now only a thread sheet, which draws once this settles.
+      !element.closest("[data-details-sheet-surface]") ||
+      element.scrollHeight - element.clientHeight >= element.clientHeight
+    )
+      return;
+    filling.current = true;
+    fills.current += 1;
+    // The sheet waits for this before drawing the thread.
+    element.dataset.filling = "";
+    captureOlderAnchor(element, true);
+    void view.loadMore().finally(() => {
+      filling.current = false;
+      delete element.dataset.filling;
+    });
+  });
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
   const showOlderPageStatus =

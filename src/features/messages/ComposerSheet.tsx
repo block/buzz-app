@@ -275,7 +275,7 @@ function useQuickHandoff(
       const scroller = body?.querySelector("[data-message-scroller]");
       const ready = scroller
         ? scroller.matches(
-            "[data-thread-drawable=read]:not([data-positioning])",
+            "[data-thread-drawable=read]:not([data-positioning], [data-filling])",
           ) &&
           (!scroller.hasAttribute("data-composer-expected") ||
             !!sheet.querySelector("[data-message-composer]"))
@@ -301,6 +301,7 @@ function useQuickHandoff(
         "data-opened",
         "data-thread-drawable",
         "data-positioning",
+        "data-filling",
         "data-composer-expected",
       ],
     });

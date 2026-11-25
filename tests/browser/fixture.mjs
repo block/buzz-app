@@ -3048,14 +3048,14 @@ export const test = base.extend({
         },
         participants,
         soloAgents,
-        soloAgentMessage(channelId, content) {
+        soloAgentMessage(channelId, content, tags = []) {
           const agent = soloAgents[0];
           expect(agent).toBeTruthy();
           const history = histories.get(`primary/${channelId}`);
           expect(history).toBeTruthy();
           const event = sign(
             9,
-            [["h", channelId]],
+            [["h", channelId], ...tags],
             content,
             soloAgentKeys[0],
             (history.at(-1)?.created_at ?? 1700000100) + 1,

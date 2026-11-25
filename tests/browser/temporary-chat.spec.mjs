@@ -105,3 +105,77 @@ test("a temporary chat opens over its message, stays out of the sidebar and post
       .getByText("Three items are still open"),
   ).toBeVisible();
 });
+
+test("a temporary chat stacks on the inline thread it opens from, and its details expand in place", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  await sidebar.getByRole("button", { name: "launch", exact: true }).click();
+  const root = app.append(
+    "primary",
+    source,
+    "Release branch is cut, QA starts on it today.",
+    true,
+    false,
+  );
+  const answer = app.append(
+    "primary",
+    source,
+    "The rollback drill is still open; I can run it Wednesday.",
+    true,
+    false,
+    root.id,
+  );
+  const rootRow = page.locator(`[data-message-id="${root.id}"]`);
+  await expect(rootRow).toBeVisible();
+  await hoverMessage(rootRow);
+  await rootRow.getByRole("button", { name: "Reply", exact: true }).click();
+  const thread = page.getByRole("dialog", { name: "Thread" });
+  const replyRow = thread.locator(`[data-message-id="${answer.id}"]`);
+  await expect(replyRow).toBeVisible();
+  await hoverMessage(replyRow);
+  await replyRow
+    .getByRole("button", { name: "More message actions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Temporary chat", exact: true })
+    .click();
+  const sheet = page.getByRole("dialog", { name: "Temporary chat" });
+  await expect(sheet).toBeVisible();
+  // It stacks on the thread, which stays open under it.
+  await expect(thread).toBeVisible();
+  await expect.poll(() => app.report.soloStarts?.length ?? 0).toBe(1);
+  const chat = app.report.soloStarts[0].tags.find(([key]) => key === "h")[1];
+  await expect(
+    sheet.getByText("The rollback drill is still open"),
+  ).toBeVisible();
+  // Its composer is on top and takes typing.
+  const composer = sheet.getByRole("textbox").last();
+  await composer.click();
+  await page.keyboard.type("What does the drill need?");
+  await expect(composer).toContainText("What does the drill need?");
+  // A details message in it expands in place rather than opening nowhere.
+  const filler = "More of it follows here. ".repeat(30);
+  const details = app.soloAgentMessage(chat, `Drill checklist\n\n${filler}`, [
+    ["audience", "details"],
+  ]);
+  const detailsRow = sheet.locator(`[data-message-id="${details.id}"]`);
+  await expect(detailsRow).toBeVisible();
+  await page.mouse.move(0, 0);
+  await detailsRow
+    .getByRole("button", { name: "Show more", exact: true })
+    .click();
+  await expect(
+    detailsRow.getByRole("button", { name: "Show less", exact: true }),
+  ).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("dialog")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  await expect(thread).toBeVisible();
+  // The thread's own reply box is back once the chat closes.
+  await expect(
+    thread.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toBeVisible();
+});

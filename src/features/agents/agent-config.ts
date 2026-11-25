@@ -13,6 +13,8 @@ import {
   artifactOp,
   artifactPrev,
   type ArtifactType,
+  NOT_OWNER,
+  notOwner,
 } from "./agent-config-artifacts";
 
 export const CONFIG_STORAGE_KEY = "buzz.agents.config.v1";
@@ -234,6 +236,8 @@ export class AgentConfigStore {
       // A stored head is re-verified; one that fails counts as never synced.
       const copy = entry.head && { ...entry.head };
       const head = copy && verifyEvent(copy) ? copy : undefined;
+      // A copy saved before owner-only config is checked again.
+      const type = k.slice(k.lastIndexOf(":") + 1) as ArtifactType;
       entries[k] =
         entry.head && !head
           ? {
@@ -241,7 +245,15 @@ export class AgentConfigStore {
               generation: entry.generation + 1,
               sequence: entry.sequence + 1,
             }
-          : entry;
+          : head && notOwner(head, k.slice(0, k.indexOf(":")), type)
+            ? {
+                state: "invalid",
+                head,
+                problem: NOT_OWNER,
+                generation: entry.generation + 1,
+                sequence: entry.sequence + 1,
+              }
+            : entry;
     }
     const hadVersion = (value.hadVersion ?? {}) as Stored["hadVersion"];
     const channels = isRecord(value.channels)

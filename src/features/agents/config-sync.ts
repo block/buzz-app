@@ -192,7 +192,7 @@ export function createConfigSync(
           d: await artifactD(type, binding.channel),
           ...(binding.family === "team-config"
             ? { team: binding.subject }
-            : {}),
+            : { owner }),
         },
       })),
     );

@@ -59,7 +59,6 @@ const gooseRuntime = (
 const owner = keypair();
 const relayKey = keypair();
 const agentKey = keypair();
-const artifactKey = keypair();
 const origin = "https://relay.example.test";
 const channel = "0b8e2a3c-1d4f-4a5b-8c6d-7e8f9a0b1c2d";
 const configChannel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
@@ -86,7 +85,7 @@ const revision = (body: object | null, op = "create") =>
         ["h", configChannel],
       ],
     },
-    artifactKey.secret,
+    owner.secret,
   ) as RelayEvent;
 
 /** Confirmed copies in this device's storage, as a sync read installs them. */

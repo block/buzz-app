@@ -11,6 +11,7 @@ import {
   artifactOp,
   artifactPrev,
   artifactProblem,
+  notOwner,
   artifactTemplate,
   type Expected,
   type SnapshotRead,
@@ -336,6 +337,10 @@ export function revertTemplate(
 ) {
   if (artifactOp(target) === "delete")
     throw new Error("A deleted revision can't be reverted to");
+  if (notOwner(target, expected.owner, expected.type))
+    throw new Error(
+      "A revision the agent's owner didn't write can't be restored",
+    );
   const restore = artifactOp(head) === "delete";
   const base =
     restore || revisionProblem(expected, head, settings) ? target : head;
@@ -364,10 +369,10 @@ export function revertTemplate(
     prev: head.id,
     extra: base.tags.filter((t) => !ENVELOPE.has(t[0] ?? "")),
   });
-  // Unsigned, so no id or pubkey yet; validation reads neither.
+  // Unsigned, so no id yet; the owner signs it.
   const problem = revisionProblem(
     expected,
-    { ...template, id: "", pubkey: "" },
+    { ...template, id: "", pubkey: expected.owner ?? "" },
     settings,
   );
   if (problem) throw new Error(`That revision isn't valid: ${problem}`);

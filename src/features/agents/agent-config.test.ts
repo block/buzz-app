@@ -1,4 +1,4 @@
-import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { describe, expect, it } from "vitest";
 import type { RelayEvent } from "../relay/events";
 import {
@@ -12,13 +12,18 @@ import { memoryStorage } from "./test-fakes";
 
 const key = generateSecretKey();
 const subject: Subject = {
-  owner: "a".repeat(64),
+  owner: getPublicKey(key),
   community: "c",
   subject: "b".repeat(64),
   channel: "9b353519-f4fe-4757-aef4-bec6cc0ae54c",
   type: "buzz.agent.instructions",
 };
-const revision = (text: string | null, prev?: string, op?: string) =>
+const revision = (
+  text: string | null,
+  prev?: string,
+  op?: string,
+  signer = key,
+) =>
   finalizeEvent(
     {
       kind: 45010,
@@ -29,7 +34,7 @@ const revision = (text: string | null, prev?: string, op?: string) =>
         ...(prev ? [["prev", prev]] : []),
       ],
     },
-    key,
+    signer,
   ) as RelayEvent;
 
 const gen = (store: AgentConfigStore) => store.capture(subject).generation;
@@ -190,6 +195,28 @@ describe("persistence", () => {
     const reloaded = new AgentConfigStore(storage);
     expect(reloaded.state(subject).state).toBe("unavailable");
     expect(reloaded.hadVersion(subject)).toBe(true);
+  });
+
+  it("blocks a stored copy its owner didn't write", () => {
+    const storage = memoryStorage();
+    new AgentConfigStore(storage).applyRead(
+      subject,
+      { generation: 0, sequence: 0 },
+      {
+        kind: "head",
+        event: revision(
+          "agent edit",
+          undefined,
+          undefined,
+          generateSecretKey(),
+        ),
+      },
+    );
+    expect(new AgentConfigStore(storage).instructions(subject)).toEqual({
+      ok: false,
+      state: "invalid",
+      problem: "Not written by the agent's owner",
+    });
   });
 
   it.each([

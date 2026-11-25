@@ -133,6 +133,16 @@ describe("artifact validation", () => {
     expect(artifactProblem(event, { ...expected, d: "x" })).toMatch(/identity/);
   });
 
+  it("accepts agent config only from its owner", async () => {
+    const { expected, event } = await instructions("hi");
+    expect(
+      artifactProblem(event, { ...expected, owner: event.pubkey }),
+    ).toBeUndefined();
+    expect(artifactProblem(event, { ...expected, owner: "b".repeat(64) })).toBe(
+      "Not written by the agent's owner",
+    );
+  });
+
   it("rejects unknown versions, U+0000 and oversize content", async () => {
     const d = await artifactD("buzz.agent.instructions", channel);
     const expected = { channel, type: "buzz.agent.instructions" as const, d };

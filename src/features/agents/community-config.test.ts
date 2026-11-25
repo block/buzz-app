@@ -1,4 +1,4 @@
-import { finalizeEvent, generateSecretKey } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import type { EventTemplate } from "nostr-tools";
 import { describe, expect, it, vi } from "vitest";
 import type { RelayEvent } from "../relay/events";
@@ -23,6 +23,8 @@ import { teamSubject } from "./config-channels";
 import { SyncedTeams, teamSources } from "./team-config";
 
 const key = generateSecretKey();
+/** The owner signs every revision. */
+const O = getPublicKey(key);
 const channel = "9b353519-f4fe-4757-aef4-bec6cc0ae54c";
 const agent: ConfigAgent = {
   pubkey: "a".repeat(64),
@@ -45,7 +47,7 @@ async function created(text: string) {
   );
 }
 const relayKey = keypair();
-/** Relay-signed state of an active channel with the owner "o" in it. */
+/** Relay-signed state of an active channel with the owner in it. */
 const channelState = (id: string) => [
   signed(relayKey, { kind: 39000, content: "", tags: [["d", id]] }),
   signed(relayKey, {
@@ -53,7 +55,7 @@ const channelState = (id: string) => [
     content: "",
     tags: [
       ["d", id],
-      ["p", "o"],
+      ["p", O],
     ],
   }),
 ];
@@ -158,7 +160,7 @@ function setup(
       owns: async () => true,
     } as never,
     sync: options.realSync
-      ? createConfigSync(store, feed, "o", "c", {
+      ? createConfigSync(store, feed, O, "c", {
           roster: (id) => configs.rosterChanged(id),
         })
       : { bind, unbind: () => {}, dispose: () => {} },
@@ -185,7 +187,7 @@ function setup(
     online: () => true,
     read,
     store,
-    owner: "o",
+    owner: O,
     community: "c",
     signal: new AbortController().signal,
     changed,
@@ -520,7 +522,7 @@ describe("an archived channel", () => {
     await first.configs.attach([agent]);
     first.configs.dispose();
     const unbound = {
-      owner: "o",
+      owner: O,
       community: "c",
       subject: agent.pubkey,
       channel: "",
@@ -548,7 +550,7 @@ describe("an archived channel", () => {
     await first.configs.attach([agent]);
     first.configs.dispose();
     const unbound = {
-      owner: "o",
+      owner: O,
       community: "c",
       subject: agent.pubkey,
       channel: "",
@@ -762,16 +764,16 @@ describe("a team roster changed elsewhere", () => {
       id,
       channel: teamChannel,
       head,
-      members: ["o", agent.pubkey],
+      members: [O, agent.pubkey],
     };
     const f = setup({ realSync: true, team });
     await f.configs.reconnected();
-    expect(teamSources(f.teams, "o", agent.pubkey)).toHaveLength(1);
+    expect(teamSources(f.teams, O, agent.pubkey)).toHaveLength(1);
     // Only the roster changes: no new team text.
-    team.members = ["o"];
+    team.members = [O];
     await f.configs.reconnected();
     await vi.waitFor(() =>
-      expect(teamSources(f.teams, "o", agent.pubkey)).toEqual([]),
+      expect(teamSources(f.teams, O, agent.pubkey)).toEqual([]),
     );
   });
 });
@@ -796,7 +798,7 @@ describe("team history", () => {
       id,
       channel: teamChannel,
       head,
-      members: ["o", agent.pubkey],
+      members: [O, agent.pubkey],
     };
     const f = setup({
       realSync: true,
@@ -860,7 +862,7 @@ describe("team history", () => {
       id,
       channel: first,
       head: await headIn(first),
-      members: ["o", agent.pubkey],
+      members: [O, agent.pubkey],
     };
     const f = setup({ realSync: true, team });
     await f.configs.reconnected();

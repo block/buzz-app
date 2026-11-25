@@ -51,7 +51,20 @@ export type Expected = Readonly<{
   d: string;
   /** For `buzz.team`: the selected team's id, from `expectedTeam`. */
   team?: string;
+  /** For `buzz.agent.*`: the agent's owner, the only accepted author. */
+  owner?: string;
 }>;
+
+export const NOT_OWNER = "Not written by the agent's owner";
+
+/** Whether `event` is agent config by someone other than its owner. Any
+ * member of the config channel can write it (NIP-AP), and only the owner's
+ * revisions are honoured. */
+export const notOwner = (
+  event: Pick<EventData, "pubkey">,
+  owner: string | undefined,
+  type: ArtifactType,
+) => type !== "buzz.team" && owner !== undefined && event.pubkey !== owner;
 
 /** A team config channel's subject label (NIP-AP "Config channels"). */
 export async function teamLabel(team: string) {
@@ -92,6 +105,7 @@ export function artifactProblem(event: EventData, expected: Expected) {
   if (tag(event, "d") !== expected.d) return "Artifact identity mismatch";
   if (tag(event, "h") !== expected.channel) return "Artifact home mismatch";
   if (tag(event, "type") !== expected.type) return "Artifact type mismatch";
+  if (notOwner(event, expected.owner, expected.type)) return NOT_OWNER;
   if (event.tags.length > MAX_TAGS) return "Too many tags";
   const op = artifactOp(event);
   if (op === "delete")

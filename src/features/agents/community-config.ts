@@ -325,7 +325,12 @@ export function agentConfigs(
                 channel,
                 type,
               },
-              expected: { channel, type, d: await artifactD(type, channel) },
+              expected: {
+                channel,
+                type,
+                d: await artifactD(type, channel),
+                owner,
+              },
               title: TITLE[side],
             },
           ];
@@ -684,6 +689,7 @@ export function agentConfigs(
         channel: channel.id,
         type,
         d: await artifactD(type, channel.id),
+        owner,
       } as const;
       const head = await readHead(input.read, channel.id, expected.d, signal);
       if (

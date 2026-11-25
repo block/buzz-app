@@ -464,6 +464,18 @@ export function createThreadView({
           : row;
       }),
     );
+    // A verified deletion folded away the root this thread was opened at, so
+    // that root is missing. The fold drops a root only for a deletion its
+    // author signed; a reply's deletion, or an unread root, never marks it.
+    if (
+      !subthreadId &&
+      rootId &&
+      rootId === messageId &&
+      inputs.has(rootId) &&
+      deletionTargets(inputs.values()).has(rootId) &&
+      !sourceRows.some((row) => row.id === rootId)
+    )
+      missing = true;
     const displayedRoot = subthreadId ?? rootId;
     let rows = sourceRows;
     if (subthreadId) {

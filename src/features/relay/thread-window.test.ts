@@ -1180,6 +1180,83 @@ it("an exact read never marks its named root missing when the read fails", async
   }
 });
 
+it("an exact read marks its root missing when the relay returns it with its deletion", async () => {
+  const deletion = signed(author, {
+    kind: 5,
+    created_at: 500,
+    content: "",
+    tags: [["e", root.id]],
+  });
+  const h = await setup((filter) =>
+    filter.ids
+      ? [root]
+      : filter.kinds?.includes(5) && filter["#e"]?.includes(root.id)
+        ? [deletion]
+        : [],
+  );
+  const gone = h.session.thread(channel, root.id, {
+    exact: true,
+    openedRoot: root.id,
+  });
+  try {
+    await gone.refresh();
+    expect(gone.snapshot()).toMatchObject({
+      status: "ready",
+      root: undefined,
+      targetStatus: "unavailable",
+      missing: true,
+    });
+  } finally {
+    gone.dispose();
+  }
+});
+
+it("marks a root missing once a live deletion folds it away, and never for a reply's", async () => {
+  const row = reply(0);
+  const h = await setup((filter) =>
+    filter.ids ? [root] : [row, bounds(filter)],
+  );
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    root: { id: root.id },
+  });
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      created_at: 500,
+      content: "",
+      tags: [["e", row.id]],
+    }),
+  ]);
+  expect(h.view.snapshot().replies).toEqual([]);
+  expect(h.view.snapshot().missing).toBeUndefined();
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      created_at: 501,
+      content: "",
+      tags: [["e", root.id]],
+    }),
+  ]);
+  expect(h.view.snapshot()).toMatchObject({ root: undefined, missing: true });
+});
+
+it("never marks a root missing for a deletion someone else signed", async () => {
+  const h = await setup((filter) => (filter.ids ? [root] : [bounds(filter)]));
+  await h.view.refresh();
+  h.traffic.receive([
+    signed(keypair(), {
+      kind: 5,
+      created_at: 500,
+      content: "",
+      tags: [["e", root.id]],
+    }),
+  ]);
+  expect(h.view.snapshot()).toMatchObject({ root: { id: root.id } });
+  expect(h.view.snapshot().missing).toBeUndefined();
+});
+
 it("never marks a thread missing when its read fails", async () => {
   const h = await setup((filter) => {
     if (filter.ids) throw new Error("relay down");

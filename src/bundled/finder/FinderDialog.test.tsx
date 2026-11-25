@@ -461,3 +461,33 @@ test("All of Buzz shows five device rows, then the relay's, then the rest of the
   // With the relay's hit, now in the index.
   expect(options("Matches")).toHaveLength(9);
 });
+
+test("More messages adds the relay's next page below the device tail", async () => {
+  const { Finder, click, corpus, events, viewer } = await fixture();
+  events.push(
+    ...Array.from({ length: 25 }, (_, n) =>
+      message(viewer, "crew", `yak relay ${n}`, 1_700_000_000 + n),
+    ),
+  );
+  corpus.add(
+    Array.from({ length: 7 }, (_, n) => local(`y${n}`, `yak note ${n}`)),
+  );
+  render(<Finder />);
+  type("yak");
+  await tick(SEARCH_DEBOUNCE_MS);
+  const relayed = () => options("More from all of Buzz");
+  expect(relayed()).toHaveLength(22);
+  const before = relayed();
+  expect(before.slice(20)).toEqual([
+    expect.stringContaining("yak note"),
+    expect.stringContaining("yak note"),
+  ]);
+  await click(screen.getByRole("button", { name: "More messages" }));
+  await tick(0);
+  expect(relayed()).toHaveLength(27);
+  // The rows already shown keep their places; the new page follows.
+  expect(relayed().slice(0, 22)).toEqual(before);
+  expect(relayed().slice(22)).toEqual(
+    Array(5).fill(expect.stringContaining("yak relay")),
+  );
+});

@@ -701,7 +701,7 @@ test("losing a channel drops its messages; rejoining reads its history again, at
   expect(reads.filter((filter) => filter["#h"]?.[0] === "lab")).toHaveLength(1);
 });
 
-test("losing one direct message of a 50-message chunk resets that chunk's fill", async () => {
+test("losing one direct message of a 50-message chunk resets that chunk's fill; while the relay refuses it, the rest are read alone", async () => {
   const now = Math.floor(Date.now() / 1000);
   const ids = Array.from(
     { length: 60 },
@@ -722,16 +722,23 @@ test("losing one direct message of a 50-message chunk resets that chunk's fill",
   const joined = rooms(true);
   const left = rooms(false);
   const reads: { "#h"?: readonly string[]; since?: number }[] = [];
-  const connect = async (member: boolean) => {
+  const refused = message(author, "dm08", "Neighbor quartz", now - 86_400);
+  const connect = async (member: boolean, refuse: boolean) => {
     const owner = createRelaySession({
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       media: () => undefined,
       async query(filters) {
+        if (refuse && filters.some((f) => f["#h"]?.includes("dm07")))
+          throw new ReadError("denied", "Relay read failed (403)", 403);
         for (const filter of filters)
           if ((filter["#h"]?.length ?? 0) > 1) reads.push(filter);
         // The relay withholds the channel's messages while access is gone.
-        const events = [...discovery, ...(member ? [...joined, said] : left)];
+        const events = [
+          ...discovery,
+          ...(member ? [...joined, said] : left),
+          refused,
+        ];
         return queryEvents(events, filters);
       },
     });
@@ -743,29 +750,40 @@ test("losing one direct message of a 50-message chunk resets that chunk's fill",
   vi.spyOn(Math, "random").mockReturnValue(0);
   const corpus = createCorpus();
   const state = createFinderState();
-  const run = async (member: boolean) => {
+  const run = async (member: boolean, refuse = false) => {
     reads.length = 0;
-    const owner = await connect(member);
+    const owner = await connect(member, refuse);
     const sync = startFinderSync({
       session: owner.session,
       corpus,
       state,
       changed() {},
     });
-    await vi.advanceTimersByTimeAsync(5000);
+    // Reading a refused group's 50 DMs alone takes 50 paced reads.
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(sync.status().phase).toBe("ready");
     sync.dispose();
     owner.dispose();
   };
+  const found = () =>
+    corpus
+      .search("quartz")
+      .hits.map(({ doc }) => doc.text)
+      .sort();
   await run(true);
-  expect(corpus.search("quartz").total).toBe(1);
+  expect(found()).toEqual(["Direct quartz", "Neighbor quartz"]);
   await run(false);
-  expect(corpus.search("quartz").total).toBe(0);
+  expect(found()).toEqual(["Neighbor quartz"]);
+  // Rejoined, but the relay refuses that DM for now.
+  await run(true, true);
+  expect(found()).toEqual(["Neighbor quartz"]);
   await run(true);
-  expect(corpus.search("quartz").total).toBe(1);
-  const chunk = reads.find((filter) => filter["#h"]?.includes("dm07"));
-  // Read from the horizon again, not resumed from its last read.
-  expect(chunk?.since).toBeLessThan(now - 86_400);
+  expect(found()).toEqual(["Direct quartz", "Neighbor quartz"]);
+  const chunk = reads.filter((filter) => filter["#h"]?.includes("dm07"));
+  // Read from the horizon again, not only resumed from its last read.
+  expect(Math.min(...chunk.map((filter) => filter.since ?? 0))).toBeLessThan(
+    now - 86_400,
+  );
   // The other chunk only resumes.
   const other = reads.find((filter) => filter["#h"]?.includes("dm55"));
   expect(other?.since).toBeGreaterThanOrEqual(now - 300);

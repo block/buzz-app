@@ -196,19 +196,35 @@ export function useFinderAll({
     return ranked.search(query, docs.length || 1);
   }, [docsKey, query]);
   const matched = new Set(results.hits.map(({ doc }) => doc.id));
-  // The rest of the device page follows once the relay answers, so it
-  // doesn't move down when the relay's rows arrive.
+  // The rest of the device page follows the relay's first page once it
+  // answers; More messages adds below it. Neither moves rows above.
+  const first = useRef<{
+    session: RelaySession;
+    query: string;
+    ids: ReadonlySet<string>;
+  }>(undefined);
+  if (
+    !search.loading &&
+    (first.current?.session !== session || first.current.query !== query)
+  )
+    first.current = { session, query, ids: new Set(docs.map((d) => d.id)) };
+  const ordered = [
+    ...results.hits,
+    ...docs
+      .filter((doc) => !matched.has(doc.id))
+      .map((doc) => ({ doc, score: 0, positions: [] })),
+  ];
+  const later = (hit: (typeof ordered)[number]) =>
+    !first.current?.ids.has(hit.doc.id);
   const tail = search.loading ? [] : rest;
   const relay: FinderResults = {
     total: docs.length + tail.length,
     hits: [
-      ...results.hits,
-      ...docs
-        .filter((doc) => !matched.has(doc.id))
-        .map((doc) => ({ doc, score: 0, positions: [] })),
+      ...ordered.filter((hit) => !later(hit)),
       ...tail,
+      ...ordered.filter(later),
     ],
   };
-  holding.current = asked && (search.loading || relay.hits.length > 0);
+  holding.current = asked && (search.loading || docs.length > 0);
   return { local, relay, search, asked };
 }

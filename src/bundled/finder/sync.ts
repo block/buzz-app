@@ -480,8 +480,21 @@ export function startFinderSync({
         (c) => c.channelType === "dm" && (!channelId || c.id === channelId),
       )
       .map((c) => c.id);
-    for (const ids of chunks(dms, 50))
-      await readAll(`dms:${ids.join()}`, { kinds: KINDS, "#h": ids });
+    for (const ids of chunks(dms, 50)) {
+      try {
+        await readAll(`dms:${ids.join()}`, { kinds: KINDS, "#h": ids });
+      } catch (error) {
+        if (signal.aborted || channelId) throw error;
+        // One refused DM refuses its whole group: read the others alone. A
+        // refused one is tried again at the next reconnect.
+        for (const id of ids)
+          await readAll(`dms:${id}`, { kinds: KINDS, "#h": [id] }).catch(
+            (error) => {
+              if (signal.aborted) throw error;
+            },
+          );
+      }
+    }
     // Replies in threads you replied in, and the roots themselves.
     for (const ids of chunks([...roots], 100)) {
       await readAll(`roots-e:${ids.join()}${at}`, {

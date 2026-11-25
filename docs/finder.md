@@ -52,7 +52,7 @@ Settings → Shortcuts.
   asks the relay, which searches every message you can read, including public
   channels you haven't joined. Those hits appear below, under **More from all of
   Buzz**, ranked the same way, followed by the rest of the device matches once
-  the relay answers. Rows you're looking at never move: once relay rows show,
+  the relay answers. **More messages** adds the relay's next page below those. Rows you're looking at never move: once relay rows show,
   the device rows above them hold still until you change the text. Relay rows
   for earlier text clear as soon as you change it, so Enter can't open one while
   the new search loads. Use **Retry** after a failed read, or **More messages**
@@ -119,7 +119,9 @@ later read brings it back.
 
 Direct messages are read 50 at a time, in the order of your DM list. When that
 list changes, every group of 50 from the change onward is read again from 90
-days back. A new DM early in the list can re-read most of them.
+days back. A new DM early in the list can re-read most of them. If the relay
+refuses one DM, the others in its group are read one at a time, and the
+refused one is tried again at the next reconnect.
 
 ## How it stays current
 

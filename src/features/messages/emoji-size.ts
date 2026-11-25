@@ -40,9 +40,18 @@ export const isEmojiOnly = (
   entries: readonly CustomEmoji[] = [],
 ) => isUnicodeEmojiOnly(renderedEmoji(value, entries));
 
+/** Most emoji a message can hold and still show large. More than this reads
+    as a run of text, so it keeps text size. */
+export const MAX_LARGE_EMOJI = 9;
+
 export function usesLargeEmojiPresentation(
   value: string,
   entries: readonly CustomEmoji[] = [],
 ) {
-  return isEmojiOnly(value, entries);
+  const rendered = renderedEmoji(value, entries);
+  if (!isUnicodeEmojiOnly(rendered)) return false;
+  let count = 0;
+  for (const { segment } of graphemes.segment(rendered.trim()))
+    if (!/^\s+$/u.test(segment) && ++count > MAX_LARGE_EMOJI) return false;
+  return true;
 }

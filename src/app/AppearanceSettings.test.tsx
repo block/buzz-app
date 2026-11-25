@@ -141,7 +141,7 @@ it("describes what the emoji size choice changes", () => {
   expect(
     screen.getByRole("combobox", { name: "Emoji size" }),
   ).toHaveAccessibleDescription(
-    "Large shows emoji-only messages and reactions bigger.",
+    "Emoji-only messages show at this size. You can also drag the corner of one in a conversation.",
   );
 });
 

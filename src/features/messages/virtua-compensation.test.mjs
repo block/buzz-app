@@ -897,3 +897,28 @@ it("reports clamped fractional correction offsets, not requested deltas", () => 
   expect(c.viewport.scrollTop).toBe(1410);
   c.driver.R();
 });
+
+it("buffers rows once they fill the viewport below its start margin", () => {
+  const { store: createStore, layout } = new Function(
+    "navigator",
+    "getComputedStyle",
+    `${helper}${core};return {store:b,layout:k};`,
+  )({ platform: "Linux x86_64", vendor: "", maxTouchPoints: 0 }, () => ({
+    direction: "ltr",
+  }));
+  // Rows without a fixed size: no buffer applies until measured rows fill
+  // the viewport. The timeline's edge sits above them as a start margin.
+  const store = createStore(layout(7));
+  store.h(7, 16);
+  store.h(4, 738);
+  expect(store.$(1600)).toEqual([0, 6]);
+  // 728 px of rows: short of the viewport, past the 722 px below the margin.
+  store.h(
+    3,
+    Array.from({ length: 7 }, (_, index) => [index, 104]),
+  );
+  // Appended rows start below the viewport's end, and must still mount, or
+  // nothing would ever measure them and end the initial measurement.
+  store.h(5, 9);
+  expect(store.$(1600)).toEqual([0, 8]);
+});

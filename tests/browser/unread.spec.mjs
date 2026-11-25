@@ -228,6 +228,10 @@ test("focus cancellation and local manual-unread survive reload until explicit m
   });
   try {
     await open(page, app, { cold: true });
+    // A gathered first screen carries its own line, so nothing holds reading
+    // for the unread repair: keep focus off the reading surface until the
+    // journey reads on purpose.
+    await park(page);
     await markerRequested;
     // Mounted history is not proof that the serial durable owner is ready.
     expect(
@@ -301,6 +305,9 @@ test("focus cancellation and local manual-unread survive reload until explicit m
       exact: true,
     }),
   ).toBeVisible();
+  // While connected, the open waits for a fresh head and never shows saved
+  // rows first, so reading needs the relay's answer.
+  app.relay.releaseContent();
   await options(page);
   await page
     .getByRole("button", {

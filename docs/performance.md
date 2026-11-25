@@ -78,6 +78,26 @@ a win, and run the correctness tests too. Results from different CPU settings,
 browsers or machines aren't comparable. If a case's definition changed between
 the two commits, collect a new baseline.
 
+## Open steps
+
+Settings → Developer → Client performance times each channel open from the
+click to the paint that shows its first screen. The screen lays out hidden
+until its New messages line is decided and its names are known, so rows can be
+in the DOM well before that paint. The **Open steps** table splits each source
+(memory, disk, network) into those steps.
+
+`tests/browser/open-phases.spec.mjs` records the same steps in the fixture,
+with the reads each open made, to `open-phases.json`. It runs only when asked:
+
+```sh
+BUZZ_OPEN_PHASES=1 BUZZ_OPEN_LATENCY_MS=80 BUZZ_OPEN_REPEATS=5 \
+  bin/pnpm test:browser open-phases.spec --project chromium --no-deps --workers 1
+```
+
+`BUZZ_OPEN_LATENCY_MS` delays each relay answer and EOSE.
+`BUZZ_OPEN_DEV_REACT=1` builds with development React, as `just desktop`
+runs. The fixture's roster and history are small, so compare steps, not totals.
+
 ## Thread scrolling
 
 `thread-scroll` scrolls a 460-reply weekly-update thread from 40 authors, with

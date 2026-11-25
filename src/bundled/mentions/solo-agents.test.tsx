@@ -56,6 +56,7 @@ import type { RelayEvent } from "../../features/relay/events";
 import {
   PROFILE_CACHE_BASE,
   PROFILE_CACHE_MAX,
+  PROFILE_NAMES_HELD,
 } from "../../features/relay/budget";
 import {
   keypair,
@@ -5798,8 +5799,8 @@ it("asks again for a member's name after the cache evicted it, but not for a kno
     view.unmount();
     expect(h.requested().has(member.pubkey)).toBe(false);
     expect(h.reads).toHaveLength(1);
-    // Unrelated profiles push the member out of the 1,024-entry base.
-    h.directory.accept(unsignedProfiles(1024, "Other "));
+    // Unrelated profiles push the member out of the names held.
+    h.directory.accept(unsignedProfiles(PROFILE_NAMES_HELD, "Other "));
     expect(h.directory.queries.snapshot().has(member.pubkey)).toBe(false);
     view = h.mount();
     await waitFor(() => expect(h.requested().has(member.pubkey)).toBe(true));

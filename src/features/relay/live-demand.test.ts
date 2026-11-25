@@ -1695,3 +1695,52 @@ describe("recovery tick roster backstop", () => {
     }
   });
 });
+
+it("the first complete roster leaves reads of channels still readable, and cancels a revoked or unknown channel's", async () => {
+  const h = setup();
+  try {
+    h.live.receive([
+      roster(h.relay, "kept", [h.viewer.pubkey]),
+      roster(h.relay, "revoked", [h.viewer.pubkey]),
+    ]);
+    await flush();
+    for (const request of h.wire.pending.splice(0)) request.respond([]);
+    await flush();
+    const read = (id: string) =>
+      h.owner.session.read([{ kinds: [9], "#h": [id], limit: 5 }]).then(
+        (events) => ({ events }),
+        (error: unknown) => ({ error }),
+      );
+    const kept = read("kept");
+    const revoked = read("revoked");
+    const unknown = read("unknown");
+    await flush();
+    const wire = (id: string) =>
+      h.wire.pending.find((request) => request.filters[0]?.["#h"]?.[0] === id);
+    const keptRead = wire("kept");
+    expect(keptRead).toBeDefined();
+    h.connected();
+    h.live.established();
+    await flush();
+    const scan = h.wire.pending.find((request) =>
+      request.filters[0]?.kinds?.includes(39002),
+    );
+    // The roster omits "revoked" and never knew "unknown".
+    scan?.respond([
+      roster(h.relay, "kept", [h.viewer.pubkey]),
+      metadata(h.relay, "kept", "Kept"),
+    ]);
+    await flush();
+    expect(
+      h.owner.session.channels.list().channels.map((channel) => channel.id),
+    ).toEqual(["kept"]);
+    expect(await revoked).toMatchObject({ error: { name: "AbortError" } });
+    expect(await unknown).toMatchObject({ error: { name: "AbortError" } });
+    expect(keptRead?.signal?.aborted).toBe(false);
+    const row = message(h.viewer, "kept", "still here", 1700000001);
+    keptRead?.respond([row]);
+    expect(await kept).toMatchObject({ events: [{ id: row.id }] });
+  } finally {
+    h.owner.dispose();
+  }
+});

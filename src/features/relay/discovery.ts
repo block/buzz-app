@@ -380,6 +380,18 @@ export class DiscoveryState {
       this.open(id) || (!roster && !this.metadata.has(id) && !this.complete)
     );
   }
+  /** Signed evidence lets the viewer read the channel: its roster lists
+   * them, or its metadata is open. Unlike `canAccess`, a channel no roster
+   * has ruled out yet (before the first complete one) or a chat still
+   * starting does not count, so what keeps a read through an access change
+   * fails closed. */
+  confirmedAccess(id: string): boolean {
+    if (this.suspended.has(id)) return false;
+    if (this.denied.has(id))
+      return this.confirmedPreviews.has(id) && this.open(id);
+    const roster = this.rosters.get(id);
+    return (!!roster && hasTag(roster, "p", this.viewer)) || this.open(id);
+  }
   /** Explicit signed public metadata grants reading, never membership. */
   private open(id: string): boolean {
     const event = this.metadata.get(id);

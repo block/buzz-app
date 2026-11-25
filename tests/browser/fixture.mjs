@@ -125,6 +125,8 @@ export const test = base.extend({
   membershipActivity: [false, { option: true }],
   // Joins newer than all alpha history, by distinct new members.
   membershipBurst: [0, { option: true }],
+  // Burst members have profiles, served on profile reads.
+  membershipBurstNamed: [false, { option: true }],
   launchAnimation: [false, { option: true }],
   historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   // Rows sharing each history second; above the page size, pages split seconds.
@@ -133,6 +135,7 @@ export const test = base.extend({
   fixedKeys: [false, { option: true }],
   channelIds: [channels, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
+  clientMetrics: [false, { option: true, scope: "worker" }],
   builderlabLogin: [false, { option: true, scope: "worker" }],
   // An FI build with no native host: the Builderlab plugin applies, signed out.
   federatedIdentity: [false, { option: true, scope: "worker" }],
@@ -217,6 +220,7 @@ export const test = base.extend({
       olderPageDelayMs,
       membershipActivity,
       membershipBurst,
+      membershipBurstNamed,
       launchAnimation,
       historyCounts,
       historyRowsPerSecond,
@@ -729,19 +733,22 @@ export const test = base.extend({
       const history = histories.get(`primary/${channels[0]}`);
       const start = history.at(-1).created_at + 1;
       history.push(
-        ...Array.from({ length: membershipBurst }, (_, i) =>
-          sign(
+        ...Array.from({ length: membershipBurst }, (_, i) => {
+          const member = generateSecretKey();
+          const target = getPublicKey(member);
+          if (membershipBurstNamed)
+            servedProfiles.set(
+              target,
+              sign(0, [], JSON.stringify({ name: `Joiner ${i}` }), member),
+            );
+          return sign(
             40099,
             [["h", channels[0]]],
-            JSON.stringify({
-              type: "member_joined",
-              actor: viewer,
-              target: getPublicKey(generateSecretKey()),
-            }),
+            JSON.stringify({ type: "member_joined", actor: viewer, target }),
             relayKey,
             start + i,
-          ),
-        ),
+          );
+        }),
       );
     }
     let inboxDmAnchor;
@@ -2486,10 +2493,13 @@ export const test = base.extend({
             expect(body.interestRevision).toBeGreaterThan(
               owner.interestRevision,
             );
+            const previous = new Set(owner.channels);
             owner.channels = body.channels;
             owner.interestRevision = body.interestRevision;
             report.streamInterests.push({ community, channels: body.channels });
             owner.state();
+            const added = body.channels.filter((id) => !previous.has(id));
+            if (added.length) owner.established(added);
           }
           return send(response, {});
         }
@@ -2515,9 +2525,18 @@ export const test = base.extend({
                 `event: state\ndata: ${JSON.stringify({ status: "connected", interestRevision: owner.interestRevision, routes: owner.channels.map((channelId) => ({ id: `channel:${channelId}`, channelId, status: "live", replay: "unknown" })) })}\n\n`,
               );
             },
+            established(channels) {
+              response.write(
+                channels
+                  ? `event: established\ndata: ${JSON.stringify({ channels, interestRevision: owner.interestRevision })}\n\n`
+                  : "event: established\ndata: {}\n\n",
+              );
+            },
           };
           streamOwners.set(streamId, owner);
           owner.state();
+          owner.established();
+          if (owner.channels.length) owner.established(owner.channels);
           const clients = streams.get(community) ?? new Set();
           streams.set(community, clients);
           clients.add(owner);

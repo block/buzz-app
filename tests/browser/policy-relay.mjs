@@ -107,6 +107,7 @@ export function policyRelay({
   report.startupFrames = [];
   let emptyRoster = false;
   let heldContent = false;
+  const pendingContent = [];
   const communityOf = (url) =>
     String(url).includes("secondary") ? "secondary" : "primary";
   const fault = (error) => {
@@ -126,6 +127,11 @@ export function policyRelay({
       socket.onmessage?.({ data: JSON.stringify(frame) });
   }
   const api = {
+    /** Answer each HTTP read, publication and EOSE `ms` late, like a remote relay. */
+    latency(ms) {
+      latencyMs = ms;
+      eoseMs = ms;
+    },
     startupQuota(limit, setupLatencyMs = 40) {
       wsLimit = limit;
       eoseMs = setupLatencyMs;
@@ -139,6 +145,11 @@ export function policyRelay({
     },
     holdContent() {
       heldContent = true;
+    },
+    /** Answer the held message reads, and every later one at once. */
+    releaseContent() {
+      heldContent = false;
+      for (const release of pendingContent.splice(0)) release();
     },
     holdProfiles(authors) {
       heldAuthors = new Set(authors);
@@ -280,8 +291,9 @@ export function policyRelay({
           filters[1].kinds[0] === 40099
         ) {
           expect(filters[1]["#h"]).toEqual(filters[0]["#h"]);
-          // Returned, not awaited: a part held and then cancelled by the app
-          // is consumer cancellation, not a fault (see the presence hold).
+          // Each part records its own faults. Return the joined parts rather
+          // than awaiting them here, so a part the consumer cancels rejects
+          // with its abort instead of counting as a fixture assertion failure.
           return Promise.all(
             filters.map((filter) =>
               api.fetch(url, {
@@ -550,14 +562,15 @@ export function policyRelay({
           return Response.json(answer(community, filter));
         }
         if (heldContent && filter.kinds?.includes(9))
-          return new Promise((_resolve, reject) => {
-            if (init.signal.aborted) reject(init.signal.reason);
-            else
-              init.signal.addEventListener(
-                "abort",
-                () => reject(init.signal.reason),
-                { once: true },
-              );
+          return new Promise((resolve, reject) => {
+            if (init.signal.aborted) return reject(init.signal.reason);
+            const abort = () => reject(init.signal.reason);
+            init.signal.addEventListener("abort", abort, { once: true });
+            pendingContent.push(() => {
+              init.signal.removeEventListener("abort", abort);
+              if (!init.signal.aborted)
+                resolve(Response.json(answer(community, filter)));
+            });
           });
         const channel = filter["#h"]?.[0];
         // Head catch-up is an exact top-level channel window, not a batched

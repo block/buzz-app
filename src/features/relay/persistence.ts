@@ -29,6 +29,9 @@ export interface HeadPersistence {
   /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
   writeProfiles?(events: readonly unknown[]): Promise<void>;
+  /** Compact names as rows showed them (`saved-names`), display only. */
+  readNames?(): Promise<unknown[]>;
+  writeNames?(names: readonly unknown[]): Promise<void>;
   write(head: SavedHead): Promise<void>;
   remove(channelId: string): Promise<void>;
   retain(channelIds: readonly string[]): Promise<void>;
@@ -41,6 +44,7 @@ const DB = "buzz-channel-heads-v1";
 const STORE = "heads";
 const STARTUP = "startup";
 const MIRROR = ":profiles";
+const NAMES = ":names";
 /** The largest row saved; a larger one is not written at all. */
 export const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_HEADS = 64;
@@ -81,6 +85,7 @@ export function createHeadPersistence(
 ): HeadPersistence {
   const scope = `${viewer}:${relay}`;
   const profiles = `${scope}${MIRROR}`;
+  const names = `${scope}${NAMES}`;
   let closed = false;
   let opening: Promise<IDBDatabase> | undefined;
   function database() {
@@ -128,8 +133,10 @@ export function createHeadPersistence(
     then(
       store.getAll(),
       (rows: { key: string; bytes: number; savedAt: number }[]) => {
+        // Over budget, saved names go first, then profile mirrors: each
+        // community's newest are kept.
         const mirror = (row: { key: string }) =>
-          Number(row.key.endsWith(MIRROR));
+          row.key.endsWith(NAMES) ? 2 : Number(row.key.endsWith(MIRROR));
         let total = 0;
         for (const row of rows.sort(
           (a, b) => mirror(a) - mirror(b) || b.savedAt - a.savedAt,
@@ -249,6 +256,26 @@ export function createHeadPersistence(
         },
         STARTUP,
       ),
+    readNames: () =>
+      transact(
+        "readonly",
+        (store, done, then) =>
+          then(store.get(names), (row) => done(row?.data ?? [])),
+        STARTUP,
+      ),
+    writeNames: (data) =>
+      transact(
+        "readwrite",
+        (store, done, then) => {
+          const bytes = byteSize(data);
+          if (bytes <= MAX_BYTES) {
+            store.put({ key: names, data, bytes, savedAt: Date.now() });
+            prune(store, then);
+          }
+          done(undefined);
+        },
+        STARTUP,
+      ),
     read: () =>
       transact("readonly", (store, done, then) =>
         then(store.getAll(historyKeys()), (rows: Record[]) =>
@@ -331,6 +358,7 @@ export function createHeadPersistence(
         (store, done) => {
           store.delete(scope);
           store.delete(profiles);
+          store.delete(names);
           done(undefined);
         },
         STARTUP,

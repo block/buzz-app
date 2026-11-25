@@ -1,3 +1,4 @@
+import { TraceProfiler } from "../../features/developer/TraceProfiler";
 import { teamSidebarSlotsReady, teamSidebarSource } from "./TeamSidebarSource";
 import { soloSidebarSource } from "./SoloSidebarSource";
 import { SidebarSectionSlotView } from "../../features/channel-navigation/SidebarSectionSources";
@@ -182,143 +183,149 @@ function ScopedSidebar({
   return (
     <SidebarBoundary key={`${scope}:${connection.generation}`} header={header}>
       {session && inventory ? (
-        <ChannelInventory
-          relay={props.relay}
-          navigator={props.navigator}
-          agents={props.agents}
-          target={props.target}
-          queries={connection.session}
-          scope={scope}
-          viewer={connection.viewer}
-          sidebarSections={props.sidebarSections}
-          sidebarRows={props.sidebarRows}
-          chatIcons={props.chatIcons}
-          chatMenus={props.chatMenus}
-          cached={!!connection.cached}
-          chatsOnly={!!restriction}
-          layoutReady={committedSlots?.generation === slotGeneration}
-          slotsReady={(ids) =>
-            teamSidebarSlotsReady(props.sidebarSections, committedSlots, ids)
-          }
-          preserveSidebar={preserveSidebar}
-          connectionError={connection.error}
-          render={({
-            sidebar,
-            workspaceComposition,
-            dmPreviews,
-            frame,
-            before,
-            content,
-            team,
-            after,
-            dialogs,
-          }) => (
-            <SidebarEnvironment
-              session={session}
-              scope={scope}
-              navigator={props.navigator}
-              target={props.target}
-              sidebar={sidebar}
-              workspaceComposition={workspaceComposition}
-              chatIcons={props.chatIcons}
-              chatMenus={props.chatMenus}
-              sidebarRows={props.sidebarRows}
-            >
-              {props.renderSections({
-                settled: sourcesSettled,
-                onReady: slotsCommitted,
-                children: (slots, sources) => {
-                  const teamContent = (
-                    <>
-                      {slots
-                        .filter(
-                          (slot) =>
-                            slot.scope === "team" &&
-                            (!restriction ||
-                              slot.source.component ===
-                                teamSidebarSource.component),
-                        )
-                        .map((slot) => (
-                          <SidebarSectionSlotView key={slot.key} slot={slot} />
-                        ))}
-                      {content}
-                    </>
-                  );
-                  return (
-                    <>
-                      {sources(
-                        "solo",
-                        (source) =>
-                          source.component !== soloSidebarSource.component,
-                      )}
-                      {team(
-                        <>
-                          {sources("team")}
-                          {sources(
-                            "solo",
-                            (source) =>
-                              source.component === soloSidebarSource.component,
-                          )}
-                        </>,
-                      )}
-                      <props.Frame
-                        scope={scope}
-                        resizable
-                        label="Sidebar"
-                        header={header}
-                        footer={footer}
-                        {...frame}
-                        launchPending={
-                          committedSlots?.generation === slotGeneration
-                            ? frame.launchPending
-                            : "required"
-                        }
-                      >
-                        {/* Relay outages for every inventory recover through one
-                    automatic owner; its one notice shows on every page. */}
-                        {!connection.cached && (
-                          <RecoveryNotice
-                            recovery={connection.session.recovery}
-                          />
+        <TraceProfiler id="sidebar">
+          <ChannelInventory
+            relay={props.relay}
+            navigator={props.navigator}
+            agents={props.agents}
+            target={props.target}
+            queries={connection.session}
+            scope={scope}
+            viewer={connection.viewer}
+            sidebarSections={props.sidebarSections}
+            sidebarRows={props.sidebarRows}
+            chatIcons={props.chatIcons}
+            chatMenus={props.chatMenus}
+            cached={!!connection.cached}
+            chatsOnly={!!restriction}
+            layoutReady={committedSlots?.generation === slotGeneration}
+            slotsReady={(ids) =>
+              teamSidebarSlotsReady(props.sidebarSections, committedSlots, ids)
+            }
+            preserveSidebar={preserveSidebar}
+            connectionError={connection.error}
+            render={({
+              sidebar,
+              workspaceComposition,
+              dmPreviews,
+              frame,
+              before,
+              content,
+              team,
+              after,
+              dialogs,
+            }) => (
+              <SidebarEnvironment
+                session={session}
+                scope={scope}
+                navigator={props.navigator}
+                target={props.target}
+                sidebar={sidebar}
+                workspaceComposition={workspaceComposition}
+                chatIcons={props.chatIcons}
+                chatMenus={props.chatMenus}
+                sidebarRows={props.sidebarRows}
+              >
+                {props.renderSections({
+                  settled: sourcesSettled,
+                  onReady: slotsCommitted,
+                  children: (slots, sources) => {
+                    const teamContent = (
+                      <>
+                        {slots
+                          .filter(
+                            (slot) =>
+                              slot.scope === "team" &&
+                              (!restriction ||
+                                slot.source.component ===
+                                  teamSidebarSource.component),
+                          )
+                          .map((slot) => (
+                            <SidebarSectionSlotView
+                              key={slot.key}
+                              slot={slot}
+                            />
+                          ))}
+                        {content}
+                      </>
+                    );
+                    return (
+                      <>
+                        {sources(
+                          "solo",
+                          (source) =>
+                            source.component !== soloSidebarSource.component,
                         )}
-                        <LiveSignIn
-                          session={connection.session}
-                          identity={communityIdentity(
-                            props.federatedIdentity,
-                            connection.origin,
-                          )}
-                          relay={connection.origin}
-                          memberships={props.memberships}
-                          tryAgain={() => props.relay.tryAgain()}
-                        />
-                        {before}
-                        <SidebarUnread
-                          listRef={sidebar.list}
-                          adjustScrollAnchor={sidebar.adjustScrollAnchor}
-                          captureScrollAnchor={sidebar.captureScrollAnchor}
-                          dmPreviews={dmPreviews}
-                          floatingAction={footer ? floatingAction : undefined}
+                        {team(
+                          <>
+                            {sources("team")}
+                            {sources(
+                              "solo",
+                              (source) =>
+                                source.component ===
+                                soloSidebarSource.component,
+                            )}
+                          </>,
+                        )}
+                        <props.Frame
+                          scope={scope}
+                          resizable
+                          label="Sidebar"
+                          header={header}
+                          footer={footer}
+                          {...frame}
+                          launchPending={
+                            committedSlots?.generation === slotGeneration
+                              ? frame.launchPending
+                              : "required"
+                          }
                         >
-                          {teamContent}
-                          {slots
-                            .filter((slot) => slot.scope === "solo")
-                            .map((slot) => (
-                              <SidebarSectionSlotView
-                                key={slot.key}
-                                slot={slot}
-                              />
-                            ))}
-                        </SidebarUnread>
-                        {after}
-                      </props.Frame>
-                      {dialogs}
-                    </>
-                  );
-                },
-              })}
-            </SidebarEnvironment>
-          )}
-        />
+                          {/* Relay outages for every inventory recover through one
+                    automatic owner; its one notice shows on every page. */}
+                          {!connection.cached && (
+                            <RecoveryNotice
+                              recovery={connection.session.recovery}
+                            />
+                          )}
+                          <LiveSignIn
+                            session={connection.session}
+                            identity={communityIdentity(
+                              props.federatedIdentity,
+                              connection.origin,
+                            )}
+                            relay={connection.origin}
+                            memberships={props.memberships}
+                            tryAgain={() => props.relay.tryAgain()}
+                          />
+                          {before}
+                          <SidebarUnread
+                            listRef={sidebar.list}
+                            adjustScrollAnchor={sidebar.adjustScrollAnchor}
+                            captureScrollAnchor={sidebar.captureScrollAnchor}
+                            dmPreviews={dmPreviews}
+                            floatingAction={footer ? floatingAction : undefined}
+                          >
+                            {teamContent}
+                            {slots
+                              .filter((slot) => slot.scope === "solo")
+                              .map((slot) => (
+                                <SidebarSectionSlotView
+                                  key={slot.key}
+                                  slot={slot}
+                                />
+                              ))}
+                          </SidebarUnread>
+                          {after}
+                        </props.Frame>
+                        {dialogs}
+                      </>
+                    );
+                  },
+                })}
+              </SidebarEnvironment>
+            )}
+          />
+        </TraceProfiler>
       ) : (
         <props.Frame
           label="Sidebar"

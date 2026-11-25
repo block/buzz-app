@@ -64,13 +64,14 @@ function setup(storage = memoryStorage(), timeoutMs = 10000) {
   assert.exists(outbox);
   const send = (content = "hello") =>
     outbox.send({ kind: 9, content, tags: [["h", "c"]] });
-  async function open() {
+  /** `dm`: a DM, whose summary carries its latest message. */
+  async function open(dm = false) {
     owner.session.channels.ensureList();
     wire
       .next()
       .respond([
         roster(relay, "c", [viewer.pubkey]),
-        metadata(relay, "c", "General"),
+        metadata(relay, "c", "General", undefined, dm ? [["t", "dm"]] : []),
       ]);
     await flush();
     owner.session.channels.ensure("c");
@@ -120,7 +121,7 @@ afterEach(() => {
 });
 it("renders one local event immediately across channel, sidebar, and filtered plugin views; stale reads cannot remove it", async () => {
   const h = setup();
-  await h.open();
+  await h.open(true);
   const view = h.session.observe([{ kinds: [9], "#h": ["c"], limit: 80 }]);
   const render = vi.fn();
   view.subscribe(render);

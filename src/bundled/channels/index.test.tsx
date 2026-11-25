@@ -15,6 +15,7 @@ function registered(
   const shortcuts = { register: vi.fn() };
   apply({
     reflect: { get: () => undefined },
+    effect() {},
     shortcuts,
     conversation: {
       registerCompletion() {},

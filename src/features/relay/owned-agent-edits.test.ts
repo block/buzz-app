@@ -484,7 +484,11 @@ it.each(["head", "tail"])(
     const preview = () =>
       channels.list().channels.find((channel) => channel.id === "c")?.preview;
     try {
-      live.receive([roster(relay, "c", [owner.pubkey, agent.pubkey], 1)]);
+      // Only Solo chats and DMs carry a preview.
+      live.receive([
+        roster(relay, "c", [owner.pubkey, agent.pubkey], 1),
+        metadata(relay, "c", "C", 1, [["t", "dm"]]),
+      ]);
       if (mode === "head") {
         channels.prepare?.("c");
         wire
@@ -541,7 +545,12 @@ it("refreshes an unopened channel's tail preview after its head changes", async 
   const preview = () =>
     channels.list().channels.find((channel) => channel.id === "c")?.preview;
   try {
-    live.receive([roster(relay, "c", [author.pubkey], 1), original]);
+    // Only Solo chats and DMs carry a preview.
+    live.receive([
+      roster(relay, "c", [author.pubkey], 1),
+      metadata(relay, "c", "C", 1, [["t", "dm"]]),
+      original,
+    ]);
     live.receive([eventDto(profile(keypair(), { name: "First" }))]);
     await flush();
     expect(preview()).toBe("Original");

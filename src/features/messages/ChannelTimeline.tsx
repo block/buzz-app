@@ -83,6 +83,7 @@ import {
 } from "./history-prefetch";
 import { useMessageSelection } from "./use-message-selection";
 import { useMessageVisit } from "./MessageManagement";
+import { rowProfileIds } from "../relay/membership";
 
 // Native upward scrolling can start on a focused message link or button.
 // Inner scrollports own the key while they can move. At their top boundary,
@@ -150,6 +151,12 @@ const visitBoundaries = new WeakMap<
   { boundary: NewMessageBoundary; baseline: NewMessageBoundaryBaseline }
 >();
 const unknownUnreadSync = Object.freeze({ completeness: "unknown" as const });
+/** The parts of a visit's first screen that are ready, for timing an open. */
+export type FirstScreen = Readonly<{
+  line: boolean;
+  names: boolean;
+  shown: boolean;
+}>;
 /** What the reader had in front of them when the window lost attention. */
 type AwayBaseline = {
   token: object;
@@ -258,6 +265,8 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string, origin?: MessageLinkOrigin): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
+  /** Each change to the first screen's progress, from its first commit. */
+  onFirstScreen?: ((screen: FirstScreen) => void) | undefined;
   /** Root of the thread currently displayed beside this conversation. */
   openThreadRootId?: string | undefined;
   /** One inline exact visit: focus the verified mounted row, without a page
@@ -312,6 +321,7 @@ function Timeline({
   onOpenLink,
   canOpenLink,
   revealMessageId,
+  onFirstScreen,
   openThreadRootId,
   inlineTarget,
   transient = false,
@@ -570,8 +580,17 @@ function Timeline({
   // An unread count without a loaded, classifiable row is not an exact boundary.
   const noUnreadEvidence =
     unreadSnapshot?.observedCount === 0 && unreadSnapshot?.attentionCount === 0;
+  /** The store handed over this opening's screen: gathered fresh, or its
+   * offline fallback. Either comes with its line. */
+  const screenGiven = window.screen === "ready" || window.screen === "offline";
   const boundaryCandidate = (() => {
-    if (!boundaryPending || !ownsMessageVisit || messageVisit?.active !== true)
+    // A screen the store gathers comes with its line (see below).
+    if (
+      window.screen !== undefined ||
+      !boundaryPending ||
+      !ownsMessageVisit ||
+      messageVisit?.active !== true
+    )
       return { ready: false };
     if (
       baseline.revision !== undefined &&
@@ -671,6 +690,16 @@ function Timeline({
         captured: false,
       },
     );
+  else if (!newMessageBoundary.captured && screenGiven)
+    // The gathered screen's line, placed with the rest of it.
+    setNewMessageBoundary({
+      token: visitToken,
+      session: queries,
+      scope,
+      channelId,
+      captured: true,
+      ...(window.screenLine ? { messageId: window.screenLine } : {}),
+    });
   else if (
     !newMessageBoundary.captured &&
     boundaryCandidate.ready &&
@@ -801,11 +830,72 @@ function Timeline({
   const newMessageBoundaryId =
     boundaryMatchesVisit &&
     newMessageBoundary.captured &&
-    messageVisit?.active === true &&
-    messageVisit?.ready === true &&
-    messageVisit?.failed === false
+    // A gathered line shows with its screen, before the visit settles.
+    (screenGiven ||
+      (messageVisit?.active === true &&
+        messageVisit?.ready === true &&
+        messageVisit?.failed === false))
       ? newMessageBoundary.messageId
       : undefined;
+  const lineDecided = !!(
+    !ownsMessageVisit ||
+    messageVisit?.active !== true ||
+    messageVisit?.failed ||
+    (boundaryMatchesVisit && newMessageBoundary.captured)
+  );
+  const namesKnown =
+    window.rows.length > 0 &&
+    window.rows.every((row) =>
+      rowProfileIds(row).every((id) => profiles.has(id)),
+    );
+  // A visit's first screen is final. While the store gathers it (its rows
+  // and the names they show), the timeline mounts, measures and positions
+  // what it has, hidden. Once it is in, it shows once, as given, with the
+  // New messages line the gather placed. After that only data that arrives
+  // later changes the screen. A store that gathers no screen leaves `screen`
+  // unset: rows show as they come, and the visit places the line itself.
+  // Nothing here times a gather out: the store ends each one with a fresh
+  // screen, its offline fallback or an error.
+  const gathering = window.screen === "gathering";
+  const [opening, setOpening] = useState(() => ({
+    token: visitToken,
+    epoch: {},
+    shown: !gathering,
+  }));
+  let currentOpening = opening;
+  if (opening.token !== visitToken) {
+    currentOpening = { token: visitToken, epoch: {}, shown: !gathering };
+    setOpening(currentOpening);
+  }
+  const { epoch } = currentOpening;
+  const laidOut = useRef<object>(undefined);
+  useLayoutEffect(() => {
+    laidOut.current = epoch;
+  }, [epoch]);
+  const firstScreenShown = currentOpening.shown;
+  // In before its first commit, the screen is laid out as it shows.
+  if (!firstScreenShown && !gathering && laidOut.current !== epoch)
+    setOpening({ ...currentOpening, shown: true });
+  useEffect(() => {
+    if (firstScreenShown) return;
+    const show = () =>
+      setOpening((opening) =>
+        opening.epoch === epoch ? { ...opening, shown: true } : opening,
+      );
+    // In later, it waits a frame for the virtualizer to measure the rows
+    // that changed while it was hidden.
+    if (gathering) return;
+    const frame = requestAnimationFrame(show);
+    return () => cancelAnimationFrame(frame);
+  }, [firstScreenShown, gathering, epoch]);
+  const hasRows = window.rows.length > 0;
+  useLayoutEffect(() => {
+    onFirstScreen?.({
+      line: lineDecided,
+      names: namesKnown,
+      shown: firstScreenShown && hasRows,
+    });
+  }, [onFirstScreen, lineDecided, namesKnown, hasRows, firstScreenShown]);
   const [expandedActivity, setExpandedActivity] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -1432,6 +1522,8 @@ function Timeline({
     // same way, once entry has settled.
     enabled:
       marksRead &&
+      // Rows laid out hidden while the store gathers the screen are unseen.
+      (firstScreenShown || !gathering) &&
       !boundaryCandidate.awaitingPage &&
       !boundaryCandidate.awaitingRepair &&
       !(awayPending && !boundaryPending),
@@ -2340,6 +2432,7 @@ function Timeline({
       data-buzz-launch-pending={launchPending ? "settling" : undefined}
       data-jump-visible={jumpVisible || undefined}
       data-trailing={trailing ? "" : undefined}
+      data-first-screen={firstScreenShown ? undefined : "pending"}
       onWheel={(event) => gesture(event.deltaY < 0 && !event.ctrlKey)}
       onTouchStart={(event) => {
         touchY.current = event.touches[0]?.clientY;
@@ -2443,7 +2536,21 @@ function Timeline({
       >
         {shownIntro}
         {edgeError && <span role="alert">{edgeError}</span>}
-        {window.historyLimited ? (
+        {window.status === "error" ? (
+          // The head failed, not a page: its Retry reads it again, as an
+          // open, rather than reading older pages below rows it never proved.
+          // A window that kept its history limit still failed its head, so
+          // Retry comes first.
+          <Button
+            type="button"
+            onClick={() => {
+              queries.channels.open?.(channelId);
+              queries.channels.ensure(channelId);
+            }}
+          >
+            Retry messages
+          </Button>
+        ) : window.historyLimited ? (
           <span>History window limit reached</span>
         ) : window.hasMore && queries.channels.cachedOnly ? (
           <span>You can load older messages once Buzz reconnects.</span>

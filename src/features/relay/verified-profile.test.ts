@@ -1759,3 +1759,58 @@ it("reads archives once when reconnecting before the queued flush lands", async 
     h.archives.dispose();
   }
 });
+
+it("a saved verified name shows only under the authority that verified it, until a sync answers", async () => {
+  const { createProfileDirectory } = await import("./profile-directory");
+  const saved = {
+    p: alice.pubkey,
+    n: "Self name",
+    v: ["Alice", "alice", "Example", 10],
+    k: relay.pubkey,
+  };
+  const open = (pubkey: string) => {
+    let sink: VerifiedProfileSink | undefined;
+    const directory = createProfileDirectory(
+      { read: async () => [] },
+      undefined,
+      undefined,
+      {
+        authority: { pubkey, multipleIssuers: false },
+        subscribe(_filter, next) {
+          sink = next;
+          return () => {};
+        },
+      },
+    );
+    directory.restoreNames([saved]);
+    return { directory, sink: () => sink };
+  };
+  const rotated = open(keypair().pubkey);
+  try {
+    expect(
+      rotated.directory.queries.snapshot().get(alice.pubkey)?.verified,
+    ).toBeUndefined();
+    expect(rotated.directory.names(10)[0]?.v).toBeUndefined();
+  } finally {
+    rotated.directory.dispose();
+  }
+  const same = open(relay.pubkey);
+  try {
+    expect(
+      same.directory.queries.snapshot().get(alice.pubkey)?.verified,
+    ).toMatchObject({ displayName: "Alice", status: "cached" });
+    // A complete sync answers with no verified head: the saved name is
+    // retired, even with no kind 0 held, and is not saved again.
+    await same.directory.ensure([alice.pubkey]);
+    const sink = same.sink();
+    assert(sink);
+    sink.eose();
+    await tick();
+    expect(
+      same.directory.queries.snapshot().get(alice.pubkey)?.verified,
+    ).toBeUndefined();
+    expect(same.directory.names(10)[0]?.v).toBeUndefined();
+  } finally {
+    same.directory.dispose();
+  }
+});

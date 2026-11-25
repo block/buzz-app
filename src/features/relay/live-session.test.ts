@@ -235,7 +235,7 @@ it("keeps a failed head recovery-owned from a dropped stream until the re-establ
 });
 
 afterEach(() => vi.useRealTimers());
-it("post-subscribe demand supersedes a pre-stream head and prioritizes the current retained reader", async () => {
+it("post-subscribe demand reads after a pre-stream head, leaves it running, and prioritizes the current retained reader", async () => {
   const relay = keypair(),
     viewer = keypair();
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
@@ -265,9 +265,14 @@ it("post-subscribe demand supersedes a pre-stream head and prioritizes the curre
     live.established("a");
     live.established("z");
     await flush();
+    // The pre-stream read cannot settle the handoff, so the catch-up reads
+    // its own; the earlier one goes on for the open that sent it.
+    expect(oldZ.signal?.aborted).toBe(false);
+    oldZ.respond([
+      bounds(relay, "z", "head", { has_more: false, next_cursor: null }),
+    ]);
     const current = wire.next();
     expect(current.filters[0]?.["#h"]).toEqual(["z"]);
-    expect(oldZ.signal?.aborted).toBe(true);
     expect(priority.mock.lastCall?.[0][0]).toBe("z");
     current.respond([
       bounds(relay, "z", "head", { has_more: false, next_cursor: null }),
@@ -386,14 +391,18 @@ it.each([1, 2, 130])(
       const evidence = wire.next();
       expect(evidence.filters[0]?.["#h"]).toEqual(ids.slice(0, 128));
       // Force the production race: both the old head and unread batch are still
-      // in flight when the live route establishes. Only the old head is obsolete.
+      // in flight when the live route establishes. The old head cannot settle
+      // the handoff, so the catch-up reads its own; neither is cancelled.
       live.state({ status: "connected", routes: [] });
       live.established(first);
       await flush();
       const head = wire.next();
       expect(head.filters[0]).toMatchObject({ "#h": [first], top_level: true });
-      expect(oldHead.signal?.aborted).toBe(true);
+      expect(oldHead.signal?.aborted).toBe(false);
       expect(evidence.signal?.aborted).toBe(false);
+      oldHead.respond([
+        bounds(relay, first, "head", { has_more: false, next_cursor: null }),
+      ]);
       head.respond([
         bounds(relay, first, "head", { has_more: false, next_cursor: null }),
       ]);
@@ -2171,32 +2180,25 @@ describe("a reconnect whose replay was continuous", () => {
     }
   });
 
-  it("catches up a window whose only recent head read was a prefetch it never took, though its replay was continuous", async () => {
-    // The prefetch's rows went to the cached head, not the open window, so
-    // they cannot show the window holds the frame the relay dropped.
-    let clock = 1_700_000_000_000;
-    const h = reconnectHarness({ now: () => clock });
+  it("a catch-up takes a head read sent after the channel's route was established, and reads nothing", async () => {
+    const h = reconnectHarness();
     try {
-      const seen = message(h.alice, "c", "seen", 10);
-      await h.reconnect(seen);
-      h.read().respond(h.page("head", [seen], seen));
+      await h.list();
+      h.live.state({ status: "connected", routes: [] });
+      h.live.established("c");
       await flush();
-      expect(h.window().freshness).toBe("verified");
-      const lost = message(h.alice, "c", "frame the relay dropped", 20);
-      clock += 15 * 60_000 + 1;
+      const seen = message(h.alice, "c", "seen", 10);
+      // A hover reads the head over the established route.
       h.owner.session.channels.prepare?.("c");
       await flush();
-      h.read().respond(h.page("head", [lost, seen], seen));
+      h.read().respond(h.page("head", [seen], null));
+      await flush();
+      h.queries.length = 0;
+      h.owner.session.channels.ensure("c");
       await flush();
       expect(h.rows()).toEqual([seen.id]);
-      await h.drop();
-      h.queries.length = 0;
-      await resume(h, [], true);
-      expect(h.window().freshness).toBe("cached");
-      h.read().respond(h.page("head", [lost, seen], seen));
-      await flush();
-      expect(h.rows()).toEqual([seen.id, lost.id]);
       expect(h.window().freshness).toBe("verified");
+      expect(h.reads()).toEqual([]);
     } finally {
       h.owner.dispose();
     }

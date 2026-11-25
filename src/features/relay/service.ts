@@ -150,6 +150,9 @@ export function provideRelay(
   let reloading: { channels: Set<string> } | undefined;
   /** What the last reload has yet to open again on its session. */
   let reopening: Set<string> | undefined;
+  /** A connection came up and its session is being prepared: the resume
+   * session's opens wait for its fresh screen instead of going offline. */
+  let connectionUp = false;
   const publish = ({
     retrying: _retrying,
     reloading: _reloading,
@@ -182,6 +185,7 @@ export function provideRelay(
   const reset = () => {
     generation++;
     connecting = false;
+    connectionUp = false;
     controller?.abort();
     clearTimeout(deadline);
     store.dispose();
@@ -233,6 +237,7 @@ export function provideRelay(
           identityNames,
           prepared: true,
           cachedOnly: true,
+          connected: () => connectionUp,
           persistence,
           initialChannelId: readView<string | undefined>(
             relayPartition(resume.scope, resume.viewer),
@@ -391,6 +396,8 @@ export function provideRelay(
         .then(() => connect(signal))
         .then(async (transport) => {
           clearTimeout(timer);
+          if (current === generation && signal === controller?.signal)
+            connectionUp = true;
           // A request can be refused while this connection is still being
           // prepared, or at any time after: either way the community is.
           let refused: CommunityRefusal | undefined;
@@ -482,6 +489,8 @@ export function provideRelay(
           if (reopen) reopenListed(store, reopen);
         })
         .catch(async (error) => {
+          if (current === generation && signal === controller?.signal)
+            connectionUp = false;
           await restoring;
           if (
             disposed ||

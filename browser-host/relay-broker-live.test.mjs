@@ -898,6 +898,65 @@ test("channel recovery under broker backpressure invalidates owner activity typi
   }
 });
 
+test("a channel route that ends under backpressure drops its queued establishment", async () => {
+  let response;
+  let backpressured = false;
+  const h = await harness(0, undefined, {
+    holdSetup: true,
+    response(res) {
+      response = res;
+      Object.defineProperty(res, "writableNeedDrain", {
+        get: () => backpressured,
+      });
+    },
+  });
+  let traffic;
+  try {
+    browserFetch(h.base);
+    const transport = await connectBrokerTransport(h.base);
+    const established = vi.fn();
+    const states = [];
+    traffic = transport.subscribe({
+      ...callbacks,
+      established,
+      state: (state) => states.push(state),
+    });
+    traffic.update(["a"]);
+    await until(() => h.requests.some((r) => r.filter["#h"]?.includes("a")));
+    const channel = h.requests.find((r) => r.filter["#h"]?.includes("a"));
+    // The route establishes while the browser is not reading, then ends.
+    backpressured = true;
+    await channel.socket.receive(["EOSE", channel.id]);
+    await channel.socket.receive([
+      "CLOSED",
+      channel.id,
+      "error: shutting down",
+    ]);
+    backpressured = false;
+    response.emit("drain");
+    // A later route is the SSE consumption barrier, not a sleep.
+    traffic.update(["a", "b"]);
+    await until(() =>
+      states.some((state) =>
+        state.routes.some((route) => route.channelId === "b"),
+      ),
+    );
+    expect(
+      states.at(-1).routes.find((route) => route.channelId === "a")?.status,
+    ).toBe("error");
+    // Its report would have certified a route that no longer delivers.
+    expect(
+      established.mock.calls.filter(
+        ([ids]) => ids === "a" || (Array.isArray(ids) && ids.includes("a")),
+      ),
+    ).toEqual([]);
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
 // Browser-origin HTTP is local credential IPC; assertions below inspect upstream transport.
 function browserFetch(base) {
   const nativeFetch = globalThis.fetch;

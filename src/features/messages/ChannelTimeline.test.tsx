@@ -259,6 +259,8 @@ function setup({
   blocked ??= freshness === "cached";
   let accepted = false;
   const olderReads = vi.fn();
+  const opens = vi.fn();
+  const ensures = vi.fn();
   const snapshot = (): ChannelWindow => ({
     channelId: "channel",
     status,
@@ -281,7 +283,14 @@ function setup({
   let queries =
     session ??
     ({
-      channels: { loadOlder, loadNewer, attach, window: snapshot },
+      channels: {
+        loadOlder,
+        loadNewer,
+        attach,
+        open: opens,
+        ensure: ensures,
+        window: snapshot,
+      },
       profiles: {},
       agentChoices: createAgentLibrary(undefined).queries,
       // Geometry fixtures are read-only; reading behavior has its own boundary tests.
@@ -414,6 +423,8 @@ function setup({
     loadNewer,
     attach,
     olderReads,
+    opens,
+    ensures,
     flush,
     render,
     unblock() {
@@ -1586,8 +1597,11 @@ it.each(["held head", "live handoff", "disconnected"])(
         expect(scripted.pending).toHaveLength(0);
         let completing = held;
         if (mode === "live handoff") {
+          // The catch-up reads after the pre-stream head, which goes on.
           live.established("channel");
-          await vi.waitFor(() => expect(held.signal?.aborted).toBe(true));
+          await vi.waitFor(() => expect(scripted.pending).toHaveLength(1));
+          expect(held.signal?.aborted).toBe(false);
+          held.respond(head);
           completing = scripted.next();
         }
         completing.respond(head);
@@ -2247,6 +2261,31 @@ it.each(["button", "scroll"] as const)(
     expect(recovering.alert()).toBeUndefined();
     expect(recovering.historyButton()).toBe("Retry older messages");
     recovering.unmount();
+  },
+);
+
+it.each([
+  ["", false],
+  [" that kept its history limit", true],
+] as const)(
+  "a failed head%s Retries as an open, not older pages",
+  (_, historyLimited) => {
+    // A window whose head failed with rows the outbox still shows (the
+    // viewer's unconfirmed send) keeps its Retry at the history edge, ahead
+    // of the limit caption a reopened window may still carry.
+    const h = setup({
+      hasMore: true,
+      historyLimited,
+      status: "error",
+      error: "Head failed",
+    });
+    expect(h.alert()).toBe("Head failed");
+    expect(h.historyButton()).toBe("Retry messages");
+    h.retry();
+    expect(h.opens).toHaveBeenCalledExactlyOnceWith("channel");
+    expect(h.ensures).toHaveBeenCalledExactlyOnceWith("channel");
+    expect(h.loadOlder).not.toHaveBeenCalled();
+    h.unmount();
   },
 );
 

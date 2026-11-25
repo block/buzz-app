@@ -1,9 +1,14 @@
 export const OUTBOX_INPUT_MAX_BYTES = 32 * 1024;
 
-/** Profiles kept in memory when no open channel reserves more. */
+/** Profiles a view may load, and the room the directory reserves, when no
+ * open channel reserves more. */
 export const PROFILE_CACHE_BASE = 1024;
-/** Hard limit while an open channel reserves room for its members. */
+/** Hard limit on the room an open channel reserves for its members. */
 export const PROFILE_CACHE_MAX = 10_240;
+/** Names the profile directory holds and the device mirror saves, whatever
+ * views reserve: enough that a reload's first screens rarely read a name.
+ * About 0.6 KB per kind 0 in memory; saved as compact names (`saved-names`). */
+export const PROFILE_NAMES_HELD = 10_240;
 /** The roster profiles a view may load at a cache limit: the room an open
  * channel reserved, so the base stays free for every other name on screen.
  * With no reservation a view may still use the base. */

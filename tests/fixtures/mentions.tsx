@@ -535,8 +535,15 @@ Object.assign(window, {
       return owner.session.agentLibrary.refresh();
     },
     list: () => owner.session.channels.list(),
-    otherMessage() {
-      incoming([message(viewer, "other", "Unrelated preview", ++time)]);
+    /** An unrelated channel's metadata changes. (A message would no longer
+     * do: only a Solo chat or DM summarizes its latest one in the list.) */
+    otherUpdate() {
+      incoming([
+        metadata(relay, "other", "Other", ++time, [
+          ...(channels ? [["t", "stream"], ["private"]] : []),
+          ["about", "Unrelated update"],
+        ]),
+      ]);
     },
   },
 });

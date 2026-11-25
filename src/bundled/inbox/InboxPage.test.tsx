@@ -3831,7 +3831,7 @@ it("Inbox keeps an open Solo chat timeline when a late reply regroups its mentio
 });
 
 it.each(["preview", "name", "history"])(
-  "failed unread Retry survives harmless channel %s replacement",
+  "failed unread Retry survives harmless channel %s change",
   async (change) => {
     const h = fixture();
     render(h.view);
@@ -3866,13 +3866,17 @@ it.each(["preview", "name", "history"])(
         expect(h.owner.session.channels.window("room").status).toBe("ready"),
       );
     }
-    await waitFor(() =>
-      expect(
-        h.owner.session.channels
-          .list()
-          .channels.find((channel) => channel.id === "room"),
-      ).not.toBe(before),
-    );
+    // A channel summary carries no preview (only Solo chats and DMs do), so
+    // only a rename replaces it. Traffic lands without touching the list.
+    if (change === "name")
+      await waitFor(() =>
+        expect(
+          h.owner.session.channels
+            .list()
+            .channels.find((channel) => channel.id === "room"),
+        ).not.toBe(before),
+      );
+    else await act(async () => {});
     expect(h.owner.session.unread.revision()).toBe(revision);
     expect(
       h.owner.session.unread.inbox().items.find((item) => item.id === row.id),

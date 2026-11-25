@@ -422,7 +422,7 @@ function ChannelSidebarItemCore({
       presenceDescription={
         presence === "unknown" ? undefined : `Presence: ${presence}`
       }
-      onPrepare={(id) => session.channels.prepare?.(id)}
+      onPrepare={(id, press) => session.channels.prepare?.(id, press)}
       onSelect={onSelect}
       navigation={navigation}
       onRename={onRename}

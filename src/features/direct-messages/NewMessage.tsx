@@ -744,6 +744,9 @@ function ExistingDiscussion({
             loading={window.status !== "error"}
             onClick={() => {
               setRecovering(true);
+              // A failed open reads again only as an open (see the
+              // timeline's Retry); other failures, here.
+              session.channels.open?.(channel.id);
               session.channels.ensure(channel.id);
             }}
           >

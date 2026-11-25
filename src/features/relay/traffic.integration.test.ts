@@ -93,7 +93,8 @@ function fixture(
           roster(relay, "c", [viewer.pubkey]),
           metadata(relay, "c", "General"),
           roster(relay, "other", [viewer.pubkey]),
-          metadata(relay, "other", "Other"),
+          // A DM, whose summary carries its latest message.
+          metadata(relay, "other", "Other", undefined, [["t", "dm"]]),
         ];
       if (stale) {
         const pending = stale;

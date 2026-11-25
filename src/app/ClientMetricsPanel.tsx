@@ -209,6 +209,54 @@ export function ClientMetricsPanel() {
         </SettingsGroup>
       </section>
 
+      <section aria-labelledby="metrics-steps">
+        <InlineHeader
+          id="metrics-steps"
+          title="Open steps"
+          subtitle="Median time from the click to each step, by source. Rows can be drawn hidden while the line and names are pending."
+        />
+        <SettingsGroup layout="form">
+          <section
+            className={styles.history}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: Scroll owner supports keyboard panning of open steps.
+            tabIndex={0}
+            aria-label="Open steps by source"
+          >
+            <table className="text-body-sm tabular-nums">
+              <thead>
+                <tr>
+                  <th scope="col">Source</th>
+                  <th scope="col">Pane</th>
+                  <th scope="col">Rows loaded</th>
+                  <th scope="col">Rows drawn</th>
+                  <th scope="col">Line</th>
+                  <th scope="col">Names</th>
+                  <th scope="col">Shown</th>
+                  <th scope="col">Painted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(([source, label]) => {
+                  const loads = opens.bySource[source];
+                  return (
+                    <tr key={source}>
+                      <th scope="row">{label}</th>
+                      <td>{ms(loads.steps.pane)}</td>
+                      <td>{ms(loads.waitP50)}</td>
+                      <td>{ms(loads.steps.rows)}</td>
+                      <td>{ms(loads.steps.line)}</td>
+                      <td>{ms(loads.steps.names)}</td>
+                      <td>{ms(loads.steps.shown)}</td>
+                      <td>{ms(loads.p50)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </section>
+        </SettingsGroup>
+      </section>
+
       <section aria-labelledby="metrics-live">
         <InlineHeader
           id="metrics-live"

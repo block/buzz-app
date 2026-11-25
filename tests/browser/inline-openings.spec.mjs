@@ -53,6 +53,15 @@ const address = (page) =>
   page.evaluate(() => history.state.buzzNavigationV1.entry.target);
 const avatar = (scope) =>
   scope.getByRole("button", { name: /^View .+ profile$/ }).first();
+const centre = (box) => [box.x + box.width / 2, box.y + box.height / 2];
+// A point of the conversation left of the sheets over it, clear of them all.
+const background = async (page) => {
+  const pane = await page
+    .getByRole("article", { name: "Conversation", exact: true })
+    .boundingBox();
+  const sheet = await sheets(page).first().boundingBox();
+  return [(pane.x + sheet.x) / 2, pane.y + pane.height / 2];
+};
 
 test.describe("Side panel", () => {
   test.use({ threadPlacement: "side" });
@@ -291,7 +300,7 @@ test.describe("Inline", () => {
     await expect(composer(page)).toHaveText("Still typing this");
   });
 
-  test("thread → profile → pull request: Back walks them, reload restores, X closes the top", async ({
+  test("thread → profile → pull request: Back walks them, reload restores, X or a press around them closes the top", async ({
     page,
     app,
   }) => {
@@ -354,7 +363,18 @@ test.describe("Inline", () => {
     await expect(profile(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(profile(page)).toHaveCount(0);
-    await close(thread(page)).click();
+    // A press in the top sheet closes nothing; each press on the conversation
+    // around the sheets closes the top one.
+    await activate(pullLink(thread(page)));
+    const heading = pullHeading(github(page));
+    await expect(heading).toBeVisible();
+    await page.mouse.click(...centre(await heading.boundingBox()));
+    await expect(github(page)).toBeVisible();
+    await page.mouse.click(...(await background(page)));
+    await expect(github(page)).toHaveCount(0);
+    await expect(thread(page)).toBeVisible();
+    expect((await address(page)).layer).toBeUndefined();
+    await page.mouse.click(...(await background(page)));
     await expect(thread(page)).toHaveCount(0);
     await expect(side(page).getByRole("tab")).toHaveCount(0);
   });

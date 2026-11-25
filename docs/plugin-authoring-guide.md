@@ -205,8 +205,10 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - Avoid fixed widths; pages can be narrow.
 - The legacy `buzz.relay-notes/notes` page uses the host's Notes icon even when installed as an external plugin.
 - A canonical plugin page link can open beside a conversation if the named
-  plugin registers a matching panel with `addressable: true`. Links fall back
-  to the plugin page if the panel does not qualify.
+  plugin registers a matching panel with `addressable: true`. A panel opened
+  from a thread keeps that thread as its origin. Links fall back to the plugin
+  page when no eligible panel matches or the conversation history entry
+  cannot store the link.
 - Call `ctx.panels.useTabTitle(label, icon?, actions?)` inside a panel to set
   its tab title. Optional `{ label, run }` actions appear in its context menu
   while the panel is mounted. Keep the actions array stable across renders.

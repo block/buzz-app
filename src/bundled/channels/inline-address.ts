@@ -1,4 +1,5 @@
 import type { OpenLayer } from "../../features/messages/view-layer";
+import type { PanelOpening } from "../../features/panels/service";
 import type { OpenTarget, ViewLayer } from "../../features/navigation/targets";
 
 /** The inline thread and the layer over a view live in the conversation's
@@ -6,6 +7,22 @@ import type { OpenTarget, ViewLayer } from "../../features/navigation/targets";
  * pure, from the visit on screen to the visit, or visits, they replace. */
 
 export type ConversationTarget = Extract<OpenTarget, { kind: "conversation" }>;
+
+export function panelVisitTarget(
+  scope: ConversationTarget["scope"],
+  opening: PanelOpening,
+): ConversationTarget {
+  return {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: opening.channelId,
+    detail: {
+      target: opening.target,
+      ...(opening.rootId ? { rootId: opening.rootId } : {}),
+    },
+  };
+}
 
 /** Visits retired together, and the one that takes their place. */
 export type Dismissal = Readonly<{

@@ -10,6 +10,7 @@ import {
 import { usePluginPanelSplit } from "./usePanelSplit";
 import type { Attachment, ChannelSummary } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
+import { parseBuzzLink } from "../navigation/buzz-links";
 import {
   createContributions,
   resolveMatch,
@@ -125,12 +126,24 @@ export type PanelOpening = {
 };
 /** The panel a link opens, kept in the thread it was opened from. */
 export const panelOpening = (
-  panels: Pick<Panels, "resolve">,
+  panels: Pick<Panels, "resolve" | "snapshot">,
   channelId: string,
   target: string,
   rootId?: string,
 ): PanelOpening | undefined => {
-  const panel = panels.resolve(target);
+  const link = parseBuzzLink(target);
+  // Canonical links can only be claimed by addressable panels of their plugin.
+  const panel =
+    link?.format === "plugin"
+      ? resolveMatch(
+          panels
+            .snapshot()
+            .filter(
+              (entry) => entry.pluginId === link.pluginId && entry.addressable,
+            ),
+          target,
+        )
+      : panels.resolve(target);
   return panel && { channelId, ...(rootId && { rootId }), panel, target };
 };
 /** A target to open beside a conversation, as if the viewer clicked a link

@@ -1,6 +1,6 @@
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { clickRow, open } from "./timeline.mjs";
 import {
   openPage,
   openSettings,
@@ -15,6 +15,120 @@ const composer = (page, name) =>
   page.getByRole("textbox", { name: `Message #${name}`, exact: true });
 const entry = (page) =>
   page.evaluate(() => history.state.buzzNavigationV1.entry);
+
+const brief = "buzz://plugin?id=fixture.page-placement&page=brief";
+const preview = `${brief}&route.view=preview`;
+const pluginLinkTest = test.extend({
+  pluginFixtures: true,
+  enabledPlugins: ["fixture.page-placement", "fixture.notes"],
+  colorScheme: "dark",
+  video: "on",
+});
+
+pluginLinkTest(
+  "plugin links in messages fall back to the page or restore the owning panel",
+  async ({ page, app }, info) => {
+    await open(page, app);
+    app.append(
+      "primary",
+      "alpha",
+      `[Read the brief](${brief}) or [Preview the brief](${preview}).`,
+    );
+    const conversation = composer(page, "Alpha");
+    const project = page.getByRole("heading", { name: "Project brief" });
+    const panel = page.getByText("Review the launch plan.", { exact: true });
+
+    await page.getByRole("link", { name: "Read the brief" }).press("Enter");
+    await expect(project).toBeVisible();
+    await page.goBack();
+    await expect(conversation).toBeVisible();
+
+    await page.getByRole("link", { name: "Preview the brief" }).press("Enter");
+    await expect(panel).toBeVisible();
+    await expect(conversation).toBeVisible();
+    await page.goBack();
+    await expect(panel).toBeHidden();
+    await page.goForward();
+    await expect(panel).toBeVisible();
+    await page.mouse.move(0, 0);
+    await page.screenshot({
+      path: info.outputPath("brief-beside-messages.png"),
+    });
+  },
+);
+
+for (const placement of ["side", "inline"])
+  pluginLinkTest.describe(`Plugin links with ${placement} threads`, () => {
+    pluginLinkTest.use({
+      threadPlacement: placement,
+      productionBroker: true,
+      readState: true,
+      threadUnread: true,
+      historyCounts: { alpha: 2, beta: 1 },
+    });
+
+    pluginLinkTest(
+      "plugin links from a thread restore the panel and fall back when the link will not fit history",
+      async ({ page, app }) => {
+        await open(page, app);
+        // The link parser ignores unrelated query parameters. The history
+        // entry must store the entire URL, including its padding.
+        const longLink = `${preview}&padding=${"x".repeat(4096)}`;
+        const root = app.histories
+          .get("primary/alpha")
+          .find((row) => row.content === "Thread root 0");
+        await clickRow(
+          page,
+          page
+            .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+            .getByRole("button", { name: /^View thread:/ }),
+        );
+        const thread =
+          placement === "inline"
+            ? page.getByRole("dialog", { name: "Thread", exact: true })
+            : page.getByRole("tabpanel", { name: /^Thread root/ });
+        await expect(thread.getByText("Unread reply 0")).toBeVisible();
+        app.append(
+          "primary",
+          "alpha",
+          `[Short preview](${preview}) or [Long preview](${longLink}).`,
+          true,
+          false,
+          root.id,
+        );
+        const panel = page.getByText("Review the launch plan.", {
+          exact: true,
+        });
+        await thread.getByRole("link", { name: "Short preview" }).click();
+        await expect(panel).toBeVisible();
+        await expect
+          .poll(async () => {
+            const target = (await entry(page)).target;
+            return placement === "inline" ? target.layer : target.detail;
+          })
+          .toMatchObject({
+            target: preview,
+            rootId: root.id,
+            ...(placement === "inline" && { threadId: root.id }),
+          });
+        await page.goBack();
+        await expect(panel).toBeHidden();
+        await expect(thread).toBeVisible();
+        await page.goForward();
+        await expect(panel).toBeVisible();
+        await page.goBack();
+        await thread.getByRole("link", { name: "Long preview" }).click();
+        await expect(
+          page.getByRole("heading", { name: "Project brief" }),
+        ).toBeVisible();
+        await expect(page.getByText("Brief view: preview")).toBeVisible();
+        await page.goBack();
+        await expect(
+          thread.getByRole("link", { name: "Long preview" }),
+        ).toBeVisible();
+      },
+    );
+  });
 
 const providerTest = test.extend({ pluginFixtures: true });
 providerTest(

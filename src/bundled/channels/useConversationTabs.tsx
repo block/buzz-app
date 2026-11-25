@@ -81,6 +81,7 @@ export function useConversationTabs({
   navigationSignal,
   isLive,
   openLink,
+  openPluginLink,
   fallbackFocus,
   eligible,
   threadId,
@@ -124,6 +125,11 @@ export function useConversationTabs({
   navigationSignal?: AbortSignal | undefined;
   isLive(): boolean;
   openLink(url: string): boolean;
+  openPluginLink?(
+    url: string,
+    channelId: string,
+    origin?: MessageLinkOrigin,
+  ): boolean;
   /** Opens a panel as a dialog on the view its link was in, when its
    * placement says so; false when it opens as a tab instead. */
   openInView?:
@@ -702,6 +708,8 @@ export function useConversationTabs({
     )
       return false;
     const parsed = parseBuzzLink(url);
+    if (parsed?.format === "plugin" && openPluginLink)
+      return openPluginLink(url, channelId, origin);
     if (
       parsed?.format === "legacy" &&
       !parsed.messageId &&

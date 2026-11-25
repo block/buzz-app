@@ -60,12 +60,12 @@ describe("mention placements", () => {
     expect(place).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the native place for a bad, own-thread, late or failed answer, or two placers", async () => {
+  it("keeps the native place for a bad, own-thread, late, stale or failed answer, or two placers", async () => {
     vi.useFakeTimers();
     try {
       const { placements, plugin } = setup();
       let answer: () => Promise<unknown> = async () => ({ root: "not hex" });
-      placements.register(plugin("p1"), {
+      const remove = placements.register(plugin("p1"), {
         id: "where",
         place: () => answer() as never,
       });
@@ -88,6 +88,17 @@ describe("mention placements", () => {
       const late = place();
       await vi.advanceTimersByTimeAsync(PLACEMENT_TIMEOUT_MS);
       await expect(late).resolves.toEqual({});
+      // An answer that comes after its plugin turned off.
+      let answered!: (value: unknown) => void;
+      answer = () => new Promise((resolve) => (answered = resolve));
+      const removed = place();
+      remove();
+      answered({ topLevel: true, note: "stale" });
+      await expect(removed).resolves.toEqual({});
+      placements.register(plugin("p1"), {
+        id: "where",
+        place: () => answer() as never,
+      });
       answer = async () => ({ topLevel: true });
       placements.register(plugin("p2"), {
         id: "where",

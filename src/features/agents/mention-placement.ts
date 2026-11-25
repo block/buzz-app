@@ -30,7 +30,8 @@ export type MentionPlacer = Readonly<{
   id: string;
   /** Asked once per top-level mention of a local agent. Undefined, a throw
    * or no answer within PLACEMENT_TIMEOUT_MS keeps the native place: a
-   * thread on the message. */
+   * thread on the message. So does an answer that comes after its plugin
+   * turned off, or another placer registered. */
   place(
     input: Readonly<{ agent: AgentKey; channel: string; event: RelayEvent }>,
     signal: AbortSignal,
@@ -105,6 +106,9 @@ export function createMentionPlacements(root: Context) {
         signal.throwIfAborted();
         if (asked.aborted)
           console.warn("A mention placer did not answer in time");
+        // Its plugin turned off, or another placer came, while it thought.
+        const now = placers.snapshot();
+        if (now.length !== 1 || now[0] !== placer) return {};
         return checked(answer, event);
       } catch (error) {
         signal.throwIfAborted();

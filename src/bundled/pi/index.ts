@@ -197,6 +197,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       return runtime.workspaceFile(agent, path);
     },
     timeoutMs: HANDOVER_MS,
+    // Pi has no MCP servers of its own: its host runs the agent's, and
+    // starts a changed list as the agent's next turn opens.
+    mcpServers: {
+      transports: ["stdio", "http"],
+      label: "Pi",
+      note: "Pi picks up changes to these servers on its next message.",
+      inherited: async () => ({ servers: [] }),
+    },
     // Memberships whose gateway enables Pi route through it; none do while
     // this build has no gateway descriptor.
     gateway: { harness: HARNESS },

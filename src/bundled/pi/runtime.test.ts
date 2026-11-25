@@ -5535,3 +5535,113 @@ it("holds a turn's bind until its reload settles, then binds against the route",
   answered.resolve({ status: "done", answer: 1, text: "" });
   await f.settled(turn);
 });
+
+it("gives Pi the agent's approved MCP servers, again only when they change", async () => {
+  const { finalizeEvent, generateSecretKey, getPublicKey } = await import(
+    "nostr-tools"
+  );
+  const { approvalTemplate } = await import(
+    "../../features/agents/mcp-servers"
+  );
+  // Where this device keeps the approval it accepted.
+  const kept = new Map<string, string>();
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => kept.get(key) ?? null,
+    setItem: (key: string, value: string) => kept.set(key, value),
+  });
+  const f = setup({
+    wait: () => ({ status: "done", answer: 1, text: "Done" }),
+  });
+  const owner = generateSecretKey();
+  f.agent.owner = getPublicKey(owner);
+  const list = {
+    servers: [
+      {
+        name: "docs",
+        enabled: true,
+        slot: "00000000000000a1",
+        transport: "stdio" as const,
+        command: "docs-mcp",
+        args: ["--quiet"],
+        env: ["TOKEN"],
+      },
+      {
+        name: "web",
+        enabled: true,
+        slot: "00000000000000b2",
+        transport: "http" as const,
+        url: "https://example.com/mcp",
+        headers: ["Authorization"],
+      },
+      {
+        name: "off",
+        enabled: false,
+        slot: "00000000000000c3",
+        transport: "http" as const,
+        url: "https://example.com/off",
+        headers: [],
+      },
+    ],
+    disabledInherited: [],
+  };
+  // From the owner, whom the turn answers.
+  const mention = (id: string, text: string) => ({
+    ...reply(id, text),
+    pubkey: f.agent.owner,
+  });
+  const turn = async (id: string, mcpServers: unknown) => {
+    // A saved change reaches the runtime with the agents it runs.
+    f.runtime.sync([
+      { key: self, pubkey: self, config: { ...DEFAULT_CONFIG, mcpServers } },
+    ] as never);
+    const delivered = f.deliver(
+      { type: "mention", event: mention(id, `@Pi ${id}`) },
+      { config: { ...DEFAULT_CONFIG, mcpServers } },
+    );
+    await delivered.run;
+    return f.settled(delivered);
+  };
+  const signed = (seq: number, body = list) =>
+    finalizeEvent(approvalTemplate(self, seq, body), owner);
+  try {
+    const first = signed(1);
+    expect(await turn("2", first)).toEqual({ ok: true });
+    expect(await turn("3", first)).toEqual({ ok: true });
+    const [one, two] = f.host.requests("open");
+    expect(one?.params.mcp).toEqual({
+      key: expect.stringContaining(first.id),
+      servers: [
+        {
+          name: "docs",
+          transport: "stdio",
+          command: "docs-mcp",
+          args: ["--quiet"],
+          env: { TOKEN: "" },
+        },
+        {
+          name: "web",
+          transport: "http",
+          url: "https://example.com/mcp",
+          headers: { Authorization: "" },
+        },
+      ],
+    });
+    // The same approval and values keep their key, so Pi keeps its servers.
+    expect(two?.params.mcp).toEqual(one?.params.mcp);
+    // An emptied list has no key, so Pi closes them.
+    const none = signed(2, { servers: [], disabledInherited: [] });
+    expect(await turn("4", none)).toEqual({ ok: true });
+    expect(f.host.requests("open")[2]?.params.mcp).toEqual({
+      key: "",
+      servers: [],
+    });
+    // An approval this device can't use fails the turn, as in the others.
+    expect((await turn("5", { ...signed(3), sig: "0".repeat(128) })).ok).toBe(
+      false,
+    );
+    expect(f.host.requests("open")).toHaveLength(3);
+  } finally {
+    vi.unstubAllGlobals();
+    await f.runtime.dispose();
+  }
+});

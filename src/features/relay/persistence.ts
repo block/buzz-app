@@ -1,4 +1,5 @@
 import { byteSize } from "./budget";
+import { newer, type EventData } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
 /** Device-local resume data, never proof of current access or permission to write. */
 export type SavedStartup = {
@@ -28,6 +29,14 @@ export class StartupRosterSuperseded extends Error {
   }
 }
 
+export class StartupCacheOverBudget extends Error {
+  constructor() {
+    super("Startup cache is over its byte budget");
+  }
+}
+
+type RevokedRosters = ReadonlyMap<string, Pick<EventData, "id" | "created_at">>;
+
 export interface HeadPersistence {
   read(): Promise<SavedHead[]>;
   readStartup?(options?: {
@@ -37,6 +46,7 @@ export interface HeadPersistence {
     patch: SavedStartup,
     revoked?: boolean,
     ifUnchanged?: boolean,
+    revokedRosters?: RevokedRosters,
   ): Promise<void>;
   /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
@@ -105,6 +115,52 @@ function discoveryVersion(discovery: SavedStartup["discovery"]): string | null {
         )
       : null,
   ]);
+}
+
+function pruneRevokedRosters(
+  discovery: NonNullable<SavedStartup["discovery"]>,
+  revoked: RevokedRosters,
+) {
+  if (!Array.isArray(discovery.events)) return;
+  const channelOf = (event: Partial<EventData> | null | undefined) => {
+    if (!Array.isArray(event?.tags)) return undefined;
+    if (event.kind !== 39000 && event.kind !== 39002 && event.kind !== 9007)
+      return undefined;
+    const name = event.kind === 9007 ? "h" : "d";
+    return event.tags.find(
+      (entry) => Array.isArray(entry) && entry[0] === name,
+    )?.[1];
+  };
+  const peerVersions = new Map<string, Pick<EventData, "id" | "created_at">>();
+  for (const value of discovery.events) {
+    const event = value as Partial<EventData> | null;
+    if (event?.kind !== 39002 || event.pubkey !== discovery.relayAuthor)
+      continue;
+    const channel = channelOf(event);
+    if (
+      channel &&
+      revoked.has(channel) &&
+      typeof event.id === "string" &&
+      typeof event.created_at === "number"
+    )
+      peerVersions.set(
+        channel,
+        newer(peerVersions.get(channel), {
+          id: event.id,
+          created_at: event.created_at,
+        }),
+      );
+  }
+  const removed = new Set<string>();
+  for (const [channel, peer] of peerVersions) {
+    const version = revoked.get(channel);
+    if (version && newer(version, peer) === version) removed.add(channel);
+  }
+  if (!removed.size) return;
+  return discovery.events.filter((value) => {
+    const channel = channelOf(value as Partial<EventData> | null);
+    return !channel || !removed.has(channel);
+  });
 }
 
 export function createHeadPersistence(
@@ -292,40 +348,67 @@ export function createHeadPersistence(
           }),
         STARTUP,
       ),
-    async writeStartup(patch, revoked = false, ifUnchanged = false) {
+    async writeStartup(
+      patch,
+      revoked = false,
+      ifUnchanged = false,
+      revokedRosters,
+    ) {
       let version: string | null | undefined;
-      const saved = await transact<boolean | undefined>(
+      const saved = await transact<boolean | "oversized" | undefined>(
         "readwrite",
         (store, done, then) =>
           then(store.get(scope), (row) => {
+            const stored = row?.data as SavedStartup | undefined;
+            let data: SavedStartup = { ...stored, ...patch };
+            let superseded = false;
             if (
               patch.discovery &&
               (ifUnchanged || observedDiscovery === undefined)
             ) {
-              const current = discoveryVersion(row?.data?.discovery);
+              const current = discoveryVersion(stored?.discovery);
               // Compare inside the write transaction. Settings-only changes
               // preserve the signed snapshot, but a peer can replace or clear it.
               if (ifUnchanged && current !== observedDiscovery) {
                 version = current;
-                return done(undefined);
+                const peer = stored?.discovery;
+                if (
+                  !peer ||
+                  peer.relayAuthor !== patch.discovery.relayAuthor ||
+                  !revokedRosters?.size
+                )
+                  return done(undefined);
+                const events = pruneRevokedRosters(peer, revokedRosters);
+                if (!events) return done(undefined);
+                // Carry the revocation into the peer's row. The local snapshot
+                // lost the compare and cannot replace the peer's other entries.
+                superseded = true;
+                data = { ...stored, discovery: { ...peer, events } };
               }
               if (observedDiscovery === undefined) observedDiscovery = current;
             }
-            const data: SavedStartup = { ...row?.data, ...patch };
             let bytes = byteSize(data);
             if (bytes > MAX_BYTES && revoked) {
               // An oversized replacement must still remove the revoked roster.
               delete data.discovery;
               bytes = byteSize(data);
             }
-            if (bytes > MAX_BYTES) return done(false);
+            if (bytes > MAX_BYTES) return done("oversized");
             if (patch.discovery) version = discoveryVersion(data.discovery);
-            const meta = { key: scope, bytes, savedAt: Date.now() };
+            const meta = {
+              key: scope,
+              bytes,
+              savedAt: superseded ? row.savedAt : Date.now(),
+            };
             store.put({ ...meta, data });
             readStartupBudget(
               store,
               then,
-              (rows) => done(pruneStartupBudget(store, rows).includes(meta)),
+              (rows) => {
+                const kept = pruneStartupBudget(store, rows).includes(meta);
+                if (superseded && !kept) version = null;
+                done(superseded ? undefined : kept);
+              },
               meta,
             );
           }),
@@ -341,6 +424,7 @@ export function createHeadPersistence(
             : undefined,
         );
       }
+      if (saved === "oversized") throw new StartupCacheOverBudget();
       if (!saved) throw new Error("Startup cache is over its byte budget");
       if (version !== undefined) observedDiscovery = version;
     },

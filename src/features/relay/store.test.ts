@@ -4,7 +4,11 @@ import { ReadError } from "./errors";
 import { listByteSize } from "./budget";
 import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
-import type { HeadPersistence, SavedStartup } from "./persistence";
+import {
+  StartupCacheOverBudget,
+  type HeadPersistence,
+  type SavedStartup,
+} from "./persistence";
 import type { RelayEvent } from "./events";
 import {
   bounds,
@@ -2123,7 +2127,7 @@ it("writes one startup snapshot with the final content after a burst of discover
     owner.dispose();
   }
 });
-it("retries a failed startup snapshot before deduplicating fresh roster reads", async () => {
+it("retries temporary startup write failures sooner than unchanged snapshots", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   const writeStartup = vi
@@ -2187,6 +2191,20 @@ it("retries a failed startup snapshot before deduplicating fresh roster reads", 
     live.receive([first]);
     vi.advanceTimersByTime(500);
     expect(discoveryWrites()).toBe(5);
+
+    writeStartup.mockRejectedValueOnce(new StartupCacheOverBudget());
+    const oversized = roster(relay, "c", [viewer.pubkey]);
+    live.receive([oversized]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(6);
+    await vi.advanceTimersByTimeAsync(30_000);
+    live.receive([oversized]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(6);
+    await vi.advanceTimersByTimeAsync(570_000);
+    live.receive([oversized]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(discoveryWrites()).toBe(7);
   } finally {
     vi.useRealTimers();
     owner.dispose();

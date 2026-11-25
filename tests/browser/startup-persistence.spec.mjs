@@ -383,7 +383,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       "/src/features/relay/profile-directory.ts"
     );
     const { createChannelStore } = await import("/src/features/relay/store.ts");
-    const { keypair, roster } = await import("/src/features/relay/testing.ts");
+    const { keypair, metadata, roster } = await import(
+      "/src/features/relay/testing.ts"
+    );
     const relay = keypair();
     const { pubkey: viewer } = keypair();
     const origin = "https://example.org";
@@ -406,6 +408,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     const second = roster(relay, "second", [viewer]);
     const retried = roster(relay, "retried", [viewer]);
     const replacement = roster(relay, "peer-only", [viewer]);
+    const newerGrant = roster(relay, "retried", [viewer], 1_700_000_002);
+    const staleMetadata = metadata(relay, "first", "Revoked channel");
     const startup = (events) => ({
       discovery: { savedAt: Date.now(), relayAuthor: relay.pubkey, events },
     });
@@ -455,6 +459,10 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         return cachedIds();
       },
       replace: () => peer.writeStartup(startup([replacement])),
+      replaceWithStaleMembership: () =>
+        peer.writeStartup(
+          startup([first, staleMetadata, replacement, newerGrant]),
+        ),
       clear: () => peer.clear(),
       repeat: () => channels.acceptDiscovery([active]),
       acceptUpdate: (name) => channels.acceptDiscovery([updates[name]]),
@@ -482,16 +490,18 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       releasePeerWrite() {
         holdPeerWrite = false;
       },
-      async reload() {
+      async reload(empty = false) {
         channels.dispose();
         await peer.writeStartup(startup([replacement]));
         channels = openChannels(createHeadPersistence(viewer, origin), true);
         await channels.restore();
         const cachedChannel = channels.queries.get("peer-only");
         abortNext = true;
-        channels.acceptDiscovery([active]);
+        if (empty) this.acceptEmpty();
+        else this.repeat();
         return cachedChannel;
       },
+      acceptEmpty: () => channels.acceptDiscovery([], new Set()),
       cachedIds,
       writeReads: () => writeReads,
       cleanup() {
@@ -533,6 +543,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       afterRetry,
       originalIds: events.map((event) => event.id),
       replacementId: replacement.id,
+      newerGrantId: newerGrant.id,
       updatedId: updated.id,
       whilePendingId: whilePending.id,
     };
@@ -548,6 +559,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let cachedOnReload;
   let afterReloadAbort;
   let afterReloadRetry;
+  let afterEmptyReloadAbort;
+  let afterEmptyReloadRetry;
   let repeatReads;
   let aborts;
   try {
@@ -565,7 +578,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     );
 
     await page.evaluate(() => window.startupRetry.revoke("first"));
-    await page.evaluate(() => window.startupRetry.replace());
+    await page.evaluate(() => window.startupRetry.replaceWithStaleMembership());
     await page.evaluate(() => window.startupRetry.holdPeerWrite());
     const readsBeforeRetries = await page.evaluate(() =>
       window.startupRetry.writeReads(),
@@ -674,19 +687,32 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     afterReloadRetry = await page.evaluate(() =>
       window.startupRetry.cachedIds(),
     );
+
+    await page.evaluate(() => window.startupRetry.reload(true));
+    await page.clock.runFor(500);
+    afterEmptyReloadAbort = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
+    await page.clock.runFor(30_000);
+    await page.evaluate(() => window.startupRetry.acceptEmpty());
+    await page.clock.runFor(500);
+    afterEmptyReloadRetry = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
   }
-  expect(aborts).toBe(5);
+  expect(aborts).toBe(6);
   expect(firstRetry.sidebarEmpty).toBe(true);
   expect(firstRetry.restored).toBe(true);
   expect(firstRetry.failed).toBe(true);
   expect.soft(firstRetry.clearSurvived).toBe(true);
   expect.soft(firstRetry.afterRetry).toEqual(firstRetry.originalIds);
   expect(afterRevocationRetry).toEqual(firstRetry.originalIds.slice(0, -1));
-  expect.soft(afterReplacement).toEqual([firstRetry.replacementId]);
+  const retainedPeerIds = [firstRetry.replacementId, firstRetry.newerGrantId];
+  expect.soft(afterReplacement).toEqual(retainedPeerIds);
   expect.soft(repeatReads).toBe(0);
-  expect.soft(duringCooldown).toEqual([firstRetry.replacementId]);
+  expect.soft(duringCooldown).toEqual(retainedPeerIds);
   expect
     .soft(afterCooldown)
     .toEqual([firstRetry.updatedId, firstRetry.originalIds[2]]);
@@ -698,4 +724,6 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   expect.soft(cachedOnReload).toBeUndefined();
   expect.soft(afterReloadAbort).toEqual([firstRetry.replacementId]);
   expect.soft(afterReloadRetry).toEqual([firstRetry.originalIds[0]]);
+  expect.soft(afterEmptyReloadAbort).toEqual([firstRetry.replacementId]);
+  expect.soft(afterEmptyReloadRetry).toEqual([]);
 });

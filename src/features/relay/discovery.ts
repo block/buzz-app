@@ -325,6 +325,14 @@ export class DiscoveryState {
   rosterVersion(id: string): RelayEvent | undefined {
     return this.rosters.get(id);
   }
+  revokedRosterVersions() {
+    const versions = new Map<string, Pick<RelayEvent, "id" | "created_at">>();
+    for (const id of this.denied) {
+      const version = this.rosters.get(id);
+      if (version) versions.set(id, version);
+    }
+    return versions;
+  }
   /** Channels whose signed metadata is retained, joined or not. */
   metadataIds(): string[] {
     return [...this.metadata.keys()];

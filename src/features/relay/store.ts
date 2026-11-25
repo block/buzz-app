@@ -57,6 +57,7 @@ import { ByteLru, byteSize, listByteSize, PROFILE_CACHE_BASE } from "./budget";
 import {
   type HeadPersistence,
   type SavedHead,
+  StartupCacheOverBudget,
   StartupRosterSuperseded,
 } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
@@ -502,7 +503,7 @@ export function createChannelStore(
   let discoveryDirty = false;
   let discoverySuperseded: "cleared" | "replaced" | undefined;
   let discoveryRevocationPending = false;
-  // The roster last written and when; undefined when the disk copy is unknown.
+  // The last roster written or skipped for size, and when it was attempted.
   let savedDiscovery: { key: string; at: number } | undefined;
   // Directory bursts rewrite the whole profile mirror; save at most once per second.
   let profileSave: ReturnType<typeof setTimeout> | undefined;
@@ -2055,12 +2056,15 @@ export function createChannelStore(
         },
         urgent,
         ifUnchanged,
+        urgent && ifUnchanged ? discovery.revokedRosterVersions() : undefined,
       )
       .then(() => {
         if (savedDiscovery === saving) discoveryRevocationPending = false;
       })
       .catch((error) => {
         if (savedDiscovery !== saving) return;
+        // Unchanged oversized snapshots follow the normal refresh interval.
+        if (!urgent && error instanceof StartupCacheOverBudget) return;
         savedDiscovery = undefined;
         if (!(error instanceof StartupRosterSuperseded)) {
           discoveryDirty = true;
@@ -2546,7 +2550,7 @@ export function createChannelStore(
             (first ||
               discoveryRevocationPending ||
               freshChange ||
-              (cacheEvidence && due))
+              ((cacheEvidence || !!complete) && due))
           ) {
             if (discoverySave) discoverySave.ifUnchanged &&= ifUnchanged;
             else

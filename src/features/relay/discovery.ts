@@ -396,10 +396,11 @@ export class DiscoveryState {
           }
         : undefined,
       includesGrant: grants.size ? includesGrant : undefined,
-      settle: () => {
+      settle: ({ removalsOnly = false } = {}) => {
         for (const channel of removals.keys()) {
           if (removalFor(channel)) this.pendingRemovals.delete(channel);
         }
+        if (removalsOnly) return;
         for (const [channel, grant] of grants) {
           if (this.pendingGrants.get(channel) === grant)
             this.pendingGrants.delete(channel);

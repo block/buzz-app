@@ -2066,9 +2066,17 @@ export function createChannelStore(
       })
       .catch((error) => {
         if (error instanceof StartupRosterSuperseded) changes?.settle();
+        if (error instanceof StartupCacheOverBudget && error.removalsSettled)
+          changes?.settle({ removalsOnly: true });
         if (savedDiscovery !== saving) return;
         // Unchanged oversized snapshots follow the normal refresh interval.
-        if (!urgent && error instanceof StartupCacheOverBudget) return;
+        if (
+          error instanceof StartupCacheOverBudget &&
+          (!urgent || error.removalsSettled)
+        ) {
+          discoveryRevocationPending = false;
+          return;
+        }
         savedDiscovery = undefined;
         if (!(error instanceof StartupRosterSuperseded)) {
           discoveryDirty = true;

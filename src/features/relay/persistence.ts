@@ -37,7 +37,7 @@ export class StartupRosterSuperseded extends Error {
 }
 
 export class StartupCacheOverBudget extends Error {
-  constructor() {
+  constructor(readonly removalsSettled = false) {
     super("Startup cache is over its byte budget");
   }
 }
@@ -238,12 +238,22 @@ function mergeRosterUpdates(
       updates.delete(key);
   }
   if (!updates.size) return;
-  const events = peer.filter((value) => {
+  // Keep replacement metadata ahead of its retained creation receipt.
+  const events: unknown[] = [];
+  const replaced = new Set<string>();
+  for (const value of peer) {
     const event = value as Partial<EventData> | null;
     const channel = channelOf(event);
-    return !channel || !updates.has(`${event?.kind}:${channel}`);
-  });
-  return [...events, ...updates.values()];
+    const key = `${event?.kind}:${channel}`;
+    if (!channel || !updates.has(key)) events.push(value);
+    else if (!replaced.has(key)) {
+      events.push(updates.get(key));
+      replaced.add(key);
+    }
+  }
+  for (const [key, event] of updates)
+    if (!replaced.has(key)) events.push(event);
+  return events;
 }
 
 export function createHeadPersistence(
@@ -437,7 +447,9 @@ export function createHeadPersistence(
     async writeStartup(patch, revoked = false, ifUnchanged = false, changes) {
       const removalFor = changes?.removalFor;
       let version: string | null | undefined;
-      const saved = await transact<boolean | "oversized" | undefined>(
+      const saved = await transact<
+        boolean | "oversized" | "oversized-with-clean-roster" | undefined
+      >(
         "readwrite",
         (store, done, then) =>
           then(store.get(scope), (row) => {
@@ -616,7 +628,8 @@ export function createHeadPersistence(
                 }
                 if (meta.bytes > room && !prunedPeer) {
                   if (superseded) return done(undefined);
-                  if (meta.bytes > MAX_BYTES) return done("oversized");
+                  if (meta.bytes > MAX_BYTES)
+                    return done("oversized-with-clean-roster");
                 }
                 if (put()) prune(rows);
               },
@@ -636,7 +649,10 @@ export function createHeadPersistence(
             : undefined,
         );
       }
-      if (saved === "oversized") throw new StartupCacheOverBudget();
+      if (saved === "oversized" || saved === "oversized-with-clean-roster")
+        throw new StartupCacheOverBudget(
+          saved === "oversized-with-clean-roster",
+        );
       if (!saved) throw new Error("Startup cache is over its byte budget");
       if (version !== undefined) {
         observedDiscovery = version;

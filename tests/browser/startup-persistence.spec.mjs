@@ -383,8 +383,11 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       "/src/features/relay/profile-directory.ts"
     );
     const { createChannelStore } = await import("/src/features/relay/store.ts");
-    const { keypair, metadata, roster } = await import(
+    const { keypair, metadata, roster, signed } = await import(
       "/src/features/relay/testing.ts"
+    );
+    const { huddleDescription } = await import(
+      "/src/features/huddle/lifecycle.ts"
     );
     const relay = keypair();
     const { pubkey: viewer } = keypair();
@@ -527,6 +530,52 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         channels.acceptDiscovery([freshGrant, freshMetadata]);
       },
       renameActive: () => channels.acceptDiscovery([renamedActive]),
+      async mergeHuddleRename(parent) {
+        await this.acceptStaleGrantAfterPeerRegrant();
+        await cachedIds();
+        const creator = keypair();
+        const about = huddleDescription(parent);
+        const tags = [
+          ["P", creator.pubkey],
+          ["private"],
+          ["t", "stream"],
+          ["ttl", "3600"],
+          ["about", about],
+        ];
+        const huddle = metadata(relay, "active", "Huddle", 1_700_000_002, tags);
+        const renamed = metadata(
+          relay,
+          "active",
+          "Renamed huddle",
+          1_700_000_003,
+          tags,
+        );
+        const receipt = signed(creator, {
+          kind: 9007,
+          created_at: 1_700_000_000,
+          content: "",
+          tags: [
+            ["h", "active"],
+            ["visibility", "private"],
+            ["channel_type", "stream"],
+            ["about", about],
+          ],
+        });
+        await peer.writeStartup(
+          startup([replacement, laterFreshGrant, active, huddle, receipt]),
+        );
+        channels.acceptDiscovery([renamed]);
+      },
+      async restoreActive() {
+        await cachedIds();
+        const restored = openChannels(createHeadPersistence(viewer, origin));
+        try {
+          await restored.restore();
+          return restored.queries.get("active");
+        } finally {
+          restored.dispose();
+        }
+      },
       async seedFullRoster(matching) {
         await this.seedRemovalOrder();
         const channel = matching ? "active" : "peer-only";
@@ -553,6 +602,12 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         const before = await cachedIds();
         this.acceptRemoval("retried", 1_700_000_001);
         return { before, after: await cachedIds() };
+      },
+      async removeFromOversizedRoster() {
+        channels.acceptDiscovery([
+          metadata(relay, "active", "p".repeat(MAX_BYTES / 2), 1_700_000_001),
+        ]);
+        return this.removeFromFullRoster();
       },
       replace: () => peer.writeStartup(startup([replacement])),
       replaceWithStaleMembership: () =>
@@ -688,6 +743,10 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let afterNewerPeerGrant;
   let afterStaleGrantAfterPeerRegrant;
   let afterRemovalFromFullPeerRoster;
+  let restoredHuddle;
+  let afterOversizedRemoval;
+  let oversizedRetryReads;
+  const huddleParent = "00000000-0000-4000-8000-000000000001";
   let afterRemovalFromMatchingFullRoster;
   let matchingFullRosterIds;
   let afterRenameWithStaleGrant;
@@ -928,6 +987,14 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     afterRenameWithStaleGrant = await page.evaluate(() =>
       window.startupRetry.cachedIds(),
     );
+    await page.evaluate(
+      (parent) => window.startupRetry.mergeHuddleRename(parent),
+      huddleParent,
+    );
+    await page.clock.runFor(500);
+    restoredHuddle = await page.evaluate(() =>
+      window.startupRetry.restoreActive(),
+    );
     await page.evaluate(() => window.startupRetry.seedFullRoster(false));
     afterRemovalFromFullPeerRoster = await page.evaluate(() =>
       window.startupRetry.removeFromFullRoster(),
@@ -939,6 +1006,24 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     afterRemovalFromMatchingFullRoster = await page.evaluate(() =>
       window.startupRetry.removeFromFullRoster(),
     );
+    await page.evaluate(() => window.startupRetry.seedFullRoster(true));
+    await page.clock.runFor(500);
+    afterOversizedRemoval = await page.evaluate(() =>
+      window.startupRetry.removeFromOversizedRoster(),
+    );
+    const readsAfterOversizedRemoval = await page.evaluate(() =>
+      window.startupRetry.writeReads(),
+    );
+    await page.evaluate(() => window.startupRetry.repeat());
+    await page.clock.runFor(500);
+    await page.clock.runFor(30_000);
+    await page.evaluate(() => window.startupRetry.repeat());
+    await page.clock.runFor(500);
+    oversizedRetryReads =
+      (await page.evaluate(async () => {
+        await window.startupRetry.cachedIds();
+        return window.startupRetry.writeReads();
+      })) - readsAfterOversizedRemoval;
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
   }
@@ -999,6 +1084,10 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   expect
     .soft(afterRenameWithStaleGrant)
     .toEqual([...peerRegrantIds, firstRetry.renamedActiveId]);
+  expect.soft(restoredHuddle).toMatchObject({
+    name: "Renamed huddle",
+    parentChannelId: huddleParent,
+  });
   expect(afterRemovalFromFullPeerRoster.before).toHaveLength(2);
   expect(afterRemovalFromFullPeerRoster.after).toEqual(
     afterRemovalFromFullPeerRoster.before,
@@ -1009,4 +1098,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   expect
     .soft(afterRemovalFromMatchingFullRoster.after)
     .toEqual(matchingFullRosterIds);
+  expect.soft(afterOversizedRemoval.before).toHaveLength(2);
+  expect
+    .soft(afterOversizedRemoval.after)
+    .toEqual(afterOversizedRemoval.before);
+  expect.soft(oversizedRetryReads).toBe(0);
 });

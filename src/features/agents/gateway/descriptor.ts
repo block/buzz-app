@@ -28,8 +28,10 @@ export type GatewayDescriptor = Readonly<{
 
 /** Harness names a descriptor may give an upstream base. An absent entry
  * opts that harness out: it keeps the user's own configuration.
- * `pi-databricks` is Pi's Databricks provider: a pass-through for its own
- * Databricks requests, apart from `pi`'s base for its built-in models. */
+ * `pi-databricks` is an explicit allow-listed exception for Pi's Databricks
+ * provider (a pass-through for its own requests, apart from `pi`'s base for
+ * its built-in models). Kept explicit rather than generalized to
+ * `pi-<provider>` until more pass-through providers follow this pattern. */
 export const UPSTREAM_KEYS = Object.freeze([
   "claude-code",
   "goose",

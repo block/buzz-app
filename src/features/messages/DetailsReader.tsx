@@ -8,6 +8,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import { useChannelWindow, useRowProfiles } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import { useComposerScope } from "./composer-overlay";
+import { DetailsVideos } from "./DetailsVideos";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { useReferenceDirectory } from "./ReferenceText";
 import styles from "./Messages.module.css";
@@ -80,8 +81,14 @@ export function DetailsReader({
   messageId: string;
   children(parts: DetailsParts): ReactNode;
 }) {
-  const { session, scope, extensions, onOpenLink, canOpenLink } =
-    useConversation();
+  const {
+    session,
+    scope,
+    extensions,
+    onOpenLink,
+    canOpenLink,
+    onOpenMediaReview,
+  } = useConversation();
   const message = useReaderMessage(session, channelId, messageId);
   const resolveName = useChannelIdentityNames(session, channelId);
   const rows = message ? [message] : [];
@@ -129,6 +136,11 @@ export function DetailsReader({
           }
           canOpenLink={canOpenLink}
           participantProfiles={profiles}
+        />
+        <DetailsVideos
+          row={message}
+          media={(url) => session.media(url, undefined, message.channelId)}
+          onOpenMediaReview={onOpenMediaReview}
         />
       </div>
     ),

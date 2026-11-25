@@ -37,6 +37,7 @@ import { useMediaElementSource } from "./use-media-element-source";
 import { isNativeMediaSource } from "./attachment-source";
 import { MediaContextMenu } from "./MediaContextMenu";
 import { MediaActionAnnouncements } from "./MediaActionAnnouncements";
+import { type PlaybackHandoff, usePlaybackHandoff } from "./playback-handoff";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -56,6 +57,8 @@ type MediaAttachmentProps = {
   compact?: boolean;
   overlayCount?: number;
   label?: string;
+  /** Shares a video's playback between a message's brief and its reader. */
+  handoff?: PlaybackHandoff | undefined;
 };
 
 function useVideoPosition(
@@ -101,6 +104,7 @@ export function MediaAttachment({
   compact = false,
   overlayCount = 0,
   label = "Open video fullscreen",
+  handoff,
 }: MediaAttachmentProps) {
   const active = useConversationPresentation();
   const corners = useMediaCorners();
@@ -139,6 +143,20 @@ export function MediaAttachment({
   const { recover: recoverMedia } = useMediaReadRecovery(
     active ? videoSource : undefined,
     () => setFailed(true),
+  );
+  usePlaybackHandoff(
+    video,
+    handoff &&
+      attachment.kind === "video" &&
+      !compact &&
+      source &&
+      !failed &&
+      !element.unavailable
+      ? `${handoff.messageId}\n${attachment.url}`
+      : undefined,
+    !!handoff?.reader,
+    started,
+    setStarted,
   );
   const viewMedia = (seconds: number) => {
     video.current?.pause();

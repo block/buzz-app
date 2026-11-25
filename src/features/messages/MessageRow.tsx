@@ -106,6 +106,7 @@ import { useReferenceDirectory } from "./ReferenceText";
 import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
 import { DetailsMessage } from "./DetailsMessage";
+import { DetailsVideos } from "./DetailsVideos";
 import { useComposerScope } from "./composer-overlay";
 import {
   safeMessageUrl,
@@ -971,6 +972,10 @@ function MessageRowContent({
                       : `Open video ${index + 1} of ${group.length}`
                   }
                   mode={mediaMode}
+                  // A details message's reader takes its video's playback over.
+                  {...(row.audience === "details"
+                    ? { handoff: { messageId: row.id } }
+                    : {})}
                   {...(attachment.kind === "video" && mediaSeekTo !== undefined
                     ? {
                         seekTo: mediaSeekTo,
@@ -1139,6 +1144,11 @@ function MessageRowContent({
           onOpenLink={openLink}
           canOpenLink={canOpenLink}
           participantProfiles={participantProfiles}
+        />
+        <DetailsVideos
+          row={row}
+          media={attachmentMedia}
+          onOpenMediaReview={onOpenMediaReview}
         />
       </DetailsMessage>
     ) : (

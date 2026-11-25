@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { clickRow, open, settle } from "./timeline.mjs";
@@ -391,6 +392,141 @@ test.describe("Inline", () => {
     await expect(detailsSheet(page)).toHaveCount(0);
     await page.goForward();
     await expect(detailsSheet(page)).toHaveCount(0);
+  });
+
+  // Browser-only: only real media elements prove a position, a play state and
+  // sound move between two players.
+  test("a details video plays on into the reader and back into the chat", async ({
+    page,
+    app,
+  }) => {
+    // Chromium seeks only in media served by byte range.
+    const bytes = await readFile(
+      new URL("../fixtures/message-gallery/assets/sample.mp4", import.meta.url),
+    );
+    await page.route("**/api/relay/primary/media?**", (route) => {
+      const range = /^bytes=(\d+)-(\d*)$/.exec(
+        route.request().headers().range ?? "",
+      );
+      const start = Number(range?.[1] ?? 0);
+      const last = range?.[2]
+        ? Math.min(Number(range[2]), bytes.length - 1)
+        : bytes.length - 1;
+      return route.fulfill({
+        status: range ? 206 : 200,
+        contentType: "video/mp4",
+        headers: {
+          "accept-ranges": "bytes",
+          ...(range && {
+            "content-range": `bytes ${start}-${last}/${bytes.length}`,
+          }),
+        },
+        body: bytes.subarray(start, last + 1),
+      });
+    });
+    // The clip lasts two seconds; at quarter speed it outlasts the journey.
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz.video.playback-speed", "0.25"),
+    );
+    await open(page, app);
+    const event = app.append(
+      "primary",
+      "alpha",
+      `Video findings\n\n${filler}`,
+      true,
+      false,
+      undefined,
+      undefined,
+      [
+        ["audience", "details"],
+        [
+          "imeta",
+          "url https://primary.example/media/sample.mp4",
+          "m video/mp4",
+        ],
+      ],
+    );
+    const timeline = page.locator("[data-channel-timeline]");
+    const brief = timeline.locator(`[data-message-id="${event.id}"] video`);
+    const reader = detailsSheet(page);
+    const read = (video) =>
+      video.evaluate((element) => ({
+        playing: !element.paused,
+        seconds: element.currentTime,
+        // Where its latest stretch of playback began.
+        from: element.played.length
+          ? element.played.start(element.played.length - 1)
+          : undefined,
+        volume: element.volume,
+        muted: element.muted,
+        rate: element.playbackRate,
+      }));
+    const press = async (scope, name) => {
+      await scope.getByRole("button", { name, exact: true }).focus();
+      await page.keyboard.press("Enter");
+    };
+    const row = timeline.locator(`[data-message-id="${event.id}"]`);
+    await expect
+      .poll(() => brief.evaluate((video) => video.readyState))
+      .toBeGreaterThanOrEqual(2);
+    await brief.evaluate((video) => {
+      video.volume = 0.5;
+      video.muted = true;
+    });
+    await press(row, "Play video");
+    await expect
+      .poll(async () => (await read(brief)).seconds)
+      .toBeGreaterThan(0.3);
+
+    // Expanded mid-playback, the reader's player plays on from the brief's
+    // position with its sound and speed, and the brief falls silent.
+    await clickRow(page, showMore(timeline, "Video findings"));
+    await expect(reader.locator("video")).toHaveCount(1);
+    await expect.poll(async () => (await read(brief)).playing).toBe(false);
+    const handed = (await read(brief)).seconds;
+    expect(handed).toBeGreaterThan(0.3);
+    await expect
+      .poll(async () => (await read(reader.locator("video"))).seconds)
+      .toBeGreaterThan(handed);
+    const taken = await read(reader.locator("video"));
+    expect(taken).toMatchObject({
+      playing: true,
+      volume: 0.5,
+      muted: true,
+      rate: 0.25,
+    });
+    // It never played from the start to get here. A position can settle on
+    // the frame before it.
+    expect(taken.from).toBeGreaterThan(handed - 0.1);
+    expect((await read(brief)).playing).toBe(false);
+
+    // Closed, the brief plays on from the reader's position.
+    const returned = (await read(reader.locator("video"))).seconds;
+    await reader.focus();
+    await page.keyboard.press("Escape");
+    await expect(reader).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const now = await read(brief);
+        return now.playing && now.seconds > returned;
+      })
+      .toBe(true);
+    expect((await read(brief)).from).toBeGreaterThan(returned - 0.1);
+
+    // Paused, it opens and closes paused at its position.
+    await press(row, "Pause video");
+    await expect.poll(async () => (await read(brief)).playing).toBe(false);
+    const paused = (await read(brief)).seconds;
+    await clickRow(page, showMore(timeline, "Video findings"));
+    await expect
+      .poll(async () => (await read(reader.locator("video"))).seconds)
+      .toBeCloseTo(paused, 1);
+    expect((await read(reader.locator("video"))).playing).toBe(false);
+    await reader.focus();
+    await page.keyboard.press("Escape");
+    await expect(reader).toHaveCount(0);
+    expect(await read(brief)).toMatchObject({ playing: false });
+    expect((await read(brief)).seconds).toBeCloseTo(paused, 1);
   });
 
   test("Move to side panel hands the thread, its draft and the reply it answers to a tab", async ({

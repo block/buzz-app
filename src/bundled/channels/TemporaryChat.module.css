@@ -1,0 +1,20 @@
+/* The chat's history and its own composer, at a reading height over the
+   source conversation. */
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: min(36rem, var(--sheet-max-height));
+  min-height: 0;
+}
+.history {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: var(--sheet-header-height);
+}
+.marker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}

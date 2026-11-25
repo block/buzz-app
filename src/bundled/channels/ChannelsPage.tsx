@@ -177,6 +177,8 @@ import styles from "./Channels.module.css";
 import { BOARD_MAIN_MIN_REM } from "./panel-split";
 import type { CommunityReader } from "../../features/communities/service";
 import { avatarMedia } from "../../shared/avatar-source";
+import { TemporaryChatSheet } from "./TemporaryChat";
+import { useOpenTemporaryChat } from "../../features/solo/temporary-chat";
 
 /** The open Solo conversation's Archive, published for the shortcut while its visit is live. */
 export type ArchiveShortcut = {
@@ -458,6 +460,7 @@ function ChannelWorkspace({
     if (list.status === "ready") queries.channelKit.ensure();
   }, [queries, list.status]);
   const [joinNoticeHeight, setJoinNoticeHeight] = useState(0);
+  const temporaryChat = useOpenTemporaryChat(queries);
   const [contentReadyChannel, setContentReadyChannel] = useState<string>();
   const [composerFocus, setComposerFocus] = useState(0);
   const [trackSoloMove, soloMoveNotices] = useSoloMoveRecovery(queries);
@@ -3055,6 +3058,23 @@ function ChannelWorkspace({
           onResolvedRoot={(root) => resolveInlineRoot(inlineThread, root)}
         />
       )}
+      {temporaryChat &&
+        current &&
+        !inlineThread &&
+        temporaryChat.source.channelId === current.id && (
+          <TemporaryChatSheet
+            key={temporaryChat.chatId}
+            session={queries}
+            scope={scope}
+            extensions={extensions}
+            interactions={{
+              onOpenLink: openLink,
+              canOpenLink,
+              onOpenMediaReview: openMediaReview,
+            }}
+            open={temporaryChat}
+          />
+        )}
       {current && <LayerReader channelId={current.id} />}
     </div>
   );

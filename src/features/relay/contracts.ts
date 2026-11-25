@@ -417,6 +417,7 @@ export interface ChannelQueries {
       members: readonly string[];
       labels: readonly string[];
       ttlSeconds?: number | undefined;
+      description?: string | undefined;
     }>,
   ): void;
   /** Drops a started chat the relay did not confirm. */

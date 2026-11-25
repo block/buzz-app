@@ -776,9 +776,13 @@ export function createChannelWrites(
       active?: () => boolean,
       labels: readonly string[] = [],
       recovery?: OutboxRecovery,
+      description?: string,
     ) {
       writer();
       identifier(id);
+      const about = description?.trim();
+      if (about && [...about].length > 1000)
+        throw new Error("Keep the chat description under 1,000 characters.");
       // Solo is a channel label, so a relay without NIP-CL cannot hold one.
       if (!channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
@@ -799,6 +803,7 @@ export function createChannelWrites(
             ["name", title],
             ["visibility", "private"],
             ["channel_type", "stream"],
+            ...(about ? [["about", about]] : []),
             ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
             ...channelLabelTags([
               SOLO_LABEL,
@@ -830,6 +835,8 @@ export function createChannelWrites(
         labels?: readonly string[];
         active?: () => boolean;
         admins?: readonly string[];
+        /** The chat's `about`, such as what it was started from. */
+        description?: string;
       },
     ) {
       const recovery = soloAdminRecovery(id, members, options?.admins);
@@ -844,10 +851,14 @@ export function createChannelWrites(
         options?.active,
         options?.labels,
         recovery,
+        options?.description,
       );
       channels.start?.({
         id,
         name: title,
+        ...(options?.description?.trim()
+          ? { description: options.description.trim() }
+          : {}),
         members,
         labels: [
           SOLO_LABEL,

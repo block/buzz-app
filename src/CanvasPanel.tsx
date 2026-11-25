@@ -6,7 +6,14 @@ import {
   useSyncExternalStore,
   type ComponentType,
 } from "react";
-import { AddMenu, Button, EmptyState } from "./kit";
+import {
+  AddMenu,
+  Button,
+  EmptyState,
+  EyeIcon,
+  IconButton,
+  WheelIcon,
+} from "./kit";
 import {
   activateItem,
   closeItem,
@@ -55,38 +62,6 @@ export function createRoaming() {
   };
 }
 export type Roaming = ReturnType<typeof createRoaming>;
-
-const Wheel = () => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinecap="round"
-    aria-hidden="true"
-  >
-    <circle cx="8" cy="8" r="6.25" />
-    <circle cx="8" cy="8" r="1.5" />
-    <path d="M1.9 7h4.7M9.4 7h4.7M8 9.5v4.7" />
-  </svg>
-);
-const Eye = () => (
-  <svg
-    width="16"
-    height="16"
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.5"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z" />
-    <circle cx="8" cy="8" r="2" />
-  </svg>
-);
 
 /** One view of a channel's canvas, in a tab of its own. The first view lives
  * in the canvas's own tab (no `id`); the host opens a tab for each other one.
@@ -336,26 +311,25 @@ export function CanvasPanel({
           {shown && menu.length > 0 && <AddMenu label="Views" items={menu} />}
         </span>
         {led && (
-          <Button
-            variant={following ? "outline" : "ghost"}
-            aria-label={following ? "Stop following" : `Follow ${driverName}`}
+          <IconButton
+            label={following ? "Stop following" : `Follow ${driverName}`}
             title={
               following
                 ? `Following ${driverName}. Look around on your own`
                 : `Follow ${driverName}`
             }
+            selected={following}
             onClick={() =>
               roaming.set(
                 following ? { base: shared.scene, edits: [] } : undefined,
               )
             }
           >
-            <Eye />
-          </Button>
+            <EyeIcon />
+          </IconButton>
         )}
-        <Button
-          variant={driving ? "prominent" : "ghost"}
-          aria-label={driving ? "Stop driving" : "Take control"}
+        <IconButton
+          label={driving ? "Stop driving" : "Take control"}
           title={
             driving
               ? "You are driving. Stop driving"
@@ -363,6 +337,7 @@ export function CanvasPanel({
                 ? `${driverName} is driving. Take control`
                 : "Take control: others see what you see"
           }
+          selected={driving}
           disabled={shared.status === "loading"}
           onClick={
             driving
@@ -370,8 +345,8 @@ export function CanvasPanel({
               : takeControl
           }
         >
-          <Wheel />
-        </Button>
+          <WheelIcon />
+        </IconButton>
       </div>
       {shared.error && (
         <p className={styles.error} role="alert">

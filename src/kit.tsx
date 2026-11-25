@@ -1,6 +1,13 @@
 // The few controls the canvas needs. Buttons, inputs and menus are the host's
 // own where it offers them, and plain elements elsewhere.
-import { createElement, Fragment, useState, type ReactNode } from "react";
+import {
+  createElement,
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { styles } from "./styles";
 
 type HostUi = {
@@ -27,7 +34,6 @@ export function Button({
   /** Shown as a tooltip. */
   title?: string;
   "aria-label"?: string;
-  "aria-expanded"?: boolean;
   children?: ReactNode;
 }) {
   if (ui?.Button) {
@@ -89,7 +95,7 @@ export function AddMenu({
     return (
       <HostMenu
         aria-label={label}
-        icon={<span aria-hidden="true">+</span>}
+        icon={<PlusIcon />}
         align="end"
         items={items}
       />
@@ -143,19 +149,95 @@ export function EmptyState({
   );
 }
 
-/** Two overlapping frames: views shared beside a conversation. */
-export const CanvasIcon = () => (
+/** An icon from the host's own set (Tabler, MIT), drawn as the host draws
+ * them: the same grid, stroke and size, in the colour of the text around. */
+const icon = (paths: readonly string[]) => () => (
   <svg
-    width="16"
-    height="16"
-    viewBox="0 0 16 16"
+    width="1rem"
+    height="1rem"
+    viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    strokeWidth="1.5"
+    strokeWidth="2"
+    strokeLinecap="round"
     strokeLinejoin="round"
+    className="tabler-icon"
     aria-hidden="true"
   >
-    <rect x="1.75" y="4.75" width="9.5" height="8.5" rx="1.5" />
-    <path d="M4.75 4.75v-1.5a1.5 1.5 0 0 1 1.5-1.5h6.5a1.5 1.5 0 0 1 1.5 1.5v5.5a1.5 1.5 0 0 1-1.5 1.5h-1.5" />
+    {paths.map((d) => (
+      <path key={d} d={d} />
+    ))}
   </svg>
 );
+/** An artboard: a frame with crop marks. */
+export const CanvasIcon = icon([
+  "M8 9a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1l0 -6",
+  "M3 8l1 0",
+  "M3 16l1 0",
+  "M8 3l0 1",
+  "M16 3l0 1",
+  "M20 8l1 0",
+  "M20 16l1 0",
+  "M8 20l0 1",
+  "M16 20l0 1",
+]);
+export const WheelIcon = icon([
+  "M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0",
+  "M10 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+  "M12 14l0 7",
+  "M10 12l-6.75 -2",
+  "M14 12l6.75 -2",
+]);
+export const EyeIcon = icon([
+  "M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0",
+  "M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6",
+]);
+const PlusIcon = icon(["M12 5l0 14", "M5 12l14 0"]);
+
+/** A button that is only an icon. The host's plugin Button has no such form,
+ * so this marks it as one of the host's own icon buttons, which gives it
+ * their size, spacing and colour wherever it sits. */
+export function IconButton({
+  label,
+  title,
+  selected,
+  expanded,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  title?: string;
+  /** Filled, as the host shows a toggle that is on. */
+  selected?: boolean;
+  expanded?: boolean;
+  disabled?: boolean;
+  onClick(): void;
+  children: ReactNode;
+}) {
+  const wrap = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const button = wrap.current?.querySelector("button");
+    if (!button) return;
+    button.dataset.iconVariant = "ghost";
+    button.dataset.iconSize = "toolbar";
+    button.dataset.iconShape = "control";
+    if (selected) button.dataset.selected = "";
+    else delete button.dataset.selected;
+    if (expanded === undefined) button.removeAttribute("aria-expanded");
+    else button.setAttribute("aria-expanded", String(expanded));
+  });
+  return (
+    <span ref={wrap} className={styles.iconButton}>
+      <Button
+        variant="ghost"
+        aria-label={label}
+        title={title ?? label}
+        disabled={disabled ?? false}
+        onClick={onClick}
+      >
+        {children}
+      </Button>
+    </span>
+  );
+}

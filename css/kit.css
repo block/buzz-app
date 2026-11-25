@@ -6,3 +6,23 @@
   max-width: 28rem;
   text-align: center;
 }
+.iconButton {
+  display: contents;
+}
+/* Without the host's controls: a plain square button, the size of theirs. */
+.iconButton > button:not([class]) {
+  display: inline-grid;
+  place-items: center;
+  width: var(--size-control-sm, 1.75rem);
+  height: var(--size-control-sm, 1.75rem);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-icon-button, 0.375rem);
+  background: none;
+  color: var(--text-metadata, inherit);
+  cursor: pointer;
+}
+.iconButton > button:not([class])[data-selected] {
+  background: var(--surface-navigation-selected, #0001);
+  color: var(--text-navigation-selected, inherit);
+}

@@ -11,7 +11,7 @@ import type {
   PluginContext,
   Session,
 } from "./host";
-import { Button, CanvasIcon, useHostUi } from "./kit";
+import { CanvasIcon, IconButton, useHostUi } from "./kit";
 import { useHost } from "./react";
 import { createCanvasChannel, type CanvasChannel } from "./store";
 import { css } from "./styles";
@@ -190,15 +190,14 @@ export function apply(ctx: PluginContext) {
       );
     if (!solo) return null;
     return (
-      <Button
-        variant="ghost"
-        aria-label="Toggle canvas"
+      <IconButton
+        label="Toggle canvas"
         title="Canvas"
-        aria-expanded={pressed}
+        expanded={pressed}
         onClick={() => toggle(CANVAS_TARGET)}
       >
         <CanvasIcon />
-      </Button>
+      </IconButton>
     );
   }
 

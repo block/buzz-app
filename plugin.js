@@ -25,6 +25,7 @@ var styles = {
 	fill: "buzz-canvas-fill",
 	frame: "buzz-canvas-frame",
 	hint: "buzz-canvas-hint",
+	iconButton: "buzz-canvas-iconButton",
 	map: "buzz-canvas-map",
 	mapControls: "buzz-canvas-mapControls",
 	pin: "buzz-canvas-pin",
@@ -36,7 +37,7 @@ var styles = {
 	video: "buzz-canvas-video",
 	view: "buzz-canvas-view"
 };
-var css = "/* Fills its panel whether the host lays that out as a flex column or a grid. */ .buzz-canvas-canvas { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; min-width: 0; position: relative; } /* The buttons sit at the end of the view's top row, which leaves them room. */ .buzz-canvas-buttons { position: absolute; top: var(--space-1); right: var(--space-2); z-index: 1; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-control); background: var(--surface-panel); } .buzz-canvas-plus { display: flex; flex: none; align-items: center; align-self: flex-start; } .buzz-canvas-quiet { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .buzz-canvas-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; } .buzz-canvas-empty { flex: 1; display: grid; place-items: center; padding: var(--space-4); } .buzz-canvas-actions { display: flex; justify-content: center; gap: var(--space-2); flex-wrap: wrap; } .buzz-canvas-error { padding: var(--space-2) var(--space-3); color: var(--text-danger); } .buzz-canvas-fill { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; } .buzz-canvas-address { display: flex; gap: var(--space-2); padding: var(--space-1) var(--space-2); padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); border-bottom: 1px solid var(--border-standard); } /* The host's browser view brings its own top row: the canvas's buttons go at its end, in place of the page title the tab already shows. */ .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] { padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); } .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] > span { display: none; } .buzz-canvas-address > :first-child { flex: 1; min-width: 0; } .buzz-canvas-hint { margin: auto; padding: var(--space-4); color: var(--text-subtle); text-align: center; } .buzz-canvas-frame, .buzz-canvas-video { flex: 1; min-height: 0; width: 100%; border: 0; } .buzz-canvas-video { background: var(--bg-media-canvas); } .buzz-canvas-map { position: relative; flex: 1; min-height: 12rem; overflow: hidden; touch-action: none; user-select: none; cursor: grab; } .buzz-canvas-map[data-dragging] { cursor: grabbing; } .buzz-canvas-tile { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; } .buzz-canvas-pin { position: absolute; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: var(--space-1); pointer-events: none; } .buzz-canvas-pinLabel { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-1); border: 1px solid var(--border-standard); border-radius: var(--radius-control); background: var(--surface-popover); color: var(--text-standard); font-size: var(--type-xsmall-size); } .buzz-canvas-pinDot { width: 0.75rem; height: 0.75rem; border: 2px solid var(--surface-popover); border-radius: 50%; background: var(--text-danger); } .buzz-canvas-mapControls { position: absolute; top: var(--space-2); left: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); } .buzz-canvas-credit { position: absolute; right: 0; bottom: 0; padding: 0 var(--space-1); background: var(--surface-popover); color: var(--text-subtle); font-size: var(--type-xsmall-size); } .buzz-canvas-emptyState { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 28rem; text-align: center; }";
+var css = "/* Fills its panel whether the host lays that out as a flex column or a grid. */ .buzz-canvas-canvas { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; min-width: 0; position: relative; } /* The buttons sit at the end of the view's top row, which leaves them room. */ .buzz-canvas-buttons { position: absolute; top: var(--space-1); right: var(--space-2); z-index: 1; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-control); background: var(--surface-panel); } .buzz-canvas-plus { display: flex; flex: none; align-items: center; align-self: flex-start; } .buzz-canvas-quiet { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .buzz-canvas-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; } .buzz-canvas-empty { flex: 1; display: grid; place-items: center; padding: var(--space-4); } .buzz-canvas-actions { display: flex; justify-content: center; gap: var(--space-2); flex-wrap: wrap; } .buzz-canvas-error { padding: var(--space-2) var(--space-3); color: var(--text-danger); } .buzz-canvas-fill { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; } .buzz-canvas-address { display: flex; gap: var(--space-2); padding: var(--space-1) var(--space-2); padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); border-bottom: 1px solid var(--border-standard); } /* The host's browser view brings its own top row: the canvas's buttons go at its end, in place of the page title the tab already shows. */ .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] { padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); } .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] > span { display: none; } .buzz-canvas-address > :first-child { flex: 1; min-width: 0; } .buzz-canvas-hint { margin: auto; padding: var(--space-4); color: var(--text-subtle); text-align: center; } .buzz-canvas-frame, .buzz-canvas-video { flex: 1; min-height: 0; width: 100%; border: 0; } .buzz-canvas-video { background: var(--bg-media-canvas); } .buzz-canvas-map { position: relative; flex: 1; min-height: 12rem; overflow: hidden; touch-action: none; user-select: none; cursor: grab; } .buzz-canvas-map[data-dragging] { cursor: grabbing; } .buzz-canvas-tile { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; } .buzz-canvas-pin { position: absolute; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: var(--space-1); pointer-events: none; } .buzz-canvas-pinLabel { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-1); border: 1px solid var(--border-standard); border-radius: var(--radius-control); background: var(--surface-popover); color: var(--text-standard); font-size: var(--type-xsmall-size); } .buzz-canvas-pinDot { width: 0.75rem; height: 0.75rem; border: 2px solid var(--surface-popover); border-radius: 50%; background: var(--text-danger); } .buzz-canvas-mapControls { position: absolute; top: var(--space-2); left: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); } .buzz-canvas-credit { position: absolute; right: 0; bottom: 0; padding: 0 var(--space-1); background: var(--surface-popover); color: var(--text-subtle); font-size: var(--type-xsmall-size); } .buzz-canvas-emptyState { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 28rem; text-align: center; } .buzz-canvas-iconButton { display: contents; } /* Without the host's controls: a plain square button, the size of theirs. */ .buzz-canvas-iconButton > button:not([class]) { display: inline-grid; place-items: center; width: var(--size-control-sm, 1.75rem); height: var(--size-control-sm, 1.75rem); padding: 0; border: 0; border-radius: var(--radius-icon-button, 0.375rem); background: none; color: var(--text-metadata, inherit); cursor: pointer; } .buzz-canvas-iconButton > button:not([class])[data-selected] { background: var(--surface-navigation-selected, #0001); color: var(--text-navigation-selected, inherit); }";
 //#endregion
 //#region src/kit.tsx
 var ui;
@@ -73,7 +74,7 @@ function AddMenu({ label, items }) {
 	const [open, setOpen] = useState(false);
 	if (ui?.Menu) return /* @__PURE__ */ createElement(Host(ui.Menu), {
 		"aria-label": label,
-		icon: /* @__PURE__ */ createElement("span", { "aria-hidden": "true" }, "+"),
+		icon: /* @__PURE__ */ createElement(PlusIcon, null),
 		align: "end",
 		items
 	});
@@ -98,23 +99,71 @@ function AddMenu({ label, items }) {
 function EmptyState({ title, description, action }) {
 	return /* @__PURE__ */ createElement("div", { className: styles.emptyState }, /* @__PURE__ */ createElement("h3", null, title), /* @__PURE__ */ createElement("p", { className: styles.hint }, description), action);
 }
-/** Two overlapping frames: views shared beside a conversation. */
-var CanvasIcon = () => /* @__PURE__ */ createElement("svg", {
-	width: "16",
-	height: "16",
-	viewBox: "0 0 16 16",
+/** An icon from the host's own set (Tabler, MIT), drawn as the host draws
+* them: the same grid, stroke and size, in the colour of the text around. */
+var icon = (paths) => () => /* @__PURE__ */ createElement("svg", {
+	width: "1rem",
+	height: "1rem",
+	viewBox: "0 0 24 24",
 	fill: "none",
 	stroke: "currentColor",
-	strokeWidth: "1.5",
+	strokeWidth: "2",
+	strokeLinecap: "round",
 	strokeLinejoin: "round",
+	className: "tabler-icon",
 	"aria-hidden": "true"
-}, /* @__PURE__ */ createElement("rect", {
-	x: "1.75",
-	y: "4.75",
-	width: "9.5",
-	height: "8.5",
-	rx: "1.5"
-}), /* @__PURE__ */ createElement("path", { d: "M4.75 4.75v-1.5a1.5 1.5 0 0 1 1.5-1.5h6.5a1.5 1.5 0 0 1 1.5 1.5v5.5a1.5 1.5 0 0 1-1.5 1.5h-1.5" }));
+}, paths.map((d) => /* @__PURE__ */ createElement("path", {
+	key: d,
+	d
+})));
+/** An artboard: a frame with crop marks. */
+var CanvasIcon = icon([
+	"M8 9a1 1 0 0 1 1 -1h6a1 1 0 0 1 1 1v6a1 1 0 0 1 -1 1h-6a1 1 0 0 1 -1 -1l0 -6",
+	"M3 8l1 0",
+	"M3 16l1 0",
+	"M8 3l0 1",
+	"M16 3l0 1",
+	"M20 8l1 0",
+	"M20 16l1 0",
+	"M8 20l0 1",
+	"M16 20l0 1"
+]);
+var WheelIcon = icon([
+	"M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0",
+	"M10 12a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+	"M12 14l0 7",
+	"M10 12l-6.75 -2",
+	"M14 12l6.75 -2"
+]);
+var EyeIcon = icon(["M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0", "M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6"]);
+var PlusIcon = icon(["M12 5l0 14", "M5 12l14 0"]);
+/** A button that is only an icon. The host's plugin Button has no such form,
+* so this marks it as one of the host's own icon buttons, which gives it
+* their size, spacing and colour wherever it sits. */
+function IconButton({ label, title, selected, expanded, disabled, onClick, children }) {
+	const wrap = useRef(null);
+	useEffect(() => {
+		const button = wrap.current?.querySelector("button");
+		if (!button) return;
+		button.dataset.iconVariant = "ghost";
+		button.dataset.iconSize = "toolbar";
+		button.dataset.iconShape = "control";
+		if (selected) button.dataset.selected = "";
+		else delete button.dataset.selected;
+		if (expanded === void 0) button.removeAttribute("aria-expanded");
+		else button.setAttribute("aria-expanded", String(expanded));
+	});
+	return /* @__PURE__ */ createElement("span", {
+		ref: wrap,
+		className: styles.iconButton
+	}, /* @__PURE__ */ createElement(Button, {
+		variant: "ghost",
+		"aria-label": label,
+		title: title ?? label,
+		disabled: disabled ?? false,
+		onClick
+	}, children));
+}
 //#endregion
 //#region src/scene.ts
 var EMPTY_SCENE = Object.freeze({ items: [] });
@@ -280,38 +329,6 @@ function createRoaming() {
 		}
 	};
 }
-var Wheel = () => /* @__PURE__ */ createElement("svg", {
-	width: "16",
-	height: "16",
-	viewBox: "0 0 16 16",
-	fill: "none",
-	stroke: "currentColor",
-	strokeWidth: "1.5",
-	strokeLinecap: "round",
-	"aria-hidden": "true"
-}, /* @__PURE__ */ createElement("circle", {
-	cx: "8",
-	cy: "8",
-	r: "6.25"
-}), /* @__PURE__ */ createElement("circle", {
-	cx: "8",
-	cy: "8",
-	r: "1.5"
-}), /* @__PURE__ */ createElement("path", { d: "M1.9 7h4.7M9.4 7h4.7M8 9.5v4.7" }));
-var Eye = () => /* @__PURE__ */ createElement("svg", {
-	width: "16",
-	height: "16",
-	viewBox: "0 0 16 16",
-	fill: "none",
-	stroke: "currentColor",
-	strokeWidth: "1.5",
-	strokeLinejoin: "round",
-	"aria-hidden": "true"
-}, /* @__PURE__ */ createElement("path", { d: "M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z" }), /* @__PURE__ */ createElement("circle", {
-	cx: "8",
-	cy: "8",
-	r: "2"
-}));
 /** One view of a channel's canvas, in a tab of its own. The first view lives
 * in the canvas's own tab (no `id`); the host opens a tab for each other one.
 * Who drives and what each view shows is the shared scene; following is this
@@ -488,21 +505,21 @@ function CanvasPanel({ channel, roaming, views, viewer, name, id, open, close, T
 	}, shown && menu.length > 0 && /* @__PURE__ */ createElement(AddMenu, {
 		label: "Views",
 		items: menu
-	})), led && /* @__PURE__ */ createElement(Button, {
-		variant: following ? "outline" : "ghost",
-		"aria-label": following ? "Stop following" : `Follow ${driverName}`,
+	})), led && /* @__PURE__ */ createElement(IconButton, {
+		label: following ? "Stop following" : `Follow ${driverName}`,
 		title: following ? `Following ${driverName}. Look around on your own` : `Follow ${driverName}`,
+		selected: following,
 		onClick: () => roaming.set(following ? {
 			base: shared.scene,
 			edits: []
 		} : void 0)
-	}, /* @__PURE__ */ createElement(Eye, null)), /* @__PURE__ */ createElement(Button, {
-		variant: driving ? "prominent" : "ghost",
-		"aria-label": driving ? "Stop driving" : "Take control",
+	}, /* @__PURE__ */ createElement(EyeIcon, null)), /* @__PURE__ */ createElement(IconButton, {
+		label: driving ? "Stop driving" : "Take control",
 		title: driving ? "You are driving. Stop driving" : led ? `${driverName} is driving. Take control` : "Take control: others see what you see",
+		selected: driving,
 		disabled: shared.status === "loading",
 		onClick: driving ? () => void change((current) => setDriver(current)) : takeControl
-	}, /* @__PURE__ */ createElement(Wheel, null))), shared.error && /* @__PURE__ */ createElement("p", {
+	}, /* @__PURE__ */ createElement(WheelIcon, null))), shared.error && /* @__PURE__ */ createElement("p", {
 		className: styles.error,
 		role: "alert"
 	}, shared.error), item && View ? /* @__PURE__ */ createElement("div", {
@@ -1295,11 +1312,10 @@ function apply(ctx) {
 	}
 	function Launcher({ context, pressed, toggle }) {
 		if (!useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot).session?.channels?.list().channels.some((channel) => channel.id === context.channelId && channel.channelType === "solo")) return null;
-		return /* @__PURE__ */ createElement(Button, {
-			variant: "ghost",
-			"aria-label": "Toggle canvas",
+		return /* @__PURE__ */ createElement(IconButton, {
+			label: "Toggle canvas",
 			title: "Canvas",
-			"aria-expanded": pressed,
+			expanded: pressed,
 			onClick: () => toggle(CANVAS_TARGET)
 		}, /* @__PURE__ */ createElement(CanvasIcon, null));
 	}

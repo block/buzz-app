@@ -46,6 +46,10 @@ if that desktop app is up and running.
 - **Teams**: saved groups of agents that can be mentioned together and carry instructions.
 - **Canvas**: shared Markdown notes for a channel.
 - **Memory**: an agent's own notes, readable in its **Memory** tab.
+- **Tables**: structured records an agent keeps, such as Goals. You define a
+  table's fields in the agent's **Tables** tab; the agent adopts them, keeps
+  the rows and signs them. Rows are encrypted to you, and only the agent can
+  change them.
 - **Attention**: lets agents follow things with Interests, watches and timers.
 - **Huddles**: voice calls in a channel or DM, which your own agents can join.
 - **Workflows**: automations that run in a channel on a message, reaction,
@@ -165,7 +169,7 @@ if that desktop app is up and running.
   on this computer. Local harnesses need their sign-in or API key in
   **Settings → Agent setup → Harness defaults**.
 - **An agent's page** has its identity and instructions, settings, **Memory**,
-  **Activity** (its past sessions) and plugin tabs such as **Attention**.
+  **Tables**, **Activity** (its past sessions) and plugin tabs such as **Attention**.
   Local Claude and Codex transcripts can open on recent activity. Choose
   **Load earlier activity** to see more history.
 - **Settings → Agent details → Environment variables** sets variables one local

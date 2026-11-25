@@ -21,6 +21,7 @@ import {
   SmileyIcon,
 } from "../../shared/design-system/icons";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { formatPublicKey } from "../../shared/identity/public-key";
 import { dmLabel } from "./dm-label";
@@ -305,12 +306,13 @@ export function reactionIdentity(
 }
 
 /** One conversation on one line, as the sidebar's other cards list theirs:
- * the conversation, then who wrote last in lighter text. */
+ * the conversation, then who wrote last by face at the row's end. */
 export function CompactActivityRow({
   channel,
   context,
   thread,
   sender,
+  senders,
   unread,
   session,
   profiles,
@@ -320,8 +322,11 @@ export function CompactActivityRow({
   channel: ChannelSummary | undefined;
   context: string;
   thread: boolean;
-  /** Omitted where the conversation's name already says who, as in a DM. */
+  /** Who wrote last, in words for the row's name; omitted where the
+   * conversation's name already says who, as in a DM. */
   sender?: string | undefined;
+  /** Whose faces end the row. A DM already leads with its face, so it shows none. */
+  senders?: readonly string[] | undefined;
   unread: boolean;
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile>;
@@ -341,6 +346,19 @@ export function CompactActivityRow({
         channel.name ?? "Direct message",
       )
     : (channel?.name ?? context);
+  const faces = (senders ?? []).map((id) => {
+    const author = profiles.get(id);
+    return {
+      id,
+      name: name(
+        id,
+        author?.name ?? formatPublicKey(id) ?? "Someone",
+        channel?.members,
+      ),
+      src: avatarMedia(author?.picture, session.media),
+      shape: author?.isAgent ? ("squircle" as const) : ("circle" as const),
+    };
+  });
   return (
     <NavigationItem
       {...props}
@@ -370,8 +388,23 @@ export function CompactActivityRow({
       label={
         <span className={styles.compactLabel} data-unread={unread || undefined}>
           <span className={styles.compactPlace}>{place}</span>
-          {sender && <span className={styles.compactSender}>{sender}</span>}
         </span>
+      }
+      trailing={
+        !dm && faces.length === 1 && faces[0] ? (
+          // One face matches the row's leading avatar in size.
+          <span className={styles.compactAvatar}>
+            <Avatar
+              src={faces[0].src}
+              alt=""
+              fallback={faces[0].name}
+              size="fill"
+              shape={faces[0].shape}
+            />
+          </span>
+        ) : !dm && faces.length ? (
+          <AvatarStack items={faces} />
+        ) : undefined
       }
     />
   );

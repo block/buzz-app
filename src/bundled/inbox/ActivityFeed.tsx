@@ -503,6 +503,13 @@ export function ActivityFeed({
                         ? undefined
                         : identity.sender
                     }
+                    senders={
+                      row.kind === "reaction"
+                        ? [...new Set(row.item.events.map((e) => e.pubkey))]
+                        : own
+                          ? [scope.viewer]
+                          : [row.item.workflowOwnerId ?? row.item.authorId]
+                    }
                     unread={unread}
                     session={session}
                     profiles={profiles}

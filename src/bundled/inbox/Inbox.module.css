@@ -203,13 +203,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.compactSender {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-metadata);
-}
+
 .compactLabel[data-unread] .compactPlace {
   color: var(--text-navigation-unread);
   font-weight: var(--type-weight-semibold);

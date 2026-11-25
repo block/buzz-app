@@ -461,16 +461,27 @@ describe.skipIf(!BIN)("goose-acp", () => {
   it.skip("keeps the Buzz MCP token out of the session database", {
     timeout: 180_000,
   }, async () => {
-    const { goose, cwd, tools } = await live();
+    // Use Goose's own MCP client. CLI providers can defer tools until a turn.
+    const { goose, cwd, tools } = await live({
+      OPENAI_API_KEY: "local-test-only",
+      OPENAI_HOST: "http://127.0.0.1:1",
+      OPENAI_BASE_URL: null,
+    });
     try {
       const session = await goose.open({
         cwd,
         tools,
+        choice: () => ({ provider: "openai", model: "gpt-4o" }),
         title: "Buzz MCP token persistence",
         systemPrompt: "",
       });
       const server = session.server;
       if (!server) throw new Error("no Buzz MCP server");
+      const listed = (await goose.request("_goose/unstable/tools/list", {
+        sessionId: session.id,
+        extensionName: "buzz",
+      })) as { tools: { name: string }[] };
+      expect(listed.tools.map((tool) => tool.name)).toContain("buzz__send");
       const files = sessionsDb();
       expect(files.some((file) => file.includes(session.id))).toBe(true);
       for (const { value } of server.headers) {

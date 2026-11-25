@@ -6,6 +6,9 @@ import { hoverMessage } from "../message-actions.mjs";
 // first unread reply before it shows anything. Older pages arrive after a
 // modeled relay round trip.
 const ROUND_TRIP_MS = 150;
+// Strict thread windows fetch 10 newest replies initially, then pages of 50.
+const INITIAL_WINDOW_SIZE = 10;
+const PAGE_SIZE = 50;
 const historySelector = '[aria-label="Thread messages"]';
 for (const [name, replies] of [
   ["thread-unread-open-60", 60],
@@ -25,6 +28,9 @@ for (const [name, replies] of [
         test.setTimeout(120_000);
         const root = populateThread(app, { replies });
         const ids = [root.id, ...app.inboxWindow.replies.map((e) => e.id)];
+        const expectedOlderReads = Math.ceil(
+          (replies - INITIAL_WINDOW_SIZE) / PAGE_SIZE,
+        );
         await perf.setup(THREAD_CHANNEL);
         const row = page
           .locator(timeline(THREAD_CHANNEL))
@@ -39,10 +45,31 @@ for (const [name, replies] of [
           timeoutMs: 30_000,
           work: { replies, roundTripMs: ROUND_TRIP_MS },
         });
-        sample.work.olderReads = app.pending.length - reads;
+        const olderReceipts = app.pending.slice(reads);
+        const olderReleaseDelaysMs = olderReceipts.map(
+          ({ releaseDelayMs }) => releaseDelayMs,
+        );
+        sample.work.olderReads = olderReceipts.length;
+        sample.work.olderReleaseDelaysMs = olderReleaseDelaysMs;
+        await perf.save(sample);
         await expect(page.locator(historySelector)).not.toHaveAttribute(
           "data-positioning",
         );
-        await perf.save(sample);
+        await expect(
+          page.locator(historySelector).getByRole("alert"),
+        ).toHaveCount(0);
+        expect(
+          sample.work.olderReads,
+          "unread opening pages older through the fixture relay",
+        ).toBe(expectedOlderReads);
+        for (const delay of olderReleaseDelaysMs)
+          expect(
+            delay,
+            "modeled older-page round trip took effect",
+          ).toBeGreaterThanOrEqual(ROUND_TRIP_MS - 10);
+        expect(
+          sample.metrics.firstRowsMs,
+          "rows stayed hidden until modeled older-page round trips completed",
+        ).toBeGreaterThanOrEqual(expectedOlderReads * (ROUND_TRIP_MS - 10));
       });
   });

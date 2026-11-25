@@ -44,6 +44,7 @@ it.each([
   ["WebFetch", true, true, true],
   ["Task", true, false, true],
   ["ToolSearch", true, true, true],
+  ["Skill", true, true, true],
   ["Edit", false, false, true],
   ["apply_patch", false, false, true],
   ["Bash", false, false, true],
@@ -68,11 +69,11 @@ it.each([
   ["watch_add", true, false, true],
   ["solo_worker_create", true, false, true],
   ["tasks_update", true, false, true],
-  ["repo", false, false, true],
-  ["canvas_set", false, false, true],
-  ["channel_delete", false, false, true],
-  ["apps_deploy", false, false, true],
-  ["a_future_buzz_tool", false, false, true],
+  ["repo", true, false, true],
+  ["canvas_set", true, false, true],
+  ["channel_delete", true, false, true],
+  ["apps_deploy", true, false, true],
+  ["a_future_buzz_tool", true, false, true],
 ] as const)(
   "Buzz %s: Super-agent %s, Reviewer %s, Coder %s",
   (name, superAgent, reviewer, coder) => {
@@ -118,18 +119,19 @@ it("allows one connected tool while another on the same server stays off", () =>
   expect(nativeToolAllowed("mcp__linear__get_issue", custom)).toBe(false);
 });
 
-it("allows one named native tool without the catch-all", () => {
-  const named = { toolPreset: "custom", toolAllow: "native-tool:skill" };
-  expect(nativeToolAllowed("Skill", named)).toBe(true);
-  expect(nativeToolAllowed("SlashCommand", named)).toBe(false);
+it("allows one named native tool without the catch-all, and Skill in every role", () => {
+  const named = {
+    toolPreset: "custom",
+    toolAllow: "native-tool:askuserquestion",
+  };
+  expect(nativeToolAllowed("AskUserQuestion", named)).toBe(true);
+  expect(nativeToolAllowed("NotebookRead", named)).toBe(false);
+  const none = { toolPreset: "custom", toolAllow: "" };
+  expect(nativeToolAllowed("AskUserQuestion", none)).toBe(false);
+  expect(nativeToolAllowed("Skill", none)).toBe(true);
+  expect(nativeToolAllowed("Bash", none)).toBe(false);
   expect(
-    nativeToolAllowed("Skill", {
-      toolPreset: "custom",
-      toolAllow: "native:read",
-    }),
-  ).toBe(false);
-  expect(
-    nativeToolAllowed("SlashCommand", {
+    nativeToolAllowed("NotebookRead", {
       toolPreset: "custom",
       toolAllow: "native:other",
     }),

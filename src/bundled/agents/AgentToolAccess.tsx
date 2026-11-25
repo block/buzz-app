@@ -5,6 +5,7 @@ import {
   buzzToolAllowed,
   CONNECTED,
   CONNECTED_TOOLS,
+  alwaysNativeTool,
   joinToolSelection,
   NAMED_NATIVE,
   namedNativeTool,
@@ -55,7 +56,9 @@ export function AgentToolAccess({
   }, [saved, dirty]);
   const custom = draft.preset === "custom";
   const servers = draft.allow.filter((id) => id.startsWith(SERVER_PREFIX));
-  const named = draft.allow.filter((id) => id.startsWith(NAMED_PREFIX));
+  const named = draft.allow.filter(
+    (id) => id.startsWith(NAMED_PREFIX) && !alwaysNativeTool(id),
+  );
   const catchAll = draft.allow.includes(OTHER_NATIVE.id);
   const choose = (preset: ToolPreset) => {
     setDraft({
@@ -80,7 +83,7 @@ export function AgentToolAccess({
   };
   const addNative = () => {
     const name = native.trim();
-    if (!/^[\w.-]+$/.test(name)) return;
+    if (!/^[\w.-]+$/.test(name) || alwaysNativeTool(name)) return;
     const id = namedNativeTool(name);
     if (!named.includes(id)) toggle(id, true);
     setNative("");
@@ -173,8 +176,10 @@ export function AgentToolAccess({
         </RadioGroup>
       </Field>
       <p className="m-0 text-body-sm text-subtle">
-        Subagents inherit this access. It is not a sandbox: with Shell on,
-        commands can use any credentials the agent's process has.
+        Every role can use the harness's skills, and each action a skill takes
+        still follows the role. Subagents inherit this access. It is not a
+        sandbox: with Shell on, commands can use any credentials the agent's
+        process has.
       </p>
       <Section title="Buzz">
         {BUZZ_TOOL_GROUPS.map((group) =>
@@ -202,7 +207,7 @@ export function AgentToolAccess({
         {custom && (
           <AddRow
             title="Allow another native tool"
-            subtitle="By the name the harness gives it, such as Skill."
+            subtitle="By the name the harness gives it."
             label="Native tool name"
             value={native}
             onChange={setNative}

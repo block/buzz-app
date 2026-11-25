@@ -24,7 +24,7 @@ const agent = {
     instructions: "Keep these",
     ...(params.has("custom") && {
       toolPreset: "custom",
-      toolAllow: `buzz:message,buzz:read,connected:github/get_pull_request,native-tool:skill,native:meta,native:read${params.has("legacy") ? ",native:other" : ""}`,
+      toolAllow: `buzz:message,buzz:read,connected:github/get_pull_request,native-tool:askuserquestion,native:meta,native:read${params.has("legacy") ? ",native:other" : ""}`,
     }),
   },
   attention: {},

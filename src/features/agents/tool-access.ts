@@ -78,9 +78,9 @@ export const NATIVE_TOOLS: readonly Described<NativeCapability>[] = [
   },
   {
     id: "native:meta",
-    label: "Plans and tool search",
+    label: "Track steps and find tools",
     description:
-      "Keep a checklist of the steps it's working through, and look up tools that load only when needed.",
+      "For example, keep a checklist like “1. Read the brief, 2. Book the room, 3. Send the summary”, and look up a tool it needs that isn't loaded yet.",
   },
 ];
 /** Allows every native tool outside the groups above, including ones a harness
@@ -91,10 +91,15 @@ export const OTHER_NATIVE: Described<"native:other"> = {
   description:
     "Also allows any native tool not covered above, including tools a harness update adds.",
 };
+/** Every role can load the harness's skills; each action a skill takes is
+ * still its own tool call, decided by the role. */
+const ALWAYS_NATIVE = new Set(["skill"]);
 /** One native tool outside the groups above, as `native-tool:<name>`. */
 export const NAMED_NATIVE = "native-tool";
 export const namedNativeTool = (name: string) =>
   `${NAMED_NATIVE}:${canonical(name)}`;
+export const alwaysNativeTool = (name: string) =>
+  ALWAYS_NATIVE.has(canonical(name.replace(/^native-tool:/, "")));
 
 export const BUZZ_TOOL_GROUPS: readonly Described<BuzzCapability>[] = [
   {
@@ -237,6 +242,7 @@ const ROLES: Readonly<
     "buzz:read",
     "buzz:message",
     "buzz:coordinate",
+    "buzz:deliverable",
   ],
   reviewer: [
     "native:read",
@@ -274,16 +280,17 @@ export const PRESET_INFO: readonly (Described<ToolPreset> &
   {
     id: "super-agent",
     label: "Orchestrator",
-    description: "Plans and delegates work, and tracks it in Tasks.",
-    can: "Read files and the web, keep plans, find tools, delegate to subagents, message, and manage memory, attention, handoffs and Tasks.",
+    description:
+      "Runs work like an assistant: plans, delegates and follows up in Buzz.",
+    can: "Take every Buzz action its identity can, such as messaging, creating channels, canvases and notes, and managing Tasks, memory and attention. Read files and the web, track steps and delegate to subagents.",
     cannot:
-      "Edit files, run commands, use connected tools, or create repositories, canvases, notes or channels.",
+      "Edit local files, run commands or use connected services such as GitHub.",
   },
   {
     id: "reviewer",
     label: "Reviewer",
     description: "Inspects work and reports findings.",
-    can: "Read files and the web, keep plans, find tools, read Buzz and send messages.",
+    can: "Read files and the web, track steps, find tools, read Buzz and send messages.",
     cannot:
       "Edit files, run commands, delegate, use connected tools, manage Tasks or memory, or change deliverables.",
   },
@@ -498,7 +505,7 @@ export function nativeToolAllowed(
   name: string,
   config: ToolConfig | ToolPolicy | unknown,
 ) {
-  if (isBuzzNativeTool(name)) return true;
+  if (isBuzzNativeTool(name) || alwaysNativeTool(name)) return true;
   const policy = toolPolicy(config);
   const connected = connectedTool(name);
   return connected

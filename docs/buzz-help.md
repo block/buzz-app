@@ -201,11 +201,13 @@ if that desktop app is up and running.
   sections, use **Save** or **Cancel**. **Options** lets you disable or enable
   a section, or put the default text back in the editor for you to save.
 - **Tools.** Local Claude Code, Codex, Goose and Pi agents have a per-device
-  **Tools** tab with four roles. **Orchestrator** plans, delegates and tracks
-  work in Tasks. **Reviewer** reads files, diffs and the web and reports
-  findings in Buzz. Neither can change files, run Shell or use Buzz, plugin or
-  connected tools that create or change deliverables, such as repositories,
-  canvases, notes, channels or app deploys. **Builder** has every tool the
+  **Tools** tab with four roles. **Orchestrator** works like an assistant: it
+  can take every Buzz action its identity can, including creating channels,
+  canvases and notes, delegate, and track work in Tasks. **Reviewer** reads
+  files, diffs and the web and reports findings in Buzz, but can't create or
+  change Buzz deliverables. Neither can change local files, run Shell or use
+  connected tools. Every role can use the harness's skills; each action a
+  skill takes still follows the role. **Builder** has every tool the
   harness allows, and is what existing agents use. **Custom** starts from a role
   and lets you switch individual groups, plugin tools, connected MCP servers or
   tools, and named native tools on or off. Saving applies to the agent's next tool call, even in a running

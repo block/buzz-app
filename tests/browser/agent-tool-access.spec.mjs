@@ -69,7 +69,7 @@ test("starts Custom from a role, adjusts tools and a connected server, then save
         instructions: "Keep these",
         toolPreset: "custom",
         toolAllow:
-          "buzz:coordinate,buzz:message,buzz:read,connected:github,native:meta,native:read,native:web",
+          "buzz:coordinate,buzz:deliverable,buzz:message,buzz:read,connected:github,native:meta,native:read,native:web",
       },
     });
   expect(errors).toEqual([]);
@@ -82,9 +82,13 @@ test("keeps a saved catch-all grant visible beside named native tools", async ({
   await expect(
     page.getByRole("switch", { name: "Every other native tool" }),
   ).toBeChecked();
-  await page.getByRole("textbox", { name: "Native tool name" }).fill("Skill");
+  await page
+    .getByRole("textbox", { name: "Native tool name" })
+    .fill("NotebookRead");
   await page.getByRole("button", { name: "Add native tool name" }).click();
-  await expect(page.getByRole("switch", { name: "skill" })).toBeChecked();
+  await expect(
+    page.getByRole("switch", { name: "notebookread" }),
+  ).toBeChecked();
   await page.getByRole("switch", { name: "Every other native tool" }).click();
   await expect(
     page.getByRole("switch", { name: "Every other native tool" }),

@@ -13,6 +13,7 @@ import type {
   ConfigOptions,
 } from "../../features/agent-harness/acp/session";
 import { errorMessage } from "../../features/agent-harness/acp/steps";
+import type { HostProcessOptions } from "../../features/host/service";
 import type {
   AcpHooks,
   ServeMcp,
@@ -214,6 +215,9 @@ export const GooseProcess = {
       signal?: AbortSignal;
       onProcess?: (goose: AcpProcess) => void;
       agent?: Readonly<{ pubkey: string; relay: string }>;
+      /** Native-held secrets: a local agent's own launch asks for
+       * `agent-env`, and a goose Buzz starts briefly for its device list. */
+      secrets?: HostProcessOptions["secrets"];
     }>,
   ) => {
     const goose = await AcpProcess.start(spawn, GOOSE, {

@@ -19,40 +19,49 @@
 .list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-}
-.row {
-  display: flex;
-  align-items: flex-start;
   gap: var(--space-2);
 }
-.open {
+.card {
   display: flex;
-  flex: 1;
-  min-width: 0;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-1);
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  text-align: start;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
 }
-.open:hover {
-  background: var(--affordance-panel-hover);
+.card > * {
+  min-width: 0;
+  max-width: 100%;
 }
-html[data-keyboard-navigation] .open:focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: -2px;
+.head {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: var(--space-2);
 }
 .byline {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: baseline;
   gap: var(--space-2);
 }
-.preview {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+.pinBody {
+  align-self: stretch;
+  /* Four lines for every pin, so the cards line up as a list. */
+  height: 6em;
   overflow: hidden;
   overflow-wrap: anywhere;
-  color: var(--text-secondary);
+}
+.pinBody[data-expanded] {
+  height: auto;
+}
+.pinBody[data-overflows]:not([data-expanded]) {
+  mask-image: linear-gradient(to bottom, black calc(100% - 1.5em), transparent);
+}
+.toggle[data-hidden] {
+  visibility: hidden;
 }

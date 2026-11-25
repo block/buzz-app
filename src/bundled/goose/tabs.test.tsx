@@ -987,6 +987,8 @@ function activity(
     channelLabel: (_: string, id: string) =>
       world.names?.[id] ? { name: world.names[id], kind: "stream" } : undefined,
     notices: () => new Map(),
+    readableRows: (_: string, rows: readonly unknown[]) => rows,
+    readableTurns: (_: string, __: unknown, turns: readonly unknown[]) => turns,
     prompts: () => ({
       shown: (turns: unknown) => turns,
       sessions: () =>
@@ -1198,6 +1200,49 @@ it("lists conversations by channel name, with running and standalone sessions, o
     await screen.findByText("Hi from timer", { selector: "summary span" }),
   ).toBeInTheDocument();
   expect(listings(fake)).toEqual([]);
+});
+
+it("filters a conversation that lost its place by each turn's own source", async () => {
+  const fake = gooseHistory(["s1"]);
+  const readableTurns = vi.fn(() => []);
+  activity(fake, {
+    saved: [{ key: "lost", at: 1, sessions: ["s1"] }],
+    runtime: {
+      readableTurns,
+      source: () => ({ channelId: "" }),
+    } as unknown as Partial<GooseRuntime>,
+  });
+  const [view] = await screen.findAllByRole("button", {
+    name: /View transcript/,
+  });
+  if (!view) throw new Error("no row");
+  await userEvent.setup().click(view);
+  await waitFor(() =>
+    expect(readableTurns).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ channelId: "", community: true }),
+      expect.anything(),
+    ),
+  );
+});
+
+it("shows a standalone watch or timer run's transcript, which is the owner's own", async () => {
+  const fake = gooseHistory(["timer"]);
+  const readableTurns = vi.fn(() => []);
+  activity(fake, {
+    saved: [],
+    ids: [{ id: "timer", at: 1, title: "Gander · timer/t" }],
+    runtime: { readableTurns } as unknown as Partial<GooseRuntime>,
+  });
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole("button", { name: "View transcript: timer/t" }),
+    );
+  expect(
+    await screen.findByText("Hi from timer", { selector: "summary span" }),
+  ).toBeInTheDocument();
+  expect(readableTurns).not.toHaveBeenCalled();
 });
 
 it("lists a conversation with more than ten sessions once", () => {

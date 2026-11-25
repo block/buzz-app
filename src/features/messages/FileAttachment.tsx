@@ -124,7 +124,9 @@ export function FileAttachment({
       } satisfies IconButtonProps;
       return (
         <div className={styles.filePreviewAttachment}>
-          <div className={styles.filePreviewMain}>
+          {/* Unselectable, so a copied selection leaves it out; the macOS
+              app's engine does not report that style to the copy walk. */}
+          <div className={styles.filePreviewMain} data-copy-skip>
             <NavigationItem
               aria-label={`Preview ${displayName}`}
               icon={
@@ -200,7 +202,8 @@ export function FileAttachment({
       </span>
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
-        <span className={styles.fileAttachmentMeta}>
+        {/* A copied selection leaves this out: it would run into the name. */}
+        <span className={styles.fileAttachmentMeta} data-copy-skip>
           {state === "pending"
             ? "Downloading…"
             : state === "ready"
@@ -255,6 +258,9 @@ export function FileAttachment({
         rel="noreferrer"
         aria-label={`Open ${displayName}`}
         title={displayName}
+        // A copied selection labels the link with this, not its text, which
+        // runs the name into the size.
+        data-link-label={displayName}
         onClick={(event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey) return;
           if (onOpenLink(source)) event.preventDefault();
@@ -312,7 +318,12 @@ function NativeDownloadAction({
   return (
     <>
       {children(state, download)}
-      <span className="sr-only" role={state === "failed" ? "alert" : "status"}>
+      {/* Not shown, so not copied by a selection that runs past the card. */}
+      <span
+        className="sr-only"
+        role={state === "failed" ? "alert" : "status"}
+        data-copy-skip
+      >
         {announcement}
       </span>
     </>
@@ -465,7 +476,12 @@ function NativeFileDownload({
           }
         }}
       />
-      <span className="sr-only" role={alert ? "alert" : "status"}>
+      {/* Not shown, so not copied by a selection that runs past the card. */}
+      <span
+        className="sr-only"
+        role={alert ? "alert" : "status"}
+        data-copy-skip
+      >
         {notice}
       </span>
       <MenuPopup size="compact" anchor={menuAnchor} finalFocus={trigger}>
@@ -508,7 +524,9 @@ function UnavailableFileAttachment({
       </span>
       <span className={styles.fileAttachmentBody}>
         <span className={styles.fileAttachmentName}>{displayName}</span>
-        <span className={styles.fileAttachmentMeta}>File unavailable</span>
+        <span className={styles.fileAttachmentMeta} data-copy-skip>
+          File unavailable
+        </span>
       </span>
     </span>
   );

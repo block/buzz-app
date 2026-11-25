@@ -4,6 +4,33 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { watchPageErrors } from "./page-errors.mjs";
 
+// Opens the fixture's thread again at the height that leaves its newest
+// replies overflowing their reader by `overflow` px, in a window that holds it.
+async function reopen(page, overflow) {
+  const { top, height } = await page
+    .getByRole("region", { name: "Thread messages" })
+    .evaluate((el) => {
+      const thread = el.closest("aside").getBoundingClientRect();
+      return {
+        top: thread.top + window.scrollY,
+        height: thread.height - el.clientHeight + el.scrollHeight,
+      };
+    });
+  await page.setViewportSize({
+    width: page.viewportSize().width,
+    height: Math.ceil(top + height - overflow),
+  });
+  await page.goto(`${page.url()}&threadHeight=${height - overflow}`);
+}
+// Scroll events and resize observations of the last change have run.
+const settled = (page) =>
+  page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+
 test("reconnect repair failure keeps retry reachable at the newest replies", async ({
   page,
 }) => {
@@ -188,7 +215,7 @@ test("legacy continuation failure exposes recovery after retained replies", asyn
 
 // Browser boundary: actual layout/scroll anchoring and user demand over the real
 // StrictMode session and ThreadPanel. Protocol permutations stay in owner tests.
-test("older-page loading adds no row or layout shift while the request is held", async ({
+test("older-page loading adds no row or layout shift while the request is held, and a page that leaves its reader at the latest reply keeps them following", async ({
   page,
 }) => {
   const server = await createServer({
@@ -201,11 +228,13 @@ test("older-page loading adds no row or layout shift while the request is held",
   });
   await server.listen();
   try {
-    await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`,
-    );
+    const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html?threadWindow=1`;
+    await page.goto(url);
     const history = page.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
+    await expect(replies).toHaveCount(10);
+    // The newest replies fit their reader, who is at the first and the latest.
+    await reopen(page, 0);
     await expect(replies).toHaveCount(10);
     // Settle at the top before the held request so native scrolling cannot
     // masquerade as a layout shift caused by a loading row.
@@ -241,6 +270,49 @@ test("older-page loading adds no row or layout shift while the request is held",
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     await expect(replies).toHaveCount(60);
     await expect(cue).toHaveCount(0);
+    await settled(page);
+    await page.evaluate(() => window.messagesFixture.live());
+    await expect(replies).toHaveCount(61);
+    await expect
+      .poll(() =>
+        history.evaluate(
+          (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+        ),
+      )
+      .toBeLessThan(2);
+    // A reader who asked for a page and scrolls back to the latest reply
+    // before it lands follows a live reply, and still follows after it lands.
+    await page.goto(url);
+    await expect(replies).toHaveCount(10);
+    await reopen(page, 40);
+    await expect(replies).toHaveCount(10);
+    const gap = () =>
+      history.evaluate(
+        (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
+      );
+    await expect.poll(gap).toBeLessThan(2);
+    await page.evaluate(() => window.messagesFixture.holdOlderPage());
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.filters.length),
+      )
+      .toBe(2);
+    await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(0);
+    await history.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+      el.dispatchEvent(new Event("scroll"));
+    });
+    await expect.poll(gap).toBeLessThan(1);
+    await settled(page);
+    await page.evaluate(() => window.messagesFixture.live());
+    await expect(replies).toHaveCount(11);
+    await expect.poll(gap).toBeLessThan(2);
+    await page.evaluate(() => window.messagesFixture.releaseOlderPage());
+    await expect(replies).toHaveCount(61);
+    await settled(page);
+    await expect.poll(gap).toBeLessThan(2);
   } finally {
     await page
       .evaluate(() => window.messagesFixture.releaseOlderPage())
@@ -249,7 +321,7 @@ test("older-page loading adds no row or layout shift while the request is held",
   }
 });
 
-test("newest window positions immediately; scrollback preserves the visible reply and live following", async ({
+test("newest window positions immediately; scrollback holds the visible reply in place and live following", async ({
   page,
 }) => {
   const server = await createServer({
@@ -273,6 +345,10 @@ test("newest window positions immediately; scrollback preserves the visible repl
     const history = panel.getByRole("region", { name: "Thread messages" });
     const replies = history.locator("ol [data-message-id]");
     await expect(replies).toHaveCount(10);
+    // The newest replies overflow their reader by less than the distance that
+    // still counts as the latest reply: scrolling to the first leaves it.
+    await reopen(page, 40);
+    await expect(replies).toHaveCount(10);
     // Loading belongs to history; the composer retains its live region idle.
     await expect(history.getByRole("status")).toHaveCount(0);
     await expect(
@@ -290,21 +366,18 @@ test("newest window positions immediately; scrollback preserves the visible repl
     expect(initial[0].thread_window).toBe(true);
     // A user gesture, not mounting or live reflow, asks for older history.
     await page.evaluate(() => window.messagesFixture.holdOlderPage());
-    // The wheel may still move the viewport after dispatch. Measure only after
-    // the continuation is pending, then release it to isolate prepend geometry.
-    await history.evaluate((el) => {
-      el.scrollTop = 0;
-      el.dispatchEvent(new Event("scroll"));
-    });
     await history.hover();
-    // Already at the top: wheel input demands history but has no native scroll
-    // to finish, so scrollend is not a completion signal for this gesture.
     await page.mouse.wheel(0, -300);
     await expect
       .poll(() =>
         page.evaluate(() => window.messagesFixture.report.filters.length),
       )
       .toBe(2);
+    // The wheel may still move the viewport after dispatch. Measure only after
+    // it rests at the top with the continuation pending, then release it to
+    // isolate prepend geometry.
+    await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(0);
+    await settled(page);
     const continuation = await page.evaluate(
       () => window.messagesFixture.report.filters[1],
     );
@@ -312,9 +385,8 @@ test("newest window positions immediately; scrollback preserves the visible repl
     expect(continuation.until).toBeDefined();
     expect(continuation.before_id).toBeDefined();
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
-    // Newly prepended content preserves the reply being read.
-    await replies.first().scrollIntoViewIfNeeded();
-    await expect(replies.first()).toBeInViewport();
+    // Newly prepended content leaves the reply being read where it is. The
+    // oldest loaded reply loses its byline to the page.
     const readingId = await history.evaluate((el) => {
       const viewport = el.getBoundingClientRect();
       const visible = [...el.querySelectorAll("ol [data-message-id]")].filter(
@@ -327,11 +399,15 @@ test("newest window positions immediately; scrollback preserves the visible repl
       if (!reading) throw new Error("No complete reply in the viewport");
       return reading.dataset.messageId;
     });
+    const readingReply = history.locator(`ol [data-message-id="${readingId}"]`);
+    const readingTop = () =>
+      readingReply.evaluate((row) => row.getBoundingClientRect().top);
+    const top = await readingTop();
     await page.evaluate(() => window.messagesFixture.releaseOlderPage());
     await expect(replies).toHaveCount(60);
     await expect(history.getByText("Loading older replies…")).toHaveCount(0);
-    const readingReply = history.locator(`ol [data-message-id="${readingId}"]`);
-    await expect(readingReply).toBeInViewport();
+    await settled(page);
+    expect(Math.abs((await readingTop()) - top)).toBeLessThan(1);
     // The page was prepended, not substituted for the reply being read.
     expect(
       await replies.evaluateAll(

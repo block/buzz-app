@@ -42,7 +42,7 @@ import {
 } from "../profiles/useVerifiedNames";
 import { abbreviatedPublicKey } from "../../shared/identity/public-key";
 import { RecipientPicker } from "./RecipientPicker";
-import type { Recipient } from "./usePeople";
+import { recipientView, type Recipient } from "./usePeople";
 import { usePassThroughUntilDrafted } from "../messages/draft-visit";
 import type { PageNavigation } from "../navigation/service";
 import styles from "./NewMessage.module.css";
@@ -63,12 +63,6 @@ const keyFor = (people: readonly Recipient[]) =>
     .map((person) => person.pubkey)
     .sort()
     .join(":");
-// Persist identity and a bounded label, never the directory's full metadata.
-const recipientView = ({ pubkey, name, isAgent }: Recipient): Recipient => ({
-  pubkey,
-  name: name.slice(0, 500),
-  ...(isAgent === true ? { isAgent: true } : {}),
-});
 function savedRecipients(scope: string, viewer?: string) {
   return validRecipients(
     readView<unknown>(scope, "direct-message:recipients", []),

@@ -192,8 +192,11 @@ test.describe("workspace heading resize", () => {
     await expect(disclosure).toHaveJSProperty("open", true);
     // The caret follows the title on every card, so a truncated title's caret
     // sits under the revealed actions; the title start still toggles it.
-    const label = await heading.getByText(title, { exact: true }).boundingBox();
-    await page.mouse.click(label.x + 4, label.y + label.height / 2);
+    // A locator click waits for the heading to settle and hit-tests the title,
+    // unlike a click at coordinates measured before it settles.
+    await heading
+      .getByText(title, { exact: true })
+      .click({ position: { x: 4, y: 4 } });
     await expect(disclosure).toHaveJSProperty("open", false);
     await arrow.click();
     await expect(

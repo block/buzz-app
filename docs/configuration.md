@@ -155,6 +155,30 @@ Unset, the create form has no Automatic option.
   `settings` in the agent's settings revision (kind 45010), with a matching
   `["preset", "recommended"]` tag. Older versions keep it when they edit.
 
+### MCP server approvals (kind 45015)
+
+An agent's own MCP servers sync as `mcpServers` in its settings revision
+(kind 45010). The value is a whole Nostr event of kind 45015, signed by the
+agent's owner, and never published on its own:
+
+```json
+{
+  "kind": 45015,
+  "pubkey": "<owner>",
+  "tags": [["agent", "<agent pubkey>"], ["seq", "3"]],
+  "content": "{\"version\":1,\"servers\":[...],\"disabledInherited\":[\"<name>\"]}"
+}
+```
+
+Each server is `{ "name", "enabled", "slot", "transport": "stdio", "command",
+"args", "env" }` or `{ "name", "enabled", "slot", "transport": "http", "url",
+"headers" }`, where `env` and `headers` list variable names only. `slot` is 16
+hex digits; a device keeps the values under
+`BUZZMCP_<SLOT>_<hex of the name>` in its credential store, and they never
+sync. A device uses an event only when the owner signed it for that agent and
+its `seq` is not older than one it already used. `disabledInherited` names the
+servers from the harness's own config that the owner turned off.
+
 A bundled plugin can replace the setup per launch with
 `ctx.agents.recommend(source)`, for example per team. Buzz waits up to five
 seconds for it, then falls back to `BUZZ_RECOMMENDED_AGENT`, so set both.

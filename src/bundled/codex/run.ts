@@ -54,7 +54,11 @@ export const codexRun = (
   timeoutMs: HANDOVER_MS,
   mcpServers: {
     transports: ["stdio", "http"],
-    inherited: (agent) => runtime.inheritedMcp(agent),
+    label: "Codex",
+    note: "Codex picks up changes to its own config on its next message.",
+    inherited: async (agent) => ({
+      servers: await runtime.inheritedMcp(agent),
+    }),
   },
   syncedSettings: {
     schema: syncedSettingsSchema,

@@ -285,8 +285,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
     mcpServers: {
       transports: ["stdio", "http"],
       reserved: GOOSE_RESERVED,
-      inherited: (agent) =>
-        agent.protection ? Promise.resolve([]) : setup.inheritedMcp(),
+      label: "goose",
+      inherited: async (agent) => {
+        if (agent.protection) return { servers: [] };
+        const [{ servers, print }, started] = await Promise.all([
+          setup.inheritedMcp(),
+          Promise.all(runtime.nativeMcp(agent.key)),
+        ]);
+        // A process whose start couldn't be listed counts as unchanged.
+        return {
+          servers,
+          changed: started.some((then) => then !== undefined && then !== print),
+        };
+      },
     },
   });
 };

@@ -671,6 +671,7 @@ export function AgentDetails({
                         agents={agents}
                         agent={agent}
                         capability={type.mcpServers}
+                        restartAgent={() => agents.restartAgent(agent.pubkey)}
                       />
                     )}
                 </div>

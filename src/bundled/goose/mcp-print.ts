@@ -62,17 +62,43 @@ async function nativeDefinitions(goose: Pick<GooseProcess, "request">) {
     });
 }
 
+/** The extensions goose's own config loads, which its agents run too, and
+ * a print of their definitions without secrets, from one listing. */
+export async function nativeSnapshot(goose: Pick<GooseProcess, "request">) {
+  const own = await nativeDefinitions(goose);
+  return {
+    servers: own.flatMap((e) => {
+      const { configKey, enabled } = e as {
+        configKey?: unknown;
+        enabled?: unknown;
+      };
+      return typeof configKey === "string" && enabled === true
+        ? [{ name: configKey, source: "From your goose config" }]
+        : [];
+    }),
+    print: JSON.stringify(own),
+  };
+}
+
+/** goose's own extensions' print; undefined when they can't be listed,
+ * which is not the same as none. */
+export const nativePrint = (goose: Pick<GooseProcess, "request">) =>
+  nativeSnapshot(goose).then(
+    ({ print }) => print,
+    () => undefined,
+  );
+
 /** The MCP setup a session for the agent would start on now. */
 export async function mcpPrint(
   goose: Pick<GooseProcess, "request">,
   agent: string,
-  config: unknown,
+  /** The approval a launch uses now, from `approvalId`. */
+  approval: unknown,
   strict: boolean,
 ): Promise<string> {
   const own = strict ? [] : await nativeDefinitions(goose);
-  const list = (config as { mcpServers?: { id?: unknown } }).mcpServers?.id;
   const text = JSON.stringify([
-    list ?? null,
+    approval ?? null,
     strict,
     own,
     mcpGeneration(agent),

@@ -218,6 +218,51 @@ describe("diff", () => {
       ),
     ).toEqual([{ field: "model", before: "a", after: "route:auto-balanced" }]);
   });
+
+  it("shows what each MCP server runs, never its values", () => {
+    const withMcp = (servers: object[]) =>
+      JSON.stringify({
+        version: 1,
+        settings: {},
+        mcpServers: {
+          kind: 45015,
+          content: JSON.stringify({
+            version: 1,
+            servers,
+            disabledInherited: [],
+          }),
+        },
+      });
+    const docs = {
+      name: "docs",
+      enabled: true,
+      slot: "0".repeat(16),
+      transport: "http",
+      headers: ["TOKEN"],
+    };
+    const tool = {
+      name: "tool",
+      enabled: true,
+      slot: "1".repeat(16),
+      transport: "stdio",
+      env: [],
+    };
+    expect(
+      settingsDiff(
+        withMcp([
+          { ...docs, url: "https://a" },
+          { ...tool, command: "run", args: ["-x"] },
+        ]),
+        withMcp([
+          { ...docs, url: "https://b" },
+          { ...tool, enabled: false, command: "run", args: ["-x"] },
+        ]),
+      ),
+    ).toEqual([
+      { field: "MCP server docs", before: "https://a", after: "https://b" },
+      { field: "MCP server tool", before: "run -x", after: "(off) run -x" },
+    ]);
+  });
 });
 
 describe("revert", () => {

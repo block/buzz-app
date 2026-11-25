@@ -6,7 +6,10 @@ import {
   approved,
   claudeServers,
   envName,
+  isServer,
   launchList,
+  nextSeq,
+  newSlot,
   type McpList,
   startList,
 } from "./mcp-servers";
@@ -19,6 +22,7 @@ const list: McpList = {
     {
       name: "docs",
       enabled: true,
+      slot: "00000000000000aa",
       transport: "stdio",
       command: "docs-mcp",
       args: ["--quiet"],
@@ -27,6 +31,7 @@ const list: McpList = {
     {
       name: "off",
       enabled: false,
+      slot: "00000000000000bb",
       transport: "http",
       url: "https://example.com/mcp",
       headers: [],
@@ -67,6 +72,42 @@ describe("approved", () => {
     expect(approved(low, OWNER, AGENT).ok).toBe(true);
   });
 
+  it("keeps using the list it accepted when the settings leave it out", () => {
+    const kept = sign(1);
+    expect(approved(kept, OWNER, AGENT).ok).toBe(true);
+    expect(approved(undefined, OWNER, AGENT)).toMatchObject({
+      ok: true,
+      list,
+      id: kept.id,
+      kept: true,
+    });
+    // A list that is there but invalid never falls back.
+    expect(approved({ ...kept, sig: "00" }, OWNER, AGENT).ok).toBe(false);
+    // One it can't recover fails closed, rather than reading as none.
+    const record = JSON.parse(
+      localStorage.getItem("buzz.agents.mcp-approvals.v1") ?? "{}",
+    );
+    record[AGENT].event.content = "{}";
+    localStorage.setItem(
+      "buzz.agents.mcp-approvals.v1",
+      JSON.stringify(record),
+    );
+    expect(approved(undefined, OWNER, AGENT).ok).toBe(false);
+  });
+
+  it("never throws on a malformed list", () => {
+    for (const bad of [null, 1, "x", { sig: "s" }, { sig: "s", tags: 1 }])
+      expect(approved(bad, OWNER, AGENT).ok).toBe(false);
+  });
+
+  it("counts on only a verified head", () => {
+    expect(nextSeq(AGENT, OWNER, sign(4))).toBe(5);
+    expect(nextSeq(AGENT, OWNER, sign(2 ** 52, generateSecretKey()))).toBe(1);
+    expect(() =>
+      nextSeq(AGENT, OWNER, sign(Number.MAX_SAFE_INTEGER)),
+    ).toThrow();
+  });
+
   it("takes no list as none", () => {
     expect(startList({}, { pubkey: AGENT, owner: OWNER })).toEqual({
       servers: [],
@@ -98,9 +139,26 @@ describe("launch", () => {
         command: "docs-mcp",
         args: ["--quiet"],
         // biome-ignore lint/suspicious/noTemplateCurlyInString: Claude expands it
-        env: { TOKEN: "${BUZZMCP_DOCS_TOKEN}" },
+        env: { TOKEN: "${BUZZMCP_00000000000000AA_544F4B454E}" },
       },
     });
-    expect(envName("my-server", "api.key")).toBe("BUZZMCP_MY_SERVER_API_KEY");
+  });
+
+  it("keeps every server's and name's values apart", () => {
+    const slot = "00000000000000aa";
+    expect(envName(slot, "a_b")).not.toBe(envName(slot, "a-b"));
+    expect(envName(slot, "token")).not.toBe(envName(slot, "TOKEN"));
+    expect(envName(slot, "x")).not.toBe(envName("00000000000000bb", "x"));
+    expect(envName(slot, "a".repeat(48))).toMatch(/^BUZZMCP_[0-9A-F_]{1,120}$/);
+    expect(newSlot([])).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it("takes from the form only what a launch accepts", () => {
+    const [docs] = list.servers;
+    expect(isServer(docs)).toBe(true);
+    expect(isServer({ ...list.servers[1], url: "https://" })).toBe(false);
+    expect(isServer({ ...docs, command: "  " })).toBe(false);
+    expect(isServer({ ...docs, env: ["A", "A"] })).toBe(false);
+    expect(isServer({ ...docs, slot: "x" })).toBe(false);
   });
 });

@@ -1335,7 +1335,18 @@ export type AgentType<Config = unknown> = {
    * the owner can turn off but not edit. Without it, the type has none. */
   mcpServers?: Readonly<{
     transports: readonly McpTransport[];
-    inherited?(agent: Agent): Promise<readonly McpInherited[]>;
+    /** The harness's name, as its config changes are described. */
+    label: string;
+    /** How the harness picks up changes to its own config, when no restart
+     * is needed for them. */
+    note?: string;
+    /** `changed` when one of the agent's running processes started with
+     * other servers of the harness's own than its config has now. */
+    inherited?(
+      agent: Agent,
+    ): Promise<
+      Readonly<{ servers: readonly McpInherited[]; changed?: boolean }>
+    >;
     /** Names the harness keeps for its own built-in tools. */
     reserved?: readonly string[];
   }>;
@@ -6606,7 +6617,11 @@ export class AgentsService extends Service implements Agents {
       throw new Error("MCP servers can be set once this agent's config syncs");
     const current = (agent.config as { mcpServers?: unknown }).mcpServers;
     const approval = await home.sign(
-      approvalTemplate(agent.pubkey, nextSeq(agent.pubkey, current), list),
+      approvalTemplate(
+        agent.pubkey,
+        nextSeq(agent.pubkey, agent.owner, current),
+        list,
+      ),
       AbortSignal.timeout(30_000),
     );
     await this.saveAs(key, {

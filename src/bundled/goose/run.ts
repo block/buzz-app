@@ -36,7 +36,7 @@ export const gooseRun = (
     return runtime.workspaceFile(agent, path);
   },
   timeoutMs: HANDOVER_MS,
-  mcpServers: { transports: ["stdio", "http"] },
+  mcpServers: { transports: ["stdio", "http"], label: "goose" },
   syncedSettings: {
     schema: syncedSettingsSchema,
     withSynced: withSyncedSettings,

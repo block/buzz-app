@@ -256,10 +256,10 @@ export function settingsDiff(before: string, after: string): FieldChange[] {
   // A route shows as the model it is in a config.
   const fields = (content: string) => {
     const body = parse(content) ?? {};
-    return routedSettings(
-      body,
-      (body.settings ?? {}) as Record<string, string>,
-    ) as Record<string, unknown>;
+    return {
+      ...routedSettings(body, (body.settings ?? {}) as Record<string, string>),
+      ...mcpFields(body.mcpServers),
+    } as Record<string, unknown>;
   };
   const a = fields(before);
   const b = fields(after);
@@ -267,6 +267,35 @@ export function settingsDiff(before: string, after: string): FieldChange[] {
     .sort()
     .filter((field) => JSON.stringify(a[field]) !== JSON.stringify(b[field]))
     .map((field) => ({ field, before: a[field], after: b[field] }));
+}
+
+/** Each signed MCP server as what it runs, so a changed command or URL
+ * shows; never a value, which isn't in the list. */
+function mcpFields(approval: unknown): Record<string, string> {
+  const content = (approval as { content?: unknown } | undefined)?.content;
+  const servers = typeof content === "string" && parse(content)?.servers;
+  if (!Array.isArray(servers)) return {};
+  return Object.fromEntries(
+    servers.flatMap((s: Record<string, unknown>) =>
+      typeof s?.name === "string"
+        ? [
+            [
+              `MCP server ${s.name}`,
+              [
+                s.enabled === false ? "(off)" : "",
+                s.transport === "http"
+                  ? String(s.url)
+                  : [s.command, ...(Array.isArray(s.args) ? s.args : [])].join(
+                      " ",
+                    ),
+              ]
+                .filter(Boolean)
+                .join(" "),
+            ],
+          ]
+        : [],
+    ),
+  );
 }
 
 const parse = (content: string) => {

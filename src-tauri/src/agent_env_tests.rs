@@ -280,10 +280,22 @@ async fn mcp_values_join_the_agents_own_and_go_with_it() {
         .unwrap();
     // Only names Buzz chose for MCP values are taken.
     assert!(envs
-        .mcp_set(ADA, vec![set("TOKEN", "x")], || Ok(true))
+        .mcp_set(ADA, vec![set("TOKEN", "x")], vec![], || Ok(true))
         .await
         .is_err());
-    envs.mcp_set(ADA, vec![set("BUZZMCP_A1_TOKEN", "secret")], || Ok(true))
+    envs.mcp_set(ADA, vec![set("BUZZMCP_A1_TOKEN", "secret")], vec![], || {
+        Ok(true)
+    })
+    .await
+    .unwrap();
+    // A save adds beside the saved values and deletes only what it names.
+    envs.mcp_set(ADA, vec![set("BUZZMCP_B2_TOKEN", "next")], vec![], || {
+        Ok(true)
+    })
+    .await
+    .unwrap();
+    assert_eq!(envs.mcp_values(ADA).await.unwrap().len(), 2);
+    envs.mcp_set(ADA, vec![], vec!["BUZZMCP_B2_TOKEN".into()], || Ok(true))
         .await
         .unwrap();
     assert_eq!(

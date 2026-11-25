@@ -3,7 +3,9 @@
 // the settings around it (NIP-AP) but can't sign the list, so a device starts
 // only a list its owner signed. Values of env vars and headers never sync:
 // they stay in this device's credential store (`agent_env.rs`), under names
-// `envName` gives, and only their names are in the list.
+// `envName` gives, and only their names are in the list. Each server's values
+// sit under its `slot`, which a save that changes the server replaces, so a
+// published list never finds values meant for another definition.
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { verifyEvent, type EventTemplate } from "nostr-tools";
 import type { RelayEvent } from "../relay/events";
@@ -13,7 +15,7 @@ import type { RelayEvent } from "../relay/events";
 export const MCP_APPROVAL_KIND = 45015;
 
 export type McpServer = Readonly<
-  { name: string; enabled: boolean } & (
+  { name: string; enabled: boolean; slot: string } & (
     | { transport: "stdio"; command: string; args: string[]; env: string[] }
     | { transport: "http"; url: string; headers: string[] }
   )
@@ -34,23 +36,43 @@ export const EMPTY_LIST: McpList = { servers: [], disabledInherited: [] };
 /** A server name: what a harness can take as a key and a tool prefix. */
 export const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** An env var or header name. */
+export const KEY = /^[A-Za-z0-9_.-]{1,48}$/;
+/** Where a server's values are kept: 16 lowercase hex digits. */
+const SLOT = /^[0-9a-f]{16}$/;
+
 const isStrings = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((s) => typeof s === "string");
+const isKeys = (v: unknown): v is string[] =>
+  isStrings(v) && v.every((k) => KEY.test(k)) && new Set(v).size === v.length;
 
-function isServer(v: unknown): v is McpServer {
+/** Whether `url` is an http(s) URL. */
+export function isHttpUrl(url: string) {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `v` is a server a list can hold: the one check the form and the
+ * parser share, so the owner can't sign what a launch refuses. */
+export function isServer(v: unknown): v is McpServer {
   if (!v || typeof v !== "object") return false;
   const s = v as Record<string, unknown>;
   if (typeof s.name !== "string" || !NAME.test(s.name)) return false;
   if (typeof s.enabled !== "boolean") return false;
+  if (typeof s.slot !== "string" || !SLOT.test(s.slot)) return false;
   return s.transport === "stdio"
     ? typeof s.command === "string" &&
-        s.command !== "" &&
+        s.command.trim() !== "" &&
         isStrings(s.args) &&
-        isStrings(s.env)
+        isKeys(s.env)
     : s.transport === "http" &&
         typeof s.url === "string" &&
-        /^https?:\/\//.test(s.url) &&
-        isStrings(s.headers);
+        isHttpUrl(s.url) &&
+        isKeys(s.headers);
 }
 
 /** The list in an approval's content, or undefined when it isn't one. */
@@ -62,6 +84,8 @@ export function listOf(content: string): McpList | undefined {
     if (!Array.isArray(servers) || !servers.every(isServer)) return undefined;
     if (!isStrings(disabledInherited)) return undefined;
     if (new Set(servers.map((s) => s.name)).size !== servers.length)
+      return undefined;
+    if (new Set(servers.map((s) => s.slot)).size !== servers.length)
       return undefined;
     return { servers, disabledInherited };
   } catch {
@@ -88,15 +112,23 @@ export const approvalTemplate = (
   content: JSON.stringify({ version: 1, ...list }),
 });
 
-/** The next approval's `seq`: past every one this device has seen. */
-export const nextSeq = (agent: string, current?: unknown) =>
-  Math.max(seen(agent)?.seq ?? 0, isEvent(current) ? seqOf(current) || 0 : 0) +
-  1;
+/** The next approval's `seq`: past every one this device accepted and the
+ * synced one, when it is the owner's for this agent. Nothing else counts, so
+ * a forged head can't push the counter out of reach. */
+export function nextSeq(agent: string, owner: string, current?: unknown) {
+  const head = isEvent(current) && signedFor(current, owner, agent);
+  const seq = Math.max(seen(agent)?.seq ?? 0, head ? seqOf(current) : 0) + 1;
+  if (!Number.isSafeInteger(seq))
+    throw new Error("These MCP servers can't be changed");
+  return seq;
+}
 
 const isEvent = (v: unknown): v is RelayEvent =>
   !!v && typeof v === "object" && typeof (v as RelayEvent).sig === "string";
 
-type Seen = { seq: number; id: string };
+/** The approval a device last accepted, kept whole, so a settings save
+ * that leaves it out doesn't read as never configured. */
+type Seen = { seq: number; id: string; event?: RelayEvent };
 const SEEN_KEY = "buzz.agents.mcp-approvals.v1";
 function seenAll(): Record<string, Seen> {
   try {
@@ -117,8 +149,58 @@ export const mayApprove = (pubkey: string, owner: string, agent: string) =>
   pubkey !== agent && pubkey === owner;
 
 export type Approval =
-  | Readonly<{ ok: true; list: McpList; approvedAt: number }>
+  | Readonly<{
+      ok: true;
+      list: McpList;
+      approvedAt: number;
+      /** The approval's id, or none without one. */
+      id?: string;
+      /** Whether it is the one this device kept, the settings having none. */
+      kept?: true;
+    }>
   | Readonly<{ ok: false; reason: string }>;
+
+/** Whether `event` is a valid approval signed for `agent` by one who may. */
+function signedFor(event: RelayEvent, owner: string, agent: string) {
+  try {
+    return (
+      event.kind === MCP_APPROVAL_KIND &&
+      typeof event.pubkey === "string" &&
+      mayApprove(event.pubkey, owner, agent) &&
+      Array.isArray(event.tags) &&
+      tag(event, "agent") === agent &&
+      Number.isSafeInteger(seqOf(event)) &&
+      seqOf(event) > 0 &&
+      typeof event.content === "string" &&
+      // Only its fields: nostr-tools trusts a mark a copy could carry.
+      verifyEvent({
+        id: event.id,
+        pubkey: event.pubkey,
+        created_at: event.created_at,
+        kind: event.kind,
+        tags: event.tags,
+        content: event.content,
+        sig: event.sig,
+      })
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The approval whose id a session's fingerprint holds: the one a launch
+ * would use now, kept or synced. */
+export const approvalId = (
+  config: unknown,
+  agent: Readonly<{ pubkey: string; owner: string }>,
+) => {
+  const check = approved(
+    (config as { mcpServers?: unknown } | undefined)?.mcpServers,
+    agent.owner,
+    agent.pubkey,
+  );
+  return check.ok ? (check.id ?? null) : check.reason;
+};
 
 /** Whether this device accepts `approval` as `agent`'s list from `owner`. It
  * must be the owner's signed list for this agent, at a `seq` no older than
@@ -130,46 +212,81 @@ export function approved(
   owner: string,
   agent: string,
 ): Approval {
-  if (approval === undefined)
-    return { ok: true, list: EMPTY_LIST, approvedAt: 0 };
+  const last = seen(agent);
+  if (approval === undefined) {
+    if (!last) return { ok: true, list: EMPTY_LIST, approvedAt: 0 };
+    // A settings save that left the list out: the one this device used.
+    const kept = last.event;
+    const list = kept && signedFor(kept, owner, agent) && listOf(kept.content);
+    if (!kept || !list || kept.id !== last.id || seqOf(kept) !== last.seq)
+      return {
+        ok: false,
+        reason:
+          "This agent's settings no longer include the MCP servers this device used. Reset them to continue.",
+      };
+    return {
+      ok: true,
+      list,
+      approvedAt: kept.created_at,
+      id: kept.id,
+      kept: true,
+    };
+  }
   const unapproved = { ok: false as const, reason: "MCP servers not approved" };
-  if (!isEvent(approval)) return unapproved;
-  const event = { ...approval };
-  if (
-    event.kind !== MCP_APPROVAL_KIND ||
-    !mayApprove(event.pubkey, owner, agent) ||
-    tag(event, "agent") !== agent ||
-    !Number.isSafeInteger(seqOf(event)) ||
-    !verifyEvent(event)
-  )
+  if (!isEvent(approval) || !signedFor(approval, owner, agent))
     return unapproved;
+  const event = { ...approval };
   const list = listOf(event.content);
   if (!list) return unapproved;
   const seq = seqOf(event);
-  const last = seen(agent);
   if (last && (seq < last.seq || (seq === last.seq && event.id > last.id)))
     return {
       ok: false,
       reason: "These MCP servers are older than ones this device has used",
     };
-  if (!last || last.seq !== seq || last.id !== event.id) {
+  if (!last || last.seq !== seq || last.id !== event.id || !last.event) {
     try {
       localStorage.setItem(
         SEEN_KEY,
-        JSON.stringify({ ...seenAll(), [agent]: { seq, id: event.id } }),
+        JSON.stringify({ ...seenAll(), [agent]: { seq, id: event.id, event } }),
       );
     } catch {
-      // Unrecorded, the next start checks against the last recorded one.
+      // Unrecorded, an older list could be taken for it later.
+      return {
+        ok: false,
+        reason: "This device couldn't record the approved MCP servers",
+      };
     }
   }
-  return { ok: true, list, approvedAt: event.created_at };
+  return { ok: true, list, approvedAt: event.created_at, id: event.id };
 }
 
+const hex = (text: string) =>
+  [...new TextEncoder().encode(text)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .toUpperCase();
+
+/** The prefix of every value kept under `slot`. */
+export const slotPrefix = (slot: string) => `BUZZMCP_${slot.toUpperCase()}_`;
+
 /** The variable a server's env var or header value is kept and passed under:
- * Buzz's prefix, then the server and the name, so two servers' `TOKEN`s
- * never meet. Not a `BUZZ_` name, which Buzz strips from agent processes. */
-export const envName = (server: string, name: string) =>
-  `BUZZMCP_${server}_${name}`.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+ * Buzz's prefix, the server's slot and the name in hex, so no two servers'
+ * or names' values meet, even where names ignore case. Not a `BUZZ_` name,
+ * which Buzz strips from agent processes. */
+export const envName = (slot: string, name: string) =>
+  `${slotPrefix(slot)}${hex(name)}`;
+
+/** A new slot, none of `taken`. */
+export function newSlot(taken: Iterable<string> = []): string {
+  const used = new Set(taken);
+  for (;;) {
+    const slot = [...crypto.getRandomValues(new Uint8Array(8))]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    if (!used.has(slot)) return slot;
+  }
+}
 
 /** The values of the agent's servers, by `envName`; empty without native.
  * Only harnesses that must send values in their protocol read them. */
@@ -207,22 +324,61 @@ function generations(): Record<string, number> {
  * in a session can tell they changed without reading or hashing them. */
 export const mcpGeneration = (agent: string) => generations()[agent] ?? 0;
 
-/** Saves the agent's values: `value` replaces, `undefined` keeps the saved
- * one, and a name left out is deleted. */
+/** Adds `rows` to the agent's saved values and deletes `remove`, leaving
+ * every other value as it is. */
 export async function saveMcpValues(
   agent: string,
-  rows: readonly Readonly<{ name: string; value?: string }>[],
+  rows: readonly Readonly<{ name: string; value: string }>[],
+  remove: readonly string[] = [],
 ) {
   if (!isTauri()) return;
-  await invoke("agent_mcp_env_set", {
-    agent,
-    rows: rows.map(({ name, value }) => ({ name, value: value ?? null })),
-  });
+  await invoke("agent_mcp_env_set", { agent, rows, remove });
   const all = generations();
   localStorage.setItem(
     GENERATIONS,
     JSON.stringify({ ...all, [agent]: (all[agent] ?? 0) + 1 }),
   );
+}
+
+const queues = new Map<string, Promise<unknown>>();
+/** Runs `step` after the agent's earlier saves here, so a cleanup never
+ * deletes values another save is staging. */
+function serially<T>(agent: string, step: () => Promise<T>): Promise<T> {
+  const run = (queues.get(agent) ?? Promise.resolve()).then(step, step);
+  queues.set(
+    agent,
+    run.catch(() => undefined),
+  );
+  return run;
+}
+
+/** Saves `next` as the agent's list: stages `values` (new slots' values,
+ * by `envName`) beside the saved ones and checks they're there, then has
+ * `approve` sign and publish it. Only once that's confirmed does it delete
+ * values no slot of `next` uses; a failed or unknown publish deletes none. */
+export function saveMcp(
+  agent: string,
+  next: McpList,
+  values: readonly Readonly<{ name: string; value: string }>[],
+  approve: (list: McpList) => Promise<void>,
+) {
+  return serially(agent, async () => {
+    if (!next.servers.every(isServer))
+      throw new Error("Check this server's settings");
+    if (values.length) {
+      await saveMcpValues(agent, values);
+      const saved = new Set(await mcpValueNames(agent));
+      if (isTauri() && !values.every((v) => saved.has(v.name)))
+        throw new Error("These values couldn't be saved on this device");
+    }
+    await approve(next);
+    const used = next.servers.map((s) => slotPrefix(s.slot));
+    const unused = (await mcpValueNames(agent)).filter(
+      (name) => !used.some((prefix) => name.startsWith(prefix)),
+    );
+    if (unused.length)
+      await saveMcpValues(agent, [], unused).catch(() => undefined);
+  });
 }
 
 /** What a harness launches with: the enabled servers it may start, minus
@@ -268,7 +424,7 @@ const names = (s: McpServer) => (s.transport === "stdio" ? s.env : s.headers);
  * which it expands from the process environment, so none is in its args. */
 export function claudeServers(list: McpList) {
   const ref = (s: McpServer) =>
-    Object.fromEntries(names(s).map((n) => [n, `\${${envName(s.name, n)}}`]));
+    Object.fromEntries(names(s).map((n) => [n, `\${${envName(s.slot, n)}}`]));
   return Object.fromEntries(
     list.servers.map((s) => [
       s.name,
@@ -285,7 +441,7 @@ export const valuesOf = (
   values: Readonly<Record<string, string>>,
 ): Readonly<Record<string, string>> =>
   Object.fromEntries(
-    names(s).map((n) => [n, values[envName(s.name, n)] ?? ""]),
+    names(s).map((n) => [n, values[envName(s.slot, n)] ?? ""]),
   );
 
 /** ACP `mcpServers` entries, values included: the protocol message is

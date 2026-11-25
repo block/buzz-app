@@ -147,6 +147,7 @@ import {
   mcpGeneration,
   mcpValues,
   startList,
+  approvalId,
 } from "../../features/agents/mcp-servers";
 import { mcpPrint, savePrint, startedOn } from "./mcp-print";
 
@@ -270,6 +271,14 @@ type Entry = {
     }
   >;
 };
+
+/** The approval the agent's sessions start on now, for fingerprints. */
+const mcpId = (
+  entry: Readonly<{
+    config: unknown;
+    handle?: Readonly<{ pubkey: string; owner: string }>;
+  }>,
+) => (entry.handle ? approvalId(entry.config, entry.handle) : null);
 
 export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
@@ -495,6 +504,11 @@ export class GooseRuntime {
   }
 
   /** Conversations each agent has a session for, for its status view. */
+  /** What each of the agent's running processes loaded of goose's own
+   * extensions when it started. */
+  nativeMcp(agent: AgentKey) {
+    return this.agents.get(agent)?.goose.natives() ?? [];
+  }
   sessions(agent: AgentKey) {
     let view = this.views.get(agent);
     if (!view) {
@@ -1384,7 +1398,7 @@ export class GooseRuntime {
       (printed = await mcpPrint(
         goose,
         pubkeyOf(agent),
-        entry.config,
+        mcpId(entry),
         !!(entry.protected || entry.handle?.protection),
       ));
     const { activity } = turn;
@@ -1890,7 +1904,7 @@ export class GooseRuntime {
           void mcpPrint(
             goose,
             pubkeyOf(agent),
-            entry.config,
+            mcpId(entry),
             !!(entry.protected || entry.handle?.protection),
           ).then(
             (print) => savePrint(this.storage, session, print),
@@ -1924,7 +1938,7 @@ export class GooseRuntime {
           entry.config.workspace,
           entry.config.scope,
           // A session starts its MCP servers once: a new list needs a new one.
-          (entry.config as { mcpServers?: { id?: string } }).mcpServers?.id,
+          mcpId(entry),
           mcpGeneration(pubkeyOf(agent)),
           addedKey(this.added()),
         ]),

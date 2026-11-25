@@ -568,21 +568,42 @@ impl AgentEnvs {
         self.list(&mcp_key(pubkey)).load().await
     }
     /// Saves `agent`'s MCP server values, as `set`.
+    /// Adds `rows` to the agent's MCP values and deletes `remove`, keeping
+    /// every other saved value: a save stages new values beside the ones a
+    /// published list still uses. Nothing changes when one is invalid.
     pub(crate) async fn mcp_set(
         &self,
         pubkey: &str,
         rows: Vec<Row>,
+        remove: Vec<String>,
         eligible: impl FnOnce() -> Result<bool, String>,
     ) -> Result<(), String> {
         agent_key(pubkey)?;
-        if let Some(row) = rows.iter().find(|row| !row.name.starts_with(MCP_PREFIX)) {
-            return Err(format!("{} isn't an MCP server value", row.name));
+        if let Some(name) = rows
+            .iter()
+            .map(|row| &row.name)
+            .chain(&remove)
+            .find(|name| !name.starts_with(MCP_PREFIX))
+        {
+            return Err(format!("{name} isn't an MCP server value"));
+        }
+        if let Some(row) = rows.iter().find(|row| row.value.is_none()) {
+            return Err(format!("Enter a value for {}", row.name));
         }
         let _turn = self.turn.lock().await;
         if !eligible()? {
             return Err("This agent can't have MCP servers of its own".into());
         }
-        self.list(&mcp_key(pubkey)).set(rows).await
+        let list = self.list(&mcp_key(pubkey));
+        let mut next: Vec<Row> = list
+            .load()
+            .await?
+            .into_keys()
+            .filter(|name| !remove.contains(name) && !rows.iter().any(|row| &row.name == name))
+            .map(|name| Row { name, value: None })
+            .collect();
+        next.extend(rows);
+        list.set(next).await
     }
     /// Deletes the agent's lists, which is done when there are none. Their
     /// read copies go only once the store items have.
@@ -744,10 +765,11 @@ pub(crate) async fn agent_mcp_env_set(
     agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
     agent: String,
     rows: Vec<Row>,
+    remove: Vec<String>,
 ) -> Result<(), String> {
     let agents = agents.agents()?;
     let pubkey = agent.clone();
-    envs.mcp_set(&agent, rows, move || {
+    envs.mcp_set(&agent, rows, remove, move || {
         agents
             .list()
             .map(|rows| eligible(&rows, &pubkey))

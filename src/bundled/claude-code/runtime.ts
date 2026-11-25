@@ -1,6 +1,10 @@
 import { readSubthread } from "../../features/relay/subthread";
-import { mcpGeneration, startList } from "../../features/agents/mcp-servers";
-import { claudeInherited } from "./inherited";
+import {
+  approvalId,
+  mcpGeneration,
+  startList,
+} from "../../features/agents/mcp-servers";
+import { claudeChanged, claudeSnapshot } from "./inherited";
 
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
@@ -152,8 +156,11 @@ import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { withWakes } from "../../features/agents/session-usage";
 
 /** The signed MCP list in a config, as it changes. */
-const mcpOf = (config: object) =>
-  (config as { mcpServers?: { id?: string } }).mcpServers?.id;
+/** The approval the agent's sessions start on now, for fingerprints. */
+const mcpOf = (
+  config: unknown,
+  handle: Readonly<{ pubkey: string; owner: string }> | undefined,
+) => (handle ? approvalId(config, handle) : null);
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -352,6 +359,30 @@ export class ClaudeRuntime {
   private readonly notices = new Map<AgentKey, Map<string, string>>();
   /** Counts changes of credentials, which start processes again. */
   private credentials = 0;
+  /** How a local process reads Claude Code's own MCP servers when it
+   * starts; a remote target's are its own. */
+  private nativeMcp() {
+    const readFile = this.host.readFile?.bind(this.host);
+    if (this.target || !readFile) return {};
+    const resolve = this.host.resolveDirectory?.bind(this.host);
+    return {
+      nativeMcp: async (cwd: string) =>
+        (await claudeSnapshot(readFile, cwd, resolve)).print,
+    };
+  }
+  /** Whether any of this agent's running processes started with other MCP
+   * servers of Claude Code's own than its config has now: each folder they
+   * started in is read once, sharing one read of `~/.claude.json`. A folder
+   * that can't be read counts as unchanged. */
+  nativeMcpChanged(agent: AgentKey): Promise<boolean> {
+    return claudeChanged(
+      this.host.readFile?.bind(this.host),
+      (this.agents.get(agent)?.sessions.processes() ?? []).flatMap((process) =>
+        process.nativeMcp ? [process.nativeMcp] : [],
+      ),
+      this.host.resolveDirectory?.bind(this.host),
+    );
+  }
   /** One process started ahead of need, for any agent's next new conversation. */
   private readonly spare = new Spare(
     // Started ahead of need, it never stops a conversation to make room.
@@ -725,7 +756,10 @@ export class ClaudeRuntime {
             !this.target &&
             !(this.bound(agent.key) || this.confirmedRemote.has(agent.key)),
         )
-        .map((agent) => where(this.resolveConfig(agent.config))),
+        .map((agent) => ({
+          ...where(this.resolveConfig(agent.config)),
+          ...this.nativeMcp(),
+        })),
     );
     this.notify();
   }
@@ -2368,7 +2402,8 @@ export class ClaudeRuntime {
         ? {
             spare: {
               take: async (where: Parameters<Spare["take"]>[0]) =>
-                (await hasOwnEnv(agent)) === false && !mcpOf(entry.config)
+                (await hasOwnEnv(agent)) === false &&
+                !mcpOf(entry.config, entry.handle)
                   ? this.spare.take(where)
                   : undefined,
             },
@@ -2436,7 +2471,7 @@ export class ClaudeRuntime {
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
-          mcpOf(entry.config),
+          mcpOf(entry.config, entry.handle),
           mcpGeneration(pubkeyOf(agent)),
           entry.team,
           entry.name,
@@ -2474,6 +2509,7 @@ export class ClaudeRuntime {
         const sections = sectionsOf(handle, key);
         return {
           ...where(entry.config),
+          ...this.nativeMcp(),
           cwd,
           ...(gate
             ? {
@@ -2500,12 +2536,12 @@ export class ClaudeRuntime {
                   entry.config,
                   handle,
                   (
-                    await claudeInherited(
+                    await claudeSnapshot(
                       this.host.readFile?.bind(this.host),
                       cwd,
                       resolve,
                     )
-                  ).map((i) => i.name),
+                  ).servers.map((i) => i.name),
                 ),
               }
             : {}),

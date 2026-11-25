@@ -63,6 +63,9 @@ export type ClaudeLaunch = Readonly<{
   cwd: string;
   /** Folders besides `cwd` that the session may work in and stay in. */
   directories?: readonly string[];
+  /** Reads Claude Code's own MCP servers for a folder, as a print without
+   * secrets; undefined when they can't be read. */
+  nativeMcp?: (cwd: string) => Promise<string | undefined>;
   /** Read-only catalog probe, without workspace customizations or tools. */
   discovery?: boolean;
   /** Runs the protected release, as the host verified it, without protection
@@ -196,6 +199,11 @@ async function setsInheritedHeaders(spawn: Spawn) {
 }
 
 export class ClaudeProcess {
+  /** Claude Code's own MCP servers as this process loaded them, at spawn,
+   * with the folder it read them for. Never replaced. */
+  nativeMcp:
+    | Readonly<{ folder: string; print: Promise<string | undefined> }>
+    | undefined;
   private protection: ClaudeProtection | undefined;
   private protectionLifetime = new AbortController();
   private protectedInstructions = "";
@@ -341,6 +349,11 @@ export class ClaudeProcess {
     const early: string[] = [];
     const earlyErrors: string[] = [];
     const mcp = security || launch.discovery ? undefined : launch.mcp;
+    // Read as Claude Code loads its config: when it starts.
+    const native =
+      security || launch.discovery || launch.pinned
+        ? undefined
+        : launch.nativeMcp?.(launch.cwd).catch(() => undefined);
     const process = await spawn(pinned ?? "claude", {
       args: [
         "--output-format",
@@ -500,6 +513,7 @@ export class ClaudeProcess {
       launch.hook,
     );
     claude.protection = launch.protection;
+    if (native) claude.nativeMcp = { folder: launch.cwd, print: native };
     // Checked once, only when Buzz first attributes this process.
     let inherited: Promise<boolean | undefined> | undefined;
     claude.inherited = () => (inherited ??= setsInheritedHeaders(spawn));

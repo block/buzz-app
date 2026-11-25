@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claudeInherited } from "./inherited";
+import { claudeChanged, claudeInherited, claudeSnapshot } from "./inherited";
 
 const files: Record<string, unknown> = {
   "~/.claude.json": {
@@ -42,5 +42,79 @@ describe("claudeInherited", () => {
     expect(
       (await claudeInherited(readFile, "~/work", fails)).map((i) => i.name),
     ).toEqual(["db", "shared", "github"]);
+  });
+});
+
+describe("claudeChanged", () => {
+  const disk = (): Record<string, string> => ({
+    "~/.claude.json": JSON.stringify({
+      mcpServers: { github: { command: "gh", env: { TOKEN: "a" } } },
+    }),
+    "~/one/.mcp.json": JSON.stringify({
+      mcpServers: { db: { url: "http://a" } },
+    }),
+    "~/two/.mcp.json": JSON.stringify({
+      mcpServers: { db: { url: "http://b" } },
+    }),
+  });
+  let now = disk();
+  let userReads = 0;
+  const read = async (path: string, options?: { cwd?: string }) => {
+    const key = options?.cwd ? `${options.cwd}/${path}` : path;
+    if (key === "~/.claude.json") userReads++;
+    const text = now[key];
+    if (text === undefined) throw new Error("No such file");
+    return new TextEncoder().encode(text);
+  };
+  /** A process's baseline, as its spawn reads it. */
+  const spawned = async (folder: string) => ({
+    folder,
+    print: Promise.resolve((await claudeSnapshot(read, folder)).print),
+  });
+  const edit = (path: string, servers: unknown) => {
+    now = { ...now, [path]: JSON.stringify({ mcpServers: servers }) };
+  };
+
+  it("shows nothing when nothing is running, or the config is as it started", async () => {
+    now = disk();
+    expect(await claudeChanged(read, [])).toBe(false);
+    expect(await claudeChanged(read, [await spawned("~/one")])).toBe(false);
+  });
+
+  it("shows a change to a server's definition, but not to a value", async () => {
+    now = disk();
+    const started = [await spawned("~/one")];
+    edit("~/.claude.json", { github: { command: "gh", env: { TOKEN: "b" } } });
+    expect(await claudeChanged(read, started)).toBe(false);
+    edit("~/.claude.json", { github: { command: "gh", args: ["--x"] } });
+    expect(await claudeChanged(read, started)).toBe(true);
+  });
+
+  it("shows a change when one of two processes is stale", async () => {
+    now = disk();
+    const one = await spawned("~/one");
+    edit("~/one/.mcp.json", { db: { url: "http://c" } });
+    const fresh = await spawned("~/one");
+    expect(await claudeChanged(read, [fresh, one])).toBe(true);
+  });
+
+  it("compares each process with its own folder, each read once", async () => {
+    now = disk();
+    const a = [await spawned("~/one"), await spawned("~/one")];
+    const b = [await spawned("~/two")];
+    userReads = 0;
+    expect(await claudeChanged(read, [...a, ...b])).toBe(false);
+    expect(userReads).toBe(1);
+    edit("~/two/.mcp.json", { db: { url: "http://d" } });
+    expect(await claudeChanged(read, a)).toBe(false);
+    expect(await claudeChanged(read, b)).toBe(true);
+  });
+
+  it("counts a config it can't parse as unchanged, not as empty", async () => {
+    now = disk();
+    const started = [await spawned("~/one")];
+    now = { ...now, "~/one/.mcp.json": "{" };
+    expect((await claudeSnapshot(read, "~/one")).print).toBeUndefined();
+    expect(await claudeChanged(read, started)).toBe(false);
   });
 });

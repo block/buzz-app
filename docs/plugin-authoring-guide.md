@@ -63,7 +63,7 @@ Each line is the main call. Read the types for every field.
 | --- | --- | --- |
 | `pages` | A page, optionally in navigation | `ctx.pages.register({ id, title, component, primary? })` |
 | `panels` | A side panel for a link or target | `ctx.panels.register({ id, title, matches(target), component })` |
-| `settingsCards` | A Settings destination | `ctx.settingsCards.register({ id, title, component })`. The host supplies navigation and the column, not a heading. |
+| `settingsCards` | A Settings destination | `ctx.settingsCards.register({ id, title, component })`. The host supplies navigation and the column, not a heading. An optional `securityRow` component adds a status or link row under Plugins in Security. |
 | `accountActions` | An account menu entry | `ctx.accountActions.register({ id, title, component })` |
 | `sidebarSections` (optional) | A Team sidebar section | `register({ version: 1, id, title, icon, rows, select })` |
 | `conversation` | Composer and message UI | `registerAccessory`, `registerMessage`, `registerMessageAction`, `registerLink`, `registerLinkPreview` (a link-preview renderer that needs setup first adds `status()`, `subscribe(listener)` and `settings`, its Settings card id; while `status()` is `"needs-setup"` the host draws a card that opens that Settings card), `registerSendGate`, and host components under `ctx.conversation.ui` (Markdown, DocumentEditor, ImageViewer, MembersDialog, Workspace) |

@@ -20,6 +20,8 @@ export type SettingsCard = {
   }>;
   /** Account status/link inside Identity; the plugin retains its session owner. */
   identityRow?: ComponentType<{ active(): boolean }>;
+  /** Status/link inside Security, such as an agent protection plugin's entry. */
+  securityRow?: ComponentType<{ active(): boolean }>;
   /** Show this card under a labelled account-level group instead of the selected community. */
   group?: string;
   /** Separate permission-gated controls from ordinary settings for the selected community. */
@@ -108,6 +110,8 @@ export class SettingsCardsService extends Service implements SettingsCards {
       typeof card.component !== "function" ||
       (card.identityRow !== undefined &&
         typeof card.identityRow !== "function") ||
+      (card.securityRow !== undefined &&
+        typeof card.securityRow !== "function") ||
       (card.group !== undefined &&
         (typeof card.group !== "string" || !card.group.trim())) ||
       (card.section !== undefined && card.section !== "administration") ||

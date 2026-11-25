@@ -3286,6 +3286,52 @@ it("retires contributed identity rows and their stale actions with the owning re
   expect(stillActive()).toBe(false);
 });
 
+it("retires contributed Security rows and their stale actions with the owning revision", async () => {
+  const priorNative = Object.getOwnPropertyDescriptor(globalThis, "isTauri");
+  Object.defineProperty(globalThis, "isTauri", {
+    configurable: true,
+    value: true,
+  });
+  try {
+    const navigate = vi.fn();
+    let stillActive = () => false;
+    const entry = {
+      ...card("protection", "Protection", "Plugins"),
+      securityRow: ({ active }: { active(): boolean }) => {
+        stillActive = active;
+        return (
+          <button type="button" onClick={() => active() && navigate()}>
+            Open protection settings
+          </button>
+        );
+      },
+    };
+    const { cards, set } = registry([entry]);
+    render(
+      <ToastProvider>
+        <Settings {...host} cards={cards} />
+      </ToastProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Security" }));
+    expect(
+      await screen.findByRole("heading", { name: "Plugins", level: 3 }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open protection settings" }),
+    );
+    expect(navigate).toHaveBeenCalledOnce();
+    act(() => set([]));
+    expect(screen.queryByText("Open protection settings")).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Plugins", level: 3 }),
+    ).toBeNull();
+    expect(stillActive()).toBe(false);
+  } finally {
+    if (priorNative) Object.defineProperty(globalThis, "isTauri", priorNative);
+    else Reflect.deleteProperty(globalThis, "isTauri");
+  }
+});
+
 it.each([true, false])(
   "opens Identity at Community sign-ins, heading focused, only when the open asks for it (%s)",
   async (part) => {

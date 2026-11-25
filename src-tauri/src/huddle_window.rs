@@ -321,11 +321,12 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
     host: tauri::State<'_, HuddleWindow>,
     view: View,
     actions: Channel<Control>,
+    requested: bool,
 ) -> Result<()> {
     require(&window, "main")?;
     validate(&view)?;
     let incoming = view.phase == "incoming";
-    let ring = ring_attention(&view.phase);
+    let raise = raise(&view.phase, requested);
     let id = view.id.clone();
     let on_closed = closed_notice(actions.clone(), id.clone());
     {
@@ -341,7 +342,9 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
         });
     }
     let app = window.app_handle();
-    let companion = match app.get_webview_window(LABEL) {
+    let existing = app.get_webview_window(LABEL);
+    let reused = existing.is_some();
+    let companion = match existing {
         Some(existing) => existing,
         None => tauri::WebviewWindowBuilder::new(
             app,
@@ -352,8 +355,8 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
         .inner_size(520.0, 560.0)
         .min_inner_size(360.0, 400.0)
         .center()
-        .focused(ring.is_none())
-        .always_on_top(ring.is_some())
+        .focused(raise == Raise::Focus)
+        .always_on_top(raise == Raise::Ring)
         .disable_drag_drop_handler()
         .build()
         .map_err(|e| e.to_string())?,
@@ -366,26 +369,65 @@ pub(crate) async fn huddle_window_open<R: tauri::Runtime>(
         return Err("This Huddle has ended".into());
     }
     companion
-        .set_always_on_top(ring.is_some())
+        .set_always_on_top(raise == Raise::Ring)
         .map_err(|e| e.to_string())?;
-    companion.show().map_err(|e| e.to_string())?;
-    match ring {
-        Some(attention) => {
+    match raise {
+        Raise::Ring => {
+            // The builder already ordered a new window front without making it
+            // key. `show()` would make it key (macOS `makeKeyAndOrderFront`) and
+            // take typing from Buzz's own main window too.
+            if reused && !companion.is_visible().unwrap_or(true) {
+                order_front_without_focus(&companion)?;
+            }
             // Best effort: the ring sound and the floating window already announce it.
-            let _ = companion.request_user_attention(Some(attention));
+            let _ = companion.request_user_attention(Some(tauri::UserAttentionType::Informational));
             Ok(())
         }
-        None => companion.set_focus().map_err(|e| e.to_string()),
+        Raise::Focus => {
+            companion.show().map_err(|e| e.to_string())?;
+            companion.set_focus().map_err(|e| e.to_string())
+        }
     }
 }
-/// How an opened Huddle window asks for attention without taking focus.
-///
-/// A ringing invitation arrives while the person may be typing in another app.
-/// Taking keyboard focus then sends their keystrokes to Buzz, so it
-/// floats above other windows and asks for attention instead. A call the person
-/// joined or started comes to the front with focus, as before.
-fn ring_attention(phase: &str) -> Option<tauri::UserAttentionType> {
-    (phase == "incoming").then_some(tauri::UserAttentionType::Informational)
+/// How an opened Huddle window comes to the screen.
+#[derive(Debug, PartialEq, Eq)]
+enum Raise {
+    /// An automatic ring. The person may be typing elsewhere, in another app or
+    /// in Buzz, so it floats above other windows, leaves keyboard focus where
+    /// it is and asks for attention instead.
+    Ring,
+    /// The person asked for it (Open Huddle, Join, starting a call), so it
+    /// comes to the front with focus.
+    Focus,
+}
+fn raise(phase: &str, requested: bool) -> Raise {
+    if phase == "incoming" && !requested {
+        Raise::Ring
+    } else {
+        Raise::Focus
+    }
+}
+/// Join keeps the ring window and only updates it, so the float set for the
+/// ring has to end as soon as connecting begins.
+fn leaves_ring(from: &str, to: &str) -> bool {
+    from == "incoming" && to != "incoming"
+}
+#[cfg(target_os = "macos")]
+fn order_front_without_focus<R: tauri::Runtime>(companion: &WebviewWindow<R>) -> Result<()> {
+    let window = companion.clone();
+    companion
+        .run_on_main_thread(move || {
+            if let Ok(ns_window) = window.ns_window() {
+                let ns_window: &objc2_app_kit::NSWindow = unsafe { &*ns_window.cast() };
+                ns_window.orderFront(None);
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+#[cfg(not(target_os = "macos"))]
+fn order_front_without_focus<R: tauri::Runtime>(companion: &WebviewWindow<R>) -> Result<()> {
+    // Only reached for a window that isn't visible; there is no other way to show it.
+    companion.show().map_err(|e| e.to_string())
 }
 #[tauri::command]
 pub(crate) fn huddle_window_update<R: tauri::Runtime>(
@@ -406,6 +448,13 @@ pub(crate) fn huddle_window_update<R: tauri::Runtime>(
         return Ok(());
     };
     if let Some(mut view) = view {
+        if leaves_ring(&session.view.phase, &view.phase) {
+            if let Some(companion) = window.app_handle().get_webview_window(LABEL) {
+                companion
+                    .set_always_on_top(false)
+                    .map_err(|e| e.to_string())?;
+            }
+        }
         // Activity-only patches omit the unchanged message list. Watch still
         // receives the complete cached presentation after a renderer reload.
         let patch = view.clone();
@@ -566,14 +615,18 @@ mod tests {
         assert!(receiver.recv().is_err());
     }
     #[test]
-    fn only_a_ringing_invitation_opens_without_taking_focus() {
-        assert!(matches!(
-            ring_attention("incoming"),
-            Some(tauri::UserAttentionType::Informational)
-        ));
+    fn rings_float_without_focus_until_the_person_acts() {
+        // An automatic ring leaves keyboard focus where it is.
+        assert_eq!(raise("incoming", false), Raise::Ring);
+        // Open Huddle on the request, and calls the person joined or started, focus.
+        assert_eq!(raise("incoming", true), Raise::Focus);
         for phase in ["connecting", "connected"] {
-            assert!(ring_attention(phase).is_none(), "{phase} must take focus");
+            assert_eq!(raise(phase, false), Raise::Focus, "{phase} must take focus");
         }
+        // Join clears the ring's float as soon as connecting begins, and only then.
+        assert!(leaves_ring("incoming", "connecting"));
+        assert!(!leaves_ring("incoming", "incoming"));
+        assert!(!leaves_ring("connecting", "connected"));
     }
     fn view(id: &str) -> View {
         View {

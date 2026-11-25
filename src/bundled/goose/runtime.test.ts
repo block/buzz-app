@@ -3857,6 +3857,45 @@ it("cancels a seat still waiting for the refresh when voice switches off, even i
   }
 });
 
+it("keeps a voice seat's idle session through a settings change", async () => {
+  const f = setup({ scope: "channel" });
+  vi.mocked(openVoice).mockResolvedValue({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  });
+  const config = { ...DEFAULT_CONFIG, scope: "channel" as const };
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    f.runtime.sync([{ ...f.agent, config } as unknown as Agent]);
+    await f.runtime.voiceSettings.setEnabled(true);
+    seat = await f.runtime.voice(
+      {
+        agent: f.agent,
+        config,
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    // New instructions reach new sessions, and close idle ones.
+    f.runtime.sync([
+      {
+        ...f.agent,
+        config: { ...config, workspace: "/elsewhere" },
+      } as unknown as Agent,
+    ]);
+    await flush(30);
+    expect(f.fake.geese.flatMap((process) => process.closed)).toEqual([]);
+  } finally {
+    await seat?.close();
+    vi.mocked(openVoice).mockReset();
+    f.runtime.dispose();
+  }
+});
+
 it("holds typed admission until a voice-settings process refresh has exited", async () => {
   let release!: () => void;
   let stopping!: () => void;

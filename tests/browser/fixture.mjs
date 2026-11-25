@@ -2591,7 +2591,11 @@ export const test = base.extend({
           filter.search === undefined &&
           filter.until !== undefined &&
           filter["#h"]?.length &&
-          !(filter.top_level && filter.include_aux && !filter.include_summaries)
+          !(
+            filter.include_aux &&
+            !filter.include_summaries &&
+            !filter.thread_window
+          )
         ) {
           const queuedAt = performance.now();
           const receipt = {

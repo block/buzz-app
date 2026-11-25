@@ -626,9 +626,9 @@ export function policyRelay({
           filter.search === undefined &&
           filter.until !== undefined &&
           !(
-            filter.top_level &&
             filter.include_aux &&
-            !filter.include_summaries
+            !filter.include_summaries &&
+            !filter.thread_window
           ) &&
           holdOlder
         )

@@ -27,7 +27,8 @@ type Route = GatewayRoute | Readonly<{ kind: "external" }>;
 /** Pi's stable harness name, which the gateway enables per membership. */
 export const HARNESS = "pi";
 /** The descriptor's upstream for each Pi provider whose own requests the
- * gateway passes through: Databricks, by its own paths and model IDs. */
+ * gateway passes through: Databricks, by its own paths and model IDs.
+ * Kept in sync with `PASS_THROUGH` in `host.mjs`. */
 const PASS_THROUGH = { databricks: "pi-databricks" } as const;
 
 /** The route Pi's agent runs on: the gateway's only when it is eligible and

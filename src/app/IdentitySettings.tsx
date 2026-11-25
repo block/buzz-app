@@ -671,6 +671,23 @@ const ENDING_REASONS: Record<SignInEnding["reason"], string> = {
   "not-confirmed": "Couldn’t check the saved sign-in, so Buzz kept it",
 };
 
+/** What held up a check that left a sign-in unconfirmed (`unconfirmed()` in
+ * mod.rs). Settings words its codes rather than showing them. */
+const UNCONFIRMED_CAUSES: Readonly<Record<string, string>> = {
+  "network-unavailable": "the network was unavailable",
+  "network-timeout": "the sign-in server didn’t answer in time",
+  "clock-unavailable": "this computer’s clock couldn’t be read",
+  "storage-unavailable": "secure storage was unavailable",
+  "storage-busy": "secure storage was busy",
+};
+
+function endingText({ reason, failure }: SignInEnding) {
+  const text = ENDING_REASONS[reason] ?? reason;
+  const cause =
+    reason === "not-confirmed" && failure && UNCONFIRMED_CAUSES[failure];
+  return cause ? `${text}: ${cause}` : text;
+}
+
 /** Why this host's latest sign-ins ended, newest first, so a sign-in
  * prompt has a visible cause. */
 function SignInEndings({
@@ -696,13 +713,14 @@ function SignInEndings({
       <ul className="m-0 grid gap-0.5 p-0 list-none">
         {keyed.reverse().map(({ ending, key }) => (
           <li key={key} className="text-caption text-subtle">
-            {new Date(ending.at).toLocaleString(undefined, {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-            {": "}
-            {ENDING_REASONS[ending.reason] ?? ending.reason}
-            {ending.failure && ` (${ending.failure})`}
+            <time dateTime={ending.at}>
+              {new Date(ending.at).toLocaleString(undefined, {
+                dateStyle: "medium",
+                timeStyle: "short",
+              })}
+            </time>
+            {" · "}
+            {endingText(ending)}
           </li>
         ))}
       </ul>

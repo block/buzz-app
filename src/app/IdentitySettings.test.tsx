@@ -302,10 +302,10 @@ it("says why recent sign-ins ended, newest first", () => {
     screen.getByRole("region", { name: "Recent sign-in endings" }),
   ).getAllByRole("listitem");
   expect(endings.map((ending) => ending.textContent)).toEqual([
-    expect.stringMatching(/: It had already ended, in another Buzz window/),
-    expect.stringMatching(/: The sign-in expired$/),
+    expect.stringMatching(/ · It had already ended, in another Buzz window/),
+    expect.stringMatching(/ · The sign-in expired$/),
     expect.stringMatching(
-      /: Couldn’t check the saved sign-in, so Buzz kept it \(network-timeout\)$/,
+      / · Couldn’t check the saved sign-in, so Buzz kept it: the sign-in server didn’t answer in time$/,
     ),
   ]);
 });

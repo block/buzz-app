@@ -503,8 +503,11 @@ private final class LegacyRecognition: Recognition, @unchecked Sendable {
         request.shouldReportPartialResults = true
         request.taskHint = .search
         request.contextualStrings = hints
-        let task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            self?.receive(result, error)
+        // Holds this recognition until its last callback: once `finish`
+        // takes it from `Current`, the final words arrive after `endAudio`.
+        // `receive` drops the task at the end, which frees both.
+        let task = recognizer.recognitionTask(with: request) { result, error in
+            self.receive(result, error)
         }
         let stopped = lock.locked {
             self.task = task
@@ -523,8 +526,10 @@ private final class LegacyRecognition: Recognition, @unchecked Sendable {
     }
 
     private func receive(_ result: SFSpeechRecognitionResult?, _ error: Error?) {
+        let over = error != nil || result?.isFinal == true
         lock.lock()
         if let result { text = result.bestTranscription.formattedString }
+        if over { task = nil }
         let current = text
         let finished = done
         let quiet = cancelled

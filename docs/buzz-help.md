@@ -335,6 +335,9 @@ mentions still work.
   stay readable meanwhile.
 - **Refused by a community**: the notice says what to do, such as sign in,
   switch accounts, or ask an admin for access.
+- **Asked to sign in again on macOS**: some organization builds tie sign-in to
+  a device key. If that key is missing, sign in again. A request for a recent
+  sign-in before a sensitive action does not end the session.
 
 ### A conversation change didn't send
 

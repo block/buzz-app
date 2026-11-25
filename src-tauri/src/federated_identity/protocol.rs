@@ -132,6 +132,16 @@ pub(crate) async fn json<T: DeserializeOwned>(
     Ok(json_with(|| std::future::ready(Ok(request()))).await?.0)
 }
 
+/// [`json_with`] without the attempt start time.
+pub(crate) async fn json_signed<T: DeserializeOwned, F>(
+    request: impl Fn() -> F,
+) -> Result<T, Failure>
+where
+    F: std::future::Future<Output = Result<RequestBuilder, Failure>>,
+{
+    Ok(json_with(request).await?.0)
+}
+
 /// `json`, building every transmitted attempt anew: a request carrying a
 /// single-use proof signs a fresh one per attempt, so a retry is never
 /// refused as a replay of the attempt before it. Also answers when the
@@ -226,6 +236,11 @@ where
                             Some("binding_mismatch") => "binding-mismatch",
                             Some("authorization_denied") => "authorization-denied",
                             Some("invalid_proof") => "invalid-proof",
+                            Some("invalid_dpop_proof") => "invalid-dpop-proof",
+                            Some("invalid_grant") if status.as_u16() == 400 => "sign-in-again",
+                            Some("fresh_authentication_required") => {
+                                "fresh-authentication-required"
+                            }
                             // Only the token route's 401: the grant itself is gone.
                             Some("invalid_grant") if status.as_u16() == 401 => "grant-refused",
                             _ if session_denied => "reauthentication-required",
@@ -327,6 +342,22 @@ mod tests {
         let count = requests.load(Ordering::SeqCst);
         server.abort();
         (count, result)
+    }
+
+    #[tokio::test]
+    async fn sensitive_action_freshness_denial_preserves_the_existing_session() {
+        let (url, server) = super::super::tests::adapter_with_status(vec![(
+            401,
+            serde_json::json!({"error":"fresh_authentication_required"}),
+        )])
+        .await;
+        let client = client().unwrap();
+        let failure = json::<serde_json::Value>(|| client.get(&url))
+            .await
+            .unwrap_err();
+        assert_eq!(failure.code, "fresh-authentication-required");
+        assert!(!failure.session_denied);
+        assert_eq!(server.await.unwrap().len(), 1);
     }
 
     #[tokio::test]

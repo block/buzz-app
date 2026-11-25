@@ -4,7 +4,7 @@
 
 #![deny(unsafe_code)]
 
-use std::{fmt, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -105,6 +105,10 @@ pub enum Error {
     Transport,
     #[error("backup service returned HTTP {0}")]
     HttpStatus(u16),
+    #[error("fresh authentication is required for this action")]
+    FreshAuthenticationRequired,
+    #[error("device proof was refused")]
+    InvalidProof,
     #[error("invalid backup service JSON or recovery secret")]
     InvalidResponse,
     #[error("backup body exceeds {0} bytes")]
@@ -112,11 +116,18 @@ pub enum Error {
 }
 
 /// A native session's client for the three backup endpoints.
+pub type Authorizer = Arc<
+    dyn Fn(reqwest::RequestBuilder, &str, &Url) -> Result<reqwest::RequestBuilder, Error>
+        + Send
+        + Sync,
+>;
+
 pub struct Client {
     http: reqwest::Client,
     base_url: Url,
     header: HeaderName,
     credential: HeaderValue,
+    authorizer: Option<Authorizer>,
 }
 
 impl fmt::Debug for Client {
@@ -146,6 +157,13 @@ impl Client {
             AUTHORIZATION,
             &Zeroizing::new(format!("Bearer {token}")),
         )
+    }
+
+    /// Called once per actual request attempt; key material stays in the native host.
+    pub fn authorized(service_url: &str, authorizer: Authorizer) -> Result<Self, Error> {
+        let mut client = Self::build(service_url, AUTHORIZATION, "unused")?;
+        client.authorizer = Some(authorizer);
+        Ok(client)
     }
 
     fn build(service_url: &str, header: HeaderName, credential: &str) -> Result<Self, Error> {
@@ -190,6 +208,7 @@ impl Client {
             base_url,
             header,
             credential,
+            authorizer: None,
         })
     }
 
@@ -230,17 +249,44 @@ impl Client {
             .base_url
             .join(path)
             .map_err(|_| Error::InvalidServiceUrl)?;
-        let mut response = self
+        let request = self
             .http
-            .post(url)
-            .header(&self.header, &self.credential)
+            .post(url.clone())
             .header(CONTENT_TYPE, "application/json")
-            .body(body.to_vec())
-            .send()
-            .await
-            .map_err(|_| Error::Transport)?;
+            .body(body.to_vec());
+        let request = match &self.authorizer {
+            Some(authorize) => authorize(request, "POST", &url)?,
+            None => request.header(&self.header, &self.credential),
+        };
+        let mut response = request.send().await.map_err(|_| Error::Transport)?;
         if !response.status().is_success() {
-            return Err(Error::HttpStatus(response.status().as_u16()));
+            let status = response.status().as_u16();
+            // Only bounded, recognized error codes are retained; response text never leaves transport.
+            if status == 401 {
+                let mut bytes = Zeroizing::new(Vec::new());
+                while let Some(chunk) = response.chunk().await.map_err(|_| Error::Transport)? {
+                    if chunk.len() > MAX_JSON_BYTES - bytes.len() {
+                        return Err(Error::HttpStatus(status));
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+                let code = value.get("error").and_then(|error| {
+                    error
+                        .as_str()
+                        .or_else(|| error.get("code").and_then(|code| code.as_str()))
+                });
+                if code == Some("fresh_authentication_required") {
+                    return Err(Error::FreshAuthenticationRequired);
+                }
+                if code == Some("invalid_dpop_proof")
+                    || (self.authorizer.is_some()
+                        && !matches!(code, Some("session_required" | "session_expired")))
+                {
+                    return Err(Error::InvalidProof);
+                }
+            }
+            return Err(Error::HttpStatus(status));
         }
         if response
             .content_length()

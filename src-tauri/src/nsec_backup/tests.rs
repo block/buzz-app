@@ -569,6 +569,7 @@ async fn recover_returning(host: &NsecBackupHost, query: &str) -> Result<Restore
         candidates: Vec::new(),
         current: None,
         credential: None,
+        authorization: None,
         subject: None,
         installing: false,
     });
@@ -582,6 +583,7 @@ async fn recover_returning(host: &NsecBackupHost, query: &str) -> Result<Restore
                 oauth.id,
                 callback_url,
                 Zeroizing::new("synthetic-verifier".into()),
+                None,
             )
             .await
     });

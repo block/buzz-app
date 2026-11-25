@@ -222,15 +222,14 @@ function ResolvedReview({
         retry={view.refresh}
       />
     );
+  const seen = new Set<string>();
   const replies = [snapshot.target, ...snapshot.replies]
-    .filter(
-      (row): row is NonNullable<typeof row> =>
-        !!row && row.id !== snapshot.root?.id,
-    )
-    .filter(
-      (row, index, rows) =>
-        rows.findIndex((item) => item.id === row.id) === index,
-    )
+    .filter((row): row is NonNullable<typeof row> => {
+      if (!row || row.id === snapshot.root?.id || seen.has(row.id))
+        return false;
+      seen.add(row.id);
+      return true;
+    })
     .sort(compareMessages);
   const threadRows = [snapshot.root, ...replies];
   return (

@@ -575,6 +575,16 @@ function MessageRowContent({
   );
   const rowRef = useRef<HTMLDivElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  // The summary leaves when its thread's last work ends with no reply; a
+  // focused one hands focus to the row's menu, as its activity bubble did.
+  const handBackSummaryFocus = useCallback((node: HTMLButtonElement) => {
+    const document = node.ownerDocument;
+    if (!node.contains(document.activeElement)) return;
+    queueMicrotask(() => {
+      if (!document.activeElement || document.activeElement === document.body)
+        menuTrigger.current?.focus({ preventScroll: true });
+    });
+  }, []);
   const active = useConversationPresentation();
   const forward = useForwardMessage();
   const [reporting, setReporting] = useState<"open" | "sent">();
@@ -1402,7 +1412,16 @@ function MessageRowContent({
         activity) &&
         onOpenThread && (
           <Button
-            ref={activity?.ref}
+            ref={(node: HTMLButtonElement | null) => {
+              const forwarded = activity?.ref;
+              if (typeof forwarded === "function") forwarded(node);
+              else if (forwarded) forwarded.current = node;
+              return () => {
+                if (typeof forwarded === "function") forwarded(null);
+                else if (forwarded) forwarded.current = null;
+                if (node) handBackSummaryFocus(node);
+              };
+            }}
             variant="ghost"
             size="sm"
             data-thread-summary=""

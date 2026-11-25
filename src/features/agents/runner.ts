@@ -3311,12 +3311,21 @@ export class AgentRunners {
       job.channelId ??
       event.tags.find(([key]) => key === "h")?.[1];
     if (!scope || !channelId) return;
-    const threadRootId = threadReference(event)?.rootId;
     const channel = this.host.channel(agent, event);
-    const thread =
-      threadRootId &&
-      (trigger.type === "mention" ||
-        (channel?.channelType !== "solo" && channel?.channelType !== "dm"));
+    // A mention's work is where its turn will be, by the turn's own rule:
+    // a thread on a top-level mention, from the start. `placed` moves it if
+    // a plugin places the turn elsewhere.
+    const place =
+      trigger.type === "mention"
+        ? placeOf(trigger, channelId, channel?.channelType === "solo")
+        : undefined;
+    const threadRootId =
+      place && "root" in place ? place.root : threadReference(event)?.rootId;
+    const thread = place
+      ? "root" in place
+      : threadRootId &&
+        channel?.channelType !== "solo" &&
+        channel?.channelType !== "dm";
     const soloChat =
       channel?.channelType === "solo" &&
       !channel.cached &&
@@ -4496,6 +4505,9 @@ export class AgentRunners {
             resumable,
             entry(!!nativePlacement || savedNative !== undefined),
           );
+        // Its activity follows, as the typing does.
+        if (decided && trigger.type === "mention")
+          work?.placed("root" in decided ? decided.root : undefined);
       },
       pinNativePlacement: () => {
         if (holds <= 0 || !resumable || nativePlacement) return;

@@ -16,6 +16,9 @@ import {
   type ChannelDetails,
   type ChannelDetailsDraft,
 } from "../../features/relay/channel-details-protocol";
+import { soloLabels } from "../../features/solo/labels";
+import { namingRulesApply } from "./channel-naming-policy";
+import { channelNameTips } from "./channel-name-tips";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { ChannelDurationField } from "./ChannelDurationField";
@@ -88,8 +91,7 @@ export function ChannelDetailsEditor({
   const patch = useCallback(
     (
       next:
-        | Partial<typeof state>
-        | ((old: typeof state) => Partial<typeof state>),
+        Partial<typeof state> | ((old: typeof state) => Partial<typeof state>),
     ) =>
       setState((old) =>
         old.capability === capability && old.id === id && old.scope === scope
@@ -151,7 +153,25 @@ export function ChannelDetailsEditor({
     ...draft,
     name: canonicalDetailsName(draft.name),
   };
-  const errors = normalized ? detailsDraftErrors(normalized) : undefined;
+  const baseErrors = normalized ? detailsDraftErrors(normalized) : undefined;
+  // A new name follows the channel naming rules. An unchanged name is left
+  // alone, so a channel created before the rules can still edit its other details.
+  const renameBlockers =
+    normalized &&
+    view.base &&
+    normalized.name !== view.base.name &&
+    !soloLabels(view.base.labels) &&
+    namingRulesApply(scope)
+      ? channelNameTips({
+          name: normalized.name,
+          temporary: normalized.ttlSeconds !== undefined,
+          description: normalized.description,
+        }).blockers
+      : [];
+  const errors =
+    baseErrors && renameBlockers.length && !baseErrors.name
+      ? { ...baseErrors, name: renameBlockers.join(" ") }
+      : baseErrors;
   const dirty =
     !!normalized &&
     !!view.base &&

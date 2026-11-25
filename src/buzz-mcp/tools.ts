@@ -454,8 +454,7 @@ type Args = Readonly<Record<string, unknown>>;
 /** A tool's answer: text, or an image (base64 `data`) for the agent to see,
  * with any `text` about it. */
 export type Reply =
-  | string
-  | Readonly<{ data: string; type: string; text?: string }>;
+  string | Readonly<{ data: string; type: string; text?: string }>;
 type Handler = (tools: Tools, args: Args) => Promise<Reply>;
 
 /** Runs tool `name` for an agent working in `context`. A throw is a tool
@@ -1683,7 +1682,7 @@ class Tools {
    * False means the scan or caller's output budget stopped the listing. */
   async scan(filter: Filter, visit: (event: BuzzEvent) => boolean) {
     let count = 0;
-    for (let cursor = {}; ; ) {
+    for (let cursor = {}; ;) {
       const limit = Math.min(PAGE, MAX_EVENTS - count + 1);
       const page = await this.client.query([{ ...filter, ...cursor, limit }]);
       for (const event of page) {
@@ -1908,8 +1907,27 @@ class Tools {
     const metadata = await this.metadata(channel);
     if (!metadata) throw unseen(channel);
     const wanted: [string, string][] = [];
-    if (args.name !== undefined)
-      wanted.push(["name", canonicalDetailsName(required(args, "name"))]);
+    if (args.name !== undefined) {
+      const name = canonicalDetailsName(required(args, "name"));
+      // A new name follows the naming rules; an unchanged one is left alone.
+      const current = metadata.tags.find((tag) => tag[0] === "name")?.[1];
+      if (
+        name !== current &&
+        !soloChannelMetadata(metadata as RelayEvent) &&
+        namingRulesApply(this.client.relayUrl)
+      ) {
+        const { blockers } = channelNameTips({
+          name,
+          temporary: false,
+          description: "",
+        });
+        if (blockers.length)
+          throw new Error(
+            `Channel name "${name}" needs a fix: ${blockers.join(" ")} Examples: payments-team, checkout-help, proj-checkout. ${TYPE_WORDS_HELP}`,
+          );
+      }
+      wanted.push(["name", name]);
+    }
     for (const key of ["about", "topic", "purpose"]) {
       const value = optional(args, key);
       if (value !== undefined) wanted.push([key, value]);

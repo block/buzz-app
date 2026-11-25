@@ -457,7 +457,7 @@ export function ShortcutSettings({
       <div className="grid gap-5">
         <MessageKeyPreference
           title="Sending messages"
-          label={`Send with ${sendChord}`}
+          label={`Require ${sendChord} to send`}
           description={`Enter adds a new line. ${sendChord} sends your message.`}
           preference={sendKeyPreference}
         />

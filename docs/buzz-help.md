@@ -36,6 +36,8 @@ if that desktop app is up and running.
     threads needed. Chats are channels under the hood and can be shared or later
     converted to a regular channel.
   - **Direct messages**: one-to-one or group DMs. Also a channel under the hood.
+    A read one-to-one DM with an archived member leaves the sidebar; search
+    still finds it, and a new unread message brings it back.
 - **Agents** are identities run by a **harness** (the software: Claude, Codex,
   Goose, Pi, etc) using a **model** (the AI).
   Local agents run on their owner's computer. Remote/hosted agents run
@@ -117,7 +119,10 @@ if that desktop app is up and running.
   pinned. A community that doesn't take pins refuses them, and Buzz says so.
   Agents pin with the `pin` tool.
 - **Composer.** **#** links a channel. On desktop, **!** gives your agents a
-  folder and **/** a skill. Attach files by pasting or dragging them in.
+  folder and **/** a skill. Attach files by pasting or dragging them in. Typed
+  Markdown formats as you type; **Settings → Appearance → Disable formatting
+  while typing** leaves it as plain characters until you send, and hides the
+  formatting toolbar.
 - **Drafts.** Every message box open on a conversation shares its draft. A box
   you aren't working in follows a draft edited, sent or cleared elsewhere. If
   that could lose your work, **This draft changed elsewhere** offers **Keep my
@@ -166,19 +171,29 @@ if that desktop app is up and running.
   **Activity** (its past sessions) and plugin tabs such as **Attention**.
   Local Claude and Codex transcripts can open on recent activity. Choose
   **Load earlier activity** to see more history.
-- **Settings → Agent details → Environment variables** sets variables one
-  local Claude Code, Codex, Goose or Pi agent starts with, such as API keys.
-  They're kept in the OS credential store on this computer, never synced, and
-  values aren't shown again after saving. Protected agents don't get them, and
-  a harness's own variables win, except that a saved `ANTHROPIC_API_KEY` wins
-  over the shared Claude key. Names that choose a model, provider or
-  endpoint, `PATH`, and `BUZZ_*`/`NOSTR_*` are refused. A save applies to agent
-  processes started afterward; running ones keep the old list until
-  **Restart agent**, which stops only that agent's processes in every
-  community so its next message starts them with the saved list. It asks
-  first, and it's refused while the agent is answering or in a call. A Codex or Pi agent
-  with its own list runs in its own process. Removing the agent from its last
-  community on this computer deletes its list.
+- **Settings → Agent details → Environment variables** sets variables one local
+  Claude Code, Codex, Goose or Pi agent starts with, such as API keys. They're
+  kept in the OS credential store on this computer, never synced, and values
+  aren't shown again after saving. Protected agents don't get them, and a
+  harness's own variables win, except that a saved `ANTHROPIC_API_KEY` wins over
+  the shared Claude key. Names that choose a model, provider or endpoint,
+  `PATH`, and `BUZZ_*`/`NOSTR_*` are refused. A save applies to agent processes
+  started afterward; running ones keep the old list until **Restart agent**,
+  which stops only that agent's processes in every community so its next message
+  starts them with the saved list. It asks first, and it's refused while the
+  agent is answering or in a call. A Codex or Pi agent with its own list runs in
+  its own process. Removing the agent from its last community on this computer
+  deletes its list.
+- **Settings → Agent setup → Environment variables**, below **Harness
+  defaults**, is one list every local agent on this device starts with. An
+  agent's own list wins over it for a variable with the same name. **Restart
+  agents** asks first, then reloads Buzz, which ends calls and turns in
+  progress, so every local agent's next message starts it with the saved list.
+  A device-list `ANTHROPIC_API_KEY` doesn't replace your own Claude setup.
+  On Windows, the Anthropic key is saved only as `ANTHROPIC_API_KEY`.
+- Each harness reads its own variable names: Codex uses its own sign-in, not
+  `OPENAI_API_KEY`, and a credential under a different name can still outrank
+  the one an agent's list sets.
 - **Instructions** change how an agent behaves. They don't give it new tools,
   accounts or permissions.
 - **Settings → Agent setup → Base instructions** shows the instructions Buzz
@@ -187,6 +202,11 @@ if that desktop app is up and running.
   a section, or put the default text back in the editor for you to save.
 - **Sessions.** By default an agent starts a fresh conversation for each
   thread. Its settings can make it one per channel or one per community.
+- **Auto models.** Some builds add choices such as **Auto Balanced** to the
+  Model menu of Claude Code, Codex and Goose agents. Before each new turn, the build
+  picks a model and thinking level for that message, and the turn's activity
+  says which and why. A message sent while the agent is working keeps its
+  model, and a model chosen beside Send still wins.
 - **While it works**, the agent shows typing dots, and you can stop it. If it
   can't finish, it says why and offers **Retry**.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
@@ -220,12 +240,21 @@ them. Don't assume an
 optional plugin is on. Agents can ask to install or enable one, which you
 approve or decline.
 
+The Notes reader is no longer bundled. When it becomes available in the
+Marketplace, install and enable it on desktop to restore **Shared notes**.
+The old enabled setting does not carry over, and browsers cannot load external
+plugins. Existing notes remain available to agents through `notes_get`,
+`notes_set` and `notes_rm`.
+
 For a Git-installed plugin, an agent's update request or a pinned install link
 can switch the tracked branch even when the code is unchanged. Review and
 confirm the update to save the new source; no reinstall is needed.
 
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
-one only if you trust its author with your account and your computer.
+one only if you trust its author with your account and your computer. An optional
+[plugin trust file](plugin-trust.md) restricts external plugins to trusted
+publishers and can include plugins you sign with your own Buzz identity. Manage
+the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the reason.
 
 ## Docs
 

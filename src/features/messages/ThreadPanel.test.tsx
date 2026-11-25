@@ -1786,7 +1786,6 @@ it("routes media in replies through the resolved root review workspace", () => {
     0,
     true,
     undefined,
-    undefined,
   );
 });
 

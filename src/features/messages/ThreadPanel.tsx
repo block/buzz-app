@@ -1,11 +1,7 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { hostComposerProvenance } from "./mention-draft";
-import {
-  composerHost,
-  type MediaReviewOrigin,
-  useComposerScope,
-} from "./composer-overlay";
+import { useComposerScope } from "./composer-overlay";
 import { AgentConnectionSetup } from "../agents/AgentConnectionSetup";
 import { TypingIndicator, useLiveConversationAgents } from "./TypingIndicator";
 import { ActivityExpansion } from "./ActivityExpansion";
@@ -85,6 +81,7 @@ import { messageViewKey } from "./view-key";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { JumpToLatestButton } from "./JumpToLatestButton";
 import { correctScrollTop } from "./scroll-correction";
+import { contentSelector } from "./useFloatingActionBar";
 
 export type ThreadPanelProps = {
   intro?: ReactNode;
@@ -148,7 +145,6 @@ export type ThreadPanelProps = {
     seconds: number,
     hasComments?: boolean,
     attachments?: ChannelMessage["attachments"],
-    opening?: MediaReviewOrigin,
   ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
@@ -822,9 +818,12 @@ function ThreadMessages({
   const readingSettled = useRef(false);
   const [initialPositioned, setInitialPositioned] = useState(false);
   const follow = useRef(true);
-  // Where a placed unread line and the panel's own corrections since left the
-  // scroller; a scroll landing there is not the reader's.
+  // Where a placed unread line, or an older page the reader asked for, and the
+  // panel's own corrections since left the scroller; a scroll landing there is
+  // not the reader's.
   const lineTop = useRef<number | undefined>(undefined);
+  // Whether it was the line: only a reader still at a placed line holds it.
+  const atLine = useRef(false);
   const resizePosition = useRef<
     | {
         width: number;
@@ -905,13 +904,27 @@ function ThreadMessages({
     if (group)
       setExpandedActivity((current) => new Set([...current, ...group]));
   }, [tree, navigation?.signal]);
+  // The row holding the reader's place through an older page, and whether the
+  // page was read unasked, so that a reader at the latest reply follows still.
   const olderAnchor = useRef<
-    { id: string; top: number; ancestors: readonly string[] } | undefined
+    | {
+        id: string;
+        top: number;
+        ancestors: readonly string[];
+        following: boolean;
+      }
+    | undefined
   >(undefined);
   const olderDemand = useRef(false);
   // The reading anchor's id while its row is detached, until it remounts.
   const remounted = useRef<{ id: string; top: number } | undefined>(undefined);
   const targetAnchor = useRef<number | undefined>(undefined);
+  // Opening details in place is reading intent, as opening a reply branch is:
+  // stop following the latest reply so the start of what opened stays in view.
+  const expandDetails = useCallback(() => {
+    follow.current = false;
+    targetAnchor.current = undefined;
+  }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: each new target request retires the previous reveal anchor, not the reader's state.
   useLayoutEffect(() => {
     targetAnchor.current = undefined;
@@ -1411,7 +1424,6 @@ function ThreadMessages({
     (snapshot.root?.replyCount ?? 0) > 0 ||
     snapshot.replies.length > 0 ||
     (!!snapshot.target && snapshot.target.id !== rootId);
-  // Media opens over this thread's view while its reply box shows.
   const composerView = useComposerScope();
   // Links outside a message row, such as profiles in an activity preview,
   // open over this thread's view, as a row's do.
@@ -1435,17 +1447,15 @@ function ThreadMessages({
       attachments?: ChannelMessage["attachments"],
     ) => {
       if (!rootId) return;
-      const host = composerHost(composerView?.handle);
       onOpenMediaReview?.(
         _rowId,
         attachment,
         seconds,
         hasMediaComments,
         attachments,
-        host ? { host, rootId } : undefined,
       );
     },
-    [rootId, onOpenMediaReview, hasMediaComments, composerView],
+    [rootId, onOpenMediaReview, hasMediaComments],
   );
   // Without a selected viewer, bare timecodes need one unambiguous video.
   const videoUrls = new Set(
@@ -1651,7 +1661,9 @@ function ThreadMessages({
       // While the reader still starts at a placed line, the line holds its
       // offset: replies around it can fold away, the first unread one too.
       const line =
-        lineTop.current !== undefined && reading.line !== undefined
+        atLine.current &&
+        lineTop.current !== undefined &&
+        reading.line !== undefined
           ? element.querySelector<HTMLElement>("[data-new-messages-boundary]")
           : null;
       // A row remounted in place, as when a group folds and then opens around
@@ -1700,14 +1712,23 @@ function ThreadMessages({
           ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
         ].find((row) => row.dataset.messageId === anchor.id);
         if (row) {
-          correctScrollTop(
-            element,
-            row.getBoundingClientRect().top - anchor.top,
-          );
-          if (lineTop.current !== undefined)
+          correctScrollTop(element, contentTop(row) - anchor.top);
+          // The scroll this correction reports is not the reader's either. A
+          // reader who asked for the page had left any placed line.
+          if (!anchor.following && lineTop.current === undefined)
+            atLine.current = false;
+          if (!anchor.following || lineTop.current !== undefined)
             lineTop.current = element.scrollTop;
         }
-        if (snapshot.status !== "loading") olderAnchor.current = undefined;
+        if (snapshot.status !== "loading") {
+          // Only a page that leaves its reader at the latest reply has them
+          // follow it again.
+          if (!anchor.following)
+            follow.current =
+              element.scrollHeight - element.clientHeight - element.scrollTop <
+              1;
+          olderAnchor.current = undefined;
+        }
       }
     }
     if (targetAnchor.current !== undefined) {
@@ -1745,6 +1766,7 @@ function ThreadMessages({
       follow.current =
         element.scrollHeight - element.clientHeight - element.scrollTop < 1;
       lineTop.current = element.scrollTop;
+      atLine.current = true;
       // Like a revealed message, the line is where a first opening's reading
       // starts, so content-focused navigation moves focus in: from where the
       // opening or navigation left it, not from where the person has since
@@ -1900,7 +1922,7 @@ function ThreadMessages({
         const row = element.querySelector<HTMLElement>(
           `[data-message-id="${olderAnchor.current.id}"]`,
         );
-        if (row) olderAnchor.current.top = row.getBoundingClientRect().top;
+        if (row) olderAnchor.current.top = contentTop(row);
       }
       captureResizePosition();
     });
@@ -2069,6 +2091,7 @@ function ThreadMessages({
             layout={continuation ? "continuation" : "thread"}
             compactAvatar={depth > 0}
             retry={session.messages.retry}
+            onExpandDetails={expandDetails}
             {...(canSeekVideo ? { onMediaTime: handleMediaTime } : {})}
             {...(onOpenMediaReview && rootId
               ? { onOpenMediaReview: openRootMedia }
@@ -2254,8 +2277,9 @@ function ThreadMessages({
     olderAnchor.current = row?.dataset.messageId
       ? {
           id: row.dataset.messageId,
-          top: row.getBoundingClientRect().top,
+          top: contentTop(row),
           ancestors: tree.ancestors(row.dataset.messageId),
+          following,
         }
       : undefined;
   };
@@ -2393,7 +2417,7 @@ function ThreadMessages({
               const row = [
                 ...element.querySelectorAll<HTMLElement>("[data-message-id]"),
               ].find((row) => row.dataset.messageId === anchor.id);
-              if (row) anchor.top = row.getBoundingClientRect().top;
+              if (row) anchor.top = contentTop(row);
             }
             // A browser-generated scroll during reflow must not replace the
             // reading intent before ResizeObserver has corrected the new geometry.
@@ -2411,7 +2435,20 @@ function ThreadMessages({
             if (jumpingToLatest.current) return;
             captureResizePosition();
             if (element.scrollTop !== lineTop.current) {
-              follow.current = bottom;
+              // A reader waiting on older replies they asked for is not at
+              // the latest one, however short the loaded history leaves them
+              // of it, until they scroll all the way back to it.
+              if (
+                olderAnchor.current &&
+                element.scrollHeight -
+                  element.clientHeight -
+                  element.scrollTop <
+                  1
+              )
+                olderAnchor.current.following = true;
+              follow.current =
+                bottom &&
+                (!olderAnchor.current || olderAnchor.current.following);
               lineTop.current = undefined;
             }
             setShowJumpToLatest(!bottom);
@@ -2743,4 +2780,12 @@ function shownAnchor(anchor: { element: HTMLElement; top: number }) {
   return !height || anchor.top + height > 0
     ? anchor
     : { element: anchor.element, top: 0 };
+}
+
+// Where a row's content starts. An older page can take the day divider and
+// byline above it, or move the row into a branch: the content holds the
+// reader's place, not the row's edges.
+function contentTop(row: HTMLElement) {
+  return (row.querySelector(contentSelector) ?? row).getBoundingClientRect()
+    .top;
 }

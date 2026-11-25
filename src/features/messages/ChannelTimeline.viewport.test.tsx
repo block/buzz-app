@@ -455,6 +455,28 @@ it.each([
   },
 );
 
+// Reading watches the history's scroll; the card scrolls in its own layer.
+it("wakes reading when the trailing card's layer scrolls", () => {
+  const { updates, content } = activityFixture();
+  render(
+    cloneElement(content(updates(3)), {
+      trailing: {
+        restHeight: 124,
+        content: () => <article aria-label="Card" />,
+      },
+    }),
+  );
+  const positioned = vi.fn();
+  screen
+    .getByRole("region", { name: "Channel message history" })
+    .addEventListener("reading-positioned", positioned);
+  const layer = screen
+    .getByRole("article", { name: "Card" })
+    .closest(`.${styles.trailingSheet}`);
+  fireEvent.scroll(layer as Element);
+  expect(positioned).toHaveBeenCalled();
+});
+
 it("starts visible and retained steps with author artwork after a hidden predecessor", () => {
   const { owner, updates, content } = activityFixture();
   try {

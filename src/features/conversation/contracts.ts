@@ -509,8 +509,13 @@ export type PageTabTarget = {
   unreadSince?: number;
 };
 /** Optional `ConversationWorkspaceProps` a workspace provider renders. */
+/** An aside's width in pixels. A later host may also accept an object form,
+ * such as a share of a wide reader. */
+export type WorkspaceAsideWidth = number;
 export type WorkspaceSlots = Readonly<{
   headerActions?: true;
+  trailing?: true;
+  aside?: true;
 }>;
 /** A page-owned conversation with the host's reader, composer, and side pane. */
 export type ConversationWorkspaceProps = {
@@ -527,6 +532,37 @@ export type ConversationWorkspaceProps = {
   intro?: ReactNode;
   /** Controls in the main tab's toolbar, before the actions menu. */
   headerActions?: ReactNode;
+  /** A card over the bottom of the channel timeline; a thread ignores it.
+   * At rest its first `restHeight` pixels show below the latest message.
+   * Scrolling over the card grows it, then slides it up; `expanded` is true
+   * once it has grown. `toggle()` grows it to near the view's top, or back.
+   * Render the whole card at rest too: growing scrolls it into view. */
+  trailing?: {
+    restHeight: number;
+    content(state: { expanded: boolean; toggle(): void }): ReactNode;
+  };
+  /** Content beside the main tab's history. The host places it in a box of
+   * `asideWidth` over the history's end edge, beside its scrollbar, from the
+   * history's top to the reader's bottom; the history and composer keep to
+   * the width beside it. When the reader would get too narrow, the aside
+   * floats over the history instead, above the composer, shown only while
+   * open. The box draws nothing: the content draws
+   * its own card, sizes to it, and scrolls itself when taller than the box.
+   * Only the content takes pointer input, so the wheel beside or below it
+   * scrolls the history. */
+  aside?: ReactNode;
+  /** The aside's width. Defaults to 320. */
+  asideWidth?: WorkspaceAsideWidth;
+  /** Whether the aside shows: docked by default, floating once opened. The
+   * host closes a floating aside when the reader narrows to it, restores the
+   * docked state when it widens again, and closes the overlay on Escape or a
+   * press outside it, reporting each change. A page drives it from its own
+   * control; without one, a floating aside stays closed. */
+  asideOpen?: boolean;
+  onAsideOpenChange?(open: boolean): void;
+  /** Called with whether the aside floats, once the host first places it and
+   * whenever it moves between docked and floating. */
+  onAsideFloatingChange?(floating: boolean): void;
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

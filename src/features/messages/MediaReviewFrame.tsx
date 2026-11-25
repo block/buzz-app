@@ -1,7 +1,4 @@
-import type { MediaReviewPlacement } from "./MediaReviewViewer";
-import { MediaSheet } from "./MediaSheet";
 import {
-  useState,
   useRef,
   type KeyboardEvent,
   type ReactNode,
@@ -23,8 +20,9 @@ import {
 import { seekVideoBy } from "./use-video-gestures";
 import styles from "./Messages.module.css";
 
-/** Shared fullscreen surface for sent media and local composer previews. */
-function FullscreenMediaReviewFrame({
+/** Shared fullscreen surface for sent media and local composer previews.
+ * Media is a viewer: opening and closing it never adds a step to history. */
+export function MediaReviewFrame({
   title,
   label,
   isVideo,
@@ -193,48 +191,4 @@ function mediaKeyDown(
   event.preventDefault();
   event.stopPropagation();
   seekVideoBy(video.current, event.key === "ArrowRight" ? 10 : -10);
-}
-
-/** Media opened from a view reads in a sheet over that view's composer, its
- * comment composer in the composer's place; elsewhere it is fullscreen. Media
- * is a viewer: opening and closing it never adds a step to history. */
-export function MediaReviewFrame(
-  props: MediaReviewFrameProps & { placement?: MediaReviewPlacement },
-) {
-  const [open, setOpen] = useState(true);
-  if (props.placement?.kind !== "sheet")
-    return <FullscreenMediaReviewFrame {...props} />;
-  return (
-    <MediaSheet
-      open={open}
-      onOpenChange={setOpen}
-      onClosed={props.close}
-      host={props.placement.host}
-      workspace={props.placement.workspace}
-      title={props.title}
-      closeLabel="Close media viewer"
-      finalFocus={props.restoreFocus}
-      headerActions={props.actions}
-    >
-      <section
-        ref={props.frame}
-        data-composer-host=""
-        className={styles.sheetReview}
-        aria-label={props.label}
-        tabIndex={-1}
-        onKeyDown={(event) =>
-          mediaKeyDown(event, props.isVideo, props.video, props.navigate)
-        }
-      >
-        <div
-          className={`${styles.mediaReviewStage} dark`}
-          data-color-mode="dark"
-          data-review-stage=""
-        >
-          {props.children}
-        </div>
-        {props.sidebar}
-      </section>
-    </MediaSheet>
-  );
 }

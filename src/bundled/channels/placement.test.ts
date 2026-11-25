@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
 import { setThreadPlacementPreference } from "../../features/messages/thread-preferences";
-import type { MediaReviewOrigin } from "../../features/messages/composer-overlay";
-import { canHoldInline, inlineMedia, placeOpening } from "./placement";
+import { canHoldInline, placeOpening } from "./placement";
 
 const open = { hasTab: false, canHold: true };
 const live = { kind: "panel", panel: { inline: false } } as const;
@@ -50,15 +49,6 @@ describe("placeOpening", () => {
     expect(placeOpening({ kind: "thread" }, { ...open, canHold: false })).toBe(
       "tab",
     );
-  });
-
-  it("reads media in a sheet only under inline, over a view on screen", () => {
-    const opening = {} as MediaReviewOrigin;
-    setThreadPlacementPreference("inline");
-    expect(inlineMedia(opening)).toBe(true);
-    expect(inlineMedia(undefined)).toBe(false);
-    setThreadPlacementPreference("side");
-    expect(inlineMedia(opening)).toBe(false);
   });
 });
 

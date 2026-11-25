@@ -101,12 +101,6 @@ export type ComposerOverlayHost = Readonly<{
   dock: HTMLElement;
   composer: HTMLElement;
 }>;
-/** The view a row opened media from: its composer, and the thread the media
- * is in, whose comments the media sheet reads. */
-export type MediaReviewOrigin = Readonly<{
-  host: ComposerOverlayHost;
-  rootId: string;
-}>;
 
 /** `handle`'s composer, while it is on screen. */
 export function composerHost(

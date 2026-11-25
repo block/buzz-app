@@ -11,8 +11,6 @@ import { CanvasEditor } from "../../src/bundled/channels/CanvasEditor";
 import { CanvasMarkdown } from "../../src/bundled/channels/CanvasView";
 import type { ChannelCanvas } from "../../src/features/channel-templates/capability";
 import { GitHubBody } from "../../src/bundled/github/GitHubBody";
-import { NoteBody } from "../../src/bundled/relay-notes/NotesPage";
-import notesStyles from "../../src/bundled/relay-notes/NotesPage.module.css";
 import { Body as RepoBody } from "../../src/bundled/repos/RepoPage";
 import { InstructionsMarkdown } from "../../src/bundled/watching/InstructionsMarkdown";
 import "../../src/bundled/watching/AttentionPage.css";
@@ -22,7 +20,6 @@ import { activityTranscript } from "../../src/features/agents/activity-transcrip
 import { createAgentMemories } from "../../src/features/agents/memory";
 import { MemoryPanel } from "../../src/features/agents/MemoryPanel";
 import type { Agent } from "../../src/features/agents/service";
-import type { RelaySession } from "../../src/features/relay/session";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 
@@ -156,17 +153,6 @@ const memoryAgent = {
   place: "here",
 } as Agent;
 
-const note = {
-  id: "d".repeat(64),
-  pubkey: agent,
-  created_at: Math.floor(at / 1000),
-  kind: 30_023,
-  content: SAMPLE,
-  tags: [
-    ["d", "runbook"],
-    ["title", "Runbook"],
-  ],
-};
 const scope = { viewer: agent, communityOrigin: "https://current.example" };
 
 const root = document.getElementById("root");
@@ -220,14 +206,6 @@ createRoot(root).render(
       </section>
       <section data-screen="canvas-source">
         <CanvasMarkdown content={TOO_DEEP} openLink={() => false} />
-      </section>
-      <section data-screen="notes" className={notesStyles.page}>
-        <NoteBody
-          note={note}
-          session={undefined as unknown as RelaySession}
-          openLink={() => false}
-          author="Ada"
-        />
       </section>
       <section data-screen="repo" className="repos-page text-body">
         <RepoBody text={SAMPLE} open={async () => {}} scope={scope} />

@@ -157,7 +157,6 @@ it.each([false, true])(
         39,
         true,
         undefined,
-        undefined,
       );
     } else {
       expect(screen.getByTestId("video-seek")).toHaveTextContent("42");

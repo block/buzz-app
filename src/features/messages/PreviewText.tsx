@@ -1,4 +1,10 @@
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { spoilerText } from "../notifications/content";
@@ -7,6 +13,7 @@ import { PROFILE_CACHE_BASE } from "../relay/budget";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
+import { linkedSoloChatName } from "../solo/labels";
 import { preparedMarkdown, recentResults } from "./markdown-preparation";
 import { placeholderPattern, protectInlineContent } from "./MessageMarkdown";
 import { placeholder } from "./placeholder-characters";
@@ -79,6 +86,35 @@ const flatChip = (text: string) => {
 /** A link that names a channel or a message in one, which previews show by
  * the channel's name as the conversation does. */
 const channelLink = (url: string) => parseBuzzLink(url)?.format === "legacy";
+
+const unsubscribed = () => () => {};
+
+/** A joined channel's name for a preview's link to it. A link to a Solo chat
+ * itself reads by the chat's title, with no channel `#`, once the relay has
+ * confirmed the chat, as the conversation's link does. */
+function ChannelName({
+  url,
+  label,
+  session,
+}: {
+  url: string;
+  label: string;
+  session: RelaySession | undefined;
+}) {
+  const channels = session?.channels;
+  // A string, so channel activity that changes no title renders nothing.
+  const chat = useSyncExternalStore(
+    channels?.subscribeList ?? unsubscribed,
+    () => {
+      const link = parseBuzzLink(url);
+      return link?.format === "legacy"
+        ? linkedSoloChatName(link, channels?.list().channels)
+        : "";
+    },
+    () => "",
+  );
+  return chat || label;
+}
 
 /** Whether `text` can show a chip for `labels`: one reads as its name, or
  * with a namesake qualifier, which may differ in case. */
@@ -276,7 +312,12 @@ export function PreviewText({
     // A row is its own control and nothing in it opens, so a channel name
     // reads as the row's own text, not as a link.
     const chip = channel ? (
-      <Fragment key={start}>{channel}</Fragment>
+      <ChannelName
+        key={start}
+        url={part.target}
+        label={channel}
+        session={session}
+      />
     ) : (
       <ProfileMention
         key={start}

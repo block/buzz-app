@@ -352,13 +352,14 @@ it.each([
     "Find the needle here",
     "needle",
   ],
-  // A joined channel's link reads as its name; a hit inside it marks the name.
-  ["a Solo link", "buzz://channel/channel", "buzz", "#Solo", "#Solo"],
+  // A joined Solo chat's link reads as its title, with no channel "#"; a hit
+  // inside it marks the title.
+  ["a Solo link", "buzz://channel/channel", "buzz", "Solo", "Solo"],
   [
     "prose with a Solo link",
     "See buzz://channel/channel for release notes",
     "release",
-    "See #Solo for release notes",
+    "See Solo for release notes",
     "release",
   ],
   [

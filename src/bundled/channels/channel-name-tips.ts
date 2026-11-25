@@ -103,7 +103,11 @@ export function channelNameTips(input: NameTipInput): NameTips {
     name !== name.toLowerCase() ||
     !/^[\p{L}\p{M}\p{N}]+(-[\p{L}\p{M}\p{N}]+)*$/u.test(name)
   ) {
-    const hint = `Use lowercase letters, numbers and single hyphens${tidy ? `, like ${tidy}` : ""}.`;
+    // Suggest a name that would pass, so a bare "Alpha" gets alpha-team.
+    const passes = typed || parts.includes("proj");
+    const known = PREFIXES.includes(bare) || SUFFIXES.includes(bare);
+    const example = passes || known || !tidy ? tidy : `${tidy}-team`;
+    const hint = `Use lowercase letters, numbers and single hyphens${example ? `, like ${example}` : ""}.`;
     tips.push(hint);
     blockers.push(hint);
   }

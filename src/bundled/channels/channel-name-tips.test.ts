@@ -43,6 +43,12 @@ describe("channelNameTips", () => {
 describe("normalization and wording", () => {
   const check = (name: string) =>
     channelNameTips({ name, temporary: false, description: "x" }).blockers;
+  it("suggests a name that passes, adding a type word when missing", () => {
+    const blockers = check("Alpha");
+    expect(blockers).toContain(
+      "Use lowercase letters, numbers and single hyphens, like alpha-team.",
+    );
+  });
   it("requires lowercase kebab-case", () => {
     const fix = (name: string) => [
       `Use lowercase letters, numbers and single hyphens, like ${name}.`,

@@ -6,7 +6,12 @@ import type { NotificationCategory } from "./preferences";
 import { prepareMarkdown } from "../messages/markdown-preparation";
 import { remarkSpoilers } from "../messages/remark-spoilers";
 
-export type NotificationText = Readonly<{ title: string; body: string }>;
+export type NotificationText = Readonly<{
+  title: string;
+  body: string;
+  /** Shown instead when message text is off, so the body is not left empty. */
+  withoutText?: Readonly<{ title: string; body: string }>;
+}>;
 
 // An isolated surrogate is not valid Unicode; native JSON rejects it.
 const loneSurrogate =
@@ -138,11 +143,15 @@ export function messageNotificationText(
     channel?.channelType === "dm"
       ? "a direct message"
       : `#${shortText(channel?.name ?? "", 64) || message.channelId.slice(0, 8)}`;
-  const title =
+  const action =
     category === "mention"
-      ? `${sender} mentioned you in ${destination}`
+      ? `mentioned you in ${destination}`
       : category === "direct"
-        ? `${sender} sent you a direct message`
-        : `${sender} replied in ${destination}`;
-  return Object.freeze({ title, body: messagePreview(message.previewContent) });
+        ? "sent you a direct message"
+        : `replied in ${destination}`;
+  return Object.freeze({
+    title: `${sender} ${action}`,
+    body: messagePreview(message.previewContent),
+    withoutText: Object.freeze({ title: sender, body: action }),
+  });
 }

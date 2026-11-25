@@ -3,7 +3,7 @@
 // an HTTP server: run with PI_DEPS set to a folder pi.sh installed Pi's
 // packages in, such as "~/Library/Application Support/Buzz/pi/deps/<sum>".
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -32,7 +32,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     send({ id, result: { protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "fake", version: "1" } } });
   else if (method === "tools/list") send({ id, result: { tools } });
   else if (params?.name === "env")
-    send({ id, result: { content: [{ type: "text", text: JSON.stringify({ token: process.env.TOKEN ?? null, base: process.env.BASE_VAR ?? null, other: Object.keys(process.env).filter((n) => n.startsWith("BUZZMCP_")) }) }] } });
+    send({ id, result: { content: [{ type: "text", text: JSON.stringify({ token: process.env.TOKEN ?? null, base: process.env.BASE_VAR ?? null, other: Object.keys(process.env).filter((n) => n.startsWith("BUZZMCP_")), cwd: process.cwd() }) }] } });
   else if (params?.name === "die") process.exit(1);
 });
 `;
@@ -63,10 +63,10 @@ const url = "http://127.0.0.1:" + http.address().port + "/mcp";
 process.env.BASE_VAR = "from-launch";
 process.env.BUZZMCP_00000000000000A1_544F4B454E = "another-slot";
 const { clients, extension } = await mcpExtension([
-  { name: "local", transport: "stdio", command: process.execPath, args: ["server.mjs"], env: { TOKEN: "t0ken" } },
+  { name: "local", transport: "stdio", command: process.execPath, args: [process.cwd() + "/server.mjs"], env: { TOKEN: "t0ken" } },
   { name: "web", transport: "http", url, headers: { Authorization: "Bearer h3ader" } },
   { name: "broken", transport: "stdio", command: "/no/such/command", args: [], env: { TOKEN: "leak" } },
-]);
+], process.env.WORKSPACE);
 out.names = extension.tools.map((t) => t.name);
 out.deferred = extension.tools.every((t) => t.deferred === true);
 out.schemas = extension.tools.map((t) => t.parameters.type);
@@ -104,7 +104,8 @@ afterAll(() =>
 describe.skipIf(!DEPS)("the Pi host's MCP client", () => {
   it("connects, names, calls and closes local and HTTP servers", async () => {
     const folder = await mkdtemp(join(tmpdir(), "buzz-pi-mcp-"));
-    folders.push(folder);
+    const workspace = await mkdtemp(join(tmpdir(), "buzz-pi-workspace-"));
+    folders.push(folder, workspace);
     await symlink(
       join(DEPS ?? "", "node_modules"),
       join(folder, "node_modules"),
@@ -115,7 +116,11 @@ describe.skipIf(!DEPS)("the Pi host's MCP client", () => {
     const { stdout, stderr } = await run(
       process.execPath,
       ["--disable-warning=ExperimentalWarning", join(folder, "driver.mjs")],
-      { cwd: folder, timeout: 60_000 },
+      {
+        cwd: folder,
+        env: { ...process.env, WORKSPACE: workspace },
+        timeout: 60_000,
+      },
     );
     const out = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}");
     // Long and invalid names are shortened with a hash, within 64.
@@ -134,7 +139,13 @@ describe.skipIf(!DEPS)("the Pi host's MCP client", () => {
     expect(out.section).toContain("broken (Error)");
     expect(out.section).not.toContain("leak");
     // The launch environment, its own values, no other slot's.
-    expect(out.env).toEqual({ token: "t0ken", base: "from-launch", other: [] });
+    expect(out.env).toEqual({
+      token: "t0ken",
+      base: "from-launch",
+      other: [],
+      // In the agent's workspace, not the host's folder.
+      cwd: await realpath(workspace),
+    });
     expect(out.web).toEqual([{ type: "text", text: '{"hello":"web"}' }]);
     expect(out.headers).toContain("Bearer h3ader");
     expect(out.wait).toEqual(["running", "aborted"]);

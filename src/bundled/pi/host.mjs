@@ -669,7 +669,7 @@ export function mcpEnv(env, own) {
 /** Connects to `server` and lists its tools, within one limit for both,
  * since a list can take several pages. Its error output is dropped, so it
  * never shows in the reason Pi stopped. */
-async function connectMcp(server) {
+async function connectMcp(server, cwd) {
   const { Client, StreamableHTTPClientTransport } = await import(
     "@modelcontextprotocol/client"
   );
@@ -681,6 +681,7 @@ async function connectMcp(server) {
           command: server.command,
           args: [...server.args],
           env: mcpEnv(process.env, server.env),
+          ...(cwd && { cwd: cwd.replace(/^~(?=$|[\\/])/, homedir()) }),
           stderr: "ignore",
         })
       : new StreamableHTTPClientTransport(new URL(server.url), {
@@ -730,8 +731,8 @@ export async function closeMcp(clients, ms) {
  * out and named in a section, with only its error's type, since a message
  * can carry what the server was given. One that stops later fails its
  * calls; nothing starts it again until its list changes. */
-export async function mcpExtension(servers, connect = connectMcp) {
-  const results = await Promise.allSettled(servers.map((s) => connect(s)));
+export async function mcpExtension(servers, cwd, connect = connectMcp) {
+  const results = await Promise.allSettled(servers.map((s) => connect(s, cwd)));
   const taken = new Set();
   const clients = [];
   const tools = [];
@@ -1651,7 +1652,7 @@ export function serve({
    * since the last open, one change at a time. The old ones close first,
    * which ends their calls still running in the agent's other
    * conversations. */
-  function startMcp(opened, { key, servers }) {
+  function startMcp(opened, { key, cwd, servers }) {
     opened.mcpUse = (opened.mcpUse ?? Promise.resolve()).then(async () => {
       if ((opened.mcp?.key ?? "") === key) return;
       if (servers.length && protectedAgent)
@@ -1663,7 +1664,7 @@ export function serve({
         await closeMcp(old.clients, MCP_CLOSE_MS);
       }
       if (!servers.length) return;
-      const { clients, extension } = await mcpExtension(servers);
+      const { clients, extension } = await mcpExtension(servers, cwd);
       opened.install(extension);
       opened.mcp = { key, clients, extension };
     });

@@ -5610,6 +5610,8 @@ it("gives Pi the agent's approved MCP servers, again only when they change", asy
     const [one, two] = f.host.requests("open");
     expect(one?.params.mcp).toEqual({
       key: expect.stringContaining(first.id),
+      // Local servers start where the agent works.
+      cwd: DEFAULT_CONFIG.workspace,
       servers: [
         {
           name: "docs",

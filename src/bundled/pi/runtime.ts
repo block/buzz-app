@@ -160,6 +160,9 @@ const WAKE = "plugin/";
  * approval or the values, and a new one replaces the servers. */
 type PiMcp = Readonly<{
   key: string;
+  /** The agent's workspace, where its local servers start, as in Claude
+   * Code. */
+  cwd?: string;
   servers: readonly Readonly<
     { name: string } & (
       | {
@@ -1745,15 +1748,18 @@ export class PiRuntime {
     if (handle.protection) return { key: "", servers: [] };
     const { servers } = startList(entry.config, handle);
     if (!servers.length) return { key: "", servers: [] };
+    const cwd = entry.config.workspace;
     const key = JSON.stringify([
       approvalId(entry.config, handle),
       mcpGeneration(handle.pubkey),
+      cwd,
     ]);
     const sent = this.mcpSent.get(agent);
     if (sent?.key === key) return sent;
     const values = await mcpValues(handle.pubkey);
     const mcp = {
       key,
+      cwd,
       servers: servers.map((s) =>
         s.transport === "stdio"
           ? {

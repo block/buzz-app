@@ -51,7 +51,8 @@ only then does the host close the old servers and start the new ones as the
 `mcp` extension. That ends calls still running in the agent's other
 conversations.
 
-- A local server starts with the host's environment, which is the agent's
+- A local server starts in the agent's workspace, as in Claude Code, with the
+  host's environment, which is the agent's
   launch one, without any `BUZZMCP_*` name (the host deletes those from its
   own at start), plus its own values. Its error output is dropped.
 - An HTTP server gets its values as headers.

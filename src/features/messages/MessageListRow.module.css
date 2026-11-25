@@ -1,9 +1,8 @@
 .rowAvatar {
   display: grid;
   flex: none;
-  /* The avatar starts with the row's first line. */
-  align-self: flex-start;
-  margin-block-start: var(--space-row-gap);
+  /* Centered on the row's lines. */
+  align-self: center;
   width: var(--space-8);
   height: var(--space-8);
 }

@@ -228,13 +228,11 @@ export async function toOlder(
 export async function end(page) {
   await edge(page, 1);
 }
-// `cold` reaches Messages by its tab, for journeys that need conversations
+// `cold` stays on the Messages the app opens to instead of navigating, for journeys that need conversations
 // unread by the app: search previews the results it highlights on the way.
 export async function open(page, app, { cold = false, hold = false } = {}) {
   await page.goto(app.origin);
-  if (cold)
-    await page.getByRole("tab", { name: "Messages", exact: true }).click();
-  else await openPage(page, "Messages");
+  if (!cold) await openPage(page, "Messages");
   await composer(page, "Alpha").waitFor();
   await expect(history(page).locator(rowSelector).first()).toBeVisible();
   await settle(page);

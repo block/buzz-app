@@ -41,7 +41,7 @@ import {
 import type { DraftPicks } from "../messages/ComposerModels";
 import type { MentionPicks } from "../relay/messages";
 import { useDefaultAgent } from "./default-agent";
-import { draftLifetime } from "./default-lifetime";
+import { draftLifetime, effectiveVisibility } from "./default-lifetime";
 import { WorkspaceControl } from "./WorkspaceControl";
 import { rememberedMentions } from "../messages/remembered-mentions";
 import {
@@ -196,6 +196,7 @@ export function SoloDraft({
   onStarted,
   onFailed,
   projectId,
+  starred,
   extensions,
   focusRequest = 0,
   agent,
@@ -204,7 +205,13 @@ export function SoloDraft({
   visit,
   region,
   draft: regionDraft,
+  embedded = false,
+  name: givenName,
 }: {
+  /** Shown inside New message, which supplies the page's title. */
+  embedded?: boolean;
+  /** The chat's name from the host's title field; empty follows settings. */
+  name?: string | undefined;
   draft?: SoloDraftStart["draft"];
   /** The Solo region whose source opened this draft; its chat gets that label. */
   region?: string | undefined;
@@ -227,6 +234,8 @@ export function SoloDraft({
     | ((id: string, message: string, retry?: () => Promise<void>) => void)
     | undefined;
   projectId?: string | undefined;
+  /** File the started chat in Favorites. */
+  starred?: boolean | undefined;
 }) {
   const draftKey = region
     ? regionDraftKey(region, projectId, regionDraft?.key)
@@ -234,7 +243,9 @@ export function SoloDraft({
       ? linkedDraftKey(linkedId)
       : projectId
         ? `solo:project:${projectId}`
-        : "solo";
+        : starred
+          ? "solo:starred"
+          : "solo";
   const notify = useToastNotification();
   // Reconcile explicit route intent before the composer restores its pick.
   useState(() => prepareNamedAgentDraft(scope, `${draftKey}:new-draft`, agent));
@@ -393,15 +404,19 @@ export function SoloDraft({
         ),
       ),
     ];
+    const chosenName = givenName?.trim() ? givenName : draftSettings.name;
     const named =
-      typeof draftSettings.name === "string" &&
-      !!canonicalDetailsName(draftSettings.name);
+      typeof chosenName === "string" && !!canonicalDetailsName(chosenName);
     const name =
-      typeof draftSettings.name === "string"
-        ? canonicalDetailsName(draftSettings.name) || startingChatTitle(draft)
-        : draftSettings.name;
-    const ttlSeconds = draftLifetime(scope, draftSettings);
+      typeof chosenName === "string"
+        ? canonicalDetailsName(chosenName) || startingChatTitle(draft)
+        : chosenName;
     const project = selectedProject;
+    const ttlSeconds = draftLifetime(
+      scope,
+      draftSettings,
+      project || undefined,
+    );
     const canvas = draftCanvas;
     const draftModelPicksKey = soloModelPicksKey(`${draftKey}:new-draft`);
     const chatModelPicksKey = soloModelPicksKey(channelId);
@@ -535,6 +550,12 @@ export function SoloDraft({
           .catch((reason) =>
             console.warn("Solo chat could not join its workspace", reason),
           );
+      if (starred)
+        void session.sidebarPreferences
+          .setStar(channelId, true)
+          .catch((reason) =>
+            console.warn("Solo chat could not join Favorites", reason),
+          );
       let starting: ReturnType<typeof session.channelWrites.start>;
       try {
         const owner = regionOwner();
@@ -589,7 +610,11 @@ export function SoloDraft({
               }
             : undefined,
           // Unguarded, so a restart can retry it like any New chat.
-          { admins, ...(region ? { labels: [region] } : {}) },
+          {
+            admins,
+            visibility: effectiveVisibility(scope, project || undefined),
+            ...(region ? { labels: [region] } : {}),
+          },
         );
       } catch (reason) {
         if (startKey) writeView(scope, startKey, null);
@@ -698,7 +723,7 @@ export function SoloDraft({
       if (mounted.current) onStarted(channelId);
       if (clearedPicks === "failed")
         notify(
-          "Could not clear model and effort from New chat. Reset them before starting another chat.",
+          "Could not clear model and effort from New message. Reset them before starting another conversation.",
           "error",
         );
       if (!savedChatPicks)
@@ -837,15 +862,15 @@ export function SoloDraft({
               const earlier = restoredPrompts.get(returnedTo);
               const outcome = returned
                 ? missing.length
-                  ? `Your message is back in New chat, but its ${new Intl.ListFormat(
+                  ? `Your message is back in New message, but its ${new Intl.ListFormat(
                       undefined,
                       { type: "conjunction" },
                     ).format(missing)} could not be saved on this device.`
-                  : "Your message is back in New chat."
+                  : "Your message is back in New message."
                 : earlier !== undefined &&
                     viewRevision(scope, `${draftKey}:new-draft`) === earlier
-                  ? "New chat holds an earlier message that couldn't be sent, so this one was not restored."
-                  : "New chat has a newer draft, so your message was not restored.";
+                  ? "New message holds an earlier message that couldn't be sent, so this one was not restored."
+                  : "New message has a newer draft, so your message was not restored.";
               restored = true;
               onFailed?.(
                 channelId,
@@ -969,6 +994,7 @@ export function SoloDraft({
   );
   return (
     <SoloDraftView
+      embedded={embedded}
       actions={
         <IconButton
           ref={settingsTrigger}
@@ -978,7 +1004,9 @@ export function SoloDraft({
           icon={<GearIcon size="1rem" aria-hidden="true" />}
           disabled={busy}
           onClick={() => {
-            setSettingsLifetime(draftLifetime(scope, draftSettings));
+            setSettingsLifetime(
+              draftLifetime(scope, draftSettings, selectedProject || undefined),
+            );
             setSettingsOpen(true);
           }}
         />

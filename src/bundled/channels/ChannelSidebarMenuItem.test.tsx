@@ -9,6 +9,7 @@ import {
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
+import type { InboxItem, InboxSnapshot } from "../../features/relay/inbox";
 import { ChannelSidebarMenuItem } from "./ChannelSidebarMenuItem";
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
@@ -17,7 +18,7 @@ afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
 
-it("keeps menu choices in sync with ordinary, attention, thread and working sidebar indicators", async () => {
+it("keeps menu choices in sync with ordinary, needs-you and working sidebar indicators", async () => {
   const owner = createRelaySession(null);
   owners.push(owner);
   const target = { kind: "channel" as const, channelId: "alpha" };
@@ -33,6 +34,18 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
     >,
   };
   let agents = owner.session.agentActivity.snapshot();
+  let inboxItems: InboxItem[] = [];
+  let inbox: InboxSnapshot = {
+    status: "ready",
+    items: inboxItems,
+    freshness: "observed",
+  };
+  const setInbox = (items: Partial<InboxItem>[]) => {
+    inboxItems = items.map(
+      (item) => ({ channelId: "alpha", ...item }) as InboxItem,
+    );
+    inbox = { ...inbox, items: inboxItems };
+  };
   const unreadListeners = new Set<() => void>();
   const agentListeners = new Set<() => void>();
   const subscribe = (listeners: Set<() => void>, listener: () => void) => {
@@ -48,6 +61,9 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
       snapshot: () => unread,
       activity: () => activity,
       subscribe: (_target: unknown, listener: () => void) =>
+        subscribe(unreadListeners, listener),
+      inbox: () => inbox,
+      subscribeInbox: (listener: () => void) =>
         subscribe(unreadListeners, listener),
       subscribeActivity: (_id: string, listener: () => void) =>
         subscribe(unreadListeners, listener),
@@ -90,7 +106,7 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
   expect(
     screen.getByRole("img", { name: /1 observed unread/ }),
   ).toBeInTheDocument();
-  expect(item.querySelector("[data-channel-priority]")).toBeNull();
+  expect(item.querySelector("[data-channel-needs-you]")).toBeNull();
   act(() => {
     unread = { ...unread, attentionCount: 1 };
     activity = {
@@ -105,13 +121,15 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
         },
       ],
     };
+    setInbox([{ unreadCount: 1, mentioned: true }]);
     publish();
   });
   expect(label).not.toHaveAttribute("data-ordinary");
-  // A mention alone keeps the priority dot, and names itself to assistive tech.
-  expect(item.querySelector("[data-channel-priority]")).toBeInTheDocument();
-  expect(item.querySelector("[data-channel-activity]")).toBeNull();
-  expect(item).toHaveAccessibleName(/1 unread mention$/);
+  // A mention needs you: one dot, named once for assistive tech.
+  expect(item.querySelector("[data-channel-needs-you]")).toBeInTheDocument();
+  expect(screen.getAllByRole("img", { name: /unread/ })).toHaveLength(1);
+  expect(screen.getByRole("img", { name: "1 unread" })).toBeInTheDocument();
+  expect(item).toHaveAccessibleName(/1 unread$/);
   act(() => {
     activity = {
       ...activity,
@@ -127,14 +145,17 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
         },
       ],
     };
+    setInbox([
+      { unreadCount: 1, mentioned: true },
+      { unreadCount: 1, thread: true },
+    ]);
     publish();
   });
-  // One dot names both, so the mention is not announced twice.
-  expect(
-    screen.getByRole("img", { name: "1 unread mention, 1 unread thread" }),
-  ).toHaveAttribute("title", "1 unread mention, 1 unread thread");
+  // One status counts both, so the mention is not announced twice.
+  expect(screen.getAllByRole("img", { name: /unread/ })).toHaveLength(1);
+  expect(screen.getByRole("img", { name: "2 unread" })).toBeInTheDocument();
   expect(within(item).queryByText(/unread mention/)).toBeNull();
-  expect(item.querySelector("[data-channel-priority]")).toBeNull();
+  expect(item.querySelector("[data-channel-needs-you]")).toBeInTheDocument();
   act(() => {
     agents = {
       ...agents,
@@ -157,11 +178,12 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
   act(() => {
     unread = { ...unread, observedCount: 0, attentionCount: 0 };
     activity = { ...activity, items: [], mentions: [] };
+    setInbox([]);
     publish();
   });
   expect(label).not.toHaveAttribute("data-ordinary");
   expect(item.querySelector("[data-channel-unread]")).toBeNull();
-  expect(item.querySelector("[data-channel-activity]")).toBeNull();
+  expect(item.querySelector("[data-channel-needs-you]")).toBeNull();
   act(() => {
     unread = { ...unread, manual: "local-only" };
     agents = { ...agents, turns: [] };
@@ -173,6 +195,7 @@ it("keeps menu choices in sync with ordinary, attention, thread and working side
     screen.getByRole("img", { name: "Marked unread on this device only" }),
   ).toBeInTheDocument();
   expect(item.querySelector("[data-channel-working]")).toBeNull();
+  expect(item.querySelector("[data-channel-needs-you]")).toBeNull();
   item.focus();
   await user.keyboard("{Enter}");
   expect(select).toHaveBeenCalledOnce();
@@ -185,7 +208,7 @@ it.each([
   ["an unmuted", false],
   ["a muted", true],
 ])(
-  "announces the mentions of %s row with no unread thread",
+  "announces the mentions of %s row once, as needing you only while unmuted",
   async (_, muted) => {
     const owner = createRelaySession(null);
     owners.push(owner);
@@ -207,12 +230,22 @@ it.each([
       mentions: [mention, { ...mention, messageId: "older", createdAt: 1 }],
       freshness: "stale" as const,
     };
+    // Activity holds both mentions, so an unmuted row needs you.
+    const inbox: InboxSnapshot = {
+      status: "ready",
+      freshness: "observed",
+      items: [
+        { channelId: "alpha", unreadCount: 1, mentioned: true },
+        { channelId: "alpha", unreadCount: 1, mentioned: true },
+      ] as InboxItem[],
+    };
     const session = {
       ...owner.session,
       unread: {
         ...owner.session.unread,
         snapshot: () => unread,
         activity: () => activity,
+        inbox: () => inbox,
       },
       sidebarPreferences: {
         ...owner.session.sidebarPreferences,
@@ -241,14 +274,15 @@ it.each([
       </MenuRoot>,
     );
     const item = await screen.findByRole("menuitem", { name: /^Alpha/ });
-    // The priority dot is aria-hidden, and a muted row hides it.
-    expect(!!item.querySelector("[data-channel-priority]")).toBe(!muted);
-    expect(item.querySelector("[data-channel-activity]")).toBeNull();
-    expect(
-      within(item).getByText("2 unread mentions; may be out of date"),
-    ).toHaveClass("sr-only");
-    expect(item).toHaveAccessibleName(
-      /unread messages\. Not an exact total\.\s*2 unread mentions; may be out of date$/,
+    // The needs-you dot is aria-hidden, and a muted row hides it.
+    expect(!!item.querySelector("[data-channel-needs-you]")).toBe(!muted);
+    // Needing you names the row once; muted, it keeps only the observed count.
+    const statuses = screen.getAllByRole("img", { name: /unread/ });
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]).toHaveAttribute(
+      "aria-label",
+      muted ? "2 observed unread messages. Not an exact total." : "2 unread",
     );
+    expect(within(item).queryByText(/unread mentions/)).toBeNull();
   },
 );

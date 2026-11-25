@@ -292,7 +292,7 @@ import {
   type Unfinished,
 } from "./store";
 import { isHuddleRoom } from "../huddle/lifecycle";
-import { soloChat } from "./solo-chat";
+import { ownerAndAgentsOnly, soloChat } from "./solo-chat";
 import { localSkills } from "./local-skills";
 import { COMMUNITY_SESSION } from "../agent-harness/session-scope";
 import {
@@ -3069,9 +3069,11 @@ export class AgentsService extends Service implements Agents {
         );
       },
       flat: (agent, channelId) => {
-        const { channelType } =
-          this.channelOf(agent, { tags: [["h", channelId]] }) ?? {};
-        return channelType === "dm" || channelType === "solo";
+        const channel = this.channelOf(agent, { tags: [["h", channelId]] });
+        return (
+          channel?.channelType === "dm" ||
+          ownerAndAgentsOnly(() => this.relay(agent.key), agent.owner, channel)
+        );
       },
       starting: (agent, channelId) =>
         this.bindingOf(agent)?.session.channelWrites.starting(channelId),
@@ -3679,6 +3681,8 @@ export class AgentsService extends Service implements Agents {
       channel: (agent, event) => this.channelOf(agent, event),
       soloChat: (agent, channel, signal) =>
         soloChat(() => this.relay(agent.key), agent.owner, channel, signal),
+      ownerAndAgentsOnly: (agent, channel) =>
+        ownerAndAgentsOnly(() => this.relay(agent.key), agent.owner, channel),
       remembered: (key, slug, body) => this.coreMemory.wrote(key, slug, body),
       woke: (key, object, events) => {
         const at = Math.floor(Date.now() / 1000);
@@ -6634,7 +6638,7 @@ export class AgentsService extends Service implements Agents {
     if (!summary) return undefined;
     return (
       summary.channelType !== "dm" &&
-      summary.channelType !== "solo" &&
+      !ownerAndAgentsOnly(() => this.relay(agent.key), agent.owner, summary) &&
       !isHuddleRoom(summary.description)
     );
   }
@@ -6651,7 +6655,7 @@ export class AgentsService extends Service implements Agents {
       source,
     );
     const whole =
-      summary?.channelType === "solo" ||
+      ownerAndAgentsOnly(() => this.relay(agent.key), agent.owner, summary) ||
       summary?.channelType === "dm" ||
       (!isolated && (scope === "channel" || scope === "community"));
     return {
@@ -7003,7 +7007,8 @@ export class AgentsService extends Service implements Agents {
       ? { ...saved, text: "" }
       : saved;
   }
-  /** Whether `place` has a root in a DM or Solo chat. Harnesses run each as
+  /** Whether `place` has a root in a DM or a conversation only the owner
+   * and their agents post in. Harnesses run each as
    * one conversation, so the root would name one that never runs. */
   private async rootInWhole(key: AgentKey, owner: string, place: SessionPlace) {
     if (!place.root) return false;

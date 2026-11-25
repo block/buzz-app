@@ -290,7 +290,7 @@ it("a panel opened from media review replaces the viewer, and media review repla
 it("a Solo thread opens without a reply composer", () => {
   render(<EmbeddedThread {...fixture("solo").props} />);
   expect(screen.getByRole("article")).toBeVisible();
-  expect(screen.queryByLabelText("Composer")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Composer")).toBeInTheDocument();
 });
 
 it("selecting a channel supplies its readers without remounting the page below", () => {

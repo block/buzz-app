@@ -117,6 +117,19 @@ async function reachOverSettings(page, app) {
   const ask = question(page);
   await expect(ask).toBeVisible();
   await openSettings(page);
+  // The profile menu opens under the notice stack; park the pointer on
+  // Settings so hover doesn't fan the stack out, and let it fold back.
+  await settingsDialog(page).hover({ position: { x: 16, y: 16 } });
+  await expect(
+    page.locator('[data-sonner-toast][data-expanded="true"]'),
+  ).toHaveCount(0);
+  await page
+    .locator("[data-sonner-toaster]")
+    .evaluate((toaster) =>
+      Promise.allSettled(
+        toaster.getAnimations({ subtree: true }).map((a) => a.finished),
+      ),
+    );
   const close = settingsDialog(page).getByRole("button", {
     name: "Close Settings",
     exact: true,

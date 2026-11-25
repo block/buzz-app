@@ -6,61 +6,17 @@
   min-height: 0;
   height: 100%;
 }
+/* To: the shared wrapping field frame holds the label, chips and input. */
 .recipientHeader {
   margin: 0;
   min-width: 0;
+  padding: 0;
   border: 0;
   position: relative;
   z-index: 3;
-  padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--border-standard);
 }
-.toField {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  min-height: 2rem;
-  cursor: text;
-}
-.toField > label {
-  @apply text-body-sm;
+.toLabel {
   color: var(--text-subtle);
-  margin-right: var(--space-1);
-}
-.toInput {
-  @apply text-body-sm;
-  flex: 1;
-  min-width: 8.75rem;
-  width: 8.75rem;
-  padding: var(--space-1) 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--text-standard);
-}
-.toInput::placeholder {
-  color: var(--text-subtle);
-}
-.toField:focus-within {
-  border-radius: var(--radius-control);
-}
-.recipientHeader[data-appearance="field"] {
-  padding: 0;
-  border-bottom: 0;
-}
-[data-appearance="field"] .toField {
-  min-height: var(--size-control);
-  padding: var(--space-1) var(--space-control-inset);
-  border-radius: var(--radius-control);
-  background: var(--surface-inset);
-}
-[data-appearance="field"] .toField:has(.toInput:disabled) {
-  background: var(--affordance-disabled);
-  cursor: not-allowed;
-}
-[data-appearance="field"] :is(.toField > label, .toInput) {
-  @apply text-body;
 }
 .chip {
   @apply text-body-sm;
@@ -71,7 +27,8 @@
     var(--space-chip-inset);
   max-width: 15rem;
   border-radius: var(--radius-pill);
-  background: var(--surface-inset);
+  /* Raised off the field's inset fill. */
+  background: var(--surface-panel);
 }
 .chipName {
   overflow: hidden;
@@ -123,9 +80,10 @@
 .pickerPositioner {
   z-index: var(--layer-popover);
 }
+/* The people list spans the field it drops from. */
 .picker {
   @apply popover-surface;
-  width: min(23.75rem, var(--available-width));
+  width: min(var(--anchor-width), var(--available-width));
   padding: var(--space-1);
 }
 .people {
@@ -199,9 +157,9 @@
 }
 .blank {
   display: flex;
-  flex-direction: column;
   flex: 1;
   min-height: 0;
+  container-type: inline-size;
 }
 .feedback {
   @apply text-body-sm;
@@ -310,4 +268,26 @@
   overflow: auto;
   place-items: center;
   padding: var(--space-6);
+}
+/* The picked people, then their DM and named conversations. */
+.group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  width: min(26rem, 100%);
+}
+.group > * {
+  align-self: stretch;
+}
+.group > :first-child {
+  align-self: center;
+}
+/* The optional name and To, as two fields as wide as the composer. */
+.header {
+  display: grid;
+  gap: var(--space-2);
+  width: min(calc(100% - 2 * var(--space-4)), var(--buzz-message-width, 52rem));
+  margin-inline: auto;
+  padding-block: var(--space-4);
 }

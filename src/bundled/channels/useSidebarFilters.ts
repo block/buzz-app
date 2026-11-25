@@ -17,54 +17,46 @@ export type { SidebarFilterMode as SidebarFilter } from "../../features/relay/si
 import type { SidebarFilterMode as SidebarFilter } from "../../features/relay/sidebar-preferences";
 export const SIDEBAR_ACTIVE_WINDOW = DEFAULT_ACTIVE_WINDOW_SECONDS * 1000;
 
-/** Filter only the existing section roster; the current destination always stays. */
-export function useSidebarFilters(
-  sections: ReturnType<typeof sidebarSections>,
+/**
+ * Filter only the existing section roster to rows active within each card's
+ * window. The current destination and conversations that need you (`keep`)
+ * always stay. A saved Unreads filter, which the sidebar no longer offers,
+ * shows everything.
+ */
+export function useSidebarFilters<
+  Section extends ReturnType<typeof sidebarSections>[number],
+>(
+  sections: readonly Section[],
   filters: Readonly<Record<string, SidebarFilter>>,
   current: string | undefined,
-  unread: UnreadCapability,
+  keep: ReadonlySet<string>,
   windows: Readonly<Record<string, number>> = {},
   activityReady = true,
 ) {
-  const ids = JSON.stringify(
-    sections.flatMap((section) =>
-      filters[section.key] === "unreads"
-        ? section.rows.map((row) => row.id)
-        : [],
-    ),
-  );
-  const unreadSet = useUnreadChannelIds(unread, ids, true);
   const [clock, tick] = useState(0);
   const now = Date.now();
   let nextExpiry = Infinity;
   // Unknown activity is not inactivity. Keep those rows during loading or a
   // failed read; a successful read can establish that a channel has no activity.
   const visible = sections.map((section) => {
-    const mode = filters[section.key] ?? "all";
+    const active = filters[section.key] === "active";
     const activeWindow =
       (windows[section.key] ?? DEFAULT_ACTIVE_WINDOW_SECONDS) * 1000;
     const rows = section.rows.filter((channel) => {
-      if (mode === "active" && channel.lastActivityAt !== undefined) {
+      if (active && channel.lastActivityAt !== undefined) {
         const expiry = channel.lastActivityAt * 1000 + activeWindow;
         if (expiry > now) nextExpiry = Math.min(nextExpiry, expiry);
       }
       return (
+        !active ||
         channel.id === current ||
-        mode === "all" ||
-        (mode === "unreads" && unreadSet.has(channel.id)) ||
-        (mode === "active" &&
-          (channel.lastActivityAt === undefined
-            ? !channel.activityKnown && !activityReady
-            : channel.lastActivityAt * 1000 + activeWindow > now))
+        keep.has(channel.id) ||
+        (channel.lastActivityAt === undefined
+          ? !channel.activityKnown && !activityReady
+          : channel.lastActivityAt * 1000 + activeWindow > now)
       );
     });
-    const visibleIds = new Set(rows.map(({ id }) => id));
-    return {
-      ...section,
-      allRows: section.rows,
-      rows,
-      hiddenRows: section.rows.filter(({ id }) => !visibleIds.has(id)),
-    };
+    return { ...section, allRows: section.rows, rows };
   });
   // One owned deadline keeps an idle sidebar correct when activity ages out.
   useEffect(() => {
@@ -94,13 +86,16 @@ export function channelHasUnread(
   );
 }
 
-/** Channels among `ids` (a JSON id array) with unread messages or threads.
- * `shown` asks what their rows show instead: the sidebar's Unreads filter
- * follows the rows, while search still leads with every unread conversation. */
+/** Channels among `ids` (a JSON id array) with unread messages or threads, or
+ * with `markedOnly`, just those marked unread by hand.
+ * `shown` asks what their rows show instead, while search still leads with
+ * every unread conversation. */
 export function useUnreadChannelIds(
   unread: UnreadCapability,
   ids: string,
   shown = false,
+  /** Only conversations marked unread by hand. */
+  markedOnly = false,
 ) {
   const targets = useMemo(
     () =>
@@ -126,10 +121,14 @@ export function useUnreadChannelIds(
     () =>
       JSON.stringify(
         targets
-          .filter((target) => channelHasUnread(unread, target.channelId, shown))
+          .filter((target) =>
+            markedOnly
+              ? unread.snapshot(target).manual !== "none"
+              : channelHasUnread(unread, target.channelId, shown),
+          )
           .map((target) => target.channelId),
       ),
-    [targets, unread, shown],
+    [targets, unread, shown, markedOnly],
   );
   const unreadIds = useSyncExternalStore(subscribe, snapshot, snapshot);
   return useMemo(() => new Set<string>(JSON.parse(unreadIds)), [unreadIds]);

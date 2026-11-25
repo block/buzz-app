@@ -5,6 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { saveWithFreeName } from "../../features/relay/free-name";
 import type { ChannelDetailsCapability } from "../../features/relay/channel-details";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelayRecovery } from "../../features/relay/recovery";
@@ -205,7 +206,7 @@ function ChannelGeneralAccessEditor({
   const locked = loading || pending || !!attempt || !shown?.canEdit;
   const solo = soloLabels(shown?.labels);
   const place = policy?.subject ?? (solo ? "chat" : "channel");
-  const restrictPublic = solo || policy?.allowPublic === false;
+  const restrictPublic = policy?.allowPublic === false;
   const policyAllowsChoice =
     !restrictPublic ||
     choice?.visibility !== "public" ||
@@ -236,8 +237,7 @@ function ChannelGeneralAccessEditor({
       signal.aborted ||
       !current?.canEdit ||
       generalAccessValue(current) === value ||
-      ((soloLabels(current.labels) || policy?.allowPublic === false) &&
-        value === "public")
+      (policy?.allowPublic === false && value === "public")
     )
       return;
     setChoice({
@@ -264,11 +264,25 @@ function ChannelGeneralAccessEditor({
     origin.current = section.current;
     setChoice(undefined);
     try {
+      let renamed: string | undefined;
       if (check) await capability.check(channelId, controller.signal);
-      else if (base && choice)
-        await capability.save(base, choice, controller.signal);
+      else if (base && choice) {
+        // Opening it needs a name no open conversation has; a taken one gets
+        // a number, and the status says so.
+        const saved = await saveWithFreeName(
+          capability,
+          base,
+          choice,
+          controller.signal,
+        );
+        if (saved !== choice.name) renamed = saved;
+      }
       if (!controller.signal.aborted) {
-        setStatus("Access updated");
+        setStatus(
+          renamed
+            ? `Access updated. Renamed to ${renamed}, since that name was taken.`
+            : "Access updated",
+        );
         await load(controller.signal);
       }
     } catch (reason) {
@@ -410,7 +424,8 @@ function ChannelGeneralAccessEditor({
               choice.visibility === "private" && autoJoin
                 ? "It’s a starter channel, so new members will be added to it again if it’s made public. To stop that, turn off Starter channel for new members in Settings first."
                 : "",
-              !solo && choice.visibility === "public"
+              choice.visibility === "public" &&
+              (!solo || choice.joinRole !== "guest")
                 ? `New people will ${choice.joinRole === "guest" ? "only be able to view" : "be able to participate"}. People already in the ${place} keep their access.`
                 : "",
             ]

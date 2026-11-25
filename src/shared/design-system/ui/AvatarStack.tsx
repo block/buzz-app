@@ -17,7 +17,7 @@ export function AvatarStack({
   animateEntrance = false,
 }: {
   items: readonly StackAvatar[];
-  size?: "compact" | "small" | "mini" | "hero" | "hero-large";
+  size?: "compact" | "small" | "mini" | "hero" | "hero-large" | "cluster";
   /** How many avatars show before the overflow count. */
   max?: number;
   /** Playful hero entry, matching the huddle avatar spring. */

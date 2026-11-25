@@ -103,7 +103,9 @@ it("opens an isolated Solo draft with the exact source link", async () => {
   );
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Message actions" }));
-  const item = await screen.findByRole("menuitem", { name: "Start Solo chat" });
+  const item = await screen.findByRole("menuitem", {
+    name: "New message about this",
+  });
   expect(item).not.toHaveAttribute("aria-haspopup");
   await user.click(item);
   expect(open).toHaveBeenCalledOnce();
@@ -123,7 +125,7 @@ it("opens an isolated Solo draft with the exact source link", async () => {
   writeView(scope, `${linkedDraftKey(id ?? "")}:new-draft`, "Half typed");
   await user.click(screen.getByRole("button", { name: "Message actions" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+    await screen.findByRole("menuitem", { name: "New message about this" }),
   );
   await waitFor(() => expect(open).toHaveBeenCalledTimes(2));
   const again = open.mock.calls[1]?.[0];
@@ -166,7 +168,7 @@ it("drops a start whose visit was superseded while its draft id was computed", a
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Message actions" }));
     await user.click(
-      await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+      await screen.findByRole("menuitem", { name: "New message about this" }),
     );
     await waitFor(() => expect(spy).toHaveBeenCalledOnce());
     elsewhere();
@@ -220,7 +222,7 @@ it.each([
   const user = userEvent.setup();
   await user.click(screen.getByRole("button", { name: "Message actions" }));
   await user.click(
-    await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+    await screen.findByRole("menuitem", { name: "New message about this" }),
   );
   await waitFor(() => expect(open).toHaveBeenCalledOnce());
   const destination = open.mock.calls[0]?.[0];
@@ -256,7 +258,7 @@ it("stays unavailable while Buzz can't create chats", async () => {
     .setup()
     .click(screen.getByRole("button", { name: "Message actions" }));
   expect(
-    await screen.findByRole("menuitem", { name: "Start Solo chat" }),
+    await screen.findByRole("menuitem", { name: "New message about this" }),
   ).toHaveAttribute("aria-disabled", "true");
 });
 

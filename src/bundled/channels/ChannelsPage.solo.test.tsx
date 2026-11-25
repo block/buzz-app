@@ -837,7 +837,7 @@ it("stops offering the Archive shortcut when its visit ends", async () => {
 it("renders a Solo draft route as the new chat composer", async () => {
   const f = fixture({ target: (scope) => soloDraftTarget(scope) });
   f.mount();
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   expect(
     within(region).getByRole("textbox", { name: "Message your agents" }),
   ).toBeVisible();
@@ -845,7 +845,7 @@ it("renders a Solo draft route as the new chat composer", async () => {
   expect(f.archive.current).toBeUndefined();
 });
 
-it("keeps the newer destination when a departed New chat acquires model ownership", async () => {
+it("keeps the newer destination when a departed New message acquires model ownership", async () => {
   const first = fixture({
     target: (scope) => soloDraftTarget(scope, { agent }),
   });
@@ -987,7 +987,7 @@ it("starts a Solo draft route in its project, with that project's saved draft", 
   });
   writeView(f.scope, "solo:new-draft", { text: "Unfiled", recipients: [] });
   f.mount();
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   expect(
     within(region).getByRole("textbox", { name: "Message your agents" }),
   ).toHaveTextContent("Plan the week");
@@ -1001,7 +1001,7 @@ it("starts a Solo draft route in its project, with that project's saved draft", 
 it("addresses a Solo draft route's agent in the new chat without tagging the text", async () => {
   const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
   f.mount();
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   const input = within(region).getByRole("textbox", {
     name: "Message your agents",
   });
@@ -1020,7 +1020,7 @@ it("addresses a Solo draft route's agent in the new chat without tagging the tex
 it("keeps a new chat out of Back history until something is written in it", async () => {
   const f = fixture({ target: (scope) => soloDraftTarget(scope, { agent }) });
   f.mount();
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   const input = within(region).getByRole("textbox", {
     name: "Message your agents",
   });
@@ -1054,7 +1054,7 @@ it("gives a new chat that could not be started its draft's place in Back history
     }),
   );
   f.mountWithToasts();
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   const user = userEvent.setup();
   await user.click(
     within(region).getByRole("textbox", { name: "Message your agents" }),
@@ -1121,7 +1121,7 @@ it("keeps a written new chat in Back history when its draft cannot be saved", as
   });
   try {
     f.mount();
-    const region = await screen.findByRole("region", { name: "New chat" });
+    const region = await screen.findByRole("region", { name: "New message" });
     const input = within(region).getByRole("textbox", {
       name: "Message your agents",
     });
@@ -1170,7 +1170,7 @@ it("keeps a saved draft that only tags the default agent in Back history", async
   };
   writeView(f.scope, "solo:new-draft", typed);
   f.mount();
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   await waitFor(() =>
     expect(
       within(region).getByRole("textbox", { name: "Message your agents" }),
@@ -1206,7 +1206,7 @@ it("keeps a linked chat draft in Back history until its source is used", async (
 it("counts a new chat's attached file as written", async () => {
   const f = fixture({ target: soloDraftTarget });
   f.mount();
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   const passes = vi.mocked(f.navigation.passThrough).mock.lastCall?.[0];
   expect(passes?.()).toBe(true);
   Object.assign(f.session, { attachments: { uploadForNewChat: vi.fn() } });
@@ -1236,7 +1236,7 @@ it("a new Solo chat finishing behind Settings stays put and retires its draft", 
   // Stands in for a field in the Settings modal that owns focus.
   const settingsField = document.createElement("input");
   document.body.append(settingsField);
-  const region = await screen.findByRole("region", { name: "New chat" });
+  const region = await screen.findByRole("region", { name: "New message" });
   try {
     // The start runs while Settings owns focus.
     settingsField.focus();
@@ -1249,7 +1249,7 @@ it("a new Solo chat finishing behind Settings stays put and retires its draft", 
     expect(f.open).not.toHaveBeenCalled();
     // A fresh draft replaces the submitted one, so it cannot start again.
     const composer = () =>
-      within(screen.getByRole("region", { name: "New chat" })).getByRole(
+      within(screen.getByRole("region", { name: "New message" })).getByRole(
         "textbox",
         { name: "Message your agents" },
       );
@@ -1854,22 +1854,17 @@ it("names the owner on the access controls of someone else's shared chat", async
   const f = fixture({ placed: false, ownedBy: person, people: [person] });
   f.mountWithSidebar();
   const user = userEvent.setup();
-  // The header names the owner; the sidebar mark retains the owner avatar.
+  // The header names the owner; the sidebar shows no owner avatar.
   const header = await screen.findByRole("button", {
     name: "Share access to Planning, Teammate’s chat",
   });
   expect(header).toHaveTextContent("Planning");
   expect(header).toHaveAttribute("title", "Teammate’s chat");
-  const mark = screen.getByRole("button", { name: "Teammate’s chat" });
-  expect(mark).toHaveTextContent("T");
-  await user.click(mark);
+  expect(screen.queryByRole("button", { name: "Teammate’s chat" })).toBeNull();
+  await user.click(header);
   expect(
     await screen.findByRole("dialog", { name: /Share access/ }),
   ).toBeInTheDocument();
-  // Closing returns focus to the mark, not the row's select button.
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(mark).toHaveFocus();
 });
 
 it.each([

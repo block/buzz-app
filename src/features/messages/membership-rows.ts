@@ -1,8 +1,10 @@
 import type {
   ChannelMessage,
+  ConversationChange,
   MembershipChange,
   Profile,
 } from "../relay/contracts";
+import { memberChange } from "../relay/membership";
 
 export type TimelineRow = ChannelMessage & {
   membershipRows?: readonly ChannelMessage[];
@@ -20,11 +22,14 @@ export function withoutStartingAgents(
   if (!complete || !owner) return rows;
   const first = rows.findIndex((row) => !row.membership);
   const start = first === -1 ? rows.length : first;
-  const starting = (row: ChannelMessage) =>
-    (row.membership?.type === "member_joined" ||
-      row.membership?.type === "member_removed") &&
-    row.membership.actor === owner &&
-    agents.has(row.membership.target);
+  const starting = (row: ChannelMessage) => {
+    const change = memberChange(row);
+    return (
+      (change?.type === "member_joined" || change?.type === "member_removed") &&
+      change.actor === owner &&
+      agents.has(change.target)
+    );
+  };
   return rows.some((row, index) => index < start && starting(row))
     ? rows.filter((row, index) => index >= start || !starting(row))
     : rows;
@@ -34,6 +39,12 @@ export function withoutStartingAgents(
 const visibleMembership = (change: MembershipChange) =>
   change.type === "member_removed" ||
   (change.type === "member_joined" && change.actor !== change.target);
+/** A row that groups with its neighbors: a member change. Naming and moving
+ * history each stand alone. */
+const groupable = (row: ChannelMessage) => !!memberChange(row);
+/** Whether a quiet system row belongs in the conversation at all. */
+const visibleRow = ({ membership }: ChannelMessage) =>
+  !membership || !("target" in membership) || visibleMembership(membership);
 
 /** Newest-anchored groups keep loaded keys stable when history is prepended.
  * Every uninterrupted membership run is one row, regardless of elapsed time.
@@ -41,15 +52,18 @@ const visibleMembership = (change: MembershipChange) =>
 export function membershipRows(
   rows: readonly ChannelMessage[],
 ): readonly TimelineRow[] {
-  rows = rows.filter(
-    ({ membership }) => !membership || visibleMembership(membership),
-  );
+  rows = rows.filter(visibleRow);
   const result: TimelineRow[] = [];
   for (let end = rows.length - 1; end >= 0; ) {
     const newest = rows[end];
     if (!newest) break;
     let start = end;
-    while (newest.membership && start > 0 && rows[start - 1]?.membership)
+    while (
+      groupable(newest) &&
+      start > 0 &&
+      rows[start - 1] &&
+      groupable(rows[start - 1] as ChannelMessage)
+    )
       start--;
     result.push(
       start === end
@@ -107,9 +121,10 @@ export function membershipDescription(
   resolveName?: (id: string, fallback: string) => string,
 ) {
   const latest = new Map<string, MembershipChange>();
-  for (const row of rows)
-    if (row.membership && visibleMembership(row.membership))
-      latest.set(row.membership.target, row.membership);
+  for (const row of rows) {
+    const change = memberChange(row);
+    if (change && visibleMembership(change)) latest.set(change.target, change);
+  }
   const changes = [...latest.values()];
   const first = changes[0];
   if (!first) return { targets: [], parts: [], text: "", title: "" };
@@ -219,4 +234,42 @@ export function membershipDescription(
       .map((part) => part.text)
       .join(""),
   };
+}
+
+/** What a conversation notice says, with the people it names as parts that
+ * open a profile. Placeholder copy; the surface owns the final wording.
+ * `conversationName` words the other conversation of a move, and `row`'s
+ * channel says whether this is its source or its destination. */
+export function conversationDescription(
+  row: ChannelMessage,
+  change: ConversationChange,
+  profiles: ReadonlyMap<string, Profile>,
+  viewer?: string,
+  resolveName?: (id: string, fallback: string) => string,
+  conversationName?: (id: string) => string | undefined,
+) {
+  const label = (id: string) =>
+    id === viewer
+      ? "You"
+      : (resolveName?.(id, profiles.get(id)?.name ?? id.slice(0, 10)) ??
+        profiles.get(id)?.name ??
+        id.slice(0, 10));
+  const actor: MembershipPart = { id: change.actor, text: label(change.actor) };
+  const plain = (text: string): MembershipPart => ({ text });
+  let parts: MembershipPart[];
+  if (change.type === "dm_named") {
+    parts = [actor, plain(` named this conversation ${change.name}`)];
+  } else {
+    const source = row.channelId === change.from;
+    const other = source ? change.to : change.from;
+    const messages = `${change.count} ${change.count === 1 ? "message" : "messages"}`;
+    parts = [
+      actor,
+      plain(
+        ` moved ${messages} ${source ? "to" : "from"} ${conversationName?.(other) ?? "another conversation"}`,
+      ),
+    ];
+  }
+  const text = parts.map((part) => part.text).join("");
+  return { targets: [change.actor], parts, text, title: text };
 }

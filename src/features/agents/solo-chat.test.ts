@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { RelayData } from "../relay/service";
-import { soloChat } from "./solo-chat";
+import { answersAtTopLevel, soloChat } from "./solo-chat";
 
 const owner = "a".repeat(64);
 
@@ -61,3 +61,31 @@ it.each(["loading", "error"] as const)(
     );
   },
 );
+
+it.each([
+  {
+    case: "top in a channel",
+    tags: [["buzz:reply", "top"]],
+    solo: false,
+    top: true,
+  },
+  {
+    case: "thread in a Solo chat",
+    tags: [["buzz:reply", "thread"]],
+    solo: true,
+    top: false,
+  },
+  { case: "no placement in a Solo chat", tags: [], solo: true, top: true },
+  { case: "no placement in a channel", tags: [], solo: false, top: false },
+])(
+  "answers where the message asks, else as the conversation does: $case",
+  ({ tags, solo, top }) => {
+    expect(answersAtTopLevel({ tags }, solo)).toBe(top);
+  },
+);
+
+it("keeps a wake's own placement", () => {
+  const tags = [["buzz:reply", "top"]];
+  expect(answersAtTopLevel({ tags }, false, {})).toBe(false);
+  expect(answersAtTopLevel({ tags: [] }, false, { topLevel: true })).toBe(true);
+});

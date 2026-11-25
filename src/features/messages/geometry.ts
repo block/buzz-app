@@ -1,6 +1,7 @@
 import type { VirtualizerHandle } from "virtua";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { ChannelQueries } from "../relay/contracts";
+import { rowProfileIds } from "../relay/membership";
 
 type Entry = {
   signature: string;
@@ -53,7 +54,7 @@ export const geometrySignature = (
         eventSignatures.set(event, signature);
       }
       const ids = event.membership
-        ? [event.membership.actor, event.membership.target]
+        ? rowProfileIds(event)
         : [
             event.authorId,
             ...(event.workflowOwnerId ? [event.workflowOwnerId] : []),
@@ -65,6 +66,6 @@ export const geometrySignature = (
         : event.workflowOwnerId
           ? [profiles.get(event.workflowOwnerId)?.name]
           : [];
-      return `${JSON.stringify(names)}:${signature.length}:${signature}:${JSON.stringify(event.membership ? [profiles.get(event.membership.actor), profiles.get(event.membership.target)] : profiles.get(event.authorId))}`;
+      return `${JSON.stringify(names)}:${signature.length}:${signature}:${JSON.stringify(event.membership ? rowProfileIds(event).map((id) => profiles.get(id)) : profiles.get(event.authorId))}`;
     })
     .join("");

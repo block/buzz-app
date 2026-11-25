@@ -891,7 +891,7 @@ export function AgentsPage({
         }
       >
         <div className={styles.main}>
-          <Panel aria-label="Agents">
+          <Panel flat aria-label="Agents">
             <div className="flex h-full min-h-0 flex-col">
               <PanelHeader
                 title={
@@ -918,7 +918,7 @@ export function AgentsPage({
         {shared && tab === "marketplace" && (
           <aside className={styles.side}>
             {split.handle}
-            <Panel aria-label="Shared agent profile">
+            <Panel flat aria-label="Shared agent profile">
               <PanelWorkspace
                 value={shared.agent.id}
                 select={() => {}}
@@ -952,7 +952,7 @@ export function AgentsPage({
             hidden={tab !== "yours"}
           >
             {split.handle}
-            <Panel aria-label="Agent profile">
+            <Panel flat aria-label="Agent profile">
               <PanelWorkspace
                 focusOnMount={false}
                 adoptSelection={selected.pubkey}

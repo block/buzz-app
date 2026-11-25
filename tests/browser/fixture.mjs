@@ -483,6 +483,25 @@ export const test = base.extend({
         }
       }
     }
+    // A saved sidebar writes its own sort; otherwise a requested one is saved.
+    if (!savedSidebar && Object.keys(initialSidebarSort).length) {
+      const key = nip44.v2.utils.getConversationKey(userKey, viewer);
+      for (const community of ["primary", "secondary"])
+        readEvents
+          .get(community)
+          .set(
+            "channel-sort",
+            sign(
+              30078,
+              [["d", "channel-sort"]],
+              nip44.v2.encrypt(
+                JSON.stringify({ version: 1, groups: initialSidebarSort }),
+                key,
+              ),
+              userKey,
+            ),
+          );
+    }
     if (ownSoloChannels.length) {
       if (!productionBroker)
         throw new Error(
@@ -2852,6 +2871,8 @@ export const test = base.extend({
       await use({
         mediaFiles,
         sign: (template) => finalizeEvent(template, userKey),
+        // A peer's event, e.g. a message that mentions or DMs the viewer.
+        signPeer: (template) => finalizeEvent(template, peerKey),
         channelMetadata: (id, tags) => sign(39000, [["d", id], ...tags]),
         // Model an owner changing visibility; production discovery consumes the
         // signed metadata through normal reads/live traffic.

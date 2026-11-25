@@ -463,12 +463,10 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(dot(other)).toBeVisible();
   await expect(broadcast).toHaveAccessibleName(/Observed unread replies/);
   const alpha = page.locator('button[data-channel-id="alpha"]');
-  const activity = alpha.getByRole("img", { name: /unread threads?/ });
-  // The open channel's row is quiet while its threads stay unread.
+  // The open channel's row is quiet (not bold) while its threads stay unread.
   await expect
     .poll(async () => (await channelUnread(page, "alpha")).threads)
     .toBe(2);
-  await expect(activity).toHaveCount(0);
   await expect(alpha.getByText("Alpha", { exact: true })).not.toHaveCSS(
     "font-weight",
     "600",
@@ -481,11 +479,13 @@ test("thread buttons show observed unread independently, clear only after readin
   await page
     .getByRole("button", { name: "Close Channel settings tab", exact: true })
     .click();
+  // The thread replies wait on the viewer, so the row's one status leads with
+  // their count and still says the channel is marked unread.
   await expect(
-    alpha.getByRole("img", { name: /^Marked unread$/ }),
+    alpha.getByRole("img", { name: /^\d+ unread\. Marked unread$/ }),
   ).toBeAttached();
   // Marking it unread shows the whole row again, its threads included.
-  await expect(activity).toHaveAccessibleName(/unread threads?/);
+  await expect(alpha.locator("[data-channel-needs-you]")).toBeAttached();
   await page.evaluate(() => {
     document.documentElement.dataset.colorMode = "dark";
   });
@@ -566,7 +566,7 @@ test("thread buttons show observed unread independently, clear only after readin
       .snapshot()
       .session.unread.clearUnreadLocal({ kind: "channel", channelId: "alpha" }),
   );
-  await expect(alpha.getByRole("img", { name: /^Marked unread$/ })).toHaveCount(
+  await expect(alpha.getByRole("img", { name: /Marked unread/ })).toHaveCount(
     0,
   );
   await expect
@@ -1341,9 +1341,8 @@ test.describe("top-level mention activity", () => {
       .filter({ has: page.getByRole("button", { name: / in #Beta$/ }) });
     await expect(row.getByRole("img", { name: "Unread" })).toBeVisible();
     await openPage(page, "Messages");
-    // A mention alone keeps the priority dot.
-    await expect(beta.locator("[data-channel-priority]")).toBeVisible();
-    await expect(beta.locator("[data-channel-activity]")).toHaveCount(0);
+    // A mention alone shows the needs-you dot.
+    await expect(beta.locator("[data-channel-needs-you]")).toBeVisible();
     await beta.hover();
     const popover = page.getByRole("dialog", { name: "Activity in Beta" });
     const item = popover

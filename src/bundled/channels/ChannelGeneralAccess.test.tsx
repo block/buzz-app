@@ -407,7 +407,7 @@ it.each(["member", "guest", undefined] as const)(
 );
 
 it.each(["private", "view-only", "legacy-public"])(
-  "offers only View only / Private for a %s Solo chat",
+  "offers every access choice for a %s Solo chat",
   async (policy) => {
     const h = harness();
     const current: ChannelDetails = {
@@ -435,13 +435,10 @@ it.each(["private", "view-only", "legacy-public"])(
       (await screen.findAllByRole("option")).map((node) =>
         node.getAttribute("aria-label"),
       ),
-    ).toEqual(["View only", "Private"]);
+    ).toEqual(["Public", "View only", "Private"]);
     expect(
       await screen.findByRole("option", { name: "View only" }),
     ).toHaveAccessibleDescription("Anyone in the community can read.");
-    expect(
-      screen.queryByRole("option", { name: /^Public$/ }),
-    ).not.toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(h.save).not.toHaveBeenCalled();
     await user.click(
@@ -458,7 +455,7 @@ it.each(["private", "view-only", "legacy-public"])(
     expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
       policy === "view-only"
         ? "Only chat members will have access. People who joined while it was View only are members and keep reading until you remove them in People."
-        : `Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions.${policy === "legacy-public" ? " People already in the chat keep their access. You won’t be able to switch back to Public here." : ""}`,
+        : `Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions.${policy === "legacy-public" ? " People already in the chat keep their access." : ""}`,
     );
     h.load.mockResolvedValue(next);
     await user.click(screen.getByRole("button", { name: "Change access" }));
@@ -486,11 +483,18 @@ it.each([
       "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions.",
   },
   {
+    visibility: "private",
+    joinRole: "guest",
+    option: "Public",
+    expected:
+      "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions. New people will be able to participate. People already in the chat keep their access.",
+  },
+  {
     visibility: "public",
     joinRole: "member",
     option: "Private",
     expected:
-      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People. You won’t be able to switch back to Public here.",
+      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People.",
   },
 ] as const)(
   "explains $visibility/$joinRole → $option with existing members",
@@ -711,7 +715,7 @@ it.each([true, false])(
     const user = userEvent.setup();
     await select(user, "General access", "Private");
     expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People. You won’t be able to switch back to Public here.",
+      "Only chat members will have access. People who already joined remain members and keep their access until you remove them in People.",
     );
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(h.save).not.toHaveBeenCalled();

@@ -54,17 +54,19 @@ if that desktop app is up and running.
 
 ## Where things are
 
-- **Left nav**: the icons at the top of the far left switch between
-  **Messages**, **Agents** and any pages plugins add. Your communities are at
-  the bottom, and your profile picture below them opens **Settings**.
+- **Top bar**: your communities and your profile picture, which opens
+  **Settings**, sit at its right.
 - **Threads and tabs**: threads, profiles and link panels open by default as a
   sheet over the conversation's message box; Back or **X** closes it. **Move to
   side panel** on the sheet moves that thread into a tab. To open them as tabs
   instead, set **Settings → Appearance → Open threads in** to **Side pane** or
   **Main pane**. Calls, canvases and apps always open as tabs on the right.
-- **Left Sidebar**: **Activity** and other pinned pages at the top, then workspaces
-  which organize groups of channels/chats/dms. It includes "new" buttons for creating
-  more of the same.
+- **Left Sidebar**: a stack of cards. The **Plugins** card lists **Messages**,
+  **Agents**, **Activity** and any pages plugins add. Then come **Solo**,
+  **Favorites**, your workspaces (which organize groups of channels/chats/dms),
+  **Team** and **Direct messages**, with "new" buttons for creating more of the
+  same. Drag a card to move it, or its bottom edge to choose how many rows it
+  shows.
 - **Search**: the top bar (⌘K or ⌘T; Ctrl elsewhere). ⌘F searches the current
   conversation. ⌘/ lists shortcuts.
 - **History shortcuts.** On macOS, ⌘← and ⌘→ go back and forward when the

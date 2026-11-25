@@ -7,7 +7,6 @@ import {
   type ChannelDetails,
 } from "../relay/channel-details-protocol";
 import { DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS } from "../relay/channel-writes";
-import { soloLabels } from "./labels";
 
 /** Presentation only: the details owner rechecks fresh signed edit authority. */
 export function canEditLifetime(
@@ -51,7 +50,7 @@ export function useLifetime({
   const pending = useRef(false);
   const confirmedTtl = useRef<number | undefined>(undefined);
   const refreshBeforeSave = useRef(false);
-  const eligible = !!base?.canEdit && soloLabels(base.labels);
+  const eligible = !!base?.canEdit;
   const matchingAttempt = !!base && matchesLifetime(base, attempt?.draft);
   // Persisted automatic-name provenance is deferred. Blank preserves the current title.
   const normalized = canonicalDetailsName(name) || confirmedName.current;
@@ -155,9 +154,9 @@ export function useLifetime({
               ? await details.load(id, active)
               : base;
             active.throwIfAborted();
-            if (!current.canEdit || !soloLabels(current.labels))
+            if (!current.canEdit)
               throw new Error(
-                "This conversation is no longer an editable Solo chat. Reload its details before changing its name or lifetime.",
+                "You can no longer edit this conversation. Reload its details before changing its name or lifetime.",
               );
             await details.save(
               current,
@@ -193,7 +192,7 @@ export function useLifetime({
     }
   };
   return {
-    available: enabled && (!base || soloLabels(base.labels)),
+    available: enabled,
     base,
     name,
     nameError,
@@ -228,8 +227,6 @@ function matchesLifetime(
 ) {
   return (
     !!draft &&
-    soloLabels(base.labels) &&
-    (draft.labels === undefined || soloLabels(draft.labels)) &&
     draft.visibility === base.visibility &&
     draft.description === base.description
   );

@@ -731,7 +731,11 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                 .and_then(|v| v.as_object())
                 .ok_or_else(invalid)?;
             if coordinate == "channel-filter" {
-                if let Some(windows) = data.get("activeWindowSeconds") {
+                // Active's and Unreads' windows share one shape.
+                for windows in ["activeWindowSeconds", "unreadsWindowSeconds"]
+                    .iter()
+                    .filter_map(|field| data.get(*field))
+                {
                     let windows = windows.as_object().ok_or_else(invalid)?;
                     if windows.len() > choice_limit
                         || windows.iter().any(|(group, value)| {
@@ -767,6 +771,64 @@ fn validate_sidebar_payload(coordinate: &str, value: &serde_json::Value) -> Resu
                             && v.bytes()
                                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                     }))
+            {
+                return Err(invalid());
+            }
+        }
+        // Account-wide settings. `lifetime` is the default for new
+        // conversations: null for ongoing, or seconds until a quiet
+        // conversation archives. `workspaces` holds the workspaces that
+        // override it; one left out follows the account default.
+        "account-settings" => {
+            let lifetime_ok = |v: &serde_json::Value| {
+                v.is_null()
+                    || v.as_u64()
+                        .is_some_and(|seconds| (60..=31_536_000).contains(&seconds))
+            };
+            let lifetime = data.get("lifetime").ok_or_else(invalid)?;
+            let workspaces = match data.get("workspaces") {
+                None => true,
+                Some(value) => value.as_object().is_some_and(|map| {
+                    map.len() <= 200
+                        && map.iter().all(|(id, value)| {
+                            !id.trim().is_empty()
+                                && id.encode_utf16().count() <= 256
+                                && lifetime_ok(value)
+                        })
+                }),
+            };
+            // `visibility` is the default for who can read new conversations;
+            // left out, they start private. `workspaceVisibility` holds the
+            // workspaces that override it.
+            let visibility_ok = |v: &serde_json::Value| {
+                matches!(v.as_str(), Some("private" | "view-only" | "public"))
+            };
+            let visibility = data.get("visibility").is_none_or(visibility_ok);
+            let workspace_visibility = match data.get("workspaceVisibility") {
+                None => true,
+                Some(value) => value.as_object().is_some_and(|map| {
+                    map.len() <= 200
+                        && map.iter().all(|(id, value)| {
+                            !id.trim().is_empty()
+                                && id.encode_utf16().count() <= 256
+                                && visibility_ok(value)
+                        })
+                }),
+            };
+            if !lifetime_ok(lifetime)
+                || !workspaces
+                || !visibility
+                || !workspace_visibility
+                || data.keys().any(|key| {
+                    !matches!(
+                        key.as_str(),
+                        "version"
+                            | "lifetime"
+                            | "workspaces"
+                            | "visibility"
+                            | "workspaceVisibility"
+                    )
+                })
             {
                 return Err(invalid());
             }
@@ -966,6 +1028,7 @@ pub(crate) fn sidebar_coordinate(value: &str) -> bool {
             | "channel-workspace-sort"
             | "channel-workspace-filter"
             | "main-agent"
+            | "account-settings"
     )
 }
 

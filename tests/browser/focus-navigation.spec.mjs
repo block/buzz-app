@@ -676,8 +676,9 @@ test.extend({
     const side = page.locator("[data-panel-workspace]");
     const tab = side.getByRole("tab", { selected: true });
     await expect(tab).toBeVisible();
+    // The page's wrapper holds its card, which holds the main workspace.
     const covered = inbox.locator(
-      'div[tabindex="-1"]:has(> [data-main-workspace])',
+      'div[tabindex="-1"]:has(> .panel > [data-main-workspace])',
     );
     // Beside the tab the page stays live. Narrowing from it hands focus to
     // the tab. Opening focuses the composer first; let it, or it takes focus

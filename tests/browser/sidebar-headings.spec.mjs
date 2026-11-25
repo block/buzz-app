@@ -92,23 +92,30 @@ test("sidebar headings keep readable space and compact disclosure targets at enl
               const gap = Number.parseFloat(
                 getComputedStyle(element).columnGap,
               );
+              // Actions that can't fit beside the label keep their own row
+              // below it, hidden or shown, so revealing them moves nothing.
+              const below = header.hasAttribute("data-actions-row");
+              const labelRow = below ? slot : frame;
               const isTeam = element.getAttribute("aria-label") === "Team";
-              const caretGap = isTeam
-                ? label.left - chevron.right
-                : chevron.left - label.right;
+              // Every card's caret follows its title.
+              const caretGap = chevron.left - label.right;
               return {
                 readable: title.clientWidth >= 2 * root,
                 singleLine:
                   title.getBoundingClientRect().height <=
                   Number.parseFloat(getComputedStyle(title).lineHeight) + 1,
                 compact:
-                  Math.abs(frame.height - disclosure.height) < 1 &&
-                  frame.height <= 2.5 * root,
+                  Math.abs(labelRow.height - disclosure.height) < 1 &&
+                  labelRow.height <= 2.5 * root,
                 adjacent: Math.abs(caretGap - gap) < 1,
                 fullTarget:
                   disclosure.left === slot.left &&
                   disclosure.right === slot.right &&
-                  (!isTeam || Math.abs(slot.right - frame.right) < 0.5) &&
+                  (below
+                    ? actions.top >= slot.bottom - 0.5
+                    : isTeam
+                      ? Math.abs(slot.right - frame.right) < 0.5
+                      : slot.right <= actions.left + 0.5) &&
                   getComputedStyle(header.lastElementChild).pointerEvents ===
                     "none",
                 actionsContained:
@@ -116,13 +123,14 @@ test("sidebar headings keep readable space and compact disclosure targets at enl
                   actions.right <= frame.right + 1 &&
                   // Fractional sizes may land half a layout subpixel off;
                   // check the intended center.
-                  Math.abs(
-                    actions.top +
-                      actions.height / 2 -
-                      frame.top -
-                      frame.height / 2,
-                  ) < 0.5 &&
-                  actions.height <= frame.height + 1,
+                  (below
+                    ? actions.bottom <= frame.bottom + 1
+                    : Math.abs(
+                        actions.top +
+                          actions.height / 2 -
+                          frame.top -
+                          frame.height / 2,
+                      ) < 0.5 && actions.height <= frame.height + 1),
               };
             }),
           )

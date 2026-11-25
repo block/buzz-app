@@ -12,6 +12,7 @@ export { threadReference } from "./thread-reference";
 import type { ChannelMessage } from "./contracts";
 import type { EventData, ReadFilter, RelayEvent } from "./events";
 import { newer } from "./events";
+import { inChannel } from "./placement";
 import type { LocalEvents } from "./outbox";
 import type { Priority, RelayReader } from "./reader";
 import type { RecoveryStatus } from "./recovery";
@@ -29,8 +30,6 @@ const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
 /** The relay's `thread_window` row allowlist excludes legacy diffs (kind 40008). */
 const STRICT_WINDOW_KINDS = [9, 40002];
-const inChannel = (event: EventData, channelId: string) =>
-  event.tags.some(([name, value]) => name === "h" && value === channelId);
 /** Relay thread-cursor order (seconds, id); rendered order is `compareMessages`. */
 const compare = (a: ThreadCursor, b: ThreadCursor) =>
   a.created_at - b.created_at || a.id.localeCompare(b.id);

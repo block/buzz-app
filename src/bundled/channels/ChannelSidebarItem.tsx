@@ -5,6 +5,7 @@ import { useIsPresent } from "motion/react";
 import {
   memo,
   useCallback,
+  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -14,7 +15,6 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -30,14 +30,24 @@ import {
   ClockIcon,
   DotsThreeIcon,
 } from "../../shared/design-system/icons/index";
-import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { channelDurationLabel } from "./ChannelDurationField";
-import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
+import {
+  ConversationRowIdentity,
+  ConversationTileIdentity,
+  useConversationIdentity,
+  ViewOnlyMark,
+  viewOnlyDescriptionId,
+} from "./ConversationIdentity";
+import { SidebarCardDisplayContext } from "./SidebarCardDisplay";
 import { DmTypingBadge } from "./DmTypingBadge";
 import { usePresenceStatus } from "../../features/presence/react";
-import { UnreadBadge, ordinaryUnread, useConfirmedMute } from "./UnreadBadge";
+import { UnreadBadge, UnreadCount, ordinaryUnread } from "./UnreadBadge";
+import {
+  useConfirmedMute,
+  useNeedsYou,
+} from "../../features/relay/useNeedsYou";
 import { SoloChatTitle } from "../../features/solo/SoloChatTitle";
 import { useWorkingAgents } from "./useWorkingAgents";
 import { WorkingAgentsBadge } from "./WorkingAgentsBadge";
@@ -50,19 +60,15 @@ import {
   sidebarRow,
   type RegisteredSidebarRows,
 } from "../../features/channel-navigation/sidebar-rows-service";
-import { avatarMedia } from "../../shared/avatar-source";
-import {
-  sidebarHome,
-  sidebarRowKind,
-  type SidebarRowKind,
-} from "./sidebar-sections";
+import { sidebarRowKind, type SidebarRowKind } from "./sidebar-sections";
 
 type ItemProps = {
   chatIcon?: ChatIcon["component"] | undefined;
   rowContributions?: readonly RegisteredSidebarRows[] | undefined;
   onHiddenChange?: ((id: string, hidden: boolean) => () => void) | undefined;
   channel: ChannelSummary;
-  profile?: Profile | undefined;
+  /** A DM's people's profiles, from its page; other rows load their own. */
+  profiles?: ReadonlyMap<string, Profile> | undefined;
   session: RelaySession;
   working: boolean;
   selected: string | undefined;
@@ -71,9 +77,6 @@ type ItemProps = {
   onRename?: ((id: string) => boolean) | undefined;
   pendingClick?:
     | RefObject<ReturnType<typeof setTimeout> | undefined>
-    | undefined;
-  onShareChat?:
-    | ((channel: ChannelSummary, trigger: HTMLElement) => void)
     | undefined;
   onOpenThread: (channelId: string, rootId: string) => void;
   onOpenMessage: (channelId: string, messageId: string) => void;
@@ -124,12 +127,17 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem(
     channel.id,
     working,
   );
-  const ordinary = useOrdinaryUnread(
+  const solo = channel.channelType === "solo";
+  // Solo is bold for any unread, as a DM is, and for anything that needs you:
+  // its row has no count, so bold is the only cue the edge pill can lead to.
+  const backlog = useOrdinaryUnread(
     session,
     channel.id,
-    channel.channelType === "dm",
+    channel.channelType === "dm" || solo,
     muted,
   );
+  const needs = useNeedsYou(session, channel.id);
+  const ordinary = backlog || (solo && needs.waiting);
   return (
     <ChannelSidebarItemCore
       {...props}
@@ -169,14 +177,13 @@ function ChannelSidebarItemCore({
   chatIcon: ChatIconComponent,
   onHiddenChange,
   channel,
-  profile,
+  profiles: dmProfiles,
   session,
   selected,
   onSelect,
   navigation,
   onRename,
   pendingClick,
-  onShareChat,
   onOpenThread,
   onOpenMessage,
   onOpenWorkingAgent,
@@ -205,24 +212,56 @@ function ChannelSidebarItemCore({
   muted: boolean;
 }) {
   const present = useIsPresent();
-  const peer =
-    channel.channelType === "dm" && channel.participants?.length === 1
-      ? channel.participants[0]
-      : undefined;
+  const { members, profiles, mark } = useConversationIdentity(
+    session,
+    channel,
+    dmProfiles,
+  );
+  const peer = members.length === 1 ? members[0] : undefined;
   const presence = usePresenceStatus(peer ? session.presence : undefined, peer);
   const actions = useRef<HTMLButtonElement>(null);
   const actionsOpen = !!menuAnchor && menuAnchor === actions.current;
   const menuLabel = `Actions for ${channel.name}`;
-  const channelActions = sidebarHome(channel) === "channels";
   // Keep the closing row's items through the popup's exit transition.
   const lastMenuContent = useRef<ReactNode>(undefined);
   useLayoutEffect(() => {
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
-  const Icon = channelIcon(channel);
+  const tiled = useContext(SidebarCardDisplayContext) === "icons";
+  // Named conversations show what they are; DMs show who's in them.
+  const named = channel.channelType !== "dm";
+  const identityShowsMembers =
+    !!channel.picture || (!named && members.length > 0);
+  const identity = (
+    <ConversationRowIdentity
+      members={members}
+      profiles={profiles}
+      fallback={channel.name}
+      picture={channel.picture}
+      session={session}
+      presence={presence === "unknown" ? undefined : presence}
+      mark={named ? mark : undefined}
+    />
+  );
+  const solo = channel.channelType === "solo";
+  // Only a solo conversation others can read gets a mark beside its name.
+  const viewOnly = named && mark === "solo-view-only";
   const plainRow = (
     <ChannelSidebarRow
       channel={channel}
+      tile={
+        tiled && (
+          <ConversationTileIdentity
+            members={members}
+            profiles={profiles}
+            fallback={channel.name}
+            picture={channel.picture}
+            presence={presence === "unknown" ? undefined : presence}
+            session={session}
+            mark={named ? mark : undefined}
+          />
+        )
+      }
       title={
         channel.channelType === "solo" ? (
           // Incoming renames animate; a rename saved here shows at once.
@@ -236,7 +275,7 @@ function ChannelSidebarItemCore({
       }
       menuAction={
         menuEnabled &&
-        (channelActions || channel.channelType === "solo") && (
+        channel.channelType === "solo" && (
           <MenuRoot
             open={menuOpen && present && actionsOpen}
             onOpenChange={(open) => {
@@ -256,8 +295,7 @@ function ChannelSidebarItemCore({
                   variant="bare"
                   size="compact"
                   aria-label={menuLabel}
-                  data-channel-row-action={channelActions ? "" : undefined}
-                  data-solo-row-action={channelActions ? undefined : ""}
+                  data-solo-row-action=""
                   icon={<DotsThreeIcon size={15} strokeWidth={2.5} />}
                 />
               )}
@@ -273,24 +311,12 @@ function ChannelSidebarItemCore({
         )
       }
       sharedDescription={
-        onShareChat && channel.channelType === "solo"
-          ? soloSharedMarkId(channel.id)
-          : undefined
-      }
-      sharedAction={
-        onShareChat &&
-        channel.channelType === "solo" && (
-          <ChatSharedMark
-            session={session}
-            channel={channel}
-            onOpen={(trigger) => onShareChat(channel, trigger)}
-          />
-        )
+        viewOnly ? viewOnlyDescriptionId(channel.id) : undefined
       }
       working={agents.length > 0}
       ordinary={ordinary}
       muted={muted}
-      dmVisualSpacing={channel.channelType === "dm"}
+      dmVisualSpacing={identityShowsMembers}
       icon={
         channel.channelType === "dm" ? (
           <DmTypingBadge
@@ -298,41 +324,18 @@ function ChannelSidebarItemCore({
             channelId={channel.id}
             agents={agents}
           >
-            {channel.participants?.length === 1 ? (
-              <span className={styles.dmAvatar} data-dm-identity="">
-                <Avatar
-                  src={avatarMedia(profile?.picture, session.media)}
-                  alt=""
-                  fallback={channel.name}
-                  size="fill"
-                  shape={profile?.isAgent ? "squircle" : "circle"}
-                  statusBadge={presence === "unknown" ? undefined : presence}
-                />
-              </span>
-            ) : (channel.participants?.length ?? 0) > 1 ? (
-              <span
-                className={styles.dmCount}
-                data-dm-identity=""
-                data-dm-participant-count=""
-                title={`${channel.participants?.length} other participants`}
-                aria-hidden="true"
-              >
-                {channel.participants?.length}
-              </span>
-            ) : (
-              <Icon size={16} />
-            )}
+            {identity}
           </DmTypingBadge>
         ) : ChatIconComponent ? (
-          <ContributionBoundary fallback={<Icon size={16} />}>
+          <ContributionBoundary fallback={identity}>
             <ChatIconComponent
               session={session}
               channelId={channel.id}
-              fallback={<Icon size={16} />}
+              fallback={identity}
             />
           </ContributionBoundary>
         ) : (
-          <Icon size={16} />
+          identity
         )
       }
       nameAccessory={
@@ -350,11 +353,29 @@ function ChannelSidebarItemCore({
         <>
           <span className={styles.indicatorStack} data-channel-indicators="">
             <span className={styles.indicatorLayer}>
-              <UnreadBadge
-                session={session}
-                channelId={channel.id}
-                dm={channel.channelType === "dm"}
-              />
+              {solo ? (
+                // Solo is bold in a list. A tile has no text to bold, so it
+                // shows a dot instead, never a count, and typing takes the
+                // corner while an agent works.
+                <UnreadBadge
+                  session={session}
+                  channelId={channel.id}
+                  labelUnread="all"
+                  unreadDot={tiled && agents.length === 0}
+                />
+              ) : tiled ? (
+                <UnreadCount
+                  session={session}
+                  channelId={channel.id}
+                  dm={channel.channelType === "dm"}
+                />
+              ) : (
+                <UnreadBadge
+                  session={session}
+                  channelId={channel.id}
+                  dm={channel.channelType === "dm"}
+                />
+              )}
             </span>
             <WorkingAgentsBadge
               agents={agents}
@@ -363,6 +384,7 @@ function ChannelSidebarItemCore({
               waiting={waiting}
             />
           </span>
+          {viewOnly && <ViewOnlyMark channelId={channel.id} tile={tiled} />}
           {channel.ttlSeconds !== undefined && agents.length === 0 && (
             <TemporaryMarker ttlSeconds={channel.ttlSeconds} />
           )}

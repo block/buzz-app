@@ -37,11 +37,7 @@ import { UnreadBadge } from "./UnreadBadge";
 import { useUnreadChannelIds } from "./useSidebarFilters";
 import { compareRecent } from "./sidebar-sections";
 import { SoloWorkspaces, type ChatListItem } from "./SoloWorkspaces";
-import {
-  soloSharedMarkId,
-  useSharedWithPeople,
-  useSoloOwner,
-} from "./ChatSharedMark";
+import { useViewOnly, viewOnlyDescriptionId } from "./ConversationIdentity";
 import { useChannelList } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -307,7 +303,11 @@ export function SoloInventory({
   const current = () => !handoff || handoff.session === session;
   const newChat = (project?: string) => {
     if (!current()) return;
-    const destination = resumeSoloDraftTarget(scope, target, project);
+    const destination = resumeSoloDraftTarget(
+      scope,
+      target,
+      project ? { project } : {},
+    );
     const input = destination === target ? soloDraftInput() : null;
     if (input) {
       if (menuOpen) setDraftFocus(input);
@@ -324,7 +324,7 @@ export function SoloInventory({
   };
   const creationItems = (
     <>
-      {!composing && <MenuItem onClick={() => newChat()}>New chat</MenuItem>}
+      {!composing && <MenuItem onClick={() => newChat()}>New message</MenuItem>}
       <MenuItem
         disabled={!session.sidebarPreferences.sectionCreationWritable}
         onClick={() => {
@@ -350,9 +350,11 @@ export function SoloInventory({
               ref={trigger}
               size="compact"
               aria-label={
-                composing ? "Workspace actions" : "New chat or workspace"
+                composing ? "Workspace actions" : "New message or workspace"
               }
-              title={composing ? "Workspace actions" : "New chat or workspace"}
+              title={
+                composing ? "Workspace actions" : "New message or workspace"
+              }
               icon={
                 composing ? (
                   <DotsThreeIcon size={15} strokeWidth={2.5} />
@@ -396,7 +398,7 @@ export function SoloInventory({
       {!compose && empty && (
         <NavigationItem
           variant="row"
-          label="New chat"
+          label="New message"
           icon={<PlusIcon size={16} />}
           onClick={() => newChat()}
         />
@@ -411,9 +413,7 @@ export function SoloInventory({
           finalFocus={trigger}
           onCreated={async (id) => {
             if (!current() || !trigger.current?.isConnected) return;
-            if (await soloNavigationFor(session)?.openCreatedWorkspace(id))
-              return;
-            if (trigger.current?.isConnected) newChat(id);
+            await soloNavigationFor(session)?.openCreatedWorkspace(id);
           }}
         />
       )}
@@ -441,7 +441,7 @@ export function SoloInventory({
               projectId: route?.project,
               content: (
                 <SpringLoadedNavigationItem
-                  label="New chat"
+                  label="New message"
                   aria-description="Unsent draft"
                   selected={selected}
                   onSpring={() => void navigator.open(destination)}
@@ -499,6 +499,7 @@ export function SoloInventory({
   return (
     <nav
       className={styles.sidebarContents}
+      data-sidebar-card-group=""
       aria-label={`${regions.regions.find((region) => region.source && !region.hidden)?.title ?? "Solo"} conversations`}
     >
       {renderContents ? (
@@ -615,9 +616,8 @@ function SoloConversationRow({
     id,
     working,
   );
-  // Describe only by a mark that renders, using the same Shared evidence.
-  const owner = useSoloOwner(session, channel);
-  const shared = useSharedWithPeople(session, channel) || !!owner;
+  // Describe only by a mark that renders, using the same evidence.
+  const viewOnly = useViewOnly(session, channel);
   return (
     <ChannelActivityPopover
       session={session}
@@ -637,7 +637,7 @@ function SoloConversationRow({
           data-solo-channel-id={id}
           data-solo-destination-id={id}
           aria-current={selected ? "page" : undefined}
-          aria-describedby={shared ? soloSharedMarkId(id) : undefined}
+          aria-describedby={viewOnly ? viewOnlyDescriptionId(id) : undefined}
           {...activation}
           {...springLoaded}
           icon={

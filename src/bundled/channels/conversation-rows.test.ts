@@ -11,8 +11,10 @@ import {
 afterEach(() => {
   document.body.innerHTML = "";
 });
+/** Ordinary backlog: bold only, never a destination. */
 const unread = '<span data-channel-unread=""></span>';
-const activity = '<span data-channel-activity=""></span>';
+/** A DM, mention or followed-thread reply: the row needs you. */
+const needs = '<span data-channel-needs-you=""></span>';
 /** Rows are `id` or `id:` plus markup; `*id` is the open one; `s-id` is Solo. */
 function sidebar(rows: string[], wrap = (html: string) => html) {
   document.body.innerHTML = `<aside><nav aria-label="Subscribed channels">${wrap(
@@ -53,8 +55,15 @@ it("starts from the top for next and the bottom for previous when the open conve
   expect(step("previous")).toBe("c");
 });
 
-it("skips to the nearest conversation that shows unread or thread activity", () => {
-  sidebar([`a:${unread}`, "b", "*c", "d", `e:${activity}`, `f:${unread}`]);
+it("skips to the nearest conversation that needs you, passing ordinary unread", () => {
+  sidebar([
+    `a:${needs}`,
+    `b:${unread}`,
+    "*c",
+    `d:${unread}`,
+    `e:${needs}`,
+    `f:${needs}`,
+  ]);
   expect(step("next", true)).toBe("e");
   expect(step("previous", true)).toBe("a");
   sidebar(["a", "*b", "c"]);
@@ -63,12 +72,12 @@ it("skips to the nearest conversation that shows unread or thread activity", () 
 });
 
 it("wraps unread stepping past either end", () => {
-  sidebar([`a:${unread}`, "b", `c:${activity}`, "*d", "e"]);
+  sidebar([`a:${needs}`, `b:${unread}`, `c:${needs}`, "*d", "e"]);
   expect(step("next", true)).toBe("a");
-  sidebar(["a", "*b", "c", `d:${unread}`, `e:${unread}`]);
+  sidebar(["a", "*b", "c", `d:${needs}`, `e:${needs}`, `f:${unread}`]);
   expect(step("previous", true)).toBe("e");
   // The open conversation alone is not a destination, even when unread.
-  sidebar(["a", `*b:${unread}`, "c"]);
+  sidebar(["a", `*b:${needs}`, "c"]);
   expect(step("next", true)).toBeUndefined();
 });
 

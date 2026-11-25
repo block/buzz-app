@@ -2683,6 +2683,128 @@ test("direct-message passes on which agent's add policy refused it", async () =>
   }
 });
 
+test("a DM is named and its history moved through the host, bound to the signed command", async () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const moved = "22222222-2222-4222-8222-222222222222";
+  const cut = "c".repeat(64);
+  const person = "a".repeat(64);
+  const h = await harness((call) =>
+    Response.json({
+      accepted: true,
+      event_id: call.body.id,
+      message: `response:${JSON.stringify(
+        call.body.kind === 41014
+          ? { channel_id: moved, created: true }
+          : { channel_id: channelId, created: false },
+      )}`,
+    }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const signal = new AbortController().signal;
+    await expect(
+      transport.nameDirectMessage(
+        channelId,
+        {
+          name: "  #Plans ",
+          picture: "https://example.org/p.png",
+          about: "About",
+        },
+        signal,
+      ),
+    ).resolves.toBe(channelId);
+    await expect(
+      transport.moveDirectMessageHistory(
+        channelId,
+        { cut, name: "Plans", add: [person] },
+        signal,
+      ),
+    ).resolves.toEqual({ channelId: moved, created: true });
+    await transport.moveDirectMessageHistory(
+      channelId,
+      { cut, add: [person] },
+      signal,
+    );
+    const [named, movedNamed, movedDm] = h.calls.map((call) => call.body);
+    expect(verifyEvent(named)).toBe(true);
+    expect(named.kind).toBe(41013);
+    expect(named.pubkey).toBe(h.event.pubkey);
+    expect(named.tags).toEqual([
+      ["h", channelId],
+      ["name", "Plans"],
+      ["picture", "https://example.org/p.png"],
+      ["about", "About"],
+    ]);
+    expect(verifyEvent(movedNamed)).toBe(true);
+    expect(movedNamed.kind).toBe(41014);
+    expect(movedNamed.tags).toEqual([
+      ["h", channelId],
+      ["e", cut],
+      ["name", "Plans"],
+      ["p", person],
+    ]);
+    expect(movedDm.tags).toEqual([
+      ["h", channelId],
+      ["e", cut],
+      ["p", person],
+    ]);
+    for (const body of [
+      { command: "name", channel: "nope", name: "Plans" },
+      { command: "name", channel: channelId, name: " # " },
+      {
+        command: "name",
+        channel: channelId,
+        name: "Plans",
+        picture: "ftp://x",
+      },
+      { command: "move", channel: channelId, cut },
+      { command: "move", channel: channelId, cut: "short", name: "Plans" },
+      { command: "move", channel: channelId, cut, add: [h.event.pubkey] },
+      { command: "move", channel: channelId, cut, add: [person, person] },
+      { command: "other", channel: channelId },
+    ])
+      expect((await h.post("direct-message", body)).status).toBe(400);
+    expect(h.calls).toHaveLength(3);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a refused DM name or move reaches the app as words to show, never the relay's own", async () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const reasons = [
+    "forbidden: only a person can name a DM",
+    "invalid: the cut is not a top-level message in this DM",
+    "error: db: internal detail",
+  ];
+  const h = await harness(() =>
+    Response.json({ error: reasons.shift() }, { status: 400 }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const signal = new AbortController().signal;
+    await expect(
+      transport.nameDirectMessage(channelId, { name: "Plans" }, signal),
+    ).rejects.toThrow("Only people can do that. Agents can’t.");
+    await expect(
+      transport.moveDirectMessageHistory(
+        channelId,
+        { cut: "c".repeat(64), name: "Plans", add: [] },
+        signal,
+      ),
+    ).rejects.toThrow("Start from a message that isn’t a reply.");
+    await expect(
+      transport.moveDirectMessageHistory(
+        channelId,
+        { cut: "c".repeat(64), name: "Plans", add: [] },
+        signal,
+      ),
+    ).rejects.toThrow("Couldn’t move this history. Try again.");
+  } finally {
+    await h.close();
+  }
+});
+
 test.each([
   {
     accepted: false,

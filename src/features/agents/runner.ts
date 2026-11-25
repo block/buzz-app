@@ -1,4 +1,5 @@
 import { interestPaused } from "./attention";
+import { answersAtTopLevel } from "./solo-chat";
 import {
   hasInvocationIntent,
   type AgentSessionAssociation,
@@ -743,6 +744,12 @@ export type RunnerHost = {
     channel: string,
     signal: AbortSignal,
   ): Promise<boolean>;
+  /** Whether only the agent's owner and their agents can post in `channel`:
+   * the people rule, read now. */
+  ownerAndAgentsOnly?(
+    agent: Agent,
+    channel: ChannelSummary | undefined,
+  ): boolean;
   /** The agent wrote this memory through its handle. */
   remembered(key: AgentKey, slug: string, body: string | null): void;
   woke?(
@@ -3157,13 +3164,13 @@ export class AgentRunners {
     const channel = this.host.channel(agent, event);
     const thread =
       threadRootId &&
-      (trigger.type === "mention" ||
-        (channel?.channelType !== "solo" && channel?.channelType !== "dm"));
+      (trigger.type === "mention" || channel?.channelType !== "dm");
     const soloChat =
-      channel?.channelType === "solo" &&
+      !!channel &&
       !channel.cached &&
       !channel.pending &&
-      !channel.metadataPending;
+      !channel.metadataPending &&
+      !!this.host.ownerAndAgentsOnly?.(agent, channel);
     const conversationName = channel?.name?.trim();
     job.work = this.host.activity.begin(
       {
@@ -3182,9 +3189,7 @@ export class AgentRunners {
           : {}),
         threadRootId: threadRootId ?? event.id,
         sourceRootId:
-          channel?.channelType === "solo" ||
-          channel?.channelType === "dm" ||
-          (wake && !wake.root)
+          channel?.channelType === "dm" || (wake && !wake.root)
             ? null
             : (threadRootId ?? event.id),
         ...(thread ? { thread: true } : {}),
@@ -3209,8 +3214,7 @@ export class AgentRunners {
     );
     if (
       !soloChat &&
-      channel?.channelType === "solo" &&
-      channel.pending &&
+      channel?.pending &&
       !channel.cached &&
       !channel.metadataPending
     ) {
@@ -3220,9 +3224,10 @@ export class AgentRunners {
           () => {
             const confirmed = this.host.channel(agent, event);
             if (
-              confirmed?.channelType === "solo" &&
+              confirmed &&
               !confirmed.cached &&
-              !confirmed.metadataPending
+              !confirmed.metadataPending &&
+              this.host.ownerAndAgentsOnly?.(agent, confirmed)
             )
               job.work?.confirmSolo(confirmed.name ?? undefined);
           },
@@ -3916,10 +3921,11 @@ export class AgentRunners {
             if (ownReply) {
               const channel = this.host.channel(agent, published);
               if (
-                channel?.channelType === "solo" &&
+                channel &&
                 !channel.cached &&
                 !channel.pending &&
-                !channel.metadataPending
+                !channel.metadataPending &&
+                this.host.ownerAndAgentsOnly?.(agent, channel)
               )
                 work.confirmSolo(channel.name ?? undefined);
               work.reply(published.id);
@@ -4186,7 +4192,7 @@ export class AgentRunners {
           .then((flat) => {
             if (wake && !wakeLands(wake, flat))
               throw new Error("The wake has no conversation here");
-            return flat || wake?.topLevel === true;
+            return answersAtTopLevel(event, flat, wake);
           }),
         event,
         channel,

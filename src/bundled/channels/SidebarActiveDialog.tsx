@@ -1,19 +1,19 @@
-import { useState, useRef, type RefObject } from "react";
+import { useId, useState, type RefObject } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { Field } from "../../shared/design-system/ui/Field";
-import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
-import { DEFAULT_ACTIVE_WINDOW_SECONDS } from "../../features/relay/sidebar-preferences";
-import styles from "./SidebarActiveDialog.module.css";
+import { Input } from "../../shared/design-system/ui/Input";
+import {
+  DEFAULT_ACTIVE_WINDOW_SECONDS,
+  MAX_ACTIVE_WINDOW_SECONDS,
+} from "../../features/relay/sidebar-preferences";
 
-const PRESET_DAYS = [1, 3, 7, 30, 90];
+const MAX_DAYS = MAX_ACTIVE_WINDOW_SECONDS / 86400;
 
-export function activeWindowLabel(seconds = DEFAULT_ACTIVE_WINDOW_SECONDS) {
-  const days = seconds / 86400;
-  return `${days} ${days === 1 ? "day" : "days"}`;
-}
-
-/** A draft stays local until Apply; a failed save keeps the entered values. */
+/**
+ * A custom "active in the last N days" window. The draft stays local until
+ * Apply; a failed save keeps the entered value and shows why.
+ */
 export function SidebarActiveDialog({
   seconds = DEFAULT_ACTIVE_WINDOW_SECONDS,
   apply,
@@ -25,20 +25,22 @@ export function SidebarActiveDialog({
   close: () => void;
   finalFocus: RefObject<HTMLButtonElement | null>;
 }) {
-  const form = useRef<HTMLDivElement>(null);
-  const days = seconds / 86400;
-  const [preset, setPreset] = useState(
-    PRESET_DAYS.includes(days) ? String(days) : "30",
-  );
+  const formId = useId();
+  const [draft, setDraft] = useState(String(seconds / 86400));
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const duration = Number(preset) * 86400;
+  const days = Number(draft);
+  const valid = Number.isInteger(days) && days >= 1 && days <= MAX_DAYS;
   const submit = async () => {
     if (pending) return;
+    if (!valid) {
+      setError(`Enter a whole number of days from 1 to ${MAX_DAYS}.`);
+      return;
+    }
     setPending(true);
     setError("");
     try {
-      await apply(duration);
+      await apply(days * 86400);
       close();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -55,57 +57,53 @@ export function SidebarActiveDialog({
       onOpenChange={(open) => !open && close()}
       preventClose={pending}
       finalFocus={finalFocus}
-      initialFocus={() =>
-        form.current?.querySelector<HTMLElement>(
-          '[role="radio"][aria-checked="true"]',
-        ) ?? false
-      }
       actions={
         <>
           <Button disabled={pending} onClick={close}>
             Cancel
           </Button>
           <Button
+            type="submit"
+            form={formId}
             variant="prominent"
             loading={pending}
-            onClick={() => void submit()}
           >
             Apply
           </Button>
         </>
       }
     >
-      <div ref={form} className={styles.form}>
-        <Field label="Time frame" labelVisibility="hidden" nativeLabel={false}>
-          <RadioGroup
-            value={preset}
-            onValueChange={setPreset}
+      <form
+        id={formId}
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        <Field label="Days" error={error || undefined}>
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_DAYS}
+            step={1}
+            value={draft}
+            autoFocus
             disabled={pending}
-            aria-label="Time frame"
-          >
-            <div className={styles.presets}>
-              {PRESET_DAYS.map((days) => (
-                <Radio
-                  key={days}
-                  value={String(days)}
-                  variant="tile"
-                  label={activeWindowLabel(days * 86400)}
-                />
-              ))}
-            </div>
-          </RadioGroup>
+            onFocus={(event) => event.currentTarget.select()}
+            onValueChange={(next) => {
+              setDraft(next);
+              setError("");
+            }}
+          />
         </Field>
-        {error && (
-          <p role="alert" className="text-body-sm text-danger">
-            {error}
-          </p>
-        )}
         {pending && (
           <p role="status" className="sr-only">
             Saving filter and waiting for confirmation…
           </p>
         )}
-      </div>
+      </form>
     </Dialog>
   );
 }

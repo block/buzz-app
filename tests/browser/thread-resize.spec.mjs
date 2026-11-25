@@ -261,10 +261,10 @@ test("thread splitter tracks the conversation reserve as interface size changes"
       expect(precision.queryContainer).toBe("inline-size");
       expect(precision.containerInsets).toEqual([0, 0, 0, 0]);
       expect(precision.boardInsets).toEqual([0, 0, 0, 0]);
-      expect(precision.containerWidth).toBe(539.546875);
+      expect(precision.containerWidth).toBe(569.984375);
       expect(precision.boardWidth).toBe(precision.cqw);
       expect(precision.boardWidth).toBe(precision.containerWidth);
-      expect(precision.clientWidth).toBe(540);
+      expect(precision.clientWidth).toBe(570);
     }
     expect.soft(narrow.min).toBeLessThanOrEqual(narrow.now);
     expect.soft(narrow.now).toBe(narrow.max);

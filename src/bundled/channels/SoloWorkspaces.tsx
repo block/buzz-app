@@ -1,4 +1,9 @@
 import { workspaceSectionOrder } from "../../features/relay/sidebar-preferences";
+import {
+  unreadsFirst,
+  useSidebarUnreadsFirst,
+  useWaitingChannels,
+} from "./SidebarUnreadsFirst";
 import { FadingLabel } from "./FadingLabel";
 import { ChannelSidebarRows } from "../../features/channel-navigation/ChannelSidebarRows";
 import { createPortal } from "react-dom";
@@ -11,7 +16,7 @@ import { sidebarDropRowKinds } from "./sidebar-sections";
 import { prepareSoloMove } from "../../features/channel-navigation/solo-navigation";
 import { useChatConversions } from "../../features/solo/conversion";
 import { ConvertToChannel } from "../../features/solo/ConvertToChannel";
-import { ChatSharedMark } from "./ChatSharedMark";
+import { useViewOnly, ViewOnlyMark } from "./ConversationIdentity";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
 import { SoloChatName } from "./SoloChatName";
 import { canEditLifetime } from "../../features/solo/Lifetime";
@@ -319,19 +324,36 @@ export function SoloWorkspaces({
     );
     void preferences.reorderSections(`group:${id}`, reordered).catch(() => {});
   };
+  const showsUnreadsFirst = useSidebarUnreadsFirst(scope);
+  const waiting = useWaitingChannels(
+    session.unread,
+    snapshot.data?.muted,
+    undefined,
+  );
   const assigned = snapshot.data?.assignments ?? {};
   const assignmentFor = (item: ChatListItem) =>
     dormantAssignments?.has(item.id) ? undefined : assigned[item.id];
   const ids = new Set(groups.map((group) => group.id));
+  // Chats that wait on you lead a workspace that shows unreads first.
+  const ordered = (id: string, rows: readonly ChatListItem[]) =>
+    showsUnreadsFirst(workspaceSectionKey(id))
+      ? unreadsFirst(rows, waiting, (item) => item.id)
+      : rows;
   const projects = [
     ...groups.map((group) => ({
       ...group,
-      rows: chats.filter((item) => assignmentFor(item) === group.id),
+      rows: ordered(
+        group.id,
+        chats.filter((item) => assignmentFor(item) === group.id),
+      ),
     })),
     {
       id: "",
       name: "Chats",
-      rows: chats.filter((item) => !ids.has(assignmentFor(item) ?? "")),
+      rows: ordered(
+        "",
+        chats.filter((item) => !ids.has(assignmentFor(item) ?? "")),
+      ),
     },
   ].filter(
     (project) =>
@@ -578,6 +600,7 @@ export function SoloWorkspaces({
         }
         key={project.id}
         className={`${styles.project} ${channelStyles.channelSection}`}
+        data-sidebar-card=""
         data-project={project.id ? "" : undefined}
         open={!collapsed.includes(project.id) || renamingProject === project.id}
         onOpenChange={(open) =>
@@ -702,8 +725,8 @@ export function SoloWorkspaces({
                         (!compose || !project.id) && (
                           <IconButton
                             size="compact"
-                            aria-label={`New chat in ${project.name}`}
-                            title="New chat"
+                            aria-label={`New message in ${project.name}`}
+                            title="New message"
                             icon={<PlusIcon size={15} strokeWidth={2.5} />}
                             onClick={() => onNew(project.id || undefined)}
                           />
@@ -743,7 +766,7 @@ export function SoloWorkspaces({
             <ChatActionsMenu
               key={draft.id}
               id={`new-chat-draft:${draft.id}`}
-              title="New chat"
+              title="New message"
               className={styles.organizedRow}
               content={null}
               enabled={false}
@@ -837,9 +860,9 @@ export function SoloWorkspaces({
           (onNew ? (
             <NavigationItem
               variant="row"
-              label="New chat"
-              aria-label={`New chat in ${project.name}`}
-              title={`New chat in ${project.name}`}
+              label="New message"
+              aria-label={`New message in ${project.name}`}
+              title={`New message in ${project.name}`}
               icon={
                 <span className={styles.conversationIcon}>
                   <PlusIcon size={16} strokeWidth={2.5} />
@@ -965,9 +988,9 @@ export function SoloWorkspaces({
               );
               return (
                 project && (
-                  <div className={channelStyles.channelDragOverlay}>
+                  <span className={channelStyles.sectionTitle}>
                     {project.name}
-                  </div>
+                  </span>
                 )
               );
             }
@@ -1221,17 +1244,12 @@ const SoloChatEntry = memo(function SoloChatEntry({
     rename,
     channel,
   );
+  const viewOnly = useViewOnly(session, channel);
   const Default = (
     <ChatActionsMenu
       id={id}
       title={title}
-      indicator={
-        <ChatSharedMark
-          session={session}
-          channel={channel}
-          onOpen={(trigger) => actions.current.share(id, trigger)}
-        />
-      }
+      indicator={viewOnly && <ViewOnlyMark channelId={id} />}
       className={styles.organizedRow}
       content={
         channel && (

@@ -1,57 +1,41 @@
 import { createPortal } from "react-dom";
-import { useRef, useState } from "react";
+import {
+  type MouseEvent,
+  type PointerEvent,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { Agents } from "../../features/agents/service";
-import { CreateChannelDialog } from "../../bundled/channels/CreateChannelDialog";
-import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
-import { useSidebarPreferences } from "../../bundled/channels/useSidebarPreferences";
 import type { Navigation } from "../../features/navigation/controller";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { splitPartition } from "../../features/relay/partition";
-import { NewWorkspace } from "../../features/solo/NewWorkspace";
-import {
-  resetNewChatProject,
-  soloDraftInput,
-} from "../../features/solo/SoloDraft";
-import {
-  soloDraftTarget,
-  resumeSoloDraftTarget,
-} from "../../features/channel-navigation/routes";
-import { soloNavigationFor } from "../../features/channel-navigation/solo-navigation";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Button } from "../../shared/design-system/ui/Button";
 import {
-  MenuRoot,
-  MenuTrigger,
+  ContextMenuRoot,
+  ContextMenuTrigger,
   MenuPopup,
-  MenuItem,
-  MenuIcon,
-  MenuSeparator,
+  MenuRadioGroup,
+  MenuRadioItem,
 } from "../../shared/design-system/ui/Menu";
-import {
-  ChatCircleIcon,
-  FolderSimpleIcon,
-  HashIcon,
-  PlusIcon,
-  UserCircleIcon,
-} from "../../shared/design-system/icons";
+import { PlusIcon } from "../../shared/design-system/icons";
+import styles from "./NewMenu.module.css";
 
 type Props = {
   relay: RelayData;
   navigator: Navigation;
   agents?: Agents | undefined;
   triggerContainer?: HTMLElement | null;
+  /** The shell asks for New (its shortcut); this opens New message. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 };
 
-const actions = {
-  chat: { label: "New chat", icon: ChatCircleIcon },
-  channel: { label: "New channel", icon: HashIcon },
-  dm: { label: "New DM", icon: UserCircleIcon },
-} as const;
-type Action = keyof typeof actions;
-
+/** The sidebar's + : every conversation starts in New message. */
 export function NewMenu(props: Props) {
   const connection = useRelayConnection(props.relay);
   return (
@@ -67,156 +51,231 @@ export function NewMenu(props: Props) {
 function ReadyNewMenu({
   relay,
   navigator,
-  agents,
   session,
   available,
   triggerContainer,
   open,
   onOpenChange,
 }: Props & { session: RelaySession; available: boolean }) {
-  const preferences = useSidebarPreferences(session.sidebarPreferences);
   const scope = splitPartition(session.scope);
-  const [channelGroup, setChannelGroup] = useState<string>();
-  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
-  const caret = useRef<HTMLButtonElement>(null);
-  const finalFocus = useRef<HTMLElement>(null);
-  const [draftFocus, setDraftFocus] = useState<HTMLElement | null>(null);
-  const current = () => relay.snapshot().session === session;
-  const disabled = (kind: Action) =>
-    !available ||
-    (kind === "channel" && !session.channelCreation.available) ||
-    (kind === "dm" && !scope);
-  const run = (kind: Action) => {
-    if (!current() || disabled(kind)) return;
-    finalFocus.current = caret.current;
-    if (kind === "channel") {
-      setChannelGroup("");
-      return;
-    }
-    if (kind === "dm") {
-      if (scope)
-        void navigator.open({
-          version: 1,
-          kind: "page",
-          pluginId: "buzz.channels",
-          pageId: "channels",
-          scope,
-          route: { version: 1, params: "new-message" },
-        });
-      return;
-    }
-    const target = navigator.snapshot().entry?.target;
-    const destination = resumeSoloDraftTarget(session.scope, target);
-    const input = destination === target ? soloDraftInput() : null;
-    if (input) {
-      setDraftFocus(input);
-      return;
-    }
-    void navigator.open(destination);
+  const enabled = available && !!scope;
+  const start = () => {
+    if (relay.snapshot().session !== session || !enabled || !scope) return;
+    void navigator.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+      scope,
+      route: { version: 1, params: "new-message" },
+    });
   };
-  const controls = (
-    <MenuTrigger
-      render={
-        <IconButton
-          ref={caret}
-          disabled={!available}
-          aria-label="New options"
-          title="New options"
-          shape="round"
-          size="md"
-          icon={<PlusIcon strokeWidth={2.5} size={18} />}
-        />
-      }
-    />
-  );
-  return (
-    <>
-      <MenuRoot
-        open={open}
-        onOpenChange={(next) => {
-          if (next) setDraftFocus(null);
-          onOpenChange?.(next);
-        }}
-      >
-        {triggerContainer === undefined
-          ? controls
-          : triggerContainer && createPortal(controls, triggerContainer)}
-        <MenuPopup
-          finalFocus={
-            draftFocus
-              ? () => (draftFocus.isConnected ? draftFocus : false)
-              : channelGroup !== undefined || creatingWorkspace
-                ? false
+  const latest = useRef(start);
+  latest.current = start;
+  useEffect(() => {
+    if (!open) return;
+    onOpenChange?.(false);
+    latest.current();
+  }, [open, onOpenChange]);
+  const drag = useDraggable();
+  const [look, setLook] = useState(savedLook);
+  const chooseLook = (next: unknown) => {
+    if (next !== "icon" && next !== "text") return;
+    setLook(next);
+    try {
+      localStorage.setItem(lookKey, next);
+    } catch {
+      /* The choice still applies until the app restarts. */
+    }
+  };
+  const icon = <PlusIcon strokeWidth={2.5} size={16} />;
+  const button = (
+    <ContextMenuRoot>
+      <ContextMenuTrigger
+        render={
+          // biome-ignore lint/a11y/noStaticElementInteractions: Moves the + by pointer; the button inside stays the control.
+          <div
+            className={drag.position ? styles.floating : styles.docked}
+            style={
+              drag.position
+                ? { left: drag.position.x, top: drag.position.y }
                 : undefined
-          }
-        >
-          {(["chat", "channel", "dm"] as const).map((kind) => {
-            const { label, icon: Icon } = actions[kind];
-            return (
-              <MenuItem
-                key={kind}
-                disabled={disabled(kind)}
-                onClick={() => run(kind)}
-              >
-                <MenuIcon>
-                  <Icon size={16} />
-                </MenuIcon>
-                {label}
-              </MenuItem>
-            );
-          })}
-          <MenuSeparator />
-          <MenuItem
-            disabled={!preferences.sectionCreationWritable}
-            onClick={() => {
-              if (!current()) return;
-              finalFocus.current = caret.current;
-              setCreatingWorkspace(true);
-            }}
+            }
+            onPointerDown={drag.onPointerDown}
+            onPointerMove={drag.onPointerMove}
+            onPointerUp={drag.onPointerUp}
+            onPointerCancel={drag.onPointerUp}
+            onClickCapture={drag.onClickCapture}
+            onDoubleClick={drag.reset}
+          />
+        }
+      >
+        {look === "text" ? (
+          <Button
+            disabled={!enabled}
+            variant="prominent"
+            size="sm"
+            onClick={start}
           >
-            <MenuIcon>
-              <FolderSimpleIcon size={16} />
-            </MenuIcon>
-            New workspace
-          </MenuItem>
-        </MenuPopup>
-      </MenuRoot>
-      <CreateChannelDialog
-        open={channelGroup !== undefined}
-        onOpenChange={(next) => {
-          if (!next) setChannelGroup(undefined);
-        }}
-        session={session}
-        agents={agents}
-        finalFocus={finalFocus}
-        destinations={preferences.data?.sections ?? []}
-        initialGroup={channelGroup ?? ""}
-        groupsReady={preferences.writable}
-        onCreate={async (input) => {
-          const channelId = await session.channelCreation.create(input);
-          revealCreatedChannel(relay, session, navigator, input, channelId);
-        }}
-      />
-      {creatingWorkspace && (
-        <NewWorkspace
-          session={session}
-          create={(section) =>
-            session.sidebarPreferences.createSection(section)
-          }
-          close={() => setCreatingWorkspace(false)}
-          finalFocus={finalFocus}
-          onCreated={async (id) => {
-            if (!current()) return;
-            if (await soloNavigationFor(session)?.openCreatedWorkspace(id))
-              return;
-            if (!current()) return;
-            resetNewChatProject(session.scope, id);
-            void navigator.open(
-              soloDraftTarget(session.scope, { project: id }),
-            );
-          }}
-        />
-      )}
-    </>
+            {icon}
+            New message
+          </Button>
+        ) : (
+          <IconButton
+            disabled={!enabled}
+            aria-label="New message"
+            title="New message"
+            variant="solid"
+            shape="round"
+            size="sm"
+            icon={icon}
+            onClick={start}
+          />
+        )}
+      </ContextMenuTrigger>
+      <MenuPopup aria-label="New message button" size="compact">
+        <MenuRadioGroup value={look} onValueChange={chooseLook}>
+          <MenuRadioItem value="icon" selection="highlight">
+            Icon
+          </MenuRadioItem>
+          <MenuRadioItem value="text" selection="highlight">
+            Full text
+          </MenuRadioItem>
+        </MenuRadioGroup>
+      </MenuPopup>
+    </ContextMenuRoot>
   );
+  if (triggerContainer === undefined) return button;
+  // Moved, it floats over the whole app; otherwise it sits in the sidebar.
+  if (drag.position) return createPortal(button, document.body);
+  return triggerContainer && createPortal(button, triggerContainer);
+}
+
+type Look = "icon" | "text";
+const lookKey = "buzz:new-message-button:look";
+function savedLook(): Look {
+  try {
+    return localStorage.getItem(lookKey) === "text" ? "text" : "icon";
+  } catch {
+    return "icon";
+  }
+}
+
+type Point = { x: number; y: number };
+const positionKey = "buzz:new-message-button:position";
+// A press that moves less than this is a click, not a drag.
+const dragThreshold = 4;
+// Keep the whole button, and a little room, inside the window.
+const edge = 8;
+
+function savedPosition(): Point | null {
+  try {
+    const saved: unknown = JSON.parse(
+      localStorage.getItem(positionKey) ?? "null",
+    );
+    if (
+      saved &&
+      typeof saved === "object" &&
+      typeof (saved as Point).x === "number" &&
+      typeof (saved as Point).y === "number"
+    )
+      return saved as Point;
+  } catch {
+    /* A position that can't be read starts at the default spot. */
+  }
+  return null;
+}
+function savePosition(point: Point | null) {
+  try {
+    if (point) localStorage.setItem(positionKey, JSON.stringify(point));
+    else localStorage.removeItem(positionKey);
+  } catch {
+    /* The position still applies until the app restarts. */
+  }
+}
+function subscribeResize(listener: () => void) {
+  window.addEventListener("resize", listener);
+  return () => window.removeEventListener("resize", listener);
+}
+const windowSize = () => `${window.innerWidth}x${window.innerHeight}`;
+
+/** Drags the + anywhere in the window, remembering where it was dropped. */
+function useDraggable() {
+  const [position, setPosition] = useState(savedPosition);
+  const [size, setSize] = useState({ width: 40, height: 40 });
+  // Re-render on window resize so the button is moved back inside.
+  useSyncExternalStore(subscribeResize, windowSize, () => "");
+  const press = useRef<
+    { start: Point; offset: Point; moved: boolean; pointer: number } | undefined
+  >(undefined);
+  const suppressClick = useRef(false);
+  const clamp = (point: Point): Point => ({
+    x: Math.min(
+      Math.max(edge, point.x),
+      Math.max(edge, window.innerWidth - size.width - edge),
+    ),
+    y: Math.min(
+      Math.max(edge, point.y),
+      Math.max(edge, window.innerHeight - size.height - edge),
+    ),
+  });
+  return {
+    position: position && clamp(position),
+    onPointerDown(event: PointerEvent<HTMLDivElement>) {
+      if (event.button !== 0) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      setSize({ width: rect.width, height: rect.height });
+      press.current = {
+        start: { x: event.clientX, y: event.clientY },
+        offset: { x: event.clientX - rect.left, y: event.clientY - rect.top },
+        moved: false,
+        pointer: event.pointerId,
+      };
+    },
+    onPointerMove(event: PointerEvent<HTMLDivElement>) {
+      const current = press.current;
+      if (!current || current.pointer !== event.pointerId) return;
+      if (
+        !current.moved &&
+        Math.hypot(
+          event.clientX - current.start.x,
+          event.clientY - current.start.y,
+        ) < dragThreshold
+      )
+        return;
+      if (!current.moved) {
+        current.moved = true;
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      setPosition(
+        clamp({
+          x: event.clientX - current.offset.x,
+          y: event.clientY - current.offset.y,
+        }),
+      );
+    },
+    onPointerUp(event: PointerEvent<HTMLDivElement>) {
+      const current = press.current;
+      press.current = undefined;
+      if (!current?.moved) return;
+      suppressClick.current = true;
+      const dropped = clamp({
+        x: event.clientX - current.offset.x,
+        y: event.clientY - current.offset.y,
+      });
+      setPosition(dropped);
+      savePosition(dropped);
+    },
+    onClickCapture(event: MouseEvent<HTMLDivElement>) {
+      // The click that ends a drag doesn't open New message.
+      if (!suppressClick.current) return;
+      suppressClick.current = false;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    reset() {
+      setPosition(null);
+      savePosition(null);
+    },
+  };
 }

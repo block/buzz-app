@@ -34,12 +34,19 @@ test("Activity restores its conversation after visiting Messages and another pag
   });
   await expect(tab).toHaveAttribute("aria-selected", "true");
   await expect(reader).toBeVisible();
-  const messages = page.getByRole("tab", { name: "Messages", exact: true });
-  for (const destination of ["Messages", "Reminders"]) {
-    await page.getByRole("tab", { name: destination, exact: true }).click();
+  // Messages is the owner of every page listed in its sidebar, so "visiting
+  // Messages" is opening a conversation and Reminders is another listed row.
+  // Alpha has unread replies, so its row's name ends with the count; the
+  // channel id names it either way.
+  const alpha = page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .locator('button[data-channel-id="alpha"]');
+  const reminders = page
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Reminders", exact: true });
+  for (const destination of [alpha, reminders]) {
+    await destination.click();
     await expect(inbox).toHaveCount(0);
-    // Activity is listed in the Messages sidebar, which other apps replace.
-    if (destination !== "Messages") await messages.click();
     await inboxTab.click();
     await expect(tab).toHaveAttribute("aria-selected", "true");
     await expect(reader).toBeVisible();
@@ -49,9 +56,8 @@ test("Activity restores its conversation after visiting Messages and another pag
     .getByRole("button", { name: "Close Thread root 1 tab", exact: true })
     .click();
   await expect(tab).toHaveCount(0);
-  await page.getByRole("tab", { name: "Reminders", exact: true }).click();
+  await reminders.click();
   await expect(inbox).toHaveCount(0);
-  await messages.click();
   await inboxTab.click();
   await expect(
     inbox.getByRole("list", { name: "Activity", exact: true }),

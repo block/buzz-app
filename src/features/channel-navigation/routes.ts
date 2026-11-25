@@ -11,11 +11,14 @@ export {
   newMessage,
   newMessageTarget,
   nextMessageIntent,
+  starredMessageTarget,
 } from "./new-message-route";
 
 /** An unsent Solo conversation: nothing exists on the relay until its first send. */
 export type SoloDraft = Readonly<{
   project?: string;
+  /** Filed in Favorites once started; never together with a project. */
+  starred?: true;
   agent?: string;
   linked?: string;
   /** The Solo region label whose source opened this draft. */
@@ -38,6 +41,7 @@ export function soloDraft(
       (key) =>
         key !== "kind" &&
         key !== "project" &&
+        key !== "starred" &&
         key !== "agent" &&
         key !== "linked" &&
         key !== "region" &&
@@ -45,7 +49,7 @@ export function soloDraft(
     )
   )
     return;
-  const { project, agent, linked, region, draft } = value;
+  const { project, starred, agent, linked, region, draft } = value;
   if (
     region !== undefined &&
     (typeof region !== "string" ||
@@ -80,12 +84,21 @@ export function soloDraft(
   )
     return;
   if (
+    starred !== undefined &&
+    (starred !== true ||
+      project !== undefined ||
+      linked !== undefined ||
+      region !== undefined)
+  )
+    return;
+  if (
     agent !== undefined &&
     (typeof agent !== "string" || !agentKey.test(agent))
   )
     return;
   return {
     ...(project ? { project } : {}),
+    ...(starred ? { starred } : {}),
     ...(agent ? { agent } : {}),
     ...(linked ? { linked } : {}),
     ...(region ? { region } : {}),
@@ -128,8 +141,9 @@ export function soloDraftTarget(
 export function resumeSoloDraftTarget(
   scope: string,
   current: OpenTarget | undefined,
-  project?: string,
+  placement: Pick<SoloDraft, "project" | "starred"> = {},
 ): OpenTarget {
+  const { project, starred } = placement;
   const parts = splitPartition(scope);
   if (
     current?.kind === "page" &&
@@ -140,10 +154,18 @@ export function resumeSoloDraftTarget(
     current.scope?.viewer === parts.viewer
   ) {
     const draft = soloDraft(current.route?.params);
-    if (draft && !draft.region && (!project || draft.project === project))
+    if (
+      draft &&
+      !draft.region &&
+      ((!project && !starred) ||
+        (draft.project === project && draft.starred === starred))
+    )
       return current;
   }
-  return soloDraftTarget(scope, project ? { project } : {});
+  return soloDraftTarget(
+    scope,
+    project ? { project } : starred ? { starred } : {},
+  );
 }
 
 export function conversationTarget(

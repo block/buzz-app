@@ -3,7 +3,7 @@ import { exactLifecycleTag } from "./channel-lifecycle-protocol";
 import { channelIdentityUnsupported, channelLabelTags } from "./channel-labels";
 import { SOLO_NAMED_LABEL, SOLO_LABEL } from "../solo/labels";
 import type { Outbox, OutboxRecovery } from "./outbox";
-import type { RelayWriter } from "./transport";
+import type { ConversationVisibility, RelayWriter } from "./transport";
 import {
   promoteSoloAdmins,
   soloAdminKey,
@@ -776,11 +776,14 @@ export function createChannelWrites(
       active?: () => boolean,
       labels: readonly string[] = [],
       recovery?: OutboxRecovery,
+      /** False for a conversation with people: no Solo labels. */
+      solo = true,
+      visibility: ConversationVisibility = "private",
     ) {
       writer();
       identifier(id);
       // Solo is a channel label, so a relay without NIP-CL cannot hold one.
-      if (!channelIdentity) throw channelIdentityUnsupported();
+      if (solo && !channelIdentity) throw channelIdentityUnsupported();
       if (!title.trim() || [...title].length > 120)
         throw new Error("Use a session title between 1 and 120 characters.");
       if (
@@ -797,14 +800,15 @@ export function createChannelWrites(
           tags: [
             ["h", id],
             ["name", title],
-            ["visibility", "private"],
+            // View only opens it too; who may post follows the create.
+            ["visibility", visibility === "private" ? "private" : "open"],
             ["channel_type", "stream"],
             ...(ttlSeconds !== undefined ? [["ttl", String(ttlSeconds)]] : []),
-            ...channelLabelTags([
-              SOLO_LABEL,
-              ...(named ? [SOLO_NAMED_LABEL] : []),
-              ...labels,
-            ]),
+            // Who is in it makes it a chat; new chats no longer carry the
+            // older Solo tag.
+            ...channelLabelTags(
+              solo && named ? [SOLO_NAMED_LABEL, ...labels] : labels,
+            ),
             ...[...new Set(members)].map((key) => ["p", key]),
           ],
         },
@@ -830,8 +834,13 @@ export function createChannelWrites(
         labels?: readonly string[];
         active?: () => boolean;
         admins?: readonly string[];
+        /** False starts a conversation with people rather than a Solo chat. */
+        solo?: boolean;
+        /** Who can read it; private unless chosen. */
+        visibility?: ConversationVisibility;
       },
     ) {
+      const solo = options?.solo ?? true;
       const recovery = soloAdminRecovery(id, members, options?.admins);
       if (recovery && (!adminWriter || !relayAuthor))
         throw new Error("This connection cannot set up chat admins.");
@@ -844,17 +853,33 @@ export function createChannelWrites(
         options?.active,
         options?.labels,
         recovery,
+        solo,
+        options?.visibility,
       );
       channels.start?.({
         id,
         name: title,
         members,
-        labels: [
-          SOLO_LABEL,
-          ...(named ? [SOLO_NAMED_LABEL] : []),
-          ...(options?.labels ?? []),
-        ],
+        labels: solo
+          ? [
+              SOLO_LABEL,
+              ...(named ? [SOLO_NAMED_LABEL] : []),
+              ...(options?.labels ?? []),
+            ]
+          : [...(options?.labels ?? [])],
         ttlSeconds,
+        ...(solo ? {} : { channelType: "stream" as const }),
+        ...(options?.visibility
+          ? {
+              visibility:
+                options.visibility === "private"
+                  ? ("private" as const)
+                  : ("public" as const),
+            }
+          : {}),
+        ...(options?.visibility === "view-only"
+          ? { joinRole: "guest" as const }
+          : {}),
       });
       // The relay adds the members in the create, so the chat takes events
       // once the create is OK.
@@ -868,6 +893,31 @@ export function createChannelWrites(
             }),
           )
         : ready;
+      // A create cannot say who posts, so View only follows it: people who
+      // join can read but not post. If it fails, anyone who joins can post;
+      // the conversation's details show its actual access.
+      if (options?.visibility === "view-only")
+        void ready
+          .then(() =>
+            delivered(
+              writer().send(
+                {
+                  kind: 9002,
+                  content: "",
+                  tags: [
+                    ["h", id],
+                    ["join_role", "guest"],
+                  ],
+                },
+                undefined,
+                options.active,
+              ),
+            ),
+          )
+          .then(() => refresh(id))
+          .catch((reason) => {
+            console.warn("View only setup did not finish", reason);
+          });
       void ready.then(
         // Confirming the chat only ends its pending listing.
         () => refresh(id).catch(() => {}),

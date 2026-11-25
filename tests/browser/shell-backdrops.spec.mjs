@@ -65,8 +65,8 @@ test("registered backdrops paint in order between the shell and its controls, an
     const main = document
       .getElementById("main-content")
       .getBoundingClientRect();
-    const dock = document
-      .querySelector(".shell-side-dock")
+    const card = document
+      .querySelector("[data-sidebar-card]")
       .getBoundingClientRect();
     return {
       // Below the header row, beside the bottom of the window: a bare gutter.
@@ -76,33 +76,41 @@ test("registered backdrops paint in order between the shell and its controls, an
       group: [history.left + history.width / 2, history.top + 3],
       floor: [toggle.left - 3, header.top + header.height / 2],
       pane: [main.left + main.width / 2, main.top + main.height / 2],
-      // The app dock's column, below its last tile: its own floor.
-      dock: [dock.left + dock.width / 2, dock.bottom - 3],
+      // Sidebar cards float like the conversation: opaque inside, with the
+      // backdrop showing in the gap below the first one.
+      dock: [card.left + card.width / 2, card.bottom - 3],
+      gap: [card.left + card.width / 2, card.bottom + 3],
     };
   });
   for (const mode of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme: mode });
     await expect(page.locator("html")).toHaveAttribute("data-color-mode", mode);
-    const [gutter, group, floor, pane, dock] = await paint(page, [
+    const [gutter, group, floor, pane, dock, gap] = await paint(page, [
       points.gutter,
       points.group,
       points.floor,
       points.pane,
       points.dock,
+      points.gap,
     ]);
     expect(near(gutter, blue), `${mode} gutter ${gutter}`).toBe(true);
     const app = await appColor(page);
     expect(near(group, app), `${mode} header group ${group}`).toBe(true);
     expect(near(floor, app), `${mode} header floor ${floor}`).toBe(true);
-    expect(near(dock, app), `${mode} dock floor ${dock}`).toBe(true);
+    expect(
+      near(dock, blue) || near(dock, red),
+      `${mode} sidebar card ${dock}`,
+    ).toBe(false);
+    expect(near(gap, blue), `${mode} sidebar gap ${gap}`).toBe(true);
     expect(near(pane, blue) || near(pane, red), `${mode} pane ${pane}`).toBe(
       false,
     );
   }
 
-  // The sidebar grip appears on hover. It sits on the seam of the joined
-  // sidebar and conversation surface, so no backdrop reaches it: the pixels
-  // beside it match the same seam well below it, with no gutter or floor.
+  // The sidebar grip appears on hover. It sits at the conversation card's edge,
+  // after the panel gap that separates it from the sidebar. That gap is a bare
+  // gutter, so the backdrop paints there as it does at the window's edge; the
+  // pixels on the card's side match the card well below the grip.
   const grip = page.getByRole("separator", { name: "Resize sidebar" });
   await grip.hover();
   await expect
@@ -117,16 +125,28 @@ test("registered backdrops paint in order between the shell and its controls, an
       y: box.top + box.height / 2,
     };
   });
-  for (const x of [seam.x - seam.half - 2, seam.x + seam.half + 1]) {
-    const [beside, below] = await paint(page, [
-      [x, seam.y],
-      [x, seam.y + 100],
-    ]);
-    expect(near(beside, below), `grip side ${beside} vs ${below}`).toBe(true);
-    expect(near(beside, blue) || near(beside, red), `grip ${beside}`).toBe(
-      false,
-    );
-  }
+  const [gutter, gapBeside, gapBelow, cardBeside, cardBelow] = await paint(
+    page,
+    [
+      points.gutter,
+      [seam.x - seam.half - 2, seam.y],
+      [seam.x - seam.half - 2, seam.y + 100],
+      [seam.x + seam.half + 1, seam.y],
+      [seam.x + seam.half + 1, seam.y + 100],
+    ],
+  );
+  expect(near(gapBeside, gapBelow), `gap ${gapBeside} vs ${gapBelow}`).toBe(
+    true,
+  );
+  expect(near(gapBeside, gutter), `gap ${gapBeside} vs ${gutter}`).toBe(true);
+  expect(
+    near(cardBeside, cardBelow),
+    `card side ${cardBeside} vs ${cardBelow}`,
+  ).toBe(true);
+  expect(
+    near(cardBeside, blue) || near(cardBeside, red),
+    `card side ${cardBeside}`,
+  ).toBe(false);
   await page.mouse.move(0, 0);
 
   for (const preference of [

@@ -5,6 +5,7 @@ import {
   validSidebarFilter,
 } from "../src/features/relay/sidebar-edits.ts";
 import { projectSidebarRecord } from "../src/features/relay/sidebar-registers.ts";
+import { defaultSidebarSort } from "../src/features/relay/sidebar-sort.ts";
 import { finalizeEvent, getPublicKey, nip44, verifyEvent } from "nostr-tools";
 import {
   projectSidebarPreferences,
@@ -207,7 +208,8 @@ function sectionChoice(
         : prepare(heads, intent, secret);
     if (
       field === "sort"
-        ? (confirmation.groups[intent.group] ?? "alpha") !== intent.mode
+        ? (confirmation.groups[intent.group] ??
+            defaultSidebarSort(intent.group)) !== intent.mode
         : confirmation.event
     )
       throw new Error(

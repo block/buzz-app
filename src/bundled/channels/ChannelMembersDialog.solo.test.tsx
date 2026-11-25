@@ -27,9 +27,8 @@ import { registerNavigationShortcuts } from "../../app/shortcuts";
 import { matchesEvent } from "../../features/relay/projection";
 import type { RelayEvent } from "../../features/relay/events";
 import { PublishRejected } from "../../features/relay/outbox";
-import { ChatSharedMark, soloSharedMarkId } from "./ChatSharedMark";
 import { ChannelMembersDialog } from "./ChannelMembersDialog";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import {
   formatPublicKey,
@@ -50,20 +49,11 @@ function SoloShare({
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
-  const list = useSyncExternalStore(
-    session.channels.subscribeList,
-    session.channels.list,
-  );
   return (
     <>
       <button ref={trigger} type="button" onClick={() => setOpen(true)}>
         Access
       </button>
-      <ChatSharedMark
-        session={session}
-        channel={list.channels.find((item) => item.id === channel.id)}
-        onOpen={() => setOpen(true)}
-      />
       {open && (
         <ChannelMembersDialog
           session={session}
@@ -445,7 +435,7 @@ function fixture(
   };
 }
 
-it("shows Public without offering Public and changes its admission to Guest", async () => {
+it("offers Public for a public Solo chat and changes its admission to Guest", async () => {
   const t = fixture(true, { visibility: "public", joinRole: "member" });
   await t.ready();
   t.mount();
@@ -461,10 +451,10 @@ it("shows Public without offering Public and changes its admission to Guest", as
     (await screen.findAllByRole("option")).map((option) =>
       option.getAttribute("aria-label"),
     ),
-  ).toEqual(["View only", "Private"]);
+  ).toEqual(["Public", "View only", "Private"]);
   await user.click(screen.getByRole("option", { name: "View only" }));
   expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
-    "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions. People already in the chat keep their access. You won’t be able to switch back to Public here.",
+    "Everyone in this community will be able to read this chat’s full history and Canvas, including its workspace folders and agent instructions. People already in the chat keep their access.",
   );
   expect(t.published).toEqual([]);
   await user.click(screen.getByRole("button", { name: "Change access" }));
@@ -499,7 +489,7 @@ it("opens a Solo chat for view-only visitors and makes it private again without 
     (await screen.findAllByRole("option")).map((option) =>
       option.getAttribute("aria-label"),
     ),
-  ).toEqual(["View only", "Private"]);
+  ).toEqual(["Public", "View only", "Private"]);
   await user.click(await screen.findByRole("option", { name: "View only" }));
   const confirmation = screen.getByRole("alertdialog", {
     name: "Change general access?",
@@ -1277,7 +1267,6 @@ it("leaves agents to mentions and shares a view-only link without enrolling or w
   expect(t.published.map((event) => event.kind)).toEqual([9]);
   expect(t.members.get(source)).not.toContain(bot.pubkey);
   expect(t.published[0]?.tags.some(([name]) => name === "p")).toBe(false);
-  expect(document.querySelector("[data-solo-shared]")).toBeNull();
 });
 
 it("shows loading and failed current access with refresh, never an empty roster", async () => {
@@ -1375,12 +1364,8 @@ it("groups agents and people by role while only verified additional humans mark 
   );
   expect(within(dialog).getAllByText("Helper Bot")).toHaveLength(1);
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
-  expect(document.querySelector("[data-solo-shared]")).toBeNull();
   t.addProfile(unknown, "Guest Human");
   await t.session.profiles.ensure([unknown.pubkey], "foreground");
-  await waitFor(() =>
-    expect(document.querySelector("[data-solo-shared]")).not.toBeNull(),
-  );
   await user.click(screen.getByRole("button", { name: "Access" }));
   dialog = screen.getByRole("dialog", { name: "Share access" });
   expect(
@@ -1389,36 +1374,6 @@ it("groups agents and people by role while only verified additional humans mark 
   expect(t.publish).not.toHaveBeenCalled();
 
   await user.click(within(dialog).getByRole("button", { name: "Done" }));
-});
-
-it("shows Shared on cold render from verified members and cached human evidence without administration demand", async () => {
-  const t = fixture();
-  t.members.set(source, [t.viewer.pubkey, t.aria.pubkey]);
-  await t.ready();
-  await t.session.profiles.ensure([t.aria.pubkey], "foreground");
-  const channel = t.channel();
-  expect(t.session.memberAdministration.snapshot(source)?.status).not.toBe(
-    "ready",
-  );
-  expect(channel?.cached).not.toBe(true);
-  // The sidebar's mark describes the row and opens its access list.
-  const onOpen = vi.fn();
-  render(
-    <>
-      <button type="button" aria-describedby={soloSharedMarkId(source)}>
-        Row
-      </button>
-      <ChatSharedMark session={t.session} channel={channel} onOpen={onOpen} />
-    </>,
-  );
-  expect(
-    screen.getByRole("button", { name: "Row" }),
-  ).toHaveAccessibleDescription("Shared");
-  await userEvent.click(screen.getByRole("button", { name: "Shared" }));
-  expect(onOpen).toHaveBeenCalledOnce();
-  expect(t.session.memberAdministration.snapshot(source)?.status).not.toBe(
-    "ready",
-  );
 });
 
 it("offers matching people and channels as labelled results without public keys", async () => {

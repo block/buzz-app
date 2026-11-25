@@ -640,7 +640,6 @@ html[data-keyboard-navigation]
 }
 .workflows-side {
   position: relative;
-  border-inline-start: 1px solid var(--border-standard);
 }
 .workflow-detail-host {
   height: 100%;
@@ -705,9 +704,6 @@ html[data-keyboard-navigation]
   }
   .workflows-side > [data-panel-resize] {
     display: none;
-  }
-  .workflows-side {
-    border-inline-start: 0;
   }
 }
 

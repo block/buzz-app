@@ -735,7 +735,7 @@ it("keeps the channel being read when a default channel arrives later", async ()
   expect(screen.queryByRole("textbox", { name: "Message #Beta" })).toBeNull();
 });
 
-it("keeps the computed channel across a New chat draft opened and closed meanwhile", async () => {
+it("keeps the computed channel across a New message draft opened and closed meanwhile", async () => {
   const viewer = keypair(),
     authority = keypair();
   const events: RelayEvent[] = [
@@ -745,7 +745,7 @@ it("keeps the computed channel across a New chat draft opened and closed meanwhi
   const { owner, scope, visit } = workspace(events, viewer, authority);
   await screen.findByRole("textbox", { name: "Message #Alpha" });
   visit(soloDraftTarget(scope));
-  await screen.findByRole("region", { name: "New chat" });
+  await screen.findByRole("region", { name: "New message" });
   events.push(
     roster(authority, "beta", [viewer.pubkey]),
     metadata(authority, "beta", "Beta", undefined, [

@@ -1650,6 +1650,43 @@ describe("starting a Solo chat", () => {
     expect(test.channels.abandon).not.toHaveBeenCalled();
   });
 
+  it("opens a View only conversation to readers, then lets only members post", async () => {
+    const test = setup();
+    test.resolve.mockImplementation(async () => {
+      test.setList(listed([viewer, agent]));
+    });
+    const { ready } = test.service.start(
+      id,
+      "Work",
+      [agent],
+      undefined,
+      false,
+      undefined,
+      {
+        solo: false,
+        visibility: "view-only",
+      },
+    );
+    expect(vi.mocked(test.outbox.send).mock.calls[0]?.[0].tags).toContainEqual([
+      "visibility",
+      "open",
+    ]);
+    expect(test.channels.start).toHaveBeenCalledWith(
+      expect.objectContaining({ visibility: "public", joinRole: "guest" }),
+    );
+    await ready;
+    await flush();
+    expect(test.outbox.send).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(test.outbox.send).mock.calls[1]?.[0]).toEqual({
+      kind: 9002,
+      content: "",
+      tags: [
+        ["h", id],
+        ["join_role", "guest"],
+      ],
+    });
+  });
+
   it("takes events once the create is OK, without waiting for the chat to confirm", async () => {
     const test = setup();
     let confirm = () => {};

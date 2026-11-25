@@ -109,36 +109,33 @@ export function SoloRegions({
   if (!service) return fallback ?? null;
   return (
     <>
+      {/* Each region renders its card directly, unwrapped, so the cards'
+          sibling gap rules reach it like every other card. */}
       {regions.map((region, index) => (
-        <div
+        <RegionFrame
           key={`${region.key}:${snapshot.binding?.incarnation ?? "recovery"}`}
-        >
-          <RegionFrame
-            region={region}
-            service={service}
-            session={session}
-            scope={scope}
-            navigator={navigator}
-            pendingClick={pendingClick}
-            target={target}
-            sidebar={sidebar}
-            move={(offset) => {
-              const ids = regions.map((item) => `solo-region:${item.key}`);
-              ids.splice(index, 1);
-              ids.splice(index + offset, 0, `solo-region:${region.key}`);
-              sidebar.setContributionOrder([
-                ...sidebar.contributionOrder.filter(
-                  (key) => !ids.includes(key),
-                ),
-                ...ids,
-              ]);
-            }}
-            first={index === 0}
-            last={index === regions.length - 1}
-            ordinary={index === primary ? ordinary : undefined}
-            composeOrdinary={index === primary ? composeOrdinary : undefined}
-          />
-        </div>
+          region={region}
+          service={service}
+          session={session}
+          scope={scope}
+          navigator={navigator}
+          pendingClick={pendingClick}
+          target={target}
+          sidebar={sidebar}
+          move={(offset) => {
+            const ids = regions.map((item) => `solo-region:${item.key}`);
+            ids.splice(index, 1);
+            ids.splice(index + offset, 0, `solo-region:${region.key}`);
+            sidebar.setContributionOrder([
+              ...sidebar.contributionOrder.filter((key) => !ids.includes(key)),
+              ...ids,
+            ]);
+          }}
+          first={index === 0}
+          last={index === regions.length - 1}
+          ordinary={index === primary ? ordinary : undefined}
+          composeOrdinary={index === primary ? composeOrdinary : undefined}
+        />
       ))}
       {primary < 0 ? fallback : null}
     </>
@@ -178,7 +175,6 @@ function RegionFrame({
   const source = region.source;
   const [actionError, setActionError] = useState(false);
   const [revealRequest, setRevealRequest] = useState<string>();
-  const root = useRef<HTMLDivElement>(null);
   const current =
     target.kind === "conversation" &&
     relayPartition(target.scope.communityOrigin, target.scope.viewer) === scope
@@ -186,7 +182,10 @@ function RegionFrame({
       : undefined;
   const sectionKey = `solo-region:${region.key}`;
   useLayoutEffect(() => {
-    const node = root.current;
+    // The card itself, so focus inside it can recover when the region leaves.
+    const node = document.querySelector(
+      `[data-sidebar-section="${CSS.escape(sectionKey)}"]`,
+    );
     return () => {
       if (!node?.contains(document.activeElement)) return;
       // Destinations restore their own same-row/neighbor focus before a heading fallback.
@@ -407,27 +406,23 @@ function RegionFrame({
     : body;
   return (
     <RegionDestinationContext.Provider value={destination}>
-      <div ref={root}>
-        <SidebarSection
-          sectionKey={sectionKey}
-          title={region.title}
-          icon={source?.icon}
-          open={open}
-          onToggle={(open) => sidebar.toggle(sectionKey, open)}
-          move={{
-            ...(!first ? { up: () => move(-1) } : {}),
-            ...(!last ? { down: () => move(1) } : {}),
-          }}
-          hideMoreActions={first && last}
-          headerActions={headerActions}
-          headerNotice={headerNotice}
-        >
-          <RegionChannelGroups session={session}>
-            {contents}
-          </RegionChannelGroups>
-        </SidebarSection>
-        {composing ? null : ordinary}
-      </div>
+      <SidebarSection
+        sectionKey={sectionKey}
+        title={region.title}
+        icon={source?.icon}
+        open={open}
+        onToggle={(open) => sidebar.toggle(sectionKey, open)}
+        move={{
+          ...(!first ? { up: () => move(-1) } : {}),
+          ...(!last ? { down: () => move(1) } : {}),
+        }}
+        hideMoreActions={first && last}
+        headerActions={headerActions}
+        headerNotice={headerNotice}
+      >
+        <RegionChannelGroups session={session}>{contents}</RegionChannelGroups>
+      </SidebarSection>
+      {composing ? null : ordinary}
     </RegionDestinationContext.Provider>
   );
 }

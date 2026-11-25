@@ -259,7 +259,7 @@ describe("composeBase", () => {
     // root, so a thread session claims nothing about huddles.
     expect(model({ scope: "thread", place: "thread" })).not.toMatch(/huddle/i);
     expect(model({ scope: "thread", place: "conversation" })).toContain(
-      "This session is one whole conversation: a DM, a personal chat, a huddle",
+      "This session is one whole conversation: a DM, a conversation with only you and your agents, a huddle",
     );
     expect(model({ scope: "channel", place: "conversation" })).toContain(
       "You are one per-channel session",

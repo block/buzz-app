@@ -50,6 +50,9 @@ export type ChannelSummary = Readonly<{
   /** `system` (NIP-CL): access control for app data; never in list().
    * `solo`: a stream with the Solo label (`SOLO_LABEL`), regardless of visibility. */
   channelType?: "stream" | "forum" | "dm" | "solo" | "system";
+  /** Relay-published picture URL from the signed metadata; absent when none is set.
+   * Owners and admins change it with kind 9002. */
+  picture?: string | undefined;
   /** Relay-authored channel visibility; private channels use restricted presentation. */
   private?: true;
   /** Relay-advertised default: the relay joins new community members here. */
@@ -123,6 +126,25 @@ export type MembershipChange = Readonly<{
   actor: string;
   target: string;
 }>;
+/** Relay-authored notice that a DM was named (it is now a channel) or that
+ * its history moved into another conversation. `history_moved` appears in
+ * both the source (`from`) and the destination (`to`); the row's channel says
+ * which. `count` is the moved messages, and `added` the people the move added. */
+export type ConversationChange = Readonly<
+  | { type: "dm_named"; actor: string; name: string }
+  | {
+      type: "history_moved";
+      actor: string;
+      from: string;
+      to: string;
+      cut: string;
+      count: number;
+      added: readonly string[];
+    }
+>;
+/** Anything the relay says about a conversation as a quiet row, never as a
+ * user message: who joined or left, that it was named, or that history moved. */
+export type SystemChange = MembershipChange | ConversationChange;
 export type ChannelMessage = Readonly<{
   id: string;
   channelId: string;
@@ -171,7 +193,7 @@ export type ChannelMessage = Readonly<{
     description?: string | undefined;
     truncated: boolean;
   }>;
-  membership?: MembershipChange;
+  membership?: SystemChange;
   /** Signed `plugin-request` tag: an agent's plugin change request, by id.
    * Untrusted display metadata; the device that holds the request decides. */
   pluginRequest?: Readonly<{ id: string }>;
@@ -233,6 +255,8 @@ export type ChannelList = Readonly<{
   rosterAsOf?: number;
   /** Initial Recent ordering observation, independent of roster/access readiness. */
   activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
+  /** The activity failure is relay recovery's to retry, not the sidebar's. */
+  activityTransient?: true;
   channels: readonly ChannelSummary[];
   error?: string;
 }>;
@@ -401,7 +425,7 @@ export interface ChannelQueries {
     channelId: string,
     options?: ChannelReadOptions,
   ): Promise<boolean>;
-  /** Lists a Solo chat this device is creating, as `pending`, until the
+  /** Lists a chat this device is creating, as `pending`, until the
    * relay's signed metadata and roster for it arrive. It has no history to
    * read meanwhile. Local display and intent only; never saved. */
   start?(
@@ -411,6 +435,10 @@ export interface ChannelQueries {
       members: readonly string[];
       labels: readonly string[];
       ttlSeconds?: number | undefined;
+      /** A conversation with people lists as a stream; otherwise Solo. */
+      channelType?: "solo" | "stream" | undefined;
+      visibility?: "private" | "public" | undefined;
+      joinRole?: "guest" | undefined;
     }>,
   ): void;
   /** Drops a started chat the relay did not confirm. */

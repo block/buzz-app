@@ -281,3 +281,71 @@ export function pageChoice(group, name) {
     .getByRole("option", { name, exact: true })
     .or(group.getByRole("row", { name, exact: true }));
 }
+
+/** A card's ••• button, which holds its structural actions and, under Filter,
+ * Sort and Layout, its view choices. */
+export function moreActionsButton(scope, title) {
+  return scope.getByRole("button", {
+    name: `More actions for ${title}`,
+    exact: true,
+  });
+}
+
+/** A menu by name, skipping one still closing. */
+export function openMenu(page, name) {
+  return page
+    .getByRole("menu", { name, exact: true })
+    .and(page.locator(":not([data-closed])"));
+}
+
+/** Opens a card's ••• menu, then its Sort submenu, which holds the sort
+ * choices and Unreads first. Choosing in it keeps the menus open. */
+export async function openSortMenu(page, title, scope = page) {
+  const name = "Sort";
+  await clickSidebarHeadingAction(moreActionsButton(scope, title));
+  await expect(openMenu(page, `More actions for ${title}`)).toBeVisible();
+  await page
+    .getByRole("menuitem", { name, exact: true })
+    .and(page.locator(":not([data-closed])"))
+    .click();
+  const menu = openMenu(page, `${name} ${title}`);
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+/** Escapes until no menu or submenu is open. Each Escape gets time to finish
+ * closing before the next, which could otherwise reach something else. */
+export async function closeMenus(page) {
+  const menus = page.getByRole("menu");
+  for (let i = 0; i < 3; i++) {
+    if ((await menus.count()) === 0) return;
+    await page.keyboard.press("Escape");
+    try {
+      await expect(menus).toHaveCount(0, { timeout: 1000 });
+      return;
+    } catch {}
+  }
+  await expect(menus).toHaveCount(0);
+}
+
+/** The Sort submenu's Unreads first checkbox. */
+export function unreadsFirst(menu) {
+  return menu.getByRole("menuitemcheckbox", {
+    name: "Unreads first",
+    exact: true,
+  });
+}
+
+/** Expects an open Sort menu to have `name` chosen. */
+export async function expectViewOption(menu, name) {
+  await expect(
+    menu.getByRole("menuitemradio", { name, exact: true }),
+  ).toBeChecked();
+}
+
+/** Picks one sort order, such as Recent or A–Z, then closes the menus. */
+export async function chooseViewOption(page, title, name, scope = page) {
+  const menu = await openSortMenu(page, title, scope);
+  await menu.getByRole("menuitemradio", { name, exact: true }).click();
+  await closeMenus(page);
+}

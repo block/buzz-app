@@ -216,11 +216,11 @@ test("hovering the sidebar Activity row previews recent conversations and opens 
       .getByRole("region", { name: "Activity", exact: true })
       .getByRole("switch", { name: "Unread", exact: true }),
   ).not.toBeChecked();
-  // The selected row's label is visible, so hovering it shows only the
-  // ordinary title hint, never the card.
+  // The selected row's label is visible, so hovering it shows nothing: no
+  // card and no system title hint.
   await page.mouse.move(1200, 880);
   await inboxRow.hover();
-  await expect(inboxRow).toHaveAttribute("title", "Activity");
+  await expect(inboxRow).not.toHaveAttribute("title");
   await expect(card).toHaveCount(0);
   await page.screenshot({
     path: testInfo.outputPath("selected-inbox-row.png"),

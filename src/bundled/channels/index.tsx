@@ -13,7 +13,12 @@ import { ConversationWorkspace, PageTabs } from "./PageTabs";
 import { registerCanvas } from "./canvas-panel";
 import { registerPins } from "./pins-panel";
 import { ChannelTemplateSettings } from "./ChannelTemplateSettings";
-import { ChatCircleIcon, CopyIcon } from "../../shared/design-system/icons";
+import {
+  ChatCircleIcon,
+  ChatsCircleIcon,
+  CopyIcon,
+} from "../../shared/design-system/icons";
+import { NameConversation, canStartConversationFrom } from "./NameConversation";
 import { isApplePlatform } from "../../features/shortcuts/format";
 import type { ArchiveShortcut, ReadShortcut } from "./ChannelsPage";
 import {
@@ -88,7 +93,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const navigator = ctx.navigation;
   ctx.conversation.registerMessageAction({
     id: "start-solo-chat",
-    title: "Start Solo chat",
+    title: "New message about this",
     placement: "menu",
     icon: () => <ChatCircleIcon size={16} aria-hidden="true" />,
     matches: canStartLinkedChatFrom,
@@ -100,6 +105,24 @@ export const apply: PluginModule["apply"] = (ctx) => {
         message={message}
       />
     ),
+  });
+  ctx.conversation.registerMessageAction({
+    id: "new-conversation-from-here",
+    title: "New conversation from here",
+    icon: () => <ChatsCircleIcon size={16} aria-hidden="true" />,
+    matches: canStartConversationFrom,
+    component: ({ message, session, close }) => {
+      const channel = session.channels.get?.(message.channelId);
+      return channel ? (
+        <NameConversation
+          session={session}
+          navigation={navigator}
+          channel={channel}
+          from={message}
+          close={close}
+        />
+      ) : null;
+    },
   });
   const panels = ctx.panels;
   const archive: ArchiveShortcut = {};
@@ -165,7 +188,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const membership = ctx.adminAccess.membership;
   ctx.settingsCards.register({
     id: "templates",
-    title: "Channel templates",
+    title: "Conversation templates",
     group: "App",
     icon: CopyIcon,
     component: ({ active }) => (

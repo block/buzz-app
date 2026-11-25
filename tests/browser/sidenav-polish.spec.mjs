@@ -56,12 +56,16 @@ test("sidebar scrollbar stays close to the divider without clipping its native t
       rightInset: panelBounds.right - bounds.right,
       clipped: bounds.right > frame.getBoundingClientRect().right,
       paddingTop: Number.parseFloat(getComputedStyle(viewport).paddingTop),
+      scrollbarWidth: viewport.offsetWidth - viewport.clientWidth,
     };
   });
+  // Cards scroll without a visible scrollbar, and nothing above the first card
+  // adds space, so its top meets the conversation's.
   expect(geometry).toEqual({
     rightInset: 0,
     clipped: false,
-    paddingTop: 8,
+    paddingTop: 0,
+    scrollbarWidth: 0,
   });
 });
 
@@ -74,11 +78,12 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const alpha = sidebar.getByRole("button", { name: "Alpha", exact: true });
-  const destinations = ["Bestie", "Reminders"].map((name) =>
+  // Every page is a row in the Plugins card of the same sidebar.
+  const pageRow = (name) =>
     page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name, exact: true }),
-  );
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name, exact: true });
+  const destinations = ["Bestie", "Reminders"].map(pageRow);
   const before = await alpha.boundingBox();
   expect(before.height).toBe(28);
   const viewportBox = await sidebar.boundingBox();
@@ -104,7 +109,15 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
       const viewportRect = viewport.getBoundingClientRect();
       const scrollbarWidth = viewport.offsetWidth - viewport.clientWidth;
       const contentRight = viewportRect.right - scrollbarWidth;
+      // The card's edge and padding are the row's inset on both sides.
+      const card = getComputedStyle(row.closest("[data-sidebar-card]"));
       return {
+        cardInset:
+          Number.parseFloat(card.borderLeftWidth) +
+          Number.parseFloat(card.paddingLeft),
+        cardInsetEnd:
+          Number.parseFloat(card.borderRightWidth) +
+          Number.parseFloat(card.paddingRight),
         fillInset:
           contentRight - (rowRect.right - Number.parseFloat(fillStyle.right)),
         leftContentInset: rowRect.left - viewportRect.left,
@@ -117,10 +130,13 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
       };
     });
     expect(visual.scrollbarWidth).toBe(visual.offsetWidth - visual.clientWidth);
-    expect(visual.leftContentInset).toBe(0);
-    const unusedGutter = Math.max(0, 6 - visual.scrollbarWidth);
-    expect(visual.rightContentInset).toBe(unusedGutter);
-    expect(visual.fillInset).toBe(4 + unusedGutter);
+    // Cards scroll without a visible scrollbar, so rows sit the card's inset
+    // from both edges and their fill fills the row, reaching the card's padding.
+    expect(visual.scrollbarWidth).toBe(0);
+    expect(visual.cardInset).toBeGreaterThan(0);
+    expect(visual.leftContentInset).toBe(visual.cardInset);
+    expect(visual.rightContentInset).toBe(visual.cardInsetEnd);
+    expect(visual.fillInset).toBe(visual.cardInsetEnd);
     expect(Number.parseFloat(visual.radius)).toBeGreaterThan(0);
     expect(visual.overflow).toBe("visible");
   };
@@ -173,15 +189,12 @@ test("compact sidenav keeps its geometry across persistent page navigation", asy
   await expect(menu).toHaveCount(0);
   await expect(alpha).toBeFocused();
   const node = await sidebar.elementHandle();
-  await page
-    .getByRole("navigation", { name: "Apps dock", exact: true })
-    .getByRole("tab", { name: "Agents", exact: true })
-    .first()
-    .click();
+  await pageRow("Agents").click();
   await expect(
     page.getByRole("region", { name: "Agents", exact: true }),
   ).toBeVisible();
-  await expect(sidebar).toHaveCount(0);
+  // Agents is listed in the Messages sidebar, which stays mounted beside it.
+  await expect(sidebar).toBeVisible();
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
   await openPage(page, "Messages");
   await expect(alpha).toBeVisible();
@@ -222,6 +235,20 @@ test("section disclosure toggles content and honors reduced motion", async ({
   const expanded = await section.evaluate(
     (el) => el.getBoundingClientRect().height,
   );
+  // Collapsed, the card is its 32px heading plus the card's own padding and edge.
+  const collapsed = await section.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return (
+      el
+        .querySelector(":scope > .navigation-section-heading")
+        .getBoundingClientRect().height +
+      Number.parseFloat(style.paddingTop) +
+      Number.parseFloat(style.paddingBottom) +
+      Number.parseFloat(style.borderTopWidth) +
+      Number.parseFloat(style.borderBottomWidth)
+    );
+  });
+  expect(collapsed).toBeGreaterThan(32);
   for (const opening of [false, true]) {
     await summary.click();
     if (opening) await expect(details).toHaveAttribute("open", "");
@@ -230,7 +257,7 @@ test("section disclosure toggles content and honors reduced motion", async ({
     else await expect(content).toHaveAttribute("inert", "");
     await expect
       .poll(() => section.evaluate((el) => el.getBoundingClientRect().height))
-      .toBe(opening ? expanded : 32);
+      .toBe(opening ? expanded : collapsed);
   }
   await page.emulateMedia({ reducedMotion: "reduce" });
   await summary.click();
@@ -245,7 +272,7 @@ test("section disclosure toggles content and honors reduced motion", async ({
   expect(durations).toEqual(["0s", "0s"]);
   expect(
     await section.evaluate((el) => el.getBoundingClientRect().height),
-  ).toBe(32);
+  ).toBe(collapsed);
 });
 
 // Header pages swap for the overflow menu at narrow widths.
@@ -353,6 +380,21 @@ test("shell toggle restores the Messages sidebar", async ({ page, app }) => {
     expect(help.overflow).toBe("visible");
   }
   const sidebarNode = await sidebar.elementHandle();
+  // The gutter beside the sidebar is the panel gap it keeps from the
+  // conversation's card, plus whatever room the resize handle takes.
+  const gutter = () =>
+    handle.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const sidebar = getComputedStyle(
+        element.parentElement.querySelector(".shell-sidebar"),
+      );
+      return (
+        element.getBoundingClientRect().width +
+        Number.parseFloat(style.marginLeft) +
+        Number.parseFloat(style.marginRight) +
+        Number.parseFloat(sidebar.marginRight)
+      );
+    });
   let expandedWidth;
   for (const viewportWidth of [1440, 800]) {
     if (viewportWidth === 800) await handle.press("End");
@@ -360,14 +402,7 @@ test("shell toggle restores the Messages sidebar", async ({ page, app }) => {
     expandedWidth = await sidebar.evaluate(
       (node) => node.closest(".shell-sidebar").getBoundingClientRect().width,
     );
-    const gutterWidth = await handle.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return (
-        element.getBoundingClientRect().width +
-        Number.parseFloat(style.marginLeft) +
-        Number.parseFloat(style.marginRight)
-      );
-    });
+    const gutterWidth = await gutter();
     const track = await shellNavigation.evaluate((node) => {
       const style = getComputedStyle(node);
       return {
@@ -489,14 +524,7 @@ test("shell toggle restores the Messages sidebar", async ({ page, app }) => {
     )
     .toBe(520);
   expandedWidth = 520;
-  const gutterWidth = await handle.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return (
-      element.getBoundingClientRect().width +
-      Number.parseFloat(style.marginLeft) +
-      Number.parseFloat(style.marginRight)
-    );
-  });
+  const gutterWidth = await gutter();
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect
@@ -576,8 +604,8 @@ test("Bestie stays clickable while its invitation artwork rotates", async ({
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await page.clock.install();
   await open(page, app);
-  const dock = page.getByRole("navigation", { name: "Apps dock" });
-  const bestie = dock.getByRole("tab", {
+  const pages = page.getByRole("navigation", { name: "Pages", exact: true });
+  const bestie = pages.getByRole("button", {
     name: "Create an agent",
     exact: true,
   });
@@ -601,14 +629,18 @@ test("Bestie stays clickable while its invitation artwork rotates", async ({
     await page.mouse.up();
     await page.clock.resume();
   }
-  await expect(bestie).toHaveAttribute("aria-selected", "true");
+  await expect(bestie).toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("region", { name: "Bestie", exact: true }),
   ).toBeVisible();
-  await dock.getByRole("tab", { name: "Messages", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "Alpha", exact: true })
+    .click();
+  await expect(bestie).not.toHaveAttribute("aria-current");
   await bestie.focus();
   await page.keyboard.press("Enter");
-  await expect(bestie).toHaveAttribute("aria-selected", "true");
+  await expect(bestie).toHaveAttribute("aria-current", "page");
 });
 
 // A real grid/overlay measurement is needed: DOM presence misses implicit columns.
@@ -620,7 +652,8 @@ test.extend({ companionFixture: true })(
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
-    const pages = page.getByRole("navigation", { name: "Apps dock" });
+    // Every page is a row in the Messages sidebar's Plugins card.
+    const pages = page.getByRole("navigation", { name: "Pages", exact: true });
     const launcher = page.locator(
       '.shell-header button[aria-label="Companion fixture"]',
     );
@@ -655,19 +688,15 @@ test.extend({ companionFixture: true })(
       if (await show.isVisible()) await show.click();
     };
     const selectChannel = async (name) => {
-      await pages.getByRole("tab", { name: "Messages", exact: true }).click();
       await showNavigation();
       await sidebar.getByRole("button", { name, exact: true }).click();
     };
     const openPage = async (name) => {
-      if (name === "Activity") {
-        // Activity is a row at the top of the Messages sidebar.
-        await pages.getByRole("tab", { name: "Messages", exact: true }).click();
-        await showNavigation();
-        await activityRow(page).click();
-      } else
+      await showNavigation();
+      if (name === "Activity") await activityRow(page).click();
+      else
         await pages
-          .getByRole("tab", {
+          .getByRole("button", {
             name: name === "Bestie" ? "Create an agent" : name,
             exact: true,
           })

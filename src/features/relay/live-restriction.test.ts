@@ -80,6 +80,7 @@ async function setup(singletons = false) {
       ["archived", "true"],
     ],
   });
+  // Chats lists before Favorites, so the unstarred row comes first.
   const rows = () =>
     sidebarSections(owner.session.channels.list().channels, {
       starred: ["a"],
@@ -104,7 +105,7 @@ async function setup(singletons = false) {
     }
     await settle();
     expect(wire.pending).toHaveLength(0);
-    expect(rows()).toEqual(["a", "b"]);
+    expect(rows()).toEqual(["b", "a"]);
     const route = socket
       .requests()
       .find(([, , filter]) => filter["#h"]?.includes("a"));
@@ -138,7 +139,7 @@ it.each(["archived", "unchanged", "removed"])(
       // Deliberately omit the archive EVENT. CLOSED alone is not archive authority.
       await h.close();
       await settle();
-      expect(h.rows()).toEqual(["a", "b"]);
+      expect(h.rows()).toEqual(["b", "a"]);
       const refresh = h.wire.next();
       expect(refresh.filters[0]?.kinds).toEqual([39002]);
       refresh.respond(
@@ -151,7 +152,7 @@ it.each(["archived", "unchanged", "removed"])(
         outcome === "archived" ? [h.archived, ...h.active.slice(1)] : h.active,
       );
       await settle();
-      expect(h.rows()).toEqual(outcome === "unchanged" ? ["a", "b"] : ["b"]);
+      expect(h.rows()).toEqual(outcome === "unchanged" ? ["b", "a"] : ["b"]);
       const channel = h.owner.session.channels
         .list()
         .channels.find(({ id }) => id === "a");
@@ -191,7 +192,7 @@ it.each(["roster", "metadata"])(
       }
       h.wire.next().fail(new Error("offline"));
       await settle();
-      expect(h.rows()).toEqual(["a", "b"]);
+      expect(h.rows()).toEqual(["b", "a"]);
       expect(h.owner.session.live.snapshot().roster.state).toBe("error");
       h.live.state(h.owner.session.live.snapshot());
       await settle();

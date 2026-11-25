@@ -56,8 +56,8 @@ test("cold app startup pins fresh defaults and activates opt-in Bestie setup", a
   });
   await openPage(fresh, "Messages");
   const destination = fresh
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Create an agent", exact: true });
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Create an agent", exact: true });
   await expect(destination).toBeVisible();
   await destination.click();
   const setup = fresh.getByRole("region", { name: "Bestie" });
@@ -119,8 +119,8 @@ test("an untouched client profile keeps its defaults and can opt in to Docs", as
     await closeSettings(upgraded);
   }
   const docs = upgraded
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Docs", exact: true });
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Docs", exact: true });
   await expect(docs).toHaveCount(0);
   await plugins(upgraded);
   const action = pluginAction(upgraded, "Docs");
@@ -147,8 +147,8 @@ test("an existing profile can opt in to Bestie and keep its choice across reload
   await openPage(page, "Messages");
   await expect(
     page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name: "Create an agent", exact: true }),
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Create an agent", exact: true }),
   ).toHaveCount(0);
   await plugins(page);
   const bestie = pluginAction(page, "Bestie");
@@ -169,8 +169,8 @@ test("an existing profile can opt in to Bestie and keep its choice across reload
       .getByRole("button", { name: "Create an agent", exact: true }),
   ).toHaveCount(0);
   const destination = page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Create an agent", exact: true });
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Create an agent", exact: true });
   await expect(destination).toBeVisible();
   await destination.click();
   const bestiePage = page.getByRole("region", { name: "Bestie" });
@@ -191,8 +191,8 @@ test("an existing profile can opt in to Bestie and keep its choice across reload
   await closeSettings(page);
   await expect(
     page
-      .getByRole("navigation", { name: "Apps dock" })
-      .getByRole("tab", { name: "Create an agent", exact: true }),
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Create an agent", exact: true }),
   ).toHaveCount(0);
 });
 

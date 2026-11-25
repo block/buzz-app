@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { Panel } from "../../shared/design-system/ui/Panel";
 import { usePanelSplit } from "./usePanelSplit";
 import { PanelDock } from "./PanelDock";
 import styles from "./Panels.module.css";
@@ -33,7 +34,13 @@ export function PanelFrame({
       style={split.style}
       className={`${styles.frame} ${styles.splitMotion}`}
     >
-      <div className={styles.page}>{children}</div>
+      {/* The page floats as its own card beside the companion; a page with
+          its own split steps this card back so its regions float instead. */}
+      <div className={styles.page}>
+        <Panel as="div" flat>
+          {children}
+        </Panel>
+      </div>
       <PanelDock
         open={!!companion}
         className={styles.dock}

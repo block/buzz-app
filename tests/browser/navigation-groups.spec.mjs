@@ -1,5 +1,11 @@
 import { openChannelDetails } from "./channel-details.mjs";
-import { openPage, selectCommunity } from "./navigation.mjs";
+import {
+  closeMenus,
+  moreActionsButton,
+  openMenu,
+  openPage,
+  selectCommunity,
+} from "./navigation.mjs";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { holdReadingFocus } from "./reading.mjs";
@@ -29,6 +35,25 @@ async function openMove(page, row, channelName = "Beta") {
   await expect(menu).toBeVisible();
   return menu;
 }
+/**
+ * Moves the page's calendar to shortly after the fixture's November 2023
+ * history, with time still running. Only dates move: Playwright's clock also
+ * fakes animation time, which drifts from the browser's own animation clock
+ * after a reload and leaves WebKit's row exits unfinished.
+ */
+const nearFixtureHistory = (page) =>
+  page.addInitScript((target) => {
+    const RealDate = Date;
+    const offset = target - RealDate.now();
+    globalThis.Date = class extends RealDate {
+      constructor(...args) {
+        super(...(args.length ? args : [RealDate.now() + offset]));
+      }
+      static now() {
+        return RealDate.now() + offset;
+      }
+    };
+  }, 1_700_100_000_000);
 const rowIn = (page, section) =>
   page.locator(`[data-sidebar-section="${section}"] [data-channel-id="beta"]`);
 const sidebar = (page) =>
@@ -155,13 +180,13 @@ test("a failed first legacy read keeps verified preferences and disables only wo
     move.getByRole("menuitemradio", { name: "Team", exact: true }),
   ).toBeDisabled();
   await move
-    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .getByRole("menuitemradio", { name: "Favorites", exact: true })
     .click();
   await saved(page, app, 1);
   await expect(rowIn(page, "starred")).toBeVisible();
   await openMove(page, rowIn(page, "starred"));
   await page
-    .getByRole("menuitem", { name: "Remove from Starred", exact: true })
+    .getByRole("menuitem", { name: "Remove from Favorites", exact: true })
     .click();
   await saved(page, app, 2);
   await expect(rowIn(page, "group:work")).toBeVisible();
@@ -202,7 +227,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   });
   await expect(menu).toBeVisible();
   await expect(
-    menu.getByRole("menuitemradio", { name: "Starred", exact: true }),
+    menu.getByRole("menuitemradio", { name: "Favorites", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("ArrowLeft");
   await expect(
@@ -216,7 +241,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   // Checked state renders before Base UI transfers focus into the reopened
   // submenu. Establish keyboard ownership before sending its next command.
   await expect(
-    menu.getByRole("menuitemradio", { name: "Starred", exact: true }),
+    menu.getByRole("menuitemradio", { name: "Favorites", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("End");
   await expect(
@@ -224,7 +249,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   ).toBeFocused();
   await page.keyboard.press("Home");
   await expect(
-    menu.getByRole("menuitemradio", { name: "Starred", exact: true }),
+    menu.getByRole("menuitemradio", { name: "Favorites", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("menuitemradio", { name: "Work" })).toBeFocused();
@@ -311,19 +336,14 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   // notices (Loading conversations…) that shift the sidebar after a reload.
   // Pointer opening is covered by navigation-sorting.
   const openSort = async () => {
-    await page.getByRole("button", { name: "More actions for Team" }).focus();
+    await moreActionsButton(page, "Team").focus();
     await page.keyboard.press("Enter");
-    // Opening during a preference refresh can skip the disabled Create item.
-    // Establish keyboard ownership before moving to Sort in either case.
-    await expect(
-      page
-        .getByRole("menu", { name: "More actions for Team", exact: true })
-        .locator('[role="menuitem"][data-highlighted]'),
-    ).toBeVisible();
-    const sort = page.getByRole("menuitem", { name: "Sort", exact: true });
-    await sort.focus();
+    await expect(openMenu(page, "More actions for Team")).toBeVisible();
+    await page.getByRole("menuitem", { name: "Sort", exact: true }).focus();
     await page.keyboard.press("ArrowRight");
-    return page.getByRole("menu", { name: "Sort Team", exact: true });
+    const options = openMenu(page, "Sort Team");
+    await expect(options).toBeVisible();
+    return options;
   };
   const sortHeld = gate(),
     sortStarted = gate();
@@ -335,7 +355,9 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   let sorted, moved;
   try {
     const sortMenu = await openSort();
+    // An unsaved card reads as A–Z, so Recent is the choice that saves.
     await sortMenu.getByRole("menuitemradio", { name: "Recent" }).click();
+    await closeMenus(page);
     await sortStarted.promise;
     const moveMenu = await openMove(page, rowIn(page, "channels"));
     await moveMenu
@@ -347,8 +369,7 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
     await expect(
       pendingSort.getByRole("menuitemradio", { name: "Recent" }),
     ).toHaveAttribute("aria-checked", "true");
-    await page.keyboard.press("Escape");
-    await page.keyboard.press("Escape");
+    await closeMenus(page);
   } finally {
     // Both writes are held behind the sort gate. Start their response waits
     // immediately before release, not before the pending UI interactions.
@@ -457,7 +478,7 @@ test("Starred stays visible when empty and accepts saved drag moves", async ({
   const starred = rowIn(page, "starred");
   const alpha = stars.locator('[data-channel-id="alpha"]');
   const menu = await openMove(page, alpha, "Alpha");
-  await menu.getByRole("menuitem", { name: "Remove from Starred" }).click();
+  await menu.getByRole("menuitem", { name: "Remove from Favorites" }).click();
   await saved(page, app, 1);
   await expect(stars.locator("summary")).toBeVisible();
   await expect(stars.locator("[data-channel-id]")).toHaveCount(0);
@@ -482,7 +503,7 @@ test("Starred stays visible when empty and accepts saved drag moves", async ({
   );
   await openMove(page, alphaInChannels, "Alpha");
   await menu
-    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .getByRole("menuitemradio", { name: "Favorites", exact: true })
     .click();
   await saved(page, app, 2);
   await expect(alpha).toBeVisible();
@@ -642,7 +663,7 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   });
   try {
     await menu
-      .getByRole("menuitemradio", { name: "Starred", exact: true })
+      .getByRole("menuitemradio", { name: "Favorites", exact: true })
       .click();
     await started.promise;
     await expect(menu).toHaveCount(0);
@@ -669,7 +690,7 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   await saved(page, app, 1);
   await openMove(page, starred);
   await menu
-    .getByRole("menuitem", { name: "Remove from Starred", exact: true })
+    .getByRole("menuitem", { name: "Remove from Favorites", exact: true })
     .click();
   await expect(rowIn(page, "channels")).toBeFocused();
   await saved(page, app, 3);
@@ -684,7 +705,7 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   await expect(beta).toHaveCount(0);
   await openMove(page, rowIn(page, "channels"));
   await menu
-    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .getByRole("menuitemradio", { name: "Favorites", exact: true })
     .click();
   await expect(starred).toBeFocused();
   await saved(page, app, 4);
@@ -702,13 +723,13 @@ test("optimistic Star moves close the menu before the write, roll back with visi
   });
   await openMove(page, beta);
   await menu
-    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .getByRole("menuitemradio", { name: "Favorites", exact: true })
     .click();
   await expect(starred).toBeFocused();
   await saved(page, app, 7);
   await openMove(page, starred);
   const selected = menu.getByRole("menuitemradio", {
-    name: "Starred",
+    name: "Favorites",
     exact: true,
   });
   await expect(selected).toHaveAttribute("aria-checked", "true");
@@ -756,7 +777,7 @@ test("dismissing a failed move restores keyboard focus to its placement or a sur
   const failMove = async () => {
     const menu = await openMove(page, beta);
     await menu
-      .getByRole("menuitemradio", { name: "Starred", exact: true })
+      .getByRole("menuitemradio", { name: "Favorites", exact: true })
       .click();
     await expect(error).toContainText("Relay request failed (502)");
     // The alert arrives with the rollback, but the optimistic Starred copy of
@@ -807,6 +828,10 @@ test("Create new supports cancel, moves before publication, and retries the same
   await page.addInitScript(() =>
     localStorage.setItem("buzz-appearance.v1", "dark"),
   );
+  // A workspace made here starts on the last 30 days; keep the page's
+  // calendar beside the fixture's November 2023 history so its rows stay
+  // in view.
+  await nearFixtureHistory(page);
   await open(page, app);
   const beta = rowIn(page, "group:work");
   await expect(beta).toBeVisible();
@@ -833,7 +858,7 @@ test("Create new supports cancel, moves before publication, and retries the same
   expect(app.report.sidebarPublications ?? []).toHaveLength(0);
   await openMove(page, beta);
   await page
-    .getByRole("menuitemradio", { name: "Starred", exact: true })
+    .getByRole("menuitemradio", { name: "Favorites", exact: true })
     .click();
   await expect(rowIn(page, "starred")).toBeFocused();
   await saved(page, app, 1);
@@ -1098,6 +1123,8 @@ const scrollTest = test.extend({
 scrollTest(
   "Workflows → Messages keeps saved groups, selected channel, and a visible entry's scroll on every frame without re-decoding",
   async ({ page, app }) => {
+    // Cards clip at ten rows, so the list only scrolls when the window is short.
+    await page.setViewportSize({ width: 1440, height: 520 });
     // The other saved community warms in the background during this journey
     // and decodes its own preferences, at a time that depends on runner load.
     // Only Primary's decoder is under test. Its startup decode passes through
@@ -1122,7 +1149,7 @@ scrollTest(
       await selectCommunity(page, "Primary");
       await expect(workGroup).toBeVisible();
       await expect(
-        sidebar.locator("summary", { hasText: /Starred$/ }),
+        sidebar.locator("summary", { hasText: /Favorites$/ }),
       ).toBeVisible();
     } finally {
       page.off("request", countStartup);
@@ -1146,7 +1173,14 @@ scrollTest(
     });
     expect(scroll).toBeGreaterThan(100);
     await openPage(page, "Workflows");
-    await expect(sidebar).toBeHidden();
+    // The sidebar stays beside app pages, keeping its scroll.
+    await expect(sidebar).toBeVisible();
+    // Opening the page revealed its own row at the top of the list. Scroll
+    // back to Beta's offset, as a reader would, before returning.
+    await sidebar.evaluate((element, top) => {
+      element.scrollTop = top;
+    }, scroll);
+    expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(scroll);
     let release;
     const held = new Promise((resolve) => {
       release = resolve;
@@ -1196,7 +1230,7 @@ scrollTest(
         frames.filter(
           (frame) =>
             !frame.groups.includes("Work") ||
-            !frame.groups.includes("Starred") ||
+            !frame.groups.includes("Favorites") ||
             Math.abs(frame.top - scroll) > 1,
         ),
         "No fallback grouping or top-of-list frame on warm return",
@@ -1214,10 +1248,11 @@ scrollTest(
 
 // Browser-owned integration: menu/dialog portals, encrypted saves, and
 // retained sidebar placement across app changes and reload.
-test("Move and Create persist across apps without a sidebar", async ({
-  page,
-  app,
-}) => {
+test("Move and Create persist across apps", async ({ page, app }) => {
+  // A workspace made here starts on the last 30 days; keep the page's
+  // calendar beside the fixture's November 2023 history so its rows stay
+  // in view.
+  await nearFixtureHistory(page);
   await open(page, app);
   await openPage(page, "Workflows");
   const projects = page.getByRole("heading", {
@@ -1225,7 +1260,8 @@ test("Move and Create persist across apps without a sidebar", async ({
     exact: true,
   });
   await expect(projects).toBeVisible();
-  await expect(sidebar(page)).toBeHidden();
+  // The Messages sidebar stays beside app pages.
+  await expect(sidebar(page)).toBeVisible();
   await openPage(page, "Messages");
   const node = await sidebar(page).elementHandle();
   const menu = await openMove(page, rowIn(page, "group:work"));
@@ -1256,7 +1292,7 @@ test("Move and Create persist across apps without a sidebar", async ({
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
   await page.reload();
   await expect(projects).toBeVisible();
-  await expect(sidebar(page)).toBeHidden();
+  await expect(sidebar(page)).toBeVisible();
   await openPage(page, "Messages");
   await expect(rowIn(page, `group:${section.id}`)).toBeVisible();
 });

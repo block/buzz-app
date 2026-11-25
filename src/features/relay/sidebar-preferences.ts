@@ -1,5 +1,10 @@
-import { isSidebarSortMode, type SidebarSortMode } from "./sidebar-sort.ts";
+import {
+  isSidebarSortMode,
+  SIDEBAR_PAGES_SECTION,
+  type SidebarSortMode,
+} from "./sidebar-sort.ts";
 export type { SidebarSortMode } from "./sidebar-sort.ts";
+export { SIDEBAR_PAGES_SECTION } from "./sidebar-sort.ts";
 import {
   MAX_WORKSPACES,
   MAX_WORKSPACE_ASSIGNMENTS,
@@ -27,8 +32,6 @@ export const HOME_SIDEBAR_SECTIONS = [
   "forums",
   "dms",
 ] as const;
-/** Sidebar-placed pages, such as Activity, ordered among the sections. */
-export const SIDEBAR_PAGES_SECTION = "pages";
 export const SIDEBAR_COORDINATES = [
   "channel-sections",
   "channel-stars",

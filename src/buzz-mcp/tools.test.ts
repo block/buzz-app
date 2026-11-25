@@ -5571,6 +5571,31 @@ it("nests a reply under a message inside a thread, naming the root and the paren
   expect(published[0]?.tags[4]?.[0]).toBe("imeta");
 });
 
+it("keeps a reply under a subthread message in that subthread, never deeper", async () => {
+  const deep = "3".repeat(64);
+  const { client, published } = fake([
+    ...community,
+    event({
+      id: deep,
+      tags: [
+        ["h", "chan"],
+        ["e", root, "", "root"],
+        ["e", nested, "", "reply"],
+      ],
+    }),
+  ]);
+  await callTool(client, { channel: "chan" }, "reply_in_subthread", {
+    audience: "everyone",
+    parent: deep,
+    text: "here",
+  });
+  expect(published[0]?.tags.slice(0, 3)).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+  ]);
+});
+
 it.each(["send", "reply_in_subthread"])(
   "%s refuses a self-mention instead of reporting a post as a wake",
   async (name) => {
@@ -5720,9 +5745,10 @@ it("nests under parents as the relay reads their root, whatever the markers or c
     text: "b",
   });
   expect(published.map((sent) => sent.tags.slice(1))).toEqual([
+    // Already in a subthread, so the answer joins it rather than nesting.
     [
       ["e", root, "", "root"],
-      ["e", remarked.id, "", "reply"],
+      ["e", nested, "", "reply"],
     ],
     [
       ["e", root.replace(/1/g, "a"), "", "root"],

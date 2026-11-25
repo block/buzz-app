@@ -2675,6 +2675,9 @@ function Timeline({
                       day={day}
                       onOpenLink={(url) => openViewLink(url, row.id)}
                       canOpenLink={canOpenLink}
+                      conversationName={(id) =>
+                        queries.channels.get?.(id)?.name
+                      }
                     />
                   ) : (
                     renderMessage(row)

@@ -2,6 +2,7 @@ import type { EventData } from "./events";
 import { channelRowChannel, channelRowKind } from "./membership";
 import { reactionTarget } from "./reaction-target";
 import { channelSourceKind } from "./channel-kinds";
+import { eventChannel, placedChannel } from "./placement";
 
 const AUXILIARY = new Set([5, 7, 9005, 40003, 39005]);
 /** Visibility, not a second membership model. Reference-only auxiliaries need
@@ -20,7 +21,7 @@ export function eventVisibility(
     homesById.set(event.id, undefined);
     const homes = event.tags.filter(([name]) => name === "h");
     if (homes.length) {
-      const channel = homes.length === 1 ? homes[0]?.[1] : undefined;
+      const channel = eventChannel(event);
       homesById.set(event.id, channel);
       return channel;
     }
@@ -55,12 +56,15 @@ export function eventVisibility(
     visiting.add(event.id);
     // The relay stores kind 0 globally and ignores a stray h tag
     // (is_global_only_kind), so a profile is never a channel's evidence.
+    const moved = placedChannel(event);
     const channels =
       event.kind === 0
         ? []
-        : event.tags.flatMap(([name, value]) =>
-            name === "h" && value ? [value] : [],
-          );
+        : moved
+          ? [moved]
+          : event.tags.flatMap(([name, value]) =>
+              name === "h" && value ? [value] : [],
+            );
     // Relay-signed per-channel state names its channel in d, not h.
     if ([39000, 39001, 39002, 30623].includes(event.kind)) {
       const channel = event.tags.find((tag) => tag[0] === "d")?.[1];

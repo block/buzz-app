@@ -1213,3 +1213,101 @@ it("keeps a region label when an editor replaces the label set with empty", asyn
   await h.owner.capability.save(base, { ...base, labels: [] });
   expect((await h.owner.capability.load(id)).labels).toEqual([region]);
 });
+
+it("sends a picture only when it changes, and an empty one clears it", () => {
+  const base = { ...draft, picture: "https://example.org/a.png" };
+  const pictureTags = (next: typeof base | typeof draft) =>
+    detailsTemplate(id, next, base).tags.filter(([key]) => key === "picture");
+  // Absent leaves it alone; unchanged is not re-sent.
+  expect(pictureTags({ ...draft })).toEqual([]);
+  expect(pictureTags(base)).toEqual([]);
+  expect(
+    pictureTags({ ...base, picture: "https://example.org/b.png" }),
+  ).toEqual([["picture", "https://example.org/b.png"]]);
+  const clear = detailsTemplate(id, { ...draft, picture: "" }, base);
+  expect(clear.tags.filter(([key]) => key === "picture")).toEqual([
+    ["picture", ""],
+  ]);
+  expect(() => validateDetailsTemplate(clear)).not.toThrow();
+});
+
+it("admits a picture only after join_role and before labels, as a web address", () => {
+  const withPicture = (picture: string) =>
+    detailsTemplate(
+      id,
+      { ...draft, picture, joinRole: "guest", labels: ["a"] },
+      {
+        ...draft,
+        joinRole: "member",
+        labels: [],
+      },
+    );
+  const ok = withPicture("https://example.org/a.png");
+  expect(ok.tags.map(([key]) => key)).toEqual([
+    "h",
+    "name",
+    "about",
+    "join_role",
+    "picture",
+    "t",
+  ]);
+  expect(() => validateDetailsTemplate(ok)).not.toThrow();
+  for (const bad of [
+    "ftp://example.org/a.png",
+    "javascript:alert(1)",
+    "https://example.org/a b",
+    `https://example.org/${"a".repeat(2048)}`,
+  ])
+    expect(() =>
+      detailsTemplate(id, { ...draft, picture: bad }, draft),
+    ).toThrow();
+  const [h0, h1, h2, ...rest] = ok.tags;
+  // Out of order, or twice.
+  expect(() =>
+    validateDetailsTemplate({
+      ...ok,
+      tags: [h0, h1, h2, ["picture", "https://example.org/a.png"], ...rest],
+    } as typeof ok),
+  ).toThrow();
+  expect(() =>
+    validateDetailsTemplate({
+      ...ok,
+      tags: [...ok.tags, ["picture", "https://example.org/b.png"]],
+    }),
+  ).toThrow();
+});
+
+it("round-trips a picture: read from the signed metadata, saved, and confirmed by readback", async () => {
+  const h = harness();
+  const withPicture = (picture?: string) =>
+    h.record(39000, [
+      ...h.metadata().tags.slice(1),
+      ...(picture ? [["picture", picture]] : []),
+    ]);
+  h.set([withPicture("https://example.org/a.png"), ...h.events().slice(1)]);
+  const base = await h.owner.capability.load(id);
+  expect(base.picture).toBe("https://example.org/a.png");
+  // The relay drops a cleared picture; readback without one confirms the clear.
+  h.publish.mockImplementationOnce(async () => {
+    h.set([withPicture(), ...h.events().slice(1)]);
+  });
+  await h.owner.capability.save(base, {
+    name: base.name,
+    description: base.description,
+    visibility: base.visibility,
+    picture: "",
+  });
+  expect(h.sign.mock.calls[0]?.[0].tags).toContainEqual(["picture", ""]);
+  const cleared = await h.owner.capability.load(id);
+  expect(cleared.picture).toBeUndefined();
+  // A relay that ignores the new picture is not confirmed.
+  h.publish.mockImplementationOnce(async () => {});
+  await expect(
+    h.owner.capability.save(cleared, {
+      name: cleared.name,
+      description: cleared.description,
+      visibility: cleared.visibility,
+      picture: "https://example.org/b.png",
+    }),
+  ).rejects.toThrow("may have been saved");
+});

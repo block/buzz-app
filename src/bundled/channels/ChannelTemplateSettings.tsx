@@ -39,8 +39,8 @@ export function ChannelTemplateSettings({
     if (active()) setEditing("new");
   };
   return (
-    <section aria-label="Channel templates settings">
-      <Header title="Channel templates" />
+    <section aria-label="Conversation templates settings">
+      <Header title="Conversation templates" />
       {templates.length ? (
         <div className={styles.stack}>
           <SettingsGroup>
@@ -71,8 +71,8 @@ export function ChannelTemplateSettings({
       ) : (
         <EmptyState
           icon={<CopyIcon />}
-          title="No channel templates yet"
-          description="Start new channels with your agents, teams and a Canvas already in place."
+          title="No conversation templates yet"
+          description="Start new conversations with your agents, teams and a Canvas already in place."
           action={<Button onClick={newTemplate}>New template</Button>}
         />
       )}
@@ -308,7 +308,7 @@ function TemplateDialog({
           </fieldset>
           <Field
             label="Starting Canvas"
-            description="Markdown, copied into each new channel made from this template."
+            description="Markdown, copied into each new conversation made from this template."
           >
             <Textarea
               rows={8}

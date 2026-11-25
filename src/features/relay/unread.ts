@@ -1,4 +1,5 @@
 import type { ProfileQueries } from "./profile-directory";
+import { isSoloConversation } from "./conversation-people";
 import { workflowOwner } from "./workflow-attribution";
 import { agentAudience, detailsBrief, messageAudience } from "./audience";
 import type { InboxItem, InboxSnapshot } from "./inbox";
@@ -22,6 +23,8 @@ import { LIVE_RESUME_LAG } from "./live";
 import type { Priority, RelayReader } from "./reader";
 import { foldMessages, deletionApplies, messageAuthor } from "./fold";
 import { eventMs } from "./message-order";
+import { eventChannel } from "./placement";
+import { cutTime, movedIds, type HistoryMove } from "./history-move";
 import { threadReference } from "./thread-reference";
 import {
   memoryThreadFollows,
@@ -367,8 +370,7 @@ const channelIds = new WeakMap<RelayEvent, string | undefined>();
 /** Verified events are frozen, and every evidence index asks for each one. */
 const channelOf = (event: RelayEvent) => {
   if (channelIds.has(event)) return channelIds.get(event);
-  const tags = event.tags.filter(([name]) => name === "h");
-  const channelId = tags.length === 1 ? tags[0]?.[1] : undefined;
+  const channelId = eventChannel(event);
   channelIds.set(event, channelId);
   return channelId;
 };
@@ -1703,7 +1705,13 @@ export function createUnread({
         )
           continue;
         const dm = channel.channelType === "dm";
-        const session = channel.channelType === "solo";
+        // Only you and your agents post here: their top-level answers are
+        // yours to read, as in a DM.
+        const session = isSoloConversation(
+          channel,
+          viewer,
+          profiles?.snapshot?.() ?? new Map(),
+        );
         const evidence = (byChannel.get(channel.id) ?? []).filter((entry) => {
           want(entry, dm);
           return (
@@ -1873,9 +1881,13 @@ export function createUnread({
                   ({ target }) => !!reads.localUnread(targetKey(target)),
                 ) ||
                 (timeline &&
-                  entries.some(
+                  (entries.some(
                     (entry) => !!reads.localUnread(`msg:${entry.event.id}`),
-                  )),
+                  ) ||
+                    // A Solo chat marked unread as a whole: the mark that
+                    // bolds its row also makes it need you.
+                    snapshot({ kind: "channel", channelId: channel.id })
+                      .manual !== "none")),
               ...(timeline ? { timeline: true as const } : {}),
               readThrough: Object.freeze(
                 readThrough.map((step) =>
@@ -2844,6 +2856,38 @@ export function createUnread({
         bytes -= eventBytes(event);
       }
   }
+  /** A conversation's history moved out of `move.channelId`: the moved
+   * messages, their threads, reactions and edits are no longer that channel's
+   * evidence, so its counts, latest message and first unread recompute from
+   * what stayed. See `movedIds` for what goes and when. */
+  function evictMoved(
+    move: HistoryMove,
+    cutAt: number | undefined,
+    stale: boolean,
+  ) {
+    if (closed) return;
+    const ids = movedIds(
+      events.values(),
+      move,
+      cutAt ?? cutTime(move, events.values()),
+      stale,
+    );
+    if (!ids.size) return;
+    for (const id of ids) {
+      const event = events.get(id);
+      if (!event) continue;
+      events.delete(id);
+      bytes -= eventBytes(event);
+      witnesses.delete(id);
+      lookupEvents.delete(id);
+      forcedMessages.get(move.channelId)?.delete(id);
+    }
+    indexed = false;
+    // Evidence shrank: the next repair reads unbounded again.
+    forget();
+    dropOrphans();
+    publish(new Set([move.channelId]));
+  }
   function accept(batch: readonly RelayEvent[]) {
     if (closed) return false;
     retract(batch);
@@ -3520,12 +3564,14 @@ export function createUnread({
             timestamp: entry.event.created_at,
             channelId,
           }));
-        const covered = (state.frontiers[channelId] ?? -1) >= cut;
+        // Reading a Solo chat from Activity also ends its whole-chat mark.
+        const marked = snapshot(target).manual !== "none";
+        const covered = (state.frontiers[channelId] ?? -1) >= cut && !marked;
         return reads.readMessages(
           covered
             ? marks
             : [{ key: channelId, timestamp: cut, channelId }, ...marks],
-          undefined,
+          marked ? messageForceKey(channelId) : undefined,
           valid,
           false,
           undefined,
@@ -4094,6 +4140,7 @@ export function createUnread({
       });
     },
     accept,
+    evictMoved,
     purge,
     /** `covered`: the membership route's replay was continuous, so read state
      * resumes from it instead of reading its snapshot again. */

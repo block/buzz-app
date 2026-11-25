@@ -1,7 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelList } from "../../features/relay/contracts";
-import { sidebarSortNeedsActivity } from "../../features/relay/sidebar-sort";
 
 // Presentation latch only, never roster/access data. Warm sidebar remounts reveal
 // immediately, but new relay/viewer sessions start independently.
@@ -21,6 +20,9 @@ export function useSidebarStartup(
   list: ChannelList,
   preferences: ReturnType<RelaySession["sidebarPreferences"]["snapshot"]>,
   sortModesReady = true,
+  // Cards default to Recent, so the first reveal waits for activity unless
+  // every card has chosen otherwise.
+  needsActivity = true,
 ) {
   // The primary sidebar is keyed by scope and connection generation; the hook is
   // remounted for a replacement session, while same-session remounts reuse latches.
@@ -69,9 +71,6 @@ export function useSidebarStartup(
     preferences.status === "error" ||
     preferences.status === "unsupported";
   const namesReady = rosterState !== "pending" && rosterState !== "idle";
-  const needsActivity = Object.values(preferences.data?.sort ?? {}).some(
-    sidebarSortNeedsActivity,
-  );
   const activityReady =
     !needsActivity ||
     list.activityStatus === "ready" ||

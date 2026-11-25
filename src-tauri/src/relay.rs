@@ -27,7 +27,7 @@ mod channel_writes;
 mod kit;
 pub(crate) use channel_writes::{
     relay_channel_publish, relay_channel_sign, relay_direct_message, relay_kit_decode,
-    relay_kit_prepare,
+    relay_kit_prepare, relay_move_direct_message_history, relay_name_direct_message,
 };
 pub(crate) use kit::relay_kit_sign;
 mod media_blocks;
@@ -1040,6 +1040,10 @@ pub(crate) async fn relay_http(
         let kind = event.get("kind").and_then(serde_json::Value::as_u64);
         if matches!(kind, Some(41010 | 41011)) {
             return Err("Choose between one and eight other people.".into());
+        }
+        // Naming a DM and moving its history are signed by their own commands.
+        if matches!(kind, Some(41013 | 41014)) {
+            return Err("Choose a conversation.".into());
         }
         if kind == Some(30078) {
             admit_app_data(host.inner(), &event, &community).await?;

@@ -1,5 +1,6 @@
 import type { LocalAgentSource } from "../agents/local-activity";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { peopleKind } from "./conversation-people";
 import { mergeLegacyWorkspaces } from "./workspace-migration";
 import { npubEncode } from "nostr-tools/nip19";
 import { createMemberAdditions } from "../channel-members/operations";
@@ -78,6 +79,7 @@ import { createTyping } from "./typing";
 import { validTypingTemplate } from "./typing-protocol";
 import { workflowOwner } from "./workflow-attribution";
 import { createUnread } from "./unread";
+import { cutTime, movedIds } from "./history-move";
 import type { SnapshotRead } from "../agents/agent-config-artifacts";
 
 import { createInboxFeed } from "./inbox-feed";
@@ -92,6 +94,7 @@ import type {
   ChannelList,
   ChannelReadOptions,
   ChannelSummary,
+  Profile,
 } from "./contracts";
 import { createChannelActivity } from "./channel-activity";
 import {
@@ -120,7 +123,7 @@ import {
 } from "./attachments";
 import { PRODUCT_FEEDBACK_KIND } from "./product-feedback";
 import { attemptEnded } from "./withdraw";
-import type { ReadTransport } from "./transport";
+import type { ConversationVisibility, ReadTransport } from "./transport";
 import type { LiveGlobal, LiveSnapshot, LiveSubscription } from "./live";
 import {
   hasTag,
@@ -1239,6 +1242,15 @@ export function createRelaySession(
           },
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
+          // Every cache that holds the source's events gives up the moved ones.
+          moved: (move, cutAt, stale) => {
+            unread.evictMoved(move, cutAt, stale);
+            const held = recent.entries().map(([, { event }]) => event);
+            const at = cutAt ?? cutTime(move, held);
+            for (const id of movedIds(held, move, at, stale)) recent.delete(id);
+            // A closed thread reopens from what it kept, which may be moved.
+            resumes.clear();
+          },
           verifyStored: transport.verifyStored?.bind(transport),
           demand: (channelId) => demandChannel(channelId),
           rosterChanged: (strong) => {
@@ -1319,11 +1331,66 @@ export function createRelaySession(
   let activityChannelList: ChannelList = Object.freeze({
     ...sourceChannelList,
     activityStatus: channelActivity.status(),
+    ...(channelActivity.transient() && { activityTransient: true as const }),
   });
   let channelActivityRevision = channelActivity.revision();
   const projectedChannels = new WeakMap<ChannelSummary, ChannelSummary>();
+  // The people rule names a conversation's kind: one only you and your agents
+  // can post in is a chat ("solo"); once anyone else can, it is a channel.
+  // The older Solo tag counts only while a chat's roster is unknown.
+  // This device's own agents count as agents before their profiles load.
+  let agentSource: unknown;
+  let localAgents: ReadonlySet<string> = new Set();
+  const ownAgents = () => {
+    const snapshot = agentChoices.snapshot();
+    if (snapshot !== agentSource) {
+      agentSource = snapshot;
+      localAgents = new Set(snapshot.identities.map((agent) => agent.pubkey));
+    }
+    return localAgents;
+  };
+  const peopleKinds = new WeakMap<
+    ChannelSummary,
+    {
+      profiles: ReadonlyMap<string, Profile>;
+      agents: ReadonlySet<string>;
+      channel: ChannelSummary;
+    }
+  >();
+  const byPeople = (channel: ChannelSummary): ChannelSummary => {
+    const known = profiles.queries.snapshot();
+    const agents = ownAgents();
+    const cached = peopleKinds.get(channel);
+    if (cached?.profiles === known && cached.agents === agents)
+      return cached.channel;
+    const found = peopleKind(channel, transport?.viewer, known, agents);
+    // While a member's profile loads, keep the kind last worked out, or the
+    // relay's own until then.
+    const kind =
+      found === "loading"
+        ? (lastKinds.get(channel.id) ?? channel.channelType)
+        : found;
+    if (found !== "loading") lastKinds.set(channel.id, found);
+    const next =
+      kind === channel.channelType
+        ? channel
+        : Object.freeze({ ...channel, channelType: kind } as ChannelSummary);
+    peopleKinds.set(channel, { profiles: known, agents, channel: next });
+    return next;
+  };
+  const lastKinds = new Map<string, ChannelSummary["channelType"]>();
+  let peopleSource: ChannelList | undefined;
+  let peopleProfiles: ReadonlyMap<string, Profile> | undefined;
+  let peopleList: ChannelList | undefined;
+  let peopleAgents: ReadonlySet<string> | undefined;
   const channelQueries = Object.freeze({
     ...channels.queries,
+    ...(channels.queries.get && {
+      get: (channelId: string) => {
+        const channel = channels.queries.get?.(channelId);
+        return channel && byPeople(channel);
+      },
+    }),
     // Viewer surfaces promote their lookups by default. Explicit agent lookups
     // extend discovery without turning watch-only channels into mention targets.
     ...(channels.queries.resolve && {
@@ -1341,7 +1408,26 @@ export function createRelaySession(
       },
     }),
     list() {
-      const snapshot = channels.queries.list();
+      const source = channels.queries.list();
+      const known = profiles.queries.snapshot();
+      const agents = ownAgents();
+      if (
+        source !== peopleSource ||
+        known !== peopleProfiles ||
+        agents !== peopleAgents ||
+        !peopleList
+      ) {
+        const classified = source.channels.map(byPeople);
+        peopleList = classified.every(
+          (channel, index) => channel === source.channels[index],
+        )
+          ? source
+          : Object.freeze({ ...source, channels: Object.freeze(classified) });
+        peopleSource = source;
+        peopleProfiles = known;
+        peopleAgents = agents;
+      }
+      const snapshot = peopleList;
       const activityRevision = channelActivity.revision();
       if (
         snapshot === sourceChannelList &&
@@ -1367,6 +1453,9 @@ export function createRelaySession(
       activityChannelList = Object.freeze({
         ...snapshot,
         activityStatus: channelActivity.status(),
+        ...(channelActivity.transient() && {
+          activityTransient: true as const,
+        }),
         channels: projected.every(
           (channel, index) => channel === snapshot.channels[index],
         )
@@ -1391,9 +1480,13 @@ export function createRelaySession(
     subscribeList(listener: () => void) {
       const offChannels = channels.queries.subscribeList(listener);
       const offActivity = channelActivity.subscribe(listener);
+      const offProfiles = profiles.queries.subscribe(listener);
+      const offAgents = agentChoices.subscribe(listener);
       return () => {
         offChannels();
         offActivity();
+        offProfiles();
+        offAgents();
       };
     },
   });
@@ -2091,6 +2184,49 @@ export function createRelaySession(
         })
       : undefined;
   })();
+  const accountSettings = (() => {
+    const read = transport?.readAccountSettings;
+    const write = transport?.writeAccountLifetime;
+    const writeWorkspace = transport?.writeWorkspaceLifetime;
+    const writeVisibility = transport?.writeAccountVisibility;
+    const writeWorkspaceVisibility = transport?.writeWorkspaceVisibility;
+    const bounded = (ms: number) =>
+      AbortSignal.any([lifetime.signal, AbortSignal.timeout(ms)]);
+    // One change at a time, so the last choice is the one confirmed.
+    let writes = Promise.resolve();
+    const queue = (change: () => Promise<void>) => {
+      const next = writes.then(change);
+      writes = next.then(
+        () => {},
+        () => {},
+      );
+      return next;
+    };
+    return read &&
+      write &&
+      writeWorkspace &&
+      writeVisibility &&
+      writeWorkspaceVisibility
+      ? Object.freeze({
+          read: () => read(bounded(10_000)),
+          writeLifetime: (seconds: number | null) =>
+            queue(() => write(seconds, bounded(20_000))),
+          writeWorkspaceLifetime: (
+            workspace: string,
+            seconds: number | null | undefined,
+          ) => queue(() => writeWorkspace(workspace, seconds, bounded(20_000))),
+          writeVisibility: (visibility: ConversationVisibility) =>
+            queue(() => writeVisibility(visibility, bounded(20_000))),
+          writeWorkspaceVisibility: (
+            workspace: string,
+            visibility: ConversationVisibility | undefined,
+          ) =>
+            queue(() =>
+              writeWorkspaceVisibility(workspace, visibility, bounded(20_000)),
+            ),
+        })
+      : undefined;
+  })();
   let legacyWorkspaceEpoch = new AbortController();
   let legacyWorkspaceCache: SidebarGroups | undefined;
   // Workspaces the old Solo sidebar listed; they keep its Show more cap.
@@ -2539,7 +2675,7 @@ export function createRelaySession(
             }
             if (setup.starred && !sidebarPreferences.queries.starWritable)
               throw new Error(
-                "Starred placement is unavailable; refresh your sidebar before creating the channel",
+                "Favorites placement is unavailable; refresh your sidebar before creating the channel",
               );
             if (setup.groupId) {
               const state = sidebarPreferences.queries.snapshot();
@@ -2556,7 +2692,7 @@ export function createRelaySession(
             await settledPreferences();
             if (!sidebarPreferences.queries.starWritable)
               throw new Error(
-                "Starred placement is unavailable; keep the partial channel and star it separately",
+                "Favorites placement is unavailable; keep the partial channel and add it to Favorites separately",
               );
             if (
               sidebarPreferences.queries.snapshot().data?.starred.includes(id)
@@ -2782,6 +2918,19 @@ export function createRelaySession(
           sidebarPreferences.queries.subscribe,
           () => loadState(sidebarPreferences.queries.snapshot()),
           () => void sidebarPreferences.queries.refresh(),
+        ),
+        // Recent sorting's activity read.
+        recoverable(
+          channelActivity.subscribe,
+          () =>
+            loadState({
+              status: channelActivity.status(),
+              transient: channelActivity.transient() || undefined,
+            }),
+          () => {
+            activityRosterKey = undefined;
+            refreshChannelActivity();
+          },
         ),
         // Threads a person reads; see createThreadView's `recover`.
         recoverable(
@@ -3035,11 +3184,13 @@ export function createRelaySession(
       () => profiles.queries.verifiedAuthority?.(),
       profiles.queries,
       identityNames,
+      details.capability,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     /** The account's saved main agent, shared by every install. */
     mainAgent,
+    accountSettings,
     reminders: reminders?.capability,
     live,
     /** Wake, network and focus hint that the live socket, which may still look

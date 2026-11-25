@@ -121,7 +121,7 @@ it("makes, edits and deletes a template of agents, teams and a Canvas", async ()
   await user.click(screen.getByRole("button", { name: "Edit Launch" }));
   await user.click(screen.getByRole("button", { name: "Delete" }));
   expect(channelTemplates.snapshot()).toEqual([]);
-  expect(screen.getByText("No channel templates yet")).toBeVisible();
+  expect(screen.getByText("No conversation templates yet")).toBeVisible();
 });
 
 it.each(["backdrop", "Escape", "Close"])(

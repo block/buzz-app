@@ -777,13 +777,21 @@ async fn sidebar_filter_signer_checks_projection_modes_and_coordinate() {
         json!("604800"),
         json!(null),
     ] {
-        let mut invalid = payload.clone();
-        invalid["activeWindowSeconds"]["channels"] = seconds;
-        assert!(host
-            .sign_sidebar("channel-filter".into(), invalid, 100)
-            .await
-            .is_err());
+        for field in ["activeWindowSeconds", "unreadsWindowSeconds"] {
+            let mut invalid = payload.clone();
+            invalid[field] = json!({ "channels": seconds.clone() });
+            assert!(host
+                .sign_sidebar("channel-filter".into(), invalid, 100)
+                .await
+                .is_err());
+        }
     }
+    let mut unreads = payload.clone();
+    unreads["unreadsWindowSeconds"] = json!({"channels": 86400});
+    assert!(host
+        .sign_sidebar("channel-filter".into(), unreads, 100)
+        .await
+        .is_ok());
     for invalid in [
         json!({"version":1,"groups":{"channels":"recent"}}),
         json!({"version":1,"groups":{},"meta":payload["meta"]}),
@@ -915,6 +923,55 @@ async fn main_agent_signer_admits_one_agent_or_a_cleared_choice() {
     ] {
         assert!(host
             .sign_sidebar("main-agent".into(), invalid, 100)
+            .await
+            .is_err());
+    }
+}
+
+#[tokio::test]
+async fn account_settings_signer_admits_lifetimes_and_workspace_overrides() {
+    use serde_json::json;
+    let host = super::IdentityHost::fixture();
+    for (payload, at) in [
+        (json!({"version": 1, "lifetime": 604800}), 100),
+        (json!({"version": 1, "lifetime": null}), 101),
+        (
+            json!({"version": 1, "lifetime": 86400, "workspaces": {"w1": null, "w2": 1209600}}),
+            102,
+        ),
+        (
+            json!({"version": 1, "lifetime": null, "visibility": "public", "workspaceVisibility": {"w1": "private", "w2": "public", "w3": "view-only"}}),
+            103,
+        ),
+    ] {
+        let event = host
+            .sign_sidebar("account-settings".into(), payload.clone(), at)
+            .await
+            .unwrap();
+        host.admit_sidebar(event.clone()).await.unwrap();
+        assert_eq!(
+            host.decode_sidebar(vec![event]).await.unwrap()["account-settings"],
+            payload
+        );
+    }
+    for invalid in [
+        json!({"version": 1}),
+        json!({"version": 2, "lifetime": 604800}),
+        json!({"version": 1, "lifetime": 0}),
+        json!({"version": 1, "lifetime": -1}),
+        json!({"version": 1, "lifetime": 1.5}),
+        json!({"version": 1, "lifetime": "604800"}),
+        json!({"version": 1, "lifetime": 604800, "extra": true}),
+        json!({"version": 1, "lifetime": null, "workspaces": []}),
+        json!({"version": 1, "lifetime": null, "workspaces": {"w1": 0}}),
+        json!({"version": 1, "lifetime": null, "workspaces": {" ": null}}),
+        json!({"version": 1, "lifetime": null, "visibility": "open"}),
+        json!({"version": 1, "lifetime": null, "visibility": null}),
+        json!({"version": 1, "lifetime": null, "workspaceVisibility": {"w1": null}}),
+        json!({"version": 1, "lifetime": null, "workspaceVisibility": []}),
+    ] {
+        assert!(host
+            .sign_sidebar("account-settings".into(), invalid, 100)
             .await
             .is_err());
     }

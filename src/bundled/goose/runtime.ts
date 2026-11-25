@@ -71,7 +71,7 @@ import {
   type RecommendedCandidate,
   type RecommendedRun,
 } from "../../features/agents/recommended";
-import { soloChat } from "../../features/agents/solo-chat";
+import { answersAtTopLevel, soloChat } from "../../features/agents/solo-chat";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
   SessionPlace,
@@ -745,7 +745,7 @@ export class GooseRuntime {
       channel,
       signal,
     );
-    const topLevel = solo || wake?.topLevel === true;
+    const topLevel = answersAtTopLevel(event, solo, wake);
     if (wake && !wakeLands(wake, topLevel)) return ignored?.();
     const gateway = offered && (await this.routed(entry, offered));
     if (offered && !admittedDeferred) signal.throwIfAborted();
@@ -785,7 +785,7 @@ export class GooseRuntime {
       const said = turnPrompt({
         ...shown,
         agent: agent.key,
-        channelLevel: topLevel && !solo,
+        channelLevel: topLevel && !solo && !!wake,
         ...woken,
       });
       const text = resumed ? `${said}\n\n${RESUMED_PROMPT}` : said;
@@ -974,7 +974,7 @@ export class GooseRuntime {
             return marking ? marked(text, marking) : text;
           },
           // A Solo chat takes the name goose gives its first session.
-          ...(solo && named ? { named } : {}),
+          ...(named ? { named } : {}),
         });
       },
     );

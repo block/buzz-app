@@ -3,6 +3,7 @@ import { CommunityDialog } from "../features/communities/CommunityDialog";
 import { CommunityRepositoriesSettings } from "./CommunityRepositoriesSettings";
 import { DefaultLifetimeSettings } from "../features/solo/DefaultLifetimeSettings";
 import { relayPartition } from "../features/relay/partition";
+import type { RelaySession } from "../features/relay/session";
 import type { Communities, Membership } from "../features/communities/service";
 import { communityDestination } from "../features/communities/destination";
 import {
@@ -30,10 +31,13 @@ export function CommunityLocalSettings({
   communities,
   community,
   viewer,
+  session,
 }: {
   communities: Communities;
   community: Membership;
   viewer: string | undefined;
+  /** This community's session, when it is the connected one. */
+  session?: RelaySession | undefined;
 }) {
   const notify = useToastNotification();
   const address = communityDestination(community.id).url;
@@ -173,7 +177,10 @@ export function CommunityLocalSettings({
       </form>
       {viewer && (
         <div className="mt-section-gap">
-          <DefaultLifetimeSettings scope={relayPartition(address, viewer)} />
+          <DefaultLifetimeSettings
+            scope={relayPartition(address, viewer)}
+            session={session}
+          />
         </div>
       )}
       <CommunityRepositoriesSettings

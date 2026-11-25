@@ -138,7 +138,13 @@ test("a unified Solo row describes and opens shared access", async ({
         getComputedStyle(document.documentElement).fontSize,
       );
       return {
-        sharedEndGap: element.getBoundingClientRect().right - shared.right,
+        // The Shared icon centres a 1rem glyph on the row inset (0.75rem) in
+        // its 1.75rem action slot, so the slot ends 0.375rem inside the row.
+        sharedEndGap:
+          Math.round(
+            ((element.getBoundingClientRect().right - shared.right) / root) *
+              64,
+          ) / 64,
         badgeInset: (shared.left - fillEnd - badge.right) / root,
         badgeClearance: action.left - badge.right,
         sharedClearance: shared.left - action.right,
@@ -165,6 +171,9 @@ test("a unified Solo row describes and opens shared access", async ({
       "--buzz-text-scale",
       String(scale),
     );
+    // The cards' inset leaves the default width too narrow for this row's
+    // badge, action and title at 200%; the widest sidebar holds them all.
+    await page.getByRole("separator", { name: "Resize sidebar" }).press("End");
     await page.mouse.move(0, 0);
     await shared.blur();
     await action.blur();
@@ -172,13 +181,15 @@ test("a unified Solo row describes and opens shared access", async ({
 
     await expect
       .poll(geometry)
-      .toMatchObject({ sharedEndGap: 0, badgeInset: 0.625 });
+      .toMatchObject({ sharedEndGap: 0.375, badgeInset: 0.75 });
     const { titleWidth } = await geometry();
     await shared.hover();
     await expect(action).toHaveCSS("opacity", "0");
     await action.hover();
     await expect(action).toHaveCSS("opacity", "1");
-    await expect.poll(geometry).toMatchObject({ sharedEndGap: 0, titleWidth });
+    await expect
+      .poll(geometry)
+      .toMatchObject({ sharedEndGap: 0.375, titleWidth });
     await expect
       .poll(async () => (await geometry()).badgeClearance)
       .toBeGreaterThanOrEqual(0);
@@ -191,7 +202,9 @@ test("a unified Solo row describes and opens shared access", async ({
     await page.keyboard.press("Tab");
     await expect(action).toBeFocused();
     await expect(action).toHaveCSS("opacity", "1");
-    await expect.poll(geometry).toMatchObject({ sharedEndGap: 0, titleWidth });
+    await expect
+      .poll(geometry)
+      .toMatchObject({ sharedEndGap: 0.375, titleWidth });
     await expect
       .poll(async () => (await geometry()).badgeClearance)
       .toBeGreaterThanOrEqual(0);

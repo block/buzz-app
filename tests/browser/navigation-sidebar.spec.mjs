@@ -163,6 +163,9 @@ test.describe("workspace heading resize", () => {
       for (const width of ["Home", "End"]) {
         await handle.press(width);
         const label = heading.getByText(title, { exact: true });
+        // The Plugins card above can push this workspace below the fold, and
+        // hovering would scroll it into view; measure it where it will stay.
+        await heading.scrollIntoViewIfNeeded();
         const resting = await label.boundingBox();
         await heading.hover();
         await expect(arrow).toBeVisible();
@@ -198,6 +201,50 @@ test.describe("workspace heading resize", () => {
       page.getByRole("menuitem", { name: "New channel" }),
     ).toBeVisible();
   });
+
+  // Revealing actions must not move the rows under the pointer: where they
+  // can't fit beside the label, their wrapped row is kept while hidden.
+  test("revealing heading actions keeps the heading's height at enlarged text", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const workspace = page.locator('[data-sidebar-section="group:work"]');
+    const heading = workspace.locator(".navigation-section-heading");
+    const actions = heading.locator(".navigation-section-heading-actions");
+    const more = workspace.getByRole("button", {
+      name: "More actions for Work",
+    });
+    const firstRow = workspace.locator("[data-channel-id]").first();
+    const layout = async () => ({
+      heading: Math.round((await heading.boundingBox()).height),
+      row: Math.round((await firstRow.boundingBox()).y),
+    });
+    const rest = async () => {
+      await page.mouse.move(800, 600);
+      await page.evaluate(() => document.activeElement?.blur());
+      await expect(actions).toHaveCSS("opacity", "0");
+    };
+    await page.getByRole("separator", { name: "Resize sidebar" }).press("Home");
+    for (const scale of [1.5, 2]) {
+      await page.evaluate((value) => {
+        document.documentElement.style.setProperty(
+          "--buzz-text-scale",
+          String(value),
+        );
+      }, scale);
+      await rest();
+      await heading.scrollIntoViewIfNeeded();
+      const before = await layout();
+      await heading.hover();
+      await expect(actions).toHaveCSS("opacity", "1");
+      expect(await layout()).toEqual(before);
+      await rest();
+      await more.focus();
+      await expect(actions).toHaveCSS("opacity", "1");
+      expect(await layout()).toEqual(before);
+    }
+  });
 });
 
 test("channel sidebar resizes from the full gutter and persists", async ({
@@ -231,6 +278,11 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     if (!(handle instanceof HTMLElement))
       throw new Error("Missing sidebar gutter");
     const contentStyle = getComputedStyle(content);
+    // Each sidebar section is a card that insets its own rows.
+    const card = row.closest("[data-sidebar-card]");
+    if (!(card instanceof HTMLElement))
+      throw new Error("Row is not inside a sidebar card");
+    const cardStyle = getComputedStyle(card);
     const rowStyle = getComputedStyle(row);
     const rootSize = Number.parseFloat(
       getComputedStyle(document.documentElement).fontSize,
@@ -239,12 +291,15 @@ test("channel sidebar resizes from the full gutter and persists", async ({
       panelGap: Number.parseFloat(
         getComputedStyle(panel.closest(".shell-sidebar")).marginInlineEnd,
       ),
-      panelGapToken:
-        Number.parseFloat(contentStyle.getPropertyValue("--space-panel-gap")) *
+      // The sidebar sits a small gap (4px) from the page, tighter than the
+      // panel gap at the app's edge.
+      sidebarGapToken:
+        Number.parseFloat(contentStyle.getPropertyValue("--space-1")) *
         rootSize,
-      // The redesigned sidebar keeps a symmetric inline gutter; rows use the
-      // sidebar's fixed row radius rather than a concentric panel radius.
-      padding: [contentStyle.paddingRight, contentStyle.paddingLeft].map(
+      // The redesigned sidebar keeps a symmetric inline gutter inside each
+      // card; rows use the sidebar's fixed row radius rather than a
+      // concentric panel radius.
+      padding: [cardStyle.paddingRight, cardStyle.paddingLeft].map(
         Number.parseFloat,
       ),
       rowRadius: Number.parseFloat(rowStyle.borderTopLeftRadius),
@@ -257,17 +312,21 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   expect(new Set(geometry.padding).size).toBe(1);
   expect(geometry.padding[0]).toBeGreaterThan(0);
   expect(geometry.rowRadius).toBe(geometry.rowRadiusToken);
+  // PanelFrame wraps the page card: frame > page > panel.
   const conversation = await page
-    .locator("#main-content > .panel")
+    .locator("#main-content > div > div > .panel")
     .boundingBox();
-  expect(geometry.panelGap).toBe(0);
+  // The floating sidebar and conversation card sit 4px apart.
+  expect(geometry.panelGap).toBe(geometry.sidebarGapToken);
+  expect(geometry.panelGap).toBeGreaterThan(0);
   expect(conversation).not.toBeNull();
   expect(conversation.x - (before.x + before.width)).toBeCloseTo(
     geometry.panelGap,
     0,
   );
-  // The resize target begins at the seam, outside sidebar action targets.
-  expect(grip.x).toBeCloseTo(before.x + before.width, 0);
+  // The resize target begins at the conversation card's edge, a panel gap
+  // past the sidebar, outside sidebar action targets.
+  expect(grip.x).toBeCloseTo(before.x + before.width + geometry.panelGap, 0);
   expect(grip.width).toBe(8);
   expect(grip.height).toBeGreaterThan(500);
   // The scrollport reaches the joined panel seam without an inner border.
@@ -536,6 +595,8 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   page,
   app,
 }) => {
+  // Cards clip at ten rows, so the list only scrolls in a short window.
+  await page.setViewportSize({ width: 1440, height: 420 });
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const scrollTop = () => sidebar.evaluate((element) => element.scrollTop);
@@ -545,9 +606,10 @@ test("navigation reveals the current sidebar entry without moving a visible one"
       return element.scrollTop;
     });
   const alpha = sidebar.locator('[data-channel-id="alpha"]');
+  // Pages are rows of the Plugins card at the top of the same list.
   const projects = page
-    .getByRole("navigation", { name: "Apps dock" })
-    .getByRole("tab", { name: "Workflows", exact: true });
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Workflows", exact: true });
   const group = sidebar
     .locator("details")
     .filter({ has: page.locator("summary", { hasText: /^Team$/ }) });
@@ -556,7 +618,7 @@ test("navigation reveals the current sidebar entry without moving a visible one"
   await expect(alpha).not.toBeInViewport();
   // Search navigation reveals a page entry.
   await openPage(page, "Workflows");
-  await expect(projects).toHaveAttribute("aria-selected", "true");
+  await expect(projects).toHaveAttribute("aria-current", "page");
   await expect(projects).toBeInViewport({ ratio: 1 });
   // History navigation restores the sidebar and reveals its channel row.
   await button(page, "Go back").click();
@@ -564,7 +626,12 @@ test("navigation reveals the current sidebar entry without moving a visible one"
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   await expect(alpha).toBeInViewport({ ratio: 1 });
-  // An already visible entry keeps the user's scroll position.
+  // An already visible entry keeps the user's scroll position. Scroll to a
+  // spot where Beta is in view, so clicking it has no reason to move the list.
+  await sidebar.locator('[data-channel-id="beta"]').scrollIntoViewIfNeeded();
+  await expect(sidebar.locator('[data-channel-id="beta"]')).toBeInViewport({
+    ratio: 1,
+  });
   const settled = await scrollTop();
   await button(page, "Beta").click();
   await expect(
@@ -611,7 +678,8 @@ test("a reveal while the narrow drawer is closed runs when the drawer opens", as
   app,
 }) => {
   await open(page, app);
-  await page.setViewportSize({ width: 600, height: 700 });
+  // Cards clip at seven rows, so the list only scrolls far in a short window.
+  await page.setViewportSize({ width: 600, height: 520 });
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   // Role queries skip the hidden drawer; this locator does not.
   const alpha = page.locator(
@@ -641,6 +709,8 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
     page,
     app,
   }) => {
+    // Cards clip at ten rows, so the list only scrolls in a short window.
+    await page.setViewportSize({ width: 1440, height: 420 });
     await open(page, app);
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
@@ -654,10 +724,11 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
         element.scrollTop = element.scrollHeight;
         return element.scrollTop;
       });
+    // Pages are rows of the Plugins card in the same sidebar.
     const pageEntry = (name) =>
       page
-        .getByRole("navigation", { name: "Apps dock" })
-        .getByRole("tab", { name, exact: true });
+        .getByRole("navigation", { name: "Pages", exact: true })
+        .getByRole("button", { name, exact: true });
     const leave = async () => {
       if (destination === "Settings") {
         await openSettings(page);
@@ -679,7 +750,8 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
           ),
         ).toBe(true);
       } else {
-        await expect(sidebar).toHaveCount(0);
+        // The sidebar stays beside the page, revealing the page's own row.
+        await expect(sidebar).toBeVisible();
         expect(await node.evaluate((element) => element.isConnected)).toBe(
           true,
         );
@@ -710,7 +782,7 @@ for (const destination of ["Workflows", "Settings", "Back/Forward"]) {
     else await expect(group.locator("summary")).toBeInViewport({ ratio: 1 });
     if (destination === "Back/Forward") {
       await button(page, "Go forward").click();
-      await expect(sidebar).toHaveCount(0);
+      await expect(sidebar).toBeVisible();
       expect(await node.evaluate((element) => element.isConnected)).toBe(true);
       await expect(
         page.getByRole("region", { name: "Channel message history" }),

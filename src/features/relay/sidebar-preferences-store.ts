@@ -1,6 +1,7 @@
 import type { HeadPersistence } from "./persistence";
 import { isTransientFailure } from "./errors";
 import { projectSidebarPreferences } from "./sidebar-preferences";
+import { defaultSidebarSort } from "./sidebar-sort";
 import type {
   SidebarAssignmentMutator,
   SidebarAssignmentIntent,
@@ -223,7 +224,7 @@ export function createSidebarPreferencesStore({
     mode: SidebarSortMode,
   ) => {
     const next = { ...sort };
-    if (mode === "alpha") delete next[group];
+    if (mode === defaultSidebarSort(group)) delete next[group];
     else next[group] = mode;
     return next;
   };
@@ -589,12 +590,12 @@ export function createSidebarPreferencesStore({
         if (!confirmed?.sections.some(({ id }) => id === sectionId))
           throw new Error("Sidebar section no longer exists");
         const group = `section:${sectionId}`;
-        // Local Alpha can be stale while another device has saved an override.
+        // A local default can be stale while another device has saved an override.
         // Reset while the section is live, so a failed write leaves removal
         // retryable and cannot strand a live override beyond the decoder cap.
         const sort = await writeSort(
           group,
-          "alpha",
+          defaultSidebarSort(group),
           confirmed.sections.map(({ id }) => id),
           writeSignal,
         );

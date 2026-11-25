@@ -10,3 +10,22 @@
   border-radius: 0;
   mask: url("./avatar-squircle.svg") center / 100% 100% no-repeat;
 }
+
+/* A small badge: a smaller dot with the same proportional gap, cut from the
+   artwork's own shape. */
+.buzz-avatar-status[data-status-size="small"] .buzz-avatar-status-dot {
+  width: 18%;
+}
+
+.buzz-avatar-status[data-status-size="small"][data-shape="circle"]
+  > .buzz-avatar {
+  mask: radial-gradient(14% 14% at 85% 85%, transparent 94%, #000 100%);
+}
+
+.buzz-avatar-status[data-status-size="small"][data-shape="squircle"]
+  > .buzz-avatar {
+  mask:
+    url("./avatar-squircle.svg") center / 100% 100% no-repeat,
+    radial-gradient(14% 14% at 85% 85%, transparent 94%, #000 100%);
+  mask-composite: intersect;
+}

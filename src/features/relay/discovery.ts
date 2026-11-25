@@ -1,6 +1,7 @@
 import { byteSize } from "./budget";
 import {
   channelJoinRole,
+  channelPicture,
   channelTtl,
   channelVisibility,
 } from "./channel-details-protocol";
@@ -503,6 +504,7 @@ export class DiscoveryState {
         : undefined;
     const identity = event && channelIdentity(event);
     const ttlSeconds = event && channelTtl(event);
+    const picture = event && channelPicture(event);
     // Legacy generated rooms lack creation proof. This is presentation only;
     // their parent still needs independent signed lifecycle evidence.
     const legacyHuddle =
@@ -534,6 +536,7 @@ export class DiscoveryState {
       ...(this.isPrivate(id) ? { private: true } : {}),
       ...(this.autoJoin(id) ? { autoJoin: true } : {}),
       ...(channelType ? { channelType } : {}),
+      ...(picture ? { picture } : {}),
       ...(channelType === "solo" && event
         ? { updatedAt: event.created_at }
         : {}),

@@ -630,6 +630,42 @@ it.each([
     expect(h.publish.mock.calls[2]?.[0].tags).not.toContainEqual(tags);
   },
 );
+it("marks where mentioned agents answer on a message and a thread reply", async () => {
+  const h = setup();
+  await h.members();
+  const root = "a".repeat(64);
+  h.session.messages.send(
+    "c",
+    "@Honey look",
+    [honey.pubkey],
+    [],
+    undefined,
+    [],
+    {},
+    "top",
+  );
+  h.session.messages.reply(
+    "c",
+    root,
+    "@Honey look",
+    [honey.pubkey],
+    [],
+    root,
+    [],
+    {},
+    undefined,
+    "subthread",
+  );
+  await flush();
+  expect(h.publish.mock.calls[0]?.[0].tags).toContainEqual([
+    "buzz:reply",
+    "top",
+  ]);
+  expect(h.publish.mock.calls[1]?.[0].tags).toContainEqual([
+    "buzz:reply",
+    "subthread",
+  ]);
+});
 it("mentions a just-added member despite an older replica roster", async () => {
   const h = setup();
   await h.members([viewer.pubkey]);

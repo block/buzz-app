@@ -3,17 +3,13 @@ import { sendWithOwnerMentions } from "../relay/owner-mentions";
 import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { agentUnavailable, canMessageAgent } from "../agents/choices";
 import { avatarMedia } from "../../shared/avatar-source";
-import { useChannelWindow } from "../relay/react";
 import type { ChannelSummary } from "../relay/contracts";
 import { sameDirectMessage } from "../relay/direct-message-policy";
-import {
-  ConversationChannel,
-  ConversationTimeline,
-} from "../conversation/Conversation";
 import type { ConversationHostServices } from "../conversation/ConversationHost";
 import { composerMarkdown } from "../messages/composer-markdown";
 import { restoreChatLinks } from "../messages/composer-chat-cards";
 import {
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -36,6 +32,20 @@ import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
 import type { MessageIntent } from "../channel-navigation/routes";
 import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { NavigationSection } from "../../shared/design-system/ui/NavigationSection";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import { startingChatTitle } from "../solo/chat-title";
+import {
+  effectiveLifetime,
+  effectiveVisibility,
+} from "../solo/default-lifetime";
+import { canonicalDetailsName } from "../relay/channel-details-protocol";
+import { relativeTimestamp } from "../../shared/relative-timestamp";
+import type { Profile } from "../relay/contracts";
+import { useIdentityNames } from "../identity-names/react";
+import { sortParticipantNames } from "../identity-names/participant-order";
 import {
   useVerifiedNames,
   withVerifiedNames,
@@ -48,12 +58,14 @@ import type { PageNavigation } from "../navigation/service";
 import styles from "./NewMessage.module.css";
 
 const draftKey = "direct-message:new-draft";
+const titleKey = "direct-message:title";
 const recoveryKey = "direct-message:new";
 
 type Pending = {
   id: string;
   channelId: string;
   workspace?: string;
+  starred?: true;
   recipients: string;
   draft: MentionDraft;
   attachments: readonly (readonly string[])[];
@@ -134,7 +146,9 @@ function recovered(operations: readonly OutgoingEvent[], viewer?: string) {
     value.workspace.trim() &&
     value.workspace.length <= 256
       ? { workspace: value.workspace }
-      : {}),
+      : value.starred === true
+        ? { starred: true as const }
+        : {}),
     recipients: keyFor(people),
     draft: mentionDraft(value.draft),
     attachments: item.event.tags.filter(([name]) => name === "imeta"),
@@ -149,18 +163,41 @@ export function NewMessage({
   extensions,
   channels,
   onPreparing,
-  host,
-  onOpenThread,
   onStarted,
+  onOpenChat,
   visit,
   intent,
   workspace,
+  starred,
+  solo,
+  dmIdentity,
 }: {
+  /** The picked people's identity as their DM shows in the sidebar. */
+  dmIdentity?:
+    | ((identity: {
+        members: readonly string[];
+        profiles: ReadonlyMap<string, Profile>;
+        fallback: string;
+      }) => ReactNode)
+    | undefined;
+  /** A new Solo chat, shown while no person is picked: with the agent picked
+   * in To, or the default one, and the page's title as its name. */
+  solo?:
+    | ((start: {
+        agent?: string;
+        name: string;
+        focusRequest: number;
+      }) => ReactNode)
+    | undefined;
+  /** Open one of the picked group's named conversations instead. */
+  onOpenChat?: ((channelId: string) => void) | undefined;
   session: RelaySession;
   scope: string;
   /** The person this visit was opened from, such as by their profile's Message. */
   intent?: MessageIntent | undefined;
   workspace?: string | undefined;
+  /** File the conversation in Favorites once it is delivered. */
+  starred?: boolean | undefined;
   /** The visit presenting this composer, a Back stop only once drafted. */
   visit?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -213,6 +250,30 @@ export function NewMessage({
   );
   const recipientNames = named.map((person) => person.name).join(", ");
   const roster = useMemo(() => ({ recipients }), [recipients]);
+  // An optional name. Without one, the first message names the conversation.
+  const [title, setTitle] = useState(() => {
+    const saved = readView<unknown>(scope, titleKey, "");
+    return typeof saved === "string" ? saved : "";
+  });
+  const changeTitle = (next: string) => {
+    setTitle(next);
+    writeView(scope, titleKey, next || null);
+  };
+  // "Direct message" chosen for people without a DM yet: the message starts
+  // their DM rather than a new conversation.
+  const [direct, setDirect] = useState(false);
+  const startable = direct
+    ? session.directMessages.available
+    : session.channelWrites.available;
+  // Agents never change whose conversation it is, as in a DM.
+  const isAgent = (person: Recipient) =>
+    !!person.isAgent || !!profiles.get(person.pubkey)?.isAgent;
+  const people = named.filter((person) => !isAgent(person));
+  // The DM's name as the sidebar shows it, following the name setting.
+  const resolveName = useIdentityNames(session.names);
+  const peopleNames = new Intl.ListFormat(undefined, {
+    type: "conjunction",
+  }).format(people.map((person) => person.name));
   // Text still in the To field may be a recipient not chosen yet, so Send
   // waits for it to become one or be cleared.
   const [typed, setTyped] = useState(false);
@@ -223,13 +284,15 @@ export function NewMessage({
   const [ready, setReady] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [draftRevision, setDraftRevision] = useState(0);
-  // A draft opened from a person starts in the message, so To keeps its list
-  // closed rather than open it only to lose focus.
-  const [addressing] = useState(() => untaken(scope, intent));
   const [composerFocus, setComposerFocus] = useState(0);
   const focusComposer = useCallback(() => {
     setComposerFocus((request) => request + 1);
   }, []);
+  // New message starts in the message, so clicking + and typing reaches an
+  // agent. To stays closed until it's clicked or typed in.
+  useEffect(() => {
+    if (ready && !document.activeElement?.closest("input")) focusComposer();
+  }, [ready, focusComposer]);
   const retiring = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState<"uploading" | "sending" | undefined>();
   const [error, setError] = useState("");
@@ -257,6 +320,8 @@ export function NewMessage({
     retiring.current = undefined;
     draftEdited(undefined);
     setRecipients([]);
+    setTitle("");
+    setDirect(false);
     setRestoredDraft(mentionDraft(""));
     setDraftRevision((revision) => revision + 1);
   }, [session, scope, draftEdited]);
@@ -340,6 +405,7 @@ export function NewMessage({
   function change(people: Recipient[]) {
     if (locked || attempt.current) return;
     setRecipients(people);
+    setDirect(false);
     writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
     setUploadFailed(false);
@@ -380,7 +446,7 @@ export function NewMessage({
       !ready ||
       !recipients.length ||
       (!content.trim() && !files?.snapshot().length && !pending) ||
-      !session.directMessages.available
+      !startable
     )
       return;
     const controller = new AbortController();
@@ -434,16 +500,33 @@ export function NewMessage({
       }
       if (!current) {
         validateAgents();
-        onPreparing?.(recipients.map((person) => person.pubkey));
-        // The relay picks the DM of these people, which can differ from the
-        // one shown, and named agents join it with its history. The message
-        // goes where the relay says now: someone may have joined the DM it
-        // gave an earlier attempt, so every new message asks again.
-        const id = await session.directMessages.open(
-          recipients.map((person) => person.pubkey),
-          controller.signal,
-          true,
-        );
+        const members = recipients.map((person) => person.pubkey);
+        let id: string;
+        if (direct) {
+          onPreparing?.(members);
+          // The relay picks the DM of these people, and named agents join it
+          // with its history. Every new message asks again: someone may have
+          // joined the DM it gave an earlier attempt.
+          id = await session.directMessages.open(
+            members,
+            controller.signal,
+            true,
+          );
+        } else {
+          // Anything else starts a new conversation with these people, named
+          // by the title or else the first message. It lists at once, and the
+          // message goes out once the relay has made it.
+          id = crypto.randomUUID();
+          session.channelWrites.start(
+            id,
+            canonicalDetailsName(title) || startingChatTitle(draft),
+            members,
+            effectiveLifetime(scope, workspace),
+            false,
+            undefined,
+            { solo: false, visibility: effectiveVisibility(scope, workspace) },
+          );
+        }
         controller.signal.throwIfAborted();
         validateAgents();
         const messageId = sendWithOwnerMentions(
@@ -461,6 +544,7 @@ export function NewMessage({
                   people: recipients.map(recipientView),
                   draft,
                   ...(workspace ? { workspace } : {}),
+                  ...(starred ? { starred } : {}),
                 }),
               },
             ),
@@ -469,6 +553,7 @@ export function NewMessage({
           id: messageId,
           channelId: id,
           ...(workspace ? { workspace } : {}),
+          ...(starred ? { starred: true as const } : {}),
           recipients: key,
           draft,
           attachments,
@@ -485,6 +570,10 @@ export function NewMessage({
         void session.sidebarPreferences
           .assign(current.channelId, current.workspace)
           .catch(() => {});
+      } else if (current.starred) {
+        void session.sidebarPreferences
+          .setStar(current.channelId, true)
+          .catch(() => {});
       }
       // Clear disposable views before releasing durable recovery. A failed clear
       // retains the operation for confirmation-only retry, even across unmount.
@@ -494,6 +583,7 @@ export function NewMessage({
         `${draftKey}:files`,
         "direct-message:pending",
         "direct-message:recipients",
+        titleKey,
       );
       await outbox?.acknowledge(current.id);
       if (controller.signal.aborted) return;
@@ -554,16 +644,81 @@ export function NewMessage({
     }
     return match;
   }, [channels, recipients, session.viewer, profiles]);
-  // Agents named for an existing DM of these people join it, with its history.
-  const joining = existing
-    ? named.filter((person) => !existing.members?.includes(person.pubkey))
-    : [];
-  return (
-    <section
-      className={styles.page}
-      aria-label="New message"
-      data-attachment-drop-zone
-    >
+  // Named conversations with exactly these people, newest first. Like a DM,
+  // a conversation is known by its people: agents in it never change whose
+  // it is.
+  const namedConversations = useMemo(() => {
+    const viewer = session.viewer;
+    if (!viewer || !onOpenChat) return [];
+    const agentKey = (key: string) =>
+      recipients.some((person) => person.pubkey === key && person.isAgent) ||
+      !!profiles.get(key)?.isAgent;
+    const group = new Set(
+      recipients.map((person) => person.pubkey).filter((key) => !agentKey(key)),
+    );
+    if (!group.size) return [];
+    return channels
+      .filter((channel) => {
+        if (
+          (channel.channelType !== "solo" &&
+            channel.channelType !== "stream") ||
+          !channel.name ||
+          channel.archived ||
+          channel.cached ||
+          channel.pending ||
+          channel.huddle ||
+          !channel.members?.includes(viewer)
+        )
+          return false;
+        const people = new Set(
+          channel.members.filter((key) => key !== viewer && !agentKey(key)),
+        );
+        return (
+          people.size === group.size &&
+          [...people].every((key) => group.has(key))
+        );
+      })
+      .sort(
+        (left, right) =>
+          (right.lastActivityAt ?? 0) - (left.lastActivityAt ?? 0),
+      );
+  }, [channels, recipients, session.viewer, profiles, onOpenChat]);
+  // Who is an agent comes from profiles, so load the unknown members of rooms
+  // that could be this group's before matching them.
+  useEffect(() => {
+    const viewer = session.viewer;
+    if (!viewer || !onOpenChat || !recipients.length) return;
+    const picked = recipients.map((person) => person.pubkey);
+    const unknown = new Set<string>();
+    for (const channel of channels) {
+      if (
+        (channel.channelType !== "solo" && channel.channelType !== "stream") ||
+        !channel.members?.includes(viewer) ||
+        !picked.every((key) => channel.members?.includes(key))
+      )
+        continue;
+      for (const key of channel.members)
+        if (key !== viewer && !profiles.has(key)) unknown.add(key);
+    }
+    if (unknown.size)
+      void session.profiles.ensure([...unknown]).catch(() => {});
+  }, [channels, recipients, session, profiles, onOpenChat]);
+  const openNamed = (channelId: string) => {
+    if (!locked) onOpenChat?.(channelId);
+  };
+  // Two fields: an optional name, then To.
+  const header = (
+    <div className={styles.header}>
+      <Field label="Name" labelVisibility="hidden">
+        <Input
+          value={direct ? "" : title}
+          maxLength={120}
+          autoComplete="off"
+          placeholder={direct ? peopleNames : "Message title (Optional)"}
+          disabled={locked || direct}
+          onChange={(event) => changeTitle(event.target.value)}
+        />
+      </Field>
       <RecipientPicker
         session={session}
         scope={scope}
@@ -571,51 +726,112 @@ export function NewMessage({
         labels={named}
         disabled={locked}
         onChange={change}
-        initiallyOpen={!addressing}
+        initiallyOpen={false}
+        optional
+        // After a pick, the group's conversations show; typing brings the
+        // people list back for the next name.
+        searchOnly={recipients.length > 0}
         onComplete={focusComposer}
         onTyped={setTyped}
       />
+    </div>
+  );
+  const dmMembers =
+    existing?.participants ?? people.map((person) => person.pubkey);
+  const dmLabel = sortParticipantNames(
+    dmMembers.map((key) =>
+      resolveName(
+        key,
+        profiles.get(key)?.name ??
+          named.find((person) => person.pubkey === key)?.name ??
+          key.slice(0, 10),
+        dmMembers,
+      ),
+    ),
+  ).join(", ");
+  // With no person picked, this is a new Solo chat with its agent.
+  if (solo && !people.length && !pending)
+    return (
+      <section
+        className={styles.page}
+        aria-label="New message"
+        data-attachment-drop-zone
+      >
+        {header}
+        {solo({
+          ...(recipients[0] ? { agent: recipients[0].pubkey } : {}),
+          name: title,
+          focusRequest: composerFocus,
+        })}
+      </section>
+    );
+  const composerName = direct
+    ? peopleNames
+    : canonicalDetailsName(title) || undefined;
+  return (
+    <section
+      className={styles.page}
+      aria-label="New message"
+      data-attachment-drop-zone
+    >
+      {header}
       <div className={styles.blank} data-new-message-body="">
-        {existing ? (
-          <ExistingDiscussion
-            key={existing.id}
-            session={session}
-            scope={scope}
-            channel={existing}
-            extensions={extensions}
-            host={host}
-            onRecovered={focusComposer}
-            onOpen={(messageId, threadRootId, intent) =>
-              onOpenThread(existing.id, messageId, threadRootId, intent)
-            }
-          />
-        ) : recipients.length > 0 ? (
+        {people.length > 0 && (
           <div className={styles.introduction}>
-            <AvatarStack
-              animateEntrance
-              size="hero-large"
-              max={5}
-              items={named.map((person) => ({
-                id: person.pubkey,
-                name: person.name,
-                src: avatarMedia(person.picture, session.media),
-                shape: person.isAgent ? "squircle" : "circle",
-              }))}
-            />
+            <div className={styles.group}>
+              <AvatarStack
+                animateEntrance
+                size="hero-large"
+                max={5}
+                items={people.map((person) => ({
+                  id: person.pubkey,
+                  name: person.name,
+                  src: avatarMedia(person.picture, session.media),
+                  shape: "circle",
+                }))}
+              />
+              <NavigationSection>
+                {/* Their DM as the sidebar shows it, new or with history. */}
+                <NavigationItem
+                  label={dmLabel}
+                  icon={dmIdentity?.({
+                    members: people.map((person) => person.pubkey),
+                    profiles,
+                    fallback: peopleNames,
+                  })}
+                  selected={direct}
+                  aria-current={false}
+                  aria-pressed={existing ? undefined : direct}
+                  disabled={locked}
+                  trailing="Direct message"
+                  aria-label={`Direct message with ${peopleNames}`}
+                  onClick={() => {
+                    if (existing) openNamed(existing.id);
+                    else {
+                      setDirect((chosen) => !chosen);
+                      focusComposer();
+                    }
+                  }}
+                />
+                {namedConversations.map((channel) => (
+                  <NavigationItem
+                    key={channel.id}
+                    label={channel.name}
+                    disabled={locked}
+                    trailing={
+                      channel.lastActivityAt
+                        ? relativeTimestamp(channel.lastActivityAt)
+                        : undefined
+                    }
+                    onClick={() => openNamed(channel.id)}
+                  />
+                ))}
+              </NavigationSection>
+            </div>
           </div>
-        ) : null}
+        )}
       </div>
       <div className={styles.feedback}>
-        {joining.length > 0 && (
-          <p role="status">
-            Sending adds{" "}
-            {new Intl.ListFormat(undefined, { type: "conjunction" }).format(
-              joining.map((person) => person.name),
-            )}{" "}
-            to this DM. {joining.length === 1 ? "It" : "They"} can read its
-            earlier messages.
-          </p>
-        )}
         {busy && (
           <p role="status">
             {busy === "uploading" ? "Uploading files…" : "Sending message…"}
@@ -629,9 +845,11 @@ export function NewMessage({
             an error, then send again.
           </p>
         )}
-        {!session.directMessages.available && (
+        {people.length > 0 && !startable && (
           <p role="status">
-            Starting direct messages is unavailable on this connection.
+            {direct
+              ? "Starting direct messages is unavailable on this connection."
+              : "Starting conversations is unavailable on this connection."}
           </p>
         )}
         {pending && !failed && !busy && !error && (
@@ -666,9 +884,21 @@ export function NewMessage({
           extensions={extensions}
           channelId={draftChannel}
           focusRequest={composerFocus}
-          channelName={recipientNames || "new message"}
-          label={recipientNames ? `Message ${recipientNames}` : "New message"}
-          placeholder={recipientNames ? undefined : ""}
+          channelName={composerName ?? (recipientNames || "new message")}
+          label={
+            composerName
+              ? `Message ${composerName}`
+              : recipientNames
+                ? "Start a new conversation"
+                : "New message"
+          }
+          placeholder={
+            composerName
+              ? `Message ${composerName}`
+              : recipientNames
+                ? "Start a new conversation"
+                : ""
+          }
           disabled={!recipients.length}
           submission={{
             draftKey,
@@ -678,11 +908,7 @@ export function NewMessage({
             onDraftChange: draftEdited,
             locked,
             disabled:
-              !ready ||
-              !!busy ||
-              !recipients.length ||
-              typed ||
-              !session.directMessages.available,
+              !ready || !!busy || !recipients.length || typed || !startable,
             submit: (
               draft,
               files,
@@ -701,72 +927,3 @@ export function NewMessage({
 const empty: readonly never[] = [];
 const emptySnapshot = () => empty;
 const noSubscribe = () => () => {};
-
-/** History owns paging and loading; the draft and send journal stay mounted above. */
-function ExistingDiscussion({
-  session,
-  scope,
-  channel,
-  extensions,
-  host,
-  onOpen,
-  onRecovered,
-}: {
-  session: RelaySession;
-  scope: string;
-  channel: ChannelSummary;
-  extensions?: ConversationExtensions | undefined;
-  host: ConversationHostServices;
-  onOpen(messageId: string, threadRootId: string, intent?: "reply"): void;
-  onRecovered(): void;
-}) {
-  const window = useChannelWindow(session.channels, channel.id);
-  const retry = useRef<HTMLButtonElement>(null);
-  const [recovering, setRecovering] = useState(false);
-  const waiting = !window.rows.length && window.status !== "ready";
-  useLayoutEffect(() => {
-    if (waiting || !recovering) return;
-    // Hand off before removing Retry, and only while it still owns focus.
-    if (document.activeElement === retry.current) onRecovered();
-    setRecovering(false);
-  }, [waiting, recovering, onRecovered]);
-  if (waiting || recovering)
-    return (
-      <div
-        className={styles.feedback}
-        role={window.status === "error" ? "alert" : "status"}
-      >
-        <p>{window.status === "error" ? window.error : "Loading messages…"}</p>
-        {(window.status === "error" || recovering) && (
-          <Button
-            ref={retry}
-            type="button"
-            loading={window.status !== "error"}
-            onClick={() => {
-              setRecovering(true);
-              session.channels.ensure(channel.id);
-            }}
-          >
-            Retry messages
-          </Button>
-        )}
-      </div>
-    );
-  return (
-    <ConversationChannel
-      session={session}
-      scope={scope}
-      channel={channel}
-      extensions={extensions}
-      active={false}
-      host={host}
-    >
-      <ConversationTimeline
-        window={window}
-        transient
-        marksRead={false}
-        onOpenThread={onOpen}
-      />
-    </ConversationChannel>
-  );
-}

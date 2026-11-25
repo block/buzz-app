@@ -16,7 +16,7 @@ import {
 import type { LiveCallbacks } from "./live";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { HeadPersistence, SavedHead } from "./persistence";
-import { diffPreview, rowProfileIds } from "./membership";
+import { diffPreview, memberChange, rowProfileIds } from "./membership";
 
 const relay = keypair(),
   viewer = keypair(),
@@ -53,7 +53,7 @@ it("admits only recognized, channel-scoped relay-authored membership payloads", 
   });
   const rows = foldMessages("a", relay.pubkey, [joined, left, removed]);
   expect(rows).toHaveLength(3);
-  expect(rows.find((r) => r.id === left.id)?.membership?.target).toBe(
+  expect(memberChange(rows.find((r) => r.id === left.id) ?? {})?.target).toBe(
     pinky.pubkey,
   );
   expect(
@@ -91,6 +91,68 @@ it("admits only recognized, channel-scoped relay-authored membership payloads", 
         content: "broken JSON",
         tags: [["h", "a"]],
       }),
+    ]),
+  ).toEqual([]);
+});
+
+const source = "11111111-1111-4111-8111-111111111111";
+const destination = "22222222-2222-4222-8222-222222222222";
+const cut = "c".repeat(64);
+const moved = {
+  type: "history_moved",
+  actor: viewer.pubkey,
+  from: source,
+  to: destination,
+  cut,
+  count: 3,
+  added: [pinky.pubkey],
+};
+
+it("reads a naming and a history move as typed system rows, never messages", () => {
+  const named = activity({
+    type: "dm_named",
+    actor: viewer.pubkey,
+    name: "Launch plan",
+  });
+  const move = activity(moved, 21);
+  const rows = foldMessages("a", relay.pubkey, [named, move]);
+  expect(rows.map((r) => r.membership)).toEqual([
+    { type: "dm_named", actor: viewer.pubkey, name: "Launch plan" },
+    { ...moved, added: [pinky.pubkey] },
+  ]);
+  expect(rows.every((r) => !r.content && !r.replyCount)).toBe(true);
+  expect(memberChange(rows[0] ?? {})).toBeUndefined();
+  expect(rowProfileIds(rows[0] as never)).toEqual([viewer.pubkey]);
+  expect(rowProfileIds(rows[1] as never)).toEqual([
+    viewer.pubkey,
+    pinky.pubkey,
+  ]);
+});
+
+it.each([
+  { type: "dm_named", actor: viewer.pubkey, name: "" },
+  { type: "dm_named", actor: viewer.pubkey },
+  { type: "dm_named", actor: "fake", name: "Name" },
+  { ...moved, from: "a" },
+  { ...moved, to: source },
+  { ...moved, cut: "short" },
+  { ...moved, count: -1 },
+  { ...moved, count: 1.5 },
+  { ...moved, added: ["fake"] },
+  { ...moved, added: "none" },
+])("ignores a malformed conversation notice %j", (body) => {
+  expect(foldMessages("a", relay.pubkey, [activity(body)])).toEqual([]);
+});
+
+it("only the relay may name a conversation or move its history", () => {
+  expect(
+    foldMessages("a", relay.pubkey, [
+      activity(
+        { type: "dm_named", actor: viewer.pubkey, name: "x" },
+        20,
+        viewer,
+      ),
+      activity(moved, 20, viewer),
     ]),
   ).toEqual([]);
 });
@@ -186,7 +248,9 @@ it.each([false, true])(
         await flush();
       }
       expect(q.window("a").rows.map((r) => r.id)).toEqual([hello.id, row.id]);
-      expect(q.window("a").rows[1]?.membership?.target).toBe(pinky.pubkey);
+      expect(memberChange(q.window("a").rows[1] ?? {})?.target).toBe(
+        pinky.pubkey,
+      );
       // Render before enrichment, with no per-row blocking request.
       take(wire, isNames).respond([
         profile(viewer, { name: "Wes" }),
@@ -443,7 +507,7 @@ it("prepared disk heads retain signed membership evidence and subject profiles f
     second.session.channels.ensure("a");
     await vi.waitFor(() =>
       expect(
-        second.session.channels.window("a").rows[0]?.membership?.target,
+        memberChange(second.session.channels.window("a").rows[0] ?? {})?.target,
       ).toBe(pinky.pubkey),
     );
     expect(second.session.profiles.snapshot().get(pinky.pubkey)?.name).toBe(

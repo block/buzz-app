@@ -54,6 +54,22 @@ import {
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
+
+export type AccountSettings = Readonly<{
+  /** Default lifetime for new conversations: seconds without activity before
+   * one archives, or null for ongoing. */
+  lifetime: number | null;
+  /** Workspaces that override it; one left out follows the default. */
+  workspaces: Readonly<Record<string, number | null>>;
+  /** Who can read new conversations by default. */
+  visibility: ConversationVisibility;
+  /** Workspaces that override it; one left out follows the default. */
+  workspaceVisibility: Readonly<Record<string, ConversationVisibility>>;
+}>;
+
+/** Who can read new conversations. View only: anyone in the community can
+ * read; only members post. */
+export type ConversationVisibility = "private" | "view-only" | "public";
 import {
   admittedApiRequest,
   ApiPaused,
@@ -78,7 +94,12 @@ import { PublishNotSent, PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import { ARTIFACT_KIND } from "../agents/agent-config-artifacts";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
-import { directMessageRefusal } from "./direct-message-policy";
+import {
+  directMessageCommandRefusal,
+  directMessageRefusal,
+  MOVE_DM_HISTORY_KIND,
+  NAME_DM_KIND,
+} from "./direct-message-policy";
 import {
   createEventVerifier,
   eventDto,
@@ -142,6 +163,21 @@ export interface ReadTransport {
     signal: AbortSignal,
     history?: DirectMessageHistory,
   ) => Promise<string>;
+  /** Host-owned naming of a DM (kind 41013): it becomes a private channel
+   * in place. Returns the same channel id. Only people can name a DM. */
+  readonly nameDirectMessage?: (
+    channelId: string,
+    details: { name: string; picture?: string; about?: string },
+    signal: AbortSignal,
+  ) => Promise<string>;
+  /** Host-owned move of a DM's history from the top-level message `cut`
+   * into a new conversation (kind 41014): a named channel, or without a
+   * name a new DM that adds `add`. Everyone in the source comes along. */
+  readonly moveDirectMessageHistory?: (
+    channelId: string,
+    move: { cut: string; name?: string; add: readonly string[] },
+    signal: AbortSignal,
+  ) => Promise<{ channelId: string; created: boolean }>;
   readonly workflows?: WorkflowHost;
   /** Narrow lifecycle signer/publisher; never supplied to the message outbox. */
   readonly channelLifecycle?: RelayWriter;
@@ -215,6 +251,32 @@ export interface ReadTransport {
     expected: string,
     signal: AbortSignal,
   ): Promise<string | undefined>;
+  /** Host-only private account settings record; undefined when there is
+   * none. */
+  readAccountSettings?(
+    signal: AbortSignal,
+  ): Promise<AccountSettings | undefined>;
+  /** Null saves ongoing. */
+  writeAccountLifetime?(
+    lifetime: number | null,
+    signal: AbortSignal,
+  ): Promise<void>;
+  writeAccountVisibility?(
+    visibility: ConversationVisibility,
+    signal: AbortSignal,
+  ): Promise<void>;
+  /** Undefined makes the workspace follow the account default again. */
+  writeWorkspaceVisibility?(
+    workspace: string,
+    visibility: ConversationVisibility | undefined,
+    signal: AbortSignal,
+  ): Promise<void>;
+  /** Undefined makes the workspace follow the account default again. */
+  writeWorkspaceLifetime?(
+    workspace: string,
+    lifetime: number | null | undefined,
+    signal: AbortSignal,
+  ): Promise<void>;
   readonly profiling?: RelayProfiler;
   /** Verifies events read back from device storage as a relay read does, with
    * the host's native batch check; only present with one. Rejects on any bad record or host failure. */
@@ -506,6 +568,18 @@ async function readResponseError(response: Response) {
   );
 }
 
+/** A failed relay read. Only the relay's own 401/403 is a denial; an edge or
+ * proxy page with that status (a VPN still reconnecting) is an outage. */
+async function relayReadError(response: Response) {
+  const failure = await readApiFailure(response);
+  return new ReadError(
+    failure.denied ? "denied" : "unavailable",
+    failure.error,
+    response.status,
+    failure.retryAfterMs,
+  );
+}
+
 /** The broker marks any response whose upstream relay request met a community
  * refusal with `x-buzz-refusal` (`relay-broker.mjs`), whatever its route does
  * with the relay's body. Every broker request below goes through here. */
@@ -538,6 +612,43 @@ export async function connectBrokerTransport(
   const endpoint = `${base}/api/relay${community ? `/${encodeURIComponent(community)}` : ""}`;
   const profiling = createRelayProfiler();
   const verify = createEventVerifier();
+  /** Naming a DM or moving its history, through the direct-message route.
+   * The broker words the relay's refusal; the result is bound to its receipt. */
+  const directMessageCommand = async (
+    body: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => {
+    const result = await fetch(`${endpoint}/direct-message`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+    });
+    if (!result.ok) {
+      const failure = await result.json().catch(() => undefined);
+      throw new Error(
+        typeof failure?.error === "string"
+          ? failure.error
+          : directMessageCommandRefusal(
+              body.command === "name" ? NAME_DM_KIND : MOVE_DM_HISTORY_KIND,
+              undefined,
+            ),
+      );
+    }
+    const value = await result.json();
+    if (
+      typeof value?.channelId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        value.channelId,
+      )
+    )
+      throw new Error("The relay returned an invalid conversation.");
+    return {
+      channelId: value.channelId as string,
+      created: value.created === true,
+    };
+  };
   const response = await fetch(`${endpoint}/session`, {
     credentials: "same-origin",
     signal: signal ?? null,
@@ -767,6 +878,28 @@ export async function connectBrokerTransport(
             )
               throw new Error("The relay returned an invalid direct message.");
             return value.channelId;
+          },
+          async nameDirectMessage(
+            channelId: string,
+            details: { name: string; picture?: string; about?: string },
+            signal: AbortSignal,
+          ) {
+            const value = await directMessageCommand(
+              { command: "name", channel: channelId, ...details },
+              signal,
+            );
+            return value.channelId;
+          },
+          async moveDirectMessageHistory(
+            channelId: string,
+            move: { cut: string; name?: string; add: readonly string[] },
+            signal: AbortSignal,
+          ) {
+            const value = await directMessageCommand(
+              { command: "move", channel: channelId, ...move },
+              signal,
+            );
+            return { channelId: value.channelId, created: value.created };
           },
         }
       : {}),
@@ -1419,7 +1552,7 @@ export async function connectBrokerTransport(
                 ),
                 signal,
               });
-              if (!result.ok) throw httpReadError(result.status);
+              if (!result.ok) throw await relayReadError(result);
               return parseEvents(
                 JSON.parse(sized(await result.text())),
                 verify,
@@ -1467,15 +1600,7 @@ export async function connectBrokerTransport(
           body: JSON.stringify(filters),
           signal: signal ?? null,
         });
-        if (!result.ok) {
-          const failure = await readApiFailure(result);
-          throw new ReadError(
-            failure.denied ? "denied" : "unavailable",
-            failure.error,
-            result.status,
-            failure.retryAfterMs,
-          );
-        }
+        if (!result.ok) throw await relayReadError(result);
         recordServerTiming(result, profiling, requestId);
         return profiling.measureAsync("read.verify", requestId, async () =>
           parseEvents(JSON.parse(sized(await result.text())), verify, signal),
@@ -1674,15 +1799,7 @@ export async function connectSignedTransport(
           principal().api,
           priority,
         );
-        if (!result.ok) {
-          const failure = await readApiFailure(result);
-          throw new ReadError(
-            failure.denied ? "denied" : "unavailable",
-            failure.error,
-            result.status,
-            failure.retryAfterMs,
-          );
-        }
+        if (!result.ok) throw await relayReadError(result);
         recordServerTiming(result, profiling, requestId);
         return profiling.measureAsync("read.verify", requestId, async () =>
           parseEvents(JSON.parse(sized(await result.text())), verify, signal),

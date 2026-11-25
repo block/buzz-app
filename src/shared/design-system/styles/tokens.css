@@ -906,7 +906,7 @@
   /* --- Corner. Containers stop at 28px; pills/circles are separate shapes. */
   --corner-row: 1rem;
   --corner-control: 1.25rem;
-  --corner-container: 1.5rem;
+  --corner-container: 1rem;
   --corner-panel: 1.75rem;
   --corner-round: 9999rem;
 
@@ -1547,6 +1547,8 @@
      inset and a 4px gap. */
   --space-chip-inset: 0.1875rem;
   --space-chip-gap: var(--space-1);
+  /* App-wide floating controls, such as a moved + button, stay below dialogs. */
+  --layer-floating-action: 900;
   --layer-dialog-backdrop: 1000;
   --layer-dialog: 1001;
   /* Feedback raised from a dialog must stay visible above it. */

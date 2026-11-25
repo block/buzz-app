@@ -1,11 +1,15 @@
 import {
   agentPolicyMessage,
   agentPolicyRefusal,
+  conversationNameDetails,
+  validConversationPicture,
   NEEDS_HISTORY_CHOICE,
   validDirectMessageParticipants,
 } from "./direct-message-policy";
+import { threadReference } from "./thread-reference";
 import { foldProfiles } from "./profiles";
 import type { ChannelQueries } from "./contracts";
+import type { ChannelDetailsCapability } from "./channel-details";
 import type { ReadTransport } from "./transport";
 import type { RelayReader } from "./reader";
 import type { Outbox } from "./outbox";
@@ -22,6 +26,11 @@ import {
   type VerifiedProfile,
   type VerifiedProfileAuthority,
 } from "./verified-profile";
+
+/** How many pages of today's messages a "start fresh" read follows to find
+ * the first one. */
+const SINCE_PAGES = 10;
+const SINCE_PAGE_SIZE = 200;
 
 /** The longest text the community people search accepts. */
 export const PEOPLE_SEARCH_MAX_LENGTH = 100;
@@ -51,8 +60,14 @@ export function createDirectMessages(
   profiles?: Pick<ProfileQueries, "ensure" | "snapshot" | "event">,
   /** Identity labels, which tell namesakes apart, for an agent's refusal. */
   names?: Pick<IdentityNameView, "resolve">,
+  /** Sets the picture of a conversation moved into a named channel: the
+   * move command carries none. */
+  details?: Pick<ChannelDetailsCapability, "load" | "save">,
 ) {
   const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
+  /** The host can sign 41013 and 41014. */
+  const nameable =
+    !!transport?.nameDirectMessage && !!transport?.moveDirectMessageHistory;
   const opened = new Set<(id: string) => void>();
   /** `error`, or, for an agent's add-policy refusal, what to show with the
    * agent and its verified owner named, so the person knows whom to ask. A
@@ -88,11 +103,7 @@ export function createDirectMessages(
   }
   /** The DM `id` as signed discovery shows it, once it holds `required`.
    * Only signed discovery can admit it: never trust a receipt as membership. */
-  async function confirmed(
-    id: string,
-    required: readonly string[],
-    signal: AbortSignal,
-  ) {
+  async function discover(id: string, signal: AbortSignal) {
     if (!transport) throw new Error("Direct messages are unavailable.");
     await reader.read(
       [
@@ -107,7 +118,15 @@ export function createDirectMessages(
       { signal, fresh: true },
     );
     signal.throwIfAborted();
-    const channel = channels.list().channels.find((item) => item.id === id);
+    return channels.list().channels.find((item) => item.id === id);
+  }
+  async function confirmed(
+    id: string,
+    required: readonly string[],
+    signal: AbortSignal,
+  ) {
+    if (!transport) throw new Error("Direct messages are unavailable.");
+    const channel = await discover(id, signal);
     if (
       channel?.channelType !== "dm" ||
       channel.archived ||
@@ -118,8 +137,55 @@ export function createDirectMessages(
       );
     return channel.members ?? [];
   }
+  /** The oldest top-level message at or after `since` (Unix seconds) in
+   * `channelId`: where "start fresh from today" cuts. */
+  async function firstSince(
+    channelId: string,
+    since: number,
+    signal: AbortSignal,
+  ) {
+    let oldest: RelayEvent | undefined;
+    let cursor: { until: number; before_id: string } | undefined;
+    for (let page = 0; page < SINCE_PAGES; page++) {
+      const events = await reader.read(
+        [
+          {
+            kinds: [9],
+            "#h": [channelId],
+            since,
+            top_level: true,
+            limit: SINCE_PAGE_SIZE,
+            ...cursor,
+          },
+        ],
+        { signal, fresh: true },
+      );
+      signal.throwIfAborted();
+      const rows = events.filter(
+        (event) =>
+          event.kind === 9 &&
+          event.created_at >= since &&
+          !threadReference(event),
+      );
+      for (const event of rows)
+        if (
+          !oldest ||
+          event.created_at < oldest.created_at ||
+          (event.created_at === oldest.created_at && event.id < oldest.id)
+        )
+          oldest = event;
+      if (events.length < SINCE_PAGE_SIZE) break;
+      const last = [...events].sort(
+        (a, b) => a.created_at - b.created_at || b.id.localeCompare(a.id),
+      )[0];
+      if (!last) break;
+      cursor = { until: last.created_at, before_id: last.id };
+    }
+    return oldest;
+  }
   return Object.freeze({
     available,
+    nameable,
     /** Observe relay-confirmed opens; opening also unhides the DM on the relay. */
     subscribeOpened(listener: (id: string) => void) {
       opened.add(listener);
@@ -294,6 +360,115 @@ export function createDirectMessages(
       await confirmed(id, [transport.viewer, ...pubkeys], active);
       if (id !== channelId) for (const listener of [...opened]) listener(id);
       return id;
+    },
+    /** Turn the DM `channelId` into a private channel named `details.name`,
+     * in place, with its history. Its people become owners. Resolves to the
+     * same id once signed discovery shows the channel. Only a person can. */
+    async name(
+      channelId: string,
+      details: { name: string; picture?: string; about?: string },
+      signal: AbortSignal,
+    ) {
+      if (!nameable || !transport?.nameDirectMessage)
+        throw new Error("This connection cannot name conversations.");
+      const checked = conversationNameDetails(details);
+      const known = channels.list().channels.find((c) => c.id === channelId);
+      if (known && known.channelType !== "dm")
+        throw new Error("Only a direct message can be named.");
+      const active = AbortSignal.any([lifetime, signal]);
+      active.throwIfAborted();
+      const id = await transport.nameDirectMessage(channelId, checked, active);
+      active.throwIfAborted();
+      if (id !== channelId)
+        throw new Error("The relay returned a different conversation.");
+      const named = await discover(id, active);
+      if (!named || named.channelType === "dm")
+        throw new Error(
+          "The conversation’s new name could not be confirmed. Try again.",
+        );
+      return id;
+    },
+    /** Move the DM `channelId`'s history from the top-level message `cut`
+     * (or, with `since` in Unix seconds, from its oldest top-level message
+     * since then) into a new conversation: a named private channel, or
+     * without `name` a new DM, which must add someone. Everyone in this DM
+     * comes along. Resolves once signed discovery shows the new conversation. */
+    async move(
+      channelId: string,
+      options: (
+        | { cut: string; since?: undefined }
+        | { since: number; cut?: undefined }
+      ) & { name?: string; picture?: string; add?: readonly string[] },
+      signal: AbortSignal,
+    ) {
+      if (!nameable || !transport?.moveDirectMessageHistory)
+        throw new Error("This connection cannot move history.");
+      const add = options.add ?? [];
+      const name =
+        options.name === undefined
+          ? undefined
+          : conversationNameDetails({ name: options.name }).name;
+      if (
+        (add.length &&
+          !validDirectMessageParticipants(add, transport.viewer, true)) ||
+        (name === undefined && !add.length)
+      )
+        throw new Error("Add someone, or give the new conversation a name.");
+      if (options.picture !== undefined) {
+        if (name === undefined)
+          throw new Error("Only a named conversation can have a picture.");
+        if (!validConversationPicture(options.picture))
+          throw new Error("The picture must be a web address.");
+      }
+      const active = AbortSignal.any([lifetime, signal]);
+      active.throwIfAborted();
+      let cut = options.cut;
+      if (cut === undefined) {
+        if (!Number.isSafeInteger(options.since))
+          throw new Error("Choose where to move this history.");
+        cut = (await firstSince(channelId, options.since as number, active))
+          ?.id;
+        if (!cut) throw new Error("There are no messages from today to move.");
+      }
+      if (!/^[0-9a-f]{64}$/.test(cut))
+        throw new Error("Choose where to move this history.");
+      const moved = await transport.moveDirectMessageHistory(
+        channelId,
+        { cut, ...(name !== undefined ? { name } : {}), add },
+        active,
+      );
+      active.throwIfAborted();
+      const destination = await discover(moved.channelId, active);
+      if (!destination || destination.archived)
+        throw new Error(
+          "The new conversation could not be confirmed. Try again.",
+        );
+      // A new DM opens like any other: unhidden, and offered to the UI.
+      if (destination.channelType === "dm")
+        for (const listener of [...opened]) listener(moved.channelId);
+      // The relay's move has no picture: set it on the new channel. The
+      // history already moved, so a failure here is reported, not thrown.
+      let pictureFailed = false;
+      if (options.picture && details) {
+        try {
+          const base = await details.load(moved.channelId, active);
+          await details.save(
+            base,
+            {
+              name: base.name,
+              description: base.description,
+              visibility: base.visibility,
+              picture: options.picture,
+            },
+            active,
+          );
+        } catch (error) {
+          active.throwIfAborted();
+          pictureFailed = true;
+          void error;
+        }
+      } else if (options.picture) pictureFailed = true;
+      return pictureFailed ? { ...moved, pictureFailed: true as const } : moved;
     },
     delivery(id: string) {
       return journal?.snapshot().find((item) => item.event.id === id)?.delivery;

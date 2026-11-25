@@ -84,6 +84,8 @@
     "allow-relay-kit-prepare",
     "allow-relay-kit-decode",
     "allow-relay-direct-message",
+    "allow-relay-name-direct-message",
+    "allow-relay-move-direct-message-history",
     "allow-relay-decode-sidebar",
     "allow-relay-sign-sidebar",
     "allow-relay-decode-reminders",

@@ -4,6 +4,7 @@ import {
   workspaceSectionOrder,
   type SidebarPreferences,
 } from "../../features/relay/sidebar-preferences";
+import { defaultSidebarSort } from "../../features/relay/sidebar-sort";
 
 export function isChannelSectionKey(key: string) {
   return key === "channels" || key.startsWith("group:");
@@ -12,9 +13,10 @@ export function isChannelSectionKey(key: string) {
 export type SidebarRowKind = "channel" | "dm" | "solo" | "forum";
 
 const anyRow: readonly SidebarRowKind[] = ["solo", "channel", "forum", "dm"];
+// Messages ("solo") takes named conversations and DMs takes DMs. The old
+// "channels" key stays valid in saved preferences but lists nothing.
 const homeRows: Partial<Record<string, readonly SidebarRowKind[]>> = {
-  solo: ["solo"],
-  channels: ["channel", "forum"],
+  solo: ["solo", "channel", "forum"],
   dms: ["dm"],
 };
 
@@ -31,13 +33,9 @@ export function sidebarRowKind(channel: ChannelSummary): SidebarRowKind {
     : "channel";
 }
 
+/** DMs list under DMs; every other conversation under Messages. */
 export function sidebarHome(channel: ChannelSummary) {
-  const kind = sidebarRowKind(channel);
-  return kind === "channel" || kind === "forum"
-    ? "channels"
-    : kind === "dm"
-      ? "dms"
-      : kind;
+  return channel.channelType === "dm" ? "dms" : "solo";
 }
 
 export function contributedSidebarSectionKey(key: string) {
@@ -88,10 +86,10 @@ export function compareRecent(a: ChannelSummary, b: ChannelSummary) {
 }
 
 const titles: Record<string, string> = {
-  starred: "Starred",
-  solo: "Solo",
-  channels: "Team",
-  dms: "Direct messages",
+  pages: "Plugins",
+  starred: "Favorites",
+  solo: "Messages",
+  dms: "DMs",
 };
 
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
@@ -102,6 +100,8 @@ export function sidebarSections<T extends ChannelSummary>(
   chatsOnly = false,
   draftSections: ReadonlySet<string> = new Set(),
   dormantAssignments: ReadonlySet<string> = new Set(),
+  /** Include the orderable Plugins section for sidebar-placed pages. */
+  pages = false,
 ) {
   const groups = new Map(
     preferences?.sections.map((group) => [group.id, group]),
@@ -130,17 +130,24 @@ export function sidebarSections<T extends ChannelSummary>(
     else rowsBySection.set(key, [channel]);
   }
   return workspaceSectionOrder(preferences).flatMap((key) => {
-    // Older clients can still save this key. Plugin pages now live in the header.
-    if (key === SIDEBAR_PAGES_SECTION) return [];
+    if (key === SIDEBAR_PAGES_SECTION && !pages) return [];
     const group = groups.get(key.slice(6));
     const rows = rowsBySection.get(key) ?? [];
+    // Its conversations list in Messages now.
+    if (key === "channels") return [];
     // The Solo heading owns New and its keyboard shortcut, even when every
-    // chat is filed in a workspace.
-    if (chatsOnly && key !== "solo" && !rows.length && !draftSections.has(key))
+    // chat is filed in a workspace. Plugins stay reachable in Focus.
+    if (
+      chatsOnly &&
+      key !== "solo" &&
+      key !== SIDEBAR_PAGES_SECTION &&
+      !rows.length &&
+      !draftSections.has(key)
+    )
       return [];
     const mode = preferences?.sort?.[group ? `section:${group.id}` : key];
     rows.sort(
-      mode === "recent" || (mode === undefined && key === "solo")
+      (mode ?? defaultSidebarSort(key)) === "recent"
         ? compareRecent
         : compareName,
     );

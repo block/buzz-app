@@ -260,6 +260,7 @@ const ChannelRow = memo(
       <motion.div
         ref={ref}
         className={styles.row}
+        data-card-row=""
         initial={{ opacity: animated ? 0 : 1 }}
         animate={{ opacity: hiding ? 0 : 1 }}
         exit={{ opacity: 0 }}

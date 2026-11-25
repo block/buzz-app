@@ -1112,9 +1112,7 @@ export function SearchChoices({
                   data-tone={group?.tone ?? "page"}
                   aria-hidden="true"
                 />
-                {group?.label === "Direct messages"
-                  ? "DMs"
-                  : (group?.label ?? "Top results")}
+                {group?.label ?? "Top results"}
                 {/* A landing group has no count yet. Top results has none:
                   it shows only the first rows of each group. */}
                 {group && group !== landing && (

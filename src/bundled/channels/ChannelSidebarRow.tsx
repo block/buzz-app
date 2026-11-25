@@ -9,6 +9,7 @@ import { useSpringLoaded } from "../../features/messages/spring-loaded-drag";
 import type { Navigation } from "../../features/navigation/controller";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import { BellSlashIcon, XIcon } from "../../shared/design-system/icons/index";
 import { useIsPresent } from "motion/react";
 import {
@@ -25,6 +26,7 @@ import styles from "./ChannelSidebarRow.module.css";
 export function ChannelSidebarRow({
   channel,
   icon,
+  tile,
   nameAccessory,
   title,
   badge,
@@ -47,6 +49,8 @@ export function ChannelSidebarRow({
 }: {
   channel: ChannelSummary;
   icon: ReactNode;
+  /** Draw the row as this identity tile, named by tooltip, in a card of icons. */
+  tile?: ReactNode;
   nameAccessory?: ReactNode;
   /** Rendered in place of the channel name, which stays its text. */
   title?: ReactNode;
@@ -140,6 +144,7 @@ export function ChannelSidebarRow({
       {...(onRename ? soloActivation : { onClick: activate })}
       {...springLoaded}
       selected={selected === channel.id}
+      variant={tile ? "avatar" : "row"}
       label={
         <span
           className={styles.nameContent}
@@ -157,23 +162,57 @@ export function ChannelSidebarRow({
         </span>
       }
       icon={
-        <span
-          className={styles.iconSpace}
-          data-channel-row-icon=""
-          data-dm-visual={dmVisualSpacing || undefined}
-        >
-          {icon}
-        </span>
-      }
-      trailing={
-        badge && (
-          <span className={styles.badges} data-working={working || undefined}>
-            {badge}
+        tile ? (
+          <span className={styles.tile} aria-hidden="true">
+            {tile}
+          </span>
+        ) : (
+          <span
+            className={styles.iconSpace}
+            data-channel-row-icon=""
+            data-dm-visual={dmVisualSpacing || undefined}
+          >
+            {icon}
           </span>
         )
       }
+      trailing={
+        badge &&
+        (tile ? (
+          // Inside the button, like a row's badges, so unread scans that
+          // resolve a marker to its row find it in either display.
+          <span className={styles.tileBadge}>{badge}</span>
+        ) : (
+          <span className={styles.badges} data-working={working || undefined}>
+            {badge}
+          </span>
+        ))
+      }
     />
   );
+  if (tile) {
+    const name = typeof title === "string" ? title : channel.name;
+    return (
+      <div
+        className={styles.tileRow}
+        data-channel-sidebar-row=""
+        data-ordinary={ordinary || undefined}
+        data-selected={selected === channel.id || undefined}
+      >
+        {/* The activity popover owns the button, so the name hint sits around it. */}
+        <Tooltip content={name} hint="dock">
+          <span className={styles.tileTarget}>
+            {wrapSelect ? wrapSelect(selectButton) : selectButton}
+          </span>
+        </Tooltip>
+        {presenceDescription && (
+          <span className="sr-only" id={presenceId}>
+            {presenceDescription}
+          </span>
+        )}
+      </div>
+    );
+  }
   return (
     <div
       className={styles.row}

@@ -2,6 +2,7 @@ import type { RelayData } from "../relay/service";
 import type { RelayEvent } from "../relay/events";
 import { threadReference } from "../relay/thread-reference";
 import { canonicalDetailsName } from "../relay/channel-details-protocol";
+import { saveWithFreeName } from "../relay/free-name";
 import { profileMentionParts } from "../messages/profile-mentions";
 import { profileKey } from "../profiles/target";
 import type { DraftRecipient } from "../messages/mention-draft";
@@ -31,15 +32,19 @@ export async function nameSoloChat(
   if (snapshot?.status !== "ready" || snapshot.viewer !== owner)
     return skip("owner not connected");
   const { session } = snapshot;
-  const solo = () =>
-    ownSolo(
-      session.channels.list().channels.find((item) => item.id === channel),
-      owner,
+  // Any conversation the owner started, other than a DM, which is known by
+  // its people rather than a name.
+  const solo = () => {
+    const listed = session.channels
+      .list()
+      .channels.find((item) => item.id === channel);
+    return (
+      ownSolo(listed, owner) ||
+      (!!listed && listed.channelType !== "dm" && listed.creator === owner)
     );
-  if (!channel || !solo()) return skip("not the owner's Solo chat");
-  const name = [...canonicalDetailsName(title.replace(/\s+/g, " "))]
-    .slice(0, 120)
-    .join("");
+  };
+  if (!channel || !solo()) return skip("not the owner's conversation");
+  const name = [...chatSlug(title)].slice(0, 120).join("").replace(/-+$/, "");
   const details = session.channelDetails;
   if (!name) return skip("empty title");
   if (!details.available) return skip("channel editing unavailable");
@@ -128,5 +133,17 @@ export async function nameSoloChat(
     !isStartingChatTitle(base.name, { text: original.content, recipients })
   )
     return skip("chat already renamed");
-  await details.save(base, { ...base, name });
+  // An open conversation's name must be free; a taken one gets a number.
+  await saveWithFreeName(details, base, { ...base, name });
+}
+
+/** Buzz's chat-name format: lowercase words joined by hyphens, like a Slack
+ * channel, whatever style the harness titled it in. */
+export function chatSlug(title: string) {
+  return canonicalDetailsName(title)
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
 }

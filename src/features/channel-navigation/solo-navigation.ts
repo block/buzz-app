@@ -11,7 +11,7 @@ import type { RelaySession } from "../relay/session";
 import { parseOpenTarget, type JsonValue } from "../navigation/targets";
 import type { PluginManager } from "../../plugins/manager";
 import { relayPartition } from "../relay/partition";
-import { ownSolo, soloLabels } from "../solo/labels";
+import { ownSolo } from "../solo/labels";
 import {
   REGION_PREFIX,
   regionLabels,
@@ -674,8 +674,6 @@ export class SoloNavigationService extends Service implements SoloNavigation {
         );
         current(binding);
         requireEligible();
-        if (!soloLabels(base.labels))
-          throw new Error("This conversation is no longer a Solo chat");
         const existing = regionLabels(base.labels);
         if (existing.some((value) => value !== label))
           throw new Error("This chat belongs to another region");

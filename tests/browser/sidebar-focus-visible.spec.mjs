@@ -149,7 +149,13 @@ test.describe("passive channel removal", () => {
     },
   ])
     test(title, async ({ page, app }) => {
-      await page.setViewportSize({ width: 1100, height: 430 });
+      // Cards clip at seven rows, so the Solo chats no longer fill the list.
+      // Without the contributed Solo rows, a shorter window keeps the list
+      // scrolled far enough to move Work's heading out of view.
+      await page.setViewportSize({
+        width: 1100,
+        height: keepViewport ? 430 : 360,
+      });
       const fixture = soloRemoval
         ? "?solo-region-fixture&compose-workspaces"
         : "?solo-region-fixture";

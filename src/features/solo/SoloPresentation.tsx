@@ -10,17 +10,26 @@ import styles from "./Solo.module.css";
 export function SoloDraftView({
   children,
   actions,
+  embedded = false,
 }: {
   actions?: ReactNode;
   children: ReactNode;
+  /** Inside New message, which owns the page; it shows no actions. */
+  embedded?: boolean;
 }) {
+  if (embedded)
+    return (
+      <div className={styles.start}>
+        <div className={styles.startContent}>{children}</div>
+      </div>
+    );
   return (
     <section
       className={styles.work}
       data-attachment-drop-zone=""
-      aria-label="New chat"
+      aria-label="New message"
     >
-      <SoloTitle channel={{ name: "New chat" }}>{actions}</SoloTitle>
+      <SoloTitle channel={{ name: "New message" }}>{actions}</SoloTitle>
       <div className={styles.start}>
         <div className={styles.startContent}>{children}</div>
       </div>

@@ -6,6 +6,7 @@ import {
 } from "./sidebar-registers";
 import { editSidebarSort } from "./sidebar-edits";
 import { projectSidebarPreferences } from "./sidebar-preferences";
+import { defaultSidebarSort } from "./sidebar-sort";
 const dev = "1234567890abcdef";
 const reg = (value: unknown, v = 100) => [v, dev, value];
 const sections = () => ({
@@ -294,6 +295,12 @@ it("keeps plugin choices outside builtin metadata and invalidates only a changed
       projectSidebarPreferences(undefined, undefined, undefined, changed).sort,
     ).toEqual(mode === "alpha" ? {} : { channels: mode });
   }
+  // Recent is stored explicitly; A–Z is stored as absence. Both clear the
+  // plugin binding.
+  const recent = editSidebarSortRecord(current, 3, "channels", "recent", 4000);
+  expect(
+    projectSidebarPreferences(undefined, undefined, undefined, recent).sort,
+  ).toEqual({ channels: "recent", dms: "recent" });
   const alpha = editSidebarSortRecord(current, 3, "channels", "alpha", 4000);
   expect(
     projectSidebarPreferences(undefined, undefined, undefined, alpha).sort,
@@ -418,4 +425,32 @@ it("reclaims superseded plugin bindings without losing unavailable choices", () 
       2000,
     ),
   ).toThrow("Plugin sidebar sort budget exceeded");
+});
+
+it("reads older A–Z records as A–Z and new Recent writes as Recent", () => {
+  const read = (record: Record<string, unknown>, group: string) =>
+    projectSidebarPreferences(undefined, undefined, undefined, record).sort?.[
+      group
+    ] ?? defaultSidebarSort(group);
+  // Older apps saved A–Z as nothing at all, or as a null register.
+  const absent = { version: 1, groups: {} };
+  const tombstone = {
+    version: 1,
+    groups: {},
+    meta: { v: 1, g: { channels: reg(null), dms: reg(null) } },
+  };
+  for (const record of [absent, tombstone]) {
+    expect(read(record, "channels")).toBe("alpha");
+    expect(read(record, "dms")).toBe("alpha");
+    expect(read(record, "section:work")).toBe("alpha");
+  }
+  const recent = editSidebarSortRecord(
+    tombstone,
+    2,
+    "channels",
+    "recent",
+    3000,
+  );
+  expect(read(recent, "channels")).toBe("recent");
+  expect(read(recent, "dms")).toBe("alpha");
 });

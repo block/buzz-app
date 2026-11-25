@@ -747,13 +747,23 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const user = await setup();
   if (!services) throw new Error("Missing app services");
   const current = services;
-  await user.click(await screen.findByRole("button", { name: "New message" }));
+  const [newMessage] = await screen.findAllByRole("button", {
+    name: "New message",
+  });
+  if (!newMessage) throw new Error("Missing New message");
+  await user.click(newMessage);
   const composing = await screen.findByRole("region", { name: "New message" });
+  // To starts closed; clicking into it lists people.
+  const to = await within(composing).findByRole("combobox", {
+    name: "Message recipients",
+  });
+  await waitFor(() => expect(to).toBeEnabled());
+  await user.click(to);
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),
   );
   const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
-    name: "Message Draft recipient",
+    name: "Start a new conversation",
   });
   await user.click(editor);
   await user.paste("Keep this draft behind Settings");
@@ -777,13 +787,15 @@ it("keeps the same unsent conversation and companion panel through Settings sect
     expect(note).toHaveValue("Retain companion state");
     expect(
       within(composing).getByRole("textbox", {
-        name: "Message Draft recipient",
+        name: "Start a new conversation",
         hidden: true,
       }),
     ).toBe(editor);
     expect(editor).toHaveTextContent("Keep this draft behind Settings");
   };
-  const communities = screen.getByRole("navigation", { name: "Communities" });
+  const communities = screen.getByRole("button", {
+    name: /^Community switcher: /,
+  });
   await user.click(trigger);
   await user.click(await screen.findByRole("menuitem", { name: "Settings" }));
   const modal = await screen.findByRole("dialog", { name: "Settings" });
@@ -792,8 +804,10 @@ it("keeps the same unsent conversation and companion panel through Settings sect
   const workspace = frame?.parentElement;
   expect(workspace).toContainElement(composing);
   expect(workspace).toContainElement(panel);
-  // The dock remains in the workspace alongside the Settings frame.
-  expect(workspace).toContainElement(communities);
+  // The header's community switcher stays mounted behind the modal, outside
+  // the workspace that holds the Settings frame.
+  expect(communities).toBeInTheDocument();
+  expect(workspace).not.toContainElement(communities);
   expect(modal.closest('[aria-hidden="true"], [inert]')).toBeNull();
   await waitFor(() =>
     expect(modal).toContainElement(document.activeElement as HTMLElement),
@@ -819,13 +833,23 @@ it("keeps the same unsent conversation and companion panel through Settings sect
 
 it("returns keyboard-opened Settings to the same focused draft", async () => {
   const user = await setup();
-  await user.click(await screen.findByRole("button", { name: "New message" }));
+  const [newMessage] = await screen.findAllByRole("button", {
+    name: "New message",
+  });
+  if (!newMessage) throw new Error("Missing New message");
+  await user.click(newMessage);
   const composing = await screen.findByRole("region", { name: "New message" });
+  // To starts closed; clicking into it lists people.
+  const to = await within(composing).findByRole("combobox", {
+    name: "Message recipients",
+  });
+  await waitFor(() => expect(to).toBeEnabled());
+  await user.click(to);
   await user.click(
     await screen.findByRole("option", { name: "Draft recipient" }),
   );
   const editor = within(composing).getByRole<ComposerInputElement>("textbox", {
-    name: "Message Draft recipient",
+    name: "Start a new conversation",
   });
   await user.click(editor);
   await user.paste("Keyboard draft");

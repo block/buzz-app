@@ -791,18 +791,23 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error("This chat stays at the top level: use send instead.");
     const audienceTags = [...audienceOf(args), ...requestOf(args)];
     // As relay ingest reads it: the last valid marker, in either case.
+    const thread = target && threadReference(target);
     const root = target
-      ? (threadReference(target)?.rootId ?? target.id)
+      ? (thread?.rootId ?? target.id)
       : (context.sourceRoot ?? parent);
+    // Subthreads are the deepest level: under a message already in one, the
+    // answer joins that subthread rather than starting another below it.
+    const under =
+      thread && thread.parentId !== thread.rootId ? thread.parentId : parent;
     return post(
       tools,
       channel,
       args,
-      root === parent
+      root === under
         ? [["e", root, "", "reply"]]
         : [
             ["e", root, "", "root"],
-            ["e", parent, "", "reply"],
+            ["e", under, "", "reply"],
           ],
       audienceTags,
     );

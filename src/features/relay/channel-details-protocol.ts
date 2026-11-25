@@ -7,6 +7,7 @@ import {
   lifecycleRecord,
   lifecycleSettings,
 } from "./channel-lifecycle-protocol.ts";
+import { validConversationPicture } from "./direct-message-policy.ts";
 import {
   channelIdentity,
   channelLabelTags,
@@ -23,6 +24,8 @@ export type ChannelDetailsDraft = Readonly<{
   ttlSeconds?: number | undefined;
   /** NIP-CL labels. Absent leaves the relay's set unchanged; empty clears it. */
   labels?: readonly string[] | undefined;
+  /** Picture URL. Absent leaves it unchanged; empty clears it, as the relay does. */
+  picture?: string | undefined;
 }>;
 export type ChannelDetails = ChannelDetailsDraft &
   Readonly<{
@@ -115,6 +118,12 @@ export function detailsDraftErrors(draft: ChannelDetailsDraft) {
         ? "Channel visibility could not be verified."
         : undefined,
     labels: labelsError(draft?.labels),
+    picture:
+      draft?.picture !== undefined &&
+      (typeof draft.picture !== "string" ||
+        !validConversationPicture(draft.picture))
+        ? "The picture must be a web address."
+        : undefined,
     joinRole:
       draft?.joinRole !== undefined &&
       draft.joinRole !== "member" &&
@@ -152,6 +161,7 @@ export function validateDetailsDraft(draft: ChannelDetailsDraft): void {
     errors.visibility ??
     errors.lifetime ??
     errors.labels ??
+    errors.picture ??
     errors.joinRole;
   if (error) throw new Error(error);
 }
@@ -177,6 +187,8 @@ export function detailsSettings(
   const description = exactLifecycleTag(metadata, "about") ?? "";
   const ttl = exactLifecycleTag(metadata, "ttl");
   const ttlSeconds = parseDetailsTtl(ttl);
+  // The relay drops an emptied picture; an empty tag is no picture too.
+  const picture = exactLifecycleTag(metadata, "picture") || undefined;
   if (!name || !visibility)
     throw new Error("Current channel details could not be verified.");
   const details: ChannelDetails = Object.freeze({
@@ -188,6 +200,7 @@ export function detailsSettings(
     ...(joinRole ? { joinRole } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
     labels: channelIdentity(metadata).labels,
+    ...(picture ? { picture } : {}),
     canEdit: editable(
       authority.channelType,
       exactLifecycleTag(metadata, "archived") === "true",
@@ -227,6 +240,10 @@ export function detailsTemplate(
       ...(draft.joinRole !== undefined && draft.joinRole !== base.joinRole
         ? [["join_role", draft.joinRole]]
         : []),
+      // An empty picture clears it; an unchanged one is not re-sent.
+      ...(draft.picture !== undefined && draft.picture !== (base.picture ?? "")
+        ? [["picture", draft.picture]]
+        : []),
       // NIP-CL: `t` tags replace the set; one empty `t` clears it; none keeps it.
       ...(draft.labels !== undefined &&
       !sameLabels(draft.labels, base.labels ?? [])
@@ -261,6 +278,14 @@ export function channelTtl(event: RelayEvent): number | undefined {
   }
 }
 
+/** Display-only picture URL of a channel's signed metadata: one well-formed
+ * tag, an http(s) URL. Anything else shows no picture rather than failing. */
+export function channelPicture(event: RelayEvent): string | undefined {
+  const tags = event.tags.filter(([key]) => key === "picture");
+  const value = tags.length === 1 && tags[0]?.length === 2 ? tags[0][1] : "";
+  return value && validConversationPicture(value) ? value : undefined;
+}
+
 /** Legacy absence means Member; malformed explicit defaults fail closed to Guest. */
 export function channelJoinRole(event: RelayEvent): "member" | "guest" {
   const tags = event.tags.filter(([key]) => key === "join_role");
@@ -282,6 +307,16 @@ function parseDetailsTtl(value: string | undefined): number | undefined {
   return Number(value);
 }
 
+/** The tags after `h`, `name` and `about`: each of visibility, ttl and
+ * join_role at most once and in that order, then at most one picture, then
+ * only labels. */
+function orderedTags(tags: readonly (readonly string[])[]) {
+  let index = 0;
+  for (const key of ["visibility", "ttl", "join_role", "picture"])
+    if (tags[index]?.[0] === key) index++;
+  return tags.slice(index).every(([key]) => key === "t");
+}
+
 /** Separate from lifecycle and outbox admission. Admits only explicit open/private visibility. */
 export function validateDetailsTemplate(event: EventTemplate): void {
   if (
@@ -300,20 +335,7 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     !["h", "name", "about"].every(
       (key, index) => event.tags[index]?.[0] === key,
     ) ||
-    ![
-      [],
-      ["visibility"],
-      ["ttl"],
-      ["visibility", "ttl"],
-      ["join_role"],
-      ["visibility", "join_role"],
-      ["ttl", "join_role"],
-      ["visibility", "ttl", "join_role"],
-    ].some(
-      (keys) =>
-        keys.every((key, index) => event.tags[index + 3]?.[0] === key) &&
-        event.tags.slice(keys.length + 3).every(([key]) => key === "t"),
-    )
+    !orderedTags(event.tags.slice(3))
   )
     throw new Error("Invalid channel details command.");
   const labels = detailsLabels(event.tags.filter(([key]) => key === "t"));
@@ -322,6 +344,7 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     throw new Error("Invalid channel details command.");
   const ttl = event.tags.find(([key]) => key === "ttl")?.[1];
   const joinRole = event.tags.find(([key]) => key === "join_role")?.[1];
+  const picture = event.tags.find(([key]) => key === "picture")?.[1];
   if (joinRole !== undefined && joinRole !== "member" && joinRole !== "guest")
     throw new Error("Invalid channel details command.");
   lifecycleChannelId(event.tags[0]?.[1] ?? "");
@@ -331,6 +354,7 @@ export function validateDetailsTemplate(event: EventTemplate): void {
     visibility: visibility?.[1] === "private" ? "private" : "public",
     ttlSeconds: ttl === "" ? undefined : parseDetailsTtl(ttl),
     ...(joinRole ? { joinRole } : {}),
+    ...(picture !== undefined ? { picture } : {}),
     ...(event.tags.some(([key]) => key === "t") ? { labels } : {}),
   });
 }

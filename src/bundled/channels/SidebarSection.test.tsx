@@ -415,27 +415,30 @@ it.each([0, 2])(
   },
 );
 
-it("offers Move up and Move down for reorderable groups, disabled at each end", async () => {
+it("offers each section move, disabled where the group can't go", async () => {
   const user = userEvent.setup();
-  const down = vi.fn();
+  const bottom = vi.fn();
   render(
     <SidebarSection
       sectionKey="group:work"
       title="Work"
       open
       onToggle={() => {}}
-      move={{ down }}
+      move={{ down: () => {}, bottom }}
     >
       <button type="button">General</button>
     </SidebarSection>,
   );
   const trigger = screen.getByRole("button", { name: "More actions for Work" });
   await user.click(trigger);
-  expect(
-    await screen.findByRole("menuitem", { name: "Move up" }),
-  ).toHaveAttribute("aria-disabled", "true");
-  await user.click(screen.getByRole("menuitem", { name: "Move down" }));
-  expect(down).toHaveBeenCalledOnce();
+  for (const name of ["Move to top", "Move up"]) {
+    expect(await screen.findByRole("menuitem", { name })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  }
+  await user.click(screen.getByRole("menuitem", { name: "Move to bottom" }));
+  expect(bottom).toHaveBeenCalledOnce();
   await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   await waitFor(() => expect(trigger).toHaveFocus());
 });
@@ -447,8 +450,7 @@ it("never offers moves without a move capability", async () => {
     screen.getByRole("button", { name: "More actions for Channels" }),
   );
   await screen.findByRole("menu", { name: "More actions for Channels" });
-  expect(screen.queryByRole("menuitem", { name: "Move up" })).toBeNull();
-  expect(screen.queryByRole("menuitem", { name: "Move down" })).toBeNull();
+  expect(screen.queryByRole("menuitem", { name: /^Move / })).toBeNull();
 });
 
 it("keeps hidden-channel navigation available when filter choices are read-only", async () => {

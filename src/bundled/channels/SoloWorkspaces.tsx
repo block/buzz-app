@@ -64,6 +64,8 @@ import {
 } from "../../shared/design-system/ui/Menu";
 import {
   CaretDownIcon,
+  ArrowBarToDownIcon,
+  ArrowBarToUpIcon,
   ArrowUpIcon,
   ArrowDownIcon,
   DotsThreeIcon,
@@ -616,24 +618,35 @@ export function SoloWorkspaces({
                 project.name,
                 menuAnchor,
               )}
-            <MenuItem
-              disabled={!orderWritable || groupIndex <= 0}
-              onClick={() => moveProject(project.id, groupIndex - 1)}
-            >
-              <MenuIcon>
-                <ArrowUpIcon size={14} />
-              </MenuIcon>
-              Move up
-            </MenuItem>
-            <MenuItem
-              disabled={!orderWritable || groupIndex >= lastIndex}
-              onClick={() => moveProject(project.id, groupIndex + 1)}
-            >
-              <MenuIcon>
-                <ArrowDownIcon size={14} />
-              </MenuIcon>
-              Move down
-            </MenuItem>
+            {(
+              [
+                [0, groupIndex <= 0, ArrowBarToUpIcon, "Move to top"],
+                [groupIndex - 1, groupIndex <= 0, ArrowUpIcon, "Move up"],
+                [
+                  groupIndex + 1,
+                  groupIndex >= lastIndex,
+                  ArrowDownIcon,
+                  "Move down",
+                ],
+                [
+                  lastIndex,
+                  groupIndex >= lastIndex,
+                  ArrowBarToDownIcon,
+                  "Move to bottom",
+                ],
+              ] as const
+            ).map(([to, atEnd, Icon, label]) => (
+              <MenuItem
+                key={label}
+                disabled={!orderWritable || atEnd}
+                onClick={() => moveProject(project.id, to)}
+              >
+                <MenuIcon>
+                  <Icon size={14} />
+                </MenuIcon>
+                {label}
+              </MenuItem>
+            ))}
             <MenuItem onClick={() => setSettingsFor(project)}>
               Workspace settings
             </MenuItem>

@@ -1208,11 +1208,15 @@ export function ChannelInventory({
     const index = visibleGroupIds.indexOf(key);
     const previous = visibleGroupIds[index - 1];
     const next = visibleGroupIds[index + 1];
+    const first = visibleGroupIds[0];
+    const last = visibleGroupIds.at(-1);
+    const moveTo = (target: string | undefined) =>
+      target ? () => moveGroup(key, groupIds.indexOf(target)) : undefined;
     return {
-      up: previous
-        ? () => moveGroup(key, groupIds.indexOf(previous))
-        : undefined,
-      down: next ? () => moveGroup(key, groupIds.indexOf(next)) : undefined,
+      top: moveTo(previous && first),
+      up: moveTo(previous),
+      down: moveTo(next),
+      bottom: moveTo(next && last),
     };
   };
   const setSectionSort = (key: string, mode: SidebarSortMode) => {

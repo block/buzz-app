@@ -202,10 +202,11 @@ export function useFinderAll({
       .filter((doc) => !matched.has(doc.id))
       .map((doc) => ({ doc, score: 0, positions: [] })),
   ];
-  const tail = search.loading ? [] : rest;
   // A row keeps the place it was first shown in: the relay's first page,
   // then the rest of the device page, then whatever arrives later (More
   // messages, a channel that finishes loading), each batch ranked on its own.
+  // The rest of the device page waits for the relay's first answer, so a
+  // failure and Retry can't move it.
   const placed = useRef<{
     session: RelaySession;
     query: string;
@@ -215,6 +216,7 @@ export function useFinderAll({
     placed.current = undefined;
   if (!placed.current && !search.loading && !search.error)
     placed.current = { session, query, ids: [] };
+  const tail = placed.current ? rest : [];
   const rows = [...ordered, ...tail];
   let hits = rows;
   if (placed.current) {

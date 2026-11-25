@@ -453,10 +453,27 @@ test("All of Buzz shows five device rows, then the relay's, then the rest of the
   render(<Finder />);
   type("zebra");
   await tick(SEARCH_DEBOUNCE_MS);
-  // The relay's first page still leads after a failure and Retry.
+  // The rest of the device rows wait for the relay's first answer, through a
+  // failure and a pending Retry, so they never move.
+  const tail = () =>
+    within(screen.getByRole("group", { name: "More from all of Buzz" }))
+      .queryAllByRole("option")
+      .filter((row) => row.textContent?.includes("zebra note"));
+  expect(tail()).toEqual([]);
   control.fail = false;
-  await click(screen.getByRole("button", { name: "Retry" }));
-  await tick(SEARCH_DEBOUNCE_MS);
+  let release = () => {};
+  control.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    await click(screen.getByRole("button", { name: "Retry" }));
+    await tick(1000);
+    expect(screen.getByRole("status")).toHaveTextContent("Searching Buzz…");
+    expect(tail()).toEqual([]);
+  } finally {
+    release();
+  }
+  await tick(0);
   expect(options("Matches")).toHaveLength(5);
   expect(options("More from all of Buzz")).toEqual([
     expect.stringContaining("zebra from the relay"),

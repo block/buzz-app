@@ -376,7 +376,13 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   const dock = await box(workspaceCard(page));
   near(dock.y, main.y);
   near(dock.height, main.height);
-  near(dock.x - main.x - main.width, cardGap);
+  // The dock shares the sheet: flush beside the conversation, divided only by
+  // its hairline.
+  near(dock.x, main.x + main.width);
+  await expect(page.locator("[data-panel-dock]")).toHaveCSS(
+    "border-inline-start-width",
+    "1px",
+  );
   near(dock.x + dock.width, page.viewportSize().width - gap - 1);
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();

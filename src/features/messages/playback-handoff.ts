@@ -129,7 +129,11 @@ const asideLimit = 3;
  * that frame stays, until the video plays or is sent to another frame.
  * Sending it to the same position again does nothing. So a paused video that
  * has presented no frame of its position is sent a little aside and, once it
- * presents a frame there, back. The still covers both. */
+ * presents a frame there, back. The still covers both.
+ *
+ * Once a seek the hand-off did not make has moved the video, the still is no
+ * picture of where it is, and the first frame presented for that seek lifts
+ * it, whatever its media time. */
 function whenShown(
   video: HTMLVideoElement,
   seconds: number,
@@ -151,6 +155,8 @@ function whenShown(
   /** A frame from here or before is of where the video was sent aside. One
    * from ahead of a paused video's position is never of it. */
   let floor = Number.NEGATIVE_INFINITY;
+  /** Whether a seek the hand-off did not make has moved the video. */
+  let moved = false;
   const there = () =>
     sent &&
     !video.seeking &&
@@ -164,9 +170,13 @@ function whenShown(
     clearTimeout(timer);
     timer = undefined;
     if (!aside) return;
-    const to = aside.home;
+    const { at, home: to } = aside;
     aside = undefined;
     presented = undefined;
+    // A seek made since, whose event is still to come, stands. Read while it
+    // is under way, when a video reports exactly where it was sent: one that
+    // has ended a seek may report a position rounded from it.
+    if (video.seeking && video.currentTime !== at) return;
     rest = to;
     video.currentTime = to;
   };
@@ -193,7 +203,8 @@ function whenShown(
     if (presented === undefined || !there()) return;
     if (aside) {
       if (of(presented, aside.at)) home();
-    } else if (presented > floor && of(presented, video.currentTime)) finish();
+    } else if (moved || (presented > floor && of(presented, video.currentTime)))
+      finish();
   };
   function arrived() {
     judge();
@@ -215,6 +226,7 @@ function whenShown(
     rest = at;
     asides = 0;
     floor = Number.NEGATIVE_INFINITY;
+    moved = true;
   };
   /** A browser that reports no frames: its position moving on, by playing or
    * by a seek, is the one sign that it shows something newer. */

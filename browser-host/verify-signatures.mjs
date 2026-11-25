@@ -3,6 +3,7 @@ import { Worker } from "node:worker_threads";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
 export const VERIFY_YIELD_CHUNK = 64;
+const MIN_SHARD_CHUNK = 12;
 const WORKER_URL = new URL("./verify-signatures-worker.mjs", import.meta.url);
 const DEFAULT_THREADS = Math.max(
   1,
@@ -161,7 +162,13 @@ export function createSignatureVerifierPool({
       );
     }
     if (!claims.length) return Promise.resolve([]);
-    const chunkCount = Math.ceil(claims.length / chunkSize);
+    // Shard medium batches (e.g. ~40–64 event pages) across the pool without
+    // fanning out tiny batches or shrinking large-batch queue capacity.
+    const batchChunk = Math.min(
+      chunkSize,
+      Math.max(MIN_SHARD_CHUNK, Math.ceil(claims.length / threads)),
+    );
+    const chunkCount = Math.ceil(claims.length / batchChunk);
     if (queue.length + chunkCount > maxQueuedChunks) {
       const error = new Error("Signature verifier queue is full");
       error.code = "VERIFY_BUSY";
@@ -191,8 +198,8 @@ export function createSignatureVerifierPool({
         task.fail(signal?.reason ?? new DOMException("Aborted", "AbortError"));
       };
       signal?.addEventListener("abort", onAbort, { once: true });
-      for (let offset = 0; offset < claims.length; offset += chunkSize) {
-        const end = Math.min(offset + chunkSize, claims.length);
+      for (let offset = 0; offset < claims.length; offset += batchChunk) {
+        const end = Math.min(offset + batchChunk, claims.length);
         const slice = new Array(end - offset);
         for (let i = offset; i < end; i++)
           slice[i - offset] = wireClaim(claims[i]);

@@ -4872,6 +4872,38 @@ test("createSignatureVerifierPool verifies multi-chunk batches across workers, a
     pool.close();
   }
   await expect(pool.verify([null])).rejects.toThrow(/closed/);
+
+  // Medium batches (below the 64-claim cap) shard across workers and preserve
+  // positional results, while large batches keep the 64-claim backpressure cap.
+  const sharded = createSignatureVerifierPool({
+    threads: 4,
+    maxQueuedChunks: 4,
+  });
+  try {
+    const key = generateSecretKey();
+    const valid = finalizeEvent(
+      { kind: 9, content: "sharded", created_at: 1700000012, tags: [] },
+      key,
+    );
+    const ok = { id: valid.id, pubkey: valid.pubkey, sig: valid.sig };
+    const bad = { ...ok, sig: "0".repeat(128) };
+    const medium = Array.from({ length: 51 }, (_, index) =>
+      index % 7 === 0 ? bad : ok,
+    );
+    expect(await sharded.verify(medium)).toEqual(
+      medium.map((_, index) => index % 7 !== 0),
+    );
+    // 256 claims = 4 chunks at the 64-claim cap (fits maxQueuedChunks: 4);
+    // 257 claims = 5 chunks and triggers VERIFY_BUSY backpressure.
+    expect(
+      await sharded.verify(Array.from({ length: 256 }, () => null)),
+    ).toEqual(Array(256).fill(false));
+    await expect(
+      sharded.verify(Array.from({ length: 257 }, () => null)),
+    ).rejects.toMatchObject({ code: "VERIFY_BUSY" });
+  } finally {
+    sharded.close();
+  }
 });
 
 test("broker transport verifies query, verifyStored, and presenceSnapshot through /verify-signatures", async () => {

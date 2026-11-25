@@ -1482,6 +1482,7 @@ function Timeline({
   // that grows a row would paint the rows below it a line lower for one frame.
   // Virtua writes the grown height while measuring, before that frame paints:
   // keep the same distance from the end then.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a placed line is what grows the row.
   useLayoutEffect(() => {
     const element = scroller.current;
     const list = element?.querySelector("ol");

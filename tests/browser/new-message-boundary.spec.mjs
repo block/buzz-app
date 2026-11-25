@@ -843,7 +843,8 @@ const startPaintLog = (page) =>
           rows: Array.from(scroller.querySelectorAll("[data-message-id]"))
             .map((row) => [row.dataset.messageId, row.getBoundingClientRect()])
             .filter(
-              ([, rect]) => rect.bottom > bounds.top && rect.top < bounds.bottom,
+              ([, rect]) =>
+                rect.bottom > bounds.top && rect.top < bounds.bottom,
             )
             .map(([id, rect]) => [id, rect.top]),
         });

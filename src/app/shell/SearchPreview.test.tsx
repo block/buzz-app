@@ -430,7 +430,9 @@ it.each([
         await vi.advanceTimersByTimeAsync(150);
       });
       expect(screen.getByText(/^12:00\s?PM$/)).toBeVisible();
-      expect(document.querySelector("mark")).toHaveTextContent(marked);
+      expect(
+        [...document.querySelectorAll("mark")].map((mark) => mark.textContent),
+      ).toEqual([marked]);
       expect(document.querySelector(".search-peek-text")?.textContent).toBe(
         shown,
       );

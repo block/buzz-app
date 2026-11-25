@@ -6,6 +6,7 @@ import type { NotificationCategory } from "./preferences";
 import { prepareMarkdown } from "../messages/markdown-preparation";
 import { remarkSpoilers } from "../messages/remark-spoilers";
 import { messageLinkParts } from "../messages/message-link-parts";
+import { placeholderCharacters } from "../messages/placeholder-characters";
 
 export type NotificationText = Readonly<{ title: string; body: string }>;
 
@@ -36,13 +37,16 @@ type TextNode = {
  * the URL. */
 type LinkText = (url: string) => string | undefined;
 
+/** Each run of text between placeholder characters. */
+const placeholderRuns = new RegExp(`[^${placeholderCharacters}]+`, "g");
+
 /** `value` with each bare URL in it through `link`, as the conversation splits
  * text into links. A caller's placeholders are private-use characters, and
  * each ends a URL, as the protected part it holds does in the conversation. */
 function textLinks(value: string, link: LinkText) {
   let result = "";
   let at = 0;
-  for (const { 0: run, index: offset } of value.matchAll(/[^-￼]+/g))
+  for (const { 0: run, index: offset } of value.matchAll(placeholderRuns))
     messageLinkParts(run, undefined, (start, end, url) => {
       // Only a URL that reads as itself; a labelled or wrapped one keeps its
       // text.

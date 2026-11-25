@@ -9,6 +9,7 @@ import type { RelaySession } from "../relay/session";
 import { MatchedLabel } from "../search/MatchedLabel";
 import { preparedMarkdown, recentResults } from "./markdown-preparation";
 import { placeholderPattern, protectInlineContent } from "./MessageMarkdown";
+import { placeholder } from "./placeholder-characters";
 import type { AgentLibrary } from "../agents/library";
 import { profileMentionNames } from "./profile-mentions";
 import {
@@ -131,14 +132,14 @@ function flatParts(
   );
   const flat = spoilerText(
     protectedContent.content,
-    `<${protectedContent.prefix}spoiler\uE002>`,
+    `<${protectedContent.prefix}spoiler${placeholder.end}>`,
     {
       limit: Number.POSITIVE_INFINITY,
       // The part reads as the URL, as the surface's own flattened text does.
       link: (url) => {
         if (!channelLink(url)) return undefined;
         protectedContent.parts.push({ text: url, target: url });
-        return `${protectedContent.prefix}${protectedContent.parts.length - 1}\uE002`;
+        return `${protectedContent.prefix}${protectedContent.parts.length - 1}${placeholder.end}`;
       },
     },
   );
@@ -248,7 +249,7 @@ export function PreviewText({
     if (!shown.near) return [{ text }];
     const parsed: Labels = edited ? [] : JSON.parse(labels);
     const named = parsed.length > 0 && mayName(text, parsed);
-    if (!named && !text.includes("buzz://")) return [{ text }];
+    if (!named && !/buzz:\/\//i.test(text)) return [{ text }];
     const bound = named ? parsed : [];
     const key = JSON.stringify([bound, seams, content, full, text, start]);
     return recentParts(key, () => {

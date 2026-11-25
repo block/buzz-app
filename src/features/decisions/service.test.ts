@@ -393,7 +393,7 @@ it("removes a provider when the plugin asks, before its scope ends", async () =>
   expect(service.providers()).toEqual([]);
 });
 
-it("says decisions can be answered while any provider is registered, whatever its status", async () => {
+it("says decisions can be answered while the provider they go to isn't waiting for setup", async () => {
   const { root, plugin } = setup();
   const seen: string[] = [];
   // A consumer, as a plugin that needs decisions registers its contributions.
@@ -407,23 +407,34 @@ it("says decisions can be answered while any provider is registered, whatever it
     .await();
   await flush();
   expect(seen).toEqual([]);
-  const status = settable("needs-setup");
+  // A default install: TypeSafe registered without a key.
+  const keyless = await plugin("buzz.typesafe", {
+    id: "typesafe",
+    status: () => "needs-setup",
+  });
+  await flush();
+  expect(seen).toEqual([]);
+  const status = settable("checking");
   const builderlab = await plugin("block.builderlab", {
     id: "builderlab",
     ...status,
   });
-  expect(seen).toEqual(["on 1"]);
-  // A status change, even to one that can't answer, doesn't flap it.
-  status.set("checking");
-  status.set("ready");
-  const typesafe = await plugin("buzz.typesafe", { id: "typesafe" });
-  await builderlab.dispose();
   await flush();
   expect(seen).toEqual(["on 1"]);
-  await typesafe.dispose();
+  // Checking and unconfirmed don't flap it; needs-setup withdraws it.
+  status.set("unconfirmed");
+  status.set("ready");
+  await flush();
+  expect(seen).toEqual(["on 1"]);
+  status.set("needs-setup");
   await flush();
   expect(seen).toEqual(["on 1", "off"]);
+  await keyless.dispose();
   await plugin("buzz.typesafe", { id: "typesafe" });
+  await flush();
+  expect(seen).toEqual(["on 1", "off", "on 1"]);
+  await builderlab.dispose();
+  await flush();
   expect(seen).toEqual(["on 1", "off", "on 1"]);
 });
 

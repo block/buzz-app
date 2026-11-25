@@ -88,7 +88,8 @@ export function createBrowserHistory(host: Window): NavigationHistory {
   const known = new Map<number, NavigationEntry>();
   // Known visits copied from a visit's history state rather than observed.
   // Their native entries may since have been replaced, or resolved in place
-  // under the same ID, so they are never saved as targets.
+  // under the same ID, so their targets are never saved or matched by a
+  // dismissal.
   const copied = new Set<number>();
   function knowStamp() {
     known.set(stamp.index, stamp.entry);
@@ -420,8 +421,17 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     dismiss(visits, input) {
       if (disposed || (typeof visits !== "function" && !visits.length)) return;
       const fallback = parseOpenTarget(input);
-      const closes = dismissalOf([...known.values()], visits);
-      const closing = [...known].filter(([, entry]) => closes(entry));
+      // A copied opener's target may be out of date, so only its ID names it.
+      const observed = [...known].filter(([index]) => !copied.has(index));
+      const closes = dismissalOf(
+        observed.map(([, entry]) => entry),
+        visits,
+      );
+      const closing = [...known].filter(([index, entry]) =>
+        copied.has(index)
+          ? typeof visits !== "function" && visits.includes(entry.id)
+          : closes(entry),
+      );
       for (const [index] of closing) dismissed.add(index);
       saveDismissed();
       if (dismissed.has(stamp.index)) {

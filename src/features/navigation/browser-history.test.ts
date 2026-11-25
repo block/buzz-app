@@ -676,6 +676,23 @@ it("a reload never saves a copied opener over the visit that replaced it", () =>
   driver.dispose();
 });
 
+it("a close after reload spares a visit resolved in place since its copy was made", () => {
+  const fixture = browser();
+  const first = createBrowserHistory(fixture.host);
+  first.push(alphaThread);
+  first.push(beta);
+  first.back();
+  first.resolve(alpha);
+  first.forward();
+  first.dispose();
+  dropSavedTargets(fixture, 3);
+  // Beta's own history state still names the thread, under the visit's own ID.
+  const driver = createBrowserHistory(fixture.host);
+  driver.dismiss(closesThread, alpha);
+  expect(walkBack(driver)).toEqual([alpha, homeTarget]);
+  driver.dispose();
+});
+
 it("full storage drops saved targets so a growing floor keeps the window", () => {
   const fixture = browser();
   const first = createBrowserHistory(fixture.host);

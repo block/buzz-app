@@ -3655,4 +3655,41 @@ it("recovers focus, isolates keyed settings, and prevents duplicate context menu
     ).toHaveFocus(),
   );
   expect(document.activeElement).not.toBe(document.body);
+
+  // Reappearing after a context-menu unmount must not pop open a ghost menu,
+  // and disappearing while a keyboard-opened context menu is open recovers focus.
+  act(() => {
+    saved = {
+      ...saved,
+      sections: [{ id: "other", name: "Other", order: 0 }],
+    };
+    snap = { status: "ready", data: saved };
+    notify();
+  });
+  const otherHeader = await screen.findByRole("button", { name: "Other" });
+  otherHeader.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(
+    await screen.findByRole("menu", { name: "Actions for Other" }),
+  ).toBeVisible();
+  await act(async () => {
+    await removeSection("other");
+  });
+  await waitFor(() =>
+    expect(
+      document.querySelector(
+        '[data-sidebar-section="solo-region:example/work"] summary',
+      ),
+    ).toHaveFocus(),
+  );
+  act(() => {
+    saved = {
+      ...saved,
+      sections: [{ id: "other", name: "Other", order: 0 }],
+    };
+    snap = { status: "ready", data: saved };
+    notify();
+  });
+  expect(await screen.findByRole("button", { name: "Other" })).toBeVisible();
+  expect(screen.queryByRole("menu", { name: "Actions for Other" })).toBeNull();
 });

@@ -305,6 +305,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   settingsOpenRef.current = settingsOpen;
+  contextOpenRef.current = contextMenuOpen;
   const sectionKey = host?.sectionKey;
   const order = workspaceSectionOrder(snapshot.data);
   const sections = snapshot.data?.sections ?? [];
@@ -324,8 +325,11 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
       section,
   );
   useEffect(() => {
-    if (!section && settingsOpen) setSettingsOpen(false);
-  }, [section, settingsOpen]);
+    if (rendered) return;
+    if (settingsOpen) setSettingsOpen(false);
+    if (contextMenuOpen) setContextMenuOpen(false);
+    if (contextMenuAnchor) setContextMenuAnchor(undefined);
+  }, [rendered, settingsOpen, contextMenuOpen, contextMenuAnchor]);
   useLayoutEffect(() => {
     if (!rendered) return;
     const root = rootRef.current;
@@ -339,9 +343,13 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
         ownsFocusRef.current ||
         overflowOpenRef.current ||
         contextOpenRef.current ||
+        openingSettings.current ||
         settingsOpenRef.current ||
         deletingRef.current;
       ownsFocusRef.current = false;
+      overflowOpenRef.current = false;
+      contextOpenRef.current = false;
+      openingSettings.current = false;
       if (!owned) return;
       queueMicrotask(() => {
         if (document.activeElement !== document.body) return;
@@ -422,16 +430,12 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
     return independentFallbackFocus(sectionKey, rootRef.current) ?? false;
   };
   const menuFinalFocus = () =>
-    openingSettings.current ? (false as const) : restoreFocus();
+    settingsOpenRef.current ? (false as const) : restoreFocus();
   const finishOpeningSettings = (isOpen: boolean) => {
     if (isOpen || !openingSettings.current) return;
     openingSettings.current = false;
-    if (mounted.current && destination.active() && !deletingRef.current) {
+    if (mounted.current && destination.active() && !deletingRef.current)
       setSettingsOpen(true);
-      return;
-    }
-    const target = restoreFocus();
-    if (target) target.focus({ preventScroll: true });
   };
   const ownsContextTarget = ({ target, currentTarget }: SyntheticEvent) =>
     target instanceof Element &&
@@ -510,6 +514,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
     <MenuRoot
       onOpenChange={(next) => {
         overflowOpenRef.current = next;
+        if (next) openingSettings.current = false;
       }}
       onOpenChangeComplete={finishOpeningSettings}
     >
@@ -585,6 +590,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
             open={contextMenuOpen}
             onOpenChange={(next) => {
               contextOpenRef.current = next;
+              if (next) openingSettings.current = false;
               setContextMenuOpen(next);
               if (!next) setContextMenuAnchor(undefined);
             }}
@@ -612,6 +618,7 @@ function IndependentRegionWorkspace(props: SoloWorkspaceProps) {
                 ) {
                   event.preventDefault();
                   event.stopPropagation();
+                  openingSettings.current = false;
                   setContextMenuAnchor(event.currentTarget);
                   setContextMenuOpen(true);
                 }

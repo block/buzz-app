@@ -506,3 +506,92 @@ it("shows a bundled card's own contents with what the sidebar has open", () => {
   );
   expect(screen.getByText("room")).toBeInTheDocument();
 });
+
+it("draws a conversation row with the sidebar's unread, working and second line", async () => {
+  const scope = {
+    viewer: "a".repeat(64),
+    communityOrigin: "https://example.test",
+  };
+  const root = "b".repeat(64);
+  const thread: OpenTarget = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "team",
+    messageId: root,
+    threadRootId: root,
+  };
+  const page: OpenTarget = {
+    version: 1,
+    kind: "page",
+    pluginId: "fixture.pages",
+    pageId: "docs",
+  };
+  const rows: readonly SidebarSectionRow[] = [
+    { id: "thread", label: "Fix the build", detail: "team" },
+    { id: "page", label: "Docs" },
+  ];
+  const entry: RegisteredSidebarSection = {
+    ...makeEntry("good", { snapshot: () => rows, subscribe: () => () => {} }),
+    select: (row) => (row.id === "thread" ? thread : page),
+  };
+  const seen: unknown[] = [];
+  const open = vi.fn().mockResolvedValue({ status: "opened" });
+  render(
+    <ChannelSidebarDnd
+      writable={false}
+      onMove={() => {}}
+      onReorder={() => {}}
+      overlay={() => null}
+    >
+      <SidebarContributionSection
+        entry={entry}
+        registry={{
+          version: 1,
+          snapshot: () => [entry],
+          subscribe: () => () => {},
+          register: () => {},
+        }}
+        // The reader is further down the same thread.
+        navigator={navigatorAt({ ...thread, messageId: "c".repeat(64) }, open)}
+        target={{
+          version: 1,
+          kind: "conversation",
+          scope,
+          channelId: "team",
+        }}
+        open
+        onToggle={() => {}}
+        groupIndex={0}
+        reorderable={false}
+        move={{}}
+        conversationRow={({ channelId, rootId, label, children }) => {
+          seen.push({ channelId, rootId, label });
+          return children({
+            unread: true,
+            working: <span role="img" aria-label="Agent working" />,
+          });
+        }}
+      />
+    </ChannelSidebarDnd>,
+  );
+  expect(seen).toContainEqual({
+    channelId: "team",
+    rootId: root,
+    label: "Fix the build",
+  });
+  const button = screen.getByRole("button", { name: /Fix the build/ });
+  expect(button).toHaveTextContent("Fix the buildteam");
+  expect(button).toHaveAttribute("aria-current", "page");
+  expect(button.closest("[data-ordinary]")).not.toBeNull();
+  expect(
+    screen.getByRole("img", { name: "Agent working" }),
+  ).toBeInTheDocument();
+  // A row that opens no conversation stays a plain row.
+  expect(
+    screen.getByRole("button", { name: "Docs" }).closest("[data-ordinary]"),
+  ).toBeNull();
+  expect(seen).toHaveLength(1);
+  await userEvent.click(button);
+  expect(open).toHaveBeenCalledWith(thread);
+});

@@ -18,6 +18,8 @@ import {
 export type SidebarSectionRow = Readonly<{
   id: string;
   label: string;
+  /** A second, quieter line under the label, such as a thread's channel. */
+  detail?: string;
   icon?: ReactNode;
   badge?: string;
   count?: number;

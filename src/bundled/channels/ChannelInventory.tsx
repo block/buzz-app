@@ -147,6 +147,7 @@ import {
 } from "./sidebar-sections";
 import { activityTranscript } from "./working-agents";
 import { SidebarContributionSection } from "../../features/channel-navigation/SidebarContributionSection";
+import { contributionConversationRow } from "./ContributionConversationRow";
 import {
   ContributionBoundary,
   contributionKey,
@@ -332,6 +333,11 @@ export function ChannelInventory({
     // a chat that already leads, so they leave the sidebar alone.
     ...(pluginSorted ? {} : { rank: recentAt }),
   });
+  // One row type per session, so the cards' rows keep their state across renders.
+  const conversationRow = useMemo(
+    () => contributionConversationRow(queries),
+    [queries],
+  );
   const rosterRecovers = useRecoveryOwns(queries, (live) =>
     rosterRecovering(live.roster),
   );
@@ -2403,6 +2409,7 @@ export function ChannelInventory({
                     reorderable={reorderable}
                     onRowsCommitted={sidebar.retryReveal}
                     resizeScope={scope}
+                    conversationRow={conversationRow}
                     move={
                       reorderable
                         ? {

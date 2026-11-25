@@ -41,8 +41,14 @@ import { withMentionedIds } from "../../features/messages/PreviewText";
 import { activityConversation, useActivityMutes } from "./useActivityMutes";
 import type { InboxItem } from "../../features/relay/inbox";
 import { useOwnActivity, withOwnActivity } from "./own-activity";
-import { ActivityRowMenu, type ActivityRowMessage } from "./ActivityRowMenu";
-import { ActivityWorking, type ActivityWork } from "./ActivityWorking";
+import {
+  ConversationMenu,
+  type ConversationMenuMessage,
+} from "../channels/ConversationMenu";
+import {
+  ConversationWork,
+  type ConversationWorkState,
+} from "../channels/ConversationWork";
 import styles from "./InboxPreview.module.css";
 
 /** Rows a compact feed renders and enriches; the Activity page holds the rest. */
@@ -239,7 +245,7 @@ export function ActivityFeed({
   const rowMessage = (
     row: (typeof activity)[number],
     threadRootId: string,
-  ): ActivityRowMessage | undefined => {
+  ): ConversationMenuMessage | undefined => {
     if (row.kind === "reaction")
       return {
         channelId: row.item.channelId,
@@ -467,19 +473,21 @@ export function ActivityFeed({
             // Right-click is the row's menu: its message's in a thread,
             // otherwise its conversation's sidebar menu.
             const rowMenu = (
-              item: (working: ActivityWork | undefined) => ReactElement,
+              item: (
+                working: ConversationWorkState | undefined,
+              ) => ReactElement,
             ) => {
               const where = destination(row);
               const channel = channelOf(where.channelId);
               return (
-                <ActivityWorking
+                <ConversationWork
                   key={row.id}
                   session={session}
                   channelId={where.channelId}
                   rootId={where.rootId}
                 >
                   {(working) => (
-                    <ActivityRowMenu
+                    <ConversationMenu
                       channel={channel}
                       message={
                         where.rootId ? rowMessage(row, where.rootId) : undefined
@@ -492,9 +500,9 @@ export function ActivityFeed({
                       }
                     >
                       {item(working)}
-                    </ActivityRowMenu>
+                    </ConversationMenu>
                   )}
-                </ActivityWorking>
+                </ConversationWork>
               );
             };
             if (compact) {

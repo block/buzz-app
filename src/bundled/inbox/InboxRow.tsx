@@ -31,7 +31,7 @@ import styles from "./Inbox.module.css";
 import { MessageListRow } from "../../features/messages/MessageListRow";
 import { PreviewText } from "../../features/messages/PreviewText";
 import type { OwnActivity } from "./own-activity";
-import type { ActivityWork } from "./ActivityWorking";
+import type { ConversationWorkState as ActivityWork } from "../channels/ConversationWork";
 
 type ResolveName = (
   key: string,

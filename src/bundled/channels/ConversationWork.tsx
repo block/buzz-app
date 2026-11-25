@@ -5,18 +5,18 @@ import { useChannelActivitySubscription } from "../../features/agents/use-channe
 import type { Profile } from "../../features/relay/contracts";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import type { RelaySession } from "../../features/relay/session";
-import { useWorkingAgents } from "../channels/useWorkingAgents";
-import { workingAgentDetails } from "../channels/working-agents";
+import { useWorkingAgents } from "./useWorkingAgents";
+import { workingAgentDetails } from "./working-agents";
 
 /** Your agents working in a row's conversation, and what the first one is
  * doing now. */
-export type ActivityWork = {
+export type ConversationWorkState = {
   agents: readonly string[];
   profiles: ReadonlyMap<string, Profile>;
   waiting: boolean;
   step: string | undefined;
 };
-type Render = (work: ActivityWork | undefined) => ReactNode;
+type Render = (work: ConversationWorkState | undefined) => ReactNode;
 
 /** The first agent's current step, as the "Working now" list shows it. */
 function useStep(
@@ -42,9 +42,9 @@ const noSubscribe = () => () => {};
 const none: ReadonlyMap<string, Profile> = new Map();
 const noProfiles = () => none;
 
-/** Who is working in a card row's conversation. A thread row has only its thread's work; any other row has its
+/** Who is working in a sidebar row's conversation. A thread row has only its thread's work; any other row has its
  * conversation's, threads included. Only the viewer's own agents count. */
-export function ActivityWorking({
+export function ConversationWork({
   session,
   channelId,
   rootId,
@@ -56,17 +56,17 @@ export function ActivityWorking({
   children: Render;
 }) {
   return rootId ? (
-    <ThreadWorking session={session} channelId={channelId} rootId={rootId}>
+    <ThreadWork session={session} channelId={channelId} rootId={rootId}>
       {children}
-    </ThreadWorking>
+    </ThreadWork>
   ) : (
-    <ConversationWorking session={session} channelId={channelId}>
+    <ChannelWork session={session} channelId={channelId}>
       {children}
-    </ConversationWorking>
+    </ChannelWork>
   );
 }
 
-function ConversationWorking({
+function ChannelWork({
   session,
   channelId,
   children,
@@ -95,7 +95,7 @@ function ConversationWorking({
   );
 }
 
-function ThreadWorking({
+function ThreadWork({
   session,
   channelId,
   rootId,

@@ -17,16 +17,16 @@ import {
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 
 /** The message a thread row shows, which its menu acts on. */
-export type ActivityRowMessage = {
+export type ConversationMenuMessage = {
   channelId: string;
   messageId: string;
   threadRootId: string;
   text: string;
 };
 
-/** A card row's right-click menu. A thread row has the menu of the message it
+/** A sidebar card row's right-click menu. A thread row has the menu of the message it
  * shows; any other row has its conversation's sidebar row menu. */
-export function ActivityRowMenu({
+export function ConversationMenu({
   children,
   channel,
   message,
@@ -36,7 +36,7 @@ export function ActivityRowMenu({
   /** The row's list item, which the menu opens on. */
   children: ReactElement;
   channel: ChannelSummary | undefined;
-  message: ActivityRowMessage | undefined;
+  message: ConversationMenuMessage | undefined;
   onOpen(): void;
   /** Absent unless the row is unread and can be marked read. */
   onRead: (() => void) | undefined;

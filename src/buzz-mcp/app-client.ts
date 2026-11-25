@@ -3,7 +3,10 @@
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
 import type { BuzzClient, Memories } from "./client";
-import { nativeToolClient } from "../features/agents/tool-operation";
+import {
+  type AgentInstruction,
+  nativeToolClient,
+} from "../features/agents/tool-operation";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import { imageType } from "../features/relay/attachment-limits";
 import type {
@@ -61,6 +64,7 @@ export function appClient(
     localAttachments?: boolean;
     /** Set only by the native runtime for an active tool request. */
     nativeCall?: () => void;
+    instruction?: AgentInstruction;
   }>,
 ): BuzzClient {
   const check = () => {
@@ -434,6 +438,7 @@ export function appClient(
   };
   if (options.nativeCall && options.callSignal) {
     nativeToolClient(client, {
+      ...(options.instruction ? { instruction: options.instruction } : {}),
       signal: options.callSignal,
       check: () => {
         check();

@@ -13,7 +13,7 @@ import { pluginInstructions } from "./plugin-instructions";
 
 export type WakeTrigger = Exclude<
   Trigger,
-  { type: "mention" | "plugin" | "attention" }
+  { type: "mention" | "plugin" | "attention" | "instruction" }
 >;
 /** Runs one standalone turn, `key` naming it (`watch/ID`, `catch-up/ID` or
  * `timer/ID`). It calls `prompt` once it is ready to start the turn, and

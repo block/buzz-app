@@ -222,3 +222,45 @@ Other grants (`mcp`, `managedFiles`, `publicImages`, `publicPages`, `agentHooks`
 - Expecting `plugin_reload` to apply a `manifest.host` change.
 - Invalid ids, or an unknown manifest key.
 - Expecting React state to survive a reload, or a dragged-in folder to be reloadable.
+
+### Owner-confirmed isolated agent instructions
+
+Feature-detect `agents.instructionId` and `agents.requestInstruction`. A plugin
+can request one isolated turn from one of the owner's local agents even when
+that agent is not in the source channel. The owner must be able to write in that
+channel. Buzz always shows its own confirmation with the selected identity,
+community, exact text, tool, operation and arguments; a mention is not consent.
+
+Register a cooperating tool with `createToolOperation` and `addTool` first. Keep
+the operation's descriptor, then request delivery:
+
+```ts
+const id = await ctx.agents.instructionId(); // retain with this exact payload
+const receipt = await ctx.agents.requestInstruction({
+  id, agent: selectedAgentKey, source: sourceChannelId,
+  operation: provider.operation, tool: "example_link",
+  args: { from: "A", to: "B" }, text: "Link A to B.",
+}, { signal });
+```
+
+The provider's ordinary `resolve(proof, args)` supplies `authority.instruction`
+only for the approved operation, exact tool and arguments. Its context has no
+channel, root or session. Explicitly support that case in the provider; it is
+not a general owner grant. Other tools retain their usual permissions. Check
+`authority.check()` after asynchronous reads and at the final write admission.
+
+`delivered` means the input transport accepted the instruction, not that the
+operation succeeded. An exact retry returns the saved receipt; changed input
+refuses. IDs belong to the originating device and cannot be rerouted elsewhere.
+`uncertain` means a previous reservation or handoff could have delivered: never
+resend it under a new ID to work around that result. Refused requests are not
+silently retried. No Solo, DM, membership or conversation history is created or
+forwarded. Removing access, disabling a plugin or cancelling stops authority;
+already accepted input cannot be retracted.
+
+Harnesses opt in with `AgentType.runInstruction`. They must use a fresh session,
+keep its tools' context empty, bind `turn.instruction` only through their native
+`appClient`, check `current()` after waits, call `submitting()` immediately before
+transport submission, and `delivery.accepted()` only after transport acceptance.
+Native local Codex implements this contract; unsupported harnesses and execution
+targets refuse rather than fall back to a conversation.

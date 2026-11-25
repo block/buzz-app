@@ -4,6 +4,8 @@ import { Context } from "@deepseek-ai/cordis";
 import { matchFilters } from "nostr-tools/filter";
 import {
   createToolOperation,
+  createInstruction,
+  exactArgs,
   type AgentToolAuthority,
 } from "../../features/agents/tool-operation";
 import { huddleDescription } from "../../features/huddle/lifecycle";
@@ -703,6 +705,7 @@ function fixture(
   const wakeTurn = (delivery: Delivery) => {
     const { trigger } = delivery;
     if (
+      trigger.type === "instruction" ||
       trigger.type === "mention" ||
       trigger.type === "plugin" ||
       trigger.type === "attention"
@@ -14112,4 +14115,186 @@ describe("gateway turns", () => {
     ).toBe(previous);
     await f.complete(2);
   });
+});
+
+it("refuses an isolated instruction if its execution target changes before handoff", async () => {
+  const execution = vi.fn(async () => {
+    throw new Error("Must not open a remote execution");
+  });
+  const inspect = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockResolvedValue({});
+  const f = fixture(
+    [],
+    undefined,
+    false,
+    {},
+    undefined,
+    undefined,
+    execution,
+    undefined,
+    inspect,
+  );
+  const base = f.delivery("unused");
+  const provider = createToolOperation("synthetic/link", () => {
+    throw new Error("Must not bind an operation");
+  });
+  const args = { from: "A", to: "B" };
+  const instruction = createInstruction({
+    operation: provider.operation,
+    args: exactArgs(args),
+    agent: pubkey,
+    owner,
+    community: scope,
+    id: "synthetic-request",
+    source: "source-channel",
+    tool: "synthetic_link",
+    check: () => {},
+  });
+  const { channelId: _, ...isolated } = base;
+  const accepted = vi.fn();
+  const submitting = vi.fn();
+  const result = await f.runtime.runInstruction({
+    delivery: {
+      ...isolated,
+      accepted,
+      trigger: {
+        type: "instruction",
+        id: "synthetic-request",
+        text: "Link A to B.",
+        tool: "synthetic_link",
+        args,
+      },
+    },
+    key: "instruction/synthetic-request",
+    signal: new AbortController().signal,
+    instruction,
+    submitting,
+    prompt: async () => "Link A to B.",
+  });
+  expect(result).toEqual({
+    ok: false,
+    error: "Isolated instructions require a local native execution target",
+  });
+  expect(execution).not.toHaveBeenCalled();
+  expect(submitting).not.toHaveBeenCalled();
+  expect(accepted).not.toHaveBeenCalled();
+  expect(f.starts()).toHaveLength(0);
+});
+
+it("runs a confirmed instruction on a fresh native thread instead of the ambient community session", async () => {
+  const f = fixture();
+  const base = f.delivery("AMBIENT_HISTORY_MUST_STAY_OUT");
+  const communal = {
+    ...base,
+    config: { ...(base.config as object), scope: "community" },
+  };
+  const provider = createToolOperation("synthetic/link", () => ({
+    viewer: owner,
+    community: scope,
+    check: () => {},
+    release: () => {},
+  }));
+  const received = vi.fn();
+  f.added.push({
+    name: "synthetic_link",
+    description: "Synthetic",
+    inputSchema: { type: "object" },
+    operation: provider.operation,
+    call: async (_client, context, args, proof) => {
+      if (!proof) throw new Error("Missing proof");
+      const authority = provider.resolve(proof, args);
+      authority.check();
+      received({
+        context,
+        instruction: authority.instruction,
+        agent: authority.client.pubkey,
+      });
+      return "synthetic receipt only";
+    },
+  });
+  const args = { from: "synthetic-A", to: "synthetic-B" };
+  const instruction = createInstruction({
+    operation: provider.operation,
+    args: exactArgs(args),
+    agent: pubkey,
+    owner,
+    community: scope,
+    id: "synthetic-request",
+    source: "source-channel",
+    tool: "synthetic_link",
+    check: () => {},
+  });
+  const accepted = vi.fn();
+  const submitting = vi.fn();
+  let once: Promise<unknown> | undefined;
+  try {
+    await f.runtime.run(communal);
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+    const { channelId: _, ...isolated } = communal;
+    once = f.runtime.runInstruction({
+      delivery: {
+        ...isolated,
+        trigger: {
+          type: "instruction",
+          id: "synthetic-request",
+          text: "Link synthetic tasks.",
+          tool: "synthetic_link",
+          args,
+        },
+        accepted,
+      },
+      key: "instruction/synthetic-request",
+      signal: new AbortController().signal,
+      instruction,
+      submitting,
+      prompt: async () => "ONLY_SELECTED_INSTRUCTION",
+    });
+    await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+    expect(submitting).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    const threads = f.sent.filter((wire) => wire.method === "thread/start");
+    expect(threads[1]?.params).toMatchObject({ ephemeral: true });
+    expect(
+      (f.starts()[1]?.params as { threadId: string } | undefined)?.threadId,
+    ).not.toBe(
+      (f.starts()[0]?.params as { threadId: string } | undefined)?.threadId,
+    );
+    expect(JSON.stringify(f.starts()[1])).toContain(
+      "ONLY_SELECTED_INSTRUCTION",
+    );
+    expect(JSON.stringify(f.starts()[1])).not.toContain(
+      "AMBIENT_HISTORY_MUST_STAY_OUT",
+    );
+    expect(
+      JSON.stringify(
+        await f.tool("send", { audience: "everyone", text: "not allowed" }, 1),
+      ),
+    ).toContain("channel is required here");
+    expect(
+      JSON.stringify(
+        await f.tool("synthetic_link", { ...args, to: "changed" }, 1),
+      ),
+    ).toContain("No matching owner-confirmed instruction");
+    expect(received).not.toHaveBeenCalled();
+    expect(JSON.stringify(await f.tool("synthetic_link", args, 1))).toContain(
+      "synthetic receipt only",
+    );
+    expect(received).toHaveBeenCalledExactlyOnceWith({
+      context: {},
+      instruction: { id: "synthetic-request", source: "source-channel" },
+      agent: pubkey,
+    });
+    expect(JSON.stringify(await f.tool("synthetic_link", args, 1))).toContain(
+      "No matching owner-confirmed instruction",
+    );
+    expect(f.publish).not.toHaveBeenCalled();
+    await f.complete(1, "");
+    await expect(once).resolves.toEqual({ ok: true });
+    await f.complete(0, "");
+  } finally {
+    f.runtime.dispose();
+    await once;
+  }
 });

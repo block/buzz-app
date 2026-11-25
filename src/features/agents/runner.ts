@@ -1,3 +1,4 @@
+import type { AgentInstruction } from "./tool-operation";
 import { interestPaused } from "./attention";
 import {
   hasInvocationIntent,
@@ -231,6 +232,12 @@ async function pickFor(
 type WakeOutcome = Awaited<ReturnType<Agents["wake"]>>;
 type WakeDropReason = Extract<WakeOutcome, { status: "dropped" }>["reason"];
 type Job = {
+  instruction?: {
+    token: AgentInstruction;
+    signal: AbortSignal;
+    end(): void;
+    submitting(): void;
+  };
   work?: ReturnType<LocalAgentActivity["begin"]>;
   trigger: Trigger;
   channelId?: string;
@@ -255,6 +262,7 @@ type SourceTrigger = Extract<Trigger, { type: "source" }>;
  * goes with mentions. */
 type Lane = "mention" | "watch";
 const addressed = (trigger: Trigger) =>
+  trigger.type === "instruction" ||
   trigger.type === "mention" ||
   trigger.type === "plugin" ||
   trigger.type === "attention";
@@ -1004,17 +1012,46 @@ export class AgentRunners {
     if (!this.enqueue(runner, { trigger, channelId: trigger.channel }))
       throw new Error("The agent is busy and could not take this wake");
   }
+  instruct(
+    key: AgentKey,
+    trigger: Extract<Trigger, { type: "instruction" }>,
+    token: AgentInstruction,
+    check: () => void,
+    signal: AbortSignal,
+    end: () => void,
+    submitting: () => void,
+  ) {
+    return this.wakeGuarded(
+      key,
+      trigger,
+      {
+        signal,
+        current: () => {
+          check();
+          return true;
+        },
+      },
+      () => !signal.aborted,
+      signal,
+      { token, signal, end, submitting },
+    );
+  }
   wakeGuarded(
     key: AgentKey,
-    trigger: PluginTrigger,
+    trigger: PluginTrigger | Extract<Trigger, { type: "instruction" }>,
     options: Parameters<Agents["wake"]>[2],
     available: () => boolean,
     lifetime: AbortSignal,
+    instruction?: Job["instruction"],
   ): Promise<WakeOutcome> {
     const runner = this.runners.get(key);
     if (!runner || !this.runs(key) || !this.host.ready(key))
       return Promise.resolve({ status: "dropped", reason: "unavailable" });
-    if (runner.type?.supportsGuardedWake !== true)
+    if (
+      instruction
+        ? !runner.type?.runInstruction
+        : runner.type?.supportsGuardedWake !== true
+    )
       return Promise.resolve({ status: "dropped", reason: "refused" });
     const controller = runner.controller.signal;
     return new Promise((resolve) => {
@@ -1033,6 +1070,7 @@ export class AgentRunners {
           const index = runner.queues.mention.indexOf(job);
           if (index >= 0) runner.queues.mention.splice(index, 1);
           job.work?.remove();
+          job.instruction?.end();
         }
         resolve(result);
       };
@@ -1062,7 +1100,8 @@ export class AgentRunners {
       };
       const job: Job = {
         trigger,
-        channelId: trigger.channel,
+        ...("channel" in trigger ? { channelId: trigger.channel } : {}),
+        ...(instruction ? { instruction } : {}),
         guardedWake: {
           current,
           accepted: () => finish({ status: "delivered" }),
@@ -3512,7 +3551,9 @@ export class AgentRunners {
       const owned = await pickFor(job.trigger, agent, type);
       // A watch or timer run as a standalone turn keeps its own picks: the
       // harness starts it on its default, so no route chooses for it.
-      const runsAlone = !addressed(trigger) && !anchor && !!type.runOnce;
+      const runsAlone =
+        trigger.type === "instruction" ||
+        (!addressed(trigger) && !anchor && !!type.runOnce);
       const choose = runsAlone
         ? undefined
         : await this.host.route?.(
@@ -3597,7 +3638,10 @@ export class AgentRunners {
           : undefined;
       };
       signal.throwIfAborted();
-      const routingTrigger = addressed(job.trigger) ? job.trigger : anchor;
+      const routingTrigger =
+        job.trigger.type !== "instruction" && addressed(job.trigger)
+          ? job.trigger
+          : anchor;
       const routeConversation = this.host.routeConversation;
       const delivery = Object.freeze({
         trigger: job.trigger,
@@ -3677,6 +3721,35 @@ export class AgentRunners {
             this.host.member(agent, wakeAnchor(destination)) === true),
       });
       const runOnce = type.runOnce?.bind(type);
+      if (trigger.type === "instruction") {
+        const requested = job.instruction;
+        const runInstruction = type.runInstruction?.bind(type);
+        if (!requested || !runInstruction || !delivery.current()) return;
+        attempted = true;
+        delivery.workingUntil(
+          standalone(AbortSignal.any([lifetime, requested.signal]), (signal) =>
+            runInstruction({
+              delivery,
+              key: `instruction/${trigger.id}`,
+              signal,
+              instruction: requested.token,
+              submitting: requested.submitting,
+              prompt: async () =>
+                delivery.current()
+                  ? [
+                      "The owner confirmed this one instruction for you. It grants no conversation access or general tool authority. There is no reply destination. Delivery is not operation completion.",
+                      JSON.stringify({
+                        instruction: trigger.text,
+                        tool: trigger.tool,
+                        arguments: trigger.args,
+                      }),
+                    ].join("\n\n")
+                  : undefined,
+            }),
+          ).finally(requested.end),
+        );
+        return;
+      }
       if (addressed(trigger)) {
         if (job.guardedWake && !delivery.current()) return;
         return invoke(delivery);
@@ -3771,7 +3844,8 @@ export class AgentRunners {
       destination &&
       trigger.type !== "mention" &&
       trigger.type !== "plugin" &&
-      trigger.type !== "attention"
+      trigger.type !== "attention" &&
+      trigger.type !== "instruction"
         ? { key: `${agent.key}\0${trigger.slug}`, trigger, destination }
         : undefined;
     // Handover expiry releases the queue, never the actual work's outcome.

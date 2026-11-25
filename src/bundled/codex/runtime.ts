@@ -1,3 +1,5 @@
+import type { InstructionTurn } from "../../features/agents/service";
+import type { AgentInstruction } from "../../features/agents/tool-operation";
 import { withTimeout } from "../../plugins/timeout";
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
@@ -301,6 +303,8 @@ type Active = {
 /** A watch or timer turn on an ephemeral thread of its own. Its tools have
  * no default destination and it answers no request. */
 type Once = {
+  instruction?: AgentInstruction;
+  current?(): boolean;
   threadId?: string;
   turnId?: string;
   finished: boolean;
@@ -2932,6 +2936,20 @@ export class CodexRuntime {
       .catch((error) => console.warn("Codex handover failed", error));
   }
 
+  /** Instructions never reuse the agent's ambient community or channel session. */
+  async runInstruction(turn: InstructionTurn): Promise<TurnResult> {
+    if (this.target || (await this.inspect?.(turn.delivery.agent.key)))
+      return {
+        ok: false,
+        error: "Isolated instructions require a local native execution target",
+      };
+    const settings = this.resolveConfig(turn.delivery.config);
+    const once = {
+      ...turn,
+      delivery: { ...turn.delivery, config: { ...settings, scope: "thread" } },
+    };
+    return this.runOnce(once);
+  }
   /** Runs an unaddressed wake without a default posting destination. Community
    * scope retains it in the shared session; other scopes use an ephemeral
    * thread. Asks for its prompt when admitted and logs failures without posting. */
@@ -2952,10 +2970,11 @@ export class CodexRuntime {
     }
   }
   private async standalone(
-    { delivery, key, signal: turnSignal, prompt }: StandaloneTurn,
+    turn: StandaloneTurn,
     reserved = false,
     published = () => {},
   ): Promise<TurnResult> {
+    const { delivery, key, signal: turnSignal, prompt, instruction } = turn;
     if (this.disposed) throw new Error("Codex runtime is disposed");
     if (this.resolveConfig(delivery.config).scope === "community" && !reserved)
       return this.controls.wake(
@@ -3047,6 +3066,12 @@ export class CodexRuntime {
       return outcome;
     }
     if (this.execution && (await this.inspect?.(agent.key))) {
+      if (instruction)
+        return {
+          ok: false,
+          error:
+            "Isolated instructions require a local native execution target",
+        };
       const conversation = `once:${crypto.randomUUID()}`;
       const storageKey = this.executionKey(agent.key, scope, conversation);
       let runtime: CodexRuntime | undefined;
@@ -3100,6 +3125,7 @@ export class CodexRuntime {
     let notice = delivery.gatewayFallback?.notice;
     let release!: () => void;
     const once: Once = {
+      ...(instruction ? { instruction, current: delivery.current } : {}),
       finished: false,
       signal,
       workspace: settings.workspace,
@@ -3161,6 +3187,7 @@ export class CodexRuntime {
       server.threads.set(once.threadId, agent.key);
       signal.throwIfAborted();
       if (!delivery.current()) return { ok: true };
+      if (instruction) (turn as InstructionTurn).submitting();
       const turnStarted = await rpc.request<{ turn: { id: string } }>(
         "turn/start",
         {
@@ -3178,6 +3205,7 @@ export class CodexRuntime {
           ),
         },
       );
+      if (instruction) delivery.accepted?.();
       once.turnId ??= turnStarted.turn.id;
       this.status(agent.key, key, "Working", notice);
       const status = await followed.completed;
@@ -3591,7 +3619,8 @@ export class CodexRuntime {
       : turn.signal;
     const check = () => {
       signal.throwIfAborted();
-      if (turn.finished) throw new Error("The Codex turn has ended");
+      if (turn.finished || (once?.current && !once.current()))
+        throw new Error("The Codex turn has ended");
     };
     check();
     if (
@@ -3628,6 +3657,7 @@ export class CodexRuntime {
       appClient(agent, {
         // Its tool registry reviews every call, Buzz's dynamic tools included.
         ...(!this.target ? { nativeCall: check } : {}),
+        ...(once?.instruction ? { instruction: once.instruction } : {}),
         nativeToolGate: true,
         // Execution-target reads come from somewhere other than this desktop;
         // suppress managed-attachment hints at publish so a remote source cannot

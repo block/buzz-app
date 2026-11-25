@@ -97,6 +97,7 @@ export type ModelRouteContext = Readonly<{
    * (`plugin`), the agent's own `handoff` from another conversation, or
    * `attention`. */
   trigger:
+    | "instruction"
     | "mention"
     | "watch"
     | "catch-up"

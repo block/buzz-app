@@ -259,6 +259,7 @@ async function setup({
   pendingChannels = [] as string[],
   timeoutMs = 60_000,
   runOnce = undefined as AgentType<Config>["runOnce"],
+  runInstruction = undefined as AgentType<Config>["runInstruction"],
   voice = undefined as AgentType<Config>["voice"],
   jev = undefined as FakeJev | undefined,
   binding = undefined as ((agent: Agent) => ConfigBinding) | undefined,
@@ -423,6 +424,7 @@ async function setup({
     ...(retire ? { retire } : {}),
     ...(readFile ? { readFile } : {}),
     ...(runOnce ? { runOnce } : {}),
+    ...(runInstruction ? { runInstruction } : {}),
     ...(sessionControls
       ? {
           sessionControls: {
@@ -3197,6 +3199,37 @@ describe("a plugin's wake", () => {
 
 describe("guarded plugin wakes", () => {
   const wake = { channel, root: "e".repeat(64), text: "Check current work" };
+  it("refuses a guarded request to an agent outside every channel without side effects", async () => {
+    const f = await setup({ supportsGuardedWake: true });
+    try {
+      await f.service.create({ type: "example/echo", name: "Echo" });
+      const list = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockReturnValue({
+        ...list,
+        channels: list.channels.map((row) => ({
+          ...row,
+          visibility: "private",
+          members: (row.members ?? []).filter((key) => key !== bot),
+        })),
+      });
+      const publishedBefore = [...f.native.publish.mock.calls];
+      const result = await f.plugin.agents.wake(
+        bot,
+        { ...wake, text: "Link synthetic task A to synthetic task B." },
+        { current: () => true },
+      );
+      expect(result).toEqual({ status: "dropped", reason: "unavailable" });
+      expect(f.run).not.toHaveBeenCalled();
+      expect(f.native.publish.mock.calls).toEqual(publishedBefore);
+      expect(
+        f.session.channels
+          .list()
+          .channels.every((row) => !row.members?.includes(bot)),
+      ).toBe(true);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
   it("refuses unsupported guarded wakes before run and preserves ordinary wakes", async () => {
     const f = await setup();
     try {
@@ -4101,6 +4134,7 @@ it("runs one turn at a time for an Interest, Interests and mentions beside each 
             ? trigger.slug
             : trigger.type === "plugin" ||
                 trigger.type === "attention" ||
+                trigger.type === "instruction" ||
                 trigger.type === "source"
               ? trigger.text
               : trigger.event.content,
@@ -11211,6 +11245,7 @@ const heard = (run: { mock: { calls: readonly (readonly unknown[])[] } }) =>
         ? []
         : trigger.type === "plugin" ||
             trigger.type === "attention" ||
+            trigger.type === "instruction" ||
             trigger.type === "source"
           ? [trigger.text]
           : [trigger.event.content];
@@ -26784,4 +26819,310 @@ describe("reload in place", () => {
     canceled.abort(new Error("canceled"));
     await expect(call).rejects.toThrow("canceled");
   });
+});
+
+describe("owner-confirmed isolated instructions", () => {
+  it("delivers once to the selected nonmember and binds only its exact cooperating operation", async () => {
+    const received = runnerGate<import("./service").InstructionTurn<Config>>();
+    const ended = runnerGate<void>();
+    const f = await setup({
+      runInstruction: async (turn) => {
+        received.resolve(turn);
+        await ended.promise;
+        return { ok: true };
+      },
+    });
+    try {
+      await f.service.create({ type: "example/echo", name: "Selected" });
+      await vi.waitFor(() => expect(f.native.claim).toHaveBeenCalled());
+      const rows = f.session.channels.list();
+      vi.spyOn(f.session.channels, "list").mockImplementation(() => ({
+        ...rows,
+        channels: rows.channels.map((row) => ({
+          ...row,
+          members: (row.members ?? []).filter((key) => key !== bot),
+        })),
+      }));
+      const provider = f.plugin.agents.createToolOperation("link");
+      const otherOperation = f.plugin.agents.createToolOperation("unrelated");
+      const calls: AgentToolAuthority[] = [];
+      f.plugin.agents.addTool({
+        name: "synthetic_link",
+        description: "Synthetic link",
+        inputSchema: { type: "object" },
+        operation: provider.operation,
+        async call(_client, context, args, proof) {
+          expect(context).toEqual({});
+          if (!proof) throw new Error("Missing instruction proof");
+          expect(() => otherOperation.resolve(proof, args)).toThrow(
+            "No matching",
+          );
+          const authority = provider.resolve(proof, args);
+          authority.check();
+          calls.push(authority);
+          return "Synthetic operation received; not saved.";
+        },
+      });
+      const id = await f.service.instructionId();
+      const input = {
+        id,
+        agent: bot,
+        source: channel,
+        operation: provider.operation,
+        tool: "synthetic_link",
+        args: { from: "synthetic-A", to: "synthetic-B" },
+        text: "Link synthetic A to synthetic B.",
+      };
+      const published = f.native.publish.mock.calls.length;
+      const pending = f.plugin.agents.requestInstruction?.(input);
+      await vi.waitFor(() =>
+        expect(f.service.instructionReviews()).toHaveLength(1),
+      );
+      expect(f.run).not.toHaveBeenCalled();
+      expect(() => f.plugin.agents.instructionReviews?.()).toThrow(
+        "Only the host",
+      );
+      expect(() => f.plugin.agents.decideInstruction?.(id, true)).toThrow(
+        "Only the host",
+      );
+      f.service.decideInstruction(id, true);
+      const turn = await received.promise;
+      expect(turn.delivery.agent.pubkey).toBe(bot);
+      expect(turn.delivery).not.toHaveProperty("channelId");
+      expect(turn.delivery).not.toHaveProperty("session");
+      expect(turn.delivery).not.toHaveProperty("routeConversation");
+      expect(await turn.prompt()).toContain("synthetic-A");
+      expect(await turn.prompt()).not.toContain("hello");
+      turn.delivery.accepted?.();
+      await expect(pending).resolves.toEqual({ id, status: "delivered" });
+      const client = appClient(turn.delivery.agent, {
+        instruction: turn.instruction,
+        nativeCall: () => {
+          if (!turn.delivery.current()) throw new Error("Expired");
+        },
+        signal: turn.signal,
+        callSignal: turn.signal,
+        read: vi.fn(),
+        memories: async () => ({ entries: [], partial: false }),
+      });
+      await expect(
+        callSessionTool(
+          client,
+          {},
+          "synthetic_link",
+          { ...input.args, to: "different" },
+          f.service.tools(),
+        ),
+      ).rejects.toThrow("No matching owner-confirmed instruction");
+      expect(calls).toHaveLength(0);
+      const reply = await callSessionTool(
+        client,
+        {},
+        "synthetic_link",
+        input.args,
+        f.service.tools(),
+      );
+      expect(reply).toBe("Synthetic operation received; not saved.");
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.instruction).toEqual({ id, source: channel });
+      expect(() => calls[0]?.check()).toThrow("call has ended");
+      await expect(
+        callSessionTool(
+          client,
+          {},
+          "synthetic_link",
+          input.args,
+          f.service.tools(),
+        ),
+      ).rejects.toThrow("No matching owner-confirmed instruction");
+      await expect(
+        f.plugin.agents.requestInstruction?.(input),
+      ).resolves.toEqual({ id, status: "delivered" });
+      await expect(
+        f.plugin.agents.requestInstruction?.({ ...input, text: "Changed" }),
+      ).rejects.toThrow("different contents");
+      expect(f.native.publish).toHaveBeenCalledTimes(published);
+      expect(
+        f.session.channels
+          .list()
+          .channels.every((row) => !row.members?.includes(bot)),
+      ).toBe(true);
+      ended.resolve();
+      await vi.waitFor(() => expect(() => calls[0]?.check()).toThrow());
+    } finally {
+      ended.resolve();
+      await f.ctx.fiber.dispose();
+    }
+  });
+  it.each(["cancel", "source revoked", "owner changed", "plugin disabled"])(
+    "refuses %s before submission",
+    async (reason) => {
+      let active = true;
+      const receiver = vi.fn(async () => ({ ok: true }));
+      const f = await setup({
+        runInstruction: receiver,
+        pluginActive: () => active,
+      });
+      try {
+        await f.service.create({ type: "example/echo", name: "Selected" });
+        const provider = f.plugin.agents.createToolOperation("link");
+        f.plugin.agents.addTool({
+          name: "synthetic_link",
+          description: "Synthetic",
+          inputSchema: { type: "object" },
+          operation: provider.operation,
+          call: async () => "unused",
+        });
+        const id = await f.service.instructionId();
+        const pending = f.plugin.agents.requestInstruction?.({
+          id,
+          agent: bot,
+          source: channel,
+          operation: provider.operation,
+          tool: "synthetic_link",
+          args: {},
+          text: "Synthetic request",
+        });
+        await vi.waitFor(() =>
+          expect(f.service.instructionReviews()).toHaveLength(1),
+        );
+        if (reason === "source revoked") {
+          f.confirm(channel, [other]);
+          f.confirm(channel, [viewer]);
+        }
+        if (reason === "owner changed") f.signIn(other);
+        if (reason === "plugin disabled") active = false;
+        f.service.decideInstruction(id, reason !== "cancel");
+        await expect(pending).resolves.toEqual({ id, status: "refused" });
+        expect(receiver).not.toHaveBeenCalled();
+        expect(f.run).not.toHaveBeenCalled();
+      } finally {
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
+
+  it("keeps a submitted but unconfirmed handoff uncertain and never replays it", async () => {
+    const receiver = vi.fn(
+      async (turn: import("./service").InstructionTurn<Config>) => {
+        turn.submitting();
+        return { ok: false, error: "Synthetic lost transport response" };
+      },
+    );
+    const f = await setup({ runInstruction: receiver });
+    try {
+      await f.service.create({ type: "example/echo", name: "Selected" });
+      const provider = f.plugin.agents.createToolOperation("link");
+      f.plugin.agents.addTool({
+        name: "synthetic_link",
+        description: "Synthetic",
+        inputSchema: { type: "object" },
+        operation: provider.operation,
+        call: async () => "unused",
+      });
+      const id = await f.service.instructionId();
+      const input = {
+        id,
+        agent: bot,
+        source: channel,
+        operation: provider.operation,
+        tool: "synthetic_link",
+        args: {},
+        text: "Synthetic request",
+      };
+      const pending = f.plugin.agents.requestInstruction?.(input);
+      await vi.waitFor(() =>
+        expect(f.service.instructionReviews()).toHaveLength(1),
+      );
+      f.service.decideInstruction(id, true);
+      await expect(pending).resolves.toEqual({ id, status: "uncertain" });
+      await expect(
+        f.plugin.agents.requestInstruction?.(input),
+      ).resolves.toEqual({ id, status: "uncertain" });
+      expect(receiver).toHaveBeenCalledTimes(1);
+    } finally {
+      await f.ctx.fiber.dispose();
+    }
+  });
+
+  it.each(["before submission", "after receipt"])(
+    "revokes a confirmed request %s",
+    async (phase) => {
+      const received =
+        runnerGate<import("./service").InstructionTurn<Config>>();
+      const proceed = runnerGate<void>();
+      let submitted = false;
+      const f = await setup({
+        runInstruction: async (turn) => {
+          if (phase === "after receipt") {
+            turn.submitting();
+            turn.delivery.accepted?.();
+          }
+          received.resolve(turn);
+          await proceed.promise;
+          if (phase === "before submission" && turn.delivery.current()) {
+            turn.submitting();
+            submitted = true;
+            turn.delivery.accepted?.();
+          }
+          return { ok: true };
+        },
+      });
+      try {
+        await f.service.create({ type: "example/echo", name: "Selected" });
+        const provider = f.plugin.agents.createToolOperation("link");
+        const operate = vi.fn(async () => "must not run");
+        f.plugin.agents.addTool({
+          name: "synthetic_link",
+          description: "Synthetic",
+          inputSchema: { type: "object" },
+          operation: provider.operation,
+          call: operate,
+        });
+        const id = await f.service.instructionId();
+        const pending = f.plugin.agents.requestInstruction?.({
+          id,
+          agent: bot,
+          source: channel,
+          operation: provider.operation,
+          tool: "synthetic_link",
+          args: {},
+          text: "Synthetic request",
+        });
+        await vi.waitFor(() =>
+          expect(f.service.instructionReviews()).toHaveLength(1),
+        );
+        f.service.decideInstruction(id, true);
+        const turn = await received.promise;
+        if (phase === "after receipt")
+          await expect(pending).resolves.toEqual({ id, status: "delivered" });
+        f.confirm(channel, [other]);
+        f.confirm(channel, [viewer]);
+        expect(turn.delivery.current()).toBe(false);
+        const client = appClient(turn.delivery.agent, {
+          instruction: turn.instruction,
+          nativeCall: () => {
+            if (!turn.delivery.current()) throw new Error("Revoked");
+          },
+          callSignal: turn.signal,
+          signal: turn.signal,
+          read: vi.fn(),
+          memories: async () => ({ entries: [], partial: false }),
+        });
+        await expect(
+          callSessionTool(client, {}, "synthetic_link", {}, f.service.tools()),
+        ).rejects.toThrow();
+        expect(operate).not.toHaveBeenCalled();
+        proceed.resolve();
+        await expect(pending).resolves.toEqual({
+          id,
+          status: phase === "after receipt" ? "delivered" : "refused",
+        });
+        expect(submitted).toBe(false);
+      } finally {
+        proceed.resolve();
+        await f.ctx.fiber.dispose();
+      }
+    },
+  );
 });

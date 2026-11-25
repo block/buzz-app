@@ -123,7 +123,21 @@ import {
   type AgentReads,
 } from "./reads";
 import { AgentInbox } from "./inbox";
-import { createToolOperation, type AgentToolProvider } from "./tool-operation";
+import {
+  createToolOperation,
+  createInstruction,
+  instructionArgs,
+  exactArgs,
+  instructionOperation,
+  type AgentToolProvider,
+  type AgentInstruction,
+} from "./tool-operation";
+import {
+  InstructionRequests,
+  type AgentInstructionInput,
+  type InstructionReceipt,
+  type InstructionReview,
+} from "./instruction-requests";
 import {
   assignConversationFolder as assignFolder,
   ALREADY_STARTED,
@@ -870,6 +884,13 @@ export type ConversationWake = Readonly<
   )
 >;
 export type Trigger =
+  | Readonly<{
+      type: "instruction";
+      id: string;
+      text: string;
+      tool: string;
+      args: Readonly<Record<string, unknown>>;
+    }>
   /** Directly addressed: a chat message that mentions the agent. `resumed`
    * when its turn was working as the app closed or reloaded, which stopped it
    * partway, and the owner chose to resume it (see `AgentType.resumes`). */
@@ -925,6 +946,8 @@ export type Trigger =
 export type StandaloneTurn<Config = unknown> = Readonly<{
   /** The watch's or timer's delivery. */
   delivery: Delivery<Config>;
+  /** Native isolated instruction turns only; never supplied by tool arguments. */
+  instruction?: AgentInstruction;
   /** Names the turn, for status views. */
   key: string;
   /** Aborts when the agent is removed, its type is replaced, or
@@ -937,6 +960,14 @@ export type StandaloneTurn<Config = unknown> = Readonly<{
    * Undefined means it is no longer wanted, so no turn starts. */
   prompt(): Promise<string | undefined>;
 }>;
+/** An owner-confirmed request must run in a fresh session without conversation history. */
+export type InstructionTurn<Config = unknown> = StandaloneTurn<Config> &
+  Readonly<{
+    instruction: AgentInstruction;
+    /** Call immediately before transport submission; an unconfirmed outcome
+     * after this point must never be reported as safe to resend. */
+    submitting(): void;
+  }>;
 /** How a standalone turn ended. */
 export type TurnResult = Readonly<{ ok: boolean; error?: string }>;
 export type Delivery<Config = unknown> = Readonly<{
@@ -1346,6 +1377,9 @@ export type AgentType<Config = unknown> = {
    * `turn.signal` aborts. With it, the host runs watches and timers as
    * standalone turns in their Interest's lane, and `run` gets only mentions. */
   runOnce?(turn: StandaloneTurn<Config>): Promise<TurnResult>;
+  /** Opt-in contract: fresh isolated session, no conversation defaults, and
+   * current()/accepted() at the final prompt handoff. Never resume a session. */
+  runInstruction?(turn: InstructionTurn<Config>): Promise<TurnResult>;
   /** Reads a file for an unprotected agent outside its turns, as its tools
    * read one they send: relative to its saved workspace, where it runs.
    * Rejects where only a conversation's session has a place to read it, as
@@ -1765,6 +1799,17 @@ function promptOf(trigger: Trigger) {
   return text.slice(-ROUTE_PROMPT_CHARS);
 }
 export type Agents = {
+  /** Device-bound replay identity. Keep it with the original payload. */
+  instructionId?(): Promise<string>;
+  /** Always asks the owner to confirm the selected agent and exact operation. */
+  requestInstruction?(
+    input: AgentInstructionInput,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<InstructionReceipt>;
+  /** Host UI only; pending payloads are not readable by plugins. */
+  instructionReviews?(): readonly InstructionReview[];
+  /** Host UI only; plugin scopes cannot confirm or decline requests. */
+  decideInstruction?(id: string, allowed: boolean): void;
   readonly invocationSubthreads?: true;
   readonly invocationIntentVersion?: 1;
   readonly invocationTurnContext?: true;
@@ -2650,6 +2695,180 @@ export class AgentsService extends Service implements Agents {
   private readonly attentionControls;
   private readonly addedTools;
   private readonly operationNames = new Set<string>();
+  private instructionState?: InstructionRequests;
+  private get instructionRequests() {
+    if (!this.instructionState)
+      this.instructionState = new InstructionRequests(this.storage, () =>
+        this.notify(),
+      );
+    return this.instructionState;
+  }
+  instructionId() {
+    return this.instructionRequests.id();
+  }
+  instructionReviews() {
+    if (this.ctx.pluginOwner)
+      throw new Error("Only the host can read pending instructions");
+    return this.instructionRequests.snapshot();
+  }
+  decideInstruction(id: string, allowed: boolean) {
+    if (this.ctx.pluginOwner)
+      throw new Error("Only the host can confirm an instruction");
+    this.instructionRequests.decide(id, allowed);
+  }
+  async requestInstruction(
+    input: AgentInstructionInput,
+    options: Readonly<{ signal?: AbortSignal }> = {},
+  ): Promise<InstructionReceipt> {
+    const ctx = this.ctx;
+    const plugin = ctx.pluginOwner;
+    if (!plugin) throw new Error("Only a plugin requests an instruction");
+    const { id, agent: key, source, operation, tool: toolName, text } = input;
+    if (
+      !id ||
+      !source ||
+      typeof text !== "string" ||
+      !text.trim() ||
+      text.length > 32768
+    )
+      throw new Error("An instruction needs an ID, source and bounded text");
+    const args = instructionArgs(input.args);
+    if (exactArgs(args).length > 32768)
+      throw new Error("Instruction arguments are too large");
+    const name = instructionOperation(operation);
+    const tool = this.tools().find(
+      (item) => item.name === toolName && item.operation === operation,
+    );
+    const agent = this.ready(key);
+    const binding = agent && this.bindingOf(agent);
+    if (
+      !agent ||
+      !binding ||
+      !tool ||
+      !this.types().find((type) => type.key === agent.type)?.runInstruction
+    )
+      throw new Error(
+        "The selected agent or operation cannot receive isolated instructions",
+      );
+    const epoch = binding.connection.epoch;
+    const stop = new AbortController();
+    const signal = AbortSignal.any([
+      stop.signal,
+      binding.controller.signal,
+      ...(options.signal ? [options.signal] : []),
+    ]);
+    let invalid = false;
+    let handed = false;
+    let ended = false;
+    const check = () => {
+      signal.throwIfAborted();
+      const current = this.ready(key);
+      const channel = binding.session.channels
+        .list()
+        .channels.find((item) => item.id === source);
+      if (
+        invalid ||
+        ended ||
+        !ctx.pluginStatus.isActive(plugin.id, plugin.revision) ||
+        this.communities.snapshot().viewer !== binding.viewer ||
+        agent.owner !== binding.viewer ||
+        this.bindingOf(agent) !== binding ||
+        binding.connection.epoch !== epoch ||
+        binding.connection.since === undefined ||
+        current?.pubkey !== agent.pubkey ||
+        current.owner !== agent.owner ||
+        current.type !== agent.type ||
+        current.protectionRevision !== agent.protectionRevision ||
+        !this.runners.runs(key) ||
+        !this.tools().includes(tool) ||
+        !channel ||
+        channel.archived ||
+        channel.cached ||
+        channel.metadataCached ||
+        channel.pending ||
+        channel.metadataPending ||
+        channel.readOnly ||
+        (channel.viewerMembership?.pubkey === binding.viewer &&
+          !channel.viewerMembership.joined) ||
+        !channel.members?.includes(binding.viewer)
+      )
+        throw new Error(
+          "The instruction's owner, agent, plugin or source access changed",
+        );
+    };
+    check();
+    const changed = () => {
+      try {
+        check();
+      } catch {
+        invalid = true;
+        stop.abort();
+      }
+    };
+    const unsubscribe = binding.session.channels.subscribeList(changed);
+    const release = ctx.effect(() => () => stop.abort());
+    const finish = () => {
+      if (ended) return;
+      ended = true;
+      signal.removeEventListener("abort", cancel);
+      unsubscribe();
+      release();
+    };
+    const cancel = () => this.instructionRequests.cancel(id);
+    signal.addEventListener("abort", cancel, { once: true });
+    return this.instructionRequests.submit({
+      review: Object.freeze({
+        id,
+        agent: agent.pubkey,
+        owner: agent.owner,
+        community: binding.origin,
+        source,
+        plugin: plugin.id,
+        operation: name,
+        tool: toolName,
+        args,
+        text,
+      }),
+      check,
+      cancel: () => {
+        if (!handed) finish();
+      },
+      deliver: async () => {
+        check();
+        const instruction = createInstruction({
+          operation,
+          args: exactArgs(args),
+          agent: key,
+          owner: agent.owner,
+          community: binding.origin,
+          id,
+          source,
+          tool: toolName,
+          check,
+        });
+        handed = true;
+        let submitted = false;
+        const receipt = await this.runners.instruct(
+          key,
+          { type: "instruction", id, text, tool: toolName, args },
+          instruction,
+          check,
+          signal,
+          finish,
+          () => {
+            check();
+            submitted = true;
+          },
+        );
+        if (receipt.status !== "delivered") finish();
+        return receipt.status === "delivered"
+          ? "delivered"
+          : submitted
+            ? "uncertain"
+            : "refused";
+      },
+    });
+  }
   private readonly addedInstructions;
   /** Every added tool's name, its plugin active or still starting. */
   private readonly toolNames = new Set<string>();
@@ -4572,7 +4791,7 @@ export class AgentsService extends Service implements Agents {
         this.operationNames.delete(name);
       };
     });
-    return createToolOperation(name, (client, context, tool) => {
+    return createToolOperation(name, (client, context, tool, instruction) => {
       const agent = this.ready(client.key);
       const binding = agent && this.bindingOf(agent);
       if (!agent || !binding)
@@ -4596,9 +4815,10 @@ export class AgentsService extends Service implements Agents {
           this.ready(client.key)?.pubkey !== agent.pubkey ||
           client.pubkey !== agent.pubkey ||
           client.owner !== binding.viewer ||
-          !context.channel ||
-          this.reads(agent, { tags: [["h", context.channel]] }) !== true ||
-          this.reads(viewer, { tags: [["h", context.channel]] }) !== true
+          (!instruction &&
+            (!context.channel ||
+              this.reads(agent, { tags: [["h", context.channel]] }) !== true ||
+              this.reads(viewer, { tags: [["h", context.channel]] }) !== true))
         )
           throw new Error("The agent operation binding is no longer active");
       };

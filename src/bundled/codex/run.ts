@@ -23,6 +23,7 @@ export const codexRun = (
   | "supportsGuardedWake"
   | "sessionControls"
   | "run"
+  | "runInstruction"
   | "runOnce"
   | "timeoutMs"
   | "syncedSettings"
@@ -44,6 +45,10 @@ export const codexRun = (
   run: async (delivery) => {
     await ready?.(delivery.signal, delivery.agent.key);
     return runtime.run(delivery);
+  },
+  runInstruction: async (turn) => {
+    await ready?.(turn.signal, turn.delivery.agent.key);
+    return runtime.runInstruction(turn);
   },
   runOnce: async (turn) => {
     await ready?.(turn.signal, turn.delivery.agent.key);

@@ -208,6 +208,13 @@ if that desktop app is up and running.
   can't finish, it says why and offers **Retry**.
 - **Your default agent** (your Bestie) answers new chats and `ask:` searches.
   Set it with **Make my bestie** in an agent's menu.
+- **Plugin-requested instructions.** A plugin can ask you to send one exact
+  instruction to a selected local agent without adding it to a channel. Review
+  the identity, community, text, tool and arguments before **Send instruction**;
+  **Cancel** sends nothing. This uses a fresh session with no conversation
+  history or reply destination, not a mention or a broader permission grant.
+  A delivery receipt does not mean the requested operation completed. An
+  uncertain delivery must not be blindly resent.
 - **Who agents answer.** An agent acts for its owner, the owner's other agents
   and the owner's workflows. Other people can talk to it, but it won't do work
   for them.

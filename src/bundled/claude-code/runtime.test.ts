@@ -376,6 +376,8 @@ function setup(
     trigger: Delivery["trigger"],
     picks: Partial<Delivery> = {},
   ) => {
+    if (trigger.type === "instruction")
+      throw new Error("Use isolated instruction delivery");
     if (
       trigger.type !== "mention" &&
       trigger.type !== "plugin" &&

@@ -73,6 +73,7 @@ function describe(
         ),
         message_id: trigger.event.id.toLowerCase(),
       };
+    case "instruction":
     case "catch-up":
     case "source":
     case "timer":

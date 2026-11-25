@@ -212,6 +212,7 @@ export type {
   AgentAddedTab,
   AgentHandle,
   AgentInstructions,
+  InstructionTurn,
   AgentType,
   AgentSession,
   AgentSessions,
@@ -287,3 +288,9 @@ export type {
   Context as AddedToolContext,
 } from "../buzz-mcp/client";
 export type { Reply as AddedToolReply } from "../buzz-mcp/tools";
+
+export type {
+  AgentInstructionInput,
+  InstructionReceipt,
+} from "../features/agents/instruction-requests";
+export type { AgentInstruction } from "../features/agents/tool-operation";

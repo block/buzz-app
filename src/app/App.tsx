@@ -1,3 +1,4 @@
+import { InstructionReview } from "../features/agents/InstructionReview";
 import { navigationOwner } from "./shell/presentation";
 import { resolveSidebarContext } from "../features/sidebar/contracts";
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
@@ -879,6 +880,7 @@ function ConnectedAppContent({ services }: { services: AppServices }) {
           <InterruptedNotice agents={services.agents} />
           <ShellNotices notices={services.notices} plugins={plugins} />
           <MediaMenuDownloadNotice />
+          <InstructionReview agents={services.agents} />
           <CreationReview agents={services.agents} />
           <UpdateReview agents={services.agents} />
           <TeamUpdateReview agents={services.agents} />

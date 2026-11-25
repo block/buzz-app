@@ -106,12 +106,14 @@ export interface RelayWriter {
  * its agents left behind. `"ask"` lets
  * the relay decide: agents join, and people joining a DM of two or more
  * people are refused with `NEEDS_HISTORY_CHOICE` so the adder chooses.
+ * `"agents"` adds agents alone to this DM, and the relay refuses an add
+ * naming anyone else with `ONLY_AGENTS_JOIN`, changing nothing.
  * Without `channelId`, it opens a DM: with `includeHistory`, the DM of these
  * people, adding any named agents to it; otherwise the DM of exactly these
  * members. */
 export type DirectMessageHistory =
   | { readonly channelId?: string; readonly includeHistory: boolean }
-  | { readonly channelId: string; readonly includeHistory: "ask" };
+  | { readonly channelId: string; readonly includeHistory: "ask" | "agents" };
 
 export interface ReadTransport {
   /** Hear the relay refuse this account for the whole community, on any

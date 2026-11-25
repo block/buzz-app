@@ -45,7 +45,8 @@ import { DraftMentionRoster } from "./draft-mention-roster";
 import {
   allowsOutsideMentions,
   directMessageAddsAgents,
-  joinsDirectMessage,
+  FixedDirectMessage,
+  knownAgent,
   outsideMentionReferences,
   pickedAgents,
   mentionAdmission,
@@ -668,6 +669,7 @@ function Composer({
     };
   }, []);
   const mentionRoster = useContext(DraftMentionRoster)?.recipients;
+  const fixedDm = useContext(FixedDirectMessage);
   // A pending mention settles after later renders; admit it against the roster then.
   const currentRoster = useRef(mentionRoster);
   currentRoster.current = mentionRoster;
@@ -3501,7 +3503,8 @@ function Composer({
               : [];
           });
           const dm = channel.channelType === "dm";
-          const addsAgents = dm && directMessageAddsAgents(session, channel);
+          const addsAgents =
+            dm && directMessageAddsAgents(session, channel, fixedDm);
           if (bring.length && (!dm || addsAgents)) {
             setSending(true);
             setError(undefined);
@@ -3519,27 +3522,26 @@ function Composer({
               !added.includes(person.pubkey),
           );
           if (dm && missing.length) {
-            // Only agents join a DM from a tag; outside people become
-            // references without a prompt. Each tag's profile says which it
-            // is, as it did in the chooser; without it the send stops rather
-            // than guess, since an agent sent as a reference hears nothing.
-            if (addsAgents) {
-              setSending(true);
-              setError(undefined);
-              await session.profiles
-                .ensure(missing.map((person) => person.pubkey))
-                .catch(() => {
-                  throw new Error(
-                    "Could not check who you mentioned. Your draft is kept. Retry.",
-                  );
-                });
-              attempt.signal.throwIfAborted();
-            }
+            // Only agents join a DM from a tag, and only they are asked about,
+            // even where the DM adds no one, so an agent never goes unheard
+            // without a word. Outside people become references without a
+            // prompt. Each tag's profile says which it is, as it did in the
+            // chooser; without it the send stops rather than guess.
+            setSending(true);
+            setError(undefined);
+            await session.profiles
+              .ensure(missing.map((person) => person.pubkey))
+              .catch(() => {
+                throw new Error(
+                  "Could not check who you mentioned. Your draft is kept. Retry.",
+                );
+              });
+            attempt.signal.throwIfAborted();
             references = missing
               .filter(
                 (person) =>
-                  !addsAgents ||
-                  !joinsDirectMessage(session, channel, person.pubkey),
+                  !knownAgent(session, person.pubkey) &&
+                  !elsewhere.has(person.pubkey),
               )
               .map((person) => person.pubkey);
             missing = missing.filter(

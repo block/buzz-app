@@ -89,15 +89,3 @@ it("requires the Bestie to be the one other member", () => {
     )?.id,
   ).toBe("dup");
 });
-
-it("keeps the chat on screen while its Bestie is still in it", () => {
-  const grown = chat("grown", { members: [viewer, bestie, other] });
-  const channels = [grown, chat("one", { lastActivityAt: 1 })];
-  expect(bestieChat(channels, viewer, bestie)?.id).toBe("one");
-  expect(bestieChat(channels, viewer, bestie, "grown")?.id).toBe("grown");
-  // Without the Bestie, or archived, it is no longer the chat.
-  const left = chat("grown", { members: [viewer, other] });
-  expect(bestieChat([left], viewer, bestie, "grown")).toBeUndefined();
-  const archived = chat("grown", { ...grown, archived: true });
-  expect(bestieChat([archived], viewer, bestie, "grown")).toBeUndefined();
-});

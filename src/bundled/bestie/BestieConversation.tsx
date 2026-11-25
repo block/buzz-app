@@ -38,6 +38,7 @@ import { LinkThreadTabContext } from "../../features/conversation/LinkLabelConte
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import type { ConversationHostServices } from "../../features/conversation/ConversationHost";
 import { ForwardMessageProvider } from "../../features/messages/ForwardMessage";
+import { FixedDirectMessage } from "../../features/messages/mention-admission";
 import { useComposerWrites } from "../../features/messages/composer-writes";
 import { LayerReader } from "../../features/messages/LayerReader";
 import {
@@ -603,217 +604,226 @@ export function BestieConversation({
       navigation={host.navigation}
     >
       <LinkThreadTabContext value={secondary.openLinkedThread}>
-        <ConversationChannel
-          session={session}
-          scope={scope}
-          extensions={extensions}
-          channel={channel}
-          channelName={channel.name || bestie}
-          active
-          interactions={{
-            onOpenLink: (url, origin) =>
-              secondary.openConversationLink(channel.id, url, origin),
-            canOpenLink: (url) => !!host.panels.resolve(url),
-            onOpenMediaReview: media.open,
-          }}
-          mediaReview={media.review}
-        >
-          <section
-            className={styles.work}
-            aria-label={`Chat with ${bestie}`}
-            ref={main}
-            tabIndex={-1}
+        {/* Bestie is a one-to-one chat: a tag here adds no one, and people
+            add to the DM itself. */}
+        <FixedDirectMessage value={channel.id}>
+          <ConversationChannel
+            session={session}
+            scope={scope}
+            extensions={extensions}
+            channel={channel}
+            channelName={channel.name || bestie}
+            active
+            interactions={{
+              onOpenLink: (url, origin) =>
+                secondary.openConversationLink(channel.id, url, origin),
+              canOpenLink: (url) => !!host.panels.resolve(url),
+              onOpenMediaReview: media.open,
+            }}
+            mediaReview={media.review}
           >
-            <div
-              ref={split.ref}
-              style={split.style}
-              className={`${panelStyles.frame} ${panelStyles.splitMotion}`}
+            <section
+              className={styles.work}
+              aria-label={`Chat with ${bestie}`}
+              ref={main}
+              tabIndex={-1}
             >
-              <div className={panelStyles.page}>
-                <Panel>
-                  <PanelWorkspace
-                    main
-                    label="Bestie conversation tabs"
-                    focusOnMount={false}
-                    value={secondary.selectedMain}
-                    select={(id) =>
-                      state.selectMain(id === "conversation" ? undefined : id)
-                    }
-                    tabMenu={tabMenu}
-                    drag={secondary.drag.main}
-                    actions={
-                      <>
-                        {secondary.drawer.launchers}
-                        <ChannelHeaderMenu
-                          channel={channel}
-                          session={session}
-                          origin={navigation?.signal}
-                          trigger={settingsTrigger}
-                          openDetails={() => {
-                            secondary.drawer.close();
-                            state.setSettings({ channelId: channel.id });
-                          }}
-                          menuPanels={
-                            channel.cached
-                              ? []
-                              : availablePanels.filter((panel) =>
-                                  panel.channelMenu?.eligible(channel, session),
-                                )
-                          }
-                          openMenuPanel={(panel) => {
-                            const connection = host.relay.snapshot();
-                            const current = session.channels
-                              .list()
-                              .channels.find((item) => item.id === channel.id);
-                            if (
-                              !ownsCurrentVisit() ||
-                              connection.status !== "ready" ||
-                              connection.cached ||
-                              connection.session !== session ||
-                              !secondary.drawerContext ||
-                              !current ||
-                              current.cached ||
-                              (current.readOnly &&
-                                current.viewerRole !== "guest") ||
-                              !viewerMember(current, session.viewer) ||
-                              !host.panels.snapshot().includes(panel) ||
-                              !panel.channelMenu?.eligible(current, session)
-                            )
-                              return;
-                            secondary.drawer.close();
-                            secondary.open(
-                              {
-                                panel,
-                                channelId: channel.id,
-                                target: channel.id,
-                                channelContext: secondary.drawerContext,
-                              },
-                              true,
-                            );
-                          }}
-                        />
-                        {!paneOpen &&
-                        (sideItems.length > 0 || secondary.drawer.side)
-                          ? toggle(false)
-                          : null}
-                      </>
-                    }
-                    items={[
-                      {
-                        id: "conversation",
-                        label: bestie,
-                        icon,
-                        content: (
-                          <ConversationPresentation
-                            value={secondary.selectedMain === "conversation"}
-                          >
-                            {/* The conversation and its inline thread read details
+              <div
+                ref={split.ref}
+                style={split.style}
+                className={`${panelStyles.frame} ${panelStyles.splitMotion}`}
+              >
+                <div className={panelStyles.page}>
+                  <Panel>
+                    <PanelWorkspace
+                      main
+                      label="Bestie conversation tabs"
+                      focusOnMount={false}
+                      value={secondary.selectedMain}
+                      select={(id) =>
+                        state.selectMain(id === "conversation" ? undefined : id)
+                      }
+                      tabMenu={tabMenu}
+                      drag={secondary.drag.main}
+                      actions={
+                        <>
+                          {secondary.drawer.launchers}
+                          <ChannelHeaderMenu
+                            channel={channel}
+                            session={session}
+                            origin={navigation?.signal}
+                            trigger={settingsTrigger}
+                            openDetails={() => {
+                              secondary.drawer.close();
+                              state.setSettings({ channelId: channel.id });
+                            }}
+                            menuPanels={
+                              channel.cached
+                                ? []
+                                : availablePanels.filter((panel) =>
+                                    panel.channelMenu?.eligible(
+                                      channel,
+                                      session,
+                                    ),
+                                  )
+                            }
+                            openMenuPanel={(panel) => {
+                              const connection = host.relay.snapshot();
+                              const current = session.channels
+                                .list()
+                                .channels.find(
+                                  (item) => item.id === channel.id,
+                                );
+                              if (
+                                !ownsCurrentVisit() ||
+                                connection.status !== "ready" ||
+                                connection.cached ||
+                                connection.session !== session ||
+                                !secondary.drawerContext ||
+                                !current ||
+                                current.cached ||
+                                (current.readOnly &&
+                                  current.viewerRole !== "guest") ||
+                                !viewerMember(current, session.viewer) ||
+                                !host.panels.snapshot().includes(panel) ||
+                                !panel.channelMenu?.eligible(current, session)
+                              )
+                                return;
+                              secondary.drawer.close();
+                              secondary.open(
+                                {
+                                  panel,
+                                  channelId: channel.id,
+                                  target: channel.id,
+                                  channelContext: secondary.drawerContext,
+                                },
+                                true,
+                              );
+                            }}
+                          />
+                          {!paneOpen &&
+                          (sideItems.length > 0 || secondary.drawer.side)
+                            ? toggle(false)
+                            : null}
+                        </>
+                      }
+                      items={[
+                        {
+                          id: "conversation",
+                          label: bestie,
+                          icon,
+                          content: (
+                            <ConversationPresentation
+                              value={secondary.selectedMain === "conversation"}
+                            >
+                              {/* The conversation and its inline thread read details
                                 over their composers. Thread tabs have no layer
                                 address, so their details and media open as they
                                 do without one. */}
-                            <LayerAddressContext value={layerAddress}>
-                              <section
-                                className={styles.work}
-                                data-attachment-drop-zone=""
-                              >
-                                <MessageManagementStatus />
-                                <ChannelBody
-                                  intro={
-                                    welcome ? (
-                                      <FirstAgentWelcome
-                                        name={bestie}
-                                        picture={agent.picture}
-                                        community={community}
-                                      />
-                                    ) : undefined
-                                  }
-                                  viewer={session.viewer}
-                                  cached={!!channel.cached}
-                                  revealMessageId={sent}
-                                  marksRead
-                                  onOpenThread={openThread}
-                                />
-                                <ConversationComposer
-                                  label={`Message ${bestie}`}
-                                  shown={
-                                    secondary.selectedMain === "conversation"
-                                  }
-                                  focusRequest={composerFocus}
-                                  onSend={setSent}
-                                />
-                                {inlineThread && (
-                                  <InlineThreadSheet
-                                    key={inlineThread}
-                                    session={session}
-                                    channel={channel}
-                                    rootId={inlineThread}
-                                    tall={layer?.rootId === inlineThread}
-                                    close={() => dismissInline(inlineThread)}
-                                    moveToTab={() =>
-                                      handInlineToTab(inlineThread, "side")
+                              <LayerAddressContext value={layerAddress}>
+                                <section
+                                  className={styles.work}
+                                  data-attachment-drop-zone=""
+                                >
+                                  <MessageManagementStatus />
+                                  <ChannelBody
+                                    intro={
+                                      welcome ? (
+                                        <FirstAgentWelcome
+                                          name={bestie}
+                                          picture={agent.picture}
+                                          community={community}
+                                        />
+                                      ) : undefined
                                     }
+                                    viewer={session.viewer}
+                                    cached={!!channel.cached}
+                                    revealMessageId={sent}
+                                    marksRead
+                                    onOpenThread={openThread}
                                   />
-                                )}
-                                <LayerReader channelId={channel.id} />
-                              </section>
-                            </LayerAddressContext>
-                          </ConversationPresentation>
-                        ),
-                      },
-                      ...secondary.mainItems,
-                    ]}
-                  />
-                </Panel>
-              </div>
-              <PanelDock
-                open={paneOpen}
-                keepMounted={
-                  state.entries.length > 0 ||
-                  (sideItems.length > 0 && !state.paneOpen) ||
-                  !!secondary.drawer.side
-                }
-                className={panelStyles.dock}
-                resizeHandle={split.handle}
-              >
-                {sideItems.length > 0 && (
-                  <Panel>
-                    <PanelWorkspace
-                      label="Bestie panel tabs"
-                      items={sideItems}
-                      value={secondary.selectedTab}
-                      select={secondary.selectPanelTab}
-                      actions={toggle(true)}
-                      tabMenu={tabMenu}
-                      drag={secondary.drag.side}
+                                  <ConversationComposer
+                                    label={`Message ${bestie}`}
+                                    shown={
+                                      secondary.selectedMain === "conversation"
+                                    }
+                                    focusRequest={composerFocus}
+                                    onSend={setSent}
+                                  />
+                                  {inlineThread && (
+                                    <InlineThreadSheet
+                                      key={inlineThread}
+                                      session={session}
+                                      channel={channel}
+                                      rootId={inlineThread}
+                                      tall={layer?.rootId === inlineThread}
+                                      close={() => dismissInline(inlineThread)}
+                                      moveToTab={() =>
+                                        handInlineToTab(inlineThread, "side")
+                                      }
+                                    />
+                                  )}
+                                  <LayerReader channelId={channel.id} />
+                                </section>
+                              </LayerAddressContext>
+                            </ConversationPresentation>
+                          ),
+                        },
+                        ...secondary.mainItems,
+                      ]}
                     />
                   </Panel>
-                )}
-                {secondary.drawer.side}
-              </PanelDock>
-            </div>
-            {secondary.drawer.content}
-            {membersOpen && (
-              <ChannelMembersDialog
-                session={session}
-                channelId={channel.id}
-                trigger={membersTrigger}
-                close={() => setMembersOpen(false)}
-                signal={navigation?.signal}
-                canOpenLink={(target) => !!host.panels.resolve(target)}
-                onOpenLink={(target) =>
-                  secondary.openConversationLink(channel.id, target)
-                }
-                // Adding someone can start or open another DM: go there.
-                onOpenMessage={openLink}
-              />
-            )}
-            {secondary.drag.feedback}
-            {secondary.hosts}
-            <span role="status" className="sr-only">
-              {secondary.announcement}
-            </span>
-          </section>
-        </ConversationChannel>
+                </div>
+                <PanelDock
+                  open={paneOpen}
+                  keepMounted={
+                    state.entries.length > 0 ||
+                    (sideItems.length > 0 && !state.paneOpen) ||
+                    !!secondary.drawer.side
+                  }
+                  className={panelStyles.dock}
+                  resizeHandle={split.handle}
+                >
+                  {sideItems.length > 0 && (
+                    <Panel>
+                      <PanelWorkspace
+                        label="Bestie panel tabs"
+                        items={sideItems}
+                        value={secondary.selectedTab}
+                        select={secondary.selectPanelTab}
+                        actions={toggle(true)}
+                        tabMenu={tabMenu}
+                        drag={secondary.drag.side}
+                      />
+                    </Panel>
+                  )}
+                  {secondary.drawer.side}
+                </PanelDock>
+              </div>
+              {secondary.drawer.content}
+              {membersOpen && (
+                <ChannelMembersDialog
+                  session={session}
+                  channelId={channel.id}
+                  trigger={membersTrigger}
+                  close={() => setMembersOpen(false)}
+                  signal={navigation?.signal}
+                  canOpenLink={(target) => !!host.panels.resolve(target)}
+                  onOpenLink={(target) =>
+                    secondary.openConversationLink(channel.id, target)
+                  }
+                  // Adding someone can start or open another DM: go there.
+                  onOpenMessage={openLink}
+                />
+              )}
+              {secondary.drag.feedback}
+              {secondary.hosts}
+              <span role="status" className="sr-only">
+                {secondary.announcement}
+              </span>
+            </section>
+          </ConversationChannel>
+        </FixedDirectMessage>
       </LinkThreadTabContext>
     </ForwardMessageProvider>
   );

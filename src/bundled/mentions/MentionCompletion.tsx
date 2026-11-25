@@ -19,6 +19,7 @@ import {
 } from "./mention-candidates";
 import {
   directMessageAddsAgents,
+  FixedDirectMessage,
   outsideMentionReferences,
 } from "../../features/messages/mention-admission";
 import { matchesMentionQuery, pendingMentionQuery } from "./mention-query";
@@ -99,7 +100,11 @@ export function MentionCompletion({
   const memberKey = members.join(":");
   const parentAdmission = !!channel && channel.channelType !== "solo";
   // A DM adds the agents tagged in it; its people stay references.
-  const addsAgents = directMessageAddsAgents(session, channel);
+  const addsAgents = directMessageAddsAgents(
+    session,
+    channel,
+    useContext(FixedDirectMessage),
+  );
   // The shared budget is append-only for this query, including late teams and
   // directory people. Neither source may displace an already displayed choice.
   const shown = useRef<{

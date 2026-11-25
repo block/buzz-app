@@ -694,11 +694,9 @@ export async function connectNativeTransport(
           ? {
               channel: history.channelId,
               history:
-                history.includeHistory === "ask"
-                  ? "ask"
-                  : history.includeHistory
-                    ? "include"
-                    : undefined,
+                history.includeHistory === true
+                  ? "include"
+                  : history.includeHistory || undefined,
             }
           : {}),
       }).catch((error: unknown) => {

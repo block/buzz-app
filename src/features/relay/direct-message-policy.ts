@@ -20,6 +20,13 @@ export const MAX_DIRECT_MESSAGE_ADDITIONS = 100;
  * would join this DM, so the adder chooses whether they see its history. */
 export const NEEDS_HISTORY_CHOICE = "needs-choice: history";
 
+/** The relay's refusal of an addition tagged `["history", "agents"]`: it
+ * names someone who is not an agent, so nothing changed. */
+export const ONLY_AGENTS_JOIN = "invalid: only agents join this DM in place";
+
+/** What a relay from before `["history", "agents"]` answers it with. */
+const AGENTS_UNSUPPORTED = 'invalid: history must be "include", got "agents"';
+
 /** An agent's add policy refused it a DM: only its owner may add it
  * (`owner_only`), or no one may (`nobody`). */
 export type AgentPolicyRefusal = Readonly<{
@@ -74,6 +81,9 @@ export function directMessageRefusal(adding: boolean, reason: unknown): string {
       reason === 'invalid: history must be "include", got "ask"')
   )
     return NEEDS_HISTORY_CHOICE;
+  if (adding && reason === ONLY_AGENTS_JOIN) return ONLY_AGENTS_JOIN;
+  if (adding && reason === AGENTS_UNSUPPORTED)
+    return "Couldn’t add them. This community can’t add agents to a DM from a mention yet.";
   const agent = agentPolicyRefusal(reason);
   if (agent) return `policy:${agent.policy} (agent ${agent.agent})`;
   // The browser host maps a refusal at admission and again on its way out.

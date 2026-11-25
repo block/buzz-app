@@ -1274,6 +1274,20 @@ it("hands the command's refusal words to every caller as an Error, so an additio
     .catch((error: unknown) => error);
   expect(refusal).toBeInstanceOf(Error);
   expect((refusal as Error).message).toBe("needs-choice: history");
+  // An agents-only addition names its tag to the command.
+  vi.mocked(invoke).mockResolvedValueOnce(channel);
+  await transport.openDirectMessage(
+    [relay.pubkey],
+    new AbortController().signal,
+    {
+      channelId: channel,
+      includeHistory: "agents",
+    },
+  );
+  expect(vi.mocked(invoke).mock.lastCall).toEqual([
+    "relay_direct_message",
+    { community, pubkeys: [relay.pubkey], channel, history: "agents" },
+  ]);
   const owner = createRelaySession(transport, {
     outboxStorage: { load: () => [], save: () => {} },
   });

@@ -1,10 +1,11 @@
+import { createContext } from "react";
 import type { ChannelSummary } from "../relay/contracts";
 import type { ComposerSession } from "./composer-session";
 import type { MentionRecipient } from "./mention-draft";
 import { agentUnavailable } from "../agents/choices";
 import { knownAgentPubkeys } from "../agents/known";
 import { canAddToDirectMessage } from "../channel-members/members";
-import { NeedsHistoryChoice } from "../relay/direct-messages";
+import { ONLY_AGENTS_JOIN } from "../relay/direct-message-policy";
 
 /** The shared forward-looking rule applied to mention recipients: archived
  * here or being deleted ({@link agentUnavailable}). */
@@ -33,15 +34,22 @@ export function allowsOutsideMentions(
     : !roster && !inviteAgents;
 }
 
+/** The DM a page shows only while its members stay as they are (Bestie's
+ * one-to-one chat): a tag there adds no one, and adding happens in the DM
+ * itself. */
+export const FixedDirectMessage = createContext<string | undefined>(undefined);
+
 /** Whether tagging an agent in this DM adds it, as the DM's Access dialog
  * does. A tagged person stays a reference: who joins a DM, and with which
- * history, is chosen there. */
+ * history, is chosen there. `fixed` is the page's {@link FixedDirectMessage}. */
 export function directMessageAddsAgents(
   session: ComposerSession,
   channel: ChannelSummary | undefined,
+  fixed?: string,
 ) {
   return (
     channel?.channelType === "dm" &&
+    channel.id !== fixed &&
     !!session.directMessages.add &&
     canAddToDirectMessage(
       {
@@ -54,10 +62,9 @@ export function directMessageAddsAgents(
   );
 }
 
-/** Add tagged agents to the DM `channelId` in place, as the Access dialog
- * does. The relay alone knows who is an agent, so the add asks rather than
- * including history: a key it finds is a person changes nothing and fails
- * here, where its history choice cannot be made. */
+/** Add tagged agents to the DM `channelId` in place. The relay alone knows
+ * who is an agent, so the add names agents only: if the relay finds a person
+ * among them it changes nothing, here or in any other DM, and this fails. */
 export async function addAgentsToDirectMessage(
   session: ComposerSession,
   channelId: string,
@@ -66,38 +73,30 @@ export async function addAgentsToDirectMessage(
 ) {
   const add = session.directMessages.add;
   if (!add) throw new Error("This connection cannot add agents to messages.");
-  const destination = await add(channelId, pubkeys, "ask", signal).catch(
+  const destination = await add(channelId, pubkeys, "agents", signal).catch(
     (error: unknown) => {
-      throw error instanceof NeedsHistoryChoice
+      throw error instanceof Error && error.message === ONLY_AGENTS_JOIN
         ? new Error("Only agents can be added to a DM by mentioning them.")
         : error;
     },
   );
+  // The relay never moves this add; anything else is not this DM.
   if (destination !== channelId)
     throw new Error("Only agents can be added to a DM by mentioning them.");
 }
 
-/** Whether tagging this key adds it to the DM `channel`: a known agent
- * outside a DM that adds agents ({@link directMessageAddsAgents}). */
-export function joinsDirectMessage(
-  session: ComposerSession,
-  channel: ChannelSummary | undefined,
-  pubkey: string,
-) {
-  return (
-    !channel?.members?.includes(pubkey) &&
-    directMessageAddsAgents(session, channel) &&
-    knownAgentPubkeys(session.profiles.snapshot(), {
-      definitions: [],
-      identities: session.agentChoices.snapshot().identities,
-    }).has(pubkey)
-  );
+/** Whether this key is an agent its profile or the viewer's agents name. */
+export function knownAgent(session: ComposerSession, pubkey: string) {
+  return knownAgentPubkeys(session.profiles.snapshot(), {
+    definitions: [],
+    identities: session.agentChoices.snapshot().identities,
+  }).has(pubkey);
 }
 
 /**
  * Whether sending names this outside key only as a reference, which adds and
  * notifies nobody. In a DM this answers for people; an agent tagged there
- * joins when the DM adds agents ({@link joinsDirectMessage}). A Solo chat adds
+ * joins when the DM adds agents ({@link directMessageAddsAgents}). A Solo chat adds
  * only the viewer's available agents; any other outside key is a reference
  * there too.
  * Elsewhere the sender chooses whether to add outside people.

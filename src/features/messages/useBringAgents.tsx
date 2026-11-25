@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
 import {
   addAgentsToDirectMessage,
   directMessageAddsAgents,
+  FixedDirectMessage,
 } from "./mention-admission";
 import { communityHost } from "./community-host";
 import type { Agent, Agents } from "../agents/service";
@@ -47,9 +48,10 @@ export function useBringAgents(
   const channel =
     pending &&
     session.channels.list().channels.find((item) => item.id === channelId);
+  const fixed = useContext(FixedDirectMessage);
   const dm = channel?.channelType === "dm";
   const canAdd = dm
-    ? directMessageAddsAgents(session, channel)
+    ? directMessageAddsAgents(session, channel, fixed)
     : !!channel && canAddMembers(session, channel);
   const here =
     (pending &&

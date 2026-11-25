@@ -270,11 +270,12 @@ export function createDirectMessages(
      * `pubkeys`, its agents left behind; or an existing DM of the grown set
      * of people. With `"ask"`, the relay decides, and throws
      * `NeedsHistoryChoice` when people would join this DM: the adder chooses,
-     * then adds again with their choice. */
+     * then adds again with their choice. With `"agents"`, agents alone join
+     * this DM, and the relay refuses an add naming anyone else. */
     async add(
       channelId: string,
       pubkeys: readonly string[],
-      includeHistory: boolean | "ask",
+      includeHistory: boolean | "ask" | "agents",
       signal: AbortSignal,
     ) {
       if (!available || !transport?.openDirectMessage)

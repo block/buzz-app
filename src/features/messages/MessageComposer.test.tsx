@@ -83,8 +83,9 @@ import { fakeSpawn } from "../../bundled/claude-code/claude-testing";
 import { ConversationPresentation } from "../conversation/ConversationPresentation";
 import { AgentsContext } from "../agents/react";
 import type { Agents, Models } from "../agents/service";
-import { NeedsHistoryChoice } from "../relay/direct-messages";
+import { ONLY_AGENTS_JOIN } from "../relay/direct-message-policy";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
+import { FixedDirectMessage } from "./mention-admission";
 import { ThreadPanel } from "./ThreadPanel";
 import { publishOutgoing, type OutgoingMessage } from "./outgoing-message";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -507,51 +508,54 @@ function mount(
   };
   bindChoices();
   let presented = true;
+  let fixed: string | undefined;
   const tree = () => (
     <AgentsContext.Provider value={agents}>
-      <ConversationPresentation value={presented}>
-        <div hidden={!presented} inert={!presented}>
-          {task ? (
-            <ThreadPanel
-              session={{
-                ...props.session,
-                unread: {
-                  subscribe: () => () => {},
-                  snapshot: () => undefined,
-                  attention: () => ({ unread: false }),
-                  threadReadThrough: () => 0,
-                } as unknown as RelaySession["unread"],
-                thread: () => {
-                  const snapshot = {
-                    status: "ready" as const,
-                    root: { ...task, id: props.threadRootId ?? task.id },
-                    replies: [],
-                    canLoadMore: false,
-                    limited: false,
-                  };
-                  return {
-                    snapshot: () => snapshot,
+      <FixedDirectMessage value={fixed}>
+        <ConversationPresentation value={presented}>
+          <div hidden={!presented} inert={!presented}>
+            {task ? (
+              <ThreadPanel
+                session={{
+                  ...props.session,
+                  unread: {
                     subscribe: () => () => {},
-                    refresh: async () => {},
-                    loadMore: async () => {},
-                    dispose: () => {},
-                  } as unknown as ReturnType<RelaySession["thread"]>;
-                },
-              }}
-              scope={props.scope}
-              channelId={props.channelId}
-              channelName={props.channelName}
-              messageId={props.threadRootId ?? task.id}
-              subthreadId={props.threadRootId ?? task.id}
-              extensions={props.extensions}
-              onOpenLink={() => false}
-              active
-            />
-          ) : (
-            <MessageComposer {...props} />
-          )}
-        </div>
-      </ConversationPresentation>
+                    snapshot: () => undefined,
+                    attention: () => ({ unread: false }),
+                    threadReadThrough: () => 0,
+                  } as unknown as RelaySession["unread"],
+                  thread: () => {
+                    const snapshot = {
+                      status: "ready" as const,
+                      root: { ...task, id: props.threadRootId ?? task.id },
+                      replies: [],
+                      canLoadMore: false,
+                      limited: false,
+                    };
+                    return {
+                      snapshot: () => snapshot,
+                      subscribe: () => () => {},
+                      refresh: async () => {},
+                      loadMore: async () => {},
+                      dispose: () => {},
+                    } as unknown as ReturnType<RelaySession["thread"]>;
+                  },
+                }}
+                scope={props.scope}
+                channelId={props.channelId}
+                channelName={props.channelName}
+                messageId={props.threadRootId ?? task.id}
+                subthreadId={props.threadRootId ?? task.id}
+                extensions={props.extensions}
+                onOpenLink={() => false}
+                active
+              />
+            ) : (
+              <MessageComposer {...props} />
+            )}
+          </div>
+        </ConversationPresentation>
+      </FixedDirectMessage>
     </AgentsContext.Provider>
   );
   const view = render(tree(), {
@@ -565,6 +569,11 @@ function mount(
     messages,
     present(active: boolean) {
       presented = active;
+      view.rerender(tree());
+    },
+    /** Show the DM `id` as Bestie does, with its members fixed. */
+    fixDirectMessage(id: string) {
+      fixed = id;
       view.rerender(tree());
     },
     /** A fresh composer for the same chat, as after navigating away and back. */
@@ -11207,11 +11216,11 @@ it("adds an agent tagged in a DM once its sender invites it, then sends", async 
   );
   fireEvent.click(screen.getByRole("button", { name: "Invite" }));
   await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  // The DM's own add, asking: the relay adds agents in place.
+  // The DM's own add, agents only: the relay adds them to this DM alone.
   expect(add).toHaveBeenCalledWith(
     "channel",
     [first.pubkey],
-    "ask",
+    "agents",
     expect.any(AbortSignal),
   );
   expect(h.memberAdd).not.toHaveBeenCalled();
@@ -11244,7 +11253,7 @@ it("keeps a person tagged in a DM a reference beside an agent it adds", async ()
   expect(add).toHaveBeenCalledWith(
     "channel",
     [first.pubkey],
-    "ask",
+    "agents",
     expect.any(AbortSignal),
   );
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
@@ -11268,7 +11277,7 @@ it("asks about and adds an agent tagged twice in a DM once, keeping both tags", 
   expect(add).toHaveBeenCalledExactlyOnceWith(
     "channel",
     [first.pubkey],
-    "ask",
+    "agents",
     expect.any(AbortSignal),
   );
   expect(h.messages.send.mock.calls[0]?.[1]).toBe("@Honey @Honey ");
@@ -11289,7 +11298,7 @@ it("sends an agent tagged in a DM as a reference when its sender does nothing", 
 
 it("keeps the draft when the relay finds a tagged agent is a person", async () => {
   const add = vi.fn(async () => {
-    throw new NeedsHistoryChoice();
+    throw new Error(ONLY_AGENTS_JOIN);
   });
   const h = mountGrowableDm(["d".repeat(64), second.pubkey], { add });
   h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
@@ -11375,19 +11384,34 @@ it("reads a tagged name's profile even when only its verified name is known", as
   );
 });
 
-it("adds no agent tagged in the relay's moderation DM", async () => {
-  const relay = "e".repeat(64);
-  const add = vi.fn(async () => "channel");
-  const h = mountGrowableDm(["d".repeat(64), relay], { add });
-  Object.assign(h.session, { relayAuthor: relay });
-  h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
-  act(() => h.commands().insertMention(first));
-  fireEvent.submit(screen.getByRole("form"));
-  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(add).not.toHaveBeenCalled();
-  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
-});
+it.each([
+  ["the relay's moderation DM", "moderation"],
+  ["Bestie's one-to-one chat", "bestie"],
+] as const)(
+  "says an agent tagged in %s cannot be added, and adds none",
+  async (_, kind) => {
+    const relay = "e".repeat(64);
+    const add = vi.fn(async () => "channel");
+    const h = mountGrowableDm(
+      ["d".repeat(64), kind === "moderation" ? relay : second.pubkey],
+      { add },
+    );
+    if (kind === "moderation") Object.assign(h.session, { relayAuthor: relay });
+    else h.fixDirectMessage("channel");
+    h.setProfiles(new Map([[first.pubkey, { name: "Honey", isAgent: true }]]));
+    act(() => h.commands().insertMention(first));
+    fireEvent.submit(screen.getByRole("form"));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Honey is not in this DM. You cannot add people to this DM. You can still send without inviting them.",
+    );
+    expect(screen.queryByRole("button", { name: "Invite" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Send anyway" }));
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+    expect(add).not.toHaveBeenCalled();
+    expect(h.memberAdd).not.toHaveBeenCalled();
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  },
+);
 
 it("brings the owner's agent from another community into a DM, then adds it there", async () => {
   const calls: string[] = [];
@@ -11454,7 +11478,7 @@ it("brings the owner's agent from another community into a DM, then adds it ther
   expect(add).toHaveBeenCalledWith(
     "channel",
     [first.pubkey],
-    "ask",
+    "agents",
     expect.any(AbortSignal),
   );
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);

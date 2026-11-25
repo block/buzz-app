@@ -37,7 +37,7 @@ function availableMentionAgents<T extends { pubkey: string }>(
 }
 
 /** Row detail for an outside choice. A DM adds only agents, and only when
- * `joins` (joinsDirectMessage); a Solo chat adds only the viewer's agents
+ * `joins` (directMessageAddsAgents); a Solo chat adds only the viewer's agents
  * (outsideMentionReferences). */
 export function outsideMentionDetail(
   channel: Pick<ChannelSummary, "channelType"> | undefined,

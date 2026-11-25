@@ -26,7 +26,8 @@ export function directMessageEvent(input, viewer, key) {
       ? typeof input.channel !== "string" ||
         !UUID.test(input.channel) ||
         (typeof input.includeHistory !== "boolean" &&
-          input.includeHistory !== "ask")
+          input.includeHistory !== "ask" &&
+          input.includeHistory !== "agents")
       : input.includeHistory !== undefined &&
         typeof input.includeHistory !== "boolean"
   )
@@ -40,7 +41,14 @@ export function directMessageEvent(input, viewer, key) {
         ...(adding ? [["h", input.channel]] : []),
         ...input.pubkeys.map((pubkey) => ["p", pubkey]),
         ...(input.includeHistory
-          ? [["history", input.includeHistory === "ask" ? "ask" : "include"]]
+          ? [
+              [
+                "history",
+                input.includeHistory === true
+                  ? "include"
+                  : input.includeHistory,
+              ],
+            ]
           : []),
         ["client", randomUUID()],
       ],

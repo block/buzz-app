@@ -17,7 +17,7 @@ import {
   CheckIcon,
   RobotIcon,
 } from "../../shared/design-system/icons/index";
-import { useEffect, useId, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
 import { useTeamMentions } from "./use-team-mentions";
 import { useMentionChoices } from "./use-mention-choices";
 import type { ComposerSession } from "../../features/messages/composer-session";
@@ -29,6 +29,7 @@ import {
 import {
   allowsOutsideMentions,
   directMessageAddsAgents,
+  FixedDirectMessage,
   outsideMentionReferences,
 } from "../../features/messages/mention-admission";
 import { matchPerson } from "../../features/search/person-match";
@@ -103,7 +104,11 @@ export function MentionPicker({
   );
   const parentAdmission = !!channel && channel.channelType !== "solo";
   // A DM adds the agents tagged in it; its people stay references.
-  const addsAgents = directMessageAddsAgents(session, channel);
+  const addsAgents = directMessageAddsAgents(
+    session,
+    channel,
+    useContext(FixedDirectMessage),
+  );
   const members =
     draftRoster?.map((person) => person.pubkey) ?? channel?.members;
   // Only an open chooser demands names; typing must not join every member.

@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import type { ComposerSession } from "./composer-session";
 import { canAddMembers } from "../channel-members/members";
 import {
   addAgentsToDirectMessage,
   directMessageAddsAgents,
+  FixedDirectMessage,
 } from "./mention-admission";
 import type { MentionRecipient } from "./mention-draft";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
@@ -33,9 +34,10 @@ export function useNonmemberMentions(
   const channel = session.channels
     .list()
     .channels.find((item) => item.id === channelId);
+  const fixed = useContext(FixedDirectMessage);
   const dm = channel?.channelType === "dm";
   const canAdd = dm
-    ? directMessageAddsAgents(session, channel)
+    ? directMessageAddsAgents(session, channel, fixed)
     : !!channel && canAddMembers(session, channel);
   const place = dm ? "DM" : "channel";
   async function add() {

@@ -68,41 +68,14 @@ export function threadCapture(actualWindow, threadRect, screen, dpr) {
   const cropBottom = floorEven(bottom * dpr);
   const cropW = cropRight - cropX;
   const cropH = cropBottom - cropY;
-  const maxPxW = Math.round(screen.frame.width * dpr);
-  const maxPxH = Math.round(screen.frame.height * dpr);
-  if (
-    cropW <= 0 ||
-    cropH <= 0 ||
-    cropX < 0 ||
-    cropY < 0 ||
-    cropRight > maxPxW ||
-    cropBottom > maxPxH
-  ) {
+  if (cropW <= 0 || cropH <= 0) {
     throw new Error(
-      `Computed crop ${cropW}x${cropH}+${cropX}+${cropY} exceeds ${maxPxW}x${maxPxH} display`,
+      `Computed crop ${cropW}x${cropH}+${cropX}+${cropY} is empty`,
     );
-  }
-  const focus = [Math.round(right) - 12, Math.round(top + th * 0.55)];
-  const center = [Math.round(left + tw / 2), Math.round(top + th / 2)];
-  for (const [px, py] of [focus, center]) {
-    if (
-      px < vLeft ||
-      py < vTop ||
-      px >= vRight ||
-      py >= vBottom ||
-      px < 0 ||
-      py < 0 ||
-      px >= screen.frame.width ||
-      py >= screen.frame.height
-    ) {
-      throw new Error(
-        `Pointer target (${px}, ${py}) lies outside display bounds`,
-      );
-    }
   }
   return {
     crop: { x: cropX, y: cropY, width: cropW, height: cropH },
-    focus,
-    center,
+    focus: [Math.round(right) - 12, Math.round(top + th * 0.55)],
+    center: [Math.round(left + tw / 2), Math.round(top + th / 2)],
   };
 }

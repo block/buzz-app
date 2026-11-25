@@ -32,6 +32,23 @@ const stamp = new Date().toISOString().replaceAll(":", "-").slice(0, 19);
 const out = values.out ?? join(root, `test-results/perf-native/${stamp}`);
 mkdirSync(join(out, "videos"), { recursive: true });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+async function stopCapture(child, closed) {
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGINT");
+    const grace = await withTimeout(closed, 2_000);
+    if (grace) return grace;
+    if (child.exitCode === null && child.signalCode === null)
+      child.kill("SIGKILL");
+  }
+  return (await withTimeout(closed, 2_000)) ?? { timedOut: true };
+}
 
 // ffmpeg lists devices on stderr and exits non-zero.
 const device = spawnSync(
@@ -271,12 +288,16 @@ try {
       await sleep(1500);
       recording = await command("stop");
     } catch (error) {
-      if (capture.exitCode === null && capture.signalCode === null)
-        capture.kill("SIGINT");
-      await captured;
+      await stopCapture(capture, captured);
       throw error;
     }
-    const captureResult = await captured;
+    const captureResult = await withTimeout(captured, 15_000);
+    if (!captureResult) {
+      await stopCapture(capture, captured);
+      throw new Error(
+        `${label}: ffmpeg timed out waiting to finish${captureErr.trim() ? `: ${captureErr.trim()}` : ""}`,
+      );
+    }
     if (captureResult.error) throw captureResult.error;
     if (captureResult.code !== 0)
       throw new Error(
@@ -328,7 +349,7 @@ try {
         ]
       : []),
   ];
-  const summary = `${summarize(runs)}\n${geometryLines.join("\n")}`;
+  const summary = `${summarize(runs, { targets: !targetWindow.fitted })}\n${geometryLines.join("\n")}`;
   writeFileSync(
     join(out, "results.json"),
     JSON.stringify(

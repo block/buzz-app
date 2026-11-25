@@ -1390,6 +1390,7 @@ export class ClaudeRuntime {
               return entry.sessions.captureProtectionContext(conversation);
             },
             relayAuthor: this.reads(agent)?.relayAuthor?.(),
+            relayUrl: this.reads(agent)?.relayUrl?.(),
             signingAuthority: this.reads(agent)?.workflowAuthority(),
             read: (path) =>
               this.target

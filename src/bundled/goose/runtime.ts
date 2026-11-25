@@ -853,6 +853,7 @@ export class GooseRuntime {
             return JSON.parse(data);
           },
           relayAuthor: this.relay(agent)?.snapshot().session.relayAuthor,
+          relayUrl: this.relay(agent)?.snapshot().session.relayUrl,
           signingAuthority:
             this.relay(agent)?.snapshot().session.workflowAuthority,
           read: (path) =>

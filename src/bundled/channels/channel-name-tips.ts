@@ -51,19 +51,30 @@ export function channelNameTips(input: NameTipInput): NameTips {
   const blockers: string[] = [];
   const name = input.name.trim();
   if (!name) return { tips, blockers };
-  // Case and separators don't matter: "Payments_Team" counts as payments-team.
-  const parts = name
+  // Case and separators don't matter for the type word: "Payments_Team"
+  // counts as payments-team. The format rule below still asks for the tidy form.
+  const tidy = name
     .toLowerCase()
-    .split(/[-_\s]+/)
-    .filter(Boolean);
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  const parts = tidy.split("-").filter(Boolean);
   const first = parts[0] ?? "";
   const last = parts[parts.length - 1] ?? "";
   const typed =
     parts.length > 1 && (PREFIXES.includes(first) || SUFFIXES.includes(last));
   const midType = parts.slice(0, -1).some((part) => SUFFIXES.includes(part));
 
+  const bare = parts.length === 1 ? (parts[0] ?? "") : "";
   if (!typed && !(parts.length > 1 && parts.includes("proj"))) {
-    if (midType) {
+    if (PREFIXES.includes(bare)) {
+      const hint = `Add a topic after ${bare}-, like ${bare}-checkout.`;
+      tips.push(hint);
+      blockers.push(hint);
+    } else if (SUFFIXES.includes(bare)) {
+      const hint = `Add a topic before -${bare}, like checkout-${bare}.`;
+      tips.push(hint);
+      blockers.push(hint);
+    } else if (midType) {
       const hint = "Put the type word at the end, like payments-team.";
       tips.push(hint);
       blockers.push(hint);
@@ -80,8 +91,12 @@ export function channelNameTips(input: NameTipInput): NameTips {
     tips.push("Project channels sort together when proj- comes first.");
     blockers.push("Move proj- to the start, like proj-checkout.");
   }
-  if (name !== name.toLowerCase() || /[\s_]/.test(name)) {
-    const hint = `Use lowercase letters and hyphens, like ${parts.join("-")}.`;
+  // Lowercase letters (any language), numbers and single hyphens between them.
+  if (
+    name !== name.toLowerCase() ||
+    !/^[\p{L}\p{M}\p{N}]+(-[\p{L}\p{M}\p{N}]+)*$/u.test(name)
+  ) {
+    const hint = `Use lowercase letters, numbers and single hyphens${tidy ? `, like ${tidy}` : ""}.`;
     tips.push(hint);
     blockers.push(hint);
   }

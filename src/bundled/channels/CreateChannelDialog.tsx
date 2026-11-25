@@ -239,11 +239,12 @@ function OpenCreateChannelDialog({
   const similar = namingRules
     ? similarChannelName(normalizedName, roster.channels)
     : undefined;
-  // Non-breaking hyphens keep "-help" and "proj-" from wrapping mid-word.
+  // Non-breaking hyphens keep "-help" and "proj-" from wrapping mid-word. A
+  // hyphen inside a name (the suggestion to copy) stays a plain one.
   const noWrap = (text: string) =>
     text
       .replace(/(^|[\s(])-(?=[a-z])/g, "$1\u2011")
-      .replace(/(proj|tmp)-/g, "$1\u2011");
+      .replace(/\b(proj|tmp)-(?![\p{L}\p{N}])/gu, "$1\u2011");
   const hintText = blockers.length
     ? noWrap(`To create: ${blockers.join(" ")}`)
     : similar

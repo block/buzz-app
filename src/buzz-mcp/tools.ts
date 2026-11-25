@@ -1762,8 +1762,9 @@ class Tools {
     const solo = args.solo === true;
     if (!solo && args.members !== undefined)
       throw new Error("members is for Solo chats.");
-    // Solo chats are private working spaces, so the naming rules are for channels.
-    if (!solo && namingRulesApply(this.client.relayUrl)) {
+    // Solo chats are private working spaces and system channels are
+    // infrastructure, so the naming rules are for ordinary channels.
+    if (!solo && type !== "system" && namingRulesApply(this.client.relayUrl)) {
       const { blockers } = channelNameTips({
         name,
         temporary: ttl !== undefined && ttl > 0,

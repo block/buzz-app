@@ -191,6 +191,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
       current: (lease) =>
         invoke<boolean>("mesh_compute_inference_current", { lease }),
       memories: readMemory,
+      relayUrl: (agent) => {
+        const snapshot = agents.relay(agent)?.snapshot();
+        return snapshot?.status === "ready"
+          ? snapshot.session.relayUrl
+          : undefined;
+      },
       remembered: (agent) => {
         const snapshot = agents.relay(agent)?.snapshot();
         if (snapshot?.status === "ready")
@@ -604,8 +610,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
           phase === "failed" ||
           Boolean(
             status?.savedSharing?.enabled &&
-              !status.sharing &&
-              phase !== "starting",
+            !status.sharing &&
+            phase !== "starting",
           )
         }
         refreshDisabled={busy || !isTauri()}

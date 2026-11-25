@@ -819,6 +819,7 @@ export class PiRuntime {
             conversation: call.conversation,
           }),
         relayAuthor: this.reads(call.agent)?.relayAuthor?.(),
+        relayUrl: this.reads(call.agent)?.relayUrl?.(),
         signingAuthority: this.reads(call.agent)?.workflowAuthority(),
         read: (path) =>
           entry.handle?.protection

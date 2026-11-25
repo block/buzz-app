@@ -2223,6 +2223,7 @@ export class CodexRuntime {
         });
       },
       relayAuthor: this.reads(agent.key)?.relayAuthor?.(),
+      relayUrl: this.reads(agent.key)?.relayUrl?.(),
       signingAuthority: this.reads(agent.key)?.workflowAuthority(),
       read: (path) =>
         this.target

@@ -170,7 +170,7 @@ test("test bodies span the listed test's call; groups, hooks and helpers are out
     "  test.beforeEach(async ({ page }) => {",
     '    await page.goto("/");',
     "  });",
-    '  test("journey", { tag: ["@local-webkit"] }, async ({ page }) => {',
+    '  test("journey", { tag: ["@media-recorder"] }, async ({ page }) => {',
     '    await page.click("text=Go");',
     "  });",
     "});",
@@ -420,7 +420,7 @@ test("journeys tagged for special projects or platforms are never repeated", () 
     repeatableLines([
       { line: 10, tags: [] },
       { line: 20, tags: ["media-recorder"] },
-      { line: 30, tags: ["local-webkit"] },
+      { line: 30, tags: ["macos-webkit"] },
       { line: 40, tags: ["classic-scrollbars"] },
       { line: 50, tags: ["other"] },
     ]),
@@ -985,7 +985,7 @@ test("related files merge into the edited selection: a line filter becomes the w
         // Two parameterized journeys share line 30.
         journey(30, "case 1"),
         journey(30, "case 2"),
-        journey(40, "mac only", ["local-webkit"]),
+        journey(40, "mac only", ["macos-webkit"]),
       ],
     ],
     [spec("b"), [journey(5, "b")]],

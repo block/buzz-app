@@ -41,7 +41,7 @@ export const browserShards = (journeys) =>
   Math.min(MAX_SHARDS, Math.max(1, Math.ceil(journeys / JOURNEYS_PER_SHARD)));
 // Journeys that need their own project or platform: the measurements job and
 // the macOS recorder own them, so the engine lanes never repeat them.
-const excludedTags = ["classic-scrollbars", "local-webkit", "media-recorder"];
+const excludedTags = ["classic-scrollbars", "macos-webkit", "media-recorder"];
 // Test files a pull request reaches without editing run whole, most specific
 // first, while each flake lane's predicted wall time stays inside the budget.
 // Tests the pull request edited always run, even past it. The budget bounds

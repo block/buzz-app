@@ -548,7 +548,7 @@ export function createBuilderlab({
             ].includes(path)
           : apps
             ? /^\/v1\/agent\//.test(path)
-            : /^\/(?:v3\/beekeeper\/|v1\/buzz\/known-communities\/(?:list|add|remove)$)/.test(
+            : /^\/(?:v3\/beekeeper\/|v1\/buzz\/known-communities\/(?:list|add|remove)$|list-oauth-extensions$|delete-oauth-extension$)/.test(
                 path,
               ))
       )

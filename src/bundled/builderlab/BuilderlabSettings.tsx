@@ -10,6 +10,7 @@ import {
   ArrowRightIcon,
   ArrowUpRightIcon,
   GlobeIcon,
+  PlugIcon,
   RobotIcon,
 } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -33,6 +34,13 @@ const sections = [
     icon: GlobeIcon,
     description: "Spaces where your team and agents talk.",
     action: "Create a community",
+  },
+  {
+    id: "connections",
+    title: "Connections",
+    icon: PlugIcon,
+    description: "Apps and services your agents use for you.",
+    action: "Add a connection",
   },
 ] as const;
 type Section = (typeof sections)[number]["id"];
@@ -64,6 +72,7 @@ export function BuilderlabSettings({
   initialSection,
   communities,
   agents,
+  connections,
   summaries,
   agentServer,
 }: {
@@ -74,7 +83,9 @@ export function BuilderlabSettings({
   initialSection?: Section | undefined;
   communities(navigation: ReactNode): ReactNode;
   agents: ReactNode;
-  summaries?: Record<Section, OverviewSnapshot>;
+  /** Absent where this build cannot sign in, which leaves its card out. */
+  connections?: ReactNode;
+  summaries?: Partial<Record<Section, OverviewSnapshot>>;
   /** The sign-in server remote agents use, when it is not this account's. */
   agentServer?: string | undefined;
 }) {
@@ -92,7 +103,7 @@ export function BuilderlabSettings({
   const section = sections.find(({ id }) => id === selected);
   const hideAccount = !!selected && !keepAccountVisible;
   const agentCount =
-    summaries?.agents.kind === "filled"
+    summaries?.agents?.kind === "filled"
       ? summaries.agents.items.length
       : undefined;
   const open = (id: Section) => {
@@ -110,12 +121,15 @@ export function BuilderlabSettings({
       }}
     />
   );
-  const ordered = [...sections].sort((a, b) => {
+  const shown = sections.filter(
+    ({ id }) => id !== "connections" || connections !== undefined,
+  );
+  const ordered = [...shown].sort((a, b) => {
     const aEmpty = ["empty", "unavailable"].includes(
-      summaries?.[a.id].kind ?? "empty",
+      summaries?.[a.id]?.kind ?? "empty",
     );
     const bEmpty = ["empty", "unavailable"].includes(
-      summaries?.[b.id].kind ?? "empty",
+      summaries?.[b.id]?.kind ?? "empty",
     );
     return (
       Number(aEmpty) - Number(bEmpty) ||
@@ -133,7 +147,9 @@ export function BuilderlabSettings({
           title={
             selected === "agents"
               ? `Remote agents${agentCount === undefined ? "" : ` (${agentCount})`}${agentServer ? ` · ${agentServer}` : ""}`
-              : "Builderlab"
+              : selected === "connections"
+                ? "Connections"
+                : "Builderlab"
           }
         />
       )}
@@ -221,12 +237,14 @@ export function BuilderlabSettings({
           })}
         </div>
       </div>
-      {sections.map(({ id }) => (
+      {shown.map(({ id }) => (
         // Mount once on entry: the overview and section share the same reads.
         <div key={id} hidden={selected !== id} inert={selected !== id}>
           {id === "communities"
             ? communities(selected === id ? navigation : undefined)
-            : agents}
+            : id === "connections"
+              ? connections
+              : agents}
         </div>
       ))}
     </section>

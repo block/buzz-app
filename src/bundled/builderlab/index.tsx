@@ -37,6 +37,12 @@ import { brokerApi, createApi } from "./communities/api";
 import { createNativeBackend } from "./communities/native";
 import { hostedAgentSettings } from "./service";
 import { applyApps } from "./apps";
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { createConnectionsClient } from "./connections/client";
+import { createConnectionsStore } from "./connections/store";
+import { startConnectionAlerts } from "./connections/alerts";
+import { connectionsPage } from "./connections/status";
+import { Connections } from "./connections/Connections";
 
 const CREATE_DISMISSED = "builderlab:create-dismissed";
 
@@ -124,6 +130,36 @@ export const apply: PluginModule["apply"] = (ctx) => {
         knownCommunities: ctx.knownCommunities,
       }),
     );
+  // Connections belong to the build's account, like its community list.
+  const connections = loginAvailable
+    ? createConnectionsStore(createConnectionsClient(session), session)
+    : undefined;
+  if (connections) {
+    ctx.effect(() => () => connections.dispose());
+    // Optional, as for older hosts: without it the list still shows status.
+    const alerts = ctx.reflect.get("notifications")?.register({
+      id: "connections",
+      label: "Builderlab connections",
+    });
+    if (alerts)
+      ctx.effect(() =>
+        startConnectionAlerts({
+          store: connections,
+          submit: alerts.submit,
+          target: {
+            version: 1,
+            kind: "settings",
+            section: "block.builderlab/login",
+            route: { version: 1, params: "connections" },
+          },
+        }),
+      );
+  }
+  const openConnectionsPage = (name?: string) => {
+    const url = connectionsPage(oauthTarget(), name);
+    if (isTauri()) void invoke("plugin:opener|open_url", { url });
+    else window.open(url, "_blank", "noopener");
+  };
   const agents = createAgentClient(agentSession);
   if (loginAvailable)
     ctx.effect(() =>
@@ -327,7 +363,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         : undefined;
     const createRequested =
       route?.version === 1 && route.params === "create-community";
+    const connectionsRequested =
+      route?.version === 1 && route.params === "connections";
     const saved = useAgentsSnapshot(ctx.agents);
+    const [connectionOverview, setConnectionOverview] =
+      useState<OverviewSnapshot>({ kind: "pending" });
     const [communityOverview, setCommunityOverview] =
       useState<OverviewSnapshot>({ kind: "pending" });
     const [agentOverview, setAgentOverview] = useState<OverviewSnapshot>({
@@ -337,9 +377,19 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <BuilderlabSettings
         key={navigation?.entryId}
         active={active}
-        initialSection={createRequested ? "communities" : undefined}
+        initialSection={
+          createRequested
+            ? "communities"
+            : connectionsRequested && connections
+              ? "connections"
+              : undefined
+        }
         keepAccountVisible={state.status !== "signed-in"}
-        summaries={{ communities: communityOverview, agents: agentOverview }}
+        summaries={{
+          communities: communityOverview,
+          agents: agentOverview,
+          connections: connectionOverview,
+        }}
         agentServer={agentServer}
         account={
           <Login
@@ -370,6 +420,17 @@ export const apply: PluginModule["apply"] = (ctx) => {
             onOverview={setCommunityOverview}
           />
         )}
+        connections={
+          connections && (
+            <Connections
+              store={connections}
+              session={session}
+              active={active}
+              onOverview={setConnectionOverview}
+              openPage={openConnectionsPage}
+            />
+          )
+        }
         agents={
           <RemoteAgents
             client={agents}

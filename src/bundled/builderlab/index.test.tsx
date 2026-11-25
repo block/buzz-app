@@ -971,6 +971,8 @@ it.for([
       result = { communities: [] };
     } else if (url.endsWith("/v1/buzz/communities/list")) {
       result = { communities: [], can_create: true };
+    } else if (url.endsWith("/list-oauth-extensions")) {
+      result = { extensions: [] };
     } else {
       throw new Error(`Unexpected Builderlab request ${url}`);
     }
@@ -1083,7 +1085,8 @@ it.for([
       // Sign-in also checks the account's linked Buzz identity, and the
       // account's community list follows through the same native session:
       // the complete list is read once. The card's Communities section reads
-      // the account's identity and its hosted communities.
+      // the account's identity and its hosted communities, and its connections
+      // are read once at sign-in.
       await userEvent.click(
         screen.getByRole("button", { name: "Back to Builderlab" }),
       );
@@ -1106,6 +1109,7 @@ it.for([
           "list",
           "list",
           "list-agents",
+          "list-oauth-extensions",
           "me",
           "me",
         ]),

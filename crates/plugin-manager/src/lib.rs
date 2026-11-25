@@ -452,6 +452,8 @@ const BUILDERLAB_FI_ROUTES: &[&str] = &[
     "v1/buzz/known-communities/list",
     "v1/buzz/known-communities/add",
     "v1/buzz/known-communities/remove",
+    "list-oauth-extensions",
+    "delete-oauth-extension",
 ];
 /// The matching Builderlab API base path, or empty when unconfigured.
 pub const BUILDERLAB_API_BASE_PATH: &str = env!("BUZZ_BUILDERLAB_API_BASE_PATH");

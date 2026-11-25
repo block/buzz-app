@@ -42,7 +42,13 @@ export const DENSITY_KEY = "buzz-message-density.v1";
 export const parseMessageDensity = (value: unknown): MessageDensity =>
   value === "compact" ? "compact" : "default";
 /** Size of emoji-only messages and reaction artwork. */
-export const EMOJI_SIZES = ["default", "medium", "large", "huge"] as const;
+export const EMOJI_SIZES = [
+  "default",
+  "medium",
+  "large",
+  "extra-large",
+  "huge",
+] as const;
 export type EmojiSize = (typeof EMOJI_SIZES)[number];
 export const EMOJI_SIZE_KEY = "buzz-emoji-size.v1";
 export const parseEmojiSize = (value: unknown): EmojiSize =>

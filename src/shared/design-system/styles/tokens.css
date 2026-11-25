@@ -1637,12 +1637,20 @@
 
 :root[data-emoji-size="large"],
 [data-emoji-size-preview="large"],
+:root[data-emoji-size="extra-large"],
+[data-emoji-size-preview="extra-large"],
 :root[data-emoji-size="huge"],
 [data-emoji-size-preview="huge"] {
   --size-emoji-display: calc(var(--type-rem) * 4);
   --size-emoji-line: calc(var(--type-rem) * 4.5);
   /* Reaction artwork, still inside the pill. */
   --size-emoji-reaction: 1rem;
+}
+
+:root[data-emoji-size="extra-large"],
+[data-emoji-size-preview="extra-large"] {
+  --size-emoji-display: calc(var(--type-rem) * 6);
+  --size-emoji-line: calc(var(--type-rem) * 6.5);
 }
 
 :root[data-emoji-size="huge"],

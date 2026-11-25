@@ -753,6 +753,34 @@ describe("message fold", () => {
     ]);
   });
 
+  it("rejects hash-shaped attachment link labels", () => {
+    const hash = "a".repeat(64);
+    const url = `https://relay.test/media/${hash}.pdf`;
+    const event = message(alice, channel, `[${hash}.pdf](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf" },
+    ]);
+  });
+
+  it.each([
+    ["RLO", "report\u202eexe.pdf"],
+    ["newline", "report\nfinal.pdf"],
+  ])("rejects %s attachment link labels", (_case, label) => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(alice, channel, `[${label}](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "file.pdf" },
+    ]);
+  });
+
   it("caps over-length attachment link names", () => {
     const url = "https://relay.test/media/file.pdf";
     const label = "n".repeat(300);

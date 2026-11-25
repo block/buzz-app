@@ -4517,6 +4517,29 @@ it.each(["fails", "stalls"])(
   },
 );
 
+it("answers a name search within the limit while the relay key is held", async () => {
+  vi.useFakeTimers();
+  try {
+    const { signingAuthority: _, ...base } = archivedPeople();
+    const client = {
+      ...base,
+      relayAuthorLookup: vi.fn(() => new Promise<never>(() => {})),
+    };
+    let done = false;
+    const search = callTool(client, {}, "users", { q: "b" }).finally(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await search).toMatch(
+      /^.*"Alice Smith"\n.*"Bob"\nwarning: the relay's archive list could not be read/,
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("gives the name lookup only the time the archive read left", async () => {
   vi.useFakeTimers();
   try {

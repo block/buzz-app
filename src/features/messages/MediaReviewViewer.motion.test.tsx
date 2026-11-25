@@ -25,15 +25,8 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, "animate");
 });
 
-function setup(
-  kind: "image" | "video",
-  reduced = false,
-  hasComments = false,
-  imageReady = true,
-) {
-  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(
-    imageReady,
-  );
+function setup(kind: "image" | "video", reduced = false) {
+  vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
   const cancel = vi.fn();
   const animate = vi.fn(
     (_frames: Keyframe[], _options: KeyframeAnimationOptions) => ({
@@ -119,7 +112,7 @@ function setup(
             channelName="One"
             messageId={root.id}
             initialTime={0}
-            hasComments={hasComments}
+            hasComments={false}
             restoreFocus={opener}
             close={() => setOpen(false)}
             onOpenLink={() => false}

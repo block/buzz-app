@@ -4801,6 +4801,18 @@ describe("a conversation given its own folder", () => {
     expect(published).toEqual([]);
   });
 
+  it("refuses a folder once the conversation's first session started in the workspace", async () => {
+    const { deliver, claudes, data } = setup([root, mention], {
+      resolveDirectory: folders(),
+    });
+    await deliver({ type: "mention", event: mention });
+    await flush(10);
+    expect(claudes().find((process) => process.prompts.length)).toBeDefined();
+    await expect(assign(data, "/repos/worktree")).rejects.toThrow(
+      "already started in the agent's workspace",
+    );
+  });
+
   it("tells a Solo chat that works there to read its Canvas's folders, not to make a worktree", async () => {
     const { deliver, claudes, data } = setup([], {
       resolveDirectory: folders(),

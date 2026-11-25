@@ -2848,6 +2848,12 @@ mod tests {
         assert!(result.is_err(), "a retired query returned its parsed body");
         assert!(server.await.unwrap().contains("nostr-federated-identity:"));
     }
+    #[test]
+    fn read_limit_mirrors_the_canvas_read_budget() {
+        let policy = include_str!("../../src/features/channel-templates/canvas-limits.ts");
+        assert_eq!(READ_LIMIT, 8 * 1024 * 1024);
+        assert!(policy.contains("export const CANVAS_READ_BYTES = 8 * 1024 * 1024;"));
+    }
     #[tokio::test]
     async fn bounded_admits_the_limit_and_refuses_one_byte_over() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

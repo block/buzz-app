@@ -3811,6 +3811,52 @@ it("opens a later seat after a voice seat's own opening fails across a switch ch
   }
 });
 
+it("cancels a seat still waiting for the refresh when voice switches off, even if switched back on", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  vi.mocked(openVoice).mockResolvedValue({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  });
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.deliver(message("1", "ongoing typed turn"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const old = f.goose();
+    if (!old) throw new Error("Expected the typed turn's process");
+    expect(old.env.GOOSE_LIVE_VOICE_ENABLED).toBe("false");
+    await f.runtime.voiceSettings.setEnabled(true);
+    const opening = f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    await flush(30);
+    expect(openVoice).not.toHaveBeenCalled();
+    const result = opening.then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await f.runtime.voiceSettings.setEnabled(false);
+    await f.runtime.voiceSettings.setEnabled(true);
+    old.turns[0]?.finish();
+    const settled = await result;
+    seat = "value" in settled ? settled.value : undefined;
+    expect(openVoice).not.toHaveBeenCalled();
+    expect(settled).toHaveProperty("error");
+  } finally {
+    await seat?.close();
+    vi.mocked(openVoice).mockReset();
+    f.runtime.dispose();
+  }
+});
+
 it("holds typed admission until a voice-settings process refresh has exited", async () => {
   let release!: () => void;
   let stopping!: () => void;

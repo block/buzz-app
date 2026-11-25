@@ -367,19 +367,26 @@ export class GooseRuntime {
       entry.lifetime.signal,
       abort.signal,
     ]);
-    // A process started before the switch changed cannot start voice, and
-    // holding its session would keep it from being replaced.
-    for (;;) {
-      const pending = this.refreshVoice.get(entry);
-      if (!pending) break;
-      await abortable(pending.done, signal);
-    }
-    const held = await entry.sessions.retain(
-      channelId,
-      signal,
-      sessionTitle(entry.name, channelId),
-    );
+    // Switching voice off cancels a seat that is still waiting, too.
     this.voiceSeats.add(abort);
+    let held: Awaited<ReturnType<typeof entry.sessions.retain>>;
+    try {
+      // A process started before the switch changed cannot start voice, and
+      // holding its session would keep it from being replaced.
+      for (;;) {
+        const pending = this.refreshVoice.get(entry);
+        if (!pending) break;
+        await abortable(pending.done, signal);
+      }
+      held = await entry.sessions.retain(
+        channelId,
+        signal,
+        sessionTitle(entry.name, channelId),
+      );
+    } catch (error) {
+      this.voiceSeats.delete(abort);
+      throw error;
+    }
     let media: Awaited<ReturnType<typeof openVoice>> | undefined;
     let promptChanged = false;
     let openingDone!: () => void;

@@ -5754,6 +5754,34 @@ it("tags a nested reply for agents only, signing its request", async () => {
   ]);
 });
 
+it("answers a subthread message in its subthread, never deeper", async () => {
+  const inner = (id: string, parent: string) =>
+    event({
+      id,
+      tags: [
+        ["h", "chan"],
+        ["e", root, "", "root"],
+        ["e", parent, "", "reply"],
+      ],
+    });
+  const deep = "4".repeat(64);
+  const { client, published } = fake([
+    ...community,
+    inner("3".repeat(64), nested),
+    inner(deep, "3".repeat(64)),
+  ]);
+  await callTool(client, { channel: "chan", root }, "reply_in_subthread", {
+    parent: deep,
+    audience: "everyone",
+    text: "a",
+  });
+  expect(published[0]?.tags).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", nested, "", "reply"],
+  ]);
+});
+
 it.each([undefined, "humans"])(
   "refuses a nested reply whose audience is %s, publishing nothing",
   async (audience) => {
@@ -5835,7 +5863,7 @@ it("nests under parents as the relay reads their root, whatever the markers or c
   expect(published.map((sent) => sent.tags.slice(1))).toEqual([
     [
       ["e", root, "", "root"],
-      ["e", remarked.id, "", "reply"],
+      ["e", nested, "", "reply"],
     ],
     [
       ["e", root.replace(/1/g, "a"), "", "root"],

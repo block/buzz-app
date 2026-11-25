@@ -1372,16 +1372,19 @@ function ThreadMessages({
   }, [session, scope, targetKey]);
   const targetReply = useCallback(
     (id: string) => {
+      // Subthreads are one level deep: answering a message inside one aims at
+      // the reply it hangs under, and a subthread's own view answers its root.
+      const branch = subthreadId ? undefined : (tree.parents.get(id) ?? id);
       if (targetKey)
         setReplyTarget(
           session,
           scope,
           targetKey,
-          replyTarget(session, scope, targetKey) === id ? undefined : id,
+          replyTarget(session, scope, targetKey) === id ? undefined : branch,
         );
       setReplyFocus((value) => value + 1);
     },
-    [session, scope, targetKey],
+    [session, scope, targetKey, subthreadId, tree],
   );
   useEffect(() => {
     if (replyRequest) setReplyFocus((value) => value + 1);

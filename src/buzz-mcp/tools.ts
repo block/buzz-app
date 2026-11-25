@@ -236,7 +236,7 @@ export const TOOLS: readonly Tool[] = [
   ),
   tool(
     "reply_in_subthread",
-    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience, request and final; the channel is the parent's.",
+    "Reply under a specific message, nested in a subthread below it rather than in the main thread. Subthreads are one level deep: a message already in a subthread is answered in that subthread. Use when asked to reply in a subthread, or to keep a side discussion under the message it is about. Takes send's text, path, files, mentions, audience, request and final; the channel is the parent's.",
     {
       parent: { ...str, description: "Id of the message to reply under" },
       text: str,
@@ -797,15 +797,16 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     const root = target
       ? (threadReference(target)?.rootId ?? target.id)
       : (context.sourceRoot ?? parent);
+    const branch = target ? await tools.branchOf(target, root) : parent;
     return post(
       tools,
       channel,
       args,
-      root === parent
+      root === branch
         ? [["e", root, "", "reply"]]
         : [
             ["e", root, "", "root"],
-            ["e", parent, "", "reply"],
+            ["e", branch, "", "reply"],
           ],
       audienceTags,
     );
@@ -2118,6 +2119,18 @@ class Tools {
     ]);
     if (!event) throw new Error(`No message ${id}.`);
     return event;
+  }
+
+  /** Subthreads are one level deep: the thread reply that `target`'s
+   * subthread hangs under, or `target` when it is the root or a thread reply. */
+  async branchOf(target: BuzzEvent, root: string) {
+    let row = target;
+    for (let hop = 0; hop < 100; hop++) {
+      const parent = threadReference(row)?.parentId;
+      if (!parent || parent === root) return row.id;
+      row = await this.event(parent);
+    }
+    throw new Error("That message is nested too deeply to reply under.");
   }
 
   /** The e-tag of a `send` reply to `parent`: a reply to any message in a

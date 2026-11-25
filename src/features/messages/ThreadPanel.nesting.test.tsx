@@ -479,20 +479,19 @@ it("targets a child, cancels on repeated Reply, resets after send and reveals th
   expect(composer).not.toHaveAttribute("data-parent");
   expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
 });
-it("continues a branch when replying to a nested reply", () => {
+it("answers a nested reply in its branch, never deeper", () => {
   const h = setup();
   fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
-  fireEvent.click(screen.getByRole("button", { name: "Reply to child" }));
-  expect(screen.getByLabelText("Composer")).toHaveAttribute(
-    "data-parent",
-    "child",
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Reply to grandchild" }));
+  const composer = screen.getByLabelText("Composer");
+  expect(composer).toHaveAttribute("data-parent", "parent");
+  expect(within(composer).getByText(/^Replying to /)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
   h.update([
     row("parent", "root"),
     row("child", "parent"),
     row("grandchild", "child"),
-    row("new", "child"),
+    row("new", "parent"),
   ]);
   const branch = branchOf("new");
   expect(branch).toBe(branchOf("child"));
@@ -511,15 +510,14 @@ it("continues a branch when replying to a nested reply", () => {
   ).not.toBeInTheDocument();
 });
 it("keeps a reply target chosen while a background send is still publishing", () => {
-  setup();
-  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
+  setup().update([row("parent", "root"), row("other", "root")]);
   fireEvent.click(screen.getByRole("button", { name: "Reply to parent" }));
   fireEvent.click(screen.getByRole("button", { name: "Send fixture upload" }));
-  fireEvent.click(screen.getByRole("button", { name: "Reply to child" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reply to other" }));
   const composer = screen.getByLabelText("Composer");
-  expect(composer).toHaveAttribute("data-parent", "child");
+  expect(composer).toHaveAttribute("data-parent", "other");
   act(() => heldSend?.("new"));
-  expect(composer).toHaveAttribute("data-parent", "child");
+  expect(composer).toHaveAttribute("data-parent", "other");
 });
 it("says an earlier reply is unavailable only once no history that could hold it is left to read", () => {
   const h = setup();

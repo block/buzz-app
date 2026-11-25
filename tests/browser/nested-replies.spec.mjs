@@ -229,15 +229,15 @@ test("nested replies send, stay open, and reveal through links at readable panel
   const grandchild = app.report.publications.find(
     ({ event }) => event?.content === "Grandchild browser reply",
   ).event;
+  // Subthreads are one level deep: answering a nested reply joins its branch.
   expect(grandchild.tags.filter(([key]) => key === "e")).toEqual([
     ["e", root.id, "", "root"],
-    ["e", nested.id, "", "reply"],
+    ["e", await parent.getAttribute("data-message-id"), "", "reply"],
   ]);
   const grandchildRow = panel.locator(`[data-message-id="${grandchild.id}"]`);
   await expect(grandchildRow).toBeInViewport();
   await expect(editor).toBeFocused();
-  // The signed parent stays exact, but the display keeps one level: the reply
-  // joins the nested row's branch instead of opening a deeper one.
+  // The display keeps one level: the reply joins the nested row's branch.
   await expect(
     grandchildRow.locator('[data-layout="continuation"]'),
   ).toBeVisible();

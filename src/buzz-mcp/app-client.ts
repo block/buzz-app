@@ -12,6 +12,7 @@ import type {
   WorkspaceAudience,
   WorkspaceChat,
 } from "../features/agents/service";
+import { communityDestination } from "../features/communities/destination";
 import type {
   HostProcess,
   HostProcessOptions,
@@ -29,6 +30,15 @@ export function relayKeyOf(
   source: { workflowAuthority(): string | undefined } | undefined,
 ) {
   return source && (source.workflowAuthority() ?? null);
+}
+
+/** The https origin of the community a `wss://` relay URL names. */
+function communityOrigin(relay: string) {
+  try {
+    return communityDestination(relay).url;
+  } catch {
+    return undefined;
+  }
 }
 
 export function appClient(
@@ -94,6 +104,7 @@ export function appClient(
           },
         }
       : {}),
+    community: communityOrigin(agent.relay),
     ...(agent.protection
       ? {
           protect: async (

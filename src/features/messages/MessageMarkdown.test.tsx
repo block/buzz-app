@@ -1078,6 +1078,24 @@ it("keeps resolved private channel labels and lock icons for Buzz links", () => 
   expect(html.split(lock)).toHaveLength(3);
 });
 
+it("renders this community's shared https links as Buzz links", () => {
+  const id = "a".repeat(64);
+  const scope = `https://relay.example:${"b".repeat(64)}`;
+  const html = render(
+    `https://relay.example/open/message?channel=design&id=${id} [here](https://relay.example/open/channel/design) https://other.example/open/message?channel=design&id=${id}`,
+    { scope },
+  );
+  expect(html).toContain(`href="buzz://message?channel=design&amp;id=${id}"`);
+  expect(html).toContain('href="buzz://channel/design"');
+  expect(html).toContain(
+    `href="https://other.example/open/message?channel=design&amp;id=${id}"`,
+  );
+  expect(html).not.toContain(' href="https://relay.example');
+  expect(html).toContain(
+    `data-shared-href="https://relay.example/open/message?channel=design&amp;id=${id}"`,
+  );
+});
+
 it("renders tagged agent library names and profile names with the same agent icon", () => {
   const directory = {
     profiles: new Map([[mic, { name: "Fizz" }]]),

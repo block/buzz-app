@@ -172,6 +172,23 @@ describe("serializeNode", () => {
     });
   });
 
+  it("copies a link opened in its in-app form as authored", () => {
+    const shared = "https://relay.example/open/channel/general";
+    const paragraph = query(
+      "p",
+      mount(
+        row(
+          `<p>${anchor("buzz://channel/general", "", "general").replace("<a ", `<a data-shared-href="${shared}" `)}</p>`,
+        ),
+      ),
+    );
+    expect(each(paragraph)).toEqual({
+      text: shared,
+      markdown: shared,
+      html: `<p><a href="${shared}">${shared}</a></p>`,
+    });
+  });
+
   it("copies raw in-app and external links as their URL and labelled ones with the label", () => {
     const paragraph = query(
       "p",

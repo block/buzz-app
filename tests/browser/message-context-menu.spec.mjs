@@ -232,7 +232,9 @@ test("right-clicking a message timestamp offers its ⋯ actions and copies its l
   await expect(menu).toHaveCount(0);
   await expect
     .poll(() => page.evaluate(() => window.copied))
-    .toEqual([`buzz://message?channel=alpha&id=${target.id}`]);
+    .toEqual([
+      `https://primary.example/open/message?channel=alpha&id=${target.id}`,
+    ]);
 
   // Opening another row's menu straight after targets that row.
   const peer = app.histories
@@ -249,7 +251,7 @@ test("right-clicking a message timestamp offers its ⋯ actions and copies its l
   await menu.getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => window.copied.at(-1)))
-    .toBe(`buzz://message?channel=alpha&id=${target.id}`);
+    .toBe(`https://primary.example/open/message?channel=alpha&id=${target.id}`);
 
   // Shift+F10 opens it from a focused control; Escape returns focus there.
   const summary = rowOf(root.id).getByRole("button", { name: /^View thread:/ });
@@ -329,5 +331,7 @@ test("right-clicking a message timestamp offers its ⋯ actions and copies its l
   await menu.getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect
     .poll(() => page.evaluate(() => window.copied.at(-1)))
-    .toBe(`buzz://message?channel=alpha&id=${reply.id}&thread=${root.id}`);
+    .toBe(
+      `https://primary.example/open/message?channel=alpha&id=${reply.id}&thread=${root.id}`,
+    );
 });

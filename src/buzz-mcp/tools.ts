@@ -51,7 +51,10 @@ import {
   editedTags,
   readableTags,
 } from "../features/agent-harness/turn-records";
-import { parseBuzzLink } from "../features/navigation/buzz-links";
+import {
+  parseBuzzLink,
+  parseCommunityShareLink,
+} from "../features/navigation/buzz-links";
 import { soloChannelMetadata } from "../features/relay/discovery";
 import { channelLabelTags } from "../features/relay/channel-labels";
 import { SOLO_LABEL, SOLO_NAMED_LABEL } from "../features/solo/labels";
@@ -280,7 +283,8 @@ export const TOOLS: readonly Tool[] = [
     thread: str,
     message_url: {
       type: "string",
-      description: "Buzz message link; replaces channel and thread.",
+      description:
+        "Buzz message link, buzz:// or https; replaces channel and thread.",
     },
     author: {
       type: "string",
@@ -929,9 +933,20 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
         throw new Error(
           "message_url cannot be combined with channel or thread.",
         );
+      // A shared https link reads from this relay only when it names this
+      // community; reading another's ids here would find nothing, or the
+      // wrong message.
+      const shared =
+        typeof args.message_url === "string"
+          ? parseCommunityShareLink(args.message_url)
+          : null;
+      if (shared && shared.origin !== client.community)
+        throw new Error(
+          "message_url is a link to another community; this agent reads only its own.",
+        );
       const link =
         typeof args.message_url === "string"
-          ? parseBuzzLink(args.message_url)
+          ? parseBuzzLink(shared?.link ?? args.message_url)
           : null;
       if (link?.format !== "legacy" || !link.messageId)
         throw new Error("message_url must be a Buzz message link.");

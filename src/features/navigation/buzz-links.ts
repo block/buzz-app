@@ -268,6 +268,58 @@ export function parseBuzzLink(href: string): BuzzLink | null {
   }
 }
 
+/** The https form of a navigation link: community `origin`'s relay serves
+ * `/open/<rest>` for `buzz://<rest>` and opens it in Buzz. Unlike a `buzz://`
+ * link, it names its community; `undefined` when `href` is not a conversation
+ * or entity link or the origin is not a web one. */
+export function communityShareLink(
+  href: string | undefined,
+  origin: string | undefined,
+): string | undefined {
+  const link = href ? parseBuzzLink(href) : null;
+  if (
+    !href ||
+    !origin ||
+    (link?.format !== "legacy" && link?.format !== "entity")
+  )
+    return undefined;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    return `${url.origin}/open/${href.slice("buzz://".length)}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A shared https link (`communityShareLink`): the community origin it names
+ * and the `buzz://` link it stands for. Whether that origin is the receiving
+ * community is the caller's check. */
+export function parseCommunityShareLink(
+  href: string,
+): Readonly<{ origin: string; link: string }> | null {
+  try {
+    if (href.length > 4096) return null;
+    const url = new URL(href);
+    if (
+      (url.protocol !== "https:" && url.protocol !== "http:") ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      !url.pathname.startsWith("/open/")
+    )
+      return null;
+    const rest = `${url.pathname.slice("/open/".length)}${url.search}`;
+    const link = `buzz://${rest}`;
+    const target = rest ? parseBuzzLink(link) : null;
+    return target?.format === "legacy" || target?.format === "entity"
+      ? { origin: url.origin, link }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A settings link's target; it has no community scope. */
 export const settingsTarget = ({
   section,

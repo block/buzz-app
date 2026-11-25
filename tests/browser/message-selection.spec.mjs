@@ -129,7 +129,9 @@ for (const [scheme, width, scale] of [
       await expect(menu).toHaveCount(0);
       await expect
         .poll(() => page.evaluate(() => window.copied.at(-1)))
-        .toBe(`buzz://message?channel=alpha&id=${message.id}`);
+        .toBe(
+          `https://primary.example/open/message?channel=alpha&id=${message.id}`,
+        );
       const paragraph = link.locator("xpath=ancestor::p[1]");
       await paragraph.selectText();
       await paragraph.locator("strong").click({ button: "right" });

@@ -161,6 +161,8 @@ export interface BuzzClient {
    * needs it for verified names, so no other tool waits for it. `undefined`
    * when the relay has no key; rejects when the key cannot be learned. */
   readonly relayAuthorLookup?: () => Promise<string | undefined>;
+  /** This client's community, as its https origin, when known. */
+  readonly community?: string | undefined;
   /** The relay's NIP-11 self key as the app host knows it: `null` when the
    * relay advertises none; absent when the host can't tell. */
   readonly signingAuthority?: string | null;

@@ -82,6 +82,7 @@ async function mount() {
   ctx.effect(() => () => runtime.dispose());
   const shortcuts = new ShortcutsService(ctx, window);
   let Overlay: ComponentType = () => null;
+  let Toolbar: ComponentType = () => null;
   const listens: ListenOptions[] = [];
   const decide = vi.fn(async (_request: unknown) =>
     answer("#design", { "#design": 0.9, "#launch": 0.05 }),
@@ -100,6 +101,11 @@ async function mount() {
   ctx.provide("pages", {
     registerOverlay(overlay: { component: ComponentType }) {
       Overlay = overlay.component;
+    },
+  } as never);
+  ctx.provide("panels", {
+    register(panel: { toolbar: ComponentType }) {
+      Toolbar = panel.toolbar;
     },
   } as never);
   ctx.provide("speech", {
@@ -135,20 +141,25 @@ async function mount() {
     ).toBe(true),
   );
   await import("./VoiceJumpDialog");
-  render(<Overlay />);
+  render(
+    <>
+      <Toolbar />
+      <Overlay />
+    </>,
+  );
   return { listens, decide, open };
 }
 
 // Off Apple platforms, ⌘ is Ctrl.
 const press = () =>
   fireEvent.keyDown(document.body, {
-    key: "K",
-    code: "KeyK",
+    key: "J",
+    code: "KeyJ",
     ctrlKey: true,
     shiftKey: true,
   });
 
-test("⇧⌘K listens, and a sure match opens that conversation while talking", async () => {
+test("⇧⌘J listens, and a sure match opens that conversation while talking", async () => {
   const { listens, decide, open } = await mount();
   press();
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
@@ -191,4 +202,11 @@ test("an unsure match lists the closest places to choose from", async () => {
   expect(open).toHaveBeenCalledWith(
     expect.objectContaining({ kind: "conversation", channelId: "design" }),
   );
+});
+
+test("the mic beside Search opens the box listening", async () => {
+  const { listens } = await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Jump by voice" }));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  await vi.waitFor(() => expect(listens).toHaveLength(1));
 });

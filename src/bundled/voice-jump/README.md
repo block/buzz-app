@@ -6,11 +6,12 @@ Go to a conversation by saying its name.
 
 1. Turn on a speech provider in **Settings → Speech to text**, and a
    decisions provider in **Settings → Decisions API**.
-2. Press ⇧⌘K (Shift+Ctrl+K on Windows and Linux) and say where to go, such as
-   "the design channel", "my DM with Alice" or "the thread about the launch".
+2. Press ⇧⌘J (Shift+Ctrl+J on Windows and Linux), or click the mic beside
+   Search, and say where to go, such as "the design channel", "my DM with
+   Alice" or "the thread about the launch".
 3. The likeliest places show as you talk. When one is clearly it, Buzz opens
    it without waiting; otherwise pause, press Enter or pick a row.
-4. Press ⇧⌘K again to stop or restart listening. You can also type instead.
+4. Press ⇧⌘J again to stop or restart listening. You can also type instead.
 
 ---
 

@@ -12,6 +12,40 @@ const sideVisits = new WeakMap<Navigation, string>();
 // The attempt a link began by naming the visit already on screen.
 const repeats = new WeakMap<Navigation, string>();
 
+type Conversation = Extract<OpenTarget, { kind: "conversation" }>;
+
+const sameConversation = (visit: OpenTarget, current: Conversation) =>
+  visit.kind === "conversation" &&
+  visit.channelId === current.channelId &&
+  visit.scope.viewer === current.scope.viewer &&
+  visit.scope.communityOrigin === current.scope.communityOrigin;
+
+/** How `target` stands to the thread read inline over `current`: a thread
+ * of that conversation that opens as a tab beside it, that thread itself, or
+ * neither. */
+function toInline(
+  current: OpenTarget | undefined,
+  target: OpenTarget,
+): "beside" | "sheet" | undefined {
+  if (
+    current?.kind !== "conversation" ||
+    !current.inline ||
+    target.kind !== "conversation" ||
+    !sameConversation(target, current) ||
+    !target.messageId ||
+    target.inline ||
+    target.detail ||
+    target.panel ||
+    target.forward ||
+    target.layer ||
+    target.context
+  )
+    return;
+  return (target.threadRootId ?? target.messageId) === current.inline
+    ? "sheet"
+    : "beside";
+}
+
 /** A thread's tab opened beside `current`: the visit `target` asks for,
  * with the thread read inline over that conversation still in it, so the
  * sheet stays as the tab opens. A target that names the inline thread is
@@ -24,17 +58,7 @@ export function besideInline(
     current?.kind !== "conversation" ||
     !current.inline ||
     target.kind !== "conversation" ||
-    target.channelId !== current.channelId ||
-    target.scope.viewer !== current.scope.viewer ||
-    target.scope.communityOrigin !== current.scope.communityOrigin ||
-    !target.messageId ||
-    target.inline ||
-    target.detail ||
-    target.panel ||
-    target.forward ||
-    target.layer ||
-    target.context ||
-    (target.threadRootId ?? target.messageId) === current.inline
+    toInline(current, target) !== "beside"
   )
     return target;
   return {
@@ -43,6 +67,17 @@ export function besideInline(
     ...(current.inlineMessage ? { inlineMessage: current.inlineMessage } : {}),
   };
 }
+
+/** The visits that leave with the thread `rootId` read inline over
+ * `current`'s conversation: the ones that read it there and name no message
+ * of their own, and `current`, the visit on screen. A tab's visit that kept
+ * the sheet beside it stays, so Back still reaches that tab. */
+export const sheetVisits =
+  (current: Conversation, rootId: string) => (visit: OpenTarget) =>
+    sameConversation(visit, current) &&
+    visit.kind === "conversation" &&
+    visit.inline === rootId &&
+    (!visit.messageId || targetKey(visit) === targetKey(current));
 
 /** Opens `target` for a link chosen in a tab or panel of `pane`. A visit
  * opened from the side pane is remembered, so the page that applies it knows
@@ -54,6 +89,21 @@ export function openFromTab(
   pane: "main" | "side" | undefined,
 ) {
   const shown = navigator.snapshot().entry;
+  // The thread read inline, chosen in the side pane, is handed to its tab as
+  // Move to side panel hands it: the sheet's visits retire and the tab's
+  // takes their place, so Back and reload do not bring the sheet back.
+  if (
+    pane === "side" &&
+    shown.target.kind === "conversation" &&
+    shown.target.inline &&
+    toInline(shown.target, target) === "sheet"
+  ) {
+    navigator.dismiss(sheetVisits(shown.target, shown.target.inline), target);
+    const { entry } = navigator.snapshot();
+    if (targetKey(entry.target) === targetKey(target))
+      sideVisits.set(navigator, entry.id);
+    return;
+  }
   const opening = pane === "side" ? besideInline(shown.target, target) : target;
   void navigator.open(opening);
   // The attempt is the opening's unless something held it, as a prompt to

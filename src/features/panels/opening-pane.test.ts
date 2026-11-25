@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
+import { createNavigationController } from "../navigation/controller";
+import { createMemoryHistory } from "../navigation/history";
 import { type OpenTarget, parseOpenTarget } from "../navigation/targets";
-import { besideInline } from "./opening-pane";
+import { besideInline, openedFromSide, openFromTab } from "./opening-pane";
 
 const root = "b".repeat(64);
 const reply = "c".repeat(64);
@@ -26,4 +28,19 @@ it("keeps the inline thread in the visit of a tab opened beside it", () => {
   expect(besideInline({ ...inline, channelId: "beta" }, tab)).toBe(tab);
   expect(besideInline(conversation, tab)).toBe(tab);
   expect(besideInline(inline, conversation)).toBe(conversation);
+});
+
+it("hands the inline thread, chosen in the side pane, to its tab", () => {
+  const { navigation: navigator } = createNavigationController(
+    createMemoryHistory(conversation),
+  );
+  void navigator.open(inline);
+  const tab = { ...conversation, messageId: reply, threadRootId: root };
+  openFromTab(navigator, tab, "side");
+  const { entry } = navigator.snapshot();
+  expect(entry.target).toEqual(tab);
+  expect(openedFromSide(navigator, entry.id)).toBe(true);
+  // The sheet's visit left with it: Back returns to the conversation.
+  navigator.back();
+  expect(navigator.snapshot().entry.target).toEqual(conversation);
 });

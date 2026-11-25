@@ -1362,11 +1362,21 @@ function ChannelWorkspace({
     const detail = entries.find(
       (entry) => panelTabId(entry) === selected && historyPanel(entry),
     );
-    const thread =
+    const shown =
       tabState.tabs.find((tab) => tab.id === selected) ??
       (pane === "side"
         ? tabState.tabs.find((tab) => tab.id === tabState.getMainSelected())
         : undefined);
+    // A side tab of another channel's thread is beside this conversation,
+    // not its address: the conversation and its sheet stay, and the tab is
+    // reselected locally (dismissContent).
+    const thread =
+      pane === "side" &&
+      shown?.kind === "thread" &&
+      currentId &&
+      shown.channelId !== currentId
+        ? undefined
+        : shown;
     return {
       version: 1,
       kind: "conversation",
@@ -1475,7 +1485,8 @@ function ChannelWorkspace({
         keep === "settings" ||
         (pane === "side" && tabState.sidePanel)) &&
       closesCurrent &&
-      keptTab?.kind !== "thread" &&
+      (keptTab?.kind !== "thread" ||
+        (pane === "side" && keptTab.channelId !== currentId)) &&
       !(keptEntry && historyPanel(keptEntry))
     )
       keepTabForReturn(
@@ -1887,9 +1898,17 @@ function ChannelWorkspace({
         )
           ? host
           : undefined;
+      // A thread opened from the side pane gets its tab there, whatever
+      // pane the setting gives threads.
+      const fromSide =
+        routedThread &&
+        !routedThread.pane &&
+        openedFromSide(navigator, navigation.entryId)
+          ? { ...routedThread, pane: "side" as const }
+          : routedThread;
       tabState.enterVisit(
         `${navigation.entryId}:${detail ? "detail" : routedThread ? "thread" : "channel"}`,
-        detail && !detailReply ? undefined : routedThread,
+        detail && !detailReply ? undefined : fromSide,
         !!detail,
         detail && currentId
           ? { channelId: currentId, target: detail.target }
@@ -2121,9 +2140,12 @@ function ChannelWorkspace({
   // The inline thread's and the layer's openings and closings, as
   // transforms of the visit on screen (inline-address.ts).
   const closeInline = (rootId: string) => {
+    // A visit that names a tab beside the sheet leaves that tab to the side
+    // pane's own selection.
     const dismissal = inlineDismissal(
       navigator?.snapshot().entry.target,
       rootId,
+      !!routedThread,
     );
     if (dismissal) navigator.dismiss(dismissal.visits, dismissal.fallback);
   };
@@ -2648,7 +2670,7 @@ function ChannelWorkspace({
       membership={membership}
       session={queries}
       canOpenLink={canOpenLink}
-      onOpenLink={openLink}
+      onOpenLink={(url) => openLink(url, { pane: "side" })}
       close={closeSettings}
     >
       {diagnosticsAvailable && (

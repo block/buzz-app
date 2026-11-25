@@ -323,7 +323,7 @@ export function registerPins(ctx: Context) {
                 });
                 if (!target) return false;
                 close();
-                void ctx.navigation.open(target);
+                openFromPanel(ctx.navigation, target, pane);
                 return true;
               }}
               open={(row) => {

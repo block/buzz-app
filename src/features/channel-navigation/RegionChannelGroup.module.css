@@ -99,6 +99,7 @@
   /* The portaled controls sit on the selected row's fill: use its ink, as the
      row's own Actions button does. */
   .teamRow:has(> [data-selected]) > .teamRowSlot > :not(.teamRowBody) {
+    --text-standard: var(--text-sidebar-selected);
     --text-subtle: var(--text-sidebar-selected);
     --text-navigation: var(--text-sidebar-selected);
   }

@@ -1,4 +1,7 @@
-import { workspaceMessageTarget } from "../../features/channel-navigation/new-message-route";
+import {
+  starredMessageTarget,
+  workspaceMessageTarget,
+} from "../../features/channel-navigation/new-message-route";
 import { WorkspaceNewMenu } from "./WorkspaceNewMenu";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { visibleSoloRegions } from "./SoloRegions";
@@ -19,6 +22,7 @@ import {
   resumeSoloDraftTarget,
   soloDraft,
   soloDraftTarget,
+  type SoloDraft,
 } from "../../features/channel-navigation/routes";
 import {
   useCallback,
@@ -46,6 +50,7 @@ import {
 import {
   hasSoloDraft,
   useSoloDraftProjects,
+  useStarredSoloDraft,
 } from "../../features/solo/draft-projects";
 import { SpringLoadedNavigationItem } from "../../features/channel-navigation/SpringLoadedNavigationItem";
 import {
@@ -177,6 +182,14 @@ function sidebarEntryLocation(target: OpenTarget) {
       ? `page:${target.pluginId}/${target.pageId}:${JSON.stringify(target.route?.params ?? null)}`
       : target.kind;
 }
+
+/** The card an unsent draft lists under. */
+const draftSection = (draft?: Pick<SoloDraft, "project" | "starred">) =>
+  draft?.starred
+    ? "starred"
+    : draft?.project
+      ? `group:${draft.project}`
+      : "solo";
 
 type Inventory = {
   sidebar: ReturnType<typeof useSidebarView>;
@@ -506,23 +519,28 @@ export function ChannelInventory({
     scope,
     preferences.data?.sections.map(({ id }) => id) ?? [],
   );
+  const starredDraft = useStarredSoloDraft(queries, scope);
   const drafts = draftProjects.map((id) =>
     soloDraftTarget(scope, id ? { project: id } : {}),
   );
+  if (starredDraft) drafts.push(soloDraftTarget(scope, { starred: true }));
   if (currentDraft && !currentDraft.region) {
     const index = currentDraft.linked
       ? -1
-      : draftProjects.indexOf(currentDraft.project ?? "");
+      : currentDraft.starred
+        ? starredDraft
+          ? draftProjects.length
+          : -1
+        : draftProjects.indexOf(currentDraft.project ?? "");
     if (index < 0) drafts.push(target);
     else drafts[index] = target;
   }
   const draftSections = new Set(
-    draftProjects.map((id) => (id ? `group:${id}` : "solo")),
+    draftProjects.map((id) => draftSection({ project: id })),
   );
+  if (starredDraft) draftSections.add("starred");
   if (currentDraft && !currentDraft.region)
-    draftSections.add(
-      currentDraft.project ? `group:${currentDraft.project}` : "solo",
-    );
+    draftSections.add(draftSection(currentDraft));
   const activeDraftSections = JSON.stringify([...draftSections]);
   const [workspaceFrames, setWorkspaceFrames] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -755,14 +773,15 @@ export function ChannelInventory({
     icon?: string | undefined;
     trigger: RefObject<HTMLButtonElement | null>;
   }>();
-  const newChat = (project?: string) => {
+  const newChat = (placement: Pick<SoloDraft, "project" | "starred"> = {}) => {
     if (relay.snapshot().session !== queries) return;
     const current = navigator.snapshot().entry.target;
-    const destination = resumeSoloDraftTarget(scope, current, project);
+    const destination = resumeSoloDraftTarget(scope, current, placement);
     if (destination === current) {
       soloDraftInput()?.focus();
       return;
     }
+    const { project } = placement;
     if (project && !hasSoloDraft(queries, scope, project))
       resetNewChatProject(scope, project);
     void navigator.open(destination);
@@ -771,13 +790,13 @@ export function ChannelInventory({
     drafts.flatMap((destination) => {
       if (destination.kind !== "page") return [];
       const draft = soloDraft(destination.route?.params);
-      if ((draft?.project ? `group:${draft.project}` : "solo") !== key)
-        return [];
+      if (draftSection(draft) !== key) return [];
       const selected =
         !!currentDraft &&
         !currentDraft.region &&
         draft?.linked === currentDraft.linked &&
-        draft?.project === currentDraft.project;
+        draft?.project === currentDraft.project &&
+        draft?.starred === currentDraft.starred;
       return [
         <SpringLoadedNavigationItem
           key={draft?.linked ?? draft?.project ?? "new-chat"}
@@ -1805,35 +1824,45 @@ export function ChannelInventory({
     },
     [lifecycleCallbacks, openSuccessor],
   );
-  const workspaceNewAction: WorkspaceSidebarComposition["newAction"] = (
-    workspace,
-    name,
-    menuAnchor,
+  // New things start in a workspace, or in Favorites.
+  const newMenu = (
+    placement: Pick<SoloDraft, "project" | "starred">,
+    name: string,
+    menuAnchor?: RefObject<HTMLButtonElement | null>,
   ) => (
     <WorkspaceNewMenu
-      key={`${scope}:${workspace}`}
+      key={`${scope}:${placement.project ?? "starred"}`}
       scope={scope}
-      workspace={workspace}
+      id={placement.project ?? "starred"}
       name={name}
       channelAvailable={queries.channelCreation.available}
       dmAvailable={queries.directMessages.available}
       menuAnchor={menuAnchor}
       choose={(action, trigger) => {
         if (relay.snapshot().session !== queries) return;
-        if (action === "chat") newChat(workspace);
+        if (action === "chat") newChat(placement);
         else if (action === "channel") {
           createChannelTrigger.current = trigger;
-          setInitialStarred(false);
-          setInitialGroup(workspace);
+          setInitialStarred(!!placement.starred);
+          setInitialGroup(placement.project ?? "");
           setCreateChannelOpen(true);
         } else {
           const partition = splitPartition(scope);
           if (partition)
-            void navigator.open(workspaceMessageTarget(partition, workspace));
+            void navigator.open(
+              placement.project
+                ? workspaceMessageTarget(partition, placement.project)
+                : starredMessageTarget(partition),
+            );
         }
       }}
     />
   );
+  const workspaceNewAction: WorkspaceSidebarComposition["newAction"] = (
+    workspace,
+    name,
+    menuAnchor,
+  ) => newMenu({ project: workspace }, name, menuAnchor);
   return render({
     sidebar,
     workspaceComposition: {
@@ -2086,6 +2115,8 @@ export function ChannelInventory({
                               section.key.slice(6),
                               section.title,
                             )
+                          ) : section.key === "starred" ? (
+                            newMenu({ starred: true }, section.title)
                           ) : section.key === "solo" ? (
                             <IconButton
                               size="compact"
@@ -2104,13 +2135,12 @@ export function ChannelInventory({
                           )
                         }
                         createChannel={
-                          section.key === "starred" ||
                           section.key === "channels"
                             ? {
                                 available: queries.channelCreation.available,
                                 open: (trigger) => {
                                   createChannelTrigger.current = trigger;
-                                  setInitialStarred(section.key === "starred");
+                                  setInitialStarred(false);
                                   setInitialGroup("");
                                   setCreateChannelOpen(true);
                                 },

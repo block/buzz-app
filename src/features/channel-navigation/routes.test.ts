@@ -10,6 +10,7 @@ import {
   soloDraft,
   soloDraftTarget,
   resumeSoloDraftTarget,
+  starredMessageTarget,
 } from "./routes";
 
 const viewer = "c".repeat(64);
@@ -19,10 +20,12 @@ const agent = "a".repeat(64);
 it("New resumes the current ordinary draft only in its own scope and workspace", () => {
   const target = soloDraftTarget(partition, { project: "work", agent });
   expect(resumeSoloDraftTarget(partition, target)).toBe(target);
-  expect(resumeSoloDraftTarget(partition, target, "work")).toBe(target);
-  expect(resumeSoloDraftTarget(partition, target, "other")).toEqual(
-    soloDraftTarget(partition, { project: "other" }),
+  expect(resumeSoloDraftTarget(partition, target, { project: "work" })).toBe(
+    target,
   );
+  expect(
+    resumeSoloDraftTarget(partition, target, { project: "other" }),
+  ).toEqual(soloDraftTarget(partition, { project: "other" }));
   expect(resumeSoloDraftTarget(`https://other.test:${viewer}`, target)).toEqual(
     soloDraftTarget(`https://other.test:${viewer}`),
   );
@@ -31,6 +34,20 @@ it("New resumes the current ordinary draft only in its own scope and workspace",
   });
   expect(resumeSoloDraftTarget(partition, region)).toEqual(
     soloDraftTarget(partition),
+  );
+});
+it("a Favorites draft resumes only for Favorites, and New elsewhere still resumes it", () => {
+  const target = soloDraftTarget(partition, { starred: true });
+  expect(resumeSoloDraftTarget(partition, target)).toBe(target);
+  expect(resumeSoloDraftTarget(partition, target, { starred: true })).toBe(
+    target,
+  );
+  expect(resumeSoloDraftTarget(partition, target, { project: "work" })).toEqual(
+    soloDraftTarget(partition, { project: "work" }),
+  );
+  const work = soloDraftTarget(partition, { project: "work" });
+  expect(resumeSoloDraftTarget(partition, work, { starred: true })).toEqual(
+    target,
   );
 });
 it("matches reopened conversations only in the original community and viewer", () => {
@@ -91,6 +108,47 @@ it("addresses a New message draft to one person by key", () => {
     { kind: "new-message", to: agent, at: "1" },
   ]) {
     expect(newMessage(invalid), JSON.stringify(invalid)).toBeUndefined();
+    expect(isChannelRoute(invalid)).toBe(false);
+  }
+});
+
+it("places a New message or Solo draft in a workspace or Favorites, never both", () => {
+  const params = (target: OpenTarget) =>
+    target.kind === "page" ? target.route?.params : undefined;
+  expect(newMessage(params(starredMessageTarget(scope)))).toEqual({
+    starred: true,
+  });
+  expect(newMessage({ kind: "new-message", workspace: "work" })).toEqual({
+    workspace: "work",
+  });
+  expect(
+    soloDraft(params(soloDraftTarget(partition, { starred: true }))),
+  ).toEqual({
+    starred: true,
+  });
+  for (const invalid of [
+    { kind: "new-message", starred: false },
+    { kind: "new-message", starred: "true" },
+    { kind: "new-message", starred: true, workspace: "work" },
+    { kind: "new-message", starred: true, to: agent, at: 1 },
+    { kind: "new-message", workspace: "work", to: agent, at: 1 },
+  ]) {
+    expect(newMessage(invalid), JSON.stringify(invalid)).toBeUndefined();
+    expect(isChannelRoute(invalid)).toBe(false);
+  }
+  const region = "buzz.region:example:tasks";
+  for (const invalid of [
+    { kind: "solo-draft", starred: false },
+    { kind: "solo-draft", starred: 1 },
+    { kind: "solo-draft", starred: true, project: "work" },
+    { kind: "solo-draft", starred: true, region },
+    {
+      kind: "solo-draft",
+      starred: true,
+      linked: "00000000-0000-4000-8000-000000000000",
+    },
+  ]) {
+    expect(soloDraft(invalid), JSON.stringify(invalid)).toBeUndefined();
     expect(isChannelRoute(invalid)).toBe(false);
   }
 });

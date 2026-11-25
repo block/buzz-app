@@ -307,7 +307,11 @@ export function SoloInventory({
   const current = () => !handoff || handoff.session === session;
   const newChat = (project?: string) => {
     if (!current()) return;
-    const destination = resumeSoloDraftTarget(scope, target, project);
+    const destination = resumeSoloDraftTarget(
+      scope,
+      target,
+      project ? { project } : {},
+    );
     const input = destination === target ? soloDraftInput() : null;
     if (input) {
       if (menuOpen) setDraftFocus(input);

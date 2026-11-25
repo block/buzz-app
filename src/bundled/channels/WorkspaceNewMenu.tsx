@@ -21,7 +21,7 @@ const icons = { chat: ChatCircleIcon, channel: HashIcon, dm: ChatsCircleIcon };
 
 export function WorkspaceNewMenu({
   scope,
-  workspace,
+  id,
   name,
   channelAvailable,
   dmAvailable,
@@ -29,14 +29,15 @@ export function WorkspaceNewMenu({
   choose,
 }: {
   scope: string;
-  workspace: string;
+  /** What the remembered action is saved under: a workspace, or Favorites. */
+  id: string;
   name: string;
   channelAvailable: boolean;
   dmAvailable: boolean;
   menuAnchor?: RefObject<HTMLButtonElement | null> | undefined;
   choose: (action: WorkspaceNewAction, trigger: HTMLButtonElement) => void;
 }) {
-  const key = `workspace-new-action:${workspace}`;
+  const key = `workspace-new-action:${id}`;
   const [action, setAction] = useState<WorkspaceNewAction>(() => {
     const saved = readView<unknown>(scope, key, "chat");
     return saved === "channel" || saved === "dm" ? saved : "chat";

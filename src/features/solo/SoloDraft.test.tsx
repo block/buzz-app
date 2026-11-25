@@ -1413,6 +1413,37 @@ it.each([false, true])(
   },
 );
 
+it("starts a chat begun from Favorites in its own draft and files it in Favorites", async () => {
+  const test = setup();
+  const setStar = vi.fn(async () => []);
+  Object.assign(test.session, {
+    sidebarPreferences: {
+      writable: true,
+      refresh: async () => {},
+      snapshot: () => ({
+        status: "ready",
+        data: { sections: [], assignments: {} },
+      }),
+      subscribe: () => () => {},
+      setStar,
+    },
+  });
+  writeView("test", "solo:starred:new-draft", taggedDraft("Favorite idea"));
+  const onStarted = vi.fn();
+  render(
+    <SoloDraft
+      session={test.session}
+      scope="test"
+      starred
+      onStarted={onStarted}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(setStar).toHaveBeenCalledWith(onStarted.mock.calls[0]?.[0], true);
+  expect(readView("test", "solo:starred:new-draft", null)).toBe("");
+});
+
 it("edits draft settings before creation, restores them, and applies Canvas once the chat starts", async () => {
   const test = setup();
   const order: string[] = [];

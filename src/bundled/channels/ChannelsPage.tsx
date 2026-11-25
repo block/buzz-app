@@ -3032,6 +3032,7 @@ function ChannelWorkspace({
             <LiveNewMessage
               intent={messageDraft?.intent}
               workspace={messageDraft?.workspace}
+              starred={messageDraft?.starred}
               host={{ relay, panels, navigation: navigator }}
               session={queries}
               scope={scope}
@@ -3056,6 +3057,7 @@ function ChannelWorkspace({
             <SoloDraft
               key={JSON.stringify([
                 draft.project,
+                draft.starred,
                 draft.agent,
                 draft.linked,
                 draft.region,
@@ -3076,6 +3078,7 @@ function ChannelWorkspace({
               }
               agent={draft.agent}
               projectId={draft.project}
+              starred={draft.starred}
               session={queries}
               scope={scope}
               extensions={extensions}

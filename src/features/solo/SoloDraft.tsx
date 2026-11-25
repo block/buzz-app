@@ -196,6 +196,7 @@ export function SoloDraft({
   onStarted,
   onFailed,
   projectId,
+  starred,
   extensions,
   focusRequest = 0,
   agent,
@@ -227,6 +228,8 @@ export function SoloDraft({
     | ((id: string, message: string, retry?: () => Promise<void>) => void)
     | undefined;
   projectId?: string | undefined;
+  /** File the started chat in Favorites. */
+  starred?: boolean | undefined;
 }) {
   const draftKey = region
     ? regionDraftKey(region, projectId, regionDraft?.key)
@@ -234,7 +237,9 @@ export function SoloDraft({
       ? linkedDraftKey(linkedId)
       : projectId
         ? `solo:project:${projectId}`
-        : "solo";
+        : starred
+          ? "solo:starred"
+          : "solo";
   const notify = useToastNotification();
   // Reconcile explicit route intent before the composer restores its pick.
   useState(() => prepareNamedAgentDraft(scope, `${draftKey}:new-draft`, agent));
@@ -534,6 +539,12 @@ export function SoloDraft({
           .assign(channelId, setup.projectId)
           .catch((reason) =>
             console.warn("Solo chat could not join its workspace", reason),
+          );
+      if (starred)
+        void session.sidebarPreferences
+          .setStar(channelId, true)
+          .catch((reason) =>
+            console.warn("Solo chat could not join Favorites", reason),
           );
       let starting: ReturnType<typeof session.channelWrites.start>;
       try {

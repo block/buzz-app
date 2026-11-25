@@ -166,11 +166,13 @@ function setup({ archived = [] as string[] } = {}) {
       notifyOutbox();
     }),
   };
+  const sidebarPreferences = { setStar: vi.fn(async () => []) };
   const session = {
     viewer: "f".repeat(64),
     directMessages,
     messages,
     outbox,
+    sidebarPreferences,
     channels: {
       list: () => channels,
       subscribeList: () => () => {},
@@ -243,9 +245,15 @@ function setup({ archived = [] as string[] } = {}) {
       signal: new AbortController().signal,
     }),
   });
-  const page = (visit?: PageNavigation, to?: string, at = Date.now()) => (
+  const page = (
+    visit?: PageNavigation,
+    to?: string,
+    at = Date.now(),
+    starred?: boolean,
+  ) => (
     <NewMessage
       intent={to ? { to, at } : undefined}
+      starred={starred}
       channels={channels.channels}
       host={
         {
@@ -267,8 +275,13 @@ function setup({ archived = [] as string[] } = {}) {
       onStarted={onStarted}
     />
   );
-  const mount = (visit?: PageNavigation, to?: string, at?: number) => {
-    const view = render(page(visit, to, at));
+  const mount = (
+    visit?: PageNavigation,
+    to?: string,
+    at?: number,
+    starred?: boolean,
+  ) => {
+    const view = render(page(visit, to, at, starred));
     return {
       ...view,
       readdress: (next: string, nextAt: number) =>
@@ -282,6 +295,7 @@ function setup({ archived = [] as string[] } = {}) {
     directMessages,
     messages,
     outbox,
+    sidebarPreferences,
     onOpenThread,
     onStarted,
     mount,
@@ -1047,6 +1061,19 @@ it("addresses the draft to the person it was opened from, creating the DM only o
     true,
   );
   expect(t.messages.send).toHaveBeenCalledOnce();
+});
+
+it("files a message begun from Favorites in Favorites once it is delivered", async () => {
+  const t = setup();
+  t.mount(undefined, undefined, undefined, true);
+  await t.user.click(await screen.findByRole("option", { name: "Person 1" }));
+  await t.user.type(screen.getByRole("textbox"), "Hello");
+  await t.user.click(send());
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.sidebarPreferences.setStar).toHaveBeenCalledExactlyOnceWith(
+    channel,
+    true,
+  );
 });
 
 it("takes each choice of a person once, so returning keeps later recipients", async () => {

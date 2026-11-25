@@ -1804,9 +1804,11 @@ it.each(["Laptop", "Team", "Favorites"])(
         expect(icon.querySelector("svg")).toBeInTheDocument();
         expect(icon).not.toHaveTextContent("★");
       }
-      if (fromGroup) {
+      if (fromGroup || fromStarred) {
         fireEvent.click(
-          within(header).getByRole("button", { name: "New options in Laptop" }),
+          within(header).getByRole("button", {
+            name: `New options in ${section}`,
+          }),
         );
         fireEvent.click(
           await screen.findByRole("menuitem", { name: "New channel" }),
@@ -1863,6 +1865,38 @@ it.each(["Laptop", "Team", "Favorites"])(
     }
   },
 );
+
+it.each([
+  ["New chat", { kind: "solo-draft", starred: true }],
+  ["New DM", { kind: "new-message", starred: true }],
+])("%s from Favorites starts it in Favorites", async (item, params) => {
+  const preferences = createSidebarPreferencesStore({
+    read: async () => ({
+      sections: [],
+      assignments: {},
+      starred: ["alpha"],
+      muted: [],
+    }),
+    available: true,
+    write: async () => ({ sections: [], assignments: {} }),
+    writeStar: async () => [],
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries);
+  h.session.directMessages = { ...h.session.directMessages, available: true };
+  try {
+    render(h.view("beta"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "New options in Favorites" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+    expect(h.navigator.open).toHaveBeenCalledWith(
+      expect.objectContaining({ route: { version: 1, params } }),
+    );
+  } finally {
+    preferences.dispose();
+  }
+});
 
 it("keeps Huddle rooms out of the sidebar before and after metadata arrives", async () => {
   const h = fixture();

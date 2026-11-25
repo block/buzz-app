@@ -328,8 +328,43 @@
   }
   /* Keep the modal portal outside the query container so its fixed backdrop
      still blocks the whole window, including the header. */
+  /* Beneath the titlebar, the workspace is one continuous sheet, edge to edge
+     and behind the sidebar. The conversation reads straight on it, and the
+     sidebar's cards sit on it in a quieter fill. */
   .shell-workspace {
     @apply relative flex min-h-0 min-w-0 flex-1;
+    --shell-sheet-radius: calc(var(--radius-container) + var(--space-1));
+    background: var(--surface-panel);
+    border-radius: var(--shell-sheet-radius) var(--shell-sheet-radius) 0 0;
+    padding-block-start: var(--space-panel-gap);
+  }
+  /* Sidebar cards on the sheet repaint `--surface-panel`, so their own fills,
+     title actions and nested controls take the card's fill too. */
+  .shell-workspace :where([data-sidebar-cards] [data-sidebar-card]) {
+    --surface-panel: var(--surface-sheet-card);
+  }
+  /* A docked side panel is a second pane on the same sheet, not a card: no gap,
+     corners or contour, just a hairline between it and the conversation.
+     Narrow windows keep the dock's floating overlay (Panels.module.css). */
+  @media (min-width: 62.5625rem) {
+    .shell-workspace
+      [data-panel-cards]:has(
+        > [data-panel-dock]:not([hidden], [data-closing])
+      ) {
+      column-gap: 0;
+    }
+    .shell-workspace [data-panel-cards] > [data-panel-dock] {
+      border-inline-start: 1px solid var(--border-standard);
+    }
+    .shell-workspace [data-panel-cards] > [data-panel-dock] .panel {
+      border-color: transparent;
+      border-radius: 0;
+      box-shadow: none;
+    }
+  }
+  /* The conversation sits on the sheet with no line beneath its header. */
+  .shell-workspace .panel-header {
+    border-block-end-color: transparent;
   }
   .shell-dialog-frame {
     position: absolute;

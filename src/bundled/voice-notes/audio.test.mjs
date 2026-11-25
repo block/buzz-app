@@ -12,6 +12,7 @@ import {
   summarizeWaveform,
   VOICE_NOTE_MAX_DURATION_SECONDS,
   voiceNoteBarHeight,
+  voiceNoteDisplayPeaks,
   waveformPeaks,
   WAVEFORM_SUMMARY_RESOLUTION,
 } from "./audio.ts";
@@ -192,4 +193,12 @@ test("resampling the summary matches pooling the raw samples", () => {
     Array.from(waveformPeaks(summary, 2)),
     Array.from(waveformPeaks(samples, 2)),
   );
+});
+
+test("notes without recorded peaks have a stable pattern specific to the clip", () => {
+  const fallback = voiceNoteDisplayPeaks("one.mp4", undefined, 38);
+  assert.ok(new Set(fallback).size > 1);
+  assert.deepEqual(voiceNoteDisplayPeaks("one.mp4", [], 38), fallback);
+  assert.notDeepEqual(voiceNoteDisplayPeaks("two.mp4", [], 38), fallback);
+  assert.deepEqual(voiceNoteDisplayPeaks("one.mp4", [0, 100], 2), [0.12, 1]);
 });

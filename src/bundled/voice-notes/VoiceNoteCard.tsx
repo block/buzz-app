@@ -19,7 +19,7 @@ import {
   formatVoiceNoteDuration,
   nextVoiceNotePlaybackRate,
   voiceNoteBarHeight,
-  waveformPeaks,
+  voiceNoteDisplayPeaks,
 } from "./audio";
 import styles from "./VoiceNotes.module.css";
 
@@ -93,9 +93,7 @@ function Player({
       setLoading(false);
     },
   );
-  const peaks = waveform?.length
-    ? waveformPeaks(Float32Array.from(waveform.slice(0, 100)), count)
-    : Array.from({ length: count }, () => 0);
+  const peaks = voiceNoteDisplayPeaks(downloadSource, waveform, count);
   useEffect(() => {
     const element = track.current;
     if (!element) return;

@@ -50,7 +50,7 @@ test("Notifications keeps settings separated and button labels contained at supp
     await expect(
       section.getByRole("button", { name: "Allow notifications" }),
     ).toBeVisible();
-    await expect(section.getByRole("switch")).toHaveCount(8);
+    await expect(section.getByRole("switch")).toHaveCount(9);
     // The per-event sound controls must be present for the geometry sweep.
     for (const name of [
       "Direct messages",

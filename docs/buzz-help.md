@@ -191,6 +191,24 @@ if that desktop app is up and running.
   progress, so every local agent's next message starts it with the saved list.
   A device-list `ANTHROPIC_API_KEY` doesn't replace your own Claude setup.
   On Windows, the Anthropic key is saved only as `ANTHROPIC_API_KEY`.
+- **Settings → Agent details → MCP servers** gives a local Claude Code, Codex
+  or Goose agent its own MCP servers: a command it runs, or an HTTP URL. The
+  list syncs with the agent's settings to your other devices; the values of
+  its environment variables and headers stay in this computer's credential
+  store, and a server whose value isn't saved here says so. Each change is
+  signed by you, the agent's owner, and a device starts only a list you
+  signed, so another member of the agent's config channel can't add a
+  command to it. **Approved** shows when you signed the list in use.
+  Protected agents and security reviews run no MCP servers but Buzz's own.
+- The servers in a harness's own config, such as `~/.codex/config.toml` or
+  goose's extensions, run for its agents too and are listed with a switch.
+  Turning one off keeps the agent from using it: Claude Code denies its tools
+  and Codex and Goose don't load it. On Goose, the agent can turn it back on
+  with goose's Extension Manager. If a server you add has the same name as one
+  in the harness's config, the harness's wins and Buzz asks you to rename
+  yours.
+- A Goose agent starts a new session when its MCP servers or their values
+  change, since goose keeps a session's servers as it started them.
 - Each harness reads its own variable names: Codex uses its own sign-in, not
   `OPENAI_API_KEY`, and a credential under a different name can still outrank
   the one an agent's list sets.

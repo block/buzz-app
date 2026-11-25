@@ -312,7 +312,12 @@ export function fakeSpawn(
           const extensions = (meta?.enabledExtensions ?? []) as {
             server?: { url?: string };
           }[];
-          const url = extensions.find((item) => item.server?.url)?.server?.url;
+          // Without the allowlist, goose takes client servers from mcpServers.
+          const url =
+            extensions.find((item) => item.server?.url)?.server?.url ??
+            (
+              (params.mcpServers ?? []) as { name?: string; url?: string }[]
+            ).find((item) => item.name === "buzz")?.url;
           if (url) declared.set(sessionId, url);
           return reply(id, {
             sessionId,
@@ -511,6 +516,10 @@ export function fakeSpawn(
           return reply(id, {});
         case "session/close":
           fake.closed.push(sessionId);
+          return reply(id, {});
+        case "_goose/unstable/config/extensions/list":
+          return reply(id, { extensions: [] });
+        case "_goose/unstable/session/extensions/remove":
           return reply(id, {});
         case "session/load":
           if (fake.loadError)

@@ -13,6 +13,7 @@ import type { AcpProcess } from "./process";
 import type { AcpSession, TurnRoute } from "./session";
 import { codeOf, errorMessage } from "./steps";
 import type {
+  AcpMcp,
   ActivityReceipt,
   Choice,
   ResolveDirectory,
@@ -161,6 +162,7 @@ export type Launch = Readonly<{
   /** The agent's working directory, absolute or `~/…`. */
   workspace: string;
   systemPrompt: string;
+  mcp?: AcpMcp;
 }>;
 
 export type SessionsOptions = Readonly<{
@@ -198,6 +200,8 @@ export type SessionsOptions = Readonly<{
     title?: string,
     conversation?: string,
     wake?: string,
+    /** The process it opened in. */
+    process?: AcpProcess,
   ): void;
   /** The tags a session opens with, for the conversation it opens for:
    * none for a one-off turn. */
@@ -1068,6 +1072,7 @@ export class AgentSessions {
         ...(named ? { named } : {}),
         tools: this.options.tools,
         choice: this.options.choice,
+        ...(launch.mcp ? { mcp: launch.mcp } : {}),
       });
     let session: AcpSession;
     try {
@@ -1134,6 +1139,7 @@ export class AgentSessions {
       title,
       this.once.has(key) ? undefined : key,
       this.onceLabels.get(key),
+      live.process,
     );
     // Removed meanwhile: the callers are gone, and `shutdown` waits for this.
     if (this.disposed) void this.close(live);

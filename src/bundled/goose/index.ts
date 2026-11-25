@@ -23,7 +23,7 @@ import {
   recommendedRun,
 } from "../../features/agents/recommended";
 import { activeRoute, routeLabel } from "../../features/agents/model-routes";
-import { REQUEST_TIMEOUT_MS } from "./goose";
+import { GOOSE_RESERVED, REQUEST_TIMEOUT_MS } from "./goose";
 import { gooseRun } from "./run";
 import { readModelSettings } from "../../features/agents/model-settings";
 import { explainTurn, GooseSetup, readNoProxy, REVIEW_REFUSED } from "./setup";
@@ -282,5 +282,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
     models: (agent) => setup.picks(config(agent.config)),
     recommends: offered,
     ...gooseRun(runtime),
+    mcpServers: {
+      transports: ["stdio", "http"],
+      reserved: GOOSE_RESERVED,
+      inherited: (agent) =>
+        agent.protection ? Promise.resolve([]) : setup.inheritedMcp(),
+    },
   });
 };

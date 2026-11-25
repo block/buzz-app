@@ -3,6 +3,7 @@ import {
   snapshotJSON,
   writeJSON,
 } from "../../features/agent-protection/json-stream";
+import { claudeServers, type McpList } from "../../features/agents/mcp-servers";
 import { CLAUDE_HOOK_EVENTS, type ClaudeHook } from "./hooks";
 import {
   type Attribution,
@@ -93,6 +94,9 @@ export type ClaudeLaunch = Readonly<{
   hook?: ClaudeHook;
   /** The agent it works for: the `buzz` it runs acts as that agent. */
   agent?: Readonly<{ pubkey: string; relay: string }>;
+  /** The agent's own MCP servers, and the names of servers from Claude's own
+   * config whose tools it is denied. A security review takes neither. */
+  mcp?: McpList;
 }>;
 
 /** Answers the in-process server's JSON-RPC for the conversation a process
@@ -336,6 +340,7 @@ export class ClaudeProcess {
     let claude: ClaudeProcess | undefined;
     const early: string[] = [];
     const earlyErrors: string[] = [];
+    const mcp = security || launch.discovery ? undefined : launch.mcp;
     const process = await spawn(pinned ?? "claude", {
       args: [
         "--output-format",
@@ -391,11 +396,19 @@ export class ClaudeProcess {
               "--mcp-config",
               JSON.stringify({
                 mcpServers: {
+                  ...(mcp && claudeServers(mcp)),
                   // Its tools load on search, but for those it marks with
                   // `_meta["anthropic/alwaysLoad"]`.
                   [TOOL_SERVER]: { type: "sdk", name: TOOL_SERVER },
                 },
               }),
+            ]
+          : []),
+        // An inherited server turned off still starts, without its tools.
+        ...(mcp?.disabledInherited.length
+          ? [
+              "--disallowedTools",
+              mcp.disabledInherited.map((n) => `mcp__${n}`).join(","),
             ]
           : []),
       ],

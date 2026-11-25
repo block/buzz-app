@@ -1,13 +1,16 @@
 //! Environment variables local agents start with: one list for every agent on
 //! this device, and one for each agent. Native code owns them: each list is
 //! kept in the OS credential store under Buzz's own item, never synced, and no
-//! command returns a value. They are added to the processes of Buzz's harnesses
+//! command returns a value but an agent's MCP values (below). They are added to the processes of Buzz's harnesses
 //! that ask for them and run a local, unprotected agent (a bundled plugin's
 //! process declared `agentEnv`, `for_spawn`): the device list, then the named
 //! agent's own, so its variable wins, after the login shell's and before the
 //! harness's own, so a harness's variable wins. A saved list reaches processes
 //! started after the save; running ones keep the list they started with until
 //! the agent restarts.
+//!
+//! An agent's MCP server values are a third list (`MCP_SERVICE`), added to
+//! its own for the same processes under Buzz-chosen names.
 //!
 //! Like the Claude key (`claude_key.rs`), a value reaches every command the
 //! agent runs, and this trusts installed plugin code.
@@ -36,6 +39,23 @@ const AGENT_SERVICE: &str = if cfg!(debug_assertions) {
 } else {
     "xyz.block.buzz.desktop.agent-env.agent"
 };
+/// Each agent's MCP server values, under its pubkey as the account. Kept
+/// apart from its own list: they reach a process under Buzz's own names
+/// (`MCP_PREFIX`), and a harness that sends them in its protocol reads them
+/// with `agent_mcp_env_values`, the one command that returns values.
+#[cfg_attr(test, allow(dead_code))]
+const MCP_SERVICE: &str = if cfg!(debug_assertions) {
+    "xyz.block.buzz.desktop.agent-env.mcp.debug"
+} else {
+    "xyz.block.buzz.desktop.agent-env.mcp"
+};
+/// The key of an agent's MCP values among the lists.
+fn mcp_key(pubkey: &str) -> String {
+    format!("mcp:{pubkey}")
+}
+/// Every MCP value's name starts with it, so none is a variable the agent
+/// or its harness reads for itself.
+const MCP_PREFIX: &str = "BUZZMCP_";
 /// The Windows Credential Manager's limit on a stored password: its UTF-16
 /// bytes. Applied everywhere, so a list saved on one platform fits on all.
 const SIZE_LIMIT: usize = 2560;
@@ -485,7 +505,11 @@ impl AgentEnvs {
     pub(crate) async fn for_process(&self, agent: Option<&str>) -> Lists {
         let device = self.list(DEVICE).for_process().await;
         let own = match agent.filter(|pubkey| agent_key(pubkey).is_ok()) {
-            Some(pubkey) => self.list(pubkey).for_process().await,
+            Some(pubkey) => {
+                let mut own = self.list(pubkey).for_process().await;
+                own.extend(self.list(&mcp_key(pubkey)).for_process().await);
+                own
+            }
             None => Vec::new(),
         };
         Lists { device, own }
@@ -532,19 +556,49 @@ impl AgentEnvs {
         }
         self.list(pubkey).set(rows).await
     }
-    /// Deletes the agent's list, which is done when there is none. Its read
-    /// copy goes only once the store item has.
+    /// `agent`'s MCP server value names.
+    pub(crate) async fn mcp_status(&self, pubkey: &str) -> Result<Status, String> {
+        agent_key(pubkey)?;
+        self.list(&mcp_key(pubkey)).status().await
+    }
+    /// `agent`'s MCP server values, for a harness that sends them in its
+    /// protocol rather than its process environment.
+    pub(crate) async fn mcp_values(&self, pubkey: &str) -> Result<List, String> {
+        agent_key(pubkey)?;
+        self.list(&mcp_key(pubkey)).load().await
+    }
+    /// Saves `agent`'s MCP server values, as `set`.
+    pub(crate) async fn mcp_set(
+        &self,
+        pubkey: &str,
+        rows: Vec<Row>,
+        eligible: impl FnOnce() -> Result<bool, String>,
+    ) -> Result<(), String> {
+        agent_key(pubkey)?;
+        if let Some(row) = rows.iter().find(|row| !row.name.starts_with(MCP_PREFIX)) {
+            return Err(format!("{} isn't an MCP server value", row.name));
+        }
+        let _turn = self.turn.lock().await;
+        if !eligible()? {
+            return Err("This agent can't have MCP servers of its own".into());
+        }
+        self.list(&mcp_key(pubkey)).set(rows).await
+    }
+    /// Deletes the agent's lists, which is done when there are none. Their
+    /// read copies go only once the store items have.
     pub(crate) async fn forget(&self, pubkey: &str) -> Result<(), String> {
         agent_key(pubkey)?;
         let _turn = self.turn.lock().await;
-        let store = Arc::new((self.open)(pubkey));
-        tokio::task::spawn_blocking(move || store.delete())
-            .await
-            .map_err(|_| "Secure storage is unavailable".to_string())??;
-        self.lists
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(pubkey);
+        for key in [pubkey.to_owned(), mcp_key(pubkey)] {
+            let store = Arc::new((self.open)(&key));
+            tokio::task::spawn_blocking(move || store.delete())
+                .await
+                .map_err(|_| "Secure storage is unavailable".to_string())??;
+            self.lists
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&key);
+        }
         Ok(())
     }
 }
@@ -558,22 +612,24 @@ pub(crate) fn forget_registry(
     for agent in agents.list().map_err(|error| error.to_string())? {
         if agent_key(&agent.pubkey).is_ok() {
             open(&agent.pubkey).delete()?;
+            open(&mcp_key(&agent.pubkey)).delete()?;
         }
     }
     Ok(())
 }
 
-/// The OS credential store item for `key`: the device list's, or an agent's
-/// under its pubkey.
+/// The OS credential store item for `key`: the device list's, an agent's
+/// MCP values (`mcp_key`), or an agent's own under its pubkey.
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn os_store(key: &str) -> Box<dyn KeyStore> {
+    let (service, account) = match key.strip_prefix("mcp:") {
+        Some(pubkey) => (MCP_SERVICE, pubkey),
+        None if key == DEVICE => (DEVICE_SERVICE, key),
+        None => (AGENT_SERVICE, key),
+    };
     Box::new(OsStore {
-        service: if key == DEVICE {
-            DEVICE_SERVICE
-        } else {
-            AGENT_SERVICE
-        },
-        account: key.to_owned(),
+        service,
+        account: account.to_owned(),
     })
 }
 
@@ -650,6 +706,48 @@ pub(crate) async fn agent_env_set(
     let agents = agents.agents()?;
     let pubkey = agent.clone();
     envs.set(&agent, rows, move || {
+        agents
+            .list()
+            .map(|rows| eligible(&rows, &pubkey))
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_mcp_env_status(
+    envs: tauri::State<'_, AgentEnvs>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+    agent: String,
+) -> Result<Status, String> {
+    if !eligible_here(&agents, &agent).await? {
+        return Err("This agent can't have MCP servers of its own".into());
+    }
+    envs.mcp_status(&agent).await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_mcp_env_values(
+    envs: tauri::State<'_, AgentEnvs>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+    agent: String,
+) -> Result<List, String> {
+    if !eligible_here(&agents, &agent).await? {
+        return Err("This agent can't have MCP servers of its own".into());
+    }
+    envs.mcp_values(&agent).await
+}
+
+#[tauri::command]
+pub(crate) async fn agent_mcp_env_set(
+    envs: tauri::State<'_, AgentEnvs>,
+    agents: tauri::State<'_, crate::app_agents::AppAgentHost>,
+    agent: String,
+    rows: Vec<Row>,
+) -> Result<(), String> {
+    let agents = agents.agents()?;
+    let pubkey = agent.clone();
+    envs.mcp_set(&agent, rows, move || {
         agents
             .list()
             .map(|rows| eligible(&rows, &pubkey))

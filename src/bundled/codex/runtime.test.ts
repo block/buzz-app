@@ -1049,11 +1049,12 @@ it("hands over promptly and runs conversations independently on one server", asy
     },
   });
   expect((started.config as Record<string, unknown>).mcp_servers).toEqual({
-    "company.tools": { enabled: false, command: "secret-tool" },
+    // An ordinary agent runs the owner's own servers as configured.
+    "company.tools": { enabled: true, command: "secret-tool" },
   });
   expect(started.config).toMatchObject({
     web_search: "disabled",
-    mcp_servers: { "company.tools": { enabled: false } },
+    mcp_servers: { "company.tools": { enabled: true } },
     "features.apps": false,
     "features.plugins": false,
   });
@@ -1097,10 +1098,10 @@ it("leaves Codex's Apps and plugins to its configuration only for an agent that 
   const { config } = started;
   expect(config).not.toHaveProperty("features.apps");
   expect(config).not.toHaveProperty("features.plugins");
-  // Everything else inherited stays off.
+  // Web search stays off; the owner's own servers run.
   expect(config).toMatchObject({
     web_search: "disabled",
-    mcp_servers: { "company.tools": { enabled: false } },
+    mcp_servers: { "company.tools": { enabled: true } },
   });
   f.complete(0, "DONE");
   await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));

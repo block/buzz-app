@@ -30,6 +30,7 @@ import { activeRoute, routeLabel } from "../../features/agents/model-routes";
 import type { ClaudeConnection } from "./ClaudeSettings";
 import { readUsage } from "./usage";
 import { usageOn } from "../../features/agents/standalone-sessions";
+import { claudeInherited } from "./inherited";
 
 export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
@@ -416,6 +417,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
       },
     ],
     // A mention during the first download waits for it, within its deadline.
+    mcpServers: {
+      transports: ["stdio", "http"],
+      inherited: (agent) =>
+        agent.protection ? Promise.resolve([]) : claudeInherited(readFile),
+    },
     ...claudeRun(runtime, async (signal, agent) => {
       // A remote target runs Recommended on its own default.
       if (agent && (await agents.inspectExecution(agent.key))) return;

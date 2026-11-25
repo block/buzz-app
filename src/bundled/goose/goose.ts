@@ -77,6 +77,38 @@ const databricks = (): Record<string, string> => {
   return host ? { DATABRICKS_HOST: host } : {};
 };
 
+/** Names goose gives its own built-in extensions (`PLATFORM_EXTENSIONS` and
+ * its default `developer` in v1.60.2), which an agent's server can't take. */
+export const GOOSE_RESERVED = [
+  "analyze",
+  "todo",
+  "apps",
+  "chatrecall",
+  "extensionmanager",
+  "scheduler",
+  "summon",
+  "summarize",
+  "code_execution",
+  "developer",
+  "tom",
+] as const;
+
+/** The extensions in goose's own config, which `enabled` says it loads. */
+export async function configExtensions(
+  goose: Pick<AcpProcess, "request">,
+): Promise<readonly Readonly<{ configKey: string; enabled: boolean }>[]> {
+  const { extensions } = (await goose.request(
+    "_goose/unstable/config/extensions/list",
+    {},
+    REQUEST_TIMEOUT_MS,
+  )) as { extensions?: { configKey?: unknown; enabled?: unknown }[] };
+  return (extensions ?? []).flatMap((e) =>
+    typeof e.configKey === "string"
+      ? [{ configKey: e.configKey, enabled: e.enabled === true }]
+      : [],
+  );
+}
+
 export const GOOSE: AcpHooks = {
   label: "goose",
   program: "goose",
@@ -100,23 +132,41 @@ export const GOOSE: AcpHooks = {
         },
         () => true,
       ),
-  newSessionMeta: (buzz, { title, provider, platform, tags }) => ({
-    // The session's whole tool set: goose's developer tools and the Buzz
-    // tools, so extensions in the owner's goose config and plugins never load
-    // into a Buzz agent. The pinned Goose persists this list, including the
-    // Buzz MCP token; aaif-goose/goose#12908 is not in v1.60.2. Keep the entry
+  newSessionMeta: (buzz, { title, provider, platform, tags, strict }) => ({
+    // A strict session's whole tool set: goose's developer tools and the
+    // Buzz tools, so extensions in the owner's goose config and plugins never
+    // load into it. The pinned Goose persists this list, including the Buzz
+    // MCP token; aaif-goose/goose#12908 is not in v1.60.2. Keep the entry
     // until upstream supports client MCP servers alongside this allowlist.
     // The non-persistence acceptance test remains a known failure.
     // Mesh sessions pass a narrower `platform` set (see mesh-compute).
-    enabledExtensions: buzz
-      ? [...(platform ?? [DEVELOPER]), { type: "mcp", server: buzz }]
-      : [],
+    // Any other session loads goose's own extensions, as goose itself does,
+    // with the agent's servers and the Buzz tools beside them.
+    ...(strict || platform
+      ? {
+          enabledExtensions: buzz
+            ? [...(platform ?? [DEVELOPER]), { type: "mcp", server: buzz }]
+            : [],
+        }
+      : {}),
     ...(title ? { sessionTitle: title } : {}),
     // On the provider's default model, whatever goose's config holds.
     ...(provider ? { provider } : {}),
     // Indexed by goose, so `session/list` finds the session by them.
     ...(tags ? { tags } : {}),
   }),
+  inheritedServers: async (goose) => [
+    ...GOOSE_RESERVED,
+    ...(await configExtensions(goose)).map((e) => e.configKey),
+  ],
+  disableInherited: async (goose, sessionId, names) => {
+    for (const extensionKey of names)
+      await goose.request(
+        "_goose/unstable/session/extensions/remove",
+        { sessionId, extensionKey },
+        REQUEST_TIMEOUT_MS,
+      );
+  },
   // Appended under goose's own prompt, which carries each extension's
   // instructions. `set` replaces that prompt and renders the text as a
   // template, so ours goes in raw.

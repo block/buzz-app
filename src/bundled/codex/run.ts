@@ -26,6 +26,7 @@ export const codexRun = (
   | "runOnce"
   | "timeoutMs"
   | "syncedSettings"
+  | "mcpServers"
   | "resumes"
   | "readFile"
 > => ({
@@ -51,6 +52,10 @@ export const codexRun = (
   },
   readFile: (agent, path, signal) => runtime.workspaceFile(agent, path, signal),
   timeoutMs: HANDOVER_MS,
+  mcpServers: {
+    transports: ["stdio", "http"],
+    inherited: (agent) => runtime.inheritedMcp(agent),
+  },
   syncedSettings: {
     schema: syncedSettingsSchema,
     withSynced: withSyncedSettings,

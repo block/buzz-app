@@ -1,4 +1,7 @@
 import { readSubthread } from "../../features/relay/subthread";
+import { mcpGeneration, startList } from "../../features/agents/mcp-servers";
+import { claudeInherited } from "./inherited";
+
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
   ProjectSource,
@@ -147,6 +150,10 @@ import {
 import { sessionPrompts } from "../../features/agents/session-prompts";
 import { standaloneSessions } from "../../features/agents/standalone-sessions";
 import { withWakes } from "../../features/agents/session-usage";
+
+/** The signed MCP list in a config, as it changes. */
+const mcpOf = (config: object) =>
+  (config as { mcpServers?: { id?: string } }).mcpServers?.id;
 
 /** The effort levels Claude lists, which a session can switch to between
  * turns. Claude runs `max` as `xhigh` in a stream-json session, so it is not
@@ -357,7 +364,10 @@ export class ClaudeRuntime {
   );
 
   constructor(
-    private readonly host: Pick<Host, "spawn" | "resolveDirectory">,
+    private readonly host: Pick<
+      Host,
+      "spawn" | "resolveDirectory" | "readFile"
+    >,
     /** What each agent's turns read of its community, while it can be read. */
     private readonly reads: (key: AgentKey) => AgentReads | undefined,
     /** The agent's `core` memory as the host keeps it (`Agents.core`). */
@@ -2358,7 +2368,7 @@ export class ClaudeRuntime {
         ? {
             spare: {
               take: async (where: Parameters<Spare["take"]>[0]) =>
-                (await hasOwnEnv(agent)) === false
+                (await hasOwnEnv(agent)) === false && !mcpOf(entry.config)
                   ? this.spare.take(where)
                   : undefined,
             },
@@ -2426,6 +2436,8 @@ export class ClaudeRuntime {
           entry.config.workspace,
           entry.config.instructions,
           entry.config.scope,
+          mcpOf(entry.config),
+          mcpGeneration(pubkeyOf(agent)),
           entry.team,
           entry.name,
           entry.memory,
@@ -2481,6 +2493,17 @@ export class ClaudeRuntime {
           ...(!this.target && directories ? { directories } : {}),
           ...(handle
             ? { agent: { pubkey: handle.pubkey, relay: handle.relay } }
+            : {}),
+          ...(handle && !gate
+            ? {
+                mcp: startList(
+                  entry.config,
+                  handle,
+                  (
+                    await claudeInherited(this.host.readFile?.bind(this.host))
+                  ).map((i) => i.name),
+                ),
+              }
             : {}),
           hook: (session, event, input) =>
             this.hook(agent, session, event, input),

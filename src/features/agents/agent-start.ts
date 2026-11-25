@@ -117,10 +117,17 @@ export function resolveStart<C extends object>(input: StartInput<C>): Start<C> {
       ? { ...config, preset: PRESET }
       : offRecommended(config);
     // So are plugin notes; a local agent's stay without them.
-    const { pluginNotes: _, ...rest } = config as { pluginNotes?: unknown };
-    config = (
-      read.pluginNotes ? { ...rest, pluginNotes: read.pluginNotes } : rest
-    ) as typeof config;
+    // So is its MCP server list, which a launch checks against the owner.
+    const {
+      pluginNotes: _,
+      mcpServers: __,
+      ...rest
+    } = config as { pluginNotes?: unknown; mcpServers?: unknown };
+    config = {
+      ...rest,
+      ...(read.pluginNotes && { pluginNotes: read.pluginNotes }),
+      ...(read.mcpServers !== undefined && { mcpServers: read.mcpServers }),
+    } as typeof config;
     applied = read.settings;
     revisions.push(entry.head.id);
   }

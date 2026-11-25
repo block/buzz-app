@@ -141,6 +141,14 @@ import {
   AgentSessions,
   localSessions,
 } from "./sessions";
+import type { AcpMcp } from "../../features/agent-harness/acp/types";
+import {
+  acpServers,
+  mcpGeneration,
+  mcpValues,
+  startList,
+} from "../../features/agents/mcp-servers";
+import { mcpPrint, savePrint, startedOn } from "./mcp-print";
 
 export type Config = Readonly<{
   /** A model the provider offers; empty uses the provider's default, or the
@@ -1370,6 +1378,15 @@ export class GooseRuntime {
     // it, as an ordinary message is.
     let shown: number | undefined;
     let systemPrompt = "";
+    // The MCP setup this turn's goose would start a session on.
+    let printed: string | undefined;
+    const print = async (goose: GooseProcess) =>
+      (printed = await mcpPrint(
+        goose,
+        pubkeyOf(agent),
+        entry.config,
+        !!(entry.protected || entry.handle?.protection),
+      ));
     const { activity } = turn;
     const done = forwardedTurn(
       {
@@ -1382,8 +1399,8 @@ export class GooseRuntime {
               ? AbortSignal.any([signal, turn.signal])
               : signal,
           ),
-        start: async (env, onProcess) =>
-          GooseProcess.start(desktop.spawn, {
+        start: async (env, onProcess) => {
+          const goose = await GooseProcess.start(desktop.spawn, {
             cwd: await workspace(),
             env,
             // Its Buzz tools' server counts in the pool sessions share.
@@ -1395,7 +1412,11 @@ export class GooseRuntime {
               agent: { pubkey: entry.handle.pubkey, relay: entry.handle.relay },
               secrets: ["agent-env"],
             }),
-          }),
+          });
+          // Unread, no session resumes and a new one keeps no print.
+          await print(goose).catch(() => undefined);
+          return goose;
+        },
         launch: async () => {
           // A conversation given its own folder runs there.
           const launched = await this.launch(
@@ -1407,6 +1428,7 @@ export class GooseRuntime {
           return {
             cwd: await absolute(desktop.resolveDirectory, launched.workspace),
             systemPrompt,
+            mcp: launched.mcp,
           };
         },
         tools: entry.tools,
@@ -1415,7 +1437,15 @@ export class GooseRuntime {
         conversation: key,
         tags: sessionTags(agent, held ? key : undefined),
         ...(turn.title ? { title: turn.title } : {}),
-        ...(held?.saved ? { load: held.saved } : {}),
+        ...(held?.saved
+          ? {
+              load: held.saved,
+              resumes: async () =>
+                !!printed &&
+                !!held.saved &&
+                startedOn(this.storage, held.saved, printed),
+            }
+          : {}),
         prompt: async (fresh) => {
           const prompt = await turn.prompt(fresh);
           shown = prompt?.shown;
@@ -1425,6 +1455,7 @@ export class GooseRuntime {
         // Kept as an ordinary new session's is, for the Prompts tab.
         started: (id) => {
           running(id);
+          if (printed) savePrint(this.storage, id, printed);
           void this.prompts(agent).save(
             id,
             [{ label: "", text: systemPrompt }],
@@ -1853,7 +1884,18 @@ export class GooseRuntime {
       tools,
       process: { get },
       store: localSessions(this.storage, agent),
-      started: (session, text, title, conversation, wake) => {
+      started: (session, text, title, conversation, wake, goose) => {
+        // What a forwarded turn checks before it resumes this session.
+        if (goose)
+          void mcpPrint(
+            goose,
+            pubkeyOf(agent),
+            entry.config,
+            !!(entry.protected || entry.handle?.protection),
+          ).then(
+            (print) => savePrint(this.storage, session, print),
+            () => undefined,
+          );
         void this.prompts(agent).save(session, [{ label: "", text }], {
           at: Date.now(),
           title: title ?? "",
@@ -1881,6 +1923,9 @@ export class GooseRuntime {
           entry.config.provider.trim() ? 0 : this.defaultsRevision,
           entry.config.workspace,
           entry.config.scope,
+          // A session starts its MCP servers once: a new list needs a new one.
+          (entry.config as { mcpServers?: { id?: string } }).mcpServers?.id,
+          mcpGeneration(pubkeyOf(agent)),
           addedKey(this.added()),
         ]),
       launch: (conversation) => this.launch(agent, entry, conversation),
@@ -1913,6 +1958,7 @@ export class GooseRuntime {
       : workspace;
     return {
       workspace: cwd,
+      mcp: await this.mcp(entry),
       systemPrompt: systemPrompt({
         scope,
         cwd,
@@ -1930,6 +1976,17 @@ export class GooseRuntime {
         place: placeOf(conversation),
       }),
     };
+  }
+
+  /** The agent's MCP servers for a new session, values included. A
+   * protected agent's sessions are strict: only the Buzz tools. */
+  private async mcp(entry: Entry): Promise<AcpMcp> {
+    const handle = entry.handle;
+    if (entry.protected || handle?.protection || !handle)
+      return { servers: [], disabledInherited: [], strict: true };
+    const list = startList(entry.config, handle);
+    const values = list.servers.length ? await mcpValues(handle.pubkey) : {};
+    return { ...list, servers: acpServers(list, values) };
   }
 
   /** The agent's memory, or only entry `slug`, as the owner's reads of its

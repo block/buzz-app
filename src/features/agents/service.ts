@@ -1330,6 +1330,15 @@ export type AgentType<Config = unknown> = {
   ): Promise<readonly SessionUsage[]>;
   /** The settings that sync across devices and how they merge into this
    * device's config. Without it, the type's settings never sync. */
+  /** Runs an owner-approved list of MCP servers for each agent, by these
+   * transports; `inherited` names the servers its own config has, which
+   * the owner can turn off but not edit. Without it, the type has none. */
+  mcpServers?: Readonly<{
+    transports: readonly McpTransport[];
+    inherited?(agent: Agent): Promise<readonly McpInherited[]>;
+    /** Names the harness keeps for its own built-in tools. */
+    reserved?: readonly string[];
+  }>;
   syncedSettings?: Readonly<{
     schema: SettingsSchema;
     withSynced(
@@ -2120,6 +2129,9 @@ export type Agents = {
   /** Saves the owner's change. Its name and config change in every
    * community the agent is in; its picture and attention only in this one. */
   save(agent: AgentKey, change: AgentChange): Promise<void>;
+  /** Signs `list` as the owner's approval of the agent's MCP servers and
+   * saves it with the agent's settings, which sync it. */
+  approveMcp?(agent: AgentKey, list: McpList): Promise<void>;
   /** The History of each of the agent's synced config sides; undefined while
    * none syncs here. */
   configHistory(agent: AgentKey): ConfigHistory | undefined;
@@ -2487,6 +2499,13 @@ export function teamPrompt(
 }
 export { fromOwner, mentionAuthority } from "./owner-attestation";
 import type { MentionRefusal } from "./owner-attestation";
+import {
+  approvalTemplate,
+  type McpInherited,
+  type McpList,
+  type McpTransport,
+  nextSeq,
+} from "./mcp-servers";
 
 /** What Agents needs of the communities: the viewer, the selected one, and
  * a connection to any joined one without selecting it. */
@@ -6554,15 +6573,45 @@ export class AgentsService extends Service implements Agents {
   ) {
     if (!change.config || typeof change.config !== "object")
       return this.saveAs(key, change, onRevision);
-    const { pluginNotes: _, ...config } = change.config as {
-      pluginNotes?: unknown;
-    };
-    const notes = notesOf(this.liveAgent(key)?.config);
+    // Its MCP servers change only through `approveMcp` too.
+    const {
+      pluginNotes: _,
+      mcpServers: __,
+      ...config
+    } = change.config as { pluginNotes?: unknown; mcpServers?: unknown };
+    const live = this.liveAgent(key)?.config as
+      | { mcpServers?: unknown }
+      | undefined;
+    const notes = notesOf(live);
     return this.saveAs(
       key,
-      { ...change, config: notes ? { ...config, pluginNotes: notes } : config },
+      {
+        ...change,
+        config: {
+          ...config,
+          ...(notes && { pluginNotes: notes }),
+          ...(live?.mcpServers !== undefined && {
+            mcpServers: live.mcpServers,
+          }),
+        },
+      },
       onRevision,
     );
+  }
+  async approveMcp(key: AgentKey, list: McpList) {
+    const agent = this.liveAgent(key);
+    if (!agent) throw new Error("This agent isn't here");
+    const home = this.communityConfigs.get(this.configHome(agent));
+    if (!home?.sign)
+      throw new Error("MCP servers can be set once this agent's config syncs");
+    const current = (agent.config as { mcpServers?: unknown }).mcpServers;
+    const approval = await home.sign(
+      approvalTemplate(agent.pubkey, nextSeq(agent.pubkey, current), list),
+      AbortSignal.timeout(30_000),
+    );
+    await this.saveAs(key, {
+      config: { ...(agent.config as object), mcpServers: approval },
+    });
   }
   private liveAgent(key: AgentKey) {
     const { agents, running } = this.snapshot();

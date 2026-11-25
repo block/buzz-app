@@ -18,6 +18,7 @@ import {
   parseInherited,
 } from "../../features/agents/gateway/forwarding";
 import {
+  configExtensions,
   GooseProcess,
   REQUEST_TIMEOUT_MS,
   type Choice,
@@ -683,6 +684,14 @@ export class GooseSetup {
     }));
   }
 
+  /** The extensions goose's own config loads, which its agents run too. */
+  inheritedMcp() {
+    return this.with(async (goose) =>
+      (await configExtensions(goose))
+        .filter((e) => e.enabled)
+        .map((e) => ({ name: e.configKey, source: "From your goose config" })),
+    );
+  }
   private with<T>(
     run: (goose: GooseProcess, cwd: string) => Promise<T>,
     env: Readonly<Record<string, string>> = {},

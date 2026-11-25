@@ -273,6 +273,40 @@ async fn forgetting_deletes_the_item_and_its_read_copy() {
 }
 
 #[tokio::test]
+async fn mcp_values_join_the_agents_own_and_go_with_it() {
+    let (envs, stores) = envs();
+    envs.set(ADA, vec![set("FOO", "own")], || Ok(true))
+        .await
+        .unwrap();
+    // Only names Buzz chose for MCP values are taken.
+    assert!(envs
+        .mcp_set(ADA, vec![set("TOKEN", "x")], || Ok(true))
+        .await
+        .is_err());
+    envs.mcp_set(ADA, vec![set("BUZZMCP_A1_TOKEN", "secret")], || Ok(true))
+        .await
+        .unwrap();
+    assert_eq!(
+        agent_given(&envs, ADA).await,
+        vec![
+            ("FOO".to_string(), "own".to_string()),
+            ("BUZZMCP_A1_TOKEN".to_string(), "secret".to_string())
+        ]
+    );
+    assert_eq!(
+        envs.mcp_values(ADA).await.unwrap().get("BUZZMCP_A1_TOKEN"),
+        Some(&"secret".to_string())
+    );
+    assert!(agent_given(&envs, BO).await.is_empty());
+    envs.forget(ADA).await.unwrap();
+    assert!(stores.lock().unwrap()[&format!("mcp:{ADA}")]
+        .text
+        .lock()
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn a_failed_forget_is_reported_and_can_be_retried() {
     let (envs, stores) = envs();
     envs.set(ADA, vec![set("FOO", "bar")], || Ok(true))

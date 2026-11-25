@@ -41,7 +41,6 @@
   gap: var(--space-2);
 }
 .memberList {
-  --member-scroll-reserve: 0px;
   container: member-list / size;
   /* Contain absolutely positioned descendants (sr-only pager text) here.
      Otherwise they reach the overflow: hidden dialog body, giving it hidden
@@ -59,7 +58,7 @@
   gap: var(--space-4);
   /* Align headings with the field while retaining row focus clearance. */
   margin-inline: calc(-1 * var(--member-bleed));
-  padding: 0 var(--space-1) calc(var(--space-6) + var(--member-scroll-reserve));
+  padding: 0 var(--space-1) var(--space-6);
 }
 .memberList > * {
   flex-shrink: 0;
@@ -70,7 +69,10 @@
 }
 .memberTabs {
   min-width: 0;
-  padding: var(--space-2) var(--space-control-inset);
+}
+/* A short page can still align its start with the list scrollport. */
+.memberPanel {
+  min-height: 100%;
 }
 .loadingMembers {
   display: grid;

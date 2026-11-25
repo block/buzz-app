@@ -4217,6 +4217,18 @@ it("shows join guidance and an empty member list to a nonmember visitor", async 
   expect(await screen.findByText("No members to show.")).toBeVisible();
 });
 
+it("places member type navigation before and outside the member list", async () => {
+  await setup("stream", false, false, undefined, undefined, {
+    memberProfiles: [profile(keypair(), { name: "Helper", is_agent: true })],
+  });
+  const tabs = await screen.findByRole("tablist", { name: "Member type" });
+  const list = screen.getByRole("region", { name: "Member list" });
+  expect(list).not.toContainElement(tabs);
+  expect(
+    tabs.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
+
 it("lists archived members in their own tab after People and Agents", async () => {
   let release!: () => void;
   const pendingArchives = new Promise<void>((resolve) => {

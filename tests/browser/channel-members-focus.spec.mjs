@@ -58,33 +58,52 @@ function tabKey(browserName, backwards = false) {
   return `${browserName === "webkit" && process.platform === "darwin" ? "Alt+" : ""}${backwards ? "Shift+" : ""}Tab`;
 }
 
-function measureList(list) {
-  return list.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    const tabs = element
-      .querySelector('[role="tablist"]')
-      .getBoundingClientRect();
-    const visible = [...element.children].filter(
-      (child) => child.getClientRects().length,
-    );
-    const bottom = Math.max(
-      ...visible.map((child) => child.getBoundingClientRect().bottom),
-    );
+async function settledFrames(page, count = 2) {
+  await page.evaluate(
+    (count) =>
+      new Promise((resolve) => {
+        function frame() {
+          if (--count === 0) resolve();
+          else requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+      }),
+    count,
+  );
+}
+
+async function memberGeometry(dialog) {
+  return dialog.evaluate((element) => {
+    const list = element.querySelector('[aria-label="Member list"]');
+    const tabs = element.querySelector('[role="tablist"]');
+    const panel = list.querySelector('[role="tabpanel"]:not([hidden])');
+    const box = (e) => {
+      const r = e.getBoundingClientRect();
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        left: r.left,
+        right: r.right,
+        height: r.height,
+      };
+    };
     return {
-      top: tabs.top,
-      scrollTop: element.scrollTop,
-      scrollHeight: element.scrollHeight,
-      clientHeight: element.clientHeight,
-      contentBottom: bottom - rect.top + element.scrollTop,
-      paddingBottom: getComputedStyle(element).paddingBottom,
+      tabs: box(tabs),
+      list: box(list),
+      panel: box(panel),
+      first: box(panel.querySelector("li")),
+      scrollTop: list.scrollTop,
+      scrollHeight: list.scrollHeight,
+      clientHeight: list.clientHeight,
+      outer: list.parentElement.scrollTop,
     };
   });
 }
 
 test.describe("member scrolling", () => {
-  test("a short member tab preserves the pointer after paging and releases spare space on return", async ({
+  test("member tabs stay in view while the list scrolls and a pointer tab change starts at the top", async ({
     page,
-  }) => {
+  }, info) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(
       `${url}?administration&editable-access&people-scale&short-panel`,
@@ -99,259 +118,201 @@ test.describe("member scrolling", () => {
       exact: true,
     });
     await expect(list).toHaveAttribute("data-refreshing", "false");
-    const people = dialog.getByRole("tab", {
-      name: "People · 62",
-      exact: true,
-    });
-    const agents = dialog.getByRole("tab", { name: "Agents · 1", exact: true });
-    const panel = dialog.getByRole("tabpanel", {
-      name: "People · 62",
-      exact: true,
-    });
-    await panel.getByRole("button", { name: "Next", exact: true }).click();
-    await expect(panel.getByText("Page 2 of 2", { exact: true })).toBeVisible();
-    await expect(panel).toBeFocused();
     await animationsSettled(dialog, { subtree: true });
-    const measure = () => measureList(list);
-    const before = await measure();
+    const before = await memberGeometry(dialog);
+    await list.hover();
+    await page.mouse.wheel(0, 100000);
+    await expect
+      .poll(() =>
+        list.evaluate(
+          (e) => e.scrollTop >= e.scrollHeight - e.clientHeight - 1,
+        ),
+      )
+      .toBe(true);
+    await settledFrames(page, 12);
+    const scrolled = await memberGeometry(dialog);
+    const agents = dialog.getByRole("tab", { name: "Agents · 1", exact: true });
     const bounds = await agents.boundingBox();
     const point = {
       x: bounds.x + bounds.width / 2,
       y: bounds.y + bounds.height / 2,
     };
-    expect(await centerHit(agents)).toBe(true);
-    await page.mouse.click(point.x, point.y);
-    await expect(agents).toHaveAttribute("aria-selected", "true");
-    await page.evaluate(
-      () =>
-        new Promise((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolve)),
-        ),
-    );
-    const after = await measure();
-    console.log(
-      "short-panel geometry " + JSON.stringify({ before, after, point }),
-    );
-    expect(after.top).toBeCloseTo(before.top, 1);
-    expect(after.scrollTop).toBeCloseTo(before.scrollTop, 1);
-    expect(
-      await agents.evaluate(
-        (tab, point) =>
-          tab.contains(document.elementFromPoint(point.x, point.y)),
+    const hit = await centerHit(agents);
+    let after = null,
+      hitAfter = null;
+    if (hit) {
+      await page.mouse.click(point.x, point.y);
+      await expect(agents).toHaveAttribute("aria-selected", "true");
+      await settledFrames(page);
+      after = await memberGeometry(dialog);
+      hitAfter = await agents.evaluate(
+        (e, p) => e.contains(document.elementFromPoint(p.x, p.y)),
         point,
-      ),
-    ).toBe(true);
-    const peopleBounds = await people.boundingBox();
-    await page.mouse.click(
-      peopleBounds.x + peopleBounds.width / 2,
-      peopleBounds.y + peopleBounds.height / 2,
-    );
-    await expect(people).toHaveAttribute("aria-selected", "true");
-    const returned = await measure();
-    console.log("short-panel returned " + JSON.stringify(returned));
-    expect(returned.scrollHeight).toBe(before.scrollHeight);
-    expect(returned.contentBottom).toBeCloseTo(before.contentBottom, 1);
-    expect(returned.paddingBottom).toBe(before.paddingBottom);
-    // At offset zero, the natural maximum already suffices for a short tab.
-    await list.evaluate((element) => {
-      element.scrollTop = 0;
-    });
-    const shortBounds = await agents.boundingBox();
-    await page.mouse.click(
-      shortBounds.x + shortBounds.width / 2,
-      shortBounds.y + shortBounds.height / 2,
-    );
-    await expect(agents).toHaveAttribute("aria-selected", "true");
-    const atStart = await measure();
-    expect(atStart.scrollTop).toBe(0);
-    expect(atStart.paddingBottom).toBe(before.paddingBottom);
-  });
-
-  async function openChangingRoster(page, initialCount = 1) {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto(
-      `${url}?administration&editable-access&people-scale&changing-roster`,
-    );
-    await page.getByRole("button", { name: "Access", exact: true }).click();
-    const list = page.getByRole("region", { name: "Member list", exact: true });
-    await expect(list).toHaveAttribute("data-refreshing", "false");
-    const update = async (count) => {
-      await page.evaluate((n) => window.focusFixture.updateAgents(n), count);
-      await expect(
-        list.getByRole("tab", { name: `Agents · ${count}`, exact: true }),
-      ).toBeVisible();
-    };
-    if (initialCount !== 1) await update(initialCount);
-    await list.getByRole("button", { name: "Next", exact: true }).click();
-    const base = await measureList(list);
-    const agents = list.getByRole("tab", {
-      name: `Agents · ${initialCount}`,
-      exact: true,
-    });
-    const bounds = await agents.boundingBox();
-    await page.mouse.click(
-      bounds.x + bounds.width / 2,
-      bounds.y + bounds.height / 2,
-    );
-    await expect(agents).toHaveAttribute("aria-selected", "true");
-    const before = await measureList(list);
-    expect(before.scrollTop).toBeGreaterThan(0);
-    expect(parseFloat(before.paddingBottom)).toBeGreaterThan(
-      parseFloat(base.paddingBottom),
-    );
-    return { list, before, base, update };
-  }
-
-  test("a growing roster keeps the tab position and releases the gap below the last row", async ({
-    page,
-  }) => {
-    const { list, before, base, update } = await openChangingRoster(page);
-    await update(30);
-    const after = await measureList(list);
-    expect(after.scrollTop).toBe(before.scrollTop);
-    expect(after.top).toBeCloseTo(before.top, 1);
-    await list.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
-    const gap = await list.evaluate(
-      (element) =>
-        element.getBoundingClientRect().bottom -
-        element
-          .querySelector('[role="tabpanel"]:not([hidden]) li:last-child')
-          .getBoundingClientRect().bottom,
-    );
-    expect(gap).toBeCloseTo(parseFloat(base.paddingBottom), 0);
-  });
-
-  test("a shrinking roster keeps the focused tab in position", async ({
-    page,
-  }) => {
-    const { list, before, update } = await openChangingRoster(page, 3);
-    await update(1);
-    await expect
-      .poll(async () => (await measureList(list)).scrollTop)
-      .toBe(before.scrollTop);
-    expect((await measureList(list)).top).toBeCloseTo(before.top, 1);
-  });
-
-  test("resizing a short roster uses only the space needed for its offset", async ({
-    page,
-  }) => {
-    const { list } = await openChangingRoster(page);
-    await page.setViewportSize({ width: 600, height: 460 });
-    await page.evaluate(() =>
-      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
-    );
-    await animationsSettled(page.getByRole("dialog"), { subtree: true });
-    const resized = await measureList(list);
-    // Read the normal padding at the new scale from the longer People panel.
-    await list.getByRole("tab", { name: "People · 62", exact: true }).click();
-    const basePadding = parseFloat((await measureList(list)).paddingBottom);
-    const needed = Math.max(
-      0,
-      resized.scrollTop +
-        resized.clientHeight -
-        resized.contentBottom -
-        basePadding,
-    );
-    expect(parseFloat(resized.paddingBottom)).toBeCloseTo(
-      basePadding + needed,
-      0,
-    );
-  });
-
-  test("a roster update keeps the position the user scrolled to", async ({
-    page,
-  }) => {
-    const { list, update } = await openChangingRoster(page);
-    await list.hover();
-    await page.mouse.wheel(0, -300);
-    await expect.poll(async () => (await measureList(list)).scrollTop).toBe(0);
-    await update(30);
-    expect((await measureList(list)).scrollTop).toBe(0);
-  });
-
-  test("a wheel position survives roster growth in the same native scroll event", async ({
-    page,
-  }) => {
-    const { list, before } = await openChangingRoster(page);
-    await list.hover();
-    await list.evaluate((element) => {
-      window.wheelGrowth = { events: [], delivered: false };
-      window.addEventListener(
-        "scroll",
-        (event) => {
-          if (event.target !== element) return;
-          window.wheelGrowth.events.push({
-            offset: element.scrollTop,
-            time: performance.now(),
-          });
-          if (window.wheelGrowth.events.length === 1)
-            void window.focusFixture.updateAgents(30).then(() => {
-              window.wheelGrowth.delivered = true;
-            });
-        },
-        { capture: true, passive: true },
       );
+    }
+    const measurements = { before, scrolled, point, hit, after, hitAfter };
+    console.log(`N1 ${JSON.stringify(measurements)}`);
+    await info.attach("N1", {
+      body: JSON.stringify(measurements, null, 2),
+      contentType: "application/json",
     });
-    await page.mouse.wheel(0, -32);
-    await page.waitForFunction(() => window.wheelGrowth.delivered);
-    // Let native smooth wheel motion finish, including WebKit's intermediate offset.
-    await page.evaluate(
-      () =>
-        new Promise((resolve) => {
-          let frames = 12;
-          function next() {
-            if (--frames === 0) resolve();
-            else requestAnimationFrame(next);
-          }
-          requestAnimationFrame(next);
-        }),
-    );
-    const after = await measureList(list);
-    const native = await page.evaluate(() => window.wheelGrowth);
-    console.log(
-      "wheel-growth geometry " + JSON.stringify({ before, after, native }),
-    );
-    expect(native.events[0].offset).toBeLessThan(before.scrollTop);
-    expect(after.scrollTop).toBeCloseTo(before.scrollTop - 32, 0);
+    expect(scrolled.tabs).toEqual(before.tabs);
+    expect(hit).toBe(true);
+    expect(after.tabs).toEqual(before.tabs);
+    expect(hitAfter).toBe(true);
+    expect(after.scrollTop).toBe(0);
   });
 
-  test("an out-of-range scroll does not change the preserved member position", async ({
-    page,
-  }) => {
-    const { list, before, update } = await openChangingRoster(page);
-    expect(before.scrollTop).toBe(48);
-    const direct = await list.evaluate((element) => {
-      const original = Object.getOwnPropertyDescriptor(element, "scrollTop");
-      const padding = getComputedStyle(element).paddingBottom;
-      try {
+  test.describe("fractional wheel input", () => {
+    test.use({ deviceScaleFactor: 1.5 });
+    test("small wheel inputs move a scrollable member tab without script writes", async ({
+      page,
+    }, info) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.goto(
+        `${url}?administration&editable-access&people-scale&short-panel`,
+      );
+      await page.evaluate(() =>
+        document.documentElement.style.setProperty("--buzz-text-scale", "1.25"),
+      );
+      await page.getByRole("button", { name: "Access", exact: true }).click();
+      const dialog = page.getByRole("dialog", {
+        name: "Manage members",
+        exact: true,
+      });
+      const list = dialog.getByRole("region", {
+        name: "Member list",
+        exact: true,
+      });
+      await expect(list).toHaveAttribute("data-refreshing", "false");
+      for (const name of ["Agents · 1", "People · 62"]) {
+        const tab = dialog.getByRole("tab", { name, exact: true });
+        const r = await tab.boundingBox();
+        await page.mouse.click(r.x + r.width / 2, r.y + r.height / 2);
+        await expect(tab).toHaveAttribute("aria-selected", "true");
+      }
+      await animationsSettled(dialog, { subtree: true });
+      await settledFrames(page);
+      await list.evaluate((element) => {
+        const native = Object.getOwnPropertyDescriptor(
+          Element.prototype,
+          "scrollTop",
+        );
+        window.memberScrollWrites = [];
         Object.defineProperty(element, "scrollTop", {
           configurable: true,
-          get: () => 60,
+          get() {
+            return native.get.call(this);
+          },
+          set(value) {
+            window.memberScrollWrites.push({ value, time: performance.now() });
+            native.set.call(this, value);
+          },
         });
-        element.dispatchEvent(new Event("scroll"));
-      } finally {
-        if (original) Object.defineProperty(element, "scrollTop", original);
-        else delete element.scrollTop;
+      });
+      const before = await memberGeometry(dialog);
+      expect(before.scrollHeight).toBeGreaterThan(before.clientHeight);
+      await list.hover();
+      const offsets = [];
+      for (let i = 0; i < 5; i++) {
+        await page.mouse.wheel(0, 1);
+        await settledFrames(page, 12);
+        offsets.push(await list.evaluate((e) => e.scrollTop));
       }
-      return {
-        beforePadding: padding,
-        padding: getComputedStyle(element).paddingBottom,
-        nativeOffset: element.scrollTop,
+      await settledFrames(page, 60);
+      const after = await memberGeometry(dialog);
+      const writes = await page.evaluate(() => window.memberScrollWrites);
+      const measurements = {
+        dpr: await page.evaluate(() => devicePixelRatio),
+        before,
+        offsets,
+        after,
+        writes,
       };
+      console.log(`N2 ${JSON.stringify(measurements)}`);
+      await info.attach("N2", {
+        body: JSON.stringify(measurements, null, 2),
+        contentType: "application/json",
+      });
+      expect(after.scrollTop).toBeGreaterThan(before.scrollTop);
+      expect(writes).toEqual([]);
     });
-    console.log("out-of-range direct " + JSON.stringify({ before, direct }));
-    expect(direct.padding).toBe(direct.beforePadding);
-    expect(direct.nativeOffset).toBe(48);
-    // A later real roster delivery reveals any position saved by the event.
-    await update(30);
-    const later = await measureList(list);
-    console.log("out-of-range later " + JSON.stringify(later));
-    expect(later.scrollTop).toBe(48);
   });
 
-  test("a pointer tab change keeps the tab under the pointer and Tab reaches the first member", async ({
+  test("paging a member tab leaves the tabs and outer layout still and reveals the first row", async ({
+    page,
+  }, info) => {
+    const measurements = [];
+    for (const enlarged of [false, true]) {
+      await page.setViewportSize(
+        enlarged ? { width: 600, height: 460 } : { width: 1440, height: 900 },
+      );
+      await page.goto(
+        `${url}?administration&editable-access&people-scale&short-panel`,
+      );
+      await page.evaluate(
+        (scale) =>
+          document.documentElement.style.setProperty(
+            "--buzz-text-scale",
+            String(scale),
+          ),
+        enlarged ? 2 : 1,
+      );
+      await page.getByRole("button", { name: "Access", exact: true }).click();
+      const dialog = page.getByRole("dialog", {
+        name: "Manage members",
+        exact: true,
+      });
+      const list = dialog.getByRole("region", {
+        name: "Member list",
+        exact: true,
+      });
+      await expect(list).toHaveAttribute("data-refreshing", "false");
+      await animationsSettled(dialog, { subtree: true });
+      const panel = dialog.getByRole("tabpanel", {
+        name: "People · 62",
+        exact: true,
+      });
+      const next = panel.getByRole("button", { name: "Next", exact: true });
+      await next.click();
+      await expect(
+        panel.getByText("Page 2 of 2", { exact: true }),
+      ).toBeVisible();
+      await expect(panel).toBeFocused();
+      await settledFrames(page);
+      const after = await memberGeometry(dialog);
+      // Repeat from page 1 with the scrollable list already at its end.
+      await panel
+        .getByRole("button", { name: "Previous", exact: true })
+        .click();
+      await next.scrollIntoViewIfNeeded();
+      const before = await memberGeometry(dialog);
+      const r = await next.boundingBox();
+      await page.mouse.click(r.x + r.width / 2, r.y + r.height / 2);
+      await expect(panel).toBeFocused();
+      await expect(
+        panel.getByText("Page 2 of 2", { exact: true }),
+      ).toBeVisible();
+      await settledFrames(page);
+      const repeated = await memberGeometry(dialog);
+      measurements.push({ enlarged, before, after, repeated });
+      expect.soft(repeated.tabs).toEqual(before.tabs);
+      expect.soft(repeated.outer).toBe(before.outer);
+      expect.soft(repeated.first.top).toBeGreaterThanOrEqual(repeated.list.top);
+      expect
+        .soft(repeated.first.bottom)
+        .toBeLessThanOrEqual(repeated.list.bottom);
+      // Native scroll offsets round to CSS pixels; round toward the start so no row is clipped.
+      expect.soft(repeated.panel.top - repeated.list.top).toBeLessThan(1);
+    }
+    console.log(`N3 ${JSON.stringify(measurements)}`);
+    await info.attach("N3", {
+      body: JSON.stringify(measurements, null, 2),
+      contentType: "application/json",
+    });
+  });
+
+  test("a pointer tab change keeps the tab under the pointer and Tab reaches General then members", async ({
     page,
     browserName,
   }) => {
@@ -373,16 +334,9 @@ test.describe("member scrolling", () => {
     });
     await expect(list).toHaveAttribute("data-refreshing", "false");
     await animationsSettled(dialog, { subtree: true });
-    // Start partway through the list with the tab center exposed.
+    // Tabs are outside the list even when its rows are partly scrolled.
     await list.evaluate((element) => {
-      const tabs = element.querySelector('[role="tablist"]');
-      const layout = element.parentElement;
-      layout.scrollTop +=
-        element.getBoundingClientRect().top -
-        layout.getBoundingClientRect().top;
-      const bounds = tabs.getBoundingClientRect();
-      element.scrollTop +=
-        bounds.top - element.getBoundingClientRect().top + bounds.height / 4;
+      element.scrollTop = 96;
     });
     const agents = dialog.getByRole("tab", { name: /^Agents ·/ });
     expect(await centerHit(agents)).toBe(true);
@@ -407,11 +361,15 @@ test.describe("member scrolling", () => {
       .getByRole("button", { name: /^Open profile for / })
       .first();
     await page.keyboard.press(tabKey(browserName));
+    await expect(
+      dialog.getByRole("combobox", { name: "General access" }),
+    ).toBeFocused();
+    await page.keyboard.press(tabKey(browserName));
     await expect(first).toBeFocused();
     expect(await centerHit(first)).toBe(true);
   });
 
-  test("Shift+Tab after paging reaches the selected tab and the tabs scroll away with the rows", async ({
+  test("Shift+Tab after paging reaches General then the selected tab while tabs stay in view", async ({
     page,
     browserName,
   }) => {
@@ -435,6 +393,10 @@ test.describe("member scrolling", () => {
     expect(await centerHit(first)).toBe(true);
     expect(await centerHit(people)).toBe(true);
     await page.keyboard.press(tabKey(browserName, true));
+    await expect(
+      dialog.getByRole("combobox", { name: "General access" }),
+    ).toBeFocused();
+    await page.keyboard.press(tabKey(browserName, true));
     await expect(people).toBeFocused();
     expect(await centerHit(people)).toBe(true);
     await dialog
@@ -442,7 +404,7 @@ test.describe("member scrolling", () => {
       .evaluate((list) => {
         list.scrollTop = list.scrollHeight;
       });
-    await expect(people).not.toBeInViewport();
+    await expect(people).toBeInViewport();
     await panel.getByRole("button", { name: "Previous", exact: true }).click();
     await expect(panel).toBeFocused();
     expect(await centerHit(first)).toBe(true);
@@ -553,7 +515,7 @@ test.describe("member scrolling", () => {
     const general = dialog.getByRole("combobox", { name: "General access" });
     await expect(list).toHaveAttribute("data-refreshing", "false");
     await expect(general).toBeInViewport();
-    // The heading must not cover its own control before the member tabs.
+    // The heading must not cover its own control below the member tabs.
     const generalBounds = await general.boundingBox();
     await page.mouse.click(
       generalBounds.x + generalBounds.width / 2,
@@ -1480,8 +1442,6 @@ test("member tabs support arrow keys, activation and paging focus", async ({
     exact: true,
   });
   await expect(general).toBeEnabled();
-  await expect(general).toBeFocused();
-  await page.keyboard.press("Tab");
   await expect(people).toBeFocused();
   await page.keyboard.press("ArrowRight");
   await expect(agents).toBeFocused();
@@ -1492,6 +1452,8 @@ test("member tabs support arrow keys, activation and paging focus", async ({
     "aria-controls",
     await panel.getAttribute("id"),
   );
+  await page.keyboard.press("Tab");
+  await expect(general).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
     panel.getByRole("button", { name: /^Open profile for / }).first(),

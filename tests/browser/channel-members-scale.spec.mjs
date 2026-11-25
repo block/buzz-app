@@ -37,7 +37,7 @@ test("large channel members stays usable while browsing and searching the roster
   await expect(dialog.getByText("Loading members…")).toHaveCount(0);
   await expect(list.getByRole("listitem").first()).toBeVisible();
   await expect(
-    list.getByRole("tab", { name: "People · 2526", exact: true }),
+    dialog.getByRole("tab", { name: "People · 2526", exact: true }),
   ).toBeVisible();
   expect(await list.getByRole("listitem").count()).toBeLessThan(100);
   const panel = list.getByRole("tabpanel", { name: /^People ·/ });

@@ -586,83 +586,6 @@ function lostFocus(control: HTMLElement) {
   return !control.isConnected && document.activeElement === document.body;
 }
 
-/** Keeps the user's scroll position when the list size or content changes.
- * Stops when the content supports that position without extra padding or the caller stops it. */
-function preserveMemberListOffset(list: HTMLElement, offset: number) {
-  if (offset === 0) {
-    list.scrollTop = 0;
-    return;
-  }
-  const property = "--member-scroll-reserve";
-
-  let reserve = 0;
-  let resize: ResizeObserver | undefined;
-  let children: MutationObserver | undefined;
-
-  function stop() {
-    resize?.disconnect();
-    children?.disconnect();
-    list.removeEventListener("scroll", rememberOffset);
-    list.style.removeProperty(property);
-  }
-  function rememberOffset() {
-    const end = list.scrollHeight - list.clientHeight;
-    if (list.scrollTop < 0 || list.scrollTop > end + 1) return;
-    // A shrink can clamp scrollTop before the new layout is measured.
-    // Only that shorter end keeps the offset from before the frame.
-    if (!(Math.abs(list.scrollTop - end) <= 1 && end < offset))
-      offset = list.scrollTop;
-    update();
-  }
-  function update() {
-    if (!list.isConnected) {
-      stop();
-      return 0;
-    }
-    const top = list.getBoundingClientRect().top + list.clientTop;
-    const contentBottom = Math.max(
-      0,
-      ...Array.from(list.children)
-        .filter((child) => child.getClientRects().length)
-        .map(
-          (child) =>
-            child.getBoundingClientRect().bottom - top + list.scrollTop,
-        ),
-    );
-    const padding = Number.parseFloat(getComputedStyle(list).paddingBottom);
-    const naturalEnd = contentBottom + padding - reserve;
-    const needed = Math.max(0, offset + list.clientHeight - naturalEnd);
-    if (needed === 0) {
-      stop();
-    } else if (Math.abs(needed - reserve) > 0.001) {
-      // Computed padding can round a fractional CSS pixel.
-      reserve = needed;
-      list.style.setProperty(property, `${needed}px`);
-    }
-    if (list.scrollTop !== offset) list.scrollTop = offset;
-    return needed;
-  }
-  function observeContent() {
-    if (!resize) return;
-    resize.disconnect();
-    resize.observe(list, { box: "border-box" });
-    for (const child of list.children)
-      resize.observe(child, { box: "border-box" });
-  }
-
-  if (update() > 0) {
-    resize = new ResizeObserver(update);
-    children = new MutationObserver(() => {
-      observeContent();
-      update();
-    });
-    list.addEventListener("scroll", rememberOffset, { passive: true });
-    children.observe(list, { childList: true });
-    observeContent();
-  }
-  return stop;
-}
-
 /** Supported props for installed plugins reusing the host member picker. */
 export type ChannelMembersDialogProps = {
   session: RelaySession;
@@ -745,7 +668,6 @@ export function ChannelMembersDialog({
       : undefined;
   const selection = shownIntent?.change;
   const scrollport = useRef<HTMLElement>(null);
-  const memberTabs = useRef<HTMLDivElement>(null);
   // Set when the step is left by confirming. That member's Actions are then
   // watched until its row leaves and until the change settles.
   const confirmed = useRef(false);
@@ -1453,17 +1375,6 @@ export function ChannelMembersDialog({
   }
   if (pages !== memberPages.pages)
     setMemberPages({ text, accessFilter, pages });
-  const pendingMemberTab = useRef<number | null>(null);
-  // Clear the previous tab's reserve before measuring the new content. Its
-  // bottom can be above the viewport bottom, which scrollHeight alone hides.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pages, text and accessFilter end the reserve even when the selected group stays the same; shownIntent ends it because the confirmation step replaces the list.
-  useLayoutEffect(() => {
-    const list = scrollport.current;
-    const offset = pendingMemberTab.current;
-    pendingMemberTab.current = null;
-    if (list && showTabs && offset !== null)
-      return preserveMemberListOffset(list, offset);
-  }, [memberGroup, showTabs, pages, text, accessFilter, shownIntent]);
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
     const group = pendingMemberPage.current;
@@ -1475,17 +1386,13 @@ export function ChannelMembersDialog({
       target?.parentElement?.scrollIntoView({ block: "start" });
       return;
     }
-    memberTabs.current?.scrollIntoView({ block: "start" });
-    // Keep the tabs above the new page when space permits. In a short list,
-    // move only far enough to reveal the complete first row.
     const list = scrollport.current;
-    const first = target?.querySelector("li");
-    if (list && first) {
-      const overflow =
-        first.getBoundingClientRect().bottom -
-        list.getBoundingClientRect().bottom;
-      if (overflow > 0) list.scrollTop += Math.ceil(overflow);
-    }
+    if (list && target)
+      list.scrollTop = Math.floor(
+        list.scrollTop +
+          target.getBoundingClientRect().top -
+          list.getBoundingClientRect().top,
+      );
   });
   const changeMemberPage = (group: string, page: number) => {
     pendingMemberPage.current = group;
@@ -2588,6 +2495,25 @@ export function ChannelMembersDialog({
               )}
             </div>
           )}
+          {showTabs && (
+            <div className={styles.memberTabs}>
+              <Tabs
+                label="Member type"
+                variant="panel"
+                size="sm"
+                value={memberGroup ?? null}
+                items={presentGroups.map((group) => ({
+                  value: group.name,
+                  label: `${group.name} · ${narrowed ? group.keys.length : group.count}`,
+                  panelId: `${presenceId}-${group.name}-page`,
+                }))}
+                onValueChange={(group) => {
+                  if (scrollport.current) scrollport.current.scrollTop = 0;
+                  setSelectedGroup(group);
+                }}
+              />
+            </div>
+          )}
           <MemberMenus
             scrollport={scrollport}
             className={`${styles.memberList} buzz-thin-scrollbar`}
@@ -2595,26 +2521,6 @@ export function ChannelMembersDialog({
             data-refreshing={refreshing}
           >
             {accessControl}
-            {showTabs && (
-              <div ref={memberTabs} className={styles.memberTabs}>
-                <Tabs
-                  label="Member type"
-                  variant="panel"
-                  size="sm"
-                  value={memberGroup ?? null}
-                  items={presentGroups.map((group) => ({
-                    value: group.name,
-                    label: `${group.name} · ${narrowed ? group.keys.length : group.count}`,
-                    panelId: `${presenceId}-${group.name}-page`,
-                  }))}
-                  onValueChange={(group) => {
-                    pendingMemberTab.current =
-                      scrollport.current?.scrollTop ?? 0;
-                    setSelectedGroup(group);
-                  }}
-                />
-              </div>
-            )}
             {!memberActions &&
               !canAdd &&
               !readOnlyAccess &&
@@ -2670,6 +2576,7 @@ export function ChannelMembersDialog({
                     <section
                       key={group.name}
                       hidden={showTabs && group.name !== memberGroup}
+                      className={showTabs ? styles.memberPanel : undefined}
                       role={showTabs ? "tabpanel" : undefined}
                       id={
                         showTabs

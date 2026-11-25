@@ -402,18 +402,18 @@ export function createMessages(
         }
       }),
     );
+    // The source may list attachments a later text-only edit dropped.
     const mediaTags = attachmentSource.tags.filter(
       ([name, ...fields]) =>
         name === "imeta" &&
-        (!row.forward ||
-          fields.some((field) => {
-            if (!field.startsWith("url ")) return false;
-            try {
-              return sourceUrls.has(new URL(field.slice(4), relayOrigin).href);
-            } catch {
-              return sourceUrls.has(field.slice(4));
-            }
-          })),
+        fields.some((field) => {
+          if (!field.startsWith("url ")) return false;
+          try {
+            return sourceUrls.has(new URL(field.slice(4), relayOrigin).href);
+          } catch {
+            return sourceUrls.has(field.slice(4));
+          }
+        }),
     );
     // Free-text local media URLs grant no destination download access. An
     // admitted upload tag is required; never invent MIME/hash/size metadata.
@@ -665,7 +665,12 @@ export function createMessages(
             emoji.url,
           ]),
           ...attachmentSource.tags.filter(
-            ([name]) => name === "imeta" || name === "link-preview",
+            (tag) =>
+              tag[0] === "link-preview" ||
+              (tag[0] === "imeta" &&
+                [...imetaAttachmentUrls({ tags: [tag] })].some((url) =>
+                  row.attachments.some((attachment) => attachment.url === url),
+                )),
           ),
         ],
       });

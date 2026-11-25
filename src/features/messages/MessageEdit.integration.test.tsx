@@ -12,6 +12,11 @@ import {
 } from "@testing-library/react";
 import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { foldMessages } from "../relay/fold";
+import {
+  forwardBody,
+  forwardTag,
+  type ForwardSnapshot,
+} from "../relay/forwarded-message";
 import { createRelaySession } from "../relay/session";
 import {
   bounds,
@@ -556,3 +561,73 @@ it.each(["thread", "exact"])(
     }
   },
 );
+
+it("thread composer keeps a forward's media metadata when editing its note", async () => {
+  const viewer = keypair(),
+    other = keypair();
+  const url = "https://fixture.test/forwarded.png";
+  const imeta = ["imeta", `url ${url}`, "m image/png", "dim 640x480"];
+  const snapshot: ForwardSnapshot = {
+    id: "f".repeat(64),
+    channelId: "elsewhere",
+    authorId: other.pubkey,
+    authorName: "Sam",
+    createdAt: 5,
+    content: `Look at this\n\n![photo](${url})`,
+    attachmentUrls: [url],
+  };
+  const root = message(other, "channel", "Root", 10);
+  const reply = signed(viewer, {
+    kind: 9,
+    content: forwardBody(snapshot, "Note"),
+    created_at: 11,
+    tags: [
+      ["h", "channel"],
+      ["e", root.id, "", "reply"],
+      forwardTag(snapshot),
+      imeta,
+    ],
+  });
+  const events = [root, reply];
+  const publish = vi.fn(async (_event: RelayEvent) => {});
+  const owner = editOwner(viewer, events, undefined, publish);
+  try {
+    await authorize(owner);
+    render(
+      <ThreadPanel
+        session={owner.session}
+        scope="forward-edit"
+        channelId="channel"
+        channelName="General"
+        messageId={root.id}
+        close={() => {}}
+        onOpenLink={() => false}
+      />,
+      { reactStrictMode: true },
+    );
+    await screen.findByText("Note");
+    const input = screen.getByRole<ComposerInputElement>("textbox", {
+      name: "Reply to thread",
+    });
+    fireEvent.keyDown(input, { key: "ArrowUp", metaKey: true });
+    const value = input.value.replace("Note", "Edited");
+    act(() => {
+      input.value = value;
+      input.setSelectionRange(6, 6);
+    });
+    fireEvent.input(input);
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    const sent = publish.mock.calls[0]?.[0];
+    assert(sent);
+    expect(sent.kind).toBe(40003);
+    expect(sent.tags.filter(([name]) => name === "imeta")).toEqual([imeta]);
+    const row = foldMessages("channel", "", [...events, sent], {
+      includeReplies: true,
+    }).find((row) => row.id === reply.id);
+    expect(row?.forward?.note).toBe("Edited");
+  } finally {
+    cleanup();
+    owner.dispose();
+  }
+});

@@ -4780,8 +4780,8 @@ function Composer({
                     !chatCards?.length &&
                     ((!!submission && !submission.allowAttachmentOnly) ||
                       (editing.target
-                      ? !editing.attachments.length
-                      : !attachments.items.length && !gifs?.length)) &&
+                        ? !editing.attachments.length
+                        : !attachments.items.length && !gifs?.length)) &&
                     !(
                       editing.target &&
                       requestDeletion &&

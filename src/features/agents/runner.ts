@@ -38,6 +38,7 @@ import type { RoutedPick, TurnPick } from "./model-routes";
 import type { LocalAgentActivity, WorkOutcome } from "./local-activity";
 import type { MentionRefusal } from "./owner-attestation";
 import { threadReference } from "../relay/thread-reference";
+import { agentAudience } from "../relay/audience";
 import {
   hasEventProof,
   type ReadFilter,
@@ -3922,7 +3923,7 @@ export class AgentRunners {
                 !channel.metadataPending
               )
                 work.confirmSolo(channel.name ?? undefined);
-              work.reply(published.id);
+              work.reply(published.id, !agentAudience(published));
             }
             return published;
           } catch (error) {

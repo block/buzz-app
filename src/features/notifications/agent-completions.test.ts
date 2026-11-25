@@ -28,6 +28,7 @@ function setup(
   focused: boolean,
   shown = active("other"),
   kind: "solo" | "dm" = "solo",
+  synthetic = false,
 ) {
   const activity = createLocalAgentActivity();
   const desktop = vi.fn();
@@ -46,6 +47,7 @@ function setup(
     messageId: "message",
     threadRootId: "thread",
     thread: true,
+    ...(synthetic ? { syntheticMessage: true as const } : {}),
     ...(kind === "solo"
       ? { soloChat: true as const, conversationName: "Launch planning" }
       : {}),
@@ -55,6 +57,41 @@ function setup(
 }
 
 describe("agent completion notifications", () => {
+  it.each([true, false])(
+    "keeps a successful silent background run quiet (focused: %s)",
+    (focused) => {
+      const h = setup(focused, active("other"), "solo", true);
+      h.work.finish({ ok: true });
+      expect(h.desktop).not.toHaveBeenCalled();
+      expect(h.foreground).not.toHaveBeenCalled();
+      h.stop();
+    },
+  );
+
+  it.each(["before", "after"])(
+    "notifies once when a background reply arrives %s completion",
+    (when) => {
+      const h = setup(false, active("other"), "solo", true);
+      h.work.reply("coordination", false);
+      if (when === "before") h.work.reply("reply", true);
+      h.work.finish({ ok: true });
+      if (when === "after") {
+        expect(h.desktop).not.toHaveBeenCalled();
+        h.work.reply("reply", true);
+      }
+      h.work.reply("another-reply", true);
+      expect(h.desktop).toHaveBeenCalledOnce();
+      h.stop();
+    },
+  );
+
+  it("still reports failed background runs", () => {
+    const h = setup(false, active("other"), "solo", true);
+    h.work.finish({ ok: false, error: "Provider unavailable" });
+    expect(h.desktop).toHaveBeenCalledOnce();
+    h.stop();
+  });
+
   it("shows in-app feedback when another Buzz conversation is focused", () => {
     const h = setup(true);
     h.work.finish({ ok: true });

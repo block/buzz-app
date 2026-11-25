@@ -74,6 +74,8 @@ export type LocalWork = Readonly<{
   /** Recent publication IDs retained with this work entry for transcript navigation,
    * independently of notification echo expiry. Capped at 512 per entry. */
   publishedMessageIds?: readonly string[];
+  /** This attempt published a confirmed reply for people, not agent-only coordination. */
+  hasUserVisibleReply?: true;
   error?: string;
   /** Latest live step, as the harness named it; display only. */
   step?: WorkStep;
@@ -215,6 +217,7 @@ export function createLocalAgentActivity() {
         | "publishing"
         | "replyMessages"
         | "publishedMessageIds"
+        | "hasUserVisibleReply"
         | "error"
         | "dismissed"
         | "stoppable"
@@ -554,7 +557,7 @@ export function createLocalAgentActivity() {
             publish();
           };
         },
-        reply: (messageId: string) => {
+        reply: (messageId: string, userVisible = false) => {
           const current = entries.get(id);
           if (
             !current ||
@@ -575,7 +578,12 @@ export function createLocalAgentActivity() {
           );
           entries.set(
             id,
-            Object.freeze({ ...current, replyMessages, publishedMessageIds }),
+            Object.freeze({
+              ...current,
+              replyMessages,
+              publishedMessageIds,
+              ...(userVisible ? { hasUserVisibleReply: true as const } : {}),
+            }),
           );
           clearTimeout(replyTimers.get(id));
           const oldest = replyMessages[0];

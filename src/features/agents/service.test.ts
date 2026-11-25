@@ -2918,14 +2918,27 @@ describe("a plugin's wake", () => {
         expect(work.messageId).toBe(
           delivery?.trigger.type === "plugin" ? delivery.trigger.id : undefined,
         );
+        const coordination = await delivery?.agent.publish({
+          kind: 9,
+          content: "Background coordination",
+          tags: [
+            ["h", channel],
+            ["audience", "agents"],
+          ],
+        });
+        expect(f.activity.reader.work()[0]).not.toHaveProperty(
+          "hasUserVisibleReply",
+        );
         const reply = await delivery?.agent.publish({
           kind: 9,
           content: "Please approve the preview",
           tags: [["h", channel]],
         });
         expect(f.activity.reader.work()[0]?.publishedMessageIds).toEqual([
+          coordination?.id,
           reply?.id,
         ]);
+        expect(f.activity.reader.work()[0]?.hasUserVisibleReply).toBe(true);
         const target = completionTarget(work, {
           viewer,
           communityOrigin: "https://buzz.example",
@@ -2968,6 +2981,7 @@ describe("a plugin's wake", () => {
           expect(f.activity.reader.work()[0]?.state).toBe("done"),
         );
         expect(f.activity.reader.work()[0]?.publishedMessageIds).toEqual([
+          coordination?.id,
           reply?.id,
         ]);
       } finally {

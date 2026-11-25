@@ -311,10 +311,11 @@ it("expires reply correlations after the notification freshness window", () => {
   try {
     const activity = createLocalAgentActivity();
     const work = activity.begin(request());
-    work.reply(reply);
+    work.reply(reply, true);
     expect(activity.reader.work()[0]?.replyMessages).toHaveLength(1);
     vi.advanceTimersByTime(120_001);
     expect(activity.reader.work()[0]).not.toHaveProperty("replyMessages");
+    expect(activity.reader.work()[0]?.hasUserVisibleReply).toBe(true);
   } finally {
     vi.useRealTimers();
   }
@@ -326,10 +327,11 @@ it("keeps fresh reply correlations when retry replaces the failed attempt", () =
   try {
     const activity = createLocalAgentActivity();
     const first = activity.begin(request(), () => {});
-    first.reply(reply);
+    first.reply(reply, true);
     first.finish({ ok: false, error: "Provider unavailable" });
     vi.advanceTimersByTime(1);
     activity.begin(request(), () => {});
+    expect(activity.reader.work()[0]).not.toHaveProperty("hasUserVisibleReply");
     expect(activity.reader.work()[0]?.replyMessages).toEqual([
       expect.objectContaining({ id: reply }),
     ]);

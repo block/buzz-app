@@ -37,6 +37,9 @@ afterEach(() => {
   cleanup();
   localStorage.clear();
   vi.restoreAllMocks();
+  vi.useRealTimers();
+  for (const name of ["requestVideoFrameCallback", "cancelVideoFrameCallback"])
+    Reflect.deleteProperty(HTMLVideoElement.prototype, name);
 });
 
 const attachment = {
@@ -91,6 +94,8 @@ async function player({
     /** Whether it shows the video's poster, over the video or as its own. */
     poster: () =>
       !!view.container.querySelector("img") || video.hasAttribute("poster"),
+    /** Whether a still of the frame it was handed lies over its video. */
+    still: () => !!view.container.querySelector("canvas"),
     load,
     press: (name: string) =>
       settled(() => controls.getByRole("button", { name }).click()),
@@ -253,4 +258,136 @@ it("leaves a reader the browser will not start paused at the position", async ()
   await reader.close();
   expect(brief.video.paused).toBe(true);
   expect(brief.video.currentTime).toBe(42);
+});
+
+const define = (video: HTMLVideoElement, values: Record<string, unknown>) => {
+  for (const [name, value] of Object.entries(values))
+    Object.defineProperty(video, name, { configurable: true, value });
+};
+
+/** Gives videos pictures, which jsdom's have none of: a frame a canvas can
+ * draw, and frames a video reports presenting. */
+function pictures() {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+    drawImage() {},
+  } as never);
+  const waiting = new Map<HTMLVideoElement, VideoFrameRequestCallback[]>();
+  Object.assign(HTMLVideoElement.prototype, {
+    requestVideoFrameCallback(
+      this: HTMLVideoElement,
+      callback: VideoFrameRequestCallback,
+    ) {
+      waiting.set(this, [...(waiting.get(this) ?? []), callback]);
+      return 1;
+    },
+    cancelVideoFrameCallback(this: HTMLVideoElement) {
+      waiting.delete(this);
+    },
+  });
+  const drawable = { readyState: 4, videoWidth: 640, videoHeight: 360 };
+  return {
+    /** A loaded video, showing a frame. */
+    loaded: (video: HTMLVideoElement) => define(video, drawable),
+    /** A video still to load, at 24 frames a second, that presents the frame
+     * of a position only as `presents` allows. Returns how to load it, and
+     * the media time of the frame it shows. */
+    loading(
+      video: HTMLVideoElement,
+      presents: (to: number, from: number) => boolean,
+    ) {
+      let position = video.currentTime;
+      let shows: number | undefined;
+      const present = (seconds: number) => {
+        shows = Math.floor(seconds * 24) / 24;
+        const callbacks = waiting.get(video) ?? [];
+        waiting.delete(video);
+        for (const callback of callbacks)
+          callback(0, { mediaTime: shows } as VideoFrameCallbackMetadata);
+      };
+      const seek = (from: number) => {
+        video.dispatchEvent(new Event("seeking"));
+        if (presents(position, from)) present(position);
+        video.dispatchEvent(new Event("seeked"));
+      };
+      Object.defineProperty(video, "currentTime", {
+        configurable: true,
+        get: () => position,
+        set(to: number) {
+          const from = position;
+          position = to;
+          // Until it loads, this only sets where it starts.
+          if (video.readyState) queueMicrotask(() => seek(from));
+        },
+      });
+      video.addEventListener("play", () => present(position));
+      return {
+        load: () =>
+          settled(() => {
+            define(video, drawable);
+            video.dispatchEvent(new Event("loadedmetadata"));
+            // Its first frame arrives as the seek to its start ends.
+            present(0);
+            seek(0);
+          }),
+        shows: () => shows,
+      };
+    },
+  };
+}
+
+/** A reader opened over a brief paused at 0:42, its video still to load. */
+async function pausedReader(presents: (to: number, from: number) => boolean) {
+  const frames = pictures();
+  const brief = await player();
+  frames.loaded(brief.video);
+  await brief.press("Play video");
+  brief.video.currentTime = 42.02;
+  await brief.press("Pause video");
+  const reader = await player({ reader: true });
+  const video = frames.loading(reader.video, presents);
+  expect(reader.still()).toBe(true);
+  await video.load();
+  return { reader, video };
+}
+
+/** Lets `ms` pass in steps, a video's events arriving between them, and runs
+ * `check` after each. */
+async function passes(ms: number, check = () => {}) {
+  for (let waited = 0; waited < ms; waited += 50) {
+    await settled(() => vi.advanceTimersByTime(50));
+    check();
+  }
+}
+
+// WebKit: the seek to a paused video's start position can end on the video's
+// first frame, which stays until the video is sent to another frame.
+it("lifts a paused reader's still only once its video presents the handed frame", async () => {
+  const { reader, video } = await pausedReader(
+    (to, from) => from !== 0 && to !== from,
+  );
+  expect(video.shows()).toBe(0);
+  // Under the still or not, the viewer sees the handed frame.
+  await passes(3000, () => {
+    if (!reader.still()) expect(video.shows()).toBe(42);
+  });
+  expect(reader.still()).toBe(false);
+  expect(reader.video.currentTime).toBe(42.02);
+  expect(reader.video.paused).toBe(true);
+});
+
+it("keeps the still over a paused reader that presents no frame, until it plays", async () => {
+  const { reader, video } = await pausedReader(() => false);
+  await passes(5000);
+  expect(reader.still()).toBe(true);
+  expect(reader.video.currentTime).toBe(42.02);
+  expect(reader.video.paused).toBe(true);
+
+  await reader.press("Play video");
+  expect(video.shows()).toBe(42);
+  expect(reader.still()).toBe(false);
+  expect(reader.video.currentTime).toBe(42.02);
+  expect(
+    reader.controls.getByRole("button", { name: "Pause video" }),
+  ).toBeInTheDocument();
 });

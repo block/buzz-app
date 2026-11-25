@@ -58,11 +58,17 @@ function playbackOf(player: Player): Playback {
   };
 }
 
+/** Lifts a player's still. A video it had sent aside is back at its
+ * position. */
+function uncover(player: Player) {
+  player.cover?.remove();
+  delete player.cover;
+}
+
 function settle(player: Player) {
   player.pending?.cancel();
   delete player.pending;
-  player.cover?.remove();
-  delete player.cover;
+  uncover(player);
 }
 
 /** The frame `video` shows, drawn no larger than it or `target` draws it. */
@@ -98,50 +104,153 @@ function frameOf(video: HTMLVideoElement, target: HTMLVideoElement) {
   return canvas;
 }
 
-/** How long a video whose seek has ended may go without reporting a frame of
- * its position before its still is lifted anyway. A browser reports none for
- * a video off screen, and some report none at all. */
-const unreportedFrameMs = 250;
+/** How long a paused video whose seek has ended may go without presenting a
+ * frame of its position before it is sent there again. */
+const unpresentedMs = 250;
+/** How far aside that sends it first: to another frame of any clip of ten
+ * frames a second or more. */
+const asideSeconds = 0.1;
+/** How many times, for one position. */
+const asideLimit = 3;
 
-/** Calls `shown` once `video` shows a frame of the position, `seconds`, it
- * was sent to: one it presents once that seek has ended, from no more than
- * half a second before the position. An older frame is from before the seek,
- * and so is a new video's first, which a browser may present while the seek
- * is under way and report after it. */
+/** Calls `shown` once `video` presents a frame of its position, having been
+ * sent to `seconds`. Nothing else lifts a still: a seek that has ended and
+ * data that has loaded say what the video holds, not what it shows.
+ *
+ * A frame is of the position when it is the last the video has presented by
+ * the time the seek has ended, and is from no more than half a second before
+ * the position, and not from after it while paused. An older frame is from
+ * before the seek, and so is a new video's first, which a browser may present
+ * while the seek is under way and report after it. A browser may equally
+ * report the frame of the position just before it reports the seek over.
+ *
+ * WebKit can end a seek on a paused video and present no frame for it: where
+ * the video's first frame arrives as the seek to its start position ends,
+ * that frame stays, until the video plays or is sent to another frame.
+ * Sending it to the same position again does nothing. So a paused video that
+ * has presented no frame of its position is sent a little aside and, once it
+ * presents a frame there, back. The still covers both. */
 function whenShown(
   video: HTMLVideoElement,
   seconds: number,
   shown: () => void,
 ) {
+  const reports = typeof video.requestVideoFrameCallback === "function";
   let sent = false;
+  let stopped = false;
   let frame: number | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** The media time of the last frame presented since the video was last
+   * sent anywhere. */
+  let presented: number | undefined;
+  /** Where the hand-off last left the video. */
+  let rest = seconds;
+  /** Where the video is while it is sent aside, and where it goes back to. */
+  let aside: { at: number; home: number } | undefined;
+  let asides = 0;
+  /** A frame from here or before is of where the video was sent aside. One
+   * from ahead of a paused video's position is never of it. */
+  let floor = Number.NEGATIVE_INFINITY;
   const there = () =>
     sent &&
     !video.seeking &&
     video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
-  const stop = () => {
-    for (const name of ["seeked", "loadeddata"])
-      video.removeEventListener(name, arrived);
-    if (frame !== undefined) video.cancelVideoFrameCallback(frame);
+  const of = (mediaTime: number, at: number) =>
+    mediaTime > at - 0.5 &&
+    mediaTime <= at + (video.paused ? 0.001 : 0.5) &&
+    (mediaTime > 0 || at <= 0);
+  /** Ends a wait, and puts a video sent aside back at its position. */
+  const home = () => {
     clearTimeout(timer);
+    timer = undefined;
+    if (!aside) return;
+    const to = aside.home;
+    aside = undefined;
+    presented = undefined;
+    rest = to;
+    video.currentTime = to;
   };
-  const finish = () => {
-    stop();
-    shown();
+  const sendAside = () => {
+    timer = undefined;
+    if (aside || !there() || !video.paused) return;
+    const at = video.currentTime;
+    const ahead = at + asideSeconds;
+    // Within the second it is in, where the clip allows: a player's readout
+    // follows its video.
+    const to =
+      at % 1 < asideSeconds && ahead < video.duration
+        ? ahead
+        : Math.max(0, at - asideSeconds);
+    if (to === at) return;
+    asides += 1;
+    if (to < at) floor = to;
+    aside = { at: to, home: at };
+    presented = undefined;
+    video.currentTime = to;
   };
-  const watch = () => {
-    frame = video.requestVideoFrameCallback?.((_now, { mediaTime }) =>
-      there() && mediaTime > seconds - 0.5 && (mediaTime > 0 || seconds <= 0)
-        ? finish()
-        : watch(),
-    );
+  /** Acts on the last frame presented, once the seek has ended. */
+  const judge = () => {
+    if (presented === undefined || !there()) return;
+    if (aside) {
+      if (of(presented, aside.at)) home();
+    } else if (presented > floor && of(presented, video.currentTime)) finish();
   };
   function arrived() {
-    if (there()) timer ??= setTimeout(finish, unreportedFrameMs);
+    judge();
+    // Not while a seek judging made is under way, nor once the still has lifted.
+    if (stopped || !there()) return;
+    clearTimeout(timer);
+    timer = aside
+      ? setTimeout(home, unpresentedMs)
+      : reports && asides < asideLimit
+        ? setTimeout(sendAside, unpresentedMs)
+        : undefined;
   }
-  for (const name of ["seeked", "loadeddata"])
-    video.addEventListener(name, arrived);
+  /** A seek the hand-off did not make leaves the video where it went. */
+  const sought = () => {
+    const at = video.currentTime;
+    if (at === (aside ? aside.at : rest)) return;
+    aside = undefined;
+    presented = undefined;
+    rest = at;
+    asides = 0;
+    floor = Number.NEGATIVE_INFINITY;
+  };
+  /** A browser that reports no frames: its position moving on, by playing or
+   * by a seek, is the one sign that it shows something newer. */
+  const progressed = () => {
+    if (!reports && there() && video.currentTime !== seconds) finish();
+  };
+  const listeners = [
+    ["seeked", arrived],
+    ["loadeddata", arrived],
+    ["seeking", sought],
+    // It plays on from its position, not from where it was sent aside.
+    ["play", home],
+    ["timeupdate", progressed],
+  ] as const;
+  const stop = () => {
+    stopped = true;
+    for (const [name, listener] of listeners)
+      video.removeEventListener(name, listener);
+    if (frame !== undefined) video.cancelVideoFrameCallback(frame);
+    frame = undefined;
+    home();
+  };
+  function finish() {
+    stop();
+    shown();
+  }
+  const watch = () => {
+    frame = video.requestVideoFrameCallback?.((_now, { mediaTime }) => {
+      frame = undefined;
+      presented = mediaTime;
+      judge();
+      if (!stopped) watch();
+    });
+  };
+  for (const [name, listener] of listeners)
+    video.addEventListener(name, listener);
   watch();
   return {
     /** The video has been sent to the position. */
@@ -153,8 +262,8 @@ function whenShown(
   };
 }
 
-/** Lays `still` over a player's video until the video shows the frame it was
- * sent to. */
+/** Lays `still` over a player's video until the video presents the frame it
+ * was sent to, however long that takes. */
 function cover(
   player: Player,
   still: HTMLCanvasElement | undefined,
@@ -204,16 +313,20 @@ function hold(key: string, player: Player | undefined) {
  * The player taking over never shows or plays anything from before the
  * position. Its poster goes at once, where the other player has a frame or a
  * position to give. A still of the frame the other player shows lies over
- * its video until the video shows that frame itself, however long it takes
- * to load. And a video still to load is given the position as its start,
+ * its video until the video presents that frame itself, however long that
+ * takes, so the still never lifts onto anything else. And a video still to
+ * load is given the position as its start,
  * which the browser seeks to as the metadata loads, before it presents a
  * frame or plays. */
 function hand(from: Player, to: Player) {
-  const playback = playbackOf(from);
   // A player still under its own still passes that on: its video has yet to
-  // show the frame.
+  // show the frame. Lifted before its position is read, which is then the
+  // one it was handed.
+  const held = from.cover?.still;
+  uncover(from);
+  const playback = playbackOf(from);
   const still = playback.started
-    ? (from.cover?.still ?? frameOf(from.video, to.video))
+    ? (held ?? frameOf(from.video, to.video))
     : undefined;
   settle(from);
   from.video.pause();

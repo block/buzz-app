@@ -89,7 +89,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
           exact: true,
         }),
       ).toHaveCount(0); // Edited-body names cannot inherit original signed recipients.
-      await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+      await expect(thread(page).locator("[data-message-id]")).toHaveCount(11);
       await expect(
         page.getByRole("textbox", { name: "Reply to thread", exact: true }),
       ).toBeVisible();
@@ -98,14 +98,10 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   expect(app.report.queries.filter((q) => q.filter.top_level).length).toBe(
     initialHeadQueries,
   );
-  expect(app.report.queries.some((q) => q.filter.depth_limit)).toBe(true);
-  expect(
-    app.report.queries.some((q) => q.filter.thread_cursor !== undefined),
-    "the exact reply requires a second thread page",
-  ).toBe(true);
+  expect(app.report.queries.some((q) => q.filter.thread_window)).toBe(true);
   expect(
     app.report.queries.filter(
-      (q) => q.filter.until && q.filter !== ahead?.filter,
+      (q) => q.filter.top_level && q.filter.until && q.filter !== ahead?.filter,
     ),
   ).toHaveLength(0);
   // Settings temporarily takes the rail without disposing the routed thread.
@@ -424,7 +420,7 @@ for (const nested of [false, true])
           }
           try {
             await expect(thread(page).locator("[data-message-id]")).toHaveCount(
-              81,
+              11,
             );
             if (nested)
               await expect(
@@ -651,7 +647,16 @@ test("post-success membership loss removes the thread and live updates do not sn
   const channelButton = page.locator(
     '.buzz-tabs-item:has([data-tab-value^="thread:"][aria-selected="true"]) > button[aria-label^="Close "], button[aria-label="Close thread"]',
   );
-  await expect(region.locator("[data-message-id]")).toHaveCount(81);
+  await expect(region.locator("[data-message-id]")).toHaveCount(11);
+  await expect
+    .poll(() =>
+      app.pending.some(
+        (entry) => entry.filter.thread_window && entry.filter.until,
+      ),
+    )
+    .toBe(true);
+  for (const entry of app.pending.splice(0)) entry.release();
+  await expect(region.locator("[data-message-id]")).toHaveCount(61);
   // A shorter edit can legitimately clamp a bottom-aligned scroll offset.
   // Force that geometry instead of depending on the platform's text wrapping.
   const exact = region.locator(`[data-message-id="${app.exact.target.id}"]`);
@@ -877,7 +882,10 @@ readTest(
         !route
           .request()
           .postDataJSON()
-          .some((filter) => filter.depth_limit)
+          .some(
+            (filter) =>
+              filter.depth_limit || filter.ids?.includes(app.exact.root.id),
+          )
       )
         return route.continue();
       intercepted();
@@ -917,7 +925,7 @@ readTest(
       release();
     }
     await page.clock.resume();
-    await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+    await expect(thread(page).locator("[data-message-id]")).toHaveCount(11);
     await expect(
       thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
     ).toBeFocused();
@@ -1057,7 +1065,7 @@ for (const movedFocus of [false, true])
         status: "opened",
       });
       const region = thread(page);
-      await expect(region.locator("[data-message-id]")).toHaveCount(82);
+      await expect(region.locator("[data-message-id]")).toHaveCount(11);
       await expect(region.getByText("Loading thread…")).toHaveCount(0);
       const row = region.locator(`[data-message-id="${parent.id}"]`);
       await row.getByRole("button", { name: "Reveal spoiler" }).click();
@@ -1108,7 +1116,7 @@ for (const movedFocus of [false, true])
     },
   );
 
-const liveTest = test.extend({ productionBroker: true });
+const liveTest = test.extend({ productionBroker: true, olderPageDelayMs: 0 });
 liveTest(
   "stream repair retains thread rows, reading position and composer focus after exact opening",
   async ({ page, app }) => {
@@ -1135,7 +1143,7 @@ liveTest(
     await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     const region = thread(page);
-    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(region.locator("[data-message-id]")).toHaveCount(61);
     await expect(region.getByText("Loading thread…")).toHaveCount(0);
     const readingRow = region.locator(
       `[data-message-id="${app.exact.replies[40].id}"]`,
@@ -1186,7 +1194,7 @@ liveTest(
         .toBe(true);
       publicationGate = undefined;
       pendingPublication.resolve();
-      await expect(region.locator("[data-message-id]")).toHaveCount(81);
+      await expect(region.locator("[data-message-id]")).toHaveCount(61);
       await expect(composer).toBeFocused();
       expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
         before,
@@ -1196,9 +1204,8 @@ liveTest(
       await expect(
         region.locator(`[data-message-id="${missedReply.id}"]`),
       ).toBeAttached();
-      await expect(region.locator("[data-message-id]")).toHaveCount(82);
-      // Arrival count updates only after the retained traversal is ready and
-      // exhausted, including its empty final page. Paint alone can precede it.
+      await expect(region.locator("[data-message-id]")).toHaveCount(62);
+      // Arrival count updates once the retained range repair settles.
       await expect(
         region.getByRole("button", { name: "1 new message", exact: true }),
       ).toBeVisible();
@@ -1229,7 +1236,7 @@ liveTest(
     await open(page, app);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     const region = thread(page);
-    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(region.locator("[data-message-id]")).toHaveCount(61);
     app.deleteTarget();
     await expect(
       region.locator(`[data-message-id="${app.exact.target.id}"]`),
@@ -1237,7 +1244,7 @@ liveTest(
     await expect(
       region.locator(`[data-message-id="${app.exact.root.id}"]`),
     ).toBeAttached();
-    await expect(region.locator("[data-message-id]")).toHaveCount(80);
+    await expect(region.locator("[data-message-id]")).toHaveCount(60);
     await expect(region).toBeFocused();
     await expect(region).toHaveAttribute("tabindex", "0");
     app.append(

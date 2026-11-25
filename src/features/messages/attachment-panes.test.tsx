@@ -20,7 +20,14 @@ import type { PageNavigation } from "../navigation/service";
 import { conversationTarget } from "../channel-navigation/routes";
 import { SOLO_LABEL } from "../solo/labels";
 import { createRelaySession } from "../relay/session";
-import { bounds, keypair, message, roster, signed } from "../relay/testing";
+import {
+  bounds,
+  keypair,
+  message,
+  roster,
+  signed,
+  threadWindowBounds,
+} from "../relay/testing";
 import { MessageComposer } from "./MessageComposer";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 import { composerDOMFixture } from "./composer-testing";
@@ -107,28 +114,44 @@ async function fixture(archived = false) {
       media: (url) => url,
       uploadAttachment: upload,
       query: async (filters) =>
-        filters.flatMap((filter) => {
-          if (filter.kinds?.some((kind) => kind === 39000 || kind === 39002))
-            return [channel, membership];
-          if (filter.ids)
-            return [root, comment].filter((event) =>
-              filter.ids?.includes(event.id),
-            );
-          if (filter.top_level)
-            return [
-              root,
-              bounds(relay, "11111111-1111-4111-8111-111111111111", "head", {
-                has_more: false,
-                next_cursor: null,
-              }),
-            ];
-          if (filter.depth_limit)
-            return filter.thread_cursor === undefined ||
-              filter.thread_cursor < comment.created_at
-              ? [comment]
-              : [];
-          return [];
-        }),
+        (
+          await Promise.all(
+            filters.map(async (filter) => {
+              if (
+                filter.kinds?.some((kind) => kind === 39000 || kind === 39002)
+              )
+                return [channel, membership];
+              if (filter.ids)
+                return [root, comment].filter((event) =>
+                  filter.ids?.includes(event.id),
+                );
+              if (filter.top_level)
+                return [
+                  root,
+                  bounds(
+                    relay,
+                    "11111111-1111-4111-8111-111111111111",
+                    "head",
+                    {
+                      has_more: false,
+                      next_cursor: null,
+                    },
+                  ),
+                ];
+              if (filter.thread_window)
+                return [
+                  comment,
+                  await threadWindowBounds(
+                    relay,
+                    "https://fixture.test",
+                    viewer.pubkey,
+                    filter,
+                  ),
+                ];
+              return [];
+            }),
+          )
+        ).flat(),
       writer: {
         kinds: [9],
         sign: async (event) => signed(viewer, event),

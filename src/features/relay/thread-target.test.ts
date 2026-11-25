@@ -1,9 +1,10 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { createThreadView } from "./threads";
 import { ReadError } from "./errors";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { LiveCallbacks } from "./live";
+import type { ThreadCursor } from "./thread-window";
 import {
   bounds,
   flush,
@@ -12,8 +13,10 @@ import {
   roster,
   scriptedTransport,
   signed,
+  threadWindowBounds,
 } from "./testing";
 
+const origin = "https://relay.example";
 const relay = keypair(),
   viewer = keypair(),
   alice = keypair();
@@ -28,7 +31,9 @@ const reply = message(alice, "a", "Selected reply", 10000, [
 const aux = (kind: number, target: RelayEvent, content = "", time = 10001) =>
   signed(alice, { kind, content, created_at: time, tags: [["e", target.id]] });
 function setup(id = reply.id, subthread = false) {
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    scope: origin,
+  });
   let traffic!: LiveCallbacks;
   const owner = createRelaySession({
     ...wire.transport,
@@ -45,6 +50,34 @@ function setup(id = reply.id, subthread = false) {
     view: owner.session.thread("a", id, { exact: true, subthread }),
   };
 }
+const windowBounds = (filter: ReadFilter, cursor: ThreadCursor | null = null) =>
+  threadWindowBounds(relay, origin, viewer.pubkey, filter, cursor);
+async function respondExactThread(
+  h: ReturnType<typeof setup>,
+  replies: readonly RelayEvent[] = [],
+  cursor: ThreadCursor | null = null,
+  rootEvents: readonly RelayEvent[] = [root],
+) {
+  const rootReq = h.next();
+  const winReq = h.next();
+  rootReq.respond([...rootEvents]);
+  const filter = winReq.filters[0];
+  if (!filter?.thread_window) throw new Error("Expected thread_window query");
+  winReq.respond([...replies, await windowBounds(filter, cursor)]);
+}
+async function respondOrdinaryThread(
+  h: ReturnType<typeof setup>,
+  replies: readonly RelayEvent[] = [],
+  cursor: ThreadCursor | null = null,
+  rootEvents: readonly RelayEvent[] = [root],
+) {
+  h.next().respond([...rootEvents]);
+  await flush();
+  const winReq = h.next();
+  const filter = winReq.filters[0];
+  if (!filter?.thread_window) throw new Error("Expected thread_window query");
+  winReq.respond([...replies, await windowBounds(filter, cursor)]);
+}
 async function targetRead(
   h: ReturnType<typeof setup>,
   target = reply,
@@ -52,6 +85,7 @@ async function targetRead(
   selection?: Parameters<typeof h.view.refresh>[0],
 ) {
   const loading = h.view.refresh(selection);
+  await vi.waitFor(() => expect(h.pending.length).toBeGreaterThanOrEqual(2));
   h.next().respond([target]);
   await flush();
   h.next().respond(overlays);
@@ -77,10 +111,13 @@ it("retains the selected reply beyond traversal limits without using it as a cur
   const { loading } = await targetRead(h, reply, [
     aux(40003, reply, "Edited target"),
   ]);
-  h.next().respond([
-    root,
-    message(alice, "a", "First reply", 2, [["e", root.id, "", "reply"]]),
+  let cursorRow = message(alice, "a", "First reply", 20, [
+    ["e", root.id, "", "reply"],
   ]);
+  await respondExactThread(h, [cursorRow], {
+    created_at: cursorRow.created_at,
+    id: cursorRow.id,
+  });
   await loading;
   expect(h.view.snapshot().target).toMatchObject({
     id: reply.id,
@@ -92,14 +129,27 @@ it("retains the selected reply beyond traversal limits without using it as a cur
   ]); // Unrelated top-level seed events must not become replies before root resolution.
   for (let page = 2; page <= 10; page++) {
     const more = h.view.loadMore();
+    const rootReq = h.next();
     const request = h.next();
-    expect(request.filters[1]?.thread_cursor).toBe(page);
-    request.respond([
-      root,
-      message(alice, "a", `Reply ${page}`, page + 1, [
-        ["e", root.id, "", "reply"],
-      ]),
+    expect(request.filters[0]).toMatchObject({
+      thread_window: true,
+      until: cursorRow.created_at,
+      before_id: cursorRow.id,
+    });
+    const nextRow = message(alice, "a", `Reply ${page}`, 21 - page, [
+      ["e", root.id, "", "reply"],
     ]);
+    rootReq.respond([root]);
+    const filter = request.filters[0];
+    if (!filter) throw new Error("Missing thread_window filter");
+    request.respond([
+      nextRow,
+      await windowBounds(filter, {
+        created_at: nextRow.created_at,
+        id: nextRow.id,
+      }),
+    ]);
+    cursorRow = nextRow;
     await more;
   }
   expect(h.view.snapshot()).toMatchObject({
@@ -149,6 +199,10 @@ it("admits passive label lookups in the background, so an opened thread's read s
   take((filter) => filter["#e"]?.[0] === reply.id).respond([]);
   await flush();
   take((filter) => filter.ids?.[0] === root.id).respond([root]);
+  const win = take((filter) => filter.thread_window === true);
+  const winFilter = win.filters[0];
+  if (!winFilter) throw new Error("Missing thread_window filter");
+  win.respond([await windowBounds(winFilter)]);
   await opened;
   expect(h.view.snapshot()).toMatchObject({
     targetStatus: "ready",
@@ -173,7 +227,7 @@ it("folds reference-only edits and deletes of overlays before exposing the targe
   expect(h.view.snapshot().target).toBeUndefined();
   h.next().respond([aux(5, reaction)]);
   await flush();
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   expect(h.view.snapshot().target).toMatchObject({
     content: "Edited",
@@ -192,7 +246,9 @@ it("keeps an accessible reply when the original is unavailable, without a compos
   const h = setup();
   const { loading } = await targetRead(h);
   h.next().respond([]);
+  const overlapped = h.next();
   await loading;
+  expect(overlapped.signal?.aborted).toBe(true);
   expect(h.view.snapshot()).toMatchObject({
     root: undefined,
     targetStatus: "ready",
@@ -209,7 +265,7 @@ it("keeps an accessible reply when the original is unavailable, without a compos
 it("keeps a fetched root in the existing thread surface", async () => {
   const h = setup(root.id);
   const { loading } = await targetRead(h, root);
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   expect(h.view.snapshot()).toMatchObject({
     root: { id: root.id },
@@ -236,7 +292,7 @@ it("distinguishes absent targets and failed lookup, then permits explicit retry"
   expect(offlineOverlay.signal?.aborted).toBe(true);
   await flush();
   const { loading } = await targetRead(h);
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   expect(h.view.snapshot().target?.id).toBe(reply.id);
 });
@@ -261,7 +317,7 @@ it("retains target tombstones across sparse refresh and shared-cache eviction", 
   const h = setup();
   const edit = aux(40003, reply, "Edited");
   const { loading } = await targetRead(h, reply, [edit]);
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   h.traffic.receive(
     Array.from({ length: 140 }, (_, i) =>
@@ -340,7 +396,7 @@ it("disposes held exact reads and purges loaded targets on cache clear", async (
   expect(h.view.snapshot().target).toBeUndefined();
   const next = setup();
   const { loading } = await targetRead(next);
-  next.next().respond([root]);
+  await respondExactThread(next);
   await loading;
   await next.clearCache();
   expect(next.view.snapshot().target).toBeUndefined();
@@ -379,7 +435,7 @@ it("retains verified rows throughout repair and keeps valid context when the sel
     ["e", root.id, "", "reply"],
   ]);
   const { loading } = await targetRead(h);
-  h.next().respond([root, sibling]);
+  await respondExactThread(h, [sibling]);
   await loading;
   const repairing = h.view.refresh();
   expect(h.view.snapshot()).toMatchObject({
@@ -396,7 +452,7 @@ it("retains verified rows throughout repair and keeps valid context when the sel
   await flush();
   h.next().respond([]);
   await flush();
-  h.next().respond([root, sibling]);
+  await respondExactThread(h, [sibling]);
   await repairing;
   h.traffic.receive([aux(5, reply)]);
   expect(h.view.snapshot()).toMatchObject({
@@ -411,7 +467,7 @@ for (const outcome of ["deleted", "failed", "live withdrawal"] as const) {
   it(`keeps the last safe selected fold through held repair overlays: ${outcome}`, async () => {
     const h = setup();
     const { loading } = await targetRead(h);
-    h.next().respond([root]);
+    await respondExactThread(h);
     await loading;
     const repair = h.view.refresh();
     h.next().respond([reply]);
@@ -432,7 +488,7 @@ for (const outcome of ["deleted", "failed", "live withdrawal"] as const) {
       }
       held.respond([aux(5, edit)]);
       await flush();
-      if (outcome !== "live withdrawal") h.next().respond([root]);
+      if (outcome !== "live withdrawal") await respondExactThread(h);
     }
     await repair;
     if (outcome === "live withdrawal") {
@@ -499,18 +555,25 @@ it.each([1, 5])(
     });
     const loaded = depth === 5 ? parents : [];
     const source = h.next();
+    const win = h.next();
     expect(source.filters[0]?.ids).toEqual([root.id]);
     h.traffic.receive([sibling]);
     expect(h.view.snapshot()).toMatchObject({
       root: undefined,
       targetStatus: "loading",
     });
-    source.respond([root, sibling, ...loaded]);
-    await flush();
+    source.respond([root]);
+    const winFilter = win.filters[0];
+    if (!winFilter) throw new Error("Missing thread_window filter");
+    win.respond([sibling, ...loaded, await windowBounds(winFilter)]);
+    await vi.waitFor(() => expect(h.pending.length).toBeGreaterThanOrEqual(2));
     h.next().respond([selected]);
     h.next().respond([]);
     await flush();
-    if (!loaded.length) h.next().respond([parent]);
+    if (!loaded.length) {
+      await vi.waitFor(() => expect(h.pending.length).toBeGreaterThan(0));
+      h.next().respond([parent]);
+    }
     expect(h.pending).toHaveLength(0);
     await loading;
 
@@ -545,8 +608,8 @@ it("keeps the verified branch available when its initial selection is a sibling"
     sourceThreadId: root.id,
   });
   expect(h.view.snapshot().root).toBeUndefined();
-  h.next().respond([root, child, sibling]);
-  await flush();
+  await respondExactThread(h, [child, sibling]);
+  await vi.waitFor(() => expect(h.pending.length).toBeGreaterThanOrEqual(2));
   h.next().respond([sibling]);
   h.next().respond([]);
   await loading;
@@ -581,7 +644,7 @@ it("retargets a root-opened reader without reloading its history or replacing it
   h.traffic.receive([root]);
   const view = h.session.thread("a", root.id);
   const initial = view.refresh();
-  h.next().respond([root]);
+  await respondOrdinaryThread(h);
   await initial;
   const before = view.snapshot();
   const selecting = view.retarget(reply.id, new AbortController().signal);
@@ -609,7 +672,7 @@ it.each(["different", "unavailable", "error", "cancelled"] as const)(
   async (outcome) => {
     const h = setup();
     const { loading } = await targetRead(h);
-    h.next().respond([root]);
+    await respondExactThread(h);
     await loading;
     const before = h.view.snapshot();
     const signal = new AbortController();
@@ -639,7 +702,7 @@ it("the newest retarget wins and access loss fences an in-flight target", async 
   const h = setup();
   h.traffic.receive([roster(relay, "a", [viewer.pubkey], 10)]);
   const { loading } = await targetRead(h);
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   const one = message(alice, "a", "One", 3, [["e", root.id, "", "reply"]]);
   const two = message(alice, "a", "Two", 4, [["e", root.id, "", "reply"]]);
@@ -673,27 +736,34 @@ it("the newest retarget wins and access loss fences an in-flight target", async 
 it("retarget during a pending history page does not strand loading or lose the page", async () => {
   const h = setup();
   const { loading } = await targetRead(h);
-  const sibling = message(alice, "a", "Sibling", 2, [
+  const sibling = message(alice, "a", "Sibling", 3, [
     ["e", root.id, "", "reply"],
   ]);
-  h.next().respond([root, sibling]);
+  await respondExactThread(h, [sibling], {
+    created_at: sibling.created_at,
+    id: sibling.id,
+  });
   await loading;
   const more = h.view.loadMore();
+  h.next().respond([root]);
   const page = h.next();
+  await flush();
   const selection = h.view.retarget(root.id, new AbortController().signal);
   expect(page.signal?.aborted).toBe(false);
   h.next().respond([root]);
   await flush();
   h.next().respond([]);
   expect(await selection).toBe("selected");
+  const pageFilter = page.filters[0];
+  if (!pageFilter) throw new Error("Missing thread_window filter");
   page.respond([
-    root,
-    message(alice, "a", "Later", 3, [["e", root.id, "", "reply"]]),
+    message(alice, "a", "Earlier", 2, [["e", root.id, "", "reply"]]),
+    await windowBounds(pageFilter),
   ]);
   await more;
-  expect(h.view.snapshot().replies.some((row) => row.content === "Later")).toBe(
-    true,
-  );
+  expect(
+    h.view.snapshot().replies.some((row) => row.content === "Earlier"),
+  ).toBe(true);
   expect(h.view.snapshot().target?.id).toBe(root.id);
   expect(h.view.snapshot().status).toBe("ready");
 });
@@ -701,7 +771,7 @@ it("retarget during a pending history page does not strand loading or lose the p
 it("a deleted new target does not replace the prior selection used by refresh", async () => {
   const h = setup();
   const { loading } = await targetRead(h);
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   const deleted = message(alice, "a", "Deleted", 3, [
     ["e", root.id, "", "reply"],
@@ -721,7 +791,7 @@ it("a deleted new target does not replace the prior selection used by refresh", 
   await flush();
   h.next().respond([]);
   await flush();
-  h.next().respond([root]);
+  await respondExactThread(h);
   await refresh;
   expect(h.view.snapshot().target?.id).toBe(reply.id);
 });
@@ -729,15 +799,18 @@ it("a deleted new target does not replace the prior selection used by refresh", 
 it("a held initial traversal finishes after retarget without overwriting the selection", async () => {
   const h = setup();
   const { loading } = await targetRead(h);
+  h.next().respond([root]);
   const page = h.next();
-  h.traffic.receive([root]);
+  await flush();
   const selected = h.view.retarget(root.id, new AbortController().signal);
   h.next().respond([root]);
   await flush();
   h.next().respond([]);
   expect(await selected).toBe("selected");
   expect(h.view.snapshot().status).toBe("loading");
-  page.respond([root]);
+  const pageFilter = page.filters[0];
+  if (!pageFilter) throw new Error("Missing thread_window filter");
+  page.respond([await windowBounds(pageFilter)]);
   await loading;
   expect(h.view.snapshot()).toMatchObject({
     status: "ready",
@@ -748,7 +821,7 @@ it("a held initial traversal finishes after retarget without overwriting the sel
 it("finishing an older refresh after a failed retarget keeps the previous target usable", async () => {
   const h = setup();
   const { loading } = await targetRead(h);
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   const refresh = h.view.refresh();
   const oldTarget = h.next();
@@ -761,7 +834,7 @@ it("finishing an older refresh after a failed retarget keeps the previous target
   await flush();
   oldOverlay.respond([]);
   await flush();
-  h.next().respond([root]);
+  await respondExactThread(h);
   await refresh;
   expect(h.view.snapshot()).toMatchObject({
     status: "ready",
@@ -773,7 +846,7 @@ it("finishing an older refresh after a failed retarget keeps the previous target
 it("a failed retarget cannot strand a pending missing-target repair in loading", async () => {
   const h = setup();
   const { loading } = await targetRead(h);
-  h.next().respond([root]);
+  await respondExactThread(h);
   await loading;
   const missing = h.view.refresh();
   const absent = h.next();
@@ -797,7 +870,7 @@ it("a failed retarget cannot strand a pending missing-target repair in loading",
   await flush();
   repairingOverlay.respond([]);
   await flush();
-  h.next().respond([root]);
+  await respondExactThread(h);
   await repair;
   expect(h.view.snapshot()).toMatchObject({
     status: "ready",
@@ -813,11 +886,11 @@ it.each(["selected", "error", "cancelled"] as const)(
   async (outcome) => {
     const h = setup();
     const { loading } = await targetRead(h);
-    h.next().respond([root]);
+    await respondExactThread(h);
     await loading;
     const other = h.session.thread("a", root.id);
     const refresh = other.refresh();
-    h.next().respond([root]);
+    await respondOrdinaryThread(h);
     await refresh;
     const candidate = message(alice, "a", "Bare candidate", 90, [
       ["e", root.id, "", "reply"],
@@ -888,11 +961,11 @@ it.each(["finite", "live"] as const)(
   async (delivery) => {
     const h = setup();
     const { loading } = await targetRead(h);
-    h.next().respond([root]);
+    await respondExactThread(h);
     await loading;
     const other = h.session.thread("a", root.id);
     const refresh = other.refresh();
-    h.next().respond([root]);
+    await respondOrdinaryThread(h);
     await refresh;
     const candidate = message(alice, "a", "Original candidate", 90, [
       ["e", root.id, "", "reply"],
@@ -985,7 +1058,7 @@ it("projects a task branch while retaining source reads and live isolation", asy
     ["e", root.id, "", "reply"],
   ]);
   const { loading } = await targetRead(h);
-  h.next().respond([root, child, nested, unrelated]);
+  await respondExactThread(h, [child, nested, unrelated]);
   await loading;
   expect(h.view.snapshot().root?.id).toBe(reply.id);
   expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([

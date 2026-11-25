@@ -121,8 +121,8 @@ it("supports the desktop's ID, reference, address, and application-data reads wi
       kinds: [40002, 9],
       "#e": ["root"],
       depth_limit: 10,
-      thread_cursor: 100,
-      thread_cursor_id: "reply",
+      until: 100,
+      before_id: "reply",
       limit: 80,
     },
     {

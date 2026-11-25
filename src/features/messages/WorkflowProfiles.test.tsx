@@ -5,7 +5,12 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { eventDto } from "../relay/events";
 import { createRelaySession } from "../relay/session";
-import { keypair, message, profile } from "../relay/testing";
+import {
+  keypair,
+  message,
+  profile,
+  threadWindowBounds,
+} from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 import { MediaReviewViewer } from "./MediaReviewViewer";
 
@@ -37,10 +42,12 @@ it.each(["thread", "media"])(
       release = resolve;
     });
     const requested: string[] = [];
+    const origin = "https://workflow-profile.test";
     const owner = createRelaySession({
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
       archiveAuthority: relay.pubkey,
+      scope: origin,
       media: (url) => url,
       async query(filters) {
         if (
@@ -54,16 +61,28 @@ it.each(["thread", "media"])(
           await gate;
           return [profile(workflowOwner, { name: "Cold workflow owner" })];
         }
-        return filters
-          .flatMap((filter) => {
-            if (filter.ids)
-              return [root, reply].filter((event) =>
-                filter.ids?.includes(event.id),
-              );
-            if (filter.depth_limit)
-              return filter.thread_cursor === undefined ? [reply] : [];
-            return [];
-          })
+        return (
+          await Promise.all(
+            filters.map(async (filter) => {
+              if (filter.ids)
+                return [root, reply].filter((event) =>
+                  filter.ids?.includes(event.id),
+                );
+              if (filter.thread_window)
+                return [
+                  reply,
+                  await threadWindowBounds(
+                    relay,
+                    origin,
+                    viewer.pubkey,
+                    filter,
+                  ),
+                ];
+              return [];
+            }),
+          )
+        )
+          .flat()
           .map(eventDto);
       },
     });

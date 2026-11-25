@@ -875,7 +875,8 @@ function ThreadMessages({
       0,
       ...snapshot.replies.map((reply) => reply.createdAt),
     ),
-    complete: snapshot.status === "ready" && !snapshot.canLoadMore,
+    ready: snapshot.status === "ready",
+    pagingOlder: snapshot.readKind === "older",
   });
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
@@ -1000,20 +1001,6 @@ function ThreadMessages({
     request: [] as unknown[],
     ids: new Set<string>(),
   });
-  // A page may supply the parent of a reply shown without it. The reply stays
-  // shown, in its parent's branch: commit that before restoring geometry.
-  const shownTree = useRef(tree);
-  useLayoutEffect(() => {
-    const added = (shownTree.current.children.get(undefined) ?? []).flatMap(
-      (row) => tree.parents.get(row.id) ?? [],
-    );
-    shownTree.current = tree;
-    if (added.length)
-      setExpanded((current) => {
-        if (added.every((id) => current.has(id))) return current;
-        return new Set([...current, ...added]);
-      });
-  }, [tree]);
   // Exact targets may precede their ancestors in bounded history. Reveal every
   // available ancestor as it arrives; missing parents remain visible at the top.
   useLayoutEffect(() => {
@@ -1075,6 +1062,27 @@ function ThreadMessages({
     !initialPositioned &&
     (!navigation || positionedVisit) &&
     snapshot.status !== "error";
+  // A page may supply the parent of a reply already shown without it. The reply
+  // stays shown, in its parent's branch: commit that before restoring geometry.
+  // Replies still hidden behind initial positioning were never shown orphan.
+  const shownTree = useRef<typeof tree>(undefined);
+  useLayoutEffect(() => {
+    if (positioning) {
+      shownTree.current = undefined;
+      return;
+    }
+    const previous = shownTree.current;
+    shownTree.current = tree;
+    if (!previous) return;
+    const added = (previous.children.get(undefined) ?? []).flatMap(
+      (row) => tree.parents.get(row.id) ?? [],
+    );
+    if (added.length)
+      setExpanded((current) => {
+        if (added.every((id) => current.has(id))) return current;
+        return new Set([...current, ...added]);
+      });
+  }, [tree, positioning]);
   // Each ordinary opening starts at the first top-level reply with unread in
   // its branch, decided once before positioning so reading it does not move
   // the line. Undefined while deciding.
@@ -1154,9 +1162,7 @@ function ThreadMessages({
     // decision asked for is in flight.
     if (
       snapshot.readKind === "older" ||
-      (!(snapshot.root && snapshot.direction) &&
-        (snapshot.status !== "ready" ||
-          (snapshot.direction !== "older" && snapshot.canLoadMore)))
+      (!(snapshot.root && snapshot.loaded) && snapshot.status !== "ready")
     )
       return;
     // An inactive reader reads nothing. Shown, it is a preview and gets no
@@ -1200,8 +1206,7 @@ function ThreadMessages({
     if (known && snapshot.resumed) return;
     // With unread known in the thread, only a thread-wide read reaching the
     // oldest loaded reply shows that older replies are read: one read alone,
-    // or the viewer's own, does not. A legacy walk reads forward from the
-    // oldest reply.
+    // or the viewer's own, does not.
     const oldest = snapshot.replies[0];
     // A reply marked unread is unread whatever the frontier says; one the
     // store knows of outside the loaded rows is older than them.
@@ -1213,7 +1218,6 @@ function ThreadMessages({
       since ?? session.unread.threadReadThrough(channelId, messageId);
     if (
       known &&
-      snapshot.direction === "older" &&
       (snapshot.canLoadMore || snapshot.limited) &&
       oldest &&
       (unreadOlder || oldest.createdAt > readThrough)
@@ -1496,41 +1500,39 @@ function ThreadMessages({
     },
     [videoOwner, videoAttachment, onOpenMediaReview, openRootMedia],
   );
-  // Only legacy traversal is eager. Strict windows open at the newest page.
-  useEffect(() => {
-    if (
-      snapshot.direction !== "older" &&
-      snapshot.status === "ready" &&
-      snapshot.canLoadMore
-    )
-      void view.loadMore();
-  }, [view, snapshot]);
   useLayoutEffect(() => {
     const previous = previousReplies.current;
-    const complete = snapshot.status === "ready" && !snapshot.canLoadMore;
-    // Initial traversal has no baseline. Once complete, retain the last
-    // observed replies through reconnect loading so recovery can reconcile them.
-    if (!complete && !previous.complete) return;
-    const arrivals =
-      complete && previous.complete
-        ? snapshot.replies.filter(
-            (reply) =>
-              !previous.ids.has(reply.id) &&
-              reply.createdAt >= previous.latestCreatedAt,
-          ).length
-        : 0;
-    if (complete)
-      previousReplies.current = {
-        ids: new Set(snapshot.replies.map((reply) => reply.id)),
-        latestCreatedAt: Math.max(
-          previous.latestCreatedAt,
-          ...snapshot.replies.map((reply) => reply.createdAt),
-        ),
-        complete: true,
-      };
+    const ready = snapshot.status === "ready";
+    const pagingOlder = snapshot.readKind === "older";
+    // The initial load has no baseline. Once ready, retain the last observed
+    // replies through reconnect refreshes and older-page loads so recovered
+    // replies count and prepended older replies do not.
+    if (!ready && !previous.ready) return;
+    if (!ready) {
+      previous.pagingOlder ||= pagingOlder;
+      return;
+    }
+    const arrivals = previous.ready
+      ? snapshot.replies.filter(
+          (reply) =>
+            !previous.ids.has(reply.id) &&
+            (previous.pagingOlder
+              ? reply.createdAt > previous.latestCreatedAt
+              : reply.createdAt >= previous.latestCreatedAt),
+        ).length
+      : 0;
+    previousReplies.current = {
+      ids: new Set(snapshot.replies.map((reply) => reply.id)),
+      latestCreatedAt: Math.max(
+        previous.latestCreatedAt,
+        ...snapshot.replies.map((reply) => reply.createdAt),
+      ),
+      ready: true,
+      pagingOlder: false,
+    };
     if (arrivals > 0 && !follow.current)
       setNewMessageCount((count) => count + arrivals);
-  }, [snapshot.status, snapshot.canLoadMore, snapshot.replies]);
+  }, [snapshot.status, snapshot.readKind, snapshot.replies]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
@@ -1570,9 +1572,8 @@ function ThreadMessages({
       // Seeded rows are not yet the thread: hold the loader until this view's
       // first page lands. Later pages and repairs keep presented rows showing.
       (!positioned.current &&
-        !(snapshot.root && snapshot.direction) &&
-        (snapshot.status !== "ready" ||
-          (snapshot.direction !== "older" && snapshot.canLoadMore))) ||
+        !(snapshot.root && snapshot.loaded) &&
+        snapshot.status !== "ready") ||
       (!positioned.current && unreadBoundary === undefined && !openLatest)
     )
       return;
@@ -1745,8 +1746,8 @@ function ThreadMessages({
       if (snapshot.status !== "loading" && !snapshot.canLoadMore)
         targetAnchor.current = undefined;
     }
-    // Initial positioning waits for one strict page or the legacy bounded walk.
-    // subsequent live changes follow only while the reader is at the bottom.
+    // Initial positioning waits for the first page; subsequent live changes
+    // follow only while the reader is at the bottom.
     // Each opening's line is placed once, when decided.
     const placing = unreadBoundary !== undefined && placed.current !== boundary;
     if (placing) placed.current = boundary;
@@ -1814,8 +1815,7 @@ function ThreadMessages({
     snapshot.status,
     snapshot.targetStatus,
     snapshot.target,
-    snapshot.canLoadMore,
-    snapshot.direction,
+    snapshot.loaded,
     snapshot.root,
     messageId,
     rows,
@@ -1862,10 +1862,7 @@ function ThreadMessages({
       (navigation && !rootTarget && revealed.current !== navigation.signal)
     )
       return;
-    if (
-      snapshot.status === "ready" &&
-      (snapshot.direction === "older" || !snapshot.canLoadMore)
-    ) {
+    if (snapshot.status === "ready") {
       readingSettled.current = true;
       readingPositioned(scroller.current);
     }
@@ -2304,7 +2301,6 @@ function ThreadMessages({
     if (
       !element ||
       !olderDemand.current ||
-      snapshot.direction !== "older" ||
       snapshot.status !== "ready" ||
       !snapshot.canLoadMore ||
       element.scrollTop >
@@ -2317,10 +2313,7 @@ function ThreadMessages({
   };
   const selectionNotice =
     selectionFailure && !snapshot.error ? selectionFailure : undefined;
-  const showOlderPageStatus =
-    snapshot.direction === "older" &&
-    snapshot.readKind === "older" &&
-    !!snapshot.root;
+  const showOlderPageStatus = snapshot.readKind === "older" && !!snapshot.root;
   const targetUnavailable =
     snapshot.targetStatus === "unavailable" && !selectionNotice;
   const historyError = !!snapshot.error && !showOlderPageStatus;
@@ -2379,10 +2372,12 @@ function ThreadMessages({
     if (!element) return;
     if (
       filled.current !== messageId &&
+      positioned.current &&
+      !routePending &&
       !revealSelected &&
+      !snapshot.resumed &&
       !snapshot.seeking &&
       !olderAnchor.current &&
-      snapshot.direction === "older" &&
       snapshot.status === "ready" &&
       snapshot.canLoadMore &&
       element.scrollHeight - element.clientHeight < element.clientHeight

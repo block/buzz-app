@@ -12,6 +12,7 @@ test.use({
   threadUnread: true,
   pluginFixtures: true,
   historyCounts: { alpha: 3, beta: 1 },
+  olderPageDelayMs: 0,
 });
 
 // Every thread reply, nested or not, carries the same full action bar; on desktop
@@ -492,6 +493,9 @@ test("branch hooks land on each reply's avatar across sides and row shapes", asy
     name: "Thread",
     exact: true,
   });
+  await expect(
+    panel.getByRole("region", { name: "Thread messages", exact: true }),
+  ).toHaveAttribute("aria-busy", "false");
   const row = (event) => panel.locator(`[data-message-id="${event.id}"]`);
   for (const branch of [
     peer,

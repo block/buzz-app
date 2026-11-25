@@ -45,6 +45,7 @@ import {
   profile,
   roster,
   signed,
+  threadWindowBounds,
 } from "../../features/relay/testing";
 import { mediaUrl } from "../../features/relay/transport";
 import {
@@ -1005,19 +1006,46 @@ function fixture(
   let auxGate: Promise<void> | undefined;
   let releaseAux = () => {};
   const historyFailures = new Set<string>();
-  const answer = (filter: ReadFilter): RelayEvent[] => {
+  const answer = async (filter: ReadFilter): Promise<RelayEvent[]> => {
     const result = events.filter((event) => matchesEvent(event, filter));
-    if (filter.depth_limit) {
-      return result
+    if (filter.thread_window) {
+      const ordered = result
         .filter(
           (event) =>
-            filter.thread_cursor === undefined ||
-            event.created_at > filter.thread_cursor ||
-            (event.created_at === filter.thread_cursor &&
-              event.id > (filter.thread_cursor_id ?? "")),
+            filter.until === undefined ||
+            event.created_at < filter.until ||
+            (event.created_at === filter.until &&
+              event.id > (filter.before_id ?? "")),
         )
-        .sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
-        .slice(0, filter.limit);
+        .sort(
+          (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+        );
+      const page = ordered.slice(0, filter.limit);
+      const last = page.at(-1);
+      return [
+        ...page,
+        ...(filter.include_aux
+          ? events.filter(
+              (event) =>
+                (event.kind === 40003 ||
+                  event.kind === 5 ||
+                  event.kind === 7) &&
+                event.tags.some(
+                  ([key, value]) =>
+                    key === "e" && page.some((row) => row.id === value),
+                ),
+            )
+          : []),
+        await threadWindowBounds(
+          relayKey,
+          "https://relay.test",
+          viewer.pubkey,
+          filter,
+          ordered.length > page.length && last
+            ? { created_at: last.created_at, id: last.id }
+            : null,
+        ),
+      ];
     }
     if (filter.top_level && filter["#h"]?.[0]) {
       return [
@@ -1161,6 +1189,7 @@ function fixture(
     {
       viewer: viewer.pubkey,
       relayAuthor: relayKey.pubkey,
+      scope: "https://relay.test",
       ...(options.withMutes
         ? {
             decodeSidebarPreferences: async () => ({
@@ -1216,7 +1245,7 @@ function fixture(
               throw new Error("history offline");
           }
         }
-        return unheld(filters.flatMap(answer));
+        return unheld((await Promise.all(filters.map(answer))).flat());
       },
       // The real sizing rewrite behind a pass-through proxy, so rows resolve
       // relay-hosted pictures to the variant they actually requested.

@@ -11,6 +11,7 @@ import {
   roster,
   scriptedTransport,
   signed,
+  threadWindowBounds,
   type Key,
 } from "./testing";
 import type { RelayEvent } from "./events";
@@ -101,7 +102,10 @@ it("preserves one server ranking above 128 joined channels and opens a public ex
     ["e", root.id, "", "reply"],
   ]);
   const other = message(viewer, "joined-0", "crew joined", 1700000002);
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const origin = "https://relay.example";
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+    scope: origin,
+  });
   const owner = createRelaySession({
     ...wire.transport,
     query(filters, signal) {
@@ -166,8 +170,16 @@ it("preserves one server ranking above 128 joined channels and opens a public ex
           ? [reply]
           : filter?.ids?.includes(root.id)
             ? [root]
-            : filter?.depth_limit
-              ? [reply]
+            : filter?.thread_window
+              ? [
+                  reply,
+                  await threadWindowBounds(
+                    relay,
+                    origin,
+                    viewer.pubkey,
+                    filter,
+                  ),
+                ]
               : [],
       );
     }

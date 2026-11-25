@@ -15,6 +15,7 @@ import {
   roster,
   profile,
   signed,
+  threadWindowBounds,
 } from "./testing";
 import { connectSignedTransport, type ReadTransport } from "./transport";
 import { eventDto, type RelayEvent } from "./events";
@@ -121,6 +122,7 @@ function setup(
     {
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
+      scope: "https://relay.example",
       query,
       media: () => undefined,
       ...(verifyStored ? { verifyStored } : {}),
@@ -1130,8 +1132,16 @@ describe("device-local startup", () => {
       query.mockImplementation(async (filters) => {
         if (filters.some((f) => f.kinds?.includes(39002)))
           return membership.promise;
-        if (filters.some((f) => f.ids?.includes(fresh.id) || f.depth_limit))
-          return [fresh];
+        if (filters[0]?.thread_window)
+          return [
+            await threadWindowBounds(
+              relay,
+              "https://relay.example",
+              viewer.pubkey,
+              filters[0],
+            ),
+          ];
+        if (filters.some((f) => f.ids?.includes(fresh.id))) return [fresh];
         return [];
       });
       const exact = owner.session.thread("alpha", fresh.id, { exact: true });

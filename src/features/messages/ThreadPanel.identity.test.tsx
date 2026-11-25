@@ -19,6 +19,7 @@ import {
   profile,
   scriptedTransport,
   signed,
+  threadWindowBounds,
 } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 import { createAgentActivity } from "../agents/activity";
@@ -62,7 +63,10 @@ it.each([false, true])(
     const viewer = keypair();
     const aliceKey = keypair();
     const bobKey = keypair();
-    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    const origin = "https://identity.test";
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey, {
+      scope: origin,
+    });
     let traffic!: LiveCallbacks;
     const owner = createRelaySession({
       ...wire.transport,
@@ -107,26 +111,45 @@ it.each([false, true])(
     );
 
     await waitFor(() =>
-      expect(wire.pending.some((request) => !request.signal?.aborted)).toBe(
-        true,
-      ),
+      expect(
+        wire.pending.some(
+          (request) =>
+            !request.signal?.aborted &&
+            request.filters[0]?.ids?.includes(root.id),
+        ),
+      ).toBe(true),
     );
-    const initial = wire.pending.find((request) => !request.signal?.aborted);
-    if (!initial) throw new Error("Initial thread page was not requested");
-    initial.respond([root, reply]);
-    expect(await screen.findByText("Alice")).toBeInTheDocument();
-    expect(screen.getByText("Bob")).toBeInTheDocument();
+    const rootRead = wire.pending.find(
+      (request) =>
+        !request.signal?.aborted && request.filters[0]?.ids?.includes(root.id),
+    );
+    if (!rootRead) throw new Error("Initial thread root was not requested");
+    rootRead.respond([root]);
     await waitFor(() =>
       expect(
-        wire.pending.filter(
-          (request) => request !== initial && !request.signal?.aborted,
+        wire.pending.some(
+          (request) =>
+            !request.signal?.aborted && request.filters[0]?.thread_window,
         ),
-      ).toHaveLength(1),
+      ).toBe(true),
     );
-    const page = wire.pending.find(
-      (request) => request !== initial && !request.signal?.aborted,
+    const windowRead = wire.pending.find(
+      (request) =>
+        !request.signal?.aborted && request.filters[0]?.thread_window,
     );
-    if (!page) throw new Error("Deferred thread page was not requested");
+    if (!windowRead?.filters[0])
+      throw new Error("Initial thread window was not requested");
+    windowRead.respond([
+      reply,
+      await threadWindowBounds(
+        relay,
+        origin,
+        viewer.pubkey,
+        windowRead.filters[0],
+      ),
+    ]);
+    expect(await screen.findByText("Alice")).toBeInTheDocument();
+    expect(screen.getByText("Bob")).toBeInTheDocument();
     expect(screen.queryByText("Loading thread…")).not.toBeInTheDocument();
 
     await act(async () => {
@@ -139,7 +162,9 @@ it.each([false, true])(
       ["e", root.id, "", "root"],
       ["e", root.id, "", "reply"],
     ]);
-    await act(async () => page.respond([root, appended]));
+    await act(async () => {
+      traffic.receive([appended]);
+    });
     expect(await screen.findByText("Appended reply body")).toBeInTheDocument();
     // The previous last bubble joins the new same-author reply while its
     // mounted content stays intact.
@@ -184,7 +209,9 @@ it("keeps a standalone activity root subscribed to its request through completio
   const root = message(agent, "a", "Checking root activity", 1, [
     ["audience", "agents"],
   ]);
-  const wire = scriptedTransport(keypair().pubkey, keypair().pubkey);
+  const wire = scriptedTransport(keypair().pubkey, keypair().pubkey, {
+    scope: "https://identity.test",
+  });
   let traffic!: LiveCallbacks;
   const owner = createRelaySession({
     ...wire.transport,

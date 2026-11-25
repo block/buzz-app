@@ -24,6 +24,7 @@ import {
   roster,
   scriptedTransport,
   signed,
+  threadWindowBounds,
 } from "./testing";
 
 it("clears retained repository homes on live recovery, cache clearing, and disposal", async () => {
@@ -435,7 +436,7 @@ it.each([1, 2, 130])(
 
 function reconnectHarness(
   options: ChannelStoreOptions = {},
-  scripted: { notices?: boolean } = {},
+  scripted: { notices?: boolean; scope?: string } = {},
 ) {
   const relay = keypair(),
     viewer = keypair(),
@@ -576,6 +577,7 @@ function reconnectHarness(
   return {
     owner,
     relay,
+    viewer,
     alice,
     wire,
     queries,
@@ -2343,7 +2345,8 @@ describe("a reconnect whose replay was continuous", () => {
   });
 
   it("refreshes an open thread only when its channel's replay was cut", async () => {
-    const h = reconnectHarness();
+    const origin = "https://relay.example";
+    const h = reconnectHarness({}, { scope: origin });
     try {
       const root = message(h.alice, "c", "root", 10);
       await verifiedThenDropped(h);
@@ -2354,10 +2357,23 @@ describe("a reconnect whose replay was continuous", () => {
           await flush();
           if (!h.wire.pending.length) quiet++;
           else quiet = 0;
-          for (const entry of h.wire.pending.splice(0))
+          for (const entry of h.wire.pending.splice(0)) {
+            const first = entry.filters[0];
             entry.respond(
-              entry.filters[0]?.ids?.includes(root.id) ? [root] : [],
+              first?.ids?.includes(root.id)
+                ? [root]
+                : first?.thread_window
+                  ? [
+                      await threadWindowBounds(
+                        h.relay,
+                        origin,
+                        h.viewer.pubkey,
+                        first,
+                      ),
+                    ]
+                  : [],
             );
+          }
         }
       };
       void thread.refresh();
@@ -2390,7 +2406,8 @@ describe("a reconnect whose replay was continuous", () => {
     // A reply the relay dropped from the live stream before the replay starts
     // reaches the view only through a read.
     let clock = 1_700_000_000_000;
-    const h = reconnectHarness({ now: () => clock });
+    const origin = "https://relay.example";
+    const h = reconnectHarness({ now: () => clock }, { scope: origin });
     try {
       const root = message(h.alice, "c", "root", 10);
       await verifiedThenDropped(h);
@@ -2403,13 +2420,24 @@ describe("a reconnect whose replay was continuous", () => {
           await flush();
           if (!h.wire.pending.length) quiet++;
           else quiet = 0;
-          for (const entry of h.wire.pending.splice(0))
-            entry.respond([
-              ...(entry.filters[0]?.ids?.includes(root.id) ? [root] : []),
-              ...(entry.filters.some((f) => f["#e"]?.includes(root.id))
-                ? replies
-                : []),
-            ]);
+          for (const entry of h.wire.pending.splice(0)) {
+            const first = entry.filters[0];
+            entry.respond(
+              first?.ids?.includes(root.id)
+                ? [root]
+                : first?.thread_window
+                  ? [
+                      ...replies,
+                      await threadWindowBounds(
+                        h.relay,
+                        origin,
+                        h.viewer.pubkey,
+                        first,
+                      ),
+                    ]
+                  : [],
+            );
+          }
         }
       };
       const threadReads = () =>
@@ -2453,7 +2481,8 @@ describe("a reconnect whose replay was continuous", () => {
     "refreshes a thread after %s, though its channel's replay was continuous",
     async (change) => {
       // Its replies came from that read, not from the stream.
-      const h = reconnectHarness();
+      const origin = "https://relay.example";
+      const h = reconnectHarness({}, { scope: origin });
       try {
         const root = message(h.alice, "c", "root", 10);
         await verifiedThenDropped(h);
@@ -2464,10 +2493,23 @@ describe("a reconnect whose replay was continuous", () => {
             await flush();
             if (!h.wire.pending.length) quiet++;
             else quiet = 0;
-            for (const entry of h.wire.pending.splice(0))
+            for (const entry of h.wire.pending.splice(0)) {
+              const first = entry.filters[0];
               entry.respond(
-                entry.filters[0]?.ids?.includes(root.id) ? [root] : [],
+                first?.ids?.includes(root.id)
+                  ? [root]
+                  : first?.thread_window
+                    ? [
+                        await threadWindowBounds(
+                          h.relay,
+                          origin,
+                          h.viewer.pubkey,
+                          first,
+                        ),
+                      ]
+                    : [],
               );
+            }
           }
         };
         const threadReads = () =>
@@ -2510,7 +2552,8 @@ describe("a reconnect whose replay was continuous", () => {
   it.each(["a cache clear", "a failed refresh"])(
     "refreshes a thread after %s between the drop and a continuous replay",
     async (change) => {
-      const h = reconnectHarness();
+      const origin = "https://relay.example";
+      const h = reconnectHarness({}, { scope: origin });
       try {
         const root = message(h.alice, "c", "root", 10);
         await verifiedThenDropped(h);
@@ -2521,13 +2564,26 @@ describe("a reconnect whose replay was continuous", () => {
             await flush();
             if (!h.wire.pending.length) quiet++;
             else quiet = 0;
-            for (const entry of h.wire.pending.splice(0))
-              if (fail && entry.filters[0]?.ids?.includes(root.id))
+            for (const entry of h.wire.pending.splice(0)) {
+              const first = entry.filters[0];
+              if (fail && first?.ids?.includes(root.id))
                 entry.fail(new Error("Relay request failed"));
               else
                 entry.respond(
-                  entry.filters[0]?.ids?.includes(root.id) ? [root] : [],
+                  first?.ids?.includes(root.id)
+                    ? [root]
+                    : first?.thread_window
+                      ? [
+                          await threadWindowBounds(
+                            h.relay,
+                            origin,
+                            h.viewer.pubkey,
+                            first,
+                          ),
+                        ]
+                      : [],
                 );
+            }
           }
         };
         void thread.refresh();

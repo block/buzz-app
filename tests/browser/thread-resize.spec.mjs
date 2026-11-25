@@ -11,6 +11,7 @@ test.use({
   threadUnread: true,
   historyCounts: { alpha: 2, beta: 1 },
   developmentReact: true,
+  olderPageDelayMs: 0,
 });
 
 // Browser-only: pane geometry and hit testing must follow the actual workspace

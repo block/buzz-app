@@ -45,8 +45,6 @@ export type ReadFilter = Readonly<{
   feed_types?: readonly string[];
   thread_window?: boolean;
   depth_limit?: number;
-  thread_cursor?: number;
-  thread_cursor_id?: string;
 }>;
 // Identity-only evidence for immutable records owned by this admission boundary.
 // Neither a caller-provided nostr-tools symbol nor a copied record is proof.

@@ -483,6 +483,8 @@ export function ActivityFeed({
                   key={row.id}
                   className={listRowStyles.unreadActionHost}
                   data-preview-row={row.id}
+                  // A sidebar card counts these rows for its resize grip.
+                  data-card-row=""
                 >
                   <CompactActivityRow
                     channel={channel}
@@ -508,6 +510,8 @@ export function ActivityFeed({
                   key={row.id}
                   className={listRowStyles.unreadActionHost}
                   data-preview-row={row.id}
+                  // A sidebar card counts these rows for its resize grip.
+                  data-card-row=""
                 >
                   <ReactionRowButton
                     item={row.item}
@@ -533,6 +537,8 @@ export function ActivityFeed({
                   key={row.id}
                   className={listRowStyles.unreadActionHost}
                   data-preview-row={row.id}
+                  // A sidebar card counts these rows for its resize grip.
+                  data-card-row=""
                 >
                   <InboxRowButton
                     own={row.own}
@@ -566,6 +572,8 @@ export function ActivityFeed({
                 key={row.id}
                 className={listRowStyles.unreadActionHost}
                 data-preview-row={row.id}
+                // A sidebar card counts these rows for its resize grip.
+                data-card-row=""
               >
                 <InboxRowButton
                   item={item}

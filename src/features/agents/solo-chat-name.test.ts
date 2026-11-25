@@ -70,7 +70,7 @@ it("only the first tagged agent names an unchanged new Berd chat, once", async (
   await nameSoloChat(relay, owner, first, event, "A useful title");
   expect(name).toBe("A useful title");
   // A plain NIP-01 read: the relay rejects a channel-window `until` without a cursor.
-  expect(read).toHaveBeenLastCalledWith([
+  expect(read).toHaveBeenCalledWith([
     {
       kinds: [9],
       authors: [owner],
@@ -79,6 +79,11 @@ it("only the first tagged agent names an unchanged new Berd chat, once", async (
       limit: 100,
       consistency: "strong",
     },
+  ]);
+  // The chat's create event, whoever signed it, read from the writer: the
+  // chat may have been created a moment ago.
+  expect(read).toHaveBeenCalledWith([
+    { kinds: [9007], "#h": ["chat"], limit: 2, consistency: "strong" },
   ]);
   await nameSoloChat(relay, owner, first, event, "Another title");
   expect(save).toHaveBeenCalledOnce();
@@ -267,7 +272,7 @@ it.each(["empty", "full", "same-second", "unrelated", "unsent"])(
   },
 );
 
-it.each(["history", "details"])(
+it.each(["history", "creation", "details"])(
   "does not rename after the owning session changes during %s",
   async (stage) => {
     let release!: () => void;
@@ -281,12 +286,13 @@ it.each(["history", "details"])(
     const save = vi.fn();
     const session = {
       channels: soloChannels,
-      read: async () => {
-        if (stage === "history") {
+      read: async ([filter]: readonly { kinds: readonly number[] }[]) => {
+        const creation = !!filter?.kinds.includes(9007);
+        if (stage === (creation ? "creation" : "history")) {
           began();
           await gate;
         }
-        return [event];
+        return creation ? [] : [event];
       },
       profiles: { snapshot: () => new Map() },
       agentChoices: { snapshot: () => ({ identities: [] }) },
@@ -491,6 +497,20 @@ it.each([
     tags: [imeta("6.m4a", "audio/mp4")],
     names: ["Attachment", `![audio](${media("6.m4a")})`],
   },
+  // The mobile app keeps a caption as written and reads no link label; each
+  // is followed here by what desktop derives.
+  {
+    sent: "a mobile photo captioned with an address",
+    content: `Send this to <dev@example.org>\n![image](${media("4.png")})`,
+    tags: [imeta("4.png", "image/png")],
+    names: ["Send this to <dev@example.org>", "Send this to dev@example.org"],
+  },
+  {
+    sent: "a mobile photo captioned with a link",
+    content: `[a](https://example.com/x(1(2))) b\n![image](${media("4.png")})`,
+    tags: [imeta("4.png", "image/png")],
+    names: ["[a](https://example.com/x(1(2))) b", "a b"],
+  },
   {
     sent: "a link",
     content: `https://www.example.com/${"x".repeat(90)}`,
@@ -498,7 +518,7 @@ it.each([
     names: ["Link to example.com", `https://www.example.com/${"x".repeat(90)}`],
   },
 ])(
-  "names a chat that still has the title $sent alone gave it",
+  "without its create event, names a chat that still has a title $sent alone gave it",
   async ({ content, tags, names }) => {
     const sent = {
       ...event,
@@ -533,3 +553,152 @@ it.each([
     }
   },
 );
+
+// The chat's own create event, as the relay keeps it: the name as signed.
+const creation = (name: string, author = owner) => ({
+  id: name.length.toString(16).padStart(64, "9"),
+  pubkey: author,
+  kind: 9007,
+  created_at: 90,
+  content: "",
+  tags: [
+    ["h", "chat"],
+    ["name", name],
+  ],
+});
+
+/** A chat `stored` under a name, whose first message is `sent`. `created`
+ * answers the read of its create event. `offer` has its agent's harness offer
+ * "Review the clip". */
+function soloChat(
+  sent: RelayEvent,
+  stored: string,
+  created: () => Promise<unknown[]>,
+  labels: string[] = [],
+) {
+  let name = stored;
+  const relay = connection(() => ({
+    status: "ready",
+    viewer: owner,
+    session: {
+      channels: soloChannels,
+      read: async ([filter]: readonly { kinds: readonly number[] }[]) =>
+        filter?.kinds.includes(9007) ? created() : [sent],
+      profiles: { snapshot: () => new Map([[first, { name: "Agent" }]]) },
+      agentChoices: { snapshot: () => ({ identities: [] }) },
+      channelDetails: {
+        available: true,
+        load: async () => ({ name, labels, canEdit: true }),
+        save: async (_base: unknown, draft: { name: string }) => {
+          name = draft.name;
+        },
+      },
+    },
+  }));
+  return {
+    name: () => name,
+    offer: () => nameSoloChat(relay, owner, first, sent, "Review the clip"),
+  };
+}
+
+const videoOnly = {
+  ...event,
+  content: `\n![video](${video})`,
+  tags: [["h", "chat"], ["p", first], imeta("1.mp4", "video/mp4")],
+} as unknown as RelayEvent;
+
+it.each([
+  // Names no desktop rule derives from these messages; the mobile app does.
+  {
+    sent: "links with nested parentheses",
+    content: "[a](https://example.com/x(1(2))) [b](https://example.com)",
+    stored: "[a](https://example.com/x(1(2))) b",
+  },
+  {
+    sent: "a quoted message and a prompt",
+    content:
+      "> The deploy failed on step 3\n> see the log\n\nWhat went wrong here?",
+    stored: "What went wrong here?",
+  },
+  {
+    sent: "a leading agent name",
+    content: "@Agent summarize the release notes",
+    stored: "@Agent summarize the release notes",
+  },
+  // The relay stores a name without a leading "#" or outer whitespace.
+  {
+    sent: "a heading",
+    content: "# Plan the launch",
+    stored: "Plan the launch",
+    created: "# Plan the launch ",
+  },
+  // A chat is created by whoever signed its create event, not always its owner.
+  {
+    sent: "a prompt, in a chat someone else's key created,",
+    content: "Discuss this change",
+    stored: "Release planning",
+    author: second,
+  },
+])(
+  "names a chat started with $sent while it has the name it was created with",
+  async ({ content, stored, created = stored, author }) => {
+    const chat = soloChat(
+      { ...event, content } as unknown as RelayEvent,
+      stored,
+      async () => [creation(created, author)],
+    );
+    await chat.offer();
+    expect(chat.name()).toBe("Review the clip");
+  },
+);
+
+it.each([
+  {
+    kept: "differs from the name it was created with",
+    // "Chat" is a title an earlier desktop gave a video; here a person chose it.
+    stored: "Chat",
+    created: ["Video"],
+    labels: [],
+  },
+  {
+    kept: "is marked as chosen",
+    stored: "Video",
+    created: ["Video"],
+    labels: ["buzz.session.named"],
+  },
+  {
+    kept: "has create events that disagree",
+    stored: "Video",
+    created: ["Video", "Clip"],
+    labels: [],
+  },
+])("keeps a chat's name that $kept", async ({ stored, created, labels }) => {
+  const chat = soloChat(
+    videoOnly,
+    stored,
+    async () => created.map((name) => creation(name)),
+    labels,
+  );
+  await chat.offer();
+  expect(chat.name()).toBe(stored);
+});
+
+it("a chat with no create event is named only while it has a title its first message gives", async () => {
+  // Its creator can delete the create event; the chat stays live.
+  const none = async () => [];
+  const untouched = soloChat(videoOnly, "Video", none);
+  await untouched.offer();
+  expect(untouched.name()).toBe("Review the clip");
+  const renamed = soloChat(videoOnly, "My clip", none);
+  await renamed.offer();
+  expect(renamed.name()).toBe("My clip");
+});
+
+it("a refused read of the create event names nothing", async () => {
+  // Not "no create event": "Video" would pass as this message's own title.
+  const chat = soloChat(videoOnly, "Video", async () => {
+    throw new Error("rate-limited: quota exceeded; retry in 4s");
+  });
+  await expect(chat.offer()).rejects.toThrow("rate-limited");
+  expect(chat.name()).toBe("Video");
+});

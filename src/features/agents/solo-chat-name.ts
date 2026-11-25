@@ -11,10 +11,12 @@ import { isStartingChatTitle } from "../solo/chat-title";
 
 /**
  * Names the owner's Solo chat with an agent harness's own title, once. Only a
- * chat that still has its original first-message name is renamed. The first
- * tagged harness on that message names it, regardless of retry wording. A chat
- * renamed by anyone, including by this, is never touched again. The owner's
- * session renames it, as the owner would.
+ * chat that still has the name it was created with is renamed: the name in its
+ * own create event, whichever app and title rule wrote it. When the relay has
+ * no create event for it, only a name its first message derives is replaced.
+ * The first tagged harness on that message names it, regardless of retry
+ * wording. A chat renamed by anyone, including by this, is never touched
+ * again. The owner's session renames it, as the owner would.
  */
 export async function nameSoloChat(
   relay: RelayData | undefined,
@@ -120,18 +122,46 @@ export async function nameSoloChat(
       });
     offset += part.text.length;
   }
+  // The name the chat was created with, from its own create event. The relay
+  // accepts one per chat and a rename leaves it as signed, so whoever signed
+  // it is trusted: an agent's tool creates a chat as the agent. A read that
+  // fails throws and names nothing; only a completed read that finds no
+  // create event, which its creator may have deleted, leaves the name to be
+  // judged against the first message.
+  const created = await session.read([
+    { kinds: [9007], "#h": [channel], limit: 2, consistency: "strong" },
+  ]);
+  if (!current()) return skip("connection changed");
+  const createdNames = new Set(
+    created.flatMap((event) => {
+      const stored =
+        event.kind === 9007 &&
+        event.tags.some(([key, value]) => key === "h" && value === channel) &&
+        // The relay stores the signed name without these edges.
+        canonicalDetailsName(
+          event.tags.find(([key]) => key === "name")?.[1] ?? "",
+        );
+      return stored ? [stored] : [];
+    }),
+  );
+  // Create events that disagree prove no single name. Do not choose a winner.
+  if (createdNames.size > 1) return skip("created name unclear");
+  const [createdName] = createdNames;
   const base = await details.load(channel);
   if (!current()) return skip("connection changed");
   if (!base.canEdit) return skip("owner can't edit the chat");
   if (
     base.labels?.includes(SOLO_NAMED_LABEL) ||
     base.name === name ||
-    !isStartingChatTitle(
-      base.name,
-      { text: original.content, recipients },
-      // What the message attached, so a title that names it is recognized.
-      parseAttachments(original, []),
-    )
+    !(createdName !== undefined
+      ? canonicalDetailsName(base.name) === createdName
+      : // No create event: only a name the first message derives is replaced.
+        isStartingChatTitle(
+          base.name,
+          { text: original.content, recipients },
+          // What the message attached, so a title that names it is recognized.
+          parseAttachments(original, []),
+        ))
   )
     return skip("chat already renamed");
   await details.save(base, { ...base, name });

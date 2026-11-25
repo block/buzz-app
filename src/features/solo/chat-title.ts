@@ -5,6 +5,7 @@ import { canonicalDetailsName } from "../relay/channel-details-protocol";
 import { isBuzzLink } from "../navigation/buzz-links";
 import {
   projectMarkdownAttachments,
+  safeMessageUrl,
   scanMarkdown,
 } from "../relay/message-content";
 import {
@@ -36,21 +37,52 @@ export function startingChatTitle(
   return chatTitle(value, "described", attachments);
 }
 
-/** Whether `name` is still the title its first message gave it, as this or
- * any earlier client wrote it; automatic naming replaces only that. */
+/** Whether `name` is a title a client can have derived from this first
+ * message: this build, an earlier one, or the mobile app, whose rule is its
+ * own. Automatic naming falls back to this only when it cannot read the name
+ * the chat was created with; the apps need not derive the same title. */
 export function isStartingChatTitle(
   name: string,
   value: MentionDraft | string,
   attachments: readonly TitleAttachment[] = [],
 ): boolean {
   const current = canonicalDetailsName(name);
-  return (["described", "undescribed", "embedded", "literal"] as const).some(
-    (style) => current === chatTitle(value, style, attachments),
+  return (
+    (["described", "undescribed", "embedded", "literal"] as const).some(
+      (style) => current === chatTitle(value, style, attachments),
+    ) || current === captionTitle(mentionDraft(value).text, attachments)
   );
 }
 
 const titleLength = (text: string) =>
   canonicalDetailsName([...text].slice(0, 80).join(""));
+
+/** The mobile app's title for the `text` it published: what the person wrote
+ * before the attachment lines its composer appended, as written, with no
+ * Markdown read. Alone, attachments and web addresses are described. */
+function captionTitle(
+  text: string,
+  attachments: readonly TitleAttachment[],
+): string {
+  const sent = new Set(attachments.flatMap(({ url }) => (url ? [url] : [])));
+  const lines = text.split("\n");
+  // One line each, after the text: `![image](address)` or `[name](address)`.
+  for (let left = attachments.length; left > 0; left -= 1) {
+    const line = lines.at(-1)?.trim() ?? "";
+    const address = line.lastIndexOf("](");
+    if (address < 1 || !/^!?\[/.test(line) || !line.endsWith(")")) break;
+    const url = safeMessageUrl(
+      line.slice(address + 2, -1).replace(/^<(.*)>$/, "$1"),
+    );
+    if (!url || !sent.has(url)) break;
+    lines.pop();
+  }
+  const flat = lines.join("\n").trim().replace(/\s+/g, " ");
+  return (
+    titleLength(linkTitle(flat) ?? (flat || attachmentSummary(attachments))) ||
+    "Chat"
+  );
+}
 
 function chatTitle(
   value: MentionDraft | string,

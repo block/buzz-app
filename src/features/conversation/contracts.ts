@@ -31,16 +31,17 @@ export type ComposerToolProps = Readonly<{
   /** Read-only: who the draft mentions, in draft order. The tool re-renders when
    * this changes; the array keeps its identity while only the prose changes. */
   recipients: readonly Readonly<{ pubkey: string; name: string }>[];
-  /** Solo, alone with agents: who hears the message. Inline mentions decide
-   * when there are any; otherwise the toolbar's agents stand in. `only`
-   * replaces those stand-ins with a non-empty list and `toggle` adds or
-   * removes one, never the last; they also follow each send. While inline
-   * mentions decide, `toggle` adds or removes that mention instead. Absent
-   * elsewhere, where mentions alone decide. */
+  /** Solo, alone with agents: who hears the message. A draft that opens with
+   * an inline mention is for whoever its mentions name; otherwise its
+   * mentions join the toolbar's agents. `only` replaces those agents with a
+   * non-empty list and `toggle` adds or removes one, never the last unless a
+   * mention remains; they also follow each send. `toggle` removes a mention
+   * from the text, and while mentions decide, `only` and `toggle` edit the
+   * mentions instead. Absent elsewhere, where mentions alone decide. */
   audience?:
     | Readonly<{
         recipients: readonly Readonly<{ pubkey: string; name: string }>[];
-        /** True while inline mentions in the text decide, so picks only change the stand-ins. */
+        /** True while inline mentions alone decide, as when the draft opens with one, so picks edit them. */
         named: boolean;
         only(
           recipients: readonly Readonly<{ pubkey: string; name: string }>[],
@@ -114,6 +115,8 @@ export type ReactionToolProps = Readonly<{
   disabled: boolean;
   /** Host-owned reaction intent; revoked when the tool or target is removed. */
   select(emoji: string): boolean;
+  /** Whether the viewer already reacted with this emoji, so selecting it removes that reaction. */
+  reacted?: ((emoji: string) => boolean) | undefined;
 }>;
 export type ComposerTool = Readonly<{
   id: string;
@@ -444,6 +447,8 @@ export type CompletionSuggestion = Readonly<{
   disabled?: string | undefined;
   /** Final synchronous evidence check; false never falls through to sending. */
   canSelect?: ((key: string) => boolean) | undefined;
+  /** Bundled providers only: called once after the host inserts this choice. */
+  onSelect?: (() => void) | undefined;
 }>;
 export type CompletionResult = Readonly<{
   items: readonly CompletionSuggestion[];
@@ -503,6 +508,11 @@ export type PageTabTarget = {
   messageId?: string;
   unreadSince?: number;
 };
+/** Optional `ConversationWorkspaceProps` a workspace provider renders. */
+export type WorkspaceSlots = Readonly<{
+  headerActions?: true;
+  trailing?: true;
+}>;
 /** A page-owned conversation with the host's reader, composer, and side pane. */
 export type ConversationWorkspaceProps = {
   id: string;
@@ -516,6 +526,17 @@ export type ConversationWorkspaceProps = {
   label: string;
   /** Content at the start of history. It scrolls with the messages. */
   intro?: ReactNode;
+  /** Controls in the main tab's toolbar, before the actions menu. */
+  headerActions?: ReactNode;
+  /** A card over the bottom of the channel timeline; a thread ignores it.
+   * At rest its first `restHeight` pixels show below the latest message.
+   * Scrolling over the card grows it, then slides it up; `expanded` is true
+   * once it has grown. `toggle()` grows it to near the view's top, or back.
+   * Render the whole card at rest too: growing scrolls it into view. */
+  trailing?: {
+    restHeight: number;
+    content(state: { expanded: boolean; toggle(): void }): ReactNode;
+  };
   /** Actions in the pane's menu and the main tab's context menu. */
   actions?: readonly { label: string; run(): void }[];
   /** Select this panel on entry. Closing it keeps the main conversation. */

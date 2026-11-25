@@ -101,7 +101,9 @@ export function CommunityPicker({
 }: {
   communities: Communities;
   /** Badges communities other than the selected one; absent shows none. */
-  unreads?: Pick<CommunityUnreads, "snapshot" | "subscribe"> | undefined;
+  unreads?:
+    | Pick<CommunityUnreads, "snapshot" | "subscribe" | "session">
+    | undefined;
   federatedIdentity?: FederatedIdentity | undefined;
   invite?: (JoinRequest & { requestId: string }) | undefined;
   /** An open join visit with no address yet: the manual Join a community. */
@@ -401,7 +403,9 @@ export function CommunityPicker({
                     icon={membership.publishedIcon ?? membership.icon}
                     selected={selected}
                     viewer={client.viewer}
-                    session={selected ? session : undefined}
+                    session={
+                      selected ? session : unreads?.session(membership.id)
+                    }
                     unread={selected ? undefined : unread.get(membership.id)}
                     manager={selected && invites && role.manager}
                     leaving={

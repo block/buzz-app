@@ -1301,6 +1301,55 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
 }
 
 #[test]
+fn retired_notes_reader_can_be_installed_with_old_bundled_settings() {
+    for enabled in [None, Some(true), Some(false)] {
+        let (root, manager, source) = fixture();
+        assert!(!bundled_manifests()
+            .iter()
+            .any(|m| m.id == "buzz.relay-notes"));
+        manager.catalog().unwrap();
+        let path = root.path().join("profiles/test/registry.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        if let Some(enabled) = enabled {
+            saved["bundledOverrides"]["buzz.relay-notes"] = serde_json::json!(enabled);
+        }
+        fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        let reopened = Manager::open(Some(root.path().into()), "test", false).unwrap();
+        assert!(!reopened
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .any(|p| p.manifest.id == "buzz.relay-notes"));
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"buzz.relay-notes","name":"Notes reader","apiVersion":1}"#,
+        )
+        .unwrap();
+        sign(&source);
+        let installed = reopened
+            .install(&source)
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "buzz.relay-notes")
+            .unwrap();
+        assert_eq!(installed.source, "external");
+        assert!(installed.publisher.is_some());
+        assert!(!installed.enabled);
+        reopened.change("enable", "buzz.relay-notes").unwrap();
+        let again = Manager::open(Some(root.path().into()), "test", false).unwrap();
+        assert!(again
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .any(|p| p.manifest.id == "buzz.relay-notes" && p.enabled));
+    }
+}
+
+#[test]
 fn feedback_is_in_native_catalog() {
     let (root, manager, _source) = fixture();
     assert!(bundled_manifests().iter().any(|m| m.id == "buzz.feedback"));
@@ -1373,13 +1422,14 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         let id = plugin.manifest.id.as_str();
         let default = !matches!(
             id,
-            "buzz.pi"
+            "com.squareup.docs"
+                | "buzz.pi"
                 | "buzz.usage"
-                | "buzz.relay-notes"
                 | "buzz.reminders"
                 | "buzz.workflows"
                 | "buzz.mesh-compute"
                 | "buzz.focus"
+                | "buzz.finder"
                 | "buzz.drafts-and-sent"
                 | "buzz.changesets"
                 | "buzz.charts"
@@ -1409,7 +1459,12 @@ fn bundled_defaults_preserve_saved_choices_and_only_channels_is_required() {
         }
     }
     // Saved choices override current defaults even across process restarts.
-    for id in ["buzz.bestie", "buzz.reminders", "buzz.workflows"] {
+    for id in [
+        "com.squareup.docs",
+        "buzz.bestie",
+        "buzz.reminders",
+        "buzz.workflows",
+    ] {
         for enabled in [true, false] {
             manager
                 .change(if enabled { "enable" } else { "disable" }, id)
@@ -1448,6 +1503,7 @@ fn bundled_defaults_are_pinned_for_fresh_and_untouched_existing_profiles() {
                 ("buzz.reminders", existing),
                 ("buzz.workflows", existing),
                 ("buzz.bestie", !existing),
+                ("com.squareup.docs", false),
             ] {
                 assert_eq!(
                     catalog
@@ -1481,12 +1537,14 @@ fn bundled_defaults_are_pinned_for_fresh_and_untouched_existing_profiles() {
                 .unwrap()
                 .enabled
         );
+        manager.change("enable", "com.squareup.docs").unwrap();
         manager.recover().unwrap();
         let reopened = Manager::open(Some(home.path().into()), "test", false).unwrap();
         for (id, expected) in [
             ("buzz.reminders", false),
             ("buzz.workflows", false),
             ("buzz.bestie", true),
+            ("com.squareup.docs", false),
         ] {
             assert_eq!(
                 reopened
@@ -1716,6 +1774,7 @@ mod cli_cleanup {
     use super::*;
     use buzz_credential_store::Error;
     use buzzodz_plugins::secrets::{begin_sign_out, SecretStore};
+    use buzzodz_plugins::SecretStatus;
     use std::collections::HashMap;
     use std::sync::{mpsc, Arc, Mutex};
     use std::time::Duration;
@@ -1726,9 +1785,11 @@ mod cli_cleanup {
         items: Mutex<HashMap<String, Vec<u8>>>,
         remaining: Mutex<Option<usize>>,
         gate: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+        calls: Mutex<usize>,
     }
     impl SecretStore for Fake {
         fn read(&self, account: &str) -> std::result::Result<Zeroizing<Vec<u8>>, Error> {
+            *self.calls.lock().unwrap() += 1;
             self.items
                 .lock()
                 .unwrap()
@@ -1738,6 +1799,7 @@ mod cli_cleanup {
                 .ok_or(Error::Absent)
         }
         fn add(&self, account: &str, value: &[u8]) -> std::result::Result<(), Error> {
+            *self.calls.lock().unwrap() += 1;
             self.items
                 .lock()
                 .unwrap()
@@ -1745,6 +1807,7 @@ mod cli_cleanup {
             Ok(())
         }
         fn delete(&self, account: &str) -> std::result::Result<(), Error> {
+            *self.calls.lock().unwrap() += 1;
             if let Some((started, release)) = self.gate.lock().unwrap().take() {
                 started.send(()).unwrap();
                 release.recv().unwrap();
@@ -2078,4 +2141,446 @@ mod cli_cleanup {
         assert!(registry.get("secrets").is_none());
         assert!(!temp.path().join("inventory").exists());
     }
+
+    const IDENTITIES: [&str; 2] = [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222222222222222222222222222",
+    ];
+    const SLOT_MANIFEST: &str = r#"{"id":"example.page","name":"Example","apiVersion":1,"host":{"networkOrigins":["https://api.example.test"],"secrets":[{"id":"api-key","label":"API key","origins":["https://api.example.test"],"header":"Authorization","scheme":"Bearer"}]}}"#;
+
+    fn test_publisher() -> String {
+        nostr::key::Keys::new(SecretKey::from_hex(TEST_KEY).unwrap())
+            .public_key()
+            .to_hex()
+    }
+    /// Writes the default trust file beside the profiles, listing only `publisher`.
+    fn trust_only(temp: &tempfile::TempDir, publisher: &str) {
+        fs::write(
+            temp.path().join(buzzodz_plugins::trust::FILE_NAME),
+            serde_json::json!({"version": 1, "trustedPublishers": [{"publisher": publisher}]})
+                .to_string(),
+        )
+        .unwrap();
+    }
+    fn untrusted() -> String {
+        nostr::key::Keys::new(SecretKey::generate())
+            .public_key()
+            .to_hex()
+    }
+    fn revision(manager: &Manager) -> String {
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+            .revision
+    }
+    fn statuses(manager: &Manager, revision: &str) -> Vec<SecretStatus> {
+        IDENTITIES
+            .iter()
+            .map(|identity| {
+                manager
+                    .secret_status("example.page", revision, "api-key", identity)
+                    .unwrap()
+            })
+            .collect()
+    }
+    fn no_secret(text: &str) {
+        assert!(!text.contains("sk-cli-sentinel"), "{text}");
+        for identity in IDENTITIES {
+            assert!(!text.contains(identity), "{text}");
+        }
+    }
+
+    #[test]
+    fn revoked_publisher_blocks_slot_authority_without_retiring_enrollment() {
+        let (temp, manager, store) = setup();
+        let revision = revision(&manager);
+        trust_only(&temp, &test_publisher());
+        assert_eq!(statuses(&manager, &revision), [SecretStatus::Saved; 2]);
+
+        trust_only(&temp, &untrusted());
+        let state = temp.path().join("inventory/state.json");
+        let registry = temp.path().join("profiles/test/registry.json");
+        let (state_before, registry_before) =
+            (fs::read(&state).unwrap(), fs::read(&registry).unwrap());
+        let (items, calls) = (
+            store.items.lock().unwrap().clone(),
+            *store.calls.lock().unwrap(),
+        );
+        let catalog = manager.catalog().unwrap();
+        let row = catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.page")
+            .expect("an untrusted plugin stays listed");
+        assert!(
+            row.error.as_deref().unwrap().contains("not trusted"),
+            "{:?}",
+            row.error
+        );
+        let refusals = [
+            manager.module("example.page", &revision).err(),
+            manager.host_grants("example.page", &revision).err(),
+            manager
+                .secret_status("example.page", &revision, "api-key", IDENTITIES[0])
+                .err(),
+            manager
+                .secret_set(
+                    "example.page",
+                    &revision,
+                    "api-key",
+                    IDENTITIES[0],
+                    "sk-cli-sentinel",
+                    &|| true,
+                )
+                .err(),
+            manager
+                .secret_clear("example.page", &revision, "api-key", IDENTITIES[0])
+                .err(),
+        ];
+        for refusal in refusals {
+            let refusal = refusal.expect("the artifact gate refuses an untrusted publisher");
+            assert!(refusal.contains("not trusted"), "{refusal}");
+            no_secret(&refusal);
+        }
+        assert_eq!(*store.items.lock().unwrap(), items);
+        assert_eq!(
+            *store.calls.lock().unwrap(),
+            calls,
+            "refusals reach no slot store"
+        );
+        assert_eq!(fs::read(&registry).unwrap(), registry_before);
+        assert_eq!(
+            fs::read(&state).unwrap(),
+            state_before,
+            "revocation retires nothing"
+        );
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 0);
+
+        // Revocation is admission, not deletion: trusting again restores the same enrollment.
+        trust_only(&temp, &test_publisher());
+        assert_eq!(statuses(&manager, &revision), [SecretStatus::Saved; 2]);
+        assert_eq!(*store.items.lock().unwrap(), items);
+    }
+
+    #[test]
+    fn untrusted_update_or_reload_changes_no_slot_policy_until_admitted() {
+        let (temp, manager, store) = setup();
+        let source = temp.path().join("build");
+        let revision = revision(&manager);
+        manager.change("disable", "example.page").unwrap();
+        // A changed slot policy makes an accidental retirement observable.
+        fs::write(
+            source.join("manifest.json"),
+            SLOT_MANIFEST.replace(
+                r#""origins":["https://api.example.test"]"#,
+                r#""origins":["https://api.example.test","https://api.example.test:8443"]"#,
+            )
+            .replace(
+                r#""networkOrigins":["https://api.example.test"]"#,
+                r#""networkOrigins":["https://api.example.test","https://api.example.test:8443"]"#,
+            ),
+        )
+        .unwrap();
+        sign(&source);
+        trust_only(&temp, &untrusted());
+        let state = temp.path().join("inventory/state.json");
+        let registry = temp.path().join("profiles/test/registry.json");
+        let (state_before, registry_before) =
+            (fs::read(&state).unwrap(), fs::read(&registry).unwrap());
+        let calls = *store.calls.lock().unwrap();
+        for refusal in [
+            manager.install(&source).err(),
+            manager.reload("example.page").err(),
+        ] {
+            let refusal = refusal.expect("an untrusted release is refused");
+            assert!(refusal.contains("not trusted"), "{refusal}");
+            no_secret(&refusal);
+        }
+        assert_eq!(fs::read(&registry).unwrap(), registry_before);
+        assert_eq!(fs::read(&state).unwrap(), state_before);
+        assert_eq!(*store.calls.lock().unwrap(), calls);
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 0);
+
+        trust_only(&temp, &test_publisher());
+        manager.change("enable", "example.page").unwrap();
+        assert_eq!(statuses(&manager, &revision), [SecretStatus::Saved; 2]);
+        manager.change("disable", "example.page").unwrap();
+        manager.install(&source).unwrap();
+        manager.change("enable", "example.page").unwrap();
+        let updated = self::revision(&manager);
+        assert_ne!(updated, revision);
+        assert_eq!(statuses(&manager, &updated), [SecretStatus::Missing; 2]);
+        // The admitted policy change retired both enrollments as cleanup debt.
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 2);
+        assert_eq!(manager.credential_cleanup(WAIT).unwrap().pending, 0);
+        assert!(store.items.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn removal_while_untrusted_still_retires_and_keeps_cleanup_debt() {
+        let (temp, manager, store) = setup();
+        trust_only(&temp, &untrusted());
+        *store.remaining.lock().unwrap() = Some(0);
+        let (ok, text) = run(&manager, "remove", WAIT);
+        assert!(
+            ok,
+            "the saved removal succeeds without trusting its code: {text}"
+        );
+        assert!(text.contains("Removed example.page"), "{text}");
+        assert!(!text.contains("confirmed complete"), "{text}");
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 2);
+        assert_eq!(store.items.lock().unwrap().len(), 2);
+        assert!(!run(&manager, "cleanup-retry", WAIT).0);
+        *store.remaining.lock().unwrap() = None;
+        let (ok, text) = run(&manager, "cleanup-retry", WAIT);
+        assert!(ok, "{text}");
+        assert!(store.items.lock().unwrap().is_empty());
+        assert_eq!(manager.credential_cleanup_status().unwrap().pending, 0);
+    }
+
+    #[test]
+    fn trust_policy_and_refusals_create_no_credential_custody() {
+        let (temp, manager, source) = fixture();
+        let store = Arc::new(Fake::default());
+        let manager = manager.with_secret_storage(temp.path().join("inventory"), store.clone());
+        fs::write(source.join("manifest.json"), SLOT_MANIFEST).unwrap();
+        sign(&source);
+        let unlisted = untrusted();
+        manager
+            .trust()
+            .update(|policy| {
+                policy.publishers.push(buzzodz_plugins::trust::Publisher {
+                    publisher: unlisted.clone(),
+                    name: None,
+                });
+                Ok(())
+            })
+            .unwrap();
+        assert!(install_error(&manager, &source).contains("not trusted"));
+        let (ok, text) = run(&manager, "list", WAIT);
+        assert!(ok, "{text}");
+        assert!(manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .all(|p| p.manifest.id != "example.page"));
+        assert!(!temp.path().join("inventory").exists());
+        assert_eq!(*store.calls.lock().unwrap(), 0);
+    }
+}
+
+#[test]
+fn trusted_publishers_restrict_install_load_and_unsigned_overrides() {
+    use std::process::Command;
+    let (temp, manager, source) = fixture();
+    let publisher = sign_release(&source, TEST_KEY).unwrap();
+    manager.install(&source).unwrap();
+    manager.change("enable", "example.page").unwrap();
+    let revision = manager
+        .catalog()
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap()
+        .revision;
+    let cli = |args: &[&str], unsigned: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_buzzodz"));
+        command
+            .args([
+                "--home",
+                temp.path().to_str().unwrap(),
+                "--profile",
+                "test",
+                "plugin",
+            ])
+            .args(args)
+            .env_remove("BUZZ_PLUGIN_TRUST")
+            .env_remove("BUZZ_REQUIRE_PLUGIN_SIGNATURES");
+        if unsigned {
+            command.env("BUZZ_REQUIRE_PLUGIN_SIGNATURES", "0");
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned()
+                + &String::from_utf8_lossy(&output.stderr),
+        )
+    };
+    let blocked = |manager: &Manager| {
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .into_iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+            .error
+    };
+
+    // Without a trust file, any valid signature runs.
+    let (ok, output) = cli(&["trust"], false);
+    assert!(ok && output.contains("not present"), "{output}");
+
+    // Registering another publisher turns the restriction on and blocks this one everywhere.
+    let other_publisher = nostr::key::Keys::new(SecretKey::generate())
+        .public_key()
+        .to_hex();
+    let (ok, output) = cli(&["trust", "add", &other_publisher, "Other"], false);
+    assert!(ok, "{output}");
+    assert!(
+        output.contains(&format!("{other_publisher} Other")),
+        "{output}"
+    );
+    assert!(
+        output.contains("Installed plugins that cannot run"),
+        "{output}"
+    );
+    assert!(blocked(&manager).unwrap().contains("is not trusted"));
+    let (_, output) = cli(&["list"], false);
+    assert!(
+        output.contains(&format!("Publisher: {publisher}")),
+        "{output}"
+    );
+    assert!(manager.module("example.page", &revision).is_err());
+    assert!(manager.host_grants("example.page", &revision).is_err());
+    assert!(manager.change("enable", "example.page").is_err());
+    assert!(install_error(&manager, &source).contains("is not trusted"));
+    assert!(manager
+        .reload_live("example.page")
+        .err()
+        .unwrap()
+        .contains("is not trusted"));
+    // Re-adding without a name keeps the existing label.
+    let (ok, output) = cli(&["trust", "add", &other_publisher], false);
+    assert!(
+        ok && output.contains(&format!("{other_publisher} Other")),
+        "{output}"
+    );
+
+    // Registering by npub admits it again; removing it blocks it again.
+    let npub = {
+        use nostr::nips::nip19::ToBech32;
+        nostr::key::PublicKey::parse(&publisher)
+            .unwrap()
+            .to_bech32()
+            .unwrap()
+    };
+    let (ok, output) = cli(&["trust", "add", &npub], false);
+    assert!(ok && !output.contains("cannot run"), "{output}");
+    assert!(blocked(&manager).is_none());
+    assert!(manager.module("example.page", &revision).is_ok());
+    manager.install(&source).unwrap();
+    // Toggle self-developed only while every installed publisher is listed, so these tests
+    // never read the saved Buzz identity; the trust unit tests cover that check.
+    let (ok, output) = cli(&["trust", "self-developed", "on"], false);
+    assert!(ok && output.contains("Self-developed: allowed"), "{output}");
+    let (ok, output) = cli(&["trust", "self-developed", "off"], false);
+    assert!(
+        ok && output.contains("Self-developed: not allowed"),
+        "{output}"
+    );
+    let (ok, output) = cli(&["trust", "remove", &publisher], false);
+    assert!(ok, "{output}");
+    let (ok, output) = cli(&["trust", "remove", &publisher], false);
+    assert!(
+        !ok && output.contains("is not a trusted publisher"),
+        "{output}"
+    );
+    assert!(blocked(&manager).unwrap().contains("is not trusted"));
+
+    // A trust policy forbids unsigned plugins even when the signature requirement is off.
+    let unsigned = temp.path().join("unsigned");
+    fs::create_dir(&unsigned).unwrap();
+    fs::write(
+        unsigned.join("manifest.json"),
+        r#"{"id":"example.unsigned","name":"Unsigned","apiVersion":1}"#,
+    )
+    .unwrap();
+    fs::write(unsigned.join("plugin.js"), "export function apply() {}").unwrap();
+    let (ok, output) = cli(&["install", unsigned.to_str().unwrap()], true);
+    assert!(
+        !ok && output.contains("signed by a trusted publisher"),
+        "{output}"
+    );
+
+    // An unusable file blocks every external plugin and refuses edits until fixed.
+    fs::write(
+        temp.path().join(buzzodz_plugins::trust::FILE_NAME),
+        r#"{"version":1,"trustedPublisher":[]}"#,
+    )
+    .unwrap();
+    assert!(blocked(&manager).unwrap().contains("unusable"));
+    let (ok, output) = cli(&["trust", "add", &publisher], false);
+    assert!(!ok && output.contains("fix or remove it first"), "{output}");
+    let (_, output) = cli(&["trust"], false);
+    assert!(
+        output.contains("Unknown field \"trustedPublisher\""),
+        "{output}"
+    );
+
+    // Removing the file restores the default: any valid signature runs.
+    fs::remove_file(temp.path().join(buzzodz_plugins::trust::FILE_NAME)).unwrap();
+    assert!(blocked(&manager).is_none());
+}
+
+#[test]
+fn explicit_trust_path_fails_closed_when_its_file_is_missing() {
+    use std::process::Command;
+    let (temp, _manager, source) = fixture();
+    let policy = temp.path().join("deployed").join("policy.json");
+    let cli = |args: &[&str], unsigned: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_buzzodz"));
+        command
+            .args([
+                "--home",
+                temp.path().to_str().unwrap(),
+                "--profile",
+                "test",
+                "plugin",
+            ])
+            .args(args)
+            .env("BUZZ_PLUGIN_TRUST", &policy)
+            .env_remove("BUZZ_REQUIRE_PLUGIN_SIGNATURES");
+        if unsigned {
+            command.env("BUZZ_REQUIRE_PLUGIN_SIGNATURES", "0");
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned()
+                + &String::from_utf8_lossy(&output.stderr),
+        )
+    };
+    // The policy the variable names was never deployed: signed and unsigned installs fail.
+    let (ok, output) = cli(&["install", source.to_str().unwrap()], false);
+    assert!(!ok && output.contains("does not exist"), "{output}");
+    for name in ["plugin.artifact.json", "plugin.signature.json"] {
+        fs::remove_file(source.join(name)).unwrap();
+    }
+    let (ok, output) = cli(&["install", source.to_str().unwrap()], true);
+    assert!(!ok && output.contains("does not exist"), "{output}");
+    let (ok, output) = cli(&["trust"], false);
+    assert!(ok && output.contains("but not present"), "{output}");
+
+    // Registering creates the named file, and the signed release then runs.
+    let publisher = sign_release(&source, TEST_KEY).unwrap();
+    let (ok, output) = cli(&["trust", "add", &publisher], false);
+    assert!(ok && policy.is_file(), "{output}");
+    let (ok, output) = cli(&["install", source.to_str().unwrap()], false);
+    assert!(ok, "{output}");
+    let (ok, output) = cli(&["enable", "example.page"], false);
+    assert!(ok, "{output}");
+
+    // Deleting the deployed file blocks the installed plugin again instead of lifting the policy.
+    fs::remove_file(&policy).unwrap();
+    let (ok, output) = cli(&["enable", "example.page"], false);
+    assert!(!ok && output.contains("does not exist"), "{output}");
+    let (_, output) = cli(&["list"], false);
+    assert!(output.contains("does not exist"), "{output}");
 }

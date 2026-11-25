@@ -5465,7 +5465,9 @@ it.each(["page", "preview"] as const)(
     );
     const reaction = { name: /Alice reacted with heart/ };
     await screen.findByText("A thread update");
-    await screen.findByText("Please review this");
+    // The card shows one row per conversation: the newer reaction stands for
+    // the channel until muting hides it.
+    if (surface === "page") await screen.findByText("Please review this");
     await screen.findByRole("button", reaction);
     expect(screen.getByRole("img", { name: "3 unread" })).toBeVisible();
 
@@ -5524,7 +5526,8 @@ it.each(["page", "preview"] as const)(
     expect(
       screen.queryByText("Direct mention in thread"),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Please review this")).toBeVisible();
+    if (surface === "page")
+      expect(screen.getByText("Please review this")).toBeVisible();
     expect(screen.getByRole("button", reaction)).toBeVisible();
     expect(screen.getByRole("img", { name: "3 unread" })).toBeVisible();
     await act(async () => {
@@ -5660,7 +5663,8 @@ it("mixes hover reactions by time, preserves unread filtering, and opens the exa
   const reaction = await screen.findByRole("button", {
     name: /Alice reacted with heart/,
   });
-  await waitFor(() => expect(previewRows()).toHaveLength(3));
+  // The reaction is the thread's newest activity, so it stands for the thread.
+  await waitFor(() => expect(previewRows()).toHaveLength(2));
   expect(previewRows()[0]).toContainElement(reaction);
   fireEvent.click(screen.getByRole("switch", { name: "Unread only" }));
   expect(
@@ -5683,13 +5687,18 @@ it("mixes hover reactions by time, preserves unread filtering, and opens the exa
 
 it("bounds mixed hover activity to 50 rows after sorting", async () => {
   const h = fixture();
+  await markRead(h, "room");
+  // Each reaction is the newest activity in its own thread.
   for (let index = 0; index < 50; index++) {
+    const root = message(h.viewer, "room", `Topic ${index}`, 50 + index);
     const target = message(
       h.viewer,
       "room",
       `Acknowledged ${index}`,
       100 + index,
+      [["e", root.id, "", "reply"]],
     );
+    h.addEvent(root);
     h.addEvent(target);
     h.addEvent(
       signed(h.alice, {

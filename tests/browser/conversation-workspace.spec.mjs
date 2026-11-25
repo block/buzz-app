@@ -713,7 +713,6 @@ test.describe("trailing card", () => {
       await input.fill("Sent below the card");
       await input.press("Enter");
       await expect(region.getByText("Sent below the card")).toBeInViewport();
-      await expect(page.getByText("card-drop.txt")).toHaveCount(0);
       await expectRest(page, region);
     });
   });
@@ -758,6 +757,7 @@ test.describe("trailing card", () => {
       await input.fill("Sent below the card");
       await input.press("Enter");
       await expect(region.getByText("Sent below the card")).toBeInViewport();
+      await expect(page.getByText("card-drop.txt")).toHaveCount(0);
       await expectRest(page, region);
 
       await overCard(page);

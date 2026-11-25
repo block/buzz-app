@@ -392,6 +392,13 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     const cache = createHeadPersistence(viewer, origin);
     const peer = createHeadPersistence(viewer, origin);
     const active = roster(relay, "active", [viewer]);
+    const activeMetadata = metadata(relay, "active", "Active channel");
+    const renamedActive = metadata(
+      relay,
+      "active",
+      "Renamed channel",
+      1_700_000_001,
+    );
     const updated = roster(relay, "active", [viewer], 1_700_000_001);
     const scheduled = roster(relay, "active", [viewer], 1_700_000_002);
     const whilePending = roster(relay, "active", [viewer], 1_700_000_003);
@@ -471,13 +478,16 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         channels.acceptDiscovery([roster(relay, id, [], createdAt)]),
       replaceWithNewerGrant: () =>
         peer.writeStartup(startup([replacement, newerGrant])),
-      async seedRemovalOrder() {
+      async seedRemovalOrder(withMetadata = false) {
         channels.dispose();
         await peer.clear();
-        await peer.writeStartup(startup([active, retried]));
+        const events = withMetadata
+          ? [active, activeMetadata, retried]
+          : [active, retried];
+        await peer.writeStartup(startup(events));
         channels = openChannels(createHeadPersistence(viewer, origin));
         await channels.restore();
-        channels.acceptDiscovery([active, retried]);
+        channels.acceptDiscovery(events);
       },
       omitRetried: () => channels.acceptDiscovery([], new Set(["active"])),
       grantAndOmit: (later = false) =>
@@ -509,26 +519,37 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         }
       },
       async acceptStaleGrantAfterPeerRegrant() {
-        await this.seedRemovalOrder();
+        await this.seedRemovalOrder(true);
         await this.peerRemovesFresh();
-        await peer.writeStartup(startup([replacement, laterFreshGrant]));
+        await peer.writeStartup(
+          startup([replacement, laterFreshGrant, active, activeMetadata]),
+        );
         channels.acceptDiscovery([freshGrant, freshMetadata]);
       },
-      async removeFromFullPeerRoster() {
+      renameActive: () => channels.acceptDiscovery([renamedActive]),
+      async seedFullRoster(matching) {
         await this.seedRemovalOrder();
+        const channel = matching ? "active" : "peer-only";
         const snapshot = startup([
-          replacement,
-          metadata(relay, "peer-only", ""),
+          matching ? active : replacement,
+          metadata(relay, channel, ""),
         ]);
         const bytes = new TextEncoder().encode(JSON.stringify(snapshot)).length;
         // The name appears in both the content and tags. Leave less room
         // than a signed removal version needs.
         snapshot.discovery.events[1] = metadata(
           relay,
-          "peer-only",
+          channel,
           "p".repeat(Math.floor((MAX_BYTES - bytes - 64) / 2)),
         );
-        await peer.writeStartup(snapshot);
+        if (matching) {
+          this.omitRetried();
+          await cachedIds();
+          channels.acceptDiscovery([snapshot.discovery.events[1]]);
+        } else await peer.writeStartup(snapshot);
+        return snapshot.discovery.events.map(({ id }) => id);
+      },
+      async removeFromFullRoster() {
         const before = await cachedIds();
         this.acceptRemoval("retried", 1_700_000_001);
         return { before, after: await cachedIds() };
@@ -636,6 +657,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       newerGrantId: newerGrant.id,
       freshIds: [freshGrant.id, freshMetadata.id],
       laterFreshIds: [laterFreshGrant.id, freshMetadata.id],
+      activeMetadataId: activeMetadata.id,
+      renamedActiveId: renamedActive.id,
       omittedIds: [omitted.id, omittedMetadata.id],
       pendingOmissionId: pendingOmission.id,
       updatedId: updated.id,
@@ -665,6 +688,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let afterNewerPeerGrant;
   let afterStaleGrantAfterPeerRegrant;
   let afterRemovalFromFullPeerRoster;
+  let afterRemovalFromMatchingFullRoster;
+  let matchingFullRosterIds;
+  let afterRenameWithStaleGrant;
   let repeatReads;
   let aborts;
   try {
@@ -896,8 +922,22 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     afterStaleGrantAfterPeerRegrant = await page.evaluate(() =>
       window.startupRetry.cachedIds(),
     );
+    await page.clock.runFor(30_000);
+    await page.evaluate(() => window.startupRetry.renameActive());
+    await page.clock.runFor(500);
+    afterRenameWithStaleGrant = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
+    await page.evaluate(() => window.startupRetry.seedFullRoster(false));
     afterRemovalFromFullPeerRoster = await page.evaluate(() =>
-      window.startupRetry.removeFromFullPeerRoster(),
+      window.startupRetry.removeFromFullRoster(),
+    );
+    matchingFullRosterIds = await page.evaluate(() =>
+      window.startupRetry.seedFullRoster(true),
+    );
+    await page.clock.runFor(500);
+    afterRemovalFromMatchingFullRoster = await page.evaluate(() =>
+      window.startupRetry.removeFromFullRoster(),
     );
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
@@ -948,11 +988,25 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     before: newerPeerIds,
     after: [...newerPeerIds, ...firstRetry.laterFreshIds],
   });
+  const peerRegrantIds = [
+    firstRetry.replacementId,
+    firstRetry.laterFreshIds[0],
+    firstRetry.originalIds[0],
+  ];
   expect
     .soft(afterStaleGrantAfterPeerRegrant)
-    .toEqual([firstRetry.replacementId, firstRetry.laterFreshIds[0]]);
+    .toEqual([...peerRegrantIds, firstRetry.activeMetadataId]);
+  expect
+    .soft(afterRenameWithStaleGrant)
+    .toEqual([...peerRegrantIds, firstRetry.renamedActiveId]);
   expect(afterRemovalFromFullPeerRoster.before).toHaveLength(2);
   expect(afterRemovalFromFullPeerRoster.after).toEqual(
     afterRemovalFromFullPeerRoster.before,
   );
+  expect
+    .soft(afterRemovalFromMatchingFullRoster.before)
+    .toEqual(matchingFullRosterIds);
+  expect
+    .soft(afterRemovalFromMatchingFullRoster.after)
+    .toEqual(matchingFullRosterIds);
 });

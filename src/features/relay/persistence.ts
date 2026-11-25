@@ -203,19 +203,19 @@ function signedRemovalVersions(
   return { versions, changed };
 }
 
-function mergeGrantedRosters(
+function mergeRosterUpdates(
   peer: unknown[],
   local: unknown[],
   includesGrant: NonNullable<RosterChanges["includesGrant"]>,
 ) {
-  const grants = new Map<string, EventData>();
+  const updates = new Map<string, EventData>();
   for (const value of local) {
     const event = value as EventData;
     const channel = channelOf(event);
     if (channel && includesGrant(channel))
-      grants.set(`${event.kind}:${channel}`, event);
+      updates.set(`${event.kind}:${channel}`, event);
   }
-  if (!grants.size) return;
+  if (!updates.size) return;
   for (const value of peer) {
     const event = value as Partial<EventData> | null;
     const channel = channelOf(event);
@@ -226,24 +226,24 @@ function mergeGrantedRosters(
     )
       continue;
     const key = `${event.kind}:${channel}`;
-    const grant = grants.get(key);
+    const update = updates.get(key);
     if (
-      grant &&
-      (event.id === grant.id ||
-        newer<Pick<EventData, "id" | "created_at">>(grant, {
+      update &&
+      (event.id === update.id ||
+        newer<Pick<EventData, "id" | "created_at">>(update, {
           id: event.id,
           created_at: event.created_at,
-        }) !== grant)
+        }) !== update)
     )
-      grants.delete(key);
+      updates.delete(key);
   }
-  if (!grants.size) return;
+  if (!updates.size) return;
   const events = peer.filter((value) => {
     const event = value as Partial<EventData> | null;
     const channel = channelOf(event);
-    return !channel || !grants.has(`${event?.kind}:${channel}`);
+    return !channel || !updates.has(`${event?.kind}:${channel}`);
   });
-  return [...events, ...grants.values()];
+  return [...events, ...updates.values()];
 }
 
 export function createHeadPersistence(
@@ -469,7 +469,7 @@ export function createHeadPersistence(
               data.discovery = local;
             }
             let withRemovals: SavedStartup | undefined;
-            let mergedGrants = false;
+            let mergedUpdates = false;
             let superseded = false;
             let prunedPeer: ReturnType<typeof pruneRevokedRosters>;
             // A filtered grant can have a newer replacement in the peer row.
@@ -483,54 +483,68 @@ export function createHeadPersistence(
               // preserve the signed snapshot, but a peer can replace or clear it.
               // Observing a conflict does not load the peer's channels into
               // discovery. Later removals still have to patch the peer row.
-              if (
-                preservePeer ||
-                (ifUnchanged &&
-                  (current !== observedDiscovery ||
-                    (removalFor && observedPeer)))
-              ) {
+              const conflict =
+                ifUnchanged &&
+                (current !== observedDiscovery || (removalFor && observedPeer));
+              if (preservePeer || conflict) {
                 version = current;
-                if (
-                  !peer ||
-                  !sameRelay ||
-                  !changes ||
-                  !Array.isArray(peer.events)
-                )
+                if (!peer || !sameRelay || !Array.isArray(peer.events))
                   return done(undefined);
                 prunedPeer =
                   removalFor && pruneRevokedRosters(peer, removalFor);
-                const granted =
-                  changes.includesGrant &&
-                  mergeGrantedRosters(
-                    prunedPeer?.events ?? peer.events,
-                    local.events,
-                    changes.includesGrant,
-                  );
-                if (!granted && !prunedPeer && !removals?.changed)
+                const peerEvents = prunedPeer?.events ?? peer.events;
+                const peerChannels = new Set<string>();
+                // The rejected channel is already absent from local.events.
+                // Other signed updates can still advance memberships on disk.
+                if (preservePeer)
+                  for (const value of peerEvents) {
+                    const event = value as Partial<EventData> | null;
+                    const channel = channelOf(event);
+                    if (
+                      event?.kind === 39002 &&
+                      channel &&
+                      event.pubkey === peer.relayAuthor &&
+                      event.tags?.some(
+                        (tag) =>
+                          Array.isArray(tag) &&
+                          tag[0] === "p" &&
+                          tag[1] === viewer,
+                      )
+                    )
+                      peerChannels.add(channel);
+                  }
+                const merged = mergeRosterUpdates(
+                  peerEvents,
+                  local.events,
+                  (channel) =>
+                    peerChannels.has(channel) ||
+                    !!changes?.includesGrant?.(channel),
+                );
+                if (!merged && !prunedPeer && !removals?.changed)
                   return done(undefined);
                 const peerDiscovery = {
                   ...peer,
                   ...(local.removals && { removals: local.removals }),
                 };
-                // The local snapshot lost the compare. Apply only new evidence
-                // to the peer's row, which may contain other channels.
+                // Apply the eligible evidence to the peer's row. A local
+                // snapshot can be missing channels that the peer confirmed.
                 superseded = true;
                 data = {
                   ...stored,
                   discovery: {
                     ...peerDiscovery,
-                    events: granted ?? prunedPeer?.events ?? peer.events,
+                    events: merged ?? peerEvents,
                   },
                 };
-                if (granted && (prunedPeer || removals?.changed))
+                if (merged && (prunedPeer || removals?.changed))
                   withRemovals = {
                     ...stored,
                     discovery: {
                       ...peerDiscovery,
-                      events: prunedPeer?.events ?? peer.events,
+                      events: peerEvents,
                     },
                   };
-                mergedGrants = !!granted;
+                mergedUpdates = !!merged;
               }
               if (observedDiscovery === undefined) observedDiscovery = current;
             }
@@ -558,7 +572,7 @@ export function createHeadPersistence(
               if (superseded && !kept) version = null;
               done(superseded ? undefined : kept);
             };
-            if (!superseded || (!mergedGrants && !removals?.changed)) {
+            if (!mergedUpdates && !(sameRelay && removals?.changed)) {
               if (put()) readStartupBudget(store, then, prune, meta);
               return;
             }
@@ -577,17 +591,32 @@ export function createHeadPersistence(
                   data = withRemovals;
                   meta.bytes = byteSize(data);
                 }
-                if (meta.bytes > room) {
-                  if (!prunedPeer || !peer || !data.discovery)
-                    return done(undefined);
-                  const required = signedRemovalVersions(
-                    peer.removals,
-                    [...(removals?.versions.values() ?? [])].filter((removal) =>
-                      prunedPeer?.removed.has(removal.channel),
-                    ),
-                  );
-                  data.discovery.removals = [...required.versions.values()];
+                if (
+                  meta.bytes > room &&
+                  removals?.changed &&
+                  peer &&
+                  data.discovery
+                ) {
+                  prunedPeer ??=
+                    removalFor && pruneRevokedRosters(peer, removalFor);
+                  if (prunedPeer) {
+                    const removed = prunedPeer.removed;
+                    const required = signedRemovalVersions(
+                      peer.removals,
+                      [...removals.versions.values()].filter((removal) =>
+                        removed.has(removal.channel),
+                      ),
+                    );
+                    data.discovery.removals = [...required.versions.values()];
+                  } else {
+                    delete data.discovery.removals;
+                    if (peer.removals) data.discovery.removals = peer.removals;
+                  }
                   meta.bytes = byteSize(data);
+                }
+                if (meta.bytes > room && !prunedPeer) {
+                  if (superseded) return done(undefined);
+                  if (meta.bytes > MAX_BYTES) return done("oversized");
                 }
                 if (put()) prune(rows);
               },

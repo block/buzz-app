@@ -219,6 +219,7 @@ function ChannelSidebarItemCore({
   useLayoutEffect(() => {
     if (menuContent !== undefined) lastMenuContent.current = menuContent;
   }, [menuContent]);
+  const popupContent = menuContent ?? lastMenuContent.current;
   // The row re-renders on each unread, activity and selection change. Its
   // closed menu keeps the same element, so React skips the menu's subtree.
   const menuAction = useMemo(
@@ -255,7 +256,7 @@ function ChannelSidebarItemCore({
             aria-label={menuLabel}
             finalFocus={() => menuFinalFocus?.(channel.id) ?? false}
           >
-            {menuContent ?? lastMenuContent.current}
+            {popupContent}
           </MenuPopup>
         </MenuRoot>
       ),
@@ -272,7 +273,7 @@ function ChannelSidebarItemCore({
       onMenuClosed,
       menuLabel,
       menuFinalFocus,
-      menuContent,
+      popupContent,
     ],
   );
   const Icon = channelIcon(channel);

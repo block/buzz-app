@@ -18177,7 +18177,7 @@ it("catches up a relay agent's lost mentions while its watches wait for its set"
     // The live subscription lost it; the set is still not read.
     f.history.push(
       eventDto(
-        message(author, "other", "lost mention", start + 20, [["p", bot]]),
+        message(author, lobby, "lost mention", start + 20, [["p", bot]]),
       ),
     );
     await vi.advanceTimersByTimeAsync(3 * 60_000);

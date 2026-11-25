@@ -24,9 +24,12 @@ import {
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import {
+  decodedImageCapture,
   openingFrame,
   openingFrameCapture,
   rememberOpeningFrame,
+  retainDecodedImage,
+  takeDecodedImage,
 } from "../relay/media";
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
@@ -440,17 +443,17 @@ export function MediaAttachment({
             className={`${styles.mediaPreviewPixels} dark`}
             data-color-mode="dark"
           >
-            {visiblePreview && !started && (
-              <img
-                className={styles.mediaPoster}
-                src={visiblePreview}
-                // WebKit paints an async-decoded image empty for a frame even
-                // when it is ready; a captured frame is small and in memory.
-                decoding={preview ? undefined : "sync"}
-                alt=""
-                aria-hidden="true"
-              />
-            )}
+            {!started &&
+              (preview ? (
+                <img
+                  className={styles.mediaPoster}
+                  src={preview}
+                  alt=""
+                  aria-hidden="true"
+                />
+              ) : (
+                capturedPreview && <CapturedPoster frame={capturedPreview} />
+              ))}
             {videoElement}
             {active && <VideoControls videoRef={video} inline />}
             <span className={styles.mediaExpand}>
@@ -503,6 +506,30 @@ export function MediaAttachment({
         )}
     </>
   );
+}
+
+// Opening frames are shared by every session already, so their painted
+// elements are too.
+const capturedPosters = {};
+
+/** A remount re-adopts the painted element: WebKit shows a new image element
+ * empty for a frame, even a loaded, synchronously decoded one. */
+function CapturedPoster({ frame }: { frame: string }) {
+  const host = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const capture = decodedImageCapture();
+    const image =
+      takeDecodedImage(capturedPosters, frame) ??
+      Object.assign(new Image(), { src: frame, alt: "", decoding: "sync" });
+    image.className = styles.mediaPoster ?? "";
+    image.setAttribute("aria-hidden", "true");
+    host.current?.append(image);
+    return () => {
+      image.remove();
+      retainDecodedImage(capturedPosters, frame, image, capture);
+    };
+  }, [frame]);
+  return <span ref={host} />;
 }
 
 /** The plain fullscreen fallback for surfaces that host no media review. */

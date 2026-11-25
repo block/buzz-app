@@ -192,6 +192,27 @@ it("with message text off, the OS gets the title and no body", async () => {
     body: "",
   });
 });
+it("with message text off, a message notification shows the sender and the action", async () => {
+  const t = setup();
+  t.service.updatePreferences({ showText: false });
+  await t.service.admit(
+    "mention",
+    "Mentions",
+    { sourceKey: "event", target },
+    () => true,
+    () => true,
+    () => ({
+      title: "Ana mentioned you in #design",
+      body: "secret",
+      withoutText: { title: "Ana", body: "mentioned you in #design" },
+    }),
+  );
+  await flush();
+  expect(vi.mocked(t.platform.show).mock.calls[0]?.[0]).toMatchObject({
+    title: "Ana",
+    body: "mentioned you in #design",
+  });
+});
 it("more than 256 sequential alerts do not fill a persistent inbox or pause delivery", async () => {
   const t = setup();
   for (let i = 0; i < 300; i++) {

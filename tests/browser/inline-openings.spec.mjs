@@ -53,7 +53,6 @@ const address = (page) =>
   page.evaluate(() => history.state.buzzNavigationV1.entry.target);
 const avatar = (scope) =>
   scope.getByRole("button", { name: /^View .+ profile$/ }).first();
-const centre = (box) => [box.x + box.width / 2, box.y + box.height / 2];
 // A point of the conversation left of the sheets over it, clear of them all.
 const background = async (page) => {
   const pane = await page
@@ -358,17 +357,16 @@ test.describe("Inline", () => {
     await expect(github(page)).toHaveCount(0);
     await expect(thread(page)).toBeVisible();
     expect((await address(page)).layer).toBeUndefined();
-    // Closing the thread closes a layer over it too.
+    // Escape closes only the top layer too.
     await avatar(thread(page)).click();
     await expect(profile(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(profile(page)).toHaveCount(0);
     // A press in the top sheet closes nothing; each press on the conversation
-    // around the sheets closes the top one.
+    // around the sheets closes the top one. The sheet is still moving when its
+    // heading shows, so the click waits for it to come to rest.
     await activate(pullLink(thread(page)));
-    const heading = pullHeading(github(page));
-    await expect(heading).toBeVisible();
-    await page.mouse.click(...centre(await heading.boundingBox()));
+    await pullHeading(github(page)).click();
     await expect(github(page)).toBeVisible();
     await page.mouse.click(...(await background(page)));
     await expect(github(page)).toHaveCount(0);

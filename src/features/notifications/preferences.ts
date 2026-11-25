@@ -1,3 +1,4 @@
+import { relayOrigin } from "../communities/destination";
 import {
   DEFAULT_CATEGORY_SOUNDS,
   isSoundName,
@@ -18,6 +19,7 @@ export type NotificationPreferences = Readonly<{
   notifyWhileViewing: boolean;
   sound: boolean;
   sounds: CategorySounds;
+  conversationSounds: Readonly<Record<string, SoundName>>;
   categories: Readonly<Record<string, boolean>>;
 }>;
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences =
@@ -26,6 +28,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences =
     notifyWhileViewing: false,
     sound: true,
     sounds: DEFAULT_CATEGORY_SOUNDS,
+    conversationSounds: Object.freeze({}),
     categories: Object.freeze({
       mention: true,
       direct: true,
@@ -52,6 +55,39 @@ function parseSounds(raw: unknown): CategorySounds {
   }
   return Object.freeze(sounds);
 }
+/** Account is scoped by the preferences store; conversation IDs are community-local. */
+export function conversationSoundKey(
+  communityOrigin: string,
+  channelId: string,
+): string {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/.test(channelId))
+    throw new Error("Invalid notification conversation");
+  return JSON.stringify([relayOrigin(communityOrigin), channelId]);
+}
+
+function parseConversationSounds(
+  raw: unknown,
+): Readonly<Record<string, SoundName>> {
+  if (raw === undefined) return Object.freeze({});
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("Invalid conversation sounds");
+  const sounds: [string, SoundName][] = [];
+  for (const [key, sound] of Object.entries(raw)) {
+    const parts: unknown = JSON.parse(key);
+    if (
+      !Array.isArray(parts) ||
+      parts.length !== 2 ||
+      typeof parts[0] !== "string" ||
+      typeof parts[1] !== "string" ||
+      conversationSoundKey(parts[0], parts[1]) !== key
+    )
+      throw new Error("Invalid conversation sound key");
+    // As with category choices, a sound absent from this build inherits the default.
+    if (isSoundName(sound)) sounds.push([key, sound]);
+  }
+  return Object.freeze(Object.fromEntries(sounds));
+}
+
 export function parsePreferences(raw: unknown): NotificationPreferences {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     throw new Error("Invalid notification preferences");
@@ -80,6 +116,7 @@ export function parsePreferences(raw: unknown): NotificationPreferences {
     notifyWhileViewing: value.notifyWhileViewing,
     sound: value.sound as boolean,
     sounds: parseSounds(value.sounds),
+    conversationSounds: parseConversationSounds(value.conversationSounds),
     categories: Object.freeze(Object.fromEntries(categories)),
   });
 }

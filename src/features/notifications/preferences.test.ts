@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
   createNotificationPreferences,
+  conversationSoundKey,
   parsePreferences,
 } from "./preferences";
 import { DEFAULT_SOUND } from "./sound";
@@ -82,7 +83,11 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   const service = createNotificationPreferences(host);
   service.selectViewer(viewer);
   expect(service.snapshot()).toEqual({
-    preferences: { ...stored, sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds },
+    preferences: {
+      ...stored,
+      sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
+      conversationSounds: {},
+    },
     error: null,
   });
   expect(setItem).not.toHaveBeenCalled();
@@ -91,6 +96,7 @@ it("restore keeps alerts on for an unknown sound name and leaves storage untouch
   expect(JSON.parse(store.get(key) ?? "")).toEqual({
     ...stored,
     sounds: DEFAULT_NOTIFICATION_PREFERENCES.sounds,
+    conversationSounds: {},
   });
   service.dispose();
 });
@@ -131,4 +137,46 @@ it("the automatic permission request is claimed once per device, and never witho
   expect(createNotificationPreferences(undefined).claimAutomaticRequest()).toBe(
     false,
   );
+});
+
+it("conversation sounds restore per account and community, including Silent and legacy defaults", () => {
+  const viewer = "a".repeat(64);
+  const first = conversationSoundKey("https://relay.example.com", "room");
+  const second = conversationSoundKey("https://other.example.com", "room");
+  const values = new Map<string, string>();
+  const host = {
+    localStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  } as unknown as Window;
+  const preferences = createNotificationPreferences(host);
+  expect(parsePreferences(stored).conversationSounds).toEqual({});
+  preferences.selectViewer(viewer);
+  preferences.update({
+    conversationSounds: { [first]: "ping", [second]: "silent" },
+  });
+  preferences.selectViewer("b".repeat(64));
+  expect(preferences.snapshot().preferences.conversationSounds).toEqual({});
+  preferences.selectViewer(viewer);
+  preferences.reload();
+  expect(preferences.snapshot().preferences.conversationSounds).toEqual({
+    [first]: "ping",
+    [second]: "silent",
+  });
+  expect(conversationSoundKey("wss://RELAY.example.com:443/", "room")).toBe(
+    first,
+  );
+  expect(
+    parsePreferences({
+      ...stored,
+      conversationSounds: {
+        [first]: "unknown-future-sound",
+        [second]: "silent",
+      },
+    }).conversationSounds,
+  ).toEqual({ [second]: "silent" });
+  preferences.dispose();
 });

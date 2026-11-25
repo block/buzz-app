@@ -145,6 +145,13 @@ if that desktop app is up and running.
   **⋯** menu.
 - **Activity** collects your mentions, DMs, chat replies and reactions.
   **Mute** on a conversation silences everything but mentions.
+- **Conversation sounds.** In a channel or DM’s **⋯ → View channel details**,
+  **Notification sound** overrides the usual type-based sound for that
+  conversation, including its thread replies. **Use default** restores the
+  choices in **Settings → Notifications**; **Silent** keeps banners without
+  audio. This is personal to your account on this device. It doesn’t enable
+  alerts for ordinary channel posts or override mute, disabled alerts or the
+  global Sound switch.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.

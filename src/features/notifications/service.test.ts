@@ -5,6 +5,7 @@ import type { PluginModule } from "../../plugins/api";
 import { provideNavigation } from "../navigation/service";
 import { NotificationsService, type Notifications } from "./service";
 import { createNotificationPreferences } from "./preferences";
+import type { OpenTarget } from "../navigation/targets";
 import type {
   NotificationPlatform,
   NotificationPermissionState,
@@ -27,6 +28,7 @@ function setup(
     requestsAutomatically?: boolean;
     permission?: NotificationPermissionState;
     values?: Map<string, string>;
+    authorized?: (target: OpenTarget) => boolean;
   } = {},
 ) {
   const ctx = new Context();
@@ -77,7 +79,7 @@ function setup(
     navigation.navigation,
     platform,
     preferences,
-    undefined,
+    options.authorized,
     (name) => plays.push(name),
     () => present,
   );
@@ -1058,3 +1060,98 @@ it("plugin display text is flattened and bounded, with the category text as fall
   expect(Array.from(rich.body)).toHaveLength(200);
   expect(shown[1]).toMatchObject({ title: "Buzz", body: "New updates" });
 });
+
+it("a conversation override wins for built-in and plugin alerts, without changing eligibility or other conversations", async () => {
+  const t = setup({ authorized: () => true });
+  const scope = { viewer, communityOrigin: "https://relay.example.com" };
+  const conversation = {
+    version: 1,
+    kind: "conversation",
+    scope,
+    channelId: "room",
+  } as const;
+  t.service.updatePreferences({
+    sounds: {
+      mention: "silent",
+      direct: "unison",
+      thread: "doop",
+      agent: "doodone",
+    },
+  });
+  t.service.setConversationSound(scope, "room", "ping");
+  t.service.reloadPreferences();
+  let sequence = 0;
+  async function submit(
+    category: string,
+    destination: OpenTarget = conversation,
+  ) {
+    await t.service.admit(
+      category,
+      category,
+      { sourceKey: `conversation-${sequence++}`, target: destination },
+      () => true,
+    );
+    await flush();
+  }
+  await submit("mention");
+  await submit("thread");
+  await submit("updates");
+  await submit("direct", { ...conversation, channelId: "other" });
+  await submit("direct", {
+    ...conversation,
+    scope: { ...scope, communityOrigin: "https://other.example.com" },
+  });
+  expect(t.plays).toEqual(["ping", "ping", "ping", "unison", "unison"]);
+  t.service.setConversationSound(scope, "room", "silent");
+  await submit("direct");
+  expect(t.platform.show).toHaveBeenCalledTimes(6);
+  expect(t.plays).toHaveLength(5);
+  t.service.setConversationSound(scope, "room", undefined);
+  await submit("direct");
+  expect(t.plays.at(-1)).toBe("unison");
+  t.service.setConversationSound(scope, "room", "boo");
+  t.service.updatePreferences({ sound: false });
+  await submit("direct");
+  expect(t.platform.show).toHaveBeenCalledTimes(8);
+  expect(t.plays).toHaveLength(6);
+  t.service.updatePreferences({ sound: true, categories: { direct: false } });
+  await submit("direct");
+  expect(t.platform.show).toHaveBeenCalledTimes(8);
+  t.service.selectViewer("b".repeat(64));
+  expect(t.service.setConversationSound(scope, "room", "ping")).toBe(false);
+  expect(t.service.snapshot().preferences.conversationSounds).toEqual({});
+});
+
+it.each([true, false])(
+  "conversation Silent before=%s or during submission never resurrects pending audio",
+  async (initiallySilent) => {
+    const t = setup({ authorized: () => true });
+    const scope = { viewer, communityOrigin: "https://relay.example.com" };
+    t.service.setConversationSound(
+      scope,
+      "room",
+      initiallySilent ? "silent" : "ping",
+    );
+    const accepted = deferred<void>();
+    vi.mocked(t.platform.show).mockImplementationOnce(() => accepted.promise);
+    await t.service.admit(
+      "direct",
+      "Direct messages",
+      {
+        sourceKey: "pending-conversation",
+        target: { version: 1, kind: "conversation", scope, channelId: "room" },
+      },
+      () => true,
+    );
+    await flush();
+    expect(t.platform.show).toHaveBeenCalledOnce();
+    try {
+      t.service.setConversationSound(scope, "room", "silent");
+      t.service.setConversationSound(scope, "room", "boo");
+    } finally {
+      accepted.resolve();
+      await flush();
+    }
+    expect(t.plays).toEqual([]);
+  },
+);

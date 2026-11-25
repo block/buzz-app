@@ -1,3 +1,4 @@
+import { NotificationsService } from "../../features/notifications/service";
 import type { SidebarContextProps } from "../../features/sidebar/contracts";
 import { useSyncExternalStore } from "react";
 import { MessagesSidebar } from "./MessagesSidebar";
@@ -102,6 +103,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     ),
   });
   const panels = ctx.panels;
+  const notifications = ctx.reflect.get("notifications");
   const archive: ArchiveShortcut = {};
   ctx.shortcuts.register({
     id: "archive-chat",
@@ -189,6 +191,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
         extensions={extensions}
         relay={relay}
         panels={panels}
+        notifications={
+          notifications instanceof NotificationsService
+            ? notifications
+            : undefined
+        }
         archive={archive}
         read={read}
         companion={companion}

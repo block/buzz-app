@@ -88,8 +88,9 @@ export function AgentApplyPrompt({ host }: { host: AgentFileHost }) {
       if (mounted) void setAgentCallListener(false);
       if (open.current)
         void answerAgentCall(open.current, {
-          code: "denied",
-          message: "Buzz closed before the change was approved",
+          code: "unavailable",
+          message:
+            "Buzz closed before you approved the change, so nothing was applied. Open Buzz and run the command again.",
         });
     };
   }, []);
@@ -101,8 +102,9 @@ export function AgentApplyPrompt({ host }: { host: AgentFileHost }) {
   };
   const deny = () => {
     void answerAgentCall(id, {
-      code: "denied",
-      message: "The change was declined in Buzz",
+      code: "declined",
+      message:
+        "You chose Decline when Buzz asked you to approve this change, so nothing was applied. Run the command again to apply it.",
     });
     close();
   };

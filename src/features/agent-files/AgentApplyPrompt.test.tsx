@@ -141,3 +141,64 @@ it("refuses a change based on a stale read", async () => {
   expect(await answer("a")).toMatchObject({ code: "conflict" });
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
+
+it("refuses, before asking, a file that adds the agent to a missing channel", async () => {
+  render(<AgentApplyPrompt host={host} />);
+  await call({
+    id: "r",
+    method: "agent_read",
+    params: [PUBKEY],
+    expiresIn: 10,
+  });
+  const { document, revision } = JSON.parse(
+    (await answer("r")).result ?? "",
+  ) as { document: object; revision: string };
+  const channel = "9b353519-0d6a-4c55-9a8e-5d3c8b1f2a10";
+  await call({
+    id: "a",
+    method: "agent_apply",
+    params: [
+      PUBKEY,
+      JSON.stringify({ ...document, channels: [{ channel, role: "member" }] }),
+      revision,
+      "{}",
+    ],
+    expiresIn: 120,
+  });
+  const refused = await answer("a");
+  expect(refused.code).toBe("not_found");
+  expect(refused.message).toContain(`This agent needs channel ${channel}`);
+  expect(refused.message).toContain("Create the channel in Buzz first");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+});
+
+it("tells the tool that the owner declined the change", async () => {
+  render(<AgentApplyPrompt host={host} />);
+  await call({
+    id: "r",
+    method: "agent_read",
+    params: [PUBKEY],
+    expiresIn: 10,
+  });
+  const { document, revision } = JSON.parse(
+    (await answer("r")).result ?? "",
+  ) as { document: object; revision: string };
+  await call({
+    id: "a",
+    method: "agent_apply",
+    params: [
+      PUBKEY,
+      JSON.stringify({ ...document, instructions: "You decline." }),
+      revision,
+      "{}",
+    ],
+    expiresIn: 120,
+  });
+  await userEvent.click(await screen.findByRole("button", { name: "Decline" }));
+  const declined = await answer("a");
+  expect(declined.code).toBe("declined");
+  expect(declined.message).toContain("nothing was applied");
+  expect(save).not.toHaveBeenCalledWith(PUBKEY, {
+    config: { instructions: "You decline.", model: "m" },
+  });
+});

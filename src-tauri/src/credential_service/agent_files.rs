@@ -116,6 +116,8 @@ fn code_of(code: &str) -> &'static str {
     match code {
         "approval_required" => "approval_required",
         "conflict" => "conflict",
+        "declined" => "declined",
+        "not_found" => "not_found",
         "invalid_request" => "invalid_request",
         "unavailable" => "unavailable",
         _ => "denied",

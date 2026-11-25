@@ -791,7 +791,8 @@ impl Failure {
     }
     fn status(&self) -> StatusCode {
         match self.code {
-            "approval_required" | "denied" => StatusCode::FORBIDDEN,
+            "approval_required" | "denied" | "declined" => StatusCode::FORBIDDEN,
+            "not_found" => StatusCode::NOT_FOUND,
             "rate_limited" => StatusCode::TOO_MANY_REQUESTS,
             "revoked" => StatusCode::UNAUTHORIZED,
             "conflict" => StatusCode::CONFLICT,

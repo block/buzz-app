@@ -35,7 +35,13 @@ export type AgentFileHost = Readonly<{
 /** A failure the CLI is told, with its provider error code. */
 export class AgentCallError extends Error {
   constructor(
-    readonly code: "conflict" | "invalid_request" | "unavailable" | "denied",
+    readonly code:
+      | "conflict"
+      | "declined"
+      | "invalid_request"
+      | "not_found"
+      | "unavailable"
+      | "denied",
     message: string,
   ) {
     super(message);
@@ -209,10 +215,12 @@ export async function prepareApply(
         "invalid_request",
         `Agents of type ${desired.type} aren't available in this Buzz`,
       );
+    const planned = plan(undefined);
+    await requireChannels(host, planned.channels);
     return {
       name: desired.profile.name,
       creating: true,
-      plan: plan(undefined),
+      plan: planned,
       run: () => create(host, desired, now, prune),
     };
   }
@@ -236,6 +244,7 @@ export async function prepareApply(
       changes: planned.changes,
     });
   if (!planned.changes.length) return result();
+  await requireChannels(host, planned.channels);
   return {
     name: agent.name,
     creating: false,
@@ -286,6 +295,50 @@ async function apply(host: AgentFileHost, agent: Agent, plan: ApplyPlan) {
     ...(attention ? { attention, attentionExpected: plan.expected } : {}),
   });
   await applyChannels(host, agent.pubkey, plan.channels);
+}
+
+/** Refuses, before the owner is asked, a file that adds the agent to channels
+ * this community doesn't have: an import adds an agent to a channel, it never
+ * creates one. */
+async function requireChannels(
+  host: AgentFileHost,
+  channels: ApplyPlan["channels"],
+) {
+  const wanted = channels.add.map(({ channel }) => channel);
+  if (!wanted.length) return;
+  const relay = host.relay();
+  const relayAuthor = relay?.relayAuthor;
+  if (!relay || !relayAuthor)
+    throw new AgentCallError("unavailable", "Connect to the community first");
+  const events = await relay.readRemote([
+    {
+      kinds: [39000],
+      authors: [relayAuthor],
+      "#d": wanted,
+      limit: wanted.length,
+    },
+  ]);
+  const metadata = (id: string) =>
+    events.find(
+      (event) => event.kind === 39000 && exactLifecycleTag(event, "d") === id,
+    );
+  const listed = (ids: string[]) =>
+    ids.length > 1 ? `channels ${ids.join(", ")}` : `channel ${ids[0]}`;
+  const missing = wanted.filter((id) => !metadata(id));
+  if (missing.length)
+    throw new AgentCallError(
+      "not_found",
+      `This agent needs ${listed(missing)}, which this community doesn't have or you can't see. An import adds the agent to existing channels but never creates them. Create the channel in Buzz first, put its ID in buzz.channels, and run the import again.`,
+    );
+  const archived = wanted.filter((id) => {
+    const found = metadata(id);
+    return found && exactLifecycleTag(found, "archived") === "true";
+  });
+  if (archived.length)
+    throw new AgentCallError(
+      "not_found",
+      `This agent needs ${listed(archived)}, but ${archived.length > 1 ? "they are" : "it is"} archived. Unarchive it in Buzz or remove it from buzz.channels, then run the import again.`,
+    );
 }
 
 async function applyChannels(

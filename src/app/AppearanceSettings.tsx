@@ -18,7 +18,11 @@ import {
   useRef,
   useSyncExternalStore,
 } from "react";
-import { parseEmojiSize, type Appearance } from "../shared/theme/service";
+import {
+  MAX_EMOJI_SIZE,
+  MIN_EMOJI_SIZE,
+  type Appearance,
+} from "../shared/theme/service";
 
 import {
   setThreadPlacementPreference,
@@ -373,27 +377,36 @@ export function AppearanceSettings({
             title="Emoji size"
             subtitle="Emoji-only messages show at this size. You can also drag the corner of one in a conversation."
             trailing={(control) => (
-              <Select
-                describedBy={control["aria-describedby"]}
-                variant="compact"
-                label="Emoji size"
-                value={emojiSize}
-                groups={[
-                  {
-                    label: "Size",
-                    options: [
-                      { value: "default", label: "Default" },
-                      { value: "medium", label: "Medium" },
-                      { value: "large", label: "Large" },
-                      { value: "extra-large", label: "Extra large" },
-                      { value: "huge", label: "Huge" },
-                    ],
-                  },
-                ]}
-                onValueChange={(value) => {
-                  appearance.setEmojiSize(parseEmojiSize(value));
-                }}
-              />
+              <fieldset
+                aria-label="Emoji size"
+                aria-describedby={control["aria-describedby"]}
+                className="m-0 flex min-w-0 flex-wrap items-center gap-3 border-0 p-0"
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  aria-label="Decrease emoji size"
+                  disabled={emojiSize <= MIN_EMOJI_SIZE}
+                  onClick={() => appearance.setEmojiSize(emojiSize - 10)}
+                >
+                  −
+                </Button>
+                <output
+                  aria-label="Emoji size"
+                  className="text-body-sm tabular-nums"
+                >
+                  {emojiSize}%
+                </output>
+                <Button
+                  type="button"
+                  size="sm"
+                  aria-label="Increase emoji size"
+                  disabled={emojiSize >= MAX_EMOJI_SIZE}
+                  onClick={() => appearance.setEmojiSize(emojiSize + 10)}
+                >
+                  +
+                </Button>
+              </fieldset>
             )}
           />
           <AppearancePreview

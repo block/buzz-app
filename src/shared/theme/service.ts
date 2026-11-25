@@ -41,18 +41,31 @@ export type MessageDensity = "default" | "compact";
 export const DENSITY_KEY = "buzz-message-density.v1";
 export const parseMessageDensity = (value: unknown): MessageDensity =>
   value === "compact" ? "compact" : "default";
-/** Size of emoji-only messages and reaction artwork. */
-export const EMOJI_SIZES = [
-  "default",
-  "medium",
-  "large",
-  "extra-large",
-  "huge",
-] as const;
-export type EmojiSize = (typeof EMOJI_SIZES)[number];
+/** Size of emoji-only messages and reaction artwork, in percent of the
+    default. Any whole percent in range, so a drag can stop anywhere. */
 export const EMOJI_SIZE_KEY = "buzz-emoji-size.v1";
-export const parseEmojiSize = (value: unknown): EmojiSize =>
-  EMOJI_SIZES.find((size) => size === value) ?? "default";
+export const MIN_EMOJI_SIZE = 100;
+export const MAX_EMOJI_SIZE = 300;
+/** Earlier builds saved named sizes; each keeps the size it showed. */
+const NAMED_EMOJI_SIZES: Readonly<Record<string, number>> = {
+  default: 100,
+  medium: 124,
+  large: 152,
+  "extra-large": 229,
+  huge: 300,
+};
+export function parseEmojiSize(value: unknown): number {
+  const named =
+    typeof value === "string" && Object.hasOwn(NAMED_EMOJI_SIZES, value)
+      ? NAMED_EMOJI_SIZES[value]
+      : undefined;
+  const number =
+    named ??
+    (typeof value === "string" && value.trim() ? Number(value) : value);
+  return typeof number === "number" && Number.isFinite(number)
+    ? Math.round(Math.min(MAX_EMOJI_SIZE, Math.max(MIN_EMOJI_SIZE, number)))
+    : MIN_EMOJI_SIZE;
+}
 
 export interface AppearanceSnapshot {
   readonly preference: ColorModePreference;
@@ -67,7 +80,7 @@ export interface AppearanceSnapshot {
   readonly contrastError: string | null;
   readonly density: MessageDensity;
   readonly densityError: string | null;
-  readonly emojiSize: EmojiSize;
+  readonly emojiSize: number;
   readonly emojiSizeError: string | null;
   readonly error: string | null;
 }
@@ -96,7 +109,7 @@ export function createAppearance(
     contrastError: null,
     density: "default",
     densityError: null,
-    emojiSize: "default",
+    emojiSize: MIN_EMOJI_SIZE,
     emojiSizeError: null,
   };
   let disposed = false;
@@ -133,7 +146,7 @@ export function createAppearance(
       state.messageWidth === "wide" ? "78rem" : "52rem",
     );
     root.dataset.messageDensity = state.density;
-    root.dataset.emojiSize = state.emojiSize;
+    root.style.setProperty("--buzz-emoji-scale", String(state.emojiSize / 100));
     root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document
@@ -434,13 +447,13 @@ export function createAppearance(
       state = { ...state, density, densityError };
       notify();
     },
-    setEmojiSize(value: EmojiSize) {
+    setEmojiSize(value: number) {
       if (disposed) return;
       const emojiSize = parseEmojiSize(value);
       let emojiSizeError: string | null = null;
       try {
         if (!host) throw new Error("No browser storage");
-        host.localStorage.setItem(EMOJI_SIZE_KEY, emojiSize);
+        host.localStorage.setItem(EMOJI_SIZE_KEY, String(emojiSize));
       } catch {
         emojiSizeError =
           "This emoji size is active, but could not be saved on this device. Try again.";

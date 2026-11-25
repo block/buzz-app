@@ -139,10 +139,30 @@ it("retry saves the System choice even when its current palette is light", async
 it("describes what the emoji size choice changes", () => {
   render(<ToastProvider>{preferencesPage()}</ToastProvider>);
   expect(
-    screen.getByRole("combobox", { name: "Emoji size" }),
+    screen.getByRole("group", { name: "Emoji size" }),
   ).toHaveAccessibleDescription(
     "Emoji-only messages show at this size. You can also drag the corner of one in a conversation.",
   );
+});
+
+it("steps emoji size by ten percent within range", () => {
+  const appearance = createAppearance();
+  preferenceAppearances.push(appearance);
+  appearance.setEmojiSize(100);
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  const decrease = screen.getByRole("button", { name: "Decrease emoji size" });
+  expect(decrease).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Increase emoji size" }));
+  expect(appearance.snapshot().emojiSize).toBe(110);
+  expect(screen.getByRole("status", { name: "Emoji size" })).toHaveTextContent(
+    "110%",
+  );
+  fireEvent.click(decrease);
+  expect(appearance.snapshot().emojiSize).toBe(100);
 });
 
 it("shows reset only away from the default size and hides it after reset", () => {

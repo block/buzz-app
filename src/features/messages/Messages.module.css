@@ -382,8 +382,8 @@ html[data-keyboard-navigation] .emojiSizeHandle:focus-visible {
   .emojiSizeHandle {
     transition: opacity var(--duration-state) var(--easing-enter);
   }
-  /* Settle onto the nearest size after a drag. Off while dragging, so the
-     glyphs track the pointer without lag. */
+  /* Ease between sizes picked in Settings or with the keyboard. Off while
+     dragging, so the glyphs track the pointer without lag. */
   .resizableEmoji:not([data-resizing]) .text[data-single-emoji] {
     transition-property: font-size, line-height, min-height;
     transition-duration: var(--duration-state);

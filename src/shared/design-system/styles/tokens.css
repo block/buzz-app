@@ -1621,42 +1621,22 @@
   --rim-shade: #ffffff1f;
 }
 
-/* Emoji-only messages follow the saved size on the root. While someone drags
-   one message's size handle, that message previews a size on its own. */
+/* Emoji-only messages follow the saved size on the root, a scale of the
+   default. While someone drags one message's size handle, that message
+   previews its own scale. Reaction artwork grows with it, from caption size
+   at the default to 1rem at half again as big, and stays inside the pill. */
 :root,
-[data-emoji-size-preview="default"] {
-  --size-emoji-display: calc(var(--type-rem) * 2.625);
-  --size-emoji-line: calc(var(--type-rem) * 3);
-}
-
-:root[data-emoji-size="medium"],
-[data-emoji-size-preview="medium"] {
-  --size-emoji-display: calc(var(--type-rem) * 3.25);
-  --size-emoji-line: calc(var(--type-rem) * 3.75);
-}
-
-:root[data-emoji-size="large"],
-[data-emoji-size-preview="large"],
-:root[data-emoji-size="extra-large"],
-[data-emoji-size-preview="extra-large"],
-:root[data-emoji-size="huge"],
-[data-emoji-size-preview="huge"] {
-  --size-emoji-display: calc(var(--type-rem) * 4);
-  --size-emoji-line: calc(var(--type-rem) * 4.5);
-  /* Reaction artwork, still inside the pill. */
-  --size-emoji-reaction: 1rem;
-}
-
-:root[data-emoji-size="extra-large"],
-[data-emoji-size-preview="extra-large"] {
-  --size-emoji-display: calc(var(--type-rem) * 6);
-  --size-emoji-line: calc(var(--type-rem) * 6.5);
-}
-
-:root[data-emoji-size="huge"],
-[data-emoji-size-preview="huge"] {
-  --size-emoji-display: calc(var(--type-rem) * 8);
-  --size-emoji-line: calc(var(--type-rem) * 8.5);
+[data-emoji-scale-preview] {
+  --size-emoji-display: calc(
+    var(--type-rem) *
+    2.625 *
+    var(--buzz-emoji-scale, 1)
+  );
+  --size-emoji-line: calc(var(--size-emoji-display) + var(--type-rem) * 0.375);
+  --size-emoji-reaction: calc(
+    var(--type-rem) *
+    min(1, 0.75 + (var(--buzz-emoji-scale, 1) - 1) * 0.5)
+  );
 }
 
 :root[data-color-mode="dark"],

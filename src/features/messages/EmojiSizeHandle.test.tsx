@@ -8,7 +8,6 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import type { EmojiSize } from "../../shared/theme/service";
 import { EmojiSizeContext, type EmojiSizePreference } from "./emoji-size";
 import { ResizableEmoji } from "./EmojiSizeHandle";
 
@@ -16,7 +15,7 @@ HTMLElement.prototype.setPointerCapture ??= () => {};
 
 afterEach(cleanup);
 
-function preference(initial: EmojiSize = "default") {
+function preference(initial = 100) {
   let emojiSize = initial;
   const listeners = new Set<() => void>();
   const value = {
@@ -25,7 +24,7 @@ function preference(initial: EmojiSize = "default") {
       return () => listeners.delete(listener);
     },
     snapshot: () => ({ emojiSize }),
-    setEmojiSize: vi.fn((size: EmojiSize) => {
+    setEmojiSize: vi.fn((size: number) => {
       emojiSize = size;
       for (const listener of listeners) listener();
     }),
@@ -37,7 +36,7 @@ function renderEmoji(saved = preference()) {
   render(
     <EmojiSizeContext value={saved}>
       <ResizableEmoji>
-        <p>😀</p>
+        <p data-single-emoji="">😀</p>
       </ResizableEmoji>
     </EmojiSizeContext>,
   );
@@ -45,6 +44,25 @@ function renderEmoji(saved = preference()) {
 }
 
 const frame = (handle: HTMLElement) => handle.closest("div") as HTMLElement;
+
+/** Glyphs render at 42px per 100%, so a pixel of travel is about 2.4%. */
+function glyphSize(fontSize = "42px") {
+  const real = window.getComputedStyle;
+  vi.spyOn(window, "getComputedStyle").mockImplementation((element) =>
+    (element as HTMLElement).hasAttribute("data-single-emoji")
+      ? ({ fontSize } as CSSStyleDeclaration)
+      : real(element),
+  );
+}
+
+afterEach(() => vi.restoreAllMocks());
+
+const press = (handle: HTMLElement, clientX = 0, clientY = 0) =>
+  fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX, clientY });
+const move = (handle: HTMLElement, clientX: number, clientY: number) =>
+  fireEvent.pointerMove(handle, { pointerId: 1, clientX, clientY });
+const scale = (handle: HTMLElement) =>
+  frame(handle).style.getPropertyValue("--buzz-emoji-scale");
 
 it("shows no handle without a saved preference", () => {
   render(
@@ -56,56 +74,59 @@ it("shows no handle without a saved preference", () => {
   expect(screen.queryByRole("slider")).not.toBeInTheDocument();
 });
 
-it("previews only this message while dragging, then saves on release", () => {
+it("follows the pointer pixel by pixel, then saves exactly that size", () => {
+  glyphSize();
   const { saved, handle } = renderEmoji();
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 0,
-    clientY: 0,
-  });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 20, clientY: 20 });
-  expect(frame(handle)).toHaveAttribute("data-emoji-size-preview", "medium");
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 32, clientY: 32 });
-  expect(frame(handle)).toHaveAttribute("data-emoji-size-preview", "large");
+  press(handle);
+  move(handle, 21, 21);
+  expect(frame(handle)).toHaveAttribute("data-emoji-scale-preview");
+  expect(scale(handle)).toBe("1.5");
+  move(handle, 22, 22);
+  expect(scale(handle)).toBe("1.52");
   expect(saved.setEmojiSize).not.toHaveBeenCalled();
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("large");
-  expect(frame(handle)).not.toHaveAttribute("data-emoji-size-preview");
-  expect(handle).toHaveAttribute("aria-valuetext", "Large");
+  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith(152);
+  expect(frame(handle)).not.toHaveAttribute("data-emoji-scale-preview");
+  expect(scale(handle)).toBe("");
+  expect(handle).toHaveAttribute("aria-valuenow", "152");
+  expect(handle).toHaveAttribute("aria-valuetext", "152%");
 });
 
-it("snaps to the smallest and largest sizes", () => {
-  const { saved, handle } = renderEmoji(preference("medium"));
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 0,
-    clientY: 0,
-  });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: -200, clientY: -200 });
+it("measures from the saved size, so travel keeps pace with the corner", () => {
+  glyphSize("84px");
+  const { saved, handle } = renderEmoji(preference(200));
+  press(handle);
+  move(handle, 21, 21);
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(saved.setEmojiSize).toHaveBeenLastCalledWith("default");
+  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith(250);
 });
 
-it("steps to the next size on a click and wraps after the largest", () => {
-  const { saved, handle } = renderEmoji(preference("huge"));
-  fireEvent.pointerDown(handle, { pointerId: 1, button: 0 });
+it("stops at the smallest and largest sizes", () => {
+  glyphSize();
+  const { saved, handle } = renderEmoji(preference(150));
+  press(handle);
+  move(handle, -400, -400);
+  expect(scale(handle)).toBe("1");
+  move(handle, 900, 900);
+  expect(scale(handle)).toBe("3");
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("default");
+  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith(300);
+});
+
+it("changes nothing on a click", () => {
+  const { saved, handle } = renderEmoji(preference(150));
+  press(handle);
+  move(handle, 2, 1);
+  fireEvent.pointerUp(handle, { pointerId: 1 });
+  expect(saved.setEmojiSize).not.toHaveBeenCalled();
 });
 
 it("discards the preview when the drag is cancelled", () => {
   const { saved, handle } = renderEmoji();
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 0,
-    clientY: 0,
-  });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 40, clientY: 40 });
+  press(handle);
+  move(handle, 40, 40);
   fireEvent.keyDown(handle, { key: "Escape" });
-  expect(frame(handle)).not.toHaveAttribute("data-emoji-size-preview");
+  expect(frame(handle)).not.toHaveAttribute("data-emoji-scale-preview");
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(saved.setEmojiSize).not.toHaveBeenCalled();
 });
@@ -114,69 +135,61 @@ it("changes size with the keyboard", () => {
   const { saved, handle } = renderEmoji();
   act(() => handle.focus());
   fireEvent.keyDown(handle, { key: "ArrowUp" });
-  expect(saved.setEmojiSize).toHaveBeenLastCalledWith("medium");
+  expect(saved.setEmojiSize).toHaveBeenLastCalledWith(110);
   fireEvent.keyDown(handle, { key: "End" });
-  expect(saved.setEmojiSize).toHaveBeenLastCalledWith("huge");
+  expect(saved.setEmojiSize).toHaveBeenLastCalledWith(300);
   fireEvent.keyDown(handle, { key: "ArrowRight" });
   expect(saved.setEmojiSize).toHaveBeenCalledTimes(2);
+  fireEvent.keyDown(handle, { key: "ArrowDown" });
+  expect(saved.setEmojiSize).toHaveBeenLastCalledWith(290);
   fireEvent.keyDown(handle, { key: "Home" });
-  expect(saved.setEmojiSize).toHaveBeenLastCalledWith("default");
-  expect(handle).toHaveAttribute("aria-valuetext", "Default");
+  expect(saved.setEmojiSize).toHaveBeenLastCalledWith(100);
+  expect(handle).toHaveAttribute("aria-valuetext", "100%");
 });
 
 it("ignores a secondary button", () => {
   const { saved, handle } = renderEmoji();
   fireEvent.pointerDown(handle, { pointerId: 1, button: 2 });
+  move(handle, 40, 40);
   fireEvent.pointerUp(handle, { pointerId: 1 });
   expect(saved.setEmojiSize).not.toHaveBeenCalled();
 });
 
 it("keeps the saved size when the pointer is cancelled", () => {
   const { saved, handle } = renderEmoji();
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 0,
-    clientY: 0,
-  });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 40, clientY: 40 });
+  press(handle);
+  move(handle, 40, 40);
   fireEvent.pointerCancel(handle, { pointerId: 1 });
   fireEvent.lostPointerCapture(handle, { pointerId: 1 });
   expect(saved.setEmojiSize).not.toHaveBeenCalled();
-  expect(frame(handle)).not.toHaveAttribute("data-emoji-size-preview");
+  expect(frame(handle)).not.toHaveAttribute("data-emoji-scale-preview");
 });
 
 it("saves once when capture is lost after a drag", () => {
+  glyphSize();
   const { saved, handle } = renderEmoji();
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 0,
-    clientY: 0,
-  });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 20, clientY: 20 });
+  press(handle);
+  move(handle, 21, 21);
   fireEvent.lostPointerCapture(handle, { pointerId: 1 });
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("medium");
+  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith(150);
 });
 
 it("follows only the pointer that started the drag", () => {
+  glyphSize();
   const { saved, handle } = renderEmoji();
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 0,
-    clientY: 0,
-  });
+  press(handle);
   fireEvent.pointerMove(handle, { pointerId: 2, clientX: 40, clientY: 40 });
   fireEvent.pointerUp(handle, { pointerId: 2 });
-  expect(frame(handle)).not.toHaveAttribute("data-emoji-size-preview");
+  expect(frame(handle)).not.toHaveAttribute("data-emoji-scale-preview");
   expect(saved.setEmojiSize).not.toHaveBeenCalled();
+  move(handle, 21, 21);
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("medium");
+  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith(150);
 });
 
 it("grows leftward when the handle sits at the emoji's left", () => {
+  glyphSize();
   const { saved, handle } = renderEmoji();
   vi.spyOn(handle, "getBoundingClientRect").mockReturnValue(
     DOMRect.fromRect({ x: 0, y: 0, width: 24, height: 24 }),
@@ -184,72 +197,8 @@ it("grows leftward when the handle sits at the emoji's left", () => {
   vi.spyOn(frame(handle), "getBoundingClientRect").mockReturnValue(
     DOMRect.fromRect({ x: 0, y: 0, width: 100, height: 60 }),
   );
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 50,
-    clientY: 0,
-  });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 18, clientY: 32 });
+  press(handle, 50, 0);
+  move(handle, 29, 21);
   fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("large");
-});
-
-it("follows the pointer between sizes, then settles on the nearest", () => {
-  // Rendered glyph sizes for each saved size, as the tokens give them.
-  const display = {
-    default: 42,
-    medium: 52,
-    large: 64,
-    "extra-large": 96,
-    huge: 128,
-  };
-  const real = window.getComputedStyle;
-  vi.spyOn(window, "getComputedStyle").mockImplementation((element) => {
-    const size = (element as HTMLElement).closest<HTMLElement>(
-      "[data-emoji-size-preview]",
-    )?.dataset.emojiSizePreview as keyof typeof display | undefined;
-    if (!size) return real(element);
-    const px = display[size];
-    return {
-      fontSize: `${px}px`,
-      lineHeight: `${px + 8}px`,
-    } as CSSStyleDeclaration;
-  });
-  const saved = preference("large");
-  render(
-    <EmojiSizeContext value={saved}>
-      <ResizableEmoji>
-        <p data-single-emoji="">😀</p>
-      </ResizableEmoji>
-    </EmojiSizeContext>,
-  );
-  const handle = screen.getByRole("slider", { name: /emoji size/i });
-  fireEvent.pointerDown(handle, {
-    pointerId: 1,
-    button: 0,
-    clientX: 0,
-    clientY: 0,
-  });
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 10, clientY: 10 });
-  expect(frame(handle).style.getPropertyValue("--size-emoji-display")).toBe(
-    "74px",
-  );
-  expect(frame(handle).style.getPropertyValue("--size-emoji-line")).toBe(
-    "82px",
-  );
-  expect(frame(handle)).toHaveAttribute("data-emoji-size-preview", "large");
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 20, clientY: 20 });
-  expect(frame(handle)).toHaveAttribute(
-    "data-emoji-size-preview",
-    "extra-large",
-  );
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 400, clientY: 400 });
-  expect(frame(handle).style.getPropertyValue("--size-emoji-display")).toBe(
-    "128px",
-  );
-  fireEvent.pointerMove(handle, { pointerId: 1, clientX: 26, clientY: 26 });
-  fireEvent.pointerUp(handle, { pointerId: 1 });
-  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith("extra-large");
-  expect(frame(handle).style.getPropertyValue("--size-emoji-display")).toBe("");
+  expect(saved.setEmojiSize).toHaveBeenCalledExactlyOnceWith(150);
 });

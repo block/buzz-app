@@ -74,20 +74,31 @@
     /* Default spacing remains usable without storage. */
   }
   document.documentElement.dataset.messageDensity = density;
-  let emojiSize = "default";
+  // Percent of the default emoji size; earlier builds saved a named size.
+  let emojiSize = 100;
   try {
     const stored = localStorage.getItem("buzz-emoji-size.v1");
-    if (
-      stored === "medium" ||
-      stored === "large" ||
-      stored === "extra-large" ||
-      stored === "huge"
-    )
-      emojiSize = stored;
+    const named = {
+      default: 100,
+      medium: 124,
+      large: 152,
+      "extra-large": 229,
+      huge: 300,
+    };
+    const value = Object.hasOwn(named, stored)
+      ? named[stored]
+      : stored?.trim()
+        ? Number(stored)
+        : Number.NaN;
+    if (Number.isFinite(value))
+      emojiSize = Math.round(Math.min(300, Math.max(100, value)));
   } catch {
     /* Default emoji remain usable without storage. */
   }
-  document.documentElement.dataset.emojiSize = emojiSize;
+  document.documentElement.style.setProperty(
+    "--buzz-emoji-scale",
+    String(emojiSize / 100),
+  );
   let scale = 1;
   try {
     const value = Number(localStorage.getItem("buzz-font-scale.v1"));

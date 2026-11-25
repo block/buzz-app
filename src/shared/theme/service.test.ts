@@ -119,7 +119,7 @@ it.each([
       contrastError: null,
       density: "default",
       densityError: null,
-      emojiSize: "default",
+      emojiSize: 100,
       emojiSizeError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
@@ -568,14 +568,25 @@ it("keeps density active on storage failure, retries, and follows other windows"
   expect(b.root.dataset.messageDensity).toBe("default");
 });
 
+/** The emoji scale most recently written to the root. */
+const emojiScale = (b: ReturnType<typeof browser>) =>
+  b.root.style.setProperty.mock.calls
+    .filter(([name]) => name === "--buzz-emoji-scale")
+    .at(-1)?.[1];
+
 it.each([
-  [null, "default"],
-  ["LARGE", "default"],
-  ["default", "default"],
-  ["medium", "medium"],
-  ["large", "large"],
-  ["extra-large", "extra-large"],
-  ["huge", "huge"],
+  [null, 100],
+  ["LARGE", 100],
+  ["nonsense", 100],
+  ["default", 100],
+  ["medium", 124],
+  ["large", 152],
+  ["extra-large", 229],
+  ["huge", 300],
+  ["137", 137],
+  ["137.6", 138],
+  ["40", 100],
+  ["900", 300],
 ] as const)(
   "bootstrap and service agree on stored emoji size %j",
   (stored, emojiSize) => {
@@ -586,10 +597,10 @@ it.each([
       document: b.host.document,
       matchMedia: b.host.matchMedia,
     });
-    expect(b.root.dataset.emojiSize).toBe(emojiSize);
+    expect(emojiScale(b)).toBe(String(emojiSize / 100));
     const app = createAppearance(b.host);
     expect(app.snapshot().emojiSize).toBe(emojiSize);
-    expect(b.root.dataset.emojiSize).toBe(emojiSize);
+    expect(emojiScale(b)).toBe(String(emojiSize / 100));
     app.dispose();
   },
 );
@@ -600,16 +611,28 @@ it("keeps emoji size active on storage failure, retries, and follows other windo
   b.storage.setItem.mockImplementationOnce(() => {
     throw new Error("denied");
   });
-  app.setEmojiSize("large");
-  expect(b.root.dataset.emojiSize).toBe("large");
+  app.setEmojiSize(150);
+  expect(emojiScale(b)).toBe("1.5");
   expect(app.snapshot().emojiSizeError).not.toBeNull();
-  app.setEmojiSize("large");
-  expect(b.values.get("buzz-emoji-size.v1")).toBe("large");
+  app.setEmojiSize(150);
+  expect(b.values.get("buzz-emoji-size.v1")).toBe("150");
   expect(app.snapshot().emojiSizeError).toBeNull();
-  b.values.set("buzz-emoji-size.v1", "default");
+  b.values.set("buzz-emoji-size.v1", "100");
   b.change("buzz-emoji-size.v1");
-  expect(b.root.dataset.emojiSize).toBe("default");
+  expect(emojiScale(b)).toBe("1");
   app.dispose();
-  app.setEmojiSize("large");
-  expect(b.root.dataset.emojiSize).toBe("default");
+  app.setEmojiSize(150);
+  expect(emojiScale(b)).toBe("1");
+});
+
+it("holds emoji size writes to whole percents in range", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  app.setEmojiSize(412);
+  expect(app.snapshot().emojiSize).toBe(300);
+  app.setEmojiSize(12);
+  expect(app.snapshot().emojiSize).toBe(100);
+  app.setEmojiSize(171.4);
+  expect(b.values.get("buzz-emoji-size.v1")).toBe("171");
+  app.dispose();
 });

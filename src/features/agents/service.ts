@@ -1711,7 +1711,7 @@ const MODEL_FIELDS = ["model", "provider", "effort"] as const;
 /** Earlier thread messages a model router may read. */
 const ROUTE_HISTORY = 20;
 /** The most prompt text a model router is given. */
-const ROUTE_PROMPT_CHARS = 16_000;
+const ROUTE_PROMPT_CHARS = 48_000;
 /** Where a routed turn runs, as its router reads it. */
 type RoutePlace = Readonly<{
   /** The conversation as its harness keys the session. */

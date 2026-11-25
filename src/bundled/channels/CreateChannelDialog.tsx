@@ -238,7 +238,13 @@ function OpenCreateChannelDialog({
       })
     : { tips: [], blockers: [] };
   const similar = namingRules
-    ? similarChannelName(normalizedName, roster.channels)
+    ? similarChannelName(
+        normalizedName,
+        roster.channels.filter(
+          (channel) =>
+            channel.channelType === "stream" || channel.channelType === "forum",
+        ),
+      )
     : undefined;
   // Non-breaking hyphens keep "-help" and "proj-" from wrapping mid-word. A
   // hyphen inside a name (the suggestion to copy) stays a plain one.

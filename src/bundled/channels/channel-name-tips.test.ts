@@ -49,6 +49,12 @@ describe("normalization and wording", () => {
       "Use lowercase letters, numbers and single hyphens, like alpha-team.",
     );
   });
+  it("only suggests names that pass", () => {
+    const hint = (name: string) => check(name).join(" ");
+    expect(hint("foo-Proj-x")).not.toContain("like foo-proj-x");
+    expect(hint("Team-Payments")).not.toContain("like team-payments.");
+    expect(hint("Team-Payments")).toContain("like team-payments-team.");
+  });
   it("requires lowercase kebab-case", () => {
     const fix = (name: string) => [
       `Use lowercase letters, numbers and single hyphens, like ${name}.`,

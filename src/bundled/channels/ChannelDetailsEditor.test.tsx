@@ -817,7 +817,8 @@ it.each([
       await screen.findByRole("button", { name: "Edit details" }),
     );
     const input = screen.getByRole("textbox", { name: field }) as
-      HTMLInputElement | HTMLTextAreaElement;
+      | HTMLInputElement
+      | HTMLTextAreaElement;
     const save = screen.getByRole("button", { name: "Save changes" });
     expect(input).toHaveValue(original);
     expect(save).toBeDisabled();

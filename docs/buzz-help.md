@@ -1102,6 +1102,14 @@ confirmation. **Delete team** asks first; it doesn't delete the team's agents.
 
 ## Optional features and limits
 
+- Some communities enforce channel naming rules, set by the build, not in the
+  app. There, a new or renamed channel needs a type word (a suffix like
+  `-team` or `-help`, or a prefix like `proj-` or `tmp-`) and lowercase
+  letters, numbers and single hyphens. The New channel dialog, the channel
+  settings rename and Convert to channel say what to fix, and agents' channel
+  create and rename calls return the same error. Solo chats, system channels
+  and DMs are exempt, and existing channels keep their names. Other communities
+  are unaffected.
 - Plugins can add features. **Settings → Plugins → Manage plugins** controls
   them. Unsigned external plugins can install and run by default. Launch Buzz
   with `BUZZ_REQUIRE_PLUGIN_SIGNATURES=1` to require signatures; restart with

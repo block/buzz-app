@@ -454,7 +454,8 @@ type Args = Readonly<Record<string, unknown>>;
 /** A tool's answer: text, or an image (base64 `data`) for the agent to see,
  * with any `text` about it. */
 export type Reply =
-  string | Readonly<{ data: string; type: string; text?: string }>;
+  | string
+  | Readonly<{ data: string; type: string; text?: string }>;
 type Handler = (tools: Tools, args: Args) => Promise<Reply>;
 
 /** Runs tool `name` for an agent working in `context`. A throw is a tool
@@ -1682,7 +1683,7 @@ class Tools {
    * False means the scan or caller's output budget stopped the listing. */
   async scan(filter: Filter, visit: (event: BuzzEvent) => boolean) {
     let count = 0;
-    for (let cursor = {}; ;) {
+    for (let cursor = {}; ; ) {
       const limit = Math.min(PAGE, MAX_EVENTS - count + 1);
       const page = await this.client.query([{ ...filter, ...cursor, limit }]);
       for (const event of page) {
@@ -1914,6 +1915,7 @@ class Tools {
       if (
         name !== current &&
         !soloChannelMetadata(metadata as RelayEvent) &&
+        !metadata.tags.some((tag) => tag[0] === "t" && tag[1] === "system") &&
         namingRulesApply(this.client.relayUrl)
       ) {
         const { blockers } = channelNameTips({

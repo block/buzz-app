@@ -10,16 +10,29 @@ const walk = (dir: string): string[] =>
     return statSync(path).isDirectory() ? walk(path) : [path];
   });
 
-it("passes relayUrl wherever a runtime builds an appClient", () => {
-  const sites = walk("src")
+// The source of each `appClient(...)` call: from the opening parenthesis to its match.
+const callArguments = (source: string): string[] =>
+  [...source.matchAll(/\bappClient\(/g)].map((match) => {
+    const start = (match.index ?? 0) + match[0].length;
+    let depth = 1;
+    let end = start;
+    while (end < source.length && depth > 0) {
+      if (source[end] === "(") depth++;
+      if (source[end] === ")") depth--;
+      end++;
+    }
+    return source.slice(start, end);
+  });
+
+it("passes relayUrl in every appClient call", () => {
+  const calls = walk("src")
     .filter((path) => /\.tsx?$/.test(path) && !/\.test\.tsx?$/.test(path))
     .filter((path) => !path.endsWith("buzz-mcp/app-client.ts"))
-    .map((path) => ({ path, source: readFileSync(path, "utf8") }))
-    .flatMap(({ path, source }) => {
-      const calls = source.match(/\bappClient\(/g)?.length ?? 0;
-      const passes = source.match(/\brelayUrl\b/g)?.length ?? 0;
-      return calls ? [{ path, calls, passes }] : [];
-    });
-  expect(sites.length).toBeGreaterThan(5);
-  expect(sites.filter(({ calls, passes }) => passes < calls)).toEqual([]);
+    .flatMap((path) =>
+      callArguments(readFileSync(path, "utf8")).map((args) => ({ path, args })),
+    );
+  expect(calls.length).toBeGreaterThan(5);
+  expect(
+    calls.filter(({ args }) => !/\brelayUrl\b/.test(args)).map((c) => c.path),
+  ).toEqual([]);
 });

@@ -4944,3 +4944,56 @@ it("gives a Solo row's plugin menu items the same section key as its render", as
   expect(keys).toHaveBeenCalledWith("chat-0", "");
   expect(keys).not.toHaveBeenCalledWith("chat-0", "solo");
 });
+
+it("retries a workspace's failed All filter under its saved key", async () => {
+  const saved = {
+    sections: [{ id: "laptop", name: "Laptop", icon: "💻", order: 0 }],
+    assignments: { beta: "laptop" },
+    starred: [],
+    muted: [],
+    filters: { "section:laptop": "active" as const },
+    activeWindowSeconds: { "section:laptop": 7 * 86400 },
+  };
+  const writeFilter = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("HTTP 502"))
+    .mockResolvedValueOnce({ filters: {}, activeWindowSeconds: {} });
+  const preferences = createSidebarPreferencesStore({
+    read: async () => saved,
+    available: true,
+    write: async () => saved,
+    writeStar: async () => [],
+    writeFilter,
+  });
+  await preferences.queries.ensure();
+  const h = fixture(preferences.queries);
+  const user = userEvent.setup();
+  render(h.view("beta"));
+  await user.click(
+    await screen.findByRole("button", { name: "More actions for Laptop" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  fireEvent.click(
+    within(
+      await screen.findByRole("menu", { name: "Filter Laptop" }),
+    ).getByRole("menuitemradio", { name: "All" }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Retry filter" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Retry filter" })).toBeNull(),
+  );
+  // The card reads group:laptop; both writes must use the saved section key.
+  expect(writeFilter.mock.calls.map(([group, mode]) => [group, mode])).toEqual([
+    ["section:laptop", "all"],
+    ["section:laptop", "all"],
+  ]);
+  await user.click(
+    screen.getByRole("button", { name: "More actions for Laptop" }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Filter" }));
+  expect(
+    within(
+      await screen.findByRole("menu", { name: "Filter Laptop" }),
+    ).getByRole("menuitemradio", { name: "All" }),
+  ).toHaveAttribute("aria-checked", "true");
+});

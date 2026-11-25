@@ -2316,10 +2316,12 @@ function ThreadMessages({
   // scroll asks for them. Read the next page before the thread is drawn,
   // still following the latest reply, so a first open looks like a later one.
   const filling = useRef(false);
-  const fills = useRef(0);
+  const fills = useRef({ thread: messageId, count: 0 });
   useLayoutEffect(() => {
     const element = scroller.current;
     if (!element) return;
+    if (fills.current.thread !== messageId)
+      fills.current = { thread: messageId, count: 0 };
     if (filling.current) {
       if (snapshot.status === "loading") return;
       filling.current = false;
@@ -2332,15 +2334,13 @@ function ThreadMessages({
       snapshot.seeking ||
       olderAnchor.current ||
       revealSelected ||
-      fills.current >= 2 ||
-      // For now only a thread sheet, which draws once this settles.
-      !element.closest("[data-details-sheet-surface]") ||
+      fills.current.count >= 2 ||
       element.scrollHeight - element.clientHeight >= element.clientHeight
     )
       return;
     filling.current = true;
-    fills.current += 1;
-    // The sheet waits for this before drawing the thread.
+    fills.current.count += 1;
+    // A thread sheet waits for this before drawing the thread.
     element.dataset.filling = "";
     captureOlderAnchor(element, true);
     void view.loadMore().finally(() => {

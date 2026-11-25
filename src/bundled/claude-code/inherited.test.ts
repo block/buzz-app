@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { claudeChanged, claudeInherited, claudeSnapshot } from "./inherited";
+import {
+  claudeChanged,
+  claudeInherited,
+  claudeSnapshot,
+  claudeUserConfig,
+} from "./inherited";
 
 const files: Record<string, unknown> = {
   "~/.claude.json": {
@@ -116,5 +121,47 @@ describe("claudeChanged", () => {
     now = { ...now, "~/one/.mcp.json": "{" };
     expect((await claudeSnapshot(read, "~/one")).print).toBeUndefined();
     expect(await claudeChanged(read, started)).toBe(false);
+  });
+
+  it("shows an on/off change in the folder's local scope alone", async () => {
+    const user = (disabled: string[]) =>
+      JSON.stringify({
+        mcpServers: { github: { command: "gh" } },
+        projects: { "/home/me/one": { disabledMcpServers: disabled } },
+      });
+    now = { ...disk(), "~/.claude.json": user([]) };
+    const started = {
+      folder: "~/one",
+      print: claudeSnapshot(read, "~/one", resolve).then((s) => s.print),
+    };
+    expect(await claudeChanged(read, [started], resolve)).toBe(false);
+    now = { ...now, "~/.claude.json": user(["db"]) };
+    expect(await claudeChanged(read, [started], resolve)).toBe(true);
+  });
+
+  it("counts a file it can't read as unchanged, not as missing", async () => {
+    now = disk();
+    const started = [await spawned("~/one")];
+    const denied = async (path: string, options?: { cwd?: string }) => {
+      if (path === ".mcp.json") throw new Error("Permission denied");
+      return read(path, options);
+    };
+    expect((await claudeSnapshot(denied, "~/one")).print).toBeUndefined();
+    expect(await claudeChanged(denied, started)).toBe(false);
+  });
+
+  it("shares the reads a settings request already made", async () => {
+    now = disk();
+    const started = [await spawned("~/one")];
+    userReads = 0;
+    const user = claudeUserConfig(read);
+    const listing = claudeSnapshot(read, "~/one", undefined, user);
+    const reads = {
+      user,
+      folders: new Map([["~/one", listing.then((s) => s.print)]]),
+    };
+    expect(await claudeChanged(read, started, undefined, reads)).toBe(false);
+    await listing;
+    expect(userReads).toBe(1);
   });
 });

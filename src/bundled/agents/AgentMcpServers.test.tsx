@@ -104,3 +104,30 @@ it("says how a harness that needs no restart picks up its config", async () => {
     ),
   ).toBeInTheDocument();
 });
+
+it("offers Reset for a record this device can't read, and resets through the owner's approval", async () => {
+  const user = userEvent.setup();
+  localStorage.setItem(`buzz.agents.mcp-approval.v2:${agent.pubkey}`, "{");
+  const approveMcp = vi.fn(async () => {
+    localStorage.removeItem(`buzz.agents.mcp-approval.v2:${agent.pubkey}`);
+  });
+  render(
+    <AgentMcpServers
+      agents={{ approveMcp, acceptedMcp: () => undefined }}
+      agent={agent}
+      capability={{ transports: ["stdio", "http"], label: "Claude Code" }}
+      restartAgent={async () => {}}
+    />,
+  );
+  expect(
+    await screen.findByText(/can't read the MCP servers it used/),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Reset MCP servers" }));
+  await waitFor(() =>
+    expect(approveMcp).toHaveBeenCalledWith(agent.key, {
+      servers: [],
+      disabledInherited: [],
+    }),
+  );
+  localStorage.clear();
+});

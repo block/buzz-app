@@ -38,7 +38,7 @@ import type { Agent, Agents, AgentType } from "../../features/agents/service";
 import styles from "./AgentEnvironment.module.css";
 
 type Props = Readonly<{
-  agents: Pick<Agents, "approveMcp">;
+  agents: Pick<Agents, "approveMcp" | "acceptedMcp">;
   agent: Agent;
   capability: NonNullable<AgentType["mcpServers"]>;
   /** Stops the agent's processes, so its next turn starts with the config. */
@@ -49,6 +49,7 @@ type Props = Readonly<{
 const BUZZ_TOOLS = "buzz";
 
 /** The one server open for editing: a saved one to change, or a new one. */
+type Value = Readonly<{ name: string; value: string }>;
 type Draft = {
   replacing?: string;
   name: string;
@@ -114,20 +115,27 @@ export function AgentMcpServers({
   }, [agent, capability]);
   useEffect(read, [read]);
   const locked = pending || restarting;
-  /** Saves `next`, staging `values` first; nothing publishes if they fail. */
+  /** Saves `next`, staging `values` first; nothing publishes if they, or
+   * reading what they copy, fail. */
   const save = async (
     next: McpList,
-    values: readonly { name: string; value: string }[] = [],
+    values: () => Promise<readonly Value[]> = async () => [],
     done = "Saved",
   ) => {
     setPending(true);
     setError(undefined);
     try {
-      await saveMcp(agent.pubkey, next, values, async (list) => {
-        if (!agents.approveMcp)
-          throw new Error("MCP servers can't be set here");
-        await agents.approveMcp(agent.key, list);
-      });
+      await saveMcp(
+        agent.pubkey,
+        next,
+        await values(),
+        async (list) => {
+          if (!agents.approveMcp)
+            throw new Error("MCP servers can't be set here");
+          await agents.approveMcp(agent.key, list);
+        },
+        () => agents.acceptedMcp?.(agent.key),
+      );
       setSaved(await mcpValueNames(agent.pubkey));
       setDraft(undefined);
       notify(done, "success");
@@ -192,12 +200,14 @@ export function AgentMcpServers({
       same && !typed.length
         ? old.slot
         : newSlot(list.servers.map((s) => s.slot));
-    const kept =
-      old && slot !== old.slot ? await mcpValues(agent.pubkey) : undefined;
-    const values = keys.flatMap((key) => {
-      const value = d.values[key] || kept?.[envName(old?.slot ?? "", key)];
-      return value ? [{ name: envName(slot, key), value }] : [];
-    });
+    const values = async () => {
+      const kept =
+        old && slot !== old.slot ? await mcpValues(agent.pubkey) : undefined;
+      return keys.flatMap((key) => {
+        const value = d.values[key] || kept?.[envName(old?.slot ?? "", key)];
+        return value ? [{ name: envName(slot, key), value }] : [];
+      });
+    };
     const server = serverOf(d, slot, old?.enabled ?? true);
     await save(
       {
@@ -224,7 +234,7 @@ export function AgentMcpServers({
   const remove = (server: McpServer) =>
     save(
       { ...list, servers: list.servers.filter((s) => s !== server) },
-      [],
+      undefined,
       "Removed",
     );
   const unset = (s: McpServer) =>
@@ -398,7 +408,7 @@ export function AgentMcpServers({
                 size="sm"
                 disabled={locked}
                 loading={pending}
-                onClick={() => void save(EMPTY_LIST, [], "Reset")}
+                onClick={() => void save(EMPTY_LIST, undefined, "Reset")}
               >
                 Reset MCP servers
               </Button>
@@ -435,14 +445,20 @@ export function AgentMcpServers({
                 >
                   {s.name}
                 </span>
-                <span
-                  className="truncate text-caption text-subtle"
-                  title={targetOf(s)}
-                >
-                  {conflict
-                    ? "Skipped: the harness's own config has a server with this name. Rename this one."
-                    : targetOf(s)}
-                </span>
+                {conflict ? (
+                  // Wraps, so the rename it asks for is never cut off.
+                  <span className="text-caption text-subtle">
+                    Skipped: the harness's own config has a server with this
+                    name. Rename this one.
+                  </span>
+                ) : (
+                  <span
+                    className="truncate text-caption text-subtle"
+                    title={targetOf(s)}
+                  >
+                    {targetOf(s)}
+                  </span>
+                )}
               </span>
               <span>
                 {keysOf(s).length === 0 ? null : missing.length ? (

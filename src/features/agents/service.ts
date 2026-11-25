@@ -2143,6 +2143,8 @@ export type Agents = {
   /** Signs `list` as the owner's approval of the agent's MCP servers and
    * saves it with the agent's settings, which sync it. */
   approveMcp?(agent: AgentKey, list: McpList): Promise<void>;
+  /** The list this device accepts for the agent now, from its live config. */
+  acceptedMcp?(agent: AgentKey): Approval | undefined;
   /** The History of each of the agent's synced config sides; undefined while
    * none syncs here. */
   configHistory(agent: AgentKey): ConfigHistory | undefined;
@@ -2511,7 +2513,10 @@ export function teamPrompt(
 export { fromOwner, mentionAuthority } from "./owner-attestation";
 import type { MentionRefusal } from "./owner-attestation";
 import {
+  accept as acceptMcp,
+  type Approval,
   approvalTemplate,
+  approved,
   type McpInherited,
   type McpList,
   type McpTransport,
@@ -6627,6 +6632,23 @@ export class AgentsService extends Service implements Agents {
     await this.saveAs(key, {
       config: { ...(agent.config as object), mcpServers: approval },
     });
+    // Published, it is the newest this device knows; recording it also
+    // replaces a record this device couldn't read.
+    try {
+      acceptMcp(agent.pubkey, approval);
+    } catch {
+      // Unrecorded, the next read records it or says it couldn't.
+    }
+  }
+  acceptedMcp(key: AgentKey) {
+    const agent = this.liveAgent(key);
+    return agent
+      ? approved(
+          (agent.config as { mcpServers?: unknown }).mcpServers,
+          agent.owner,
+          agent.pubkey,
+        )
+      : undefined;
   }
   private liveAgent(key: AgentKey) {
     const { agents, running } = this.snapshot();

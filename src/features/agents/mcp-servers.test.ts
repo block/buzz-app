@@ -2,6 +2,7 @@
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  accept,
   approvalTemplate,
   approved,
   claudeServers,
@@ -39,6 +40,7 @@ const list: McpList = {
   ],
   disabledInherited: ["github"],
 };
+const SEEN = `buzz.agents.mcp-approval.v2:${AGENT}`;
 const sign = (seq: number, key = owner, body = list) =>
   finalizeEvent(approvalTemplate(AGENT, seq, body), key);
 
@@ -84,15 +86,43 @@ describe("approved", () => {
     // A list that is there but invalid never falls back.
     expect(approved({ ...kept, sig: "00" }, OWNER, AGENT).ok).toBe(false);
     // One it can't recover fails closed, rather than reading as none.
-    const record = JSON.parse(
-      localStorage.getItem("buzz.agents.mcp-approvals.v1") ?? "{}",
-    );
-    record[AGENT].event.content = "{}";
-    localStorage.setItem(
-      "buzz.agents.mcp-approvals.v1",
-      JSON.stringify(record),
-    );
+    const record = JSON.parse(localStorage.getItem(SEEN) ?? "{}");
+    record.event.content = "{}";
+    localStorage.setItem(SEEN, JSON.stringify(record));
     expect(approved(undefined, OWNER, AGENT).ok).toBe(false);
+  });
+
+  it("fails closed on a record it can't read, and Reset replaces it", () => {
+    const kept = sign(1);
+    for (const corrupt of ["{", "null", '{"seq":"1","id":"x"}', "[]"]) {
+      localStorage.clear();
+      approved(kept, OWNER, AGENT);
+      localStorage.setItem(SEEN, corrupt);
+      for (const approval of [undefined, kept]) {
+        const check = approved(approval, OWNER, AGENT);
+        expect(check.ok).toBe(false);
+        expect(!check.ok && check.reason).toContain("Reset them to continue");
+        expect(() =>
+          startList({ mcpServers: approval }, { pubkey: AGENT, owner: OWNER }),
+        ).toThrow("Reset them to continue");
+      }
+      // Reset: the next seq comes from the settings, and the owner's newly
+      // published list replaces the record.
+      expect(nextSeq(AGENT, OWNER, kept)).toBe(2);
+      const reset = sign(2, owner, { servers: [], disabledInherited: [] });
+      accept(AGENT, reset);
+      expect(approved(reset, OWNER, AGENT)).toMatchObject({ ok: true });
+    }
+    // Storage that throws on read is unreadable too, never none.
+    const getItem = Storage.prototype.getItem;
+    Storage.prototype.getItem = () => {
+      throw new Error("denied");
+    };
+    try {
+      expect(approved(undefined, OWNER, AGENT).ok).toBe(false);
+    } finally {
+      Storage.prototype.getItem = getItem;
+    }
   });
 
   it("never throws on a malformed list", () => {

@@ -4,7 +4,7 @@ import {
   mcpGeneration,
   startList,
 } from "../../features/agents/mcp-servers";
-import { claudeChanged, claudeSnapshot } from "./inherited";
+import { type ClaudeReads, claudeChanged, claudeSnapshot } from "./inherited";
 
 import { ownerInstructions } from "../../features/agent-harness/plugin-instructions";
 import {
@@ -374,13 +374,14 @@ export class ClaudeRuntime {
    * servers of Claude Code's own than its config has now: each folder they
    * started in is read once, sharing one read of `~/.claude.json`. A folder
    * that can't be read counts as unchanged. */
-  nativeMcpChanged(agent: AgentKey): Promise<boolean> {
+  nativeMcpChanged(agent: AgentKey, reads?: ClaudeReads): Promise<boolean> {
     return claudeChanged(
       this.host.readFile?.bind(this.host),
       (this.agents.get(agent)?.sessions.processes() ?? []).flatMap((process) =>
         process.nativeMcp ? [process.nativeMcp] : [],
       ),
       this.host.resolveDirectory?.bind(this.host),
+      reads,
     );
   }
   /** One process started ahead of need, for any agent's next new conversation. */

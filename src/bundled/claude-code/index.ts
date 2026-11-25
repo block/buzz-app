@@ -30,7 +30,7 @@ import { activeRoute, routeLabel } from "../../features/agents/model-routes";
 import type { ClaudeConnection } from "./ClaudeSettings";
 import { readUsage } from "./usage";
 import { usageOn } from "../../features/agents/standalone-sessions";
-import { claudeSnapshot } from "./inherited";
+import { claudeSnapshot, claudeUserConfig } from "./inherited";
 
 export { TYPE_ID };
 /** How often Buzz's copy of Claude looks for a new release. */
@@ -422,13 +422,26 @@ export const apply: PluginModule["apply"] = (ctx) => {
       label: "Claude Code",
       inherited: async (agent) => {
         if (agent.protection) return { servers: [] };
+        // One read of each file serves the list and the comparison.
+        const workspace = (agent.config as { workspace?: string }).workspace;
+        const user = readFile && claudeUserConfig(readFile);
+        const listing = claudeSnapshot(
+          readFile,
+          workspace,
+          host.resolveDirectory?.bind(host),
+          user,
+        );
         const [{ servers }, changed] = await Promise.all([
-          claudeSnapshot(
-            readFile,
-            (agent.config as { workspace?: string }).workspace,
-            host.resolveDirectory?.bind(host),
+          listing,
+          runtime.nativeMcpChanged(
+            agent.key,
+            user && workspace
+              ? {
+                  user,
+                  folders: new Map([[workspace, listing.then((s) => s.print)]]),
+                }
+              : undefined,
           ),
-          runtime.nativeMcpChanged(agent.key),
         ]);
         return { servers, changed };
       },

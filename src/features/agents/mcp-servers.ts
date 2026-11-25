@@ -117,7 +117,9 @@ export const approvalTemplate = (
  * a forged head can't push the counter out of reach. */
 export function nextSeq(agent: string, owner: string, current?: unknown) {
   const head = isEvent(current) && signedFor(current, owner, agent);
-  const seq = Math.max(seen(agent)?.seq ?? 0, head ? seqOf(current) : 0) + 1;
+  // An unreadable record counts as none, so Reset can still replace it.
+  const last = seen(agent);
+  const seq = Math.max(last ? last.seq : 0, head ? seqOf(current) : 0) + 1;
   if (!Number.isSafeInteger(seq))
     throw new Error("These MCP servers can't be changed");
   return seq;
@@ -127,20 +129,50 @@ const isEvent = (v: unknown): v is RelayEvent =>
   !!v && typeof v === "object" && typeof (v as RelayEvent).sig === "string";
 
 /** The approval a device last accepted, kept whole, so a settings save
- * that leaves it out doesn't read as never configured. */
+ * that leaves it out doesn't read as never configured. One item per agent,
+ * so a damaged record affects only its own agent. */
 type Seen = { seq: number; id: string; event?: RelayEvent };
-const SEEN_KEY = "buzz.agents.mcp-approvals.v1";
-function seenAll(): Record<string, Seen> {
+const SEEN_PREFIX = "buzz.agents.mcp-approval.v2:";
+/** The record for `agent`: none when this device never accepted one, or
+ * `false` when it can't be read or isn't a record, which is never "none". */
+function seen(agent: string): Seen | undefined | false {
+  // No storage at all, as outside a browser, has never kept a record.
+  if (typeof localStorage === "undefined") return undefined;
+  let text: string | null;
   try {
-    return JSON.parse(localStorage.getItem(SEEN_KEY) ?? "{}") as Record<
-      string,
-      Seen
-    >;
+    text = localStorage.getItem(SEEN_PREFIX + agent);
   } catch {
-    return {};
+    return false;
+  }
+  if (text === null) return undefined;
+  try {
+    const record = JSON.parse(text) as Partial<Seen> | null;
+    if (
+      !record ||
+      typeof record !== "object" ||
+      !Number.isSafeInteger(record.seq) ||
+      (record.seq as number) <= 0 ||
+      typeof record.id !== "string" ||
+      (record.event !== undefined && !isEvent(record.event))
+    )
+      return false;
+    return record as Seen;
+  } catch {
+    return false;
   }
 }
-const seen = (agent: string): Seen | undefined => seenAll()[agent];
+const UNREADABLE =
+  "This device can't read the MCP servers it used for this agent. Reset them to continue.";
+
+/** Records `event` as the approval this device uses for `agent`: the owner's
+ * own newest, once published. It replaces an unreadable record, which is how
+ * Reset recovers one. */
+export function accept(agent: string, event: RelayEvent) {
+  localStorage.setItem(
+    SEEN_PREFIX + agent,
+    JSON.stringify({ seq: seqOf(event), id: event.id, event }),
+  );
+}
 
 /** Whether `pubkey` may approve `agent`'s server list. Today only its owner
  * may. A future team binding widens this to the members of the agent's
@@ -213,6 +245,7 @@ export function approved(
   agent: string,
 ): Approval {
   const last = seen(agent);
+  if (last === false) return { ok: false, reason: UNREADABLE };
   if (approval === undefined) {
     if (!last) return { ok: true, list: EMPTY_LIST, approvedAt: 0 };
     // A settings save that left the list out: the one this device used.
@@ -246,10 +279,7 @@ export function approved(
     };
   if (!last || last.seq !== seq || last.id !== event.id || !last.event) {
     try {
-      localStorage.setItem(
-        SEEN_KEY,
-        JSON.stringify({ ...seenAll(), [agent]: { seq, id: event.id, event } }),
-      );
+      accept(agent, event);
     } catch {
       // Unrecorded, an older list could be taken for it later.
       return {
@@ -355,12 +385,15 @@ function serially<T>(agent: string, step: () => Promise<T>): Promise<T> {
 /** Saves `next` as the agent's list: stages `values` (new slots' values,
  * by `envName`) beside the saved ones and checks they're there, then has
  * `approve` sign and publish it. Only once that's confirmed does it delete
- * values no slot of `next` uses; a failed or unknown publish deletes none. */
+ * values that neither `next` nor the list `current` accepts now uses. A
+ * failed or unknown publish deletes none, nor does a `current` that isn't
+ * known or changes while it looks, since a newer list may need them. */
 export function saveMcp(
   agent: string,
   next: McpList,
   values: readonly Readonly<{ name: string; value: string }>[],
   approve: (list: McpList) => Promise<void>,
+  current: () => Approval | undefined,
 ) {
   return serially(agent, async () => {
     if (!next.servers.every(isServer))
@@ -372,8 +405,14 @@ export function saveMcp(
         throw new Error("These values couldn't be saved on this device");
     }
     await approve(next);
-    const used = next.servers.map((s) => slotPrefix(s.slot));
-    const unused = (await mcpValueNames(agent)).filter(
+    const before = current();
+    const names = await mcpValueNames(agent);
+    const after = current();
+    if (!before?.ok || !after?.ok || before.id !== after.id) return;
+    const used = [...next.servers, ...after.list.servers].map((s) =>
+      slotPrefix(s.slot),
+    );
+    const unused = names.filter(
       (name) => !used.some((prefix) => name.startsWith(prefix)),
     );
     if (unused.length)

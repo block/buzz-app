@@ -259,8 +259,59 @@ describe("diff", () => {
         ]),
       ),
     ).toEqual([
-      { field: "MCP server docs", before: "https://a", after: "https://b" },
-      { field: "MCP server tool", before: "run -x", after: "(off) run -x" },
+      {
+        field: "MCP server docs",
+        before: `https://a header TOKEN values ${"0".repeat(16)}`,
+        after: `https://b header TOKEN values ${"0".repeat(16)}`,
+      },
+      {
+        field: "MCP server tool",
+        before: `["run","-x"] values ${"1".repeat(16)}`,
+        after: `(off) ["run","-x"] values ${"1".repeat(16)}`,
+      },
+    ]);
+  });
+
+  it("shows argument boundaries, value names, new values and harness servers turned off", () => {
+    const withMcp = (server: object, disabledInherited: string[] = []) =>
+      JSON.stringify({
+        version: 1,
+        settings: {},
+        mcpServers: {
+          kind: 45015,
+          content: JSON.stringify({
+            version: 1,
+            servers: [server],
+            disabledInherited,
+          }),
+        },
+      });
+    const tool = {
+      name: "tool",
+      enabled: true,
+      slot: "1".repeat(16),
+      transport: "stdio",
+      command: "run",
+      args: ["a b"],
+      env: ["TOKEN"],
+    };
+    const field = (before: string, after: string) =>
+      settingsDiff(before, after).map((c) => c.field);
+    expect(
+      field(withMcp(tool), withMcp({ ...tool, args: ["a", "b"] })),
+    ).toEqual(["MCP server tool"]);
+    expect(field(withMcp(tool), withMcp({ ...tool, env: ["KEY"] }))).toEqual([
+      "MCP server tool",
+    ]);
+    expect(
+      field(withMcp(tool), withMcp({ ...tool, slot: "2".repeat(16) })),
+    ).toEqual(["MCP server tool"]);
+    expect(settingsDiff(withMcp(tool), withMcp(tool, ["github"]))).toEqual([
+      {
+        field: "Harness MCP servers turned off",
+        before: undefined,
+        after: "github",
+      },
     ]);
   });
 });

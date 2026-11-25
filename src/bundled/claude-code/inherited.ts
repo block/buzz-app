@@ -10,7 +10,7 @@ type ReadFile = (
 ) => Promise<Uint8Array>;
 
 /** A config file, parsed: undefined when it isn't there, `null` when it
- * can't be parsed, which is not the same as an empty config. */
+ * can't be read or parsed, which is not the same as an empty config. */
 async function json(
   readFile: ReadFile,
   path: string,
@@ -19,8 +19,9 @@ async function json(
   let bytes: Uint8Array;
   try {
     bytes = await readFile(path, cwd ? { cwd } : undefined);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // The host's one way of saying the file isn't there.
+    return String(error).includes("No such file") ? undefined : null;
   }
   try {
     return JSON.parse(new TextDecoder().decode(bytes)) ?? {};
@@ -52,6 +53,19 @@ function definition(server: unknown) {
     s.disabled ?? null,
     sorted(s.env),
     sorted(s.headers),
+  ];
+}
+
+/** How a folder's local scope turns its project's servers on and off,
+ * kept beside the tables: Claude's own toggles write these lists. */
+function toggles(local: unknown) {
+  const l = (local ?? {}) as Record<string, unknown>;
+  const names = (v: unknown) =>
+    Array.isArray(v) ? v.filter((n) => typeof n === "string").sort() : null;
+  return [
+    names(l.disabledMcpServers),
+    names(l.enabledMcpServers),
+    l.enableAllProjectMcpServers ?? null,
   ];
 }
 
@@ -105,13 +119,14 @@ export async function claudeSnapshot(
   const print =
     mine === null || project === null
       ? undefined
-      : JSON.stringify(
-          tables.map(([config]) =>
+      : JSON.stringify([
+          ...tables.map(([config]) =>
             Object.entries(table(config))
               .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
               .map(([name, server]) => [name, definition(server)]),
           ),
-        );
+          toggles(local),
+        ]);
   return { servers, print };
 }
 
@@ -120,9 +135,17 @@ export const claudeInherited = async (
   ...args: Parameters<typeof claudeSnapshot>
 ): Promise<readonly McpInherited[]> => (await claudeSnapshot(...args)).servers;
 
+/** Reads a settings request already made, for `claudeChanged` to share:
+ * its read of `~/.claude.json` and the prints of the folders it read. */
+export type ClaudeReads = Readonly<{
+  user: Promise<unknown>;
+  folders: ReadonlyMap<string, Promise<string | undefined>>;
+}>;
+
 /** Whether any process `started` with other servers than its folder has
- * now. Each folder is read once, sharing one read of `~/.claude.json`; a
- * print that can't be read, then or now, counts as unchanged. */
+ * now. Each folder is read once, sharing one read of `~/.claude.json` and
+ * any of `reads`; a print that can't be read, then or now, counts as
+ * unchanged. */
 export async function claudeChanged(
   readFile: ReadFile | undefined,
   started: readonly Readonly<{
@@ -130,10 +153,11 @@ export async function claudeChanged(
     print: Promise<string | undefined>;
   }>[],
   resolve?: (path: string) => Promise<string>,
+  reads?: ClaudeReads,
 ): Promise<boolean> {
   if (!readFile || !started.length) return false;
-  const user = claudeUserConfig(readFile);
-  const now = new Map<string, Promise<string | undefined>>();
+  const user = reads?.user ?? claudeUserConfig(readFile);
+  const now = new Map(reads?.folders);
   const fresh = (folder: string) => {
     let print = now.get(folder);
     if (!print) {

@@ -2077,14 +2077,26 @@ fn a_pending_erase_deletes_every_agents_own_list_and_retries_after_a_failure() {
     .unwrap();
     mark(&paths, true, true);
     let stores: Stores = Default::default();
-    // Each agent's own list and its MCP server values.
+    // Each agent's own list, its MCP slot index and one slot's values.
+    const SLOT: &str = "00000000000000A1";
     let keys: Vec<String> = [ADA, BO, old.as_str()]
         .iter()
-        .flat_map(|pubkey| [pubkey.to_string(), format!("mcp:{pubkey}")])
+        .flat_map(|pubkey| {
+            [
+                pubkey.to_string(),
+                format!("mcp:{pubkey}"),
+                format!("mcp:{pubkey}:{SLOT}"),
+            ]
+        })
         .collect();
     for key in &keys {
         let store = Arc::new(FakeStore::default());
-        *store.text.lock().unwrap() = Some("{}".into());
+        let text = if key.starts_with("mcp:") && !key.ends_with(SLOT) {
+            format!(r#"{{"buzzMcpSlots":1,"slots":["{SLOT}"]}}"#)
+        } else {
+            "{}".into()
+        };
+        *store.text.lock().unwrap() = Some(text);
         stores.lock().unwrap().insert(key.clone(), store);
     }
     let open = |pubkey: &str| -> Box<dyn crate::claude_key::KeyStore> {
@@ -2104,14 +2116,14 @@ fn a_pending_erase_deletes_every_agents_own_list_and_retries_after_a_failure() {
             || Ok(()),
         )
     };
-    let bo_mcp = format!("mcp:{BO}");
+    let bo_mcp = format!("mcp:{BO}:{SLOT}");
     *stores.lock().unwrap()[bo_mcp.as_str()]
         .unwritable
         .lock()
         .unwrap() = true;
     assert!(erase().is_err());
     // The registry and the marker stay, so the next launch tries again.
-    assert!(saved(&bo_mcp));
+    assert!(saved(&bo_mcp) && saved(&format!("mcp:{BO}")));
     assert_eq!(fs::read(&index).unwrap(), rows);
     assert!(pending(&paths.marker).unwrap().is_some());
     *stores.lock().unwrap()[bo_mcp.as_str()]

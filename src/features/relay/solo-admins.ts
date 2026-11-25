@@ -112,6 +112,10 @@ export const soloAdminSetupExpired = (create: { created_at: number }) =>
 /** Setup can no longer grant this agent, so it keeps its current role. */
 class GrantSkipped extends Error {}
 
+/** A verified profile was replaced mid-grant, which a same-owner edit also
+ * does, so the grant restarts from a fresh read. */
+class OwnershipChanged extends Error {}
+
 /** Reconstruct the exact same promotions after interruption. Their timestamp
  * and channel come from the saved create, so retries never invent a new grant
  * that could undo a later demotion or removal. A grant that can no longer be
@@ -138,12 +142,16 @@ export async function promoteSoloAdmins(
   const read = (filters: Parameters<RelayReader["read"]>[0]) =>
     reader.read(filters, { signal, fresh: true, priority: "foreground" });
   for (const admin of admins) {
-    signal.throwIfAborted();
-    try {
-      await promote(admin);
-    } catch (error) {
-      if (!(error instanceof GrantSkipped)) throw error;
-      console.warn("Opening agent keeps its current role", admin, error);
+    for (let attempt = 1; ; attempt++) {
+      signal.throwIfAborted();
+      try {
+        await promote(admin);
+      } catch (error) {
+        if (error instanceof OwnershipChanged && attempt < 3) continue;
+        if (!(error instanceof GrantSkipped)) throw error;
+        console.warn("Opening agent keeps its current role", admin, error);
+      }
+      break;
     }
   }
   async function promote(admin: string) {
@@ -174,13 +182,16 @@ export async function promoteSoloAdmins(
     // A recorded grant remains complete even when its recipient was demoted.
     if (await recorded()) return;
     const ownership = await owned?.(admin, admins);
+    if (!ownership?.())
+      throw new GrantSkipped(
+        "An opening agent is not verified as owned by the chat creator.",
+      );
     const checkOwnership = () => {
-      if (!ownership?.())
-        throw new GrantSkipped(
-          "An opening agent is not verified as owned by the chat creator.",
+      if (!ownership())
+        throw new OwnershipChanged(
+          "An opening agent's profile changed. Retry the opening message.",
         );
     };
-    checkOwnership();
     const rosters = await read([
       {
         kinds: [39002],

@@ -88,6 +88,7 @@ export interface Outbox {
     id: string,
     recovery: OutboxRecovery,
     run: () => Promise<unknown>,
+    dismissAbsent?: boolean,
   ): Promise<void>;
   /** Complete under exact ownership, without joining an independent dismissal. */
   finishRecovery?(id: string, recovery: OutboxRecovery): Promise<void>;

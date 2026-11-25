@@ -627,7 +627,14 @@ export function createChannelWrites(
     if (active) return active;
     const opening = pending.recovery;
     const work = (async () => {
-      await created(pending.event.id);
+      // An expired create can no longer land, so a relay roster listing its
+      // creator shows the chat exists without the create lookup.
+      const exists =
+        soloAdminSetupExpired(pending.event) &&
+        (await listsMember(id, pending.event.pubkey, signal).catch(
+          () => false,
+        ));
+      if (!exists) await created(pending.event.id);
       // Checked first, so no other failure can block the chat past expiry.
       if (soloAdminSetupExpired(pending.event))
         return outbox?.dismiss(pending.event.id, opening);
@@ -659,12 +666,10 @@ export function createChannelWrites(
         signal.throwIfAborted();
         await finishRecovery(saved.event.id, recovery);
       } catch (error) {
-        // Another window finished it while this one was granting.
-        if (
-          signal.aborted ||
-          (await source.recovery(soloAdminKey(id)))?.recovery
-        )
-          throw error;
+        if (signal.aborted) throw error;
+        // Drops this window's copy if another window finished it meanwhile.
+        await withRecovery(saved.event.id, recovery, async () => {}, true);
+        if ((await source.recovery(soloAdminKey(id)))?.recovery) throw error;
       }
     })();
     adminSetups.set(id, work);

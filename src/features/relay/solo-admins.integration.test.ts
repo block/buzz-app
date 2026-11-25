@@ -30,6 +30,7 @@ function setup() {
   let omitProfiles = false;
   let failProfiles = false;
   let failGrantReads = false;
+  let failCreateReads = false;
   let finished = false;
   let journal: readonly OutgoingEvent[] = [];
   const unfinished = (items: readonly OutgoingEvent[]) =>
@@ -69,6 +70,13 @@ function setup() {
         filters.some((filter) => filter.kinds?.includes(9000) && filter.ids)
       )
         throw new Error("Grant read unavailable");
+      if (
+        failCreateReads &&
+        filters.some((filter) =>
+          filter.ids?.some((id) => events.get(id)?.kind === 9007),
+        )
+      )
+        throw new Error("Create read unavailable");
       const roster = signed(relay, {
         kind: 39002,
         content: "",
@@ -81,7 +89,9 @@ function setup() {
         ...(omitProfiles ? [] : await profiles).map((profile) =>
           eventDto(profileOverrides.get(profile.pubkey) ?? profile),
         ),
-        ...events.values(),
+        ...[...events.values()].filter(
+          (event) => !failCreateReads || event.kind !== 9007,
+        ),
         ...(roles.size
           ? [
               roster,
@@ -149,33 +159,41 @@ function setup() {
     );
     return { creation, message };
   };
+  const replaceProfile = async (
+    owner: Awaited<ReturnType<typeof open>>,
+    index: number,
+    by: ReturnType<typeof keypair>,
+    receive: boolean,
+  ) => {
+    const agent = agentKeys[index];
+    assert.exists(agent);
+    const profile = await ownedProfile(agent, by);
+    const previous = (await profiles).find(
+      (event) => event.pubkey === agent.pubkey,
+    );
+    assert.exists(previous);
+    const changed = signed(agent, {
+      ...profile,
+      created_at: previous.created_at + 1,
+    });
+    profileOverrides.set(agent.pubkey, changed);
+    if (!receive) return;
+    await owner.session.read(
+      [{ kinds: [0], authors: [agent.pubkey], limit: 1 }],
+      { fresh: true },
+    );
+    expect(owner.session.profiles.event?.(agent.pubkey)?.id).toBe(changed.id);
+  };
   return {
     channel,
     viewer,
-    async transferAgent(
+    transferAgent: (
       owner: Awaited<ReturnType<typeof open>>,
       index: number,
       receive = true,
-    ) {
-      const agent = agentKeys[index];
-      assert.exists(agent);
-      const profile = await ownedProfile(agent, keypair());
-      const previous = (await profiles).find(
-        (event) => event.pubkey === agent.pubkey,
-      );
-      assert.exists(previous);
-      const changed = signed(agent, {
-        ...profile,
-        created_at: previous.created_at + 1,
-      });
-      profileOverrides.set(agent.pubkey, changed);
-      if (!receive) return;
-      await owner.session.read(
-        [{ kinds: [0], authors: [agent.pubkey], limit: 1 }],
-        { fresh: true },
-      );
-      expect(owner.session.profiles.event?.(agent.pubkey)?.id).toBe(changed.id);
-    },
+    ) => replaceProfile(owner, index, keypair(), receive),
+    editAgent: (owner: Awaited<ReturnType<typeof open>>, index: number) =>
+      replaceProfile(owner, index, viewer, true),
     omitProfiles: () => {
       omitProfiles = true;
     },
@@ -184,6 +202,9 @@ function setup() {
     },
     failGrantReads: () => {
       failGrantReads = true;
+    },
+    failCreateReads: () => {
+      failCreateReads = true;
     },
     finishElsewhere: () => {
       finished = true;
@@ -310,10 +331,16 @@ it("resumes a partial setup from the durable outbox after restart without restor
   ).toHaveLength(1);
 });
 
-it.each(["grants are readable", "grants are unreadable", "it cannot grant"])(
+it.each([
+  "grants are readable",
+  "grants are unreadable",
+  "the create is unreadable",
+  "it cannot grant",
+])(
   "finishes an expired setup on its own so the chat's next message sends with current roles when %s",
   async (connection) => {
     const h = setup();
+    if (connection === "the create is unreadable") h.failCreateReads();
     const first = await h.open();
     h.adminPublish.mockRejectedValue(new Error("offline"));
     const { message } = h.start(first);
@@ -433,6 +460,24 @@ it("sends from a window whose setup another window already finished", async () =
   expect(h.adminPublish).toHaveBeenCalledOnce();
 });
 
+it("sends from the creating window after another window finishes setup and a grant lookup fails", async () => {
+  const h = setup();
+  const owner = await h.open();
+  h.adminPublish.mockRejectedValue(new Error("offline"));
+  const { message } = h.start(owner);
+  await vi.waitFor(() =>
+    expect(
+      owner.session.outbox?.snapshot().find((item) => item.event.id === message)
+        ?.delivery,
+    ).toBe("failed"),
+  );
+  h.finishElsewhere();
+  h.failGrantReads();
+  owner.session.outbox?.retry(message);
+  await vi.waitFor(() => expect(h.events.has(message)).toBe(true));
+  expect(h.adminPublish).toHaveBeenCalledOnce();
+});
+
 it("sends the message when another window finishes setup while this one grants", async () => {
   const h = setup();
   const owner = await h.open();
@@ -473,4 +518,21 @@ it("checks the current profile inside the shared publication lock after signing"
       ([event]) => event.tags[1]?.[1] === h.agents[0],
     ),
   ).toBe(false);
+});
+
+it("grants an agent whose owner edits its profile during signing", async () => {
+  const h = setup();
+  const owner = await h.open();
+  const sign = h.transport.memberAdministration.sign;
+  let edited = false;
+  h.transport.memberAdministration.sign = async (template) => {
+    const event = await sign(template);
+    if (edited) return event;
+    edited = true;
+    await h.editAgent(owner, 0);
+    return event;
+  };
+  const { message } = h.start(owner);
+  await vi.waitFor(() => expect(h.events.has(message)).toBe(true));
+  expect(h.agents.map((key) => h.roles.get(key))).toEqual(["admin", "admin"]);
 });

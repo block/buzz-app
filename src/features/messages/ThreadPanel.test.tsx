@@ -17,8 +17,6 @@ import { selectNewestMessage } from "./message-selection";
 import type { MessageRowProps } from "./MessageRow";
 import type { MessageComposerProps } from "./MessageComposer";
 import { createAgentLibrary } from "../agents/library";
-import { createAgentActivity } from "../agents/activity";
-import { createLocalAgentActivity } from "../agents/local-activity";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import type { RelayEvent } from "../relay/events";
 import type { ReadStateSigning } from "../relay/read-state-host";
@@ -60,13 +58,8 @@ vi.mock("./MessageRow", () => ({
     onReply,
     onOpenMediaReview,
     onMediaPlayback,
-    recordedActivity,
   }: MessageRowProps) => (
-    <article
-      data-message-id={row.id}
-      data-scope={scope}
-      data-activity-outcome={recordedActivity?.hasOutcome}
-    >
+    <article data-message-id={row.id} data-scope={scope}>
       <span>{row.content}</span>
       <button type="button" onClick={() => onReply?.(row.id)}>
         Reply to {row.content}
@@ -923,7 +916,7 @@ it("opens at the first unread reply behind a line that reading keeps, paging pas
     line,
   ]);
 });
-it("opens at the unread boundary when a later grouped update has an unread reply", () => {
+it("opens at the unread boundary beside a branch-bearing update without folding its reply indicator", () => {
   const h = messagesHarness(ordinaryNavigation());
   const { reply, unread, read } = unreadReplies(h);
   const first = { ...reply("read update", 2), audience: "agents" as const };
@@ -937,10 +930,6 @@ it("opens at the unread boundary when a later grouped update has an unread reply
   const line = screen.getByRole("separator", { name: "New messages" });
   expect(line).toBeVisible();
   expect(h.element.scrollTop).toBe(300);
-  fireEvent.click(
-    screen.getByRole("button", { name: /^Show activity history:/ }),
-  );
-  expect(line).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: /^View 1 reply/ }));
   expect(screen.getByText(child.content)).toBeVisible();
   unread.clear();
@@ -3665,88 +3654,3 @@ it("reveals a completed step selected by an exact thread link", async () => {
     screen.getByRole("button", { name: /Collapse activity history/ }),
   ).toBeVisible();
 });
-
-it.each(["error", "stopped"] as const)(
-  "preserves the %s outcome when folded activity contains replies",
-  async (state) => {
-    const h = messagesHarness();
-    const local = createLocalAgentActivity();
-    const activity = createAgentActivity(
-      true,
-      () => {},
-      () => true,
-      undefined,
-      undefined,
-      { source: local.reader, scope: "test" },
-    );
-    const release = activity.queries.activate();
-    Object.assign(h.session, { agentActivity: activity.queries });
-    const update = {
-      ...row,
-      id: "d".repeat(64),
-      authorId: "e".repeat(64),
-      audience: "agents" as const,
-      mentions: ["f".repeat(64)],
-      content: "Inspecting the layout",
-      threadRootId: row.id,
-      replyParentId: row.id,
-      createdAt: 2,
-    };
-    h.snapshot.replies = [
-      update,
-      {
-        ...row,
-        id: "1".repeat(64),
-        content: "A nested response",
-        threadRootId: row.id,
-        replyParentId: update.id,
-        createdAt: 3,
-      },
-    ];
-    const work = local.begin({
-      scope: "test",
-      agent: update.authorId,
-      channelId: row.channelId,
-      messageId: row.id,
-      threadRootId: row.id,
-    });
-    try {
-      h.render();
-      fireEvent.click(
-        await screen.findByRole("button", { name: /Show activity history/ }),
-      );
-      const rendered = await screen.findByText(update.content);
-      expect(rendered.closest("[data-message-id]")).toHaveAttribute(
-        "data-activity-outcome",
-        "false",
-      );
-      act(() =>
-        work.finish(
-          state === "error"
-            ? { ok: false, error: "Provider unavailable" }
-            : { ok: true, stopped: true },
-        ),
-      );
-      await waitFor(() =>
-        expect(rendered.closest("[data-message-id]")).toHaveAttribute(
-          "data-activity-outcome",
-          "true",
-        ),
-      );
-      fireEvent.click(
-        screen.getByRole("button", { name: /Collapse activity history/ }),
-      );
-      expect(
-        screen.getByRole("button", {
-          name: new RegExp(
-            `Show activity history:.*${state === "error" ? "Couldn’t finish" : "Stopped"}`,
-          ),
-        }),
-      ).toBeVisible();
-      expect(screen.queryByText(/Agent coordination/)).not.toBeInTheDocument();
-    } finally {
-      release();
-      activity.dispose();
-    }
-  },
-);

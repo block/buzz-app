@@ -1,3 +1,5 @@
+import { createHuddleVoices } from "../huddle/voice";
+import type { RelayData } from "../relay/service";
 import { AcpProcess } from "../agent-harness/acp/process";
 import { GOOSE } from "../../bundled/goose/goose";
 import { fakeSpawn } from "../../bundled/goose/goose-testing";
@@ -106,6 +108,7 @@ import { typesafeProvider } from "../../bundled/typesafe";
 import {
   CATCH_UP_PREFIX,
   MENTIONS,
+  PRIVATE_MENTIONS,
   readCheckpoints,
   streamKey,
   writeCheckpoints,
@@ -125,6 +128,7 @@ import { TEAM_MOVES_KEY, TeamMoves } from "./team-migration";
 import { NoTeamChannel, type TeamSent } from "./team-ops";
 import { importedTeamId } from "./config-channels";
 import { STANDALONE_DEADLINE_MS } from "../agent-harness/standalone";
+import { NoticesService, type ShownNotice } from "../notices/service";
 import { readTeams, writeTeams, type AgentRecord } from "./store";
 import { createPluginRequests } from "../../plugins/requests";
 import {
@@ -7422,6 +7426,254 @@ describe("an agent in several communities", () => {
     expect(native.setType).toHaveBeenCalledWith(bot, "other/relay");
     expect(service.find(bot)?.type).toBe("other/relay");
   });
+
+  const restarter = (ctx: Context) =>
+    ctx.extend({
+      pluginOwner: bundledOwner(
+        Object.freeze({ id: "buzz.agents", revision: "bundled" }),
+      ),
+    }).agents;
+
+  it("restarts an agent by retiring each of its memberships, for bundled plugins only", async () => {
+    const retire = vi.fn(async (_key: string) => {});
+    const { ctx, plugin } = await joined({ retire });
+    await expect(plugin.agents.restartAgent(bot)).rejects.toThrow(
+      "available only to bundled plugins",
+    );
+    expect(retire).not.toHaveBeenCalled();
+    await restarter(ctx).restartAgent(bot);
+    expect(retire.mock.calls.map(([key]) => key).sort()).toEqual(
+      [bot, away].sort(),
+    );
+  });
+
+  it("refuses to restart an agent while a turn is working or a call is open", async () => {
+    const retire = vi.fn(async (_key: string) => {});
+    const voice = vi.fn(async (_seat: AgentVoiceSeat<Config>) => ({
+      input: vi.fn(),
+      close: vi.fn(),
+    }));
+    const { service, ctx, run, second } = await joined({ retire, voice });
+    const agents = restarter(ctx);
+    let finish = () => {};
+    run.mockImplementationOnce(async ({ workingUntil }) =>
+      workingUntil(new Promise<void>((resolve) => (finish = resolve))),
+    );
+    second.emit({ events: [mention("there")] });
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+    await expect(agents.restartAgent(bot)).rejects.toThrow(
+      "Echo is answering; restart it when it finishes",
+    );
+    finish();
+    await vi.waitFor(() =>
+      expect(service.sessionState(away, { channelId: channel })).not.toBe(
+        "working",
+      ),
+    );
+    const agent = service.find(bot);
+    const open = service
+      .types()
+      .find((type) => type.key === "example/echo")?.voice;
+    if (!agent || !open) throw new Error("Missing voice fixture");
+    const call = new AbortController();
+    await open({
+      agent,
+      conversation: { channelId: channel },
+      signal: call.signal,
+      output: async () => {},
+      ended: () => {},
+    });
+    await expect(agents.restartAgent(bot)).rejects.toThrow(
+      "Echo is in a call; restart it when the call ends",
+    );
+    expect(retire).not.toHaveBeenCalled();
+    call.abort();
+    await agents.restartAgent(bot);
+    expect(retire).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a restart while a Huddle seat is opening, and a seat while it restarts", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const retire = vi.fn(() => held);
+    const { ctx } = await joined({ retire });
+    const agents = restarter(ctx);
+    // A seat reserved before its bridge opens, as the Huddle owner does.
+    const end = agents.reserveVoice(bot);
+    await expect(agents.restartAgent(bot)).rejects.toThrow(
+      "Echo is in a call; restart it when the call ends",
+    );
+    expect(retire).not.toHaveBeenCalled();
+    end();
+    const restarting = agents.restartAgent(bot);
+    await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+    expect(() => agents.reserveVoice(bot)).toThrow(
+      "This agent is restarting or changing provider",
+    );
+    release();
+    await restarting;
+    agents.reserveVoice(bot)();
+  });
+
+  /** The real Huddle owner seating `agent`, whose bridge opens only when
+   * `opened` resolves; reservation and restart are the service's own. */
+  function huddleOwner(agents: Agents, agent: Agent, opened: Promise<void>) {
+    const owner = "owner";
+    const destination = {
+      viewer: owner,
+      scope: "scope",
+      relayUrl: "https://relay.example.test",
+      channelId: "parent",
+      channelName: "Parent",
+    };
+    const seated = {
+      ...agent,
+      owner,
+      place: "here" as const,
+      relay: destination.relayUrl,
+    };
+    const quiet = () => () => {};
+    const bridge = {
+      available: true,
+      open: vi.fn(() => opened),
+      close: vi.fn(async () => {}),
+      touch: vi.fn(async () => {}),
+      send: vi.fn(async () => {}),
+    };
+    const report = vi.fn();
+    const relayed = {
+      status: "ready",
+      scope: "scope",
+      viewer: owner,
+      session: {
+        channels: {
+          get: () => ({
+            id: "room",
+            name: "Room",
+            members: [owner, agent.pubkey],
+          }),
+          subscribeList: quiet,
+          resolve: async () => {},
+        },
+      },
+    };
+    const relay = {
+      snapshot: () => relayed,
+      subscribe: quiet,
+    } as unknown as RelayData;
+    const start = () =>
+      createHuddleVoices(
+        {
+          snapshot: () => ({
+            phase: "connected",
+            id: "call",
+            room: "room",
+            muted: false,
+            participants: [owner],
+            destination,
+          }),
+          subscribe: quiet,
+          voiceListening: () => {},
+          voiceThinking: () => {},
+        },
+        {
+          snapshot: () => ({
+            status: "ready",
+            running: [seated],
+          }),
+          subscribe: quiet,
+          types: () => [
+            {
+              key: agent.type,
+              voice: async () => ({ input() {}, close() {} }),
+            },
+          ],
+          reserveVoice: (key: Agent["key"]) => agents.reserveVoice(key),
+        } as unknown as Agents,
+        relay,
+        bridge,
+        report,
+      );
+    return { bridge, report, start };
+  }
+
+  it("refuses a restart while the Huddle owner's bridge is still opening", async () => {
+    const retire = vi.fn(async (_key: string) => {});
+    const { ctx, service } = await joined({ retire });
+    const agents = restarter(ctx);
+    const agent = service.find(bot);
+    if (!agent) throw new Error("Missing agent");
+    let open!: () => void;
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    const huddle = huddleOwner(agents, agent, opened);
+    const stop = huddle.start();
+    try {
+      await vi.waitFor(() => expect(huddle.bridge.open).toHaveBeenCalled());
+      // The bridge is still opening: the seat holds.
+      await expect(agents.restartAgent(bot)).rejects.toThrow(
+        "Echo is in a call; restart it when the call ends",
+      );
+      expect(retire).not.toHaveBeenCalled();
+      open();
+      await settle();
+      await expect(agents.restartAgent(bot)).rejects.toThrow("in a call");
+      expect(retire).not.toHaveBeenCalled();
+      // The seat ends with the call; the restart goes ahead.
+      await stop();
+      await agents.restartAgent(bot);
+      expect(retire).toHaveBeenCalled();
+    } finally {
+      open();
+      await stop();
+    }
+  });
+
+  it("opens no Huddle seat while the agent restarts", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const retire = vi.fn(() => held);
+    const { ctx, service } = await joined({ retire });
+    const agents = restarter(ctx);
+    const agent = service.find(bot);
+    if (!agent) throw new Error("Missing agent");
+    const restarting = agents.restartAgent(bot);
+    const huddle = huddleOwner(agents, agent, Promise.resolve());
+    let stop: (() => Promise<void>) | undefined;
+    try {
+      await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+      stop = huddle.start();
+      await vi.waitFor(() =>
+        expect(huddle.report).toHaveBeenCalledWith(
+          "call",
+          expect.stringContaining("restarting or changing provider"),
+        ),
+      );
+      expect(huddle.bridge.open).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await restarting;
+      await stop?.();
+    }
+  });
+
+  it("admits no turn while an agent restarts", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const retire = vi.fn(() => held);
+    const { ctx, run, second } = await joined({ retire });
+    const restarting = restarter(ctx).restartAgent(bot);
+    await vi.waitFor(() => expect(retire).toHaveBeenCalled());
+    second.emit({ events: [mention("during-restart")] });
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    release();
+    await restarting;
+    await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
+  });
 });
 
 it("keeps an agent running while its community reconnects, and stops it on disconnect or leave", async () => {
@@ -10710,7 +10962,12 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 /** The saved checkpoints of watch streams, without the mention streams'. */
 const watchCheckpoints = (storage: Parameters<typeof readCheckpoints>[0]) =>
   Object.entries(readCheckpoints(storage))
-    .filter(([key]) => (JSON.parse(key) as unknown[])[1] !== MENTIONS)
+    .filter(
+      ([key]) =>
+        ![MENTIONS, PRIVATE_MENTIONS].includes(
+          (JSON.parse(key) as unknown[])[1] as string,
+        ),
+    )
     .map(([, checkpoint]) => checkpoint);
 
 it.each([false, true])(
@@ -11247,6 +11504,43 @@ describe("a turn closing or reloading the app stopped", () => {
         [bot]: { [asked.id]: channel },
       });
       second.recover();
+      await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
+      expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("is read again at once by a replacement session after a failed read", async () => {
+    const asked = mention();
+    const second = await setup({
+      storage: await stopped(asked),
+      identities: [echo],
+      resumes: true,
+      history: [asked],
+    });
+    await settle();
+    const read = vi.mocked(second.session.readRemote);
+    const original = read.getMockImplementation() as NonNullable<
+      ReturnType<typeof read.getMockImplementation>
+    >;
+    let failed = false;
+    read.mockImplementation(async (filters, options) => {
+      if (!filters[0]?.ids || failed) return original(filters, options);
+      failed = true;
+      throw new Error("relay down");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      second.service.resumeInterrupted();
+      await vi.waitFor(() => expect(failed).toBe(true));
+      await settle();
+      expect(second.run).not.toHaveBeenCalled();
+      expect(readInterrupted(second.storage)).toEqual({
+        [bot]: { [asked.id]: channel },
+      });
+      second.connect(false);
+      second.connect(true);
       await vi.waitFor(() => expect(second.run).toHaveBeenCalledOnce());
       expect(resumedOf(second.run)).toEqual(["Echo, go on (resumed)"]);
     } finally {
@@ -21287,6 +21581,8 @@ describe("full external agent access", () => {
     return {
       ...f,
       write,
+      send,
+      server,
       message,
       names,
       call: (name: string, args: object) =>
@@ -21366,6 +21662,126 @@ describe("full external agent access", () => {
         "result.isError",
         true,
       );
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it("ends a plugin tool's wait when the agent cancels that call or the connection closes", async () => {
+    const f = await fixture();
+    try {
+      const started = runnerGate();
+      let waiting = 0;
+      const tasks = f.ctx.extend({
+        pluginOwner: Object.freeze({ id: "buzz.tasks", revision: "one" }),
+      });
+      await tasks.plugin({
+        inject: ["agents"],
+        apply: (plugin: Context) =>
+          plugin.agents.addTool({
+            name: "tasks_wait",
+            description: "Wait for its call to end.",
+            inputSchema: { type: "object" },
+            call: (client) =>
+              new Promise((_, reject) => {
+                const { signal } = client;
+                if (!signal) reject(new Error("no signal"));
+                else
+                  signal.addEventListener("abort", () => reject(signal.reason));
+                if (++waiting === 2) started.resolve();
+              }),
+          }),
+      });
+      const wait = (id: number) =>
+        f.send({
+          id,
+          method: "tools/call",
+          params: { name: "tasks_wait", arguments: {} },
+        });
+      const cancel = (requestId: number) =>
+        f.send({ method: "notifications/cancelled", params: { requestId } });
+      const first = wait(101);
+      const second = wait(102);
+      await started.promise;
+      await cancel(999);
+      await cancel(101);
+      expect(await first).toMatchObject({
+        id: 101,
+        result: {
+          isError: true,
+          content: [{ text: "The agent cancelled this request" }],
+        },
+      });
+      await f.server.close();
+      await expect(second).rejects.toThrow("This agent connection has closed");
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it("lets a plugin's tool wait for its owner's answer to a notice, which the agent's cancel withdraws", async () => {
+    const f = await fixture();
+    try {
+      const notices = new NoticesService(f.ctx);
+      const files = f.ctx.extend({
+        pluginOwner: Object.freeze({ id: "example.files", revision: "one" }),
+      });
+      await files.plugin({
+        inject: ["agents"],
+        apply: (plugin: Context) =>
+          plugin.agents.addTool({
+            name: "files_delete",
+            description: "Delete a file, once the owner allows it.",
+            inputSchema: { type: "object" },
+            async call(client) {
+              const answer = await plugin.reflect.get("notices")?.show(
+                {
+                  title: "Let Echo delete a.txt?",
+                  actions: [{ id: "once", label: "Allow once" }],
+                },
+                { signal: client.signal },
+              );
+              return `answered ${answer}`;
+            },
+          }),
+      });
+      const shown = () =>
+        new Promise<ShownNotice>((resolve) => {
+          const stop = notices.subscribe(() => {
+            const [notice] = notices.snapshot();
+            if (notice) {
+              stop();
+              resolve(notice);
+            }
+          });
+        });
+      const asked = shown();
+      const call = f.call("files_delete", {});
+      const notice = await asked;
+      expect(notices.snapshot()).toHaveLength(1);
+      expect(notice).toMatchObject({
+        title: "Let Echo delete a.txt?",
+        plugin: "example.files",
+      });
+      notice.pick("once");
+      expect((await call).result).toMatchObject({
+        content: [{ text: "answered once" }],
+      });
+      expect(notices.snapshot()).toEqual([]);
+      const reasked = shown();
+      const cancelled = f.send({
+        id: 901,
+        method: "tools/call",
+        params: { name: "files_delete", arguments: {} },
+      });
+      await reasked;
+      expect(notices.snapshot()).toHaveLength(1);
+      await f.send({
+        method: "notifications/cancelled",
+        params: { requestId: 901 },
+      });
+      expect(notices.snapshot()).toEqual([]);
+      await cancelled;
     } finally {
       await f.cleanup();
     }

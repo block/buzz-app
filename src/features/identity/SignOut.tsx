@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
@@ -34,69 +34,6 @@ export function signOutFailure(reason: unknown) {
   return String(reason);
 }
 
-/** Native offers this only when this build's own saved-credential setup is unfinished. */
-export function offersSetupFinish(reason: unknown) {
-  return (
-    typeof reason === "object" &&
-    reason !== null &&
-    "finishSetup" in reason &&
-    reason.finishSetup === true
-  );
-}
-
-/** A stepped confirmation: success restarts Buzz, which qualifies the setup afresh. */
-function FinishSetupDialog({
-  identity,
-  onBack,
-}: {
-  identity: Identity;
-  onBack(): void;
-}) {
-  const cancel = useRef<HTMLButtonElement>(null);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  async function finish() {
-    setPending(true);
-    setError("");
-    try {
-      await identity.finishCredentialSetup();
-    } catch (reason) {
-      setError(signOutFailure(reason));
-      setPending(false);
-    }
-  }
-  return (
-    <AlertDialog
-      title="Finish credential setup?"
-      description="Buzz finishes setting up secure storage for saved plugin credentials on this device, then restarts. Nothing is signed out or removed. After it restarts, you can sign out again."
-      onClose={onBack}
-      pending={pending}
-      initialFocus={cancel}
-      actions={
-        <>
-          <Button
-            ref={cancel}
-            type="button"
-            disabled={pending}
-            onClick={onBack}
-          >
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            disabled={pending}
-            onClick={() => void finish()}
-          >
-            Finish and restart
-          </Button>
-        </>
-      }
-    >
-      {error && <p role="alert">{error}</p>}
-    </AlertDialog>
-  );
-}
-
 export function SignOutDialog({
   identity,
   onClose,
@@ -111,8 +48,6 @@ export function SignOutDialog({
   const [phrase, setPhrase] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const [setupOffered, setSetupOffered] = useState(false);
-  const [finishingSetup, setFinishingSetup] = useState(false);
   // Asked of the native side, which enforces it; wipe stays off until it answers.
   const [wipeRefusal, setWipeRefusal] = useState<string | null>();
   useEffect(() => {
@@ -131,22 +66,13 @@ export function SignOutDialog({
   async function confirm() {
     setPending(true);
     setError("");
-    setSetupOffered(false);
     try {
       await identity.signOut({ wipe, removeAgents: wipe && removeAgents });
     } catch (reason) {
       setError(signOutFailure(reason));
-      setSetupOffered(offersSetupFinish(reason));
       setPending(false);
     }
   }
-  if (finishingSetup)
-    return (
-      <FinishSetupDialog
-        identity={identity}
-        onBack={() => setFinishingSetup(false)}
-      />
-    );
   return (
     <AlertDialog
       title="Remove your key from this device?"
@@ -228,17 +154,6 @@ export function SignOutDialog({
         )}
       </div>
       {error && <p role="alert">{error}</p>}
-      {setupOffered && (
-        <div className="mt-3">
-          <Button
-            type="button"
-            disabled={pending}
-            onClick={() => setFinishingSetup(true)}
-          >
-            Finish credential setup
-          </Button>
-        </div>
-      )}
     </AlertDialog>
   );
 }

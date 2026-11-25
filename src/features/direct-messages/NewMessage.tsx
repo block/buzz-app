@@ -42,7 +42,7 @@ import {
 } from "../profiles/useVerifiedNames";
 import { abbreviatedPublicKey } from "../../shared/identity/public-key";
 import { RecipientPicker } from "./RecipientPicker";
-import type { Recipient } from "./usePeople";
+import { recipientView, type Recipient } from "./usePeople";
 import { usePassThroughUntilDrafted } from "../messages/draft-visit";
 import type { PageNavigation } from "../navigation/service";
 import styles from "./NewMessage.module.css";
@@ -63,12 +63,6 @@ const keyFor = (people: readonly Recipient[]) =>
     .map((person) => person.pubkey)
     .sort()
     .join(":");
-// Persist identity and a bounded label, never the directory's full metadata.
-const recipientView = ({ pubkey, name, isAgent }: Recipient): Recipient => ({
-  pubkey,
-  name: name.slice(0, 500),
-  ...(isAgent === true ? { isAgent: true } : {}),
-});
 function savedRecipients(scope: string, viewer?: string) {
   return validRecipients(
     readView<unknown>(scope, "direct-message:recipients", []),
@@ -628,8 +622,11 @@ export function NewMessage({
           </p>
         )}
         {uploadFailed && (
+          // A failed send also pauses the files queued behind the one that
+          // failed, and each chip names its own way out.
           <p role="status">
-            A file couldn’t upload. Retry or remove it, then send again.
+            A file couldn’t upload. Follow the guidance on each file that shows
+            an error, then send again.
           </p>
         )}
         {!session.directMessages.available && (

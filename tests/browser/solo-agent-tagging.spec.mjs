@@ -150,6 +150,11 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     await expect(pill).toHaveCount(0);
     // The relay answers again. The snapshot is still running, so this read
     // must not wait for it.
+    // Directory completion removes a notice above Retry and moves the button.
+    // Settle that layout before pointer hit-testing; keep the snapshot held.
+    await expect(
+      page.getByText("Searching community…", { exact: true }),
+    ).toHaveCount(0);
     inventoryAnswered = true;
     page.on("request", observeInventory);
     await page.evaluate(() => {

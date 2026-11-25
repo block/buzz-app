@@ -513,6 +513,45 @@ fn cancelled_or_stale_enrollment_cannot_reach_input_or_clear_an_existing_key() {
     assert_eq!(f.store.adds.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn trust_refusal_keeps_registered_slots_from_storage_confirmation_and_input() {
+    let f = Fixture::ready();
+    f.call("set", f.body()).unwrap();
+    let (_entered, _user) = f.input();
+    let calls = f.store.calls.load(Ordering::SeqCst);
+    let trust = f
+        .root
+        .path()
+        .join("home")
+        .join(buzzodz_plugins::trust::FILE_NAME);
+    // An unsigned plugin is refused before any self-developed identity lookup.
+    for policy in [r#"{"version":1,"trustedPublishers":[]}"#, "{"] {
+        std::fs::write(&trust, policy).unwrap();
+        // Registered calls stay opaque; the store log shows where refusal happened.
+        for (op, error) in [
+            ("status", UNAVAILABLE),
+            ("set", SAVE_UNKNOWN),
+            ("clear", UNAVAILABLE),
+        ] {
+            assert_eq!(f.call(op, f.body()).unwrap_err(), json!(error).to_string());
+        }
+        assert!(f.call("enroll", f.enrollment()).is_err());
+        assert_eq!(f.store.calls.load(Ordering::SeqCst), calls);
+        assert!(f.unshown::<bool>(), "no confirmation for refused work");
+        assert!(f
+            .app
+            .state::<super::private_input::FixtureInput>()
+            .0
+            .lock()
+            .unwrap()
+            .is_some());
+    }
+    std::fs::remove_file(&trust).unwrap();
+    assert_eq!(f.call("status", f.body()).unwrap(), "saved");
+    assert_eq!(f.store.items.lock().unwrap().len(), 1);
+    assert_eq!(f.store.adds.load(Ordering::SeqCst), 1);
+}
+
 #[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn private_enrollment_is_unavailable_without_touching_saved_credentials_or_input() {

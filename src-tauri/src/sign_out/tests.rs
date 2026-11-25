@@ -372,7 +372,7 @@ fn a_retry_clears_storage_recreated_after_the_key_was_removed() {
 /// A child process another test is spawning holds inherited lock handles until
 /// it execs, so a dropped instance's lock can take a moment to free.
 fn admitted_once_free(instance: &Instance, choices: Choices) -> bool {
-    wait_for(|| instance.begin(choices, None))
+    wait_for(|| instance.begin(choices, Admission::Scanner))
 }
 const PLAIN: Choices = Choices {
     wipe: false,
@@ -391,7 +391,7 @@ fn instances_share_the_lock_and_sign_out_needs_it_alone() {
     let second = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert!(first.begin(WIPE, None).is_err());
+    assert!(first.begin(WIPE, Admission::Scanner).is_err());
     drop(second);
     assert!(admitted_once_free(&first, WIPE));
     // While one instance signs out, a new launch neither runs nor waits forever.
@@ -400,7 +400,7 @@ fn instances_share_the_lock_and_sign_out_needs_it_alone() {
         Some(SIGNING_OUT.into())
     );
     assert_eq!(
-        first.abort(WIPE, refuse("withdrawn"), None),
+        first.abort(WIPE, refuse("withdrawn"), Admission::Scanner),
         refuse("withdrawn")
     );
     assert!(boot(&paths, None, no_agents, || panic!("no marker")).is_ok());
@@ -412,13 +412,16 @@ fn a_second_sign_out_in_the_same_instance_is_refused() {
     let instance = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    instance.begin(WIPE, None).unwrap();
-    assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
+    instance.begin(WIPE, Admission::Scanner).unwrap();
+    assert_eq!(
+        instance.begin(WIPE, Admission::Scanner),
+        Err(refuse(ALREADY))
+    );
     // Concurrent calls race for the same guard; exactly one is admitted.
-    instance.abort(WIPE, refuse("withdrawn"), None);
+    instance.abort(WIPE, refuse("withdrawn"), Admission::Scanner);
     let admitted = std::thread::scope(|scope| {
         let calls: Vec<_> = (0..8)
-            .map(|_| scope.spawn(|| instance.begin(WIPE, None).is_ok()))
+            .map(|_| scope.spawn(|| instance.begin(WIPE, Admission::Scanner).is_ok()))
             .collect();
         calls
             .into_iter()
@@ -435,7 +438,7 @@ fn a_pending_sign_out_waits_for_the_restarting_instance_to_exit() {
     let exiting = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    exiting.begin(WIPE, None).unwrap();
+    exiting.begin(WIPE, Admission::Scanner).unwrap();
     mark(&paths, false, false);
     let release = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(30));
@@ -638,7 +641,7 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
         &paths,
         PLAIN,
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || closes.set(closes.get() + 1),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
         || {
@@ -651,7 +654,10 @@ fn a_sign_out_committed_while_a_refused_one_lets_go_exits_natively() {
     assert_eq!(result, Err(refuse("exited")));
     assert!(paths.marker.exists());
     // Not a usable retry: the guard stays taken.
-    assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
+    assert_eq!(
+        instance.begin(WIPE, Admission::Scanner),
+        Err(refuse(ALREADY))
+    );
 }
 
 /// Reading the kept registry's details fails while traversing and deleting it
@@ -722,7 +728,7 @@ fn plain_sign_out_needs_only_copies_using_the_same_key_closed() {
     let signing_out = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert_eq!(signing_out.begin(PLAIN, None), Ok(()));
+    assert_eq!(signing_out.begin(PLAIN, Admission::Scanner), Ok(()));
     other.finish();
 }
 
@@ -733,7 +739,10 @@ fn plain_sign_out_is_refused_while_a_copy_using_the_same_key_runs() {
     let signing_out = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert_eq!(signing_out.begin(PLAIN, None), Err(refuse(OTHERS)));
+    assert_eq!(
+        signing_out.begin(PLAIN, Admission::Scanner),
+        Err(refuse(OTHERS))
+    );
     drop(signing_out);
     // A pending plain sign-out waits for that copy too.
     mark(&paths, false, false);
@@ -753,7 +762,10 @@ fn wipe_is_refused_while_any_copy_runs() {
     let signing_out = boot(&paths, None, no_agents, || panic!("no marker"))
         .ok()
         .unwrap();
-    assert_eq!(signing_out.begin(WIPE, None), Err(refuse(OTHERS_ALL)));
+    assert_eq!(
+        signing_out.begin(WIPE, Admission::Scanner),
+        Err(refuse(OTHERS_ALL))
+    );
     drop(signing_out);
     // A pending wipe waits for every copy; a pending plain sign-out doesn't.
     mark(&paths, true, false);
@@ -1011,7 +1023,7 @@ fn preparation_commits_the_marker_before_stopping_agents() {
         &paths,
         choices(true),
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || closed.set(true),
         || {
             assert!(marker.exists());
@@ -1032,7 +1044,7 @@ fn a_marker_write_failure_stops_nothing() {
         &paths,
         choices(true),
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
@@ -1052,7 +1064,7 @@ fn a_shutdown_failure_keeps_the_marker_and_exits_natively() {
         &paths,
         choices(false),
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || closes.set(closes.get() + 1),
         || async { Err("controller stuck".to_owned()) },
         || {
@@ -1253,7 +1265,7 @@ fn a_linked_wipe_folder_refuses_before_any_marker() {
         &paths,
         choices(false),
         || -> std::future::Ready<Result<(), Failure>> { panic!("paired tools stay") },
-        None,
+        Admission::Scanner,
         || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
@@ -1270,7 +1282,7 @@ fn unrevoked_paired_tools_refuse_before_any_marker() {
         &paths,
         choices(false),
         || async { Err(refuse("unrevoked")) },
-        None,
+        Admission::Scanner,
         || panic!("nothing was committed"),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
     ))
@@ -1374,7 +1386,7 @@ fn finished_in_the_gap(
         paths,
         choices,
         || async { Ok(()) },
-        None,
+        Admission::Scanner,
         || closes.set(closes.get() + 1),
         || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
         || {
@@ -1382,7 +1394,10 @@ fn finished_in_the_gap(
             async { Err(refuse("exited")) }
         },
     ));
-    assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
+    assert_eq!(
+        instance.begin(WIPE, Admission::Scanner),
+        Err(refuse(ALREADY))
+    );
     result
 }
 
@@ -1420,7 +1435,10 @@ fn a_sign_out_finished_before_launch_does_not_fence_a_later_refusal() {
     let instance = boot(&paths, None, no_agents, || Ok(())).ok().unwrap();
     assert!(paths.finished.exists());
     let running = Child::running(dir.path(), "identity");
-    assert_eq!(instance.begin(PLAIN, None), Err(refuse(OTHERS)));
+    assert_eq!(
+        instance.begin(PLAIN, Admission::Scanner),
+        Err(refuse(OTHERS))
+    );
     running.finish();
 }
 
@@ -2221,7 +2239,7 @@ pub(super) mod slots {
                 paths,
                 choices,
                 || async { Ok(()) },
-                Some(&journal),
+                Admission::Journal(&journal),
                 || {},
                 || std::future::ready(Ok(())),
                 || std::future::ready(Err(refuse("exited"))),
@@ -2238,7 +2256,9 @@ pub(super) mod slots {
                 (self.root.clone(), self.store.clone(), self.attempts.clone());
             Slots {
                 continuity: None,
-                finish: None,
+                cancel: None,
+                depart: None,
+                departable: Box::new(|| false),
                 inventory: Some(&self.root),
                 pending: Box::new(|| secrets::sign_out_pending(&self.root)),
                 cleanup: Some(Box::new(move || {
@@ -2332,7 +2352,7 @@ pub(super) mod slots {
                 &paths,
                 PLAIN,
                 || async { Ok(()) },
-                Some(&journal),
+                Admission::Journal(&journal),
                 || closed.store(true, Ordering::SeqCst),
                 std::future::pending::<Result<(), String>>,
                 || std::future::ready(Err(refuse("exited"))),
@@ -2389,7 +2409,7 @@ pub(super) mod slots {
                     &paths,
                     choices,
                     || async { Ok(()) },
-                    Some(&journal),
+                    Admission::Journal(&journal),
                     || closes.set(closes.get() + 1),
                     || {
                         stopped.set(true);
@@ -2462,7 +2482,7 @@ pub(super) mod slots {
             &gap,
             PLAIN,
             || async { Ok(()) },
-            Some(&journal),
+            Admission::Journal(&journal),
             || {},
             || std::future::ready(Ok(())),
             || std::future::ready(Err(refuse("exited"))),
@@ -2574,7 +2594,7 @@ pub(super) mod slots {
             &paths,
             choices,
             || async { Ok(()) },
-            Some(&journal),
+            Admission::Journal(&journal),
             || closes.set(closes.get() + 1),
             || -> std::future::Ready<Result<(), String>> { panic!("agents must not stop") },
             || {
@@ -2584,7 +2604,10 @@ pub(super) mod slots {
         ));
         assert_eq!(result, Err(refuse("exited")));
         // Not a usable retry: the guard stays taken.
-        assert_eq!(instance.begin(WIPE, None), Err(refuse(ALREADY)));
+        assert_eq!(
+            instance.begin(WIPE, Admission::Scanner),
+            Err(refuse(ALREADY))
+        );
         assert!(vault.pending() && !paths.marker.exists());
         drop(instance);
         let _instance = boot(&paths, Some(vault.slots(BUDGET)), no_agents, || {
@@ -2621,7 +2644,9 @@ pub(super) mod slots {
             let (root, store, cleaned) = (vault.root.clone(), vault.store.clone(), order.clone());
             let slots = Slots {
                 continuity: None,
-                finish: None,
+                cancel: None,
+                depart: None,
+                departable: Box::new(|| false),
                 inventory: Some(&vault.root),
                 pending: Box::new(|| secrets::sign_out_pending(&vault.root)),
                 cleanup: Some(Box::new(move || {
@@ -3095,3 +3120,78 @@ pub(super) mod slots {
 }
 
 pub(super) mod preflight;
+
+/// Agent keys a sign-out removes: there are none to keep here.
+struct NoKeys;
+impl buzz_agent_controller::Credentials for NoKeys {
+    fn read_legacy(
+        &self,
+        _: buzz_agent_controller::LegacySource,
+        _: &str,
+    ) -> Result<buzz_agent_controller::Secret, String> {
+        unreachable!()
+    }
+    fn read(&self, _: &str, _: &str) -> Result<Option<buzz_agent_controller::Secret>, String> {
+        unreachable!()
+    }
+    fn add(&self, _: &str, _: &buzz_agent_controller::Secret) -> Result<(), String> {
+        unreachable!()
+    }
+    fn delete(&self, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_pending_erase_deletes_every_agents_own_list_and_retries_after_a_failure() {
+    use crate::agent_env::tests::{agent_row, FakeStore, Stores, ADA, BO};
+    use std::sync::Arc;
+    let (_dir, paths) = fixture();
+    fs::remove_dir_all(paths.app_data.join(OLD_AGENTS)).unwrap();
+    let index = paths.app_data.join(AGENTS).join("identities.json");
+    let rows = serde_json::to_vec(&[agent_row(ADA), agent_row(BO)]).unwrap();
+    fs::write(&index, &rows).unwrap();
+    // An agent only the legacy registry still names.
+    let old = "d".repeat(64);
+    let legacy = paths.app_data.join(migrate_agents::LEGACY);
+    fs::create_dir_all(&legacy).unwrap();
+    fs::write(
+        legacy.join("identities.json"),
+        serde_json::to_vec(&[agent_row(&old)]).unwrap(),
+    )
+    .unwrap();
+    mark(&paths, true, true);
+    let stores: Stores = Default::default();
+    for pubkey in [ADA, BO, &old] {
+        let store = Arc::new(FakeStore::default());
+        *store.text.lock().unwrap() = Some("{}".into());
+        stores.lock().unwrap().insert(pubkey.into(), store);
+    }
+    let open = |pubkey: &str| -> Box<dyn crate::claude_key::KeyStore> {
+        Box::new(stores.lock().unwrap()[pubkey].clone())
+    };
+    let saved = |pubkey: &str| {
+        stores.lock().unwrap()[pubkey]
+            .text
+            .lock()
+            .unwrap()
+            .is_some()
+    };
+    let erase = || {
+        finish_pending(
+            &paths,
+            |app_data| remove_local_agents(app_data, &NoKeys, &open),
+            || Ok(()),
+        )
+    };
+    *stores.lock().unwrap()[BO].unwritable.lock().unwrap() = true;
+    assert!(erase().is_err());
+    // The registry and the marker stay, so the next launch tries again.
+    assert!(saved(BO));
+    assert_eq!(fs::read(&index).unwrap(), rows);
+    assert!(pending(&paths.marker).unwrap().is_some());
+    *stores.lock().unwrap()[BO].unwritable.lock().unwrap() = false;
+    erase().unwrap();
+    assert!(!saved(ADA) && !saved(BO) && !saved(&old));
+    assert!(pending(&paths.marker).unwrap().is_none());
+}

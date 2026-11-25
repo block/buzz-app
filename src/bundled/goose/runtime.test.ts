@@ -1,4 +1,5 @@
 import { assignConversationFolder } from "../../features/agents/conversation-folders";
+import { messageTokenTags } from "../../features/messages/message-tokens";
 import { memoryStorage } from "../../features/agents/test-fakes";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { SectionChoices } from "../../features/agent-harness/sections/choices";
@@ -1372,6 +1373,107 @@ describe("GooseRuntime", () => {
     expect(goose()?.opened).toHaveLength(opened ?? 0);
     expect(promptOf(2)).not.toContain("<plugin-section id=");
     expect(promptOf(2)).toContain("Make file changes on a new branch");
+  });
+
+  it("includes only the owner-selected skill chip addressed to this Goose agent", async () => {
+    const path = "/home/test/.agents/skills/pr-r-fixture/SKILL.md";
+    const skill = (target: string) => ({
+      kind: "skill" as const,
+      id: path,
+      label: "pr-r-fixture",
+      target,
+    });
+    const promptFor = async (event: RelayEvent) => {
+      const f = setup();
+      try {
+        await f.deliver(event);
+        await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+        const process = f.goose();
+        return process?.turns[0]?.text ?? "";
+      } finally {
+        f.runtime.dispose();
+      }
+    };
+    const selected = await promptFor(
+      message("1", "@Gander use pr-r-fixture", {
+        tags: [["h", channel], ["p", self], ...messageTokenTags([skill(self)])],
+      }),
+    );
+    const reference =
+      "<referenced-skills>\nThe owner's message asks you to use these skills on this device.";
+    expect(selected).toContain(reference);
+    expect(selected).toContain(JSON.stringify(path));
+    expect(
+      selected.match(/<referenced-skills>\nThe owner's message asks/g),
+    ).toHaveLength(1);
+
+    const wrongTarget = await promptFor(
+      message("2", "@Gander use pr-r-fixture", {
+        tags: [["h", channel], ["p", self], ...messageTokenTags([skill(bob)])],
+      }),
+    );
+    expect(wrongTarget).not.toContain(reference);
+
+    const plainText = await promptFor(message("3", "@Gander use pr-r-fixture"));
+    expect(plainText).not.toContain(reference);
+
+    const nonOwner = setup();
+    try {
+      await nonOwner.deliver(
+        message("4", "@Gander use pr-r-fixture", {
+          pubkey: bob,
+          tags: [
+            ["h", channel],
+            ["p", self],
+            ...messageTokenTags([skill(self)]),
+          ],
+        }),
+      );
+      expect(nonOwner.goose()).toBeUndefined();
+    } finally {
+      nonOwner.runtime.dispose();
+    }
+  });
+
+  it("adds a selected skill once to a mid-turn Goose steer", async () => {
+    const path = "/home/test/.agents/skills/pr-r-fixture/SKILL.md";
+    const root = message("1", "@Gander start");
+    const next = message("2", "@Gander use pr-r-fixture", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+        ...messageTokenTags([
+          {
+            kind: "skill",
+            id: path,
+            label: "pr-r-fixture",
+            target: self,
+          },
+        ]),
+      ],
+    });
+    const f = setup({ hold: true });
+    try {
+      await f.deliver(root);
+      await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+      const process = f.goose();
+      expect(process?.turns[0]?.text).not.toContain(
+        "<referenced-skills>\nThe owner's message asks you to use these skills on this device.",
+      );
+
+      await f.deliver(next);
+      await vi.waitFor(() =>
+        expect(process?.turns[0]?.steered).toHaveLength(1),
+      );
+      const steer = process?.turns[0]?.steered[0] ?? "";
+      expect(steer).toContain(JSON.stringify(path));
+      expect(
+        steer.match(/<referenced-skills>\nThe owner's message asks/g),
+      ).toHaveLength(1);
+    } finally {
+      f.runtime.dispose();
+    }
   });
 
   it("starts an agent on a model route on its provider's default, and runs each turn on its pick", async () => {

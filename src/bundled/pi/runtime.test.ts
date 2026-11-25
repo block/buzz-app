@@ -15,6 +15,7 @@ import { STANDALONE_PREFIX } from "../../features/agents/standalone-sessions";
 import { type AgentStore, localStore } from "../../features/agents/store";
 import { memoryStorage } from "../../features/agents/test-fakes";
 import { assignConversationFolder } from "../../features/agents/conversation-folders";
+import { messageTokenTags } from "../../features/messages/message-tokens";
 import { ownerReads } from "../../features/agents/reads";
 import type { MemoryEntry } from "../../features/agents/memory";
 import type {
@@ -872,6 +873,128 @@ it("ends a turn's prompt with its conversation's instructions", async () => {
   );
   // Keyed as its session is: the reply's thread.
   expect(conversationInstructions).toHaveBeenCalledWith(channel, root.id);
+});
+
+it("includes only the owner-selected skill chip addressed to this Pi agent", async () => {
+  const path = "/home/test/.agents/skills/pr-r-fixture/SKILL.md";
+  const skill = (target: string) => ({
+    kind: "skill" as const,
+    id: path,
+    label: "pr-r-fixture",
+    target,
+  });
+  const promptFor = async (event: RelayEvent) => {
+    const f = setup();
+    try {
+      await f.deliver({ type: "mention", event }).run;
+      return String(f.host.requests("deliver")[0]?.params.text ?? "");
+    } finally {
+      f.runtime.dispose();
+    }
+  };
+  const reference =
+    "<referenced-skills>\nThe owner's message asks you to use these skills on this device.";
+  const selected = await promptFor(
+    message("2", "@Pi use pr-r-fixture", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+        ...messageTokenTags([skill(self)]),
+      ],
+    }),
+  );
+  expect(selected).toContain(reference);
+  expect(selected).toContain(JSON.stringify(path));
+  expect(
+    selected.match(/<referenced-skills>\nThe owner's message asks/g),
+  ).toHaveLength(1);
+
+  const wrongTarget = await promptFor(
+    message("3", "@Pi use pr-r-fixture", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+        ...messageTokenTags([skill(bob)]),
+      ],
+    }),
+  );
+  expect(wrongTarget).not.toContain(reference);
+
+  const plainText = await promptFor(
+    message("4", "@Pi use pr-r-fixture", {
+      tags: [
+        ["h", channel],
+        ["e", root.id, "", "reply"],
+        ["p", self],
+      ],
+    }),
+  );
+  expect(plainText).not.toContain(reference);
+
+  const f = setup();
+  try {
+    await f.deliver({
+      type: "mention",
+      event: message("5", "@Pi use pr-r-fixture", {
+        pubkey: bob,
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+          ...messageTokenTags([skill(self)]),
+        ],
+      }),
+    }).run;
+    expect(
+      String(f.host.requests("deliver")[0]?.params.text ?? ""),
+    ).not.toContain(reference);
+  } finally {
+    f.runtime.dispose();
+  }
+});
+
+it("adds a selected skill once to a mid-turn Pi steer", async () => {
+  const path = "/home/test/.agents/skills/pr-r-fixture/SKILL.md";
+  const finished = deferred<unknown>();
+  const f = setup({ wait: () => finished.promise });
+  const reference =
+    "<referenced-skills>\nThe owner's message asks you to use these skills on this device.";
+  try {
+    await f.deliver({ type: "mention", event: reply("2", "start") }).run;
+    expect(
+      String(f.host.requests("deliver")[0]?.params.text ?? ""),
+    ).not.toContain(reference);
+
+    await f.deliver({
+      type: "mention",
+      event: message("3", "@Pi use pr-r-fixture", {
+        tags: [
+          ["h", channel],
+          ["e", root.id, "", "reply"],
+          ["p", self],
+          ...messageTokenTags([
+            {
+              kind: "skill",
+              id: path,
+              label: "pr-r-fixture",
+              target: self,
+            },
+          ]),
+        ],
+      }),
+    }).run;
+    await vi.waitFor(() => expect(f.host.requests("deliver")).toHaveLength(2));
+    const steer = String(f.host.requests("deliver")[1]?.params.steer ?? "");
+    expect(steer).toContain(JSON.stringify(path));
+    expect(
+      steer.match(/<referenced-skills>\nThe owner's message asks/g),
+    ).toHaveLength(1);
+  } finally {
+    finished.resolve(undefined);
+    f.runtime.dispose();
+  }
 });
 
 it("gives a turn the notes plugins left for its conversation, taken when Pi builds its prompt", async () => {

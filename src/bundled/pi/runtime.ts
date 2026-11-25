@@ -47,6 +47,7 @@ import {
   readProject,
   worksElsewhere,
 } from "../../features/agent-harness/project";
+import { referencedSkills } from "../../features/agent-harness/referenced-folders";
 import {
   placeOf,
   sectionsOf,
@@ -1921,6 +1922,12 @@ export class PiRuntime {
       scope === "community" && entry && current()
         ? entry.project.preview(channelId, solo ? loadedProject : NO_PROJECT)
         : loadedProject;
+    const projectContext = [
+      project?.section,
+      referencedSkills(event, owner, agent.pubkey),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     return {
       event,
       scope,
@@ -1935,7 +1942,7 @@ export class PiRuntime {
       total: earlier.length + 1,
       names,
       ...(signingAuthority ? { signingAuthority } : {}),
-      ...(project ? { project: project.section } : {}),
+      ...(projectContext ? { project: projectContext } : {}),
       ...(scope === "community" && project && entry
         ? { acceptProject: () => entry.project.resolve(channelId, project) }
         : {}),

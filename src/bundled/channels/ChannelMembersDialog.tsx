@@ -586,7 +586,8 @@ function lostFocus(control: HTMLElement) {
   return !control.isConnected && document.activeElement === document.body;
 }
 
-/** Supported props for installed plugins reusing the host member picker. */
+/** Keeps the user's scroll position when the list size or content changes.
+ * Stops when the content supports that position without extra padding or the caller stops it. */
 function preserveMemberListOffset(list: HTMLElement, offset: number) {
   if (offset === 0) {
     list.scrollTop = 0;
@@ -662,6 +663,7 @@ function preserveMemberListOffset(list: HTMLElement, offset: number) {
   return stop;
 }
 
+/** Supported props for installed plugins reusing the host member picker. */
 export type ChannelMembersDialogProps = {
   session: RelaySession;
   channelId: string;

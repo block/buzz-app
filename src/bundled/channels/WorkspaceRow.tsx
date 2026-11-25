@@ -119,9 +119,9 @@ export function WorkspaceRow({
     if (measured) reportFloating(!docked);
   }, [measured, docked]);
 
-  // The box starts at the history's top, beside its scrollbar; floating, it
-  // stops at the history's bottom, above the composer. It wakes reading whenever it shows, moves, floats, docks or hides. A reader
-  // can show its history later, as a thread does once loaded, or replace it.
+  // The box starts at the history's top, beside its scrollbar. It wakes
+  // reading whenever it shows, moves, floats, docks or hides. A reader can
+  // show its history later, as a thread does once loaded, or replace it.
   const [geometry, setGeometry] = useState<CSSProperties>();
   // biome-ignore lint/correctness/useExhaustiveDependencies: docking or floating changes what covers the rows, so reading wakes.
   useLayoutEffect(() => {
@@ -135,7 +135,6 @@ export function WorkspaceRow({
       const history = scroller.getBoundingClientRect();
       setGeometry({
         "--aside-top": `${history.top - outer.top}px`,
-        "--aside-height": `${history.height}px`,
         "--aside-scrollbar": `${scroller.offsetWidth - scroller.clientWidth}px`,
       } as CSSProperties);
       readingPositioned(scroller);

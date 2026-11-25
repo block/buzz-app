@@ -564,9 +564,9 @@ export type ConversationWorkspaceProps = {
    * `asideWidth` over the history's end edge, beside its scrollbar, from the
    * history's top to the reader's bottom; the history and composer keep to
    * the width beside it. When the reader would get too narrow, the aside
-   * floats over the history instead, above the composer, shown only while
-   * open. The box draws nothing: the content draws
-   * its own card, sizes to it, and scrolls itself when taller than the box.
+   * floats over the history and the composer's end instead, shown only
+   * while open. The box draws nothing: the content draws its own card, sizes
+   * to it, and scrolls itself when taller than the box.
    * Only the content takes pointer input, so the wheel beside or below it
    * scrolls the history. */
   aside?: ReactNode;

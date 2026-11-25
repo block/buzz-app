@@ -1608,6 +1608,27 @@ it("replaces memory only at the version it was shown, newer than the entry it re
   ).rejects.toThrow(
     "conflict: mem/notes was saved, but another session's write replaced it. Read it again with mem_get, merge your change into it, and pass the new version as expected.",
   );
+  // Or another session's delete of the same version did.
+  vi.mocked(client.memories).mockResolvedValue({
+    entries: [{ slug: "mem/notes", body: "old", createdAt: 50 }],
+    partial: false,
+  });
+  vi.mocked(client.remember).mockImplementationOnce(async () => {
+    vi.mocked(client.memories).mockResolvedValue({
+      entries: [],
+      deleted: [{ slug: "mem/notes", createdAt: 51 }],
+      partial: false,
+    });
+  });
+  await expect(
+    callTool(client, {}, "mem_set", {
+      slug: "notes",
+      text: "new",
+      expected: version,
+    }),
+  ).rejects.toThrow(
+    "conflict: mem/notes was saved, but another session deleted it. Check with mem_get whether it should exist before you write it again.",
+  );
   // Without an entry, expected names nothing to replace.
   vi.mocked(client.memories).mockResolvedValue({ entries: [], partial: false });
   await expect(

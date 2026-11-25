@@ -343,7 +343,11 @@ export function nodeClient(
               kinds: [30174],
               authors: [pubkey],
               "#p": [owner],
-              ...(slug ? { "#d": [memoryAddress(key, slug)] } : {}),
+              // One entry is read from the writer, so the version mem_set
+              // checks and reads back is the one mem_get showed.
+              ...(slug
+                ? { "#d": [memoryAddress(key, slug)], consistency: "strong" }
+                : {}),
               limit: MEMORY_LIMIT,
             },
           ]),

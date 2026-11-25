@@ -485,6 +485,9 @@ async fn read_agent_memories(
             return Ok(unread_memories());
         };
         filter["#d"] = json!([address?]);
+        // One entry is read from the writer, so the version mem_set checks
+        // and reads back is the one mem_get showed.
+        filter["consistency"] = json!("strong");
     }
     // However the read ends, cancelled or done, a decode still running on a
     // blocking worker stops at its next record and releases the identity.

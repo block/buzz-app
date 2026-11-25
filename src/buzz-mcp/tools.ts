@@ -1540,6 +1540,11 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
       throw new Error(
         `conflict: ${key} was saved, but another session's write replaced it. Read it again with mem_get, merge your change into it, and pass the new version as expected.`,
       );
+    const removed = readBack?.deleted?.find((entry) => entry.slug === key);
+    if (removed && removed.createdAt !== tombstone?.createdAt)
+      throw new Error(
+        `conflict: ${key} was saved, but another session deleted it. Check with mem_get whether it should exist before you write it again.`,
+      );
     const saved = `saved; version ${await memoryVersion(body)}`;
     if (key !== "core") return saved;
     const size = new TextEncoder().encode(body).length;

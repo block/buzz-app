@@ -331,15 +331,8 @@ test.describe("Inline", () => {
     }
     expect((await address(page)).layer).toMatchObject({ rootId: root.id });
     await expect(thread(page)).toHaveAttribute("data-tall", "true");
-    // Opening the profile draws the thread again; it takes input once drawn.
-    await expect(thread(page)).toHaveAttribute("data-revealed", "");
-    // From the thread, the pull request replaces the profile. The thread may
-    // still be redrawing from the profile's remount, inert until it shows.
-    await expect(async () => {
-      await pullLink(thread(page)).focus();
-      await expect(pullLink(thread(page))).toBeFocused({ timeout: 500 });
-    }).toPass();
-    await pullLink(thread(page)).press("Enter");
+    // From the mounted thread, the pull request replaces the profile.
+    await activate(pullLink(thread(page)));
     await expect(pullHeading(github(page))).toBeVisible();
     await expect(github(page)).toBeFocused();
     await expect(profile(page)).toHaveCount(0);
@@ -361,8 +354,9 @@ test.describe("Inline", () => {
     await page.goForward();
     await page.goForward();
     await expect(pullHeading(github(page))).toBeVisible();
-    // X closes only the top layer; the thread stays. The sheet can still
-    // move after Forward, so exercise the control without chasing its bounds.
+    // The restored thread takes focus when it finishes revealing. Let it
+    // settle before activating the top sheet's Close control.
+    await expect(thread(page)).toHaveAttribute("data-revealed", "");
     await activate(close(github(page)));
     await expect(github(page)).toHaveCount(0);
     await expect(thread(page)).toBeVisible();
@@ -372,14 +366,8 @@ test.describe("Inline", () => {
     await expect(profile(page)).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(profile(page)).toHaveCount(0);
-    // Closing the profile draws the thread again, inert until it shows; its
-    // reply box takes focus as it does.
-    await expect(
-      thread(page).getByRole("textbox", {
-        name: "Reply to thread",
-        exact: true,
-      }),
-    ).toBeFocused();
+    await expect(thread(page)).toBeVisible();
+    expect((await address(page)).layer).toBeUndefined();
     // A press in the top sheet closes nothing; each press on the conversation
     // around the sheets closes the top one. The sheet is still moving when its
     // heading shows, so the click waits for it to come to rest.

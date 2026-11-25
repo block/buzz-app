@@ -78,6 +78,9 @@ test.describe("Inline thread", () => {
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
         .getByRole("button", { name: /^View thread:/ }),
     );
+    await expect(
+      titled(page, "Thread").getByRole("textbox", { name: "Reply to thread" }),
+    ).toBeFocused();
     await activate(
       titled(page, "Thread").getByRole("link", { name: "model settings" }),
     );

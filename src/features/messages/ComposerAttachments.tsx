@@ -271,6 +271,9 @@ function AttachmentItem({
       <FfmpegInstall
         file={item.file}
         disabled={disabled}
+        focusAttachment={(button) => {
+          (previewButton.current ?? button.closest("li"))?.focus();
+        }}
         retry={() => retry(item.id)}
       />
     ) : undefined;
@@ -288,7 +291,13 @@ function AttachmentItem({
     item.status === "uploading";
   if (item.voice && source && renderers)
     return (
-      <motion.li {...appearance} className={styles.voiceItem} data-voice-draft>
+      <motion.li
+        {...appearance}
+        tabIndex={-1}
+        aria-label={item.file.name}
+        className={styles.voiceItem}
+        data-voice-draft
+      >
         <AttachmentDownloadContext value={false}>
           <AttachmentView
             registry={renderers}

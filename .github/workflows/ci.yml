@@ -1,11 +1,11 @@
 name: CI
 
 on:
-  # Manual dispatch runs Windows, with optional Linux and Windows FFmpeg checks.
+  # Manual dispatch runs Windows, with an optional fresh FFmpeg install and conversion check.
   workflow_dispatch:
     inputs:
       ffmpeg_acceptance:
-        description: Exercise FFmpeg recovery with the hosted Windows and Linux package managers
+        description: Exercise FFmpeg recovery on a clean Windows host
         type: boolean
         default: false
   # Sunday's preview (release.yml) calls this to rebuild main's caches.
@@ -118,7 +118,7 @@ jobs:
           retention-days: 7
 
   native:
-    if: github.event_name != 'workflow_dispatch' || inputs.ffmpeg_acceptance
+    if: github.event_name != 'workflow_dispatch'
     name: Rust and tool integration
     # Select one runner class, shared by native and browser jobs below.
     # Use the PR author so rerunning a bot PR keeps standard runners.
@@ -178,20 +178,6 @@ jobs:
       # --workspace includes Tauri, unlike the default Cargo member selection.
       - name: All Rust tests and doctests
         run: ./bin/cargo test --workspace --locked
-      - name: Exercise FFmpeg recovery with administrator approval on the Linux host
-        id: ffmpeg_linux
-        if: github.event_name == 'workflow_dispatch' && inputs.ffmpeg_acceptance
-        run: |
-          sudo apt-get install --no-install-recommends -y packagekit-tools
-          # Headless runners have no desktop authentication agent. Build as the runner,
-          # then run only the selected native acceptance test as administrator.
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="sudo -n --" ./bin/cargo test -p Buzz --lib --locked ffmpeg_install::tests::host_installation -- --ignored --nocapture
-      - name: Diagnose Linux FFmpeg recovery
-        if: failure() && steps.ffmpeg_linux.outcome == 'failure'
-        run: |
-          apt-cache policy ffmpeg
-          command -v ffmpeg && ffmpeg -version | head -1
-          sudo journalctl --unit=packagekit.service --boot --no-pager --lines=50
       - name: Bundled buzz CLI
         run: ./bin/node scripts/test-buzz-cli.mjs --prebuilt
       - name: FI Builderlab build and grant tests

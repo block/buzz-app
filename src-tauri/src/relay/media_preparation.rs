@@ -82,7 +82,7 @@ fn allowed_mode(mode: &str, size: usize) -> Option<(&'static str, bool, bool)> {
     Some(result)
 }
 
-fn ffmpeg_command(program: &Path) -> Command {
+pub(crate) fn ffmpeg_command(program: &Path) -> Command {
     let path = crate::host_command::effective_path();
     let mut cmd = Command::new(program);
     cmd.env_clear().env("PATH", path).env("LANG", "C");
@@ -202,9 +202,7 @@ pub(super) async fn prepare_file(
     mode: &str,
     cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<(std::path::PathBuf, &'static str), PreparationError> {
-    let path = crate::host_command::effective_path();
-    let program = crate::ffmpeg_install::program(&path);
-    prepare_file_with_program(source, size, directory, mode, cancelled, &program).await
+    prepare_file_with_program(source, size, directory, mode, cancelled, None).await
 }
 
 #[cfg(test)]
@@ -234,7 +232,7 @@ async fn prepare_with_program(
         directory.path(),
         mode,
         cancelled,
-        program,
+        Some(program),
     )
     .await?;
     Ok((
@@ -249,7 +247,7 @@ async fn prepare_file_with_program(
     directory: &Path,
     mode: &str,
     cancelled: &mut oneshot::Receiver<()>,
-    program: &Path,
+    program: Option<&Path>,
 ) -> Result<(std::path::PathBuf, &'static str), PreparationError> {
     if size == 0 || size > MAX_INPUT {
         return Err(PreparationError::Size);
@@ -267,6 +265,15 @@ async fn prepare_file_with_program(
         .get_or_init(|| Semaphore::new(2))
         .try_acquire()
         .map_err(|_| PreparationError::Capacity)?;
+    let selected;
+    let program = match program {
+        Some(program) => program,
+        None => {
+            selected =
+                crate::ffmpeg_install::program(&crate::host_command::effective_path(), image).await;
+            &selected
+        }
+    };
     let output = directory.join(if image {
         "prepared.jpg"
     } else {

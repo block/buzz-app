@@ -34,7 +34,7 @@ mod media_blocks;
 mod media_cache;
 pub(crate) use media_cache::MediaCache;
 pub(crate) use media_cache::DIR as MEDIA_CACHE_DIR;
-mod media_preparation;
+pub(crate) mod media_preparation;
 mod media_spool;
 mod reminders;
 pub(crate) use reminders::{relay_decode_reminders, relay_sign_reminder};

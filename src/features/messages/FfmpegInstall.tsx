@@ -8,11 +8,14 @@ export function FfmpegInstall({
   file,
   disabled,
   retry,
+  focusAttachment,
 }: {
   file: File;
   disabled: boolean;
   retry(): void;
+  focusAttachment?(button: HTMLButtonElement): void;
 }) {
+  const button = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const selection = useRef<{ file: File } | null>(null);
@@ -24,7 +27,10 @@ export function FfmpegInstall({
       selection.current = null;
     };
   }, [file]);
-  const desktop = isTauri() && window.location.pathname !== "/huddle.html";
+  const desktop =
+    isTauri() &&
+    !/^Linux/i.test(navigator.platform) &&
+    window.location.pathname !== "/huddle.html";
   const needsUpdate =
     /\.(heic|heif)$/i.test(file.name) || /^image\/hei[cf]/.test(file.type);
   async function install() {
@@ -43,6 +49,8 @@ export function FfmpegInstall({
       }
       if (selection.current !== current) return;
       setError("");
+      if (button.current && document.activeElement === button.current)
+        focusAttachment?.(button.current);
       retry();
     } catch (cause) {
       if (selection.current !== current) return;
@@ -53,35 +61,41 @@ export function FfmpegInstall({
       if (selection.current === current) setBusy(false);
     }
   }
+  const label = error
+    ? "Try again"
+    : !desktop
+      ? "Retry upload"
+      : needsUpdate
+        ? "Install or update"
+        : "Install";
   return (
     <div className={styles.encoderCard}>
       <div>
         <strong>
           {needsUpdate ? "Install or update FFmpeg" : "Install FFmpeg"}
         </strong>
-        <p role="status">
+        <p role="alert">
+          <span className="sr-only">Upload failed for {file.name}. </span>
           {error ||
             (desktop
               ? needsUpdate
                 ? "Buzz needs FFmpeg 8 or newer to upload this photo."
                 : "Buzz uses FFmpeg to send voice notes, videos, and photos."
-              : "Install or update FFmpeg on the computer running Buzz, then retry the upload.")}
+              : needsUpdate
+                ? "Install FFmpeg 8 or newer on the computer running Buzz, then retry or upload a JPEG."
+                : "Install FFmpeg on the computer running Buzz, then retry the upload.")}
         </p>
       </div>
       <Button
+        ref={button}
+        aria-label={`${label} for ${file.name}`}
         variant="prominent"
         size="sm"
         disabled={disabled}
         loading={busy}
         onClick={() => void install()}
       >
-        {error
-          ? "Try again"
-          : !desktop
-            ? "Retry upload"
-            : needsUpdate
-              ? "Install or update"
-              : "Install"}
+        {label}
       </Button>
     </div>
   );

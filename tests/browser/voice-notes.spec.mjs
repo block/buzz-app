@@ -257,6 +257,10 @@ test("install FFmpeg and retry the recorded note", {
   await page.evaluate(() => {
     window.voiceFixture.report.missingEncoder = true;
     let firstAttempt = true;
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
       invoke: async (command) => {
@@ -270,18 +274,21 @@ test("install FFmpeg and retry the recorded note", {
     };
   });
   await record(page, { stopWith: "pointer" });
-  const install = page.getByRole("button", { name: "Install", exact: true });
+  const install = page.getByRole("button", { name: /^Install for / });
   await expect(install).toBeVisible();
   await page.locator("[data-voice-draft]").screenshot({
     path: test.info().outputPath("install-ffmpeg.png"),
   });
   await install.click();
   await expect(page.getByText("Installation interrupted.")).toBeVisible();
-  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  const retry = page.getByRole("button", { name: /^Try again for / });
+  await retry.focus();
+  await retry.press("Enter");
   await expect(
     page.getByRole("button", { name: "Send message", exact: true }),
   ).toBeEnabled();
   await expect(install).toHaveCount(0);
+  await expect(page.locator("[data-voice-draft]")).toBeFocused();
   expect(await page.evaluate(() => window.voiceFixture.report.uploads)).toBe(2);
 });
 test("a photo with the FFmpeg error offers host recovery and requests HEIC support on desktop", async ({
@@ -289,6 +296,13 @@ test("a photo with the FFmpeg error offers host recovery and requests HEIC suppo
 }) => {
   await page.evaluate(() => {
     window.voiceFixture.report.missingEncoder = true;
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Linux x86_64",
+    });
+    window.isTauri = true;
   });
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Attach files" }).click();
@@ -298,11 +312,16 @@ test("a photo with the FFmpeg error offers host recovery and requests HEIC suppo
     buffer: Buffer.from("fixture"),
   });
   const hostRetry = page.getByRole("button", {
-    name: "Retry upload",
+    name: "Retry upload for sample.heic",
     exact: true,
   });
   await expect(hostRetry).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("sample.heic");
   await page.evaluate(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
       invoke: async (command, args) => {
@@ -315,7 +334,10 @@ test("a photo with the FFmpeg error offers host recovery and requests HEIC suppo
   });
   await hostRetry.click();
   await page
-    .getByRole("button", { name: "Install or update", exact: true })
+    .getByRole("button", {
+      name: "Install or update for sample.heic",
+      exact: true,
+    })
     .click();
   await expect(
     page.getByText("Fixture upload failed", { exact: false }),

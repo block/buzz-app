@@ -70,10 +70,6 @@
 .memberTabs {
   min-width: 0;
 }
-/* A short page can still align its start with the list scrollport. */
-.memberPanel {
-  min-height: 100%;
-}
 .loadingMembers {
   display: grid;
   flex: 1;

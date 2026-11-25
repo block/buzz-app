@@ -87,6 +87,21 @@ async function memberGeometry(dialog) {
         height: r.height,
       };
     };
+    let top = 0,
+      bottom = innerHeight;
+    for (let ancestor = list; ancestor; ancestor = ancestor.parentElement) {
+      const style = getComputedStyle(ancestor);
+      if (["auto", "scroll", "hidden", "clip"].includes(style.overflowY)) {
+        const rect = ancestor.getBoundingClientRect();
+        top = Math.max(top, rect.top + ancestor.clientTop);
+        bottom = Math.min(
+          bottom,
+          rect.top + ancestor.clientTop + ancestor.clientHeight,
+        );
+      }
+      // A fixed dialog is clipped by the viewport, not the document body.
+      if (style.position === "fixed") break;
+    }
     return {
       tabs: box(tabs),
       list: box(list),
@@ -96,6 +111,7 @@ async function memberGeometry(dialog) {
       scrollHeight: list.scrollHeight,
       clientHeight: list.clientHeight,
       outer: list.parentElement.scrollTop,
+      clip: { top, bottom },
     };
   });
 }
@@ -298,18 +314,81 @@ test.describe("member scrolling", () => {
       measurements.push({ enlarged, before, after, repeated });
       expect.soft(repeated.tabs).toEqual(before.tabs);
       expect.soft(repeated.outer).toBe(before.outer);
-      expect.soft(repeated.first.top).toBeGreaterThanOrEqual(repeated.list.top);
-      expect
-        .soft(repeated.first.bottom)
-        .toBeLessThanOrEqual(repeated.list.bottom);
-      // Native scroll offsets round to CSS pixels; round toward the start so no row is clipped.
-      expect.soft(repeated.panel.top - repeated.list.top).toBeLessThan(1);
+      for (const state of [after, repeated]) {
+        expect.soft(state.first.top).toBeGreaterThanOrEqual(state.clip.top);
+        expect.soft(state.first.bottom).toBeLessThanOrEqual(state.clip.bottom);
+        // A short page stops at the natural end instead of adding empty space.
+        const aligned = Math.abs(state.panel.top - state.list.top) <= 1;
+        const atEnd =
+          Math.abs(state.scrollHeight - state.clientHeight - state.scrollTop) <=
+          1;
+        expect.soft(aligned || atEnd).toBe(true);
+      }
     }
     console.log(`N3 ${JSON.stringify(measurements)}`);
     await info.attach("N3", {
       body: JSON.stringify(measurements, null, 2),
       contentType: "application/json",
     });
+  });
+
+  test("a single matching member keeps nonmember search results in view", async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(
+      `${url}?administration&editable-access&short-panel&member-search`,
+    );
+    await page.getByRole("button", { name: "Access", exact: true }).click();
+    const dialog = page.getByRole("dialog", {
+      name: "Manage members",
+      exact: true,
+    });
+    const list = dialog.getByRole("region", {
+      name: "Member list",
+      exact: true,
+    });
+    await expect(list).toHaveAttribute("data-refreshing", "false");
+    await dialog.getByRole("searchbox").fill("Morgan");
+    await expect(
+      dialog.getByRole("tab", { name: "People · 1", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      dialog.getByRole("tabpanel").getByRole("listitem"),
+    ).toHaveCount(1);
+    await expect(
+      list.getByRole("button", { name: /^Add Morgan Visitor \(.*\)$/ }),
+    ).toHaveCount(1);
+    await animationsSettled(dialog, { subtree: true });
+    await settledFrames(page);
+    // Measure the short search results at the requested initial list position.
+    await list.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await settledFrames(page);
+    const heading = await list
+      .getByRole("heading", { name: "Not in this channel", exact: true })
+      .boundingBox();
+    const geometry = await memberGeometry(dialog);
+    const clipping = {
+      top: Math.max(0, geometry.clip.top - heading.y),
+      bottom: Math.max(0, heading.y + heading.height - geometry.clip.bottom),
+      visibleHeight: Math.max(
+        0,
+        Math.min(heading.y + heading.height, geometry.clip.bottom) -
+          Math.max(heading.y, geometry.clip.top),
+      ),
+    };
+    const measurements = { geometry, heading, clipping };
+    console.log(`N4 ${JSON.stringify(measurements)}`);
+    await info.attach("N4", {
+      body: JSON.stringify(measurements, null, 2),
+      contentType: "application/json",
+    });
+    expect(geometry.scrollTop).toBe(0);
+    expect(clipping.top).toBe(0);
+    expect(clipping.bottom).toBe(0);
+    expect(clipping.visibleHeight).toBe(heading.height);
   });
 
   test("a pointer tab change keeps the tab under the pointer and Tab reaches General then members", async ({

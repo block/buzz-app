@@ -668,6 +668,7 @@ export function ChannelMembersDialog({
       : undefined;
   const selection = shownIntent?.change;
   const scrollport = useRef<HTMLElement>(null);
+  const memberTabs = useRef<HTMLDivElement>(null);
   // Set when the step is left by confirming. That member's Actions are then
   // watched until its row leaves and until the change settles.
   const confirmed = useRef(false);
@@ -798,7 +799,7 @@ export function ChannelMembersDialog({
     listFocus.current = undefined;
     const active = document.activeElement;
     if (!list || (active && !active.contains(list))) return;
-    const tab = list.querySelector<HTMLElement>(
+    const tab = memberTabs.current?.querySelector<HTMLElement>(
       '[role="tab"][aria-selected="true"]',
     );
     if (tab) {
@@ -2496,7 +2497,7 @@ export function ChannelMembersDialog({
             </div>
           )}
           {showTabs && (
-            <div className={styles.memberTabs}>
+            <div className={styles.memberTabs} ref={memberTabs}>
               <Tabs
                 label="Member type"
                 variant="panel"
@@ -2576,7 +2577,6 @@ export function ChannelMembersDialog({
                     <section
                       key={group.name}
                       hidden={showTabs && group.name !== memberGroup}
-                      className={showTabs ? styles.memberPanel : undefined}
                       role={showTabs ? "tabpanel" : undefined}
                       id={
                         showTabs

@@ -46,12 +46,16 @@ const archivesReady = new Promise<void>((resolve) => {
 const viewer = keypair();
 const relay = keypair();
 const person = keypair();
+const memberSearch = new URLSearchParams(location.search).has("member-search");
 const candidates = new URLSearchParams(location.search).has("multiple")
   ? [1, 2, 3].map((index) => ({
       key: keypair(),
       name: `Morgan Field Tester ${index}`,
     }))
-  : [{ key: person, name: "Morgan" }];
+  : [
+      { key: person, name: "Morgan" },
+      ...(memberSearch ? [{ key: keypair(), name: "Morgan Visitor" }] : []),
+    ];
 const candidateProfiles = candidates.map(({ key, name }) =>
   profile(key, { name }),
 );
@@ -194,7 +198,7 @@ const { session: sharedSession } = createRelaySession(
       if (filters.some((filter) => filter.search)) {
         // The roster-only workload must not introduce a new identity: random
         // npub suffix collisions legitimately change every row's key label.
-        if (invitationScale || searchScale) return [];
+        if ((invitationScale || searchScale) && !memberSearch) return [];
         return candidateProfiles;
       }
       if (holdNames && filters.some((filter) => filter.kinds?.includes(0))) {

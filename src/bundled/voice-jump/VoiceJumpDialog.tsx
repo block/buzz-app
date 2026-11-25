@@ -47,9 +47,6 @@ export type VoiceJumpScope = Readonly<{
   communityOrigin: string;
 }>;
 
-/** On-device speech gets this many place names as words to listen for. */
-const MAX_HINTS = 100;
-
 type Phase =
   | { kind: "listening" }
   | { kind: "matching" }
@@ -281,15 +278,7 @@ function VoiceJumpBody({
     setCandidates([]);
     setText("");
     setPhase({ kind: "listening" });
-    // Place names help on-device speech hear the names it doesn't know.
-    const hints = placesNow()
-      .filter((place) => place.kind !== "thread")
-      .slice(0, MAX_HINTS)
-      .map((place) => place.name);
-    start({
-      hints,
-      ...(scope ? { community: scope.communityOrigin } : {}),
-    });
+    start(scope ? { community: scope.communityOrigin } : {});
   };
   const listenRef = useRef(listen);
   listenRef.current = listen;
@@ -311,8 +300,6 @@ function VoiceJumpBody({
       phase.message
     ) : dictation.state === "starting" ? (
       <ShimmerText>Starting the microphone…</ShimmerText>
-    ) : dictation.state === "downloading" ? (
-      <ShimmerText>Downloading the speech model…</ShimmerText>
     ) : listening ? (
       <ShimmerText>Listening. Say where to go.</ShimmerText>
     ) : (

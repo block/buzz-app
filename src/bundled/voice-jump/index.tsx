@@ -42,9 +42,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
   // The shortcut pressed while the box is open stops or restarts listening.
   const again: { current: (() => void) | undefined } = { current: undefined };
 
-  // The first opening starts with the recognizer warm.
-  ctx.speech.prepare();
-
   // A modal on its way out, such as this box just after Escape, doesn't count.
   const available = () => {
     const modal = activeModal(document);
@@ -100,11 +97,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         <Suspense fallback={null}>
           <VoiceJumpDialog
             open={isOpen}
-            onOpenChange={(next) => {
-              set(next);
-              // The next opening starts with the recognizer warm again.
-              if (!next) ctx.speech.prepare();
-            }}
+            onOpenChange={set}
             speech={ctx.speech}
             decisions={ctx.decisions}
             session={relay.session}

@@ -19,9 +19,8 @@ Go to a conversation by saying its name.
 
 - It chooses among the channels, DMs, agent chats and threads this device
   already has loaded, and never reads more from the community to do it.
-- The speech provider you chose in Settings hears you. A hosted provider is
-  billed to the community you're in; on-device speech also gets the names of
-  your conversations as words to listen for.
+- The speech provider you chose in Settings hears you, billed to the
+  community you're in.
 - The decisions provider gets what you said with the names, descriptions and
   a few recent messages of up to 200 places, and picks one. It opens a place
   at 50% or more, or at 80% while you're still talking.

@@ -109,7 +109,6 @@ async function mount() {
     },
   } as never);
   ctx.provide("speech", {
-    prepare() {},
     listen(options: ListenOptions) {
       listens.push(options);
       options.onState?.("listening");
@@ -165,9 +164,8 @@ test("⇧⌘J listens, and a sure match opens that conversation while talking", 
   expect(await screen.findByRole("dialog")).toBeInTheDocument();
   await vi.waitFor(() => expect(listens).toHaveLength(1));
   const listen = listens[0] as ListenOptions;
-  // The hosted provider bills the community; on-device hears the names.
+  // The hosted provider bills the community.
   expect(listen.community).toBe(communityOrigin);
-  expect(listen.hints).toEqual(["design", "launch"]);
 
   act(() => listen.onText("take me to design"));
   await vi.waitFor(() =>

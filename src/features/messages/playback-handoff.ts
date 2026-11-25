@@ -23,8 +23,9 @@ type Player = {
   active(): boolean;
   /** Whether the player has left its poster for the video's own frames. */
   started(): boolean;
-  /** Leaves its poster for good: it was handed a video that has played. */
-  start(): void;
+  /** Counts as started: it was handed a video that has. With `posterless`
+   * it leaves its poster for good too. */
+  start(posterless: boolean): void;
   /** Where a still of a frame it was handed lies over its video. */
   still(): HTMLElement | null;
   /** Tells a brief whether a reader holds the playback it took from it. */
@@ -201,11 +202,12 @@ function hold(key: string, player: Player | undefined) {
  * saved preference every player follows.
  *
  * The player taking over never shows or plays anything from before the
- * position. Its poster goes at once. A still of the frame the other player
- * shows lies over its video until the video shows that frame itself, however
- * long it takes to load. And a video still to load is given the position as
- * its start, which the browser seeks to as the metadata loads, before it
- * presents a frame or plays. */
+ * position. Its poster goes at once, where the other player has a frame or a
+ * position to give. A still of the frame the other player shows lies over
+ * its video until the video shows that frame itself, however long it takes
+ * to load. And a video still to load is given the position as its start,
+ * which the browser seeks to as the metadata loads, before it presents a
+ * frame or plays. */
 function hand(from: Player, to: Player) {
   const playback = playbackOf(from);
   // A player still under its own still passes that on: its video has yet to
@@ -219,7 +221,10 @@ function hand(from: Player, to: Player) {
   const { video } = to;
   video.volume = playback.volume;
   video.muted = playback.muted;
-  if (playback.started) to.start();
+  // The poster goes only for something better: the frame, or a position the
+  // poster is no picture of. A video started at 0:00 with no frame yet keeps
+  // it, as the player it comes from does, rather than load dark.
+  if (playback.started) to.start(!!still || playback.seconds > 0);
   // Started now, in the commit of the press that opened or closed the reader,
   // not when the video loads: a browser may refuse sound that starts later,
   // away from the press. One it refuses stays paused at the position.
@@ -335,7 +340,7 @@ export function usePlaybackHandoff(
     active: boolean;
     started: boolean;
     /** Must be stable. */
-    start(): void;
+    start(posterless: boolean): void;
     still: RefObject<HTMLElement | null>;
     onLent?: ((lent: boolean) => void) | undefined;
   },

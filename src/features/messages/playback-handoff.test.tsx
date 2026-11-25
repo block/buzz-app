@@ -155,6 +155,15 @@ it("opens a video that has not played on its poster", async () => {
   expect(reader.video.paused).toBe(true);
 });
 
+it("keeps the poster of a video started at 0:00 that has no frame yet", async () => {
+  const brief = await player();
+  await brief.press("Play video");
+  expect(brief.poster()).toBe(true);
+  const reader = await player({ reader: true });
+  expect(reader.video.paused).toBe(false);
+  expect(reader.poster()).toBe(true);
+});
+
 // React replays a mount in development: the reader hands playback back and
 // takes it again, and the brief's play event from the hand back arrives after.
 it("returns the handed position when the reader closes before its video loads", async () => {

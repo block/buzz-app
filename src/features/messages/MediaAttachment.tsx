@@ -128,9 +128,9 @@ export function MediaAttachment({
   // or a still of the one it was handed until then.
   const [handed, setHanded] = useState(false);
   const still = useRef<HTMLSpanElement>(null);
-  const takeOver = useCallback(() => {
+  const takeOver = useCallback((posterless: boolean) => {
     setStarted(true);
-    setHanded(true);
+    if (posterless) setHanded(true);
   }, []);
   const [failed, setFailed] = useState(false);
   const captured = source ? openingFrame(source) : undefined;

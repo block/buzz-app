@@ -637,6 +637,11 @@ test.describe("Inline", () => {
       muted,
       rate: 0.25,
     });
+    // Frames come a third of a second apart at this speed, and a record of
+    // none would pass below: wait for one shown with nothing over the video.
+    await expect
+      .poll(() => page.evaluate(() => window.readerPlayer.frames.length))
+      .toBeGreaterThan(0);
     // It was never at the start to get here: it reported no position before
     // the brief's and showed no frame from before it, neither in place of
     // the seek nor before it landed. A position can settle on the frame

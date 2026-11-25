@@ -140,6 +140,15 @@ it("keeps the user's choice, and never sends speech elsewhere while it is missin
   expect(second.service.backend()).toBeUndefined();
   await second.plugin("example.speech", {});
   expect(second.service.backend()).toBe("example.speech/main");
+
+  // A default holds too: On this Mac never falls through to a hosted one.
+  const local = await setup(
+    memory({ [SPEECH_PROVIDER_KEY]: ON_DEVICE_SPEECH }),
+    device(false),
+  );
+  await local.plugin("block.builderlab", { id: "builderlab" });
+  expect(local.service.backend()).toBeUndefined();
+  expect(local.service.status()).toBe("unavailable");
 });
 
 it("falls back to the defaults after a plugin retires its saved provider", async () => {

@@ -73,6 +73,9 @@ it("chooses the provider, and tries it with the community it bills", async () =>
   );
   act(() => listen().onState?.("listening"));
   expect(screen.getByRole("status")).toHaveTextContent("Listening…");
+  // The listen keeps its provider, so the choice waits for Stop.
+  await user.click(screen.getByRole("radio", { name: /On this Mac/ }));
+  expect(speech.setBackend).toHaveBeenCalledOnce();
   act(() => listen().onText("hello"));
   expect(screen.getByRole("status")).toHaveTextContent("hello");
   await user.click(screen.getByRole("button", { name: "Stop" }));
@@ -83,6 +86,8 @@ it("chooses the provider, and tries it with the community it bills", async () =>
   });
   expect(screen.getByRole("status")).toHaveTextContent("Hello.");
   expect(screen.getByRole("button", { name: "Start listening" })).toBeEnabled();
+  await user.click(screen.getByRole("radio", { name: /On this Mac/ }));
+  expect(speech.setBackend).toHaveBeenLastCalledWith(ON_DEVICE_SPEECH);
 });
 
 it("shows why a try failed", async () => {

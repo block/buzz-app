@@ -122,8 +122,8 @@ declare module "@deepseek-ai/cordis" {
 export const SPEECH_PROVIDER_KEY = "buzz-speech-provider.v1";
 /** On-device speech's key. It has no slash, so no plugin's key can match. */
 export const ON_DEVICE_SPEECH = "on-device";
-/** Providers that listen, in this order, while the user has not chosen one
- * or their choice is not registered. The first that can listen does. */
+/** Providers that listen, in this order, while the user has not chosen one.
+ * The first that can listen does. */
 export const DEFAULT_SPEECH_PROVIDERS: readonly string[] = [
   "block.builderlab/builderlab",
   ON_DEVICE_SPEECH,
@@ -167,8 +167,8 @@ const nativeOnDevice = (): OnDevice | undefined =>
 
 /** Audio goes to the provider the user chose, or the first default that can
  * listen until they choose. Speech can be private, so no other provider gets
- * it without that choice: while a chosen provider that is not a default is
- * not registered, speech is unavailable rather than sent somewhere else. */
+ * it without that choice: while the chosen provider can't listen, speech is
+ * unavailable rather than sent somewhere else. */
 export class SpeechService extends Service implements Speech {
   private readonly registry;
   private chosen: string | undefined;
@@ -268,13 +268,7 @@ export class SpeechService extends Service implements Speech {
       const status = this.statusOf(key);
       return status === undefined ? undefined : { key, status };
     };
-    const chosen = this.chosen === undefined ? undefined : known(this.chosen);
-    if (chosen) return chosen;
-    if (
-      this.chosen !== undefined &&
-      !DEFAULT_SPEECH_PROVIDERS.includes(this.chosen)
-    )
-      return undefined;
+    if (this.chosen !== undefined) return known(this.chosen);
     const defaults = DEFAULT_SPEECH_PROVIDERS.flatMap((key) => {
       const route = known(key);
       return route ? [route] : [];

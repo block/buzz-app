@@ -108,6 +108,8 @@ export function SpeechSettings({
                 aria-label="Speech provider"
                 value={backend ?? ""}
                 onValueChange={choose}
+                // The listen keeps its provider, so the choice waits for Stop.
+                disabled={listening}
               >
                 {providers.map((provider) => (
                   <Radio

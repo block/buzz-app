@@ -3579,6 +3579,17 @@ html[data-keyboard-navigation] .rawDiff:focus-visible {
   flex: 1;
   background: var(--border-standard);
 }
+/* The channel draws the line over the seam between two rows instead of in the
+   flow, so it can appear after the rows are placed without moving them. It
+   keeps its static top and is centered on it. */
+.feed .newMessages {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 1;
+  margin-block: 0;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
 .activityExpansionRoot {
   display: contents;
 }

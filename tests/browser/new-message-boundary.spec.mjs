@@ -407,20 +407,34 @@ appTest(
       .getByText("New messages", { exact: true })
       .boundingBox();
     const wideHistoryBounds = await history(page).boundingBox();
-    const messageBounds = await history(page)
-      .locator(`[data-message-id="${revisitBoundaryId}"] [data-bubble]`)
-      .boundingBox();
+    // The line is drawn over the gap between two grouped bubbles, so its
+    // label can overlap their padding but never their text.
+    const textAround = (id, which) =>
+      history(page)
+        .locator(`[data-message-id="${id}"] [data-bubble] p`)
+        [which]()
+        .boundingBox();
+    const messageText = await textAround(revisitBoundaryId, "first");
+    const previousText = await textAround(
+      app.histories.get("primary/alpha")[actualBoundaryIndex - 1].id,
+      "last",
+    );
     expect(labelBounds).not.toBeNull();
     expect(wideHistoryBounds).not.toBeNull();
-    expect(messageBounds).not.toBeNull();
+    expect(messageText).not.toBeNull();
+    expect(previousText).not.toBeNull();
     expect(labelBounds.y).toBeGreaterThanOrEqual(wideHistoryBounds.y);
     expect(labelBounds.y + labelBounds.height).toBeLessThanOrEqual(
       wideHistoryBounds.y + wideHistoryBounds.height,
     );
     expect(
       labelBounds.y + labelBounds.height,
-      "the boundary label clears the first unread message bubble",
-    ).toBeLessThanOrEqual(messageBounds.y);
+      "the boundary label clears the first unread message's text",
+    ).toBeLessThanOrEqual(messageText.y);
+    expect(
+      previousText.y + previousText.height,
+      "the boundary label clears the last read message's text",
+    ).toBeLessThanOrEqual(labelBounds.y);
     const revisitPath = testInfo.outputPath("boundary-revisit-grouped.png");
     await history(page).screenshot({ path: revisitPath });
     await testInfo.attach("boundary-revisit-grouped.png", {
@@ -459,18 +473,16 @@ appTest(
     await expect(separator(page)).toHaveText("New messages");
     const bounds = await separator(page).boundingBox();
     const viewport = await history(page).boundingBox();
-    const narrowBubble = await history(page)
-      .locator(`[data-message-id="${revisitBoundaryId}"] [data-bubble]`)
-      .boundingBox();
+    const narrowText = await textAround(revisitBoundaryId, "first");
     expect(bounds).not.toBeNull();
     expect(viewport).not.toBeNull();
-    expect(narrowBubble).not.toBeNull();
+    expect(narrowText).not.toBeNull();
     expect(bounds.x).toBeGreaterThanOrEqual(viewport.x);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(
       viewport.x + viewport.width,
     );
     expect(bounds.y).toBeGreaterThanOrEqual(viewport.y);
-    expect(bounds.y + bounds.height).toBeLessThanOrEqual(narrowBubble.y);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(narrowText.y);
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(
       viewport.y + viewport.height,
     );
@@ -852,6 +864,39 @@ async function holdHead(page, channel) {
   });
   return { reading, release };
 }
+// Records every visible row's top on each real frame. `page.clock` fakes the
+// page's requestAnimationFrame, so the loop uses one kept from before it.
+async function recordRowTops(page) {
+  await page.evaluate(() => {
+    const frame = window.realRequestAnimationFrame;
+    const samples = [];
+    let running = true;
+    const tick = () => {
+      if (!running) return;
+      const tops = {};
+      for (const row of document.querySelectorAll(
+        '[aria-label="Channel message history"] [data-message-id]',
+      ))
+        tops[row.dataset.messageId] = row.getBoundingClientRect().top;
+      samples.push({
+        line: !!document.querySelector("[data-new-messages-boundary]"),
+        tops,
+      });
+      frame(tick);
+    };
+    frame(tick);
+    window.rowTops = {
+      count: () => samples.length,
+      stop() {
+        running = false;
+        return samples;
+      },
+    };
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.rowTops.count()))
+    .toBeGreaterThan(5);
+}
 const pageOf = (page, channel) =>
   page.evaluate((channel) => {
     const history = window.fixtureRelay
@@ -894,6 +939,9 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
     "marks new messages when the revisit head read is slow",
     async ({ page, app }) => {
       // Installed before the app loads, so every timer is the page clock's.
+      await page.addInitScript(() => {
+        window.realRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+      });
       await page.clock.install();
       await open(page, app);
       await go(page, "Beta");
@@ -919,10 +967,20 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
           refreshing: true,
           rows: 18,
         });
+        await settle(page);
+        await recordRowTops(page);
       } finally {
         head.release();
       }
       await expectBoundaryAt(page, arrivals);
+      const samples = await page.evaluate(() => window.rowTops.stop());
+      // The line arrives after the rows are already painted, and nothing
+      // on screen moves when it does.
+      expect(samples.some(({ line }) => !line)).toBe(true);
+      expect(samples.some(({ line }) => line)).toBe(true);
+      for (const [id, top] of Object.entries(samples[0].tops))
+        for (const sample of samples)
+          if (id in sample.tops) expect(sample.tops[id]).toBeCloseTo(top, 0);
       await expectRead(page, arrivals);
     },
   );

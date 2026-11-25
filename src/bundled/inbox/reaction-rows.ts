@@ -2,7 +2,7 @@ import { groupReactions } from "../../features/relay/fold";
 import type { InboxReaction } from "../../features/relay/inbox-reactions";
 import type { RelayEvent } from "../../features/relay/events";
 
-/** Apply the sender filter before deciding which emoji are shared. */
+/** Apply the who-tab filter before deciding which emoji are shared. */
 export function reactionRows(
   items: readonly InboxReaction[],
   include: (authorId: string) => boolean = () => true,

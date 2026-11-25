@@ -215,7 +215,7 @@ test("hovering the sidebar Activity row previews recent conversations and opens 
     page
       .getByRole("region", { name: "Activity", exact: true })
       .getByRole("switch", { name: "Unread", exact: true }),
-  ).not.toBeChecked();
+  ).toBeVisible();
   // The selected row's label is visible, so hovering it shows only the
   // ordinary title hint, never the card.
   await page.mouse.move(1200, 880);

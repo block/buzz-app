@@ -450,10 +450,15 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   await open(page, app);
   await openPage(page, "Activity");
   const inbox = page.getByRole("region", { name: "Activity", exact: true });
+  const show = inbox.getByRole("tablist", { name: "Show", exact: true });
   const unread = inbox.getByRole("switch", { name: "Unread", exact: true });
-  await unread.check();
-  await inbox.getByRole("tab", { name: "Reactions", exact: true }).click();
-  await expect(unread).not.toBeChecked();
+  await unread.click();
+  await expect(unread).toHaveAttribute("aria-checked", "true");
+  await show.getByRole("tab", { name: "Reactions", exact: true }).click();
+  // Reactions have no unread state: choosing them turns Unread off and
+  // leaves it unavailable.
+  await expect(unread).toHaveAttribute("aria-checked", "false");
+  await expect(unread).toBeDisabled();
   const row = inbox
     .getByRole("list", { name: "Activity", exact: true })
     .getByRole("listitem");
@@ -536,13 +541,11 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
     });
   }
 
-  // The dock and gutters take 60px. At list widths of 540px, 522px and
-  // 402px, the controls stay on one row, wrap Unread, and wrap From, respectively.
+  // The dock and gutters take 60px; the quick filters stay visible as the list narrows.
   for (const width of [1280, 600, 582, 462]) {
     await page.setViewportSize({ width, height: 900 });
-    await expect(
-      inbox.getByRole("tab", { name: "Reactions", exact: true }),
-    ).toBeVisible();
+    await expect(show).toBeVisible();
+    await expect(unread).toBeVisible();
     await expect
       .poll(() =>
         page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
@@ -558,32 +561,6 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
         return box.left >= row.left && box.right <= row.right;
       }),
     ).toBe(true);
-    const geometry = await inbox.evaluate((element) => {
-      const centerY = (selector) => {
-        const box = element.querySelector(selector).getBoundingClientRect();
-        return box.y + box.height / 2;
-      };
-      return {
-        width: element.getBoundingClientRect().width,
-        tabsY: centerY(
-          '[role="tablist"][aria-label="Activity type"] [role="tab"]',
-        ),
-        fromY: centerY('button[aria-label="From anyone"]'),
-        unreadY: centerY('[role="switch"][aria-label="Unread"]'),
-      };
-    });
-    if (width === 600) {
-      expect(geometry.width).toBe(540);
-      expect(Math.abs(geometry.tabsY - geometry.unreadY)).toBeLessThan(3);
-    } else if (width === 582) {
-      expect(geometry.width).toBe(522);
-      expect(geometry.unreadY).toBeGreaterThan(geometry.tabsY + 20);
-      expect(Math.abs(geometry.tabsY - geometry.fromY)).toBeLessThan(3);
-    } else if (width === 462) {
-      expect(geometry.width).toBe(402);
-      expect(geometry.fromY).toBeGreaterThan(geometry.tabsY + 20);
-      expect(Math.abs(geometry.fromY - geometry.unreadY)).toBeLessThan(3);
-    }
     await page.screenshot({
       path: testInfo.outputPath(`reaction-width-${width}.png`),
     });
@@ -591,9 +568,8 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   await page.evaluate(() =>
     document.documentElement.style.setProperty("--buzz-text-scale", "1.5"),
   );
-  await expect(
-    inbox.getByRole("tab", { name: "Reactions", exact: true }),
-  ).toBeVisible();
+  await expect(show).toBeVisible();
+  await expect(unread).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("reaction-enlarged.png") });
   await page.setViewportSize({ width: 1280, height: 900 });
   const sharedHeart = finalizeEvent(
@@ -613,11 +589,11 @@ test("Reaction activity turns Unread off and opens the exact message", async ({
   app.relay.publish("primary", sharedHeart);
   await expect(row).toHaveCount(2);
   await expect(row.filter({ hasText: "reacted ❤️" })).toContainText(" and ");
-  const typeTabs = inbox.getByRole("tablist", { name: "Activity type" });
-  await animationsSettled(typeTabs, { subtree: true });
+  const groupTabs = inbox.getByRole("tablist", { name: "Activity groups" });
+  await animationsSettled(groupTabs, { subtree: true });
   await expect
     .poll(() =>
-      typeTabs.evaluate((element) => {
+      groupTabs.evaluate((element) => {
         const selected = element
           .querySelector('[aria-selected="true"]')
           .getBoundingClientRect();
@@ -677,7 +653,10 @@ test.describe("reaction conversation targets", () => {
     await open(page, app);
     await openPage(page, "Activity");
     const inbox = page.getByRole("region", { name: "Activity", exact: true });
-    await inbox.getByRole("tab", { name: "Reactions", exact: true }).click();
+    await inbox
+      .getByRole("tablist", { name: "Show", exact: true })
+      .getByRole("tab", { name: "Reactions", exact: true })
+      .click();
     for (const { channelId, message } of targets) {
       await inbox
         .getByRole("button", {

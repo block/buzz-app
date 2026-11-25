@@ -675,7 +675,7 @@ test.extend({ companionFixture: true })(
       const body = page.getByRole("region", { name, exact: true });
       await expect(
         name === "Activity"
-          ? body.getByRole("button", { name: /^From / })
+          ? body.getByRole("switch", { name: "Unread", exact: true })
           : body.getByRole("heading", { name, exact: true }),
       ).toBeVisible();
       return body;

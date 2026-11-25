@@ -42,7 +42,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
   open("open-mentions", "Open mentions in Activity", "m", 40, {
     activity: "mentions",
   });
-  open("open-dms", "Open DMs in Activity", "k", 50, { activity: "dms" });
   ctx.pages.register({
     id: "inbox",
     title: "Activity",

@@ -20,40 +20,17 @@ test.use({
   screenshot: "off",
 });
 
-async function choose(page, inbox, control, option) {
-  if (control === "Activity type") {
-    const tab = inbox
-      .getByRole("tablist", { name: "Activity type" })
-      .getByRole("tab", {
-        name: option === "All activity" ? "All" : option,
-        exact: true,
-      });
-    await tab.click();
-    await expect(tab).toHaveAttribute("aria-selected", "true");
-    return;
-  }
-  // Sender: the From menu's single choice.
-  await inbox.getByRole("button", { name: /^From / }).click();
-  const menu = page.getByRole("menu", { name: "From" });
-  await expect(menu).toBeVisible();
-  await menu
-    .getByRole("menuitemradio", {
-      name:
-        option === "Humans"
-          ? "People"
-          : option === "Everyone"
-            ? "Anyone"
-            : option,
-      exact: true,
-    })
-    .click();
-  await expect(menu).toHaveCount(0);
-}
+const showTab = (inbox, name) =>
+  inbox
+    .getByRole("tablist", { name: "Show", exact: true })
+    .getByRole("tab", { name, exact: true });
+const unreadSwitch = (inbox) =>
+  inbox.getByRole("switch", { name: "Unread", exact: true });
+const chooseShow = (inbox, name) => showTab(inbox, name).click();
 
 const markedNotice = (page) =>
   page.getByRole("dialog", { name: "Marked as read", exact: true });
-const unreadSwitch = (inbox) =>
-  inbox.getByRole("switch", { name: "Unread", exact: true });
+const toggleUnreadOnly = (inbox) => unreadSwitch(inbox).click();
 // Typing in a just-mounted composer's first instant can be dropped on the
 // unchanged base too, which these tests do not cover: retype until it lands.
 const typeDraft = (editor, text) =>
@@ -73,11 +50,9 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
   const rows = inbox
     .getByRole("list", { name: "Activity", exact: true })
     .getByRole("listitem");
-  const trigger = inbox.getByRole("button", {
-    name: /^From /,
-  });
+  const unread = unreadSwitch(inbox);
 
-  await expect(trigger).toHaveAccessibleName("From anyone");
+  await expect(unread).toHaveAttribute("aria-checked", "false");
   await expect(rows).toHaveCount(1);
   // The unread dot is the row's ✓: hover turns the dot into the check, in the
   // dot's place, and the date stays.
@@ -105,9 +80,13 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
   await expect(dot).toHaveCSS("opacity", "0");
   await expect(date).toHaveCSS("opacity", "1");
 
-  await choose(page, inbox, "Activity type", "Mentions");
-  await choose(page, inbox, "Sender", "Agents");
-  await unreadSwitch(inbox).click();
+  await chooseShow(inbox, "Mentions");
+  await toggleUnreadOnly(inbox);
+  await expect(showTab(inbox, "Mentions")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(unread).toHaveAttribute("aria-checked", "true");
   await rows.getByRole("button", { name: /^Open / }).focus();
   await page.keyboard.press("Shift+F10");
   // An unread row offers only Mark as read.
@@ -124,47 +103,25 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
   await expect(
     inbox.getByRole("button", { name: "Clear filters", exact: true }),
   ).toBeVisible();
-  await unreadSwitch(inbox).click();
+  await toggleUnreadOnly(inbox);
   await expect(rows).toHaveCount(1);
   await expect(rows.getByRole("img", { name: "Unread" })).toHaveCount(0);
   // A read row shows its date and no ✓.
   await expect(
     rows.getByRole("button", { name: /^Mark as read / }),
   ).toHaveCount(0);
-  await expect(trigger).toHaveAccessibleName("From agents");
+  await expect(unread).toHaveAttribute("aria-checked", "false");
   await page.reload();
   await openPage(page, "Activity");
   await expect(rows).toHaveCount(1);
-  await expect(trigger).toHaveAccessibleName("From agents");
-  await expect(
-    inbox
-      .getByRole("tablist", { name: "Activity type" })
-      .getByRole("tab", { name: "Mentions", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(unreadSwitch(inbox)).toHaveAttribute("aria-checked", "false");
+  await expect(showTab(inbox, "Mentions")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(unread).toHaveAttribute("aria-checked", "false");
   await expect(conversations(inbox)).toHaveCount(0);
-  // Keep the focused From choice while relay activity updates rows.
-  await trigger.focus();
-  await page.keyboard.press("Enter");
-  const menu = page.getByRole("menu", { name: "From" });
-  await expect(menu.getByRole("menuitemradio")).toHaveText([
-    "Anyone",
-    "People",
-    "Agents",
-  ]);
-  const people = menu.getByRole("menuitemradio", {
-    name: "People",
-    exact: true,
-  });
-  // Keys before the opened menu takes focus would go to the trigger.
-  await expect
-    .poll(() =>
-      page.evaluate(() => !!document.activeElement?.closest('[role="menu"]')),
-    )
-    .toBe(true);
-  await page.keyboard.press("End");
-  await page.keyboard.press("ArrowUp");
-  await expect(people).toBeFocused();
+  // Keep the focused Unread switch while relay activity updates rows.
+  await unread.focus();
   app.append(
     "primary",
     channel,
@@ -176,14 +133,13 @@ test("Activity filter choices combine, persist, and hold menu focus through row 
     [["p", app.viewer]],
   );
   await expect(rows.getByRole("img", { name: "Unread" })).toHaveCount(1);
-  await expect(people).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(menu).toHaveCount(0);
-  await expect(trigger).toHaveAccessibleName("From people");
-  await expect(trigger).toBeFocused();
+  await expect(unread).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(unread).toHaveAttribute("aria-checked", "true");
+  await expect(unread).toBeFocused();
 });
 
-test("the toolbar keeps tabs, From and Unread on one row in a 540px list and wraps Unread first, under All", async ({
+test("the toolbar keeps the who-tabs and quick filters on one row when wide and inside the toolbar when narrower", async ({
   page,
   app,
 }) => {
@@ -191,108 +147,69 @@ test("the toolbar keeps tabs, From and Unread on one row in a 540px list and wra
   await page.goto(app.origin);
   await openPage(page, "Activity");
   const inbox = page.getByRole("region", { name: "Activity", exact: true });
-  const types = inbox.getByRole("tablist", { name: "Activity type" });
-  const trigger = inbox.getByRole("button", { name: /^From / });
+  const groups = inbox.getByRole("tablist", { name: "Activity groups" });
+  const show = inbox.getByRole("tablist", { name: "Show", exact: true });
+  const unread = unreadSwitch(inbox);
   await expect(
     inbox
       .getByRole("list", { name: "Activity", exact: true })
       .getByRole("listitem"),
   ).toHaveCount(1);
-  // Drafts left Activity: the four activity types and Reactions remain.
-  await expect(types.getByRole("tab")).toHaveText([
+  expect(
+    await groups
+      .getByRole("tab")
+      .evaluateAll((tabs) => tabs.map((tab) => tab.title)),
+  ).toEqual(["All", "My team", "Others"]);
+  await expect(show.getByRole("tab")).toHaveText([
     "All",
     "Threads",
     "Mentions",
-    "DMs",
     "Reactions",
   ]);
-  // From's label stays short; its name says the choice, and a fill shows a
-  // narrowing choice.
-  await expect(trigger).toHaveText("From");
-  await expect(trigger).toHaveAccessibleName("From anyone");
-  await expect(trigger).toHaveAttribute("data-variant", "ghost");
+  await expect(unread).toBeVisible();
   const layout = () =>
     inbox.evaluate((root) => {
       const toolbar = root.querySelector(
-        'header:has([role="tablist"][aria-label="Activity type"])',
+        'header:has([role="tablist"][aria-label="Activity groups"])',
       );
       const box = (element) => element.getBoundingClientRect().toJSON();
-      const textBox = (element) => {
-        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-        let node = walker.nextNode();
-        while (node && !node.textContent.trim()) node = walker.nextNode();
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        return range.getBoundingClientRect().toJSON();
-      };
-      const tab = (name) =>
-        [...toolbar.querySelectorAll('[role="tab"]')].find(
-          (element) => element.textContent === name,
-        );
       const style = getComputedStyle(toolbar);
       return {
         pane: toolbar.parentElement.getBoundingClientRect().width,
         toolbar: box(toolbar),
         inset: parseFloat(style.paddingInlineEnd),
-        tabText: textBox(tab("All")).left,
-        bell: root.querySelector(".panel-header svg").getBoundingClientRect()
-          .left,
-        tabGap: textBox(tab("Mentions")).left - textBox(tab("Threads")).right,
-        fromGap:
-          textBox(toolbar.querySelector('button[aria-haspopup="menu"]')).left -
-          textBox(tab("Reactions")).right,
-        unreadText: textBox(toolbar.querySelector(".buzz-switch")).left,
         controls: [
-          '[role="tablist"][aria-label="Activity type"]',
-          'button[aria-haspopup="menu"]',
-          '.buzz-switch:has([role="switch"])',
+          '[role="tablist"][aria-label="Activity groups"]',
+          '[role="tablist"][aria-label="Show"]',
+          '[role="switch"]',
         ].map((selector) => box(toolbar.querySelector(selector))),
       };
     });
-  // The first tab's text starts on the title bar's bell.
+  const middle = (box) => box.top + box.height / 2;
   const wide = await layout();
-  expect(Math.abs(wide.tabText - wide.bell)).toBeLessThan(1);
+  // Wide: the tabs, then Show and Unread after them, on one row inside the
+  // toolbar's inset.
+  const [tabs, kinds, unreadBox] = wide.controls;
+  expect(Math.abs(middle(tabs) - middle(kinds))).toBeLessThan(2);
+  expect(Math.abs(middle(kinds) - middle(unreadBox))).toBeLessThan(2);
+  expect(kinds.left).toBeGreaterThanOrEqual(tabs.right);
+  expect(unreadBox.left).toBeGreaterThanOrEqual(kinds.right);
+  expect(
+    wide.toolbar.right - wide.inset - unreadBox.right,
+  ).toBeGreaterThanOrEqual(0);
   // Size the list pane to 540px: the sidebar keeps its width as the window narrows.
   await page.setViewportSize({
     width: Math.round(1280 - (wide.pane - 540)),
     height: 720,
   });
   await expect.poll(async () => Math.round((await layout()).pane)).toBe(540);
-  const mid = await layout();
-  const [tabs, from, unread] = mid.controls;
-  const middle = (box) => box.top + box.height / 2;
-  // One row, left-aligned: tabs, then From, then Unread right after it.
-  expect(Math.abs(middle(tabs) - middle(from))).toBeLessThan(2);
-  expect(Math.abs(middle(tabs) - middle(unread))).toBeLessThan(2);
-  // From reads as part of the tab group: about one tab gap after the last tab, Reactions.
-  expect(from.left).toBeGreaterThan(tabs.right);
-  expect(mid.fromGap - mid.tabGap).toBeLessThanOrEqual(8);
-  // Unread follows From at the row's control gap, not pushed to the far edge.
-  expect(unread.left).toBeGreaterThan(from.right);
-  expect(unread.left - from.right).toBeLessThanOrEqual(mid.fromGap + 8);
-  // With the Reactions tab, a 540px list still fits the row inside its inset,
-  // with little room to spare; the gap check above keeps it left-aligned.
-  expect(mid.toolbar.right - mid.inset - unread.right).toBeGreaterThanOrEqual(
-    0,
-  );
-  for (const width of [420, 390, 280]) {
-    await page.setViewportSize({ width, height: 720 });
-    await expect(trigger).toBeVisible();
+  // Narrower, the quick filters may wrap to their own line, but every control
+  // stays inside the toolbar and none overlap.
+  for (const width of [null, 420, 390, 280]) {
+    if (width) await page.setViewportSize({ width, height: 720 });
+    await expect(show).toBeVisible();
+    await expect(unread).toBeVisible();
     const narrow = await layout();
-    const [tabs, from, unread] = narrow.controls;
-    // Unread wraps first, to the start of the next line under "All"; once From
-    // wraps too, it starts that line instead and Unread follows it. Beside the
-    // dock, a 280px window is too narrow for both, so Unread takes a third line.
-    expect(unread.top).toBeGreaterThanOrEqual(tabs.bottom - 1);
-    if (from.top < tabs.bottom)
-      expect(Math.abs(narrow.unreadText - narrow.tabText)).toBeLessThan(1);
-    else {
-      expect(Math.abs(from.left - narrow.tabText)).toBeLessThan(1);
-      if (unread.top < from.bottom)
-        expect(Math.abs(middle(from) - middle(unread))).toBeLessThan(2);
-      else expect(Math.abs(narrow.unreadText - narrow.tabText)).toBeLessThan(1);
-    }
-    expect(from.left).toBeGreaterThanOrEqual(narrow.toolbar.left);
     narrow.controls.forEach((control, index) => {
       expect(control.left).toBeGreaterThanOrEqual(narrow.toolbar.left);
       expect(control.right).toBeLessThanOrEqual(narrow.toolbar.right);
@@ -318,7 +235,7 @@ test("All caught up: Undo returns the row unread, and Show all turns Unread off"
   const list = inbox.getByRole("list", { name: "Activity", exact: true });
   const rows = list.getByRole("listitem");
   await expect(rows).toHaveCount(1);
-  await unreadSwitch(inbox).click();
+  await toggleUnreadOnly(inbox);
   await expect(rows).toHaveCount(1);
   await rows.hover();
   await rows.getByRole("button", { name: /^Mark as read / }).click();
@@ -343,7 +260,7 @@ test("All caught up: Undo returns the row unread, and Show all turns Unread off"
   await expect(unreadSwitch(inbox)).toHaveAttribute("aria-checked", "false");
   await expect(rows).toHaveCount(1);
   await expect(rows.getByRole("img", { name: "Unread" })).toHaveCount(0);
-  await expect(inbox.getByRole("button", { name: /^From / })).toBeFocused();
+  await expect(unreadSwitch(inbox)).toBeFocused();
 });
 
 // Browser coverage proves Activity/thread/composer wiring: sending leaves both open.
@@ -422,7 +339,7 @@ test("under Unread, a neighbor's menu Mark as read keeps the open draft and Undo
     el.dataset.retentionMarker = "original-editor";
   });
   // The open conversation is read now, but stays listed under Unread.
-  await unreadSwitch(inbox).click();
+  await toggleUnreadOnly(inbox);
   await expect(rows).toHaveCount(2);
   await expect(thread).toHaveAttribute("data-selected", "true");
   await expect(next.getByRole("img", { name: "Unread" })).toBeVisible();
@@ -585,8 +502,8 @@ test("incoming replies and mentions update the open conversation without replaci
     "original-composer",
   );
   // The conversation stays open while the type tabs change.
-  await choose(page, inbox, "Activity type", "Threads");
-  await choose(page, inbox, "Activity type", "Mentions");
+  await chooseShow(inbox, "Threads");
+  await chooseShow(inbox, "Mentions");
   await expect(detail).toHaveCount(1);
   await expect(editor).toHaveText("Unsent mention retention draft");
   app.append(
@@ -634,24 +551,20 @@ test("same-account windows reconcile filters without reload", async ({
       .getByRole("listitem");
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
-    await choose(page, inbox, "Activity type", "Mentions");
-    await choose(page, inbox, "Sender", "Agents");
-    await unreadSwitch(inbox).click();
-    await expect(
-      sibling
-        .getByRole("tablist", { name: "Activity type" })
-        .getByRole("tab", { name: "Mentions", exact: true }),
-    ).toHaveAttribute("aria-selected", "true");
-    await expect(
-      sibling.getByRole("button", { name: /^From / }),
-    ).toHaveAccessibleName("From agents");
+    await chooseShow(inbox, "Mentions");
+    await toggleUnreadOnly(inbox);
+    await expect(showTab(sibling, "Mentions")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await expect(unreadSwitch(sibling)).toHaveAttribute("aria-checked", "true");
-    await unreadSwitch(sibling).click();
+    await toggleUnreadOnly(sibling);
     await expect(unreadSwitch(inbox)).toHaveAttribute("aria-checked", "false");
-    await choose(other, sibling, "Sender", "Everyone");
-    await expect(
-      inbox.getByRole("button", { name: /^From / }),
-    ).toHaveAccessibleName("From anyone");
+    await chooseShow(sibling, "All");
+    await expect(showTab(inbox, "All")).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await expect(rows).toHaveCount(1);
     await expect(siblingRows).toHaveCount(1);
   } finally {

@@ -143,8 +143,18 @@ if that desktop app is up and running.
   that support tasks, **⋯ → New task** works even when the pencil is hidden.
   Plugins can add actions after **View channel details** in a Solo channel’s
   **⋯** menu.
-- **Activity** collects your mentions, DMs, chat replies and reactions.
-  **Mute** on a conversation silences everything but mentions.
+- **Activity** collects your mentions, DMs, chat replies and reactions. Tabs
+  narrow it by who: **All**, **My agents** (shown when you have agents), **My
+  team** and **Others**. Under each tab is what's unread there: All shows a
+  count, and the others show the faces of who it's from, or **All read**. My
+  team is everyone who's a member of one channel you choose, people and agents
+  alike, and shows their activity from anywhere, not just that channel; the
+  first time you open it, it asks for the channel, and right-clicking the tab
+  changes it. Others is everyone outside your team and your agents. On the
+  right, **All** and the **Threads**, **Mentions** and **Reactions** icons
+  narrow any tab by what happened, and **Unread** shows only what you haven't
+  read. **Mute** on a conversation silences everything but
+  mentions.
 - **Search** supports `from:`, `in:#channel`, `in:@person`, `after:`,
   `before:`, `"exact phrase"` and `-word`; type `?` for the full list. `ask:`
   sends the query to your default agent as a new chat.

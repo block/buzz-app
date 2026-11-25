@@ -1,114 +1,170 @@
-import type { ReactNode, Ref } from "react";
+import type { ComponentProps, ReactNode, Ref } from "react";
 import styles from "./Inbox.module.css";
-import { Button } from "../../shared/design-system/ui/Button";
+import { AvatarStack } from "../../shared/design-system/ui/AvatarStack";
 import { Switch } from "../../shared/design-system/ui/Switch";
-import { Tabs } from "../../shared/design-system/ui/Tabs";
 import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-} from "../../shared/design-system/ui/Menu";
-import { CaretDownIcon } from "../../shared/design-system/icons";
+  Tabs,
+  type TabAction,
+  type TabItem,
+} from "../../shared/design-system/ui/Tabs";
+import {
+  AtIcon,
+  CheckIcon,
+  SmileyIcon,
+  ThreadIcon,
+} from "../../shared/design-system/icons";
 
-export type ActivityFilter =
-  | "all"
-  | "threads"
-  | "mentions"
-  | "dms"
-  | "reactions";
-export type SenderFilter = "everyone" | "humans" | "agents";
-const views = [
+/** What happened: a link or shortcut can open any of these. */
+export type ActivityKind = "all" | "threads" | "mentions" | "reactions";
+/** Whose activity: Others is everyone outside My team and your agents. */
+export type ActivityGroup = "all" | "agents" | "team" | "others";
+// All in words, then each kind as an icon named by its tooltip.
+const kinds: TabItem<ActivityKind>[] = [
   { value: "all", label: "All" },
-  { value: "threads", label: "Threads" },
-  { value: "mentions", label: "Mentions" },
-  { value: "dms", label: "DMs" },
-  { value: "reactions", label: "Reactions" },
-] as const;
-const senders = [
-  { value: "everyone", label: "Anyone" },
-  { value: "humans", label: "People" },
-  { value: "agents", label: "Agents" },
-] as const satisfies readonly { value: SenderFilter; label: string }[];
+  {
+    value: "threads",
+    label: "Threads",
+    icon: <ThreadIcon size="1rem" />,
+    labelHidden: true,
+  },
+  {
+    value: "mentions",
+    label: "Mentions",
+    icon: <AtIcon size="1rem" />,
+    labelHidden: true,
+  },
+  {
+    value: "reactions",
+    label: "Reactions",
+    icon: <SmileyIcon size="1rem" />,
+    labelHidden: true,
+  },
+];
+
+/** A group's unread authors, newest first; undefined while still loading. */
+export type GroupSummary =
+  | {
+      avatars: ComponentProps<typeof AvatarStack>["items"];
+      unread: number;
+    }
+  | undefined;
+
+const unreadText = (unread: number) =>
+  unread ? `${unread} unread` : "All read";
 
 /**
- * Type tabs, From and Unread as one left-aligned group, like Slack's Activity,
- * so Unread stays in view on a wide page. From's visible label stays short so
- * the bar fits one row in a narrow list; its name says the choice, and a fill
- * shows when it narrows the list.
+ * Who-tabs, each over a summary of what is unread in it, then one-click
+ * controls at the end: what happened, and Unread. All counts what is unread;
+ * the other tabs show whose it is.
  */
 export function InboxFilters({
-  view,
-  sender,
+  group,
+  all,
+  agents,
+  team,
+  others,
+  myTeam,
+  onReselect,
+  kind,
   unreadOnly,
-  triggerRef,
-  onViewChange,
-  onSenderChange,
+  unreadRef,
+  onGroupChange,
+  onKindChange,
   onUnreadChange,
   status,
 }: {
-  view: ActivityFilter;
-  sender: SenderFilter;
+  group: ActivityGroup;
+  all: GroupSummary;
+  /** Absent hides My agents: it shows only for someone with agents. */
+  agents: GroupSummary | null;
+  /** Null until a team channel is chosen. */
+  team: GroupSummary | null;
+  others: GroupSummary;
+  myTeam: readonly TabAction[];
+  /** Choosing the current tab again, as when leaving My team's setup. */
+  onReselect(): void;
+  kind: ActivityKind;
   unreadOnly: boolean;
-  triggerRef: Ref<HTMLButtonElement>;
-  onViewChange(view: ActivityFilter): void;
-  onSenderChange(sender: SenderFilter): void;
+  /** Unread, where focus goes when the control it was on goes away. */
+  unreadRef: Ref<HTMLElement>;
+  onGroupChange(group: ActivityGroup): void;
+  onKindChange(kind: ActivityKind): void;
   onUnreadChange(checked: boolean): void;
-  /** Refresh status, sharing the last line with Unread so it never adds one. */
+  /** Refresh status, between the tabs and the controls so it never adds a line. */
   status?: ReactNode;
 }) {
-  const from = senders.find((entry) => entry.value === sender) ?? senders[0];
-  const fromLabel = `From ${from.label.toLowerCase()}`;
+  const summary = (
+    value: Exclude<ActivityGroup, "all">,
+    label: string,
+    shown: GroupSummary | null,
+    actions?: readonly TabAction[],
+  ): TabItem<ActivityGroup> => ({
+    value,
+    label,
+    ...(actions ? { actions } : {}),
+    ...(shown === null
+      ? { detail: "Set up", description: "No team yet" }
+      : shown === undefined
+        ? { detail: null }
+        : {
+            detail: shown.unread ? (
+              <AvatarStack size="small" items={shown.avatars} />
+            ) : (
+              <>
+                <CheckIcon size="0.875rem" />
+                All read
+              </>
+            ),
+            description: unreadText(shown.unread),
+          }),
+  });
+  const groups: TabItem<ActivityGroup>[] = [
+    {
+      value: "all",
+      label: "All",
+      ...(all
+        ? {
+            detail: unreadText(all.unread),
+            description: unreadText(all.unread),
+          }
+        : { detail: null }),
+    },
+    ...(agents === null ? [] : [summary("agents", "My agents", agents)]),
+    summary("team", "My team", team, myTeam),
+    summary("others", "Others", others),
+  ];
   return (
     <div className={styles.filters}>
       <div className={styles.typeTabs}>
         <Tabs
-          label="Activity type"
+          label="Activity groups"
           variant="panel"
           size="sm"
-          value={view}
-          items={views}
-          onValueChange={onViewChange}
+          value={group}
+          items={groups}
+          onValueChange={onGroupChange}
+          onReselect={onReselect}
         />
       </div>
-      <MenuRoot>
-        <MenuTrigger
-          ref={triggerRef}
-          render={
-            <Button
-              size="sm"
-              variant={sender === "everyone" ? "ghost" : "subtle"}
-              aria-label={fromLabel}
-              title={fromLabel}
-            >
-              From
-              <CaretDownIcon size="1rem" />
-            </Button>
-          }
-        />
-        <MenuPopup
-          aria-label="From"
-          style={{ maxHeight: "var(--available-height)" }}
-        >
-          <MenuRadioGroup
-            value={sender}
-            onValueChange={(value) => onSenderChange(value as SenderFilter)}
-          >
-            {senders.map(({ value, label }) => (
-              <MenuRadioItem key={value} value={value} closeOnClick>
-                {label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuPopup>
-      </MenuRoot>
-      <Switch
-        label="Unread"
-        checked={unreadOnly}
-        onCheckedChange={onUnreadChange}
-      />
       {status}
+      <div className={styles.quickFilters}>
+        <Tabs
+          label="Show"
+          variant="segmented"
+          size="sm"
+          value={kind}
+          items={kinds}
+          onValueChange={onKindChange}
+        />
+        {/* Reactions have no unread state, so the choice doesn't apply. */}
+        <Switch
+          ref={unreadRef}
+          label="Unread"
+          checked={unreadOnly}
+          disabled={kind === "reactions"}
+          onCheckedChange={onUnreadChange}
+        />
+      </div>
     </div>
   );
 }

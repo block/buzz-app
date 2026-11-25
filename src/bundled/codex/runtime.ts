@@ -94,6 +94,7 @@ import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
 import {
   abortable as readUntilAborted,
   MemoryReads,
+  ownerProposals,
 } from "../../features/agent-harness/core-memory";
 import { SessionControls } from "../../features/agent-harness/session-control";
 import type {
@@ -3666,6 +3667,7 @@ export class CodexRuntime {
           check();
           return listing;
         },
+        proposals: (slug) => ownerProposals(this.reads(agent.key), slug),
         remembered: () => {
           const reads = this.reads(agent.key);
           if (reads) this.memoryReads.forget(reads.connection, agent.pubkey);

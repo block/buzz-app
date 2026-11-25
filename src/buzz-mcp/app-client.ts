@@ -2,7 +2,7 @@
 // reads through its Agents handle, files are read as its plugin reads them, and
 // memory is read back through the owner's own session, to whom it is
 // encrypted.
-import type { BuzzClient, Memories } from "./client";
+import type { BuzzClient, Memories, Proposal } from "./client";
 import { nativeToolClient } from "../features/agents/tool-operation";
 import { prepareAttachment } from "../features/messages/prepare-attachment";
 import { imageType } from "../features/relay/attachment-limits";
@@ -41,6 +41,8 @@ export function appClient(
     /** As `BuzzClient.signingAuthority`; undefined when unknown. */
     signingAuthority?: string | null | undefined;
     memories(slug?: string): Promise<Memories>;
+    /** The owner's proposals to the agent, where the owner's host reads them. */
+    proposals?(slug?: string): Promise<readonly Proposal[]>;
     /** Forget a read that may have started before a successful memory write. */
     remembered?(): void;
     /** Reject operations after the owning turn or community has ended. */
@@ -305,6 +307,16 @@ export function appClient(
       check();
       return result;
     },
+    ...(options.proposals
+      ? {
+          proposals: async (slug?: string) => {
+            check();
+            const result = await options.proposals?.(slug);
+            check();
+            return result ?? [];
+          },
+        }
+      : {}),
     remember: async (slug, body, after) => {
       check();
       await agent.remember(slug, body, after);

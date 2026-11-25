@@ -6,6 +6,7 @@ import {
   memoryResponseText,
   type MemoryReader,
   type MemoryListing,
+  type ProposalSource,
 } from "../agents/memory";
 import { publicationRefusal } from "../developer/traffic";
 import { migrationSource } from "./migration";
@@ -123,6 +124,7 @@ export interface ReadTransport {
   readonly artifactIncremental?: ArtifactIncrementalReader;
   readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
+  readonly tableProposals?: ProposalSource;
   /** Session-scoped owner proof, not an arbitrary signing capability. */
   readonly authorizeAgentLog?: (
     target: { id: string; pubkey: string; relayUrl: string },

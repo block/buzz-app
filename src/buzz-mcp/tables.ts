@@ -69,7 +69,7 @@ export const TABLE_HANDLERS: Readonly<
   async tables_list(client) {
     const [{ entries, partial }, proposals] = await Promise.all([
       client.memories(),
-      client.proposals?.() ?? [],
+      (client.proposals?.() ?? Promise.resolve([])).catch(() => undefined),
     ]);
     const adopted = new Map<string, Memory>();
     const rows = new Map<string, number>();
@@ -83,7 +83,7 @@ export const TABLE_HANDLERS: Readonly<
       const schema = parseAdopted(entry.body);
       return `${id} "${schema.name}" ${rows.get(id) ?? 0} rows`;
     });
-    for (const proposal of proposals) {
+    for (const proposal of proposals ?? []) {
       const id = slugTable(proposal.slug);
       if (!id || proposal.slug !== proposalSlug(id)) continue;
       const current = adopted.get(id);
@@ -98,9 +98,13 @@ export const TABLE_HANDLERS: Readonly<
       );
     }
     const list = lines.join("\n") || "No tables.";
-    return partial
-      ? `${list}\nThis list is incomplete: some memory could not be read.`
-      : list;
+    return [
+      list,
+      ...(partial
+        ? ["This list is incomplete: some memory could not be read."]
+        : []),
+      ...(proposals ? [] : ["Your owner's proposals could not be read here."]),
+    ].join("\n");
   },
 
   async table_read(client, args) {

@@ -4,7 +4,7 @@
 // connection and agent-authenticated reads for conversations the owner cannot
 // read; a standalone host reads as the agent. Both give a type the same
 // answers, so the type runs the same code in either.
-import type { Memories } from "../../buzz-mcp/client";
+import type { Memories, Proposal } from "../../buzz-mcp/client";
 import type { Profile } from "../relay/contracts";
 import { validVerifiedName } from "../relay/verified-profile";
 import type { AuthorNames } from "../agent-harness/turn-records";
@@ -69,6 +69,9 @@ export type AgentReads = Readonly<{
   /** The agent's memory, or only entry `slug` when given; `partial` when the
    * entries may be incomplete. `signal` stops the read. */
   memoryListing(signal: AbortSignal, slug?: string): Promise<MemoryListing>;
+  /** Table schemas the owner proposed to the agent, where the owner's host
+   * can read them. */
+  proposals?(signal: AbortSignal): Promise<readonly Proposal[]>;
   /** The channel's current Canvas text when `owner`, or an agent they
    * attest, wrote it; undefined when it has none, someone else wrote it, or
    * the reader cannot read Canvas. */
@@ -151,6 +154,13 @@ export function ownerReads(
       ),
     memoryListing: (signal: AbortSignal, slug?: string) =>
       session.agentMemories.read(pubkey, signal, slug),
+    proposals: async (signal: AbortSignal) => {
+      const owner = session.viewer;
+      const read = session.agentMemories?.proposals?.read;
+      if (!owner || !read) throw new Error("Proposals unavailable");
+      const { entries } = await read(pubkey, signal);
+      return entries.map((entry) => ({ ...entry, author: owner }));
+    },
   });
 }
 

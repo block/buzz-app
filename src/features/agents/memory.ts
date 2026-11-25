@@ -28,6 +28,17 @@ export type MemoryReader = (
   slug?: string,
   onPage?: (page: MemoryListing) => void,
 ) => Promise<MemoryListing>;
+/** The viewer's own table proposals to an agent: read them, or sign and
+ * publish one. Only a key-owning host has them. */
+export type ProposalSource = Readonly<{
+  read(agent: string, signal: AbortSignal): Promise<MemoryListing>;
+  propose(
+    agent: string,
+    table: string,
+    schema: string,
+    after: number,
+  ): Promise<Readonly<{ eventId: string; createdAt: number }>>;
+}>;
 export type MemorySnapshot = Readonly<{
   /** `loading` may carry the entries read so far. */
   status:
@@ -228,6 +239,7 @@ export function createAgentMemories(
   viewer: string,
   available: () => boolean,
   notify = (listener: () => void) => listener(),
+  proposals?: ProposalSource,
 ) {
   const views = new Set<ReturnType<typeof open>>();
   const reads = new Set<AbortController>();
@@ -407,8 +419,35 @@ export function createAgentMemories(
     );
     return task;
   }
+  /** Proposals share the session's lifetime: retirement and invalidation
+   * refuse them, and a read admitted before either is not returned. */
+  const proposing = proposals && {
+    async read(agent: string, signal: AbortSignal) {
+      const admitted = generation;
+      const usable = () =>
+        admitted === generation &&
+        !closed &&
+        memoryAgent(agent, viewer) &&
+        available();
+      if (!usable()) throw new Error("Proposals unavailable");
+      const combined = AbortSignal.any([signal, AbortSignal.timeout(10000)]);
+      const listing = memoryListing(await proposals.read(agent, combined));
+      combined.throwIfAborted();
+      if (!usable()) throw new Error("Proposals unavailable");
+      return listing;
+    },
+    async propose(agent: string, table: string, schema: string, after: number) {
+      if (closed || !memoryAgent(agent, viewer) || !available())
+        throw new Error("Proposals unavailable");
+      return proposals.propose(agent, table, schema, after);
+    },
+  };
   return {
-    capability: Object.freeze({ open, read }),
+    capability: Object.freeze({
+      open,
+      read,
+      ...(proposing ? { proposals: Object.freeze(proposing) } : {}),
+    }),
     clear() {
       generation++;
       forget();

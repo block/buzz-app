@@ -142,6 +142,7 @@ fn native_command_permissions_isolate_webviews() {
         "relay_agent_observer",
         "relay_archive",
         "relay_agent_memories_read",
+        "relay_table_propose",
         "relay_agent_library",
         "relay_upload_begin",
         "relay_upload_chunk",

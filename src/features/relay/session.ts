@@ -1159,6 +1159,7 @@ export function createRelaySession(
     transport?.viewer ?? "",
     () => !closed && !revoking && !cacheClearing && memoryConnected,
     notify,
+    transport?.tableProposals,
   );
   const agentLibrary = createAgentLibrary(
     transport

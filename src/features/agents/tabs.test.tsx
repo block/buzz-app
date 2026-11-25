@@ -86,7 +86,10 @@ it("adds no Settings tab when the host has nothing to set", () => {
     memories: undefined,
     settingsHost: {},
   });
-  expect(sections.map((tab) => tab.value)).toEqual(["agent:memory"]);
+  expect(sections.map((tab) => tab.value)).toEqual([
+    "agent:memory",
+    "agent:tables",
+  ]);
 });
 
 it("moves both synced histories into a collapsed Settings disclosure", async () => {
@@ -183,11 +186,13 @@ it("adds plugin tabs to each agent shown unless their `when` says otherwise, alo
     "agent:added:buzz.example/every",
     "agent:added:buzz.example/local",
     "agent:memory",
+    "agent:tables",
   ]);
   // Settings (version history) stays local; a tab without `when` is for hosted agents too.
   expect(values("hosted")).toEqual([
     "agent:added:buzz.example/every",
     "agent:memory",
+    "agent:tables",
   ]);
   expect(values("elsewhere")).toEqual([]);
   // A plugin's tab opens links, such as profiles, where it is shown.
@@ -239,9 +244,14 @@ it("adds a plugin tab only to the agents its `when` accepts", () => {
     "agent:added:example/every",
     "agent:added:example/ada",
     "agent:memory",
+    "agent:tables",
   ]);
   // A tab whose `when` throws hides only itself.
-  expect(values("Bea")).toEqual(["agent:added:example/every", "agent:memory"]);
+  expect(values("Bea")).toEqual([
+    "agent:added:example/every",
+    "agent:memory",
+    "agent:tables",
+  ]);
   expect(error).toHaveBeenCalled();
   error.mockRestore();
 });

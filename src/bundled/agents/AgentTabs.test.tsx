@@ -132,6 +132,7 @@ it.each(["here", "hosted"] as const)(
       );
       expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
         "Memory",
+        "Tables",
         "Settings",
       ]);
       expect(screen.queryByRole("tab", { name: "Identity" })).toBeNull();
@@ -541,6 +542,7 @@ it("places plugin tabs after Activity and before Settings", () => {
   expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
     "Identity",
     "Memory",
+    "Tables",
     "Activity",
     "Watching",
     "Settings",

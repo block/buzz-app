@@ -71,6 +71,7 @@ export function AgentTabs(props: {
     ...(identity ? [{ ...identity, label: "Identity" }] : []),
     ...supplied.filter((section) => section.value.startsWith("agent:type:")),
     ...supplied.filter((section) => section.value === "agent:memory"),
+    ...supplied.filter((section) => section.value === "agent:tables"),
     ...supplied.filter((section) => section.value === "agent:activity"),
     ...supplied.filter((section) => section.value.startsWith("agent:added:")),
     {

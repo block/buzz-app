@@ -880,6 +880,37 @@ export async function connectNativeTransport(
       bounded.throwIfAborted();
       return memoryListing(result);
     },
+    tableProposals: {
+      async read(agent, signal) {
+        if (!memoryAgent(agent, transport.viewer))
+          throw new Error("Invalid memory target");
+        signal.throwIfAborted();
+        const result = await invoke<unknown>("relay_agent_memories_read", {
+          community: origin,
+          agent,
+          slug: null,
+          id: null,
+          onPage: null,
+          proposals: true,
+        });
+        signal.throwIfAborted();
+        return memoryListing(result);
+      },
+      async propose(agent, table, schema, after) {
+        if (!memoryAgent(agent, transport.viewer))
+          throw new Error("Invalid memory target");
+        const result = await invoke<{ eventId: string; createdAt: number }>(
+          "relay_table_propose",
+          { community: origin, agent, table, schema, after },
+        );
+        if (
+          !/^[0-9a-f]{64}$/.test(result?.eventId ?? "") ||
+          !Number.isSafeInteger(result.createdAt)
+        )
+          throw new Error("Invalid table proposal");
+        return result;
+      },
+    },
     async authorizeAgentLog(target, nonce) {
       if (relayOrigin(target.relayUrl) !== origin)
         throw new Error("Log authorization unavailable");

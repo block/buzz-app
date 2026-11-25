@@ -1870,7 +1870,7 @@ export const TYPE_ROLES: TypeRole[] = [
     size: "18px",
     lineHeight: "24px",
     tracking: "0em",
-    weight: "400",
+    weight: "500",
     use: "Item names in catalogs.",
     status: "core",
   },

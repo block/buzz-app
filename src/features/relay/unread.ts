@@ -3280,7 +3280,7 @@ export function createUnread({
               );
             else if (reminders.length)
               await reads.clearLocalUnread(key, reminders, fresh);
-          } else
+          } else {
             await reads.read(
               key,
               cut,
@@ -3288,6 +3288,22 @@ export function createUnread({
               endManual,
               endManual ? [channelId] : undefined,
             );
+            // A mark made while shown is saved as covered through this cut,
+            // so the advance alone does not end it; older marks end with it.
+            const covered = reminders.filter(
+              (local) => (reads.localCover(local)?.[1] ?? -1) >= cut,
+            );
+            if (covered.length)
+              await reads.clearLocalUnread(
+                key,
+                covered,
+                (journal) =>
+                  current(journal) &&
+                  covered.every(
+                    (local) => manual(local, journal) <= manualRevision,
+                  ),
+              );
+          }
         },
         async observe(ids: readonly string[]) {
           if (!valid() || ids.length > 128) return;

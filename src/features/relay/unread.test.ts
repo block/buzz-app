@@ -8530,6 +8530,40 @@ it("a reply marked unread while shown ends when a newer reply in its thread is r
   );
 });
 
+it("a channel message marked unread while shown ends when a later visit catches up past it", async () => {
+  const h = setup();
+  h.grant("room");
+  const first = message(h.alice, "room", "first", 100);
+  h.emit([first]);
+  const unread = h.session.unread;
+  const before = unread.reading("room");
+  await before.catchUp(first.id);
+  before.dispose();
+  const second = message(h.alice, "room", "second", 200);
+  h.emit([second]);
+  const visit = {};
+  const lease = unread.reading("room", undefined, visit);
+  lease.view([first.id, second.id], () => true);
+  await unread.markUnreadLocal({
+    kind: "message",
+    channelId: "room",
+    messageId: first.id,
+  });
+  lease.dispose();
+  unread.leave(visit);
+  await flush();
+  expect(unread.attention("room", first.id).unread).toBe(true);
+
+  // A later visit catches up to the newer message without showing the mark.
+  const back = unread.reading("room");
+  await back.catchUp(second.id);
+  back.dispose();
+  await vi.waitFor(() =>
+    expect(h.journal()?.localUnread[`msg:${first.id}`]).toBeUndefined(),
+  );
+  expect(h.journal()?.state.frontiers.room).toBe(200);
+});
+
 it("a channel message marked unread keeps its row lit in a muted channel", async () => {
   const h = setup();
   h.grant("room");

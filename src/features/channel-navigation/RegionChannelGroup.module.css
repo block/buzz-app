@@ -90,6 +90,13 @@
     color: var(--text-navigation);
   }
 
+  /* The portaled controls sit on the selected row's fill: use its ink, as the
+     row's own Actions button does. */
+  .teamRow:has(> [data-selected]) > .teamRowSlot > :not(.teamRowBody) {
+    --text-subtle: var(--text-sidebar-selected);
+    --text-navigation: var(--text-sidebar-selected);
+  }
+
   /* The portaled controls are part of the same row's hover target. */
   .teamRow:has(> .teamRowSlot > :not(.teamRowBody):hover) > :first-child {
     &:not([data-selected])::before {

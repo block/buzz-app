@@ -196,36 +196,35 @@ export function useFinderAll({
     return ranked.search(query, docs.length || 1);
   }, [docsKey, query]);
   const matched = new Set(results.hits.map(({ doc }) => doc.id));
-  // The rest of the device page follows the relay's first page once it
-  // answers; More messages adds below it. Neither moves rows above.
-  const first = useRef<{
-    session: RelaySession;
-    query: string;
-    ids: ReadonlySet<string>;
-  }>(undefined);
-  if (
-    !search.loading &&
-    !search.error &&
-    (first.current?.session !== session || first.current.query !== query)
-  )
-    first.current = { session, query, ids: new Set(docs.map((d) => d.id)) };
   const ordered = [
     ...results.hits,
     ...docs
       .filter((doc) => !matched.has(doc.id))
       .map((doc) => ({ doc, score: 0, positions: [] })),
   ];
-  const later = (hit: (typeof ordered)[number]) =>
-    !first.current?.ids.has(hit.doc.id);
   const tail = search.loading ? [] : rest;
-  const relay: FinderResults = {
-    total: docs.length + tail.length,
-    hits: [
-      ...ordered.filter((hit) => !later(hit)),
-      ...tail,
-      ...ordered.filter(later),
-    ],
-  };
+  // A row keeps the place it was first shown in: the relay's first page,
+  // then the rest of the device page, then whatever arrives later (More
+  // messages, a channel that finishes loading), each batch ranked on its own.
+  const placed = useRef<{
+    session: RelaySession;
+    query: string;
+    ids: string[];
+  }>(undefined);
+  if (placed.current?.session !== session || placed.current.query !== query)
+    placed.current = undefined;
+  if (!placed.current && !search.loading && !search.error)
+    placed.current = { session, query, ids: [] };
+  const rows = [...ordered, ...tail];
+  let hits = rows;
+  if (placed.current) {
+    const { ids } = placed.current;
+    const known = new Set(ids);
+    for (const { doc } of rows) if (!known.has(doc.id)) ids.push(doc.id);
+    const byId = new Map(rows.map((hit) => [hit.doc.id, hit]));
+    hits = ids.flatMap((id) => byId.get(id) ?? []);
+  }
+  const relay: FinderResults = { total: docs.length + tail.length, hits };
   holding.current = asked && (search.loading || docs.length > 0);
   return { local, relay, search, asked };
 }

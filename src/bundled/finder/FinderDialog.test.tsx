@@ -467,12 +467,15 @@ test("All of Buzz shows five device rows, then the relay's, then the rest of the
   expect(options("Matches")).toHaveLength(9);
 });
 
-test("More messages adds the relay's next page below the device tail", async () => {
+test("rows already shown keep their places: More messages always adds below", async () => {
   const { Finder, click, corpus, events, viewer } = await fixture();
+  const said = (text: string, at: number) =>
+    message(viewer, "crew", text, 1_700_000_000 + at);
   events.push(
-    ...Array.from({ length: 25 }, (_, n) =>
-      message(viewer, "crew", `yak relay ${n}`, 1_700_000_000 + n),
-    ),
+    // Newest first, 20 a page. The second page ranks below the third.
+    ...Array.from({ length: 20 }, (_, n) => said(`yak first ${n}`, 100 + n)),
+    ...Array.from({ length: 20 }, (_, n) => said(`(yak) second ${n}`, 50 + n)),
+    ...Array.from({ length: 5 }, (_, n) => said(`yak third ${n}`, n)),
   );
   corpus.add(
     Array.from({ length: 7 }, (_, n) => local(`y${n}`, `yak note ${n}`)),
@@ -482,17 +485,21 @@ test("More messages adds the relay's next page below the device tail", async () 
   await tick(SEARCH_DEBOUNCE_MS);
   const relayed = () => options("More from all of Buzz");
   expect(relayed()).toHaveLength(22);
-  const before = relayed();
-  expect(before.slice(20)).toEqual([
+  expect(relayed().slice(20)).toEqual([
     expect.stringContaining("yak note"),
     expect.stringContaining("yak note"),
   ]);
-  await click(screen.getByRole("button", { name: "More messages" }));
-  await tick(0);
-  expect(relayed()).toHaveLength(27);
-  // The rows already shown keep their places; the new page follows.
-  expect(relayed().slice(0, 22)).toEqual(before);
-  expect(relayed().slice(22)).toEqual(
-    Array(5).fill(expect.stringContaining("yak relay")),
+  const more = async () => {
+    const before = relayed();
+    await click(screen.getByRole("button", { name: "More messages" }));
+    await tick(0);
+    expect(relayed().slice(0, before.length)).toEqual(before);
+    return relayed().slice(before.length);
+  };
+  expect(await more()).toEqual(
+    Array(20).fill(expect.stringContaining("(yak) second")),
+  );
+  expect(await more()).toEqual(
+    Array(5).fill(expect.stringContaining("yak third")),
   );
 });

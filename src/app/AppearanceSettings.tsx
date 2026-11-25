@@ -5,6 +5,8 @@ import { IconButton } from "../shared/design-system/ui/IconButton";
 import {
   ArrowCounterClockwiseIcon,
   CircleIcon,
+  MinusIcon,
+  PlusIcon,
 } from "../shared/design-system/icons";
 import { SettingsGroup } from "../shared/design-system/ui/SettingsGroup";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
@@ -166,31 +168,27 @@ export function AppearanceSettings({
                 aria-label="Interface size"
                 className="m-0 flex min-w-0 flex-wrap items-center gap-3 border-0 p-0"
               >
-                <Button
+                <IconButton
                   type="button"
-                  size="sm"
                   aria-label="Decrease interface size"
                   disabled={fontScale <= 0.8}
                   onClick={() => appearance.setFontScale(fontScale - 0.1)}
-                >
-                  −
-                </Button>
+                  icon={<MinusIcon size={16} aria-hidden="true" />}
+                />
                 <output
                   aria-label="Interface size"
                   className="text-body-sm tabular-nums"
                 >
                   {Math.round(fontScale * 100)}%
                 </output>
-                <Button
+                <IconButton
                   type="button"
-                  size="sm"
                   ref={increaseButton}
                   aria-label="Increase interface size"
                   disabled={fontScale >= 2}
                   onClick={() => appearance.setFontScale(fontScale + 0.1)}
-                >
-                  +
-                </Button>
+                  icon={<PlusIcon size={16} aria-hidden="true" />}
+                />
                 {fontScale !== 1 && (
                   <IconButton
                     icon={<ArrowCounterClockwiseIcon aria-hidden="true" />}
@@ -382,29 +380,25 @@ export function AppearanceSettings({
                 aria-describedby={control["aria-describedby"]}
                 className="m-0 flex min-w-0 flex-wrap items-center gap-3 border-0 p-0"
               >
-                <Button
+                <IconButton
                   type="button"
-                  size="sm"
                   aria-label="Decrease emoji size"
                   disabled={emojiSize <= MIN_EMOJI_SIZE}
                   focusableWhenDisabled
                   onClick={() => appearance.setEmojiSize(emojiSize - 10)}
-                >
-                  −
-                </Button>
+                  icon={<MinusIcon size={16} aria-hidden="true" />}
+                />
                 <output className="text-body-sm tabular-nums">
                   {emojiSize}%
                 </output>
-                <Button
+                <IconButton
                   type="button"
-                  size="sm"
                   aria-label="Increase emoji size"
                   disabled={emojiSize >= MAX_EMOJI_SIZE}
                   focusableWhenDisabled
                   onClick={() => appearance.setEmojiSize(emojiSize + 10)}
-                >
-                  +
-                </Button>
+                  icon={<PlusIcon size={16} aria-hidden="true" />}
+                />
               </fieldset>
             )}
           />

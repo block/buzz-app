@@ -713,6 +713,7 @@ test.describe("trailing card", () => {
       await input.fill("Sent below the card");
       await input.press("Enter");
       await expect(region.getByText("Sent below the card")).toBeInViewport();
+      await expect(page.getByText("card-drop.txt")).toHaveCount(0);
       await expectRest(page, region);
     });
   });
@@ -737,6 +738,14 @@ test.describe("trailing card", () => {
       await expect(toggle(page)).toHaveText("Full brief");
       const rest = await expectRest(page, region);
       expect(Math.abs(rest.offCentre)).toBeLessThanOrEqual(1);
+      // A file dropped on the card is the page's, not a reply attachment.
+      const transfer = await page.evaluateHandle(() => {
+        const data = new DataTransfer();
+        data.items.add(new File(["card"], "card-drop.txt"));
+        return data;
+      });
+      await toggle(page).dispatchEvent("drop", { dataTransfer: transfer });
+      await transfer.dispose();
 
       await overCard(page);
       await wheel(page, 150, sheet(page));

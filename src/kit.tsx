@@ -27,6 +27,7 @@ export function Button({
   /** Shown as a tooltip. */
   title?: string;
   "aria-label"?: string;
+  "aria-expanded"?: boolean;
   children?: ReactNode;
 }) {
   if (ui?.Button) {
@@ -141,3 +142,20 @@ export function EmptyState({
     </div>
   );
 }
+
+/** Two overlapping frames: views shared beside a conversation. */
+export const CanvasIcon = () => (
+  <svg
+    width="16"
+    height="16"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <rect x="1.75" y="4.75" width="9.5" height="8.5" rx="1.5" />
+    <path d="M4.75 4.75v-1.5a1.5 1.5 0 0 1 1.5-1.5h6.5a1.5 1.5 0 0 1 1.5 1.5v5.5a1.5 1.5 0 0 1-1.5 1.5h-1.5" />
+  </svg>
+);

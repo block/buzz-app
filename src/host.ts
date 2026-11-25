@@ -29,6 +29,11 @@ export type AddedTool = {
 export type Session = {
   readonly lifetimeSignal: AbortSignal;
   readonly viewer?: string;
+  readonly channels?: {
+    list(): {
+      channels: readonly { id: string; channelType?: string }[];
+    };
+  };
   readonly names?: {
     subscribe(listener: () => void): () => void;
     snapshot(): unknown;
@@ -60,6 +65,13 @@ export type RelaySnapshot = {
   session: Session;
 };
 
+/** What the host hands a panel's button in a conversation's header. */
+export type LauncherProps = {
+  context: { channelId: string };
+  /** Whether this panel's tab is the one showing. */
+  pressed: boolean;
+  toggle(target: string): void;
+};
 export type PanelProps = {
   channelContext?: { channelId: string; scope: string };
   context?: { channelId?: string };

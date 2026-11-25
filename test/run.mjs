@@ -29,7 +29,9 @@ try {
     // With the host's own browser view: one address bar, and where the driver
     // goes inside the page is where everyone goes.
     const page = await browser.newPage({ viewport: { width: 1440, height: 800 } });
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/zz-canvas-plugin.html?native`);
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/zz-canvas-plugin.html?native&solo`);
+    // A Solo chat has no channel menu: its header has a button for the canvas.
+    assert.equal(await page.getByRole("button", { name: "Toggle canvas" }).count(), 2);
     const ada = page.getByRole("region", { name: "Ada's screen" });
     const ben = page.getByRole("region", { name: "Ben's screen" });
     const shows = (seat, url) => seat.locator("[data-page]").filter({ hasText: new RegExp(`^${url}$`) }).waitFor();
@@ -83,7 +85,9 @@ try {
   // The "+" sits in the tab strip, just past the last tab.
   const plusBox = await ada.getByRole("button", { name: "Views" }).boundingBox();
   const tabBox = await ada.getByRole("tab", { name: "Browser" }).boundingBox();
-  assert.ok(plusBox.x >= tabBox.x + tabBox.width && plusBox.y < tabBox.y + tabBox.height, "the + is beside the tabs");
+  assert.ok(plusBox.x >= tabBox.x + tabBox.width, "the + is beside the tabs");
+  assert.ok(Math.abs(plusBox.y + plusBox.height / 2 - (tabBox.y + tabBox.height / 2)) <= 0.5, "the + is level with the tabs");
+  assert.equal(await page.getByRole("button", { name: "Toggle canvas" }).count(), 0, "a channel's header gets no button");
 
   await assert.rejects(agent("canvas_open", { type: "map", state: { center: [0, 0], zoom: 2 } }), /Someone else is driving/);
   await agent("canvas_drive", { drive: true });

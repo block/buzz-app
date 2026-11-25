@@ -5,8 +5,13 @@ import {
   useSyncExternalStore,
 } from "react";
 import { CanvasPanel, createRoaming, type Roaming } from "./CanvasPanel";
-import type { PanelProps, PluginContext, Session } from "./host";
-import { useHostUi } from "./kit";
+import type {
+  LauncherProps,
+  PanelProps,
+  PluginContext,
+  Session,
+} from "./host";
+import { Button, CanvasIcon, useHostUi } from "./kit";
 import { useHost } from "./react";
 import { createCanvasChannel, type CanvasChannel } from "./store";
 import { css } from "./styles";
@@ -162,9 +167,38 @@ export function apply(ctx: PluginContext) {
         session={state.session}
         viewer={state.viewer}
         channelId={channelId}
-        view={target?.slice(CANVAS_TARGET.length) || undefined}
+        // A tab opened from the channel's menu has the channel as its target.
+        view={
+          (target?.startsWith(CANVAS_TARGET) &&
+            target.slice(CANVAS_TARGET.length)) ||
+          undefined
+        }
         close={close ?? still}
       />
+    );
+  }
+
+  // A Solo chat has no channel menu, so the canvas gets a button in its
+  // header instead. Channels keep the menu, and their header as it is.
+  function Launcher({ context, pressed, toggle }: LauncherProps) {
+    const state = useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot);
+    const solo = state.session?.channels
+      ?.list()
+      .channels.some(
+        (channel) =>
+          channel.id === context.channelId && channel.channelType === "solo",
+      );
+    if (!solo) return null;
+    return (
+      <Button
+        variant="ghost"
+        aria-label="Toggle canvas"
+        title="Canvas"
+        aria-expanded={pressed}
+        onClick={() => toggle(CANVAS_TARGET)}
+      >
+        <CanvasIcon />
+      </Button>
     );
   }
 
@@ -184,13 +218,21 @@ export function apply(ctx: PluginContext) {
     channelMenu: {
       label: "Share a view",
       eligible: (
-        channel: { cached?: boolean; archived?: boolean; members?: string[] },
+        channel: {
+          cached?: boolean;
+          archived?: boolean;
+          members?: string[];
+          channelType?: string;
+        },
         session: Session,
       ) =>
         !channel.cached &&
         !channel.archived &&
-        !!channel.members?.includes(session.viewer ?? ""),
+        // A Solo chat is the viewer's own.
+        (channel.channelType === "solo" ||
+          !!channel.members?.includes(session.viewer ?? "")),
     },
+    channelLauncher: Launcher,
     component: Panel,
   });
 

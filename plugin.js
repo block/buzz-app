@@ -36,7 +36,7 @@ var styles = {
 	video: "buzz-canvas-video",
 	view: "buzz-canvas-view"
 };
-var css = "/* Fills its panel whether the host lays that out as a flex column or a grid. */ .buzz-canvas-canvas { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; min-width: 0; position: relative; } /* The buttons sit at the end of the view's top row, which leaves them room. */ .buzz-canvas-buttons { position: absolute; top: var(--space-1); right: var(--space-2); z-index: 1; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-control); background: var(--surface-panel); } .buzz-canvas-plus { display: flex; flex: none; align-items: center; align-self: center; } .buzz-canvas-quiet { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .buzz-canvas-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; } .buzz-canvas-empty { flex: 1; display: grid; place-items: center; padding: var(--space-4); } .buzz-canvas-actions { display: flex; justify-content: center; gap: var(--space-2); flex-wrap: wrap; } .buzz-canvas-error { padding: var(--space-2) var(--space-3); color: var(--text-danger); } .buzz-canvas-fill { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; } .buzz-canvas-address { display: flex; gap: var(--space-2); padding: var(--space-1) var(--space-2); padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); border-bottom: 1px solid var(--border-standard); } /* The host's browser view brings its own top row: the canvas's buttons go at its end, in place of the page title the tab already shows. */ .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] { padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); } .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] > span { display: none; } .buzz-canvas-address > :first-child { flex: 1; min-width: 0; } .buzz-canvas-hint { margin: auto; padding: var(--space-4); color: var(--text-subtle); text-align: center; } .buzz-canvas-frame, .buzz-canvas-video { flex: 1; min-height: 0; width: 100%; border: 0; } .buzz-canvas-video { background: var(--bg-media-canvas); } .buzz-canvas-map { position: relative; flex: 1; min-height: 12rem; overflow: hidden; touch-action: none; user-select: none; cursor: grab; } .buzz-canvas-map[data-dragging] { cursor: grabbing; } .buzz-canvas-tile { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; } .buzz-canvas-pin { position: absolute; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: var(--space-1); pointer-events: none; } .buzz-canvas-pinLabel { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-1); border: 1px solid var(--border-standard); border-radius: var(--radius-control); background: var(--surface-popover); color: var(--text-standard); font-size: var(--type-xsmall-size); } .buzz-canvas-pinDot { width: 0.75rem; height: 0.75rem; border: 2px solid var(--surface-popover); border-radius: 50%; background: var(--text-danger); } .buzz-canvas-mapControls { position: absolute; top: var(--space-2); left: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); } .buzz-canvas-credit { position: absolute; right: 0; bottom: 0; padding: 0 var(--space-1); background: var(--surface-popover); color: var(--text-subtle); font-size: var(--type-xsmall-size); } .buzz-canvas-emptyState { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 28rem; text-align: center; }";
+var css = "/* Fills its panel whether the host lays that out as a flex column or a grid. */ .buzz-canvas-canvas { display: flex; flex: 1; flex-direction: column; height: 100%; min-height: 0; min-width: 0; position: relative; } /* The buttons sit at the end of the view's top row, which leaves them room. */ .buzz-canvas-buttons { position: absolute; top: var(--space-1); right: var(--space-2); z-index: 1; display: flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-control); background: var(--surface-panel); } .buzz-canvas-plus { display: flex; flex: none; align-items: center; align-self: flex-start; } .buzz-canvas-quiet { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; } .buzz-canvas-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: auto; } .buzz-canvas-empty { flex: 1; display: grid; place-items: center; padding: var(--space-4); } .buzz-canvas-actions { display: flex; justify-content: center; gap: var(--space-2); flex-wrap: wrap; } .buzz-canvas-error { padding: var(--space-2) var(--space-3); color: var(--text-danger); } .buzz-canvas-fill { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; } .buzz-canvas-address { display: flex; gap: var(--space-2); padding: var(--space-1) var(--space-2); padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); border-bottom: 1px solid var(--border-standard); } /* The host's browser view brings its own top row: the canvas's buttons go at its end, in place of the page title the tab already shows. */ .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] { padding-right: calc(var(--buzz-canvas-room, 0px) + var(--space-3)); } .buzz-canvas-fill [role=\"toolbar\"][aria-label=\"Browser controls\"] > span { display: none; } .buzz-canvas-address > :first-child { flex: 1; min-width: 0; } .buzz-canvas-hint { margin: auto; padding: var(--space-4); color: var(--text-subtle); text-align: center; } .buzz-canvas-frame, .buzz-canvas-video { flex: 1; min-height: 0; width: 100%; border: 0; } .buzz-canvas-video { background: var(--bg-media-canvas); } .buzz-canvas-map { position: relative; flex: 1; min-height: 12rem; overflow: hidden; touch-action: none; user-select: none; cursor: grab; } .buzz-canvas-map[data-dragging] { cursor: grabbing; } .buzz-canvas-tile { position: absolute; width: 256px; height: 256px; max-width: none; pointer-events: none; } .buzz-canvas-pin { position: absolute; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: center; gap: var(--space-1); pointer-events: none; } .buzz-canvas-pinLabel { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 var(--space-1); border: 1px solid var(--border-standard); border-radius: var(--radius-control); background: var(--surface-popover); color: var(--text-standard); font-size: var(--type-xsmall-size); } .buzz-canvas-pinDot { width: 0.75rem; height: 0.75rem; border: 2px solid var(--surface-popover); border-radius: 50%; background: var(--text-danger); } .buzz-canvas-mapControls { position: absolute; top: var(--space-2); left: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); } .buzz-canvas-credit { position: absolute; right: 0; bottom: 0; padding: 0 var(--space-1); background: var(--surface-popover); color: var(--text-subtle); font-size: var(--type-xsmall-size); } .buzz-canvas-emptyState { display: flex; flex-direction: column; align-items: center; gap: var(--space-2); max-width: 28rem; text-align: center; }";
 //#endregion
 //#region src/kit.tsx
 var ui;
@@ -98,6 +98,23 @@ function AddMenu({ label, items }) {
 function EmptyState({ title, description, action }) {
 	return /* @__PURE__ */ createElement("div", { className: styles.emptyState }, /* @__PURE__ */ createElement("h3", null, title), /* @__PURE__ */ createElement("p", { className: styles.hint }, description), action);
 }
+/** Two overlapping frames: views shared beside a conversation. */
+var CanvasIcon = () => /* @__PURE__ */ createElement("svg", {
+	width: "16",
+	height: "16",
+	viewBox: "0 0 16 16",
+	fill: "none",
+	stroke: "currentColor",
+	strokeWidth: "1.5",
+	strokeLinejoin: "round",
+	"aria-hidden": "true"
+}, /* @__PURE__ */ createElement("rect", {
+	x: "1.75",
+	y: "4.75",
+	width: "9.5",
+	height: "8.5",
+	rx: "1.5"
+}), /* @__PURE__ */ createElement("path", { d: "M4.75 4.75v-1.5a1.5 1.5 0 0 1 1.5-1.5h6.5a1.5 1.5 0 0 1 1.5 1.5v5.5a1.5 1.5 0 0 1-1.5 1.5h-1.5" }));
 //#endregion
 //#region src/scene.ts
 var EMPTY_SCENE = Object.freeze({ items: [] });
@@ -406,12 +423,22 @@ function CanvasPanel({ channel, roaming, views, viewer, name, id, open, close, T
 			let after = element.parentElement === tabs ? element.nextElementSibling : tabs;
 			while (after && after !== tabs && after.hasAttribute("data-canvas-plus")) after = after.nextElementSibling;
 			if (after) tabs.append(element);
+			const tab = tabs.querySelector("[role=\"tab\"]")?.getBoundingClientRect();
+			if (!tab) return;
+			element.style.height = `${tab.height}px`;
+			element.style.marginTop = "0px";
+			const off = tab.top - element.getBoundingClientRect().top;
+			element.style.marginTop = `${off}px`;
 		};
 		place();
 		const changed = new MutationObserver(place);
 		changed.observe(tabs, { childList: true });
+		const resized = new ResizeObserver(place);
+		resized.observe(tabs);
 		return () => {
 			changed.disconnect();
+			resized.disconnect();
+			element.removeAttribute("style");
 			home.prepend(element);
 		};
 	}, [shown]);
@@ -1262,9 +1289,19 @@ function apply(ctx) {
 			session: state.session,
 			viewer: state.viewer,
 			channelId,
-			view: target?.slice(12) || void 0,
+			view: target?.startsWith(CANVAS_TARGET) && target.slice(12) || void 0,
 			close: close ?? still
 		});
+	}
+	function Launcher({ context, pressed, toggle }) {
+		if (!useSyncExternalStore(ctx.relay.subscribe, ctx.relay.snapshot).session?.channels?.list().channels.some((channel) => channel.id === context.channelId && channel.channelType === "solo")) return null;
+		return /* @__PURE__ */ createElement(Button, {
+			variant: "ghost",
+			"aria-label": "Toggle canvas",
+			title: "Canvas",
+			"aria-expanded": pressed,
+			onClick: () => toggle(CANVAS_TARGET)
+		}, /* @__PURE__ */ createElement(CanvasIcon, null));
 	}
 	ctx.panels.register({
 		id: "canvas",
@@ -1275,8 +1312,9 @@ function apply(ctx) {
 		matches: (target) => /^[a-z0-9._-]{0,64}$/.test(target.startsWith(CANVAS_TARGET) ? target.slice(12) : "/"),
 		channelMenu: {
 			label: "Share a view",
-			eligible: (channel, session) => !channel.cached && !channel.archived && !!channel.members?.includes(session.viewer ?? "")
+			eligible: (channel, session) => !channel.cached && !channel.archived && (channel.channelType === "solo" || !!channel.members?.includes(session.viewer ?? ""))
 		},
+		channelLauncher: Launcher,
 		component: Panel
 	});
 	for (const tool of canvasTools(views, (channelId, rootId, view) => ctx.panels.requestOpen({

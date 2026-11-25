@@ -231,17 +231,30 @@ export function CanvasPanel({
     const tabs = strip;
     const place = () => {
       // Past every tab; another tab's "+" may briefly be here too.
-      let after = element.parentElement === tabs ? element.nextElementSibling : tabs;
+      let after =
+        element.parentElement === tabs ? element.nextElementSibling : tabs;
       while (after && after !== tabs && after.hasAttribute("data-canvas-plus"))
         after = after.nextElementSibling;
       if (after) tabs.append(element);
+      // Exactly as tall as a tab and level with it, however the strip lays
+      // its tabs out: the button is then centred on the tabs' own centre line.
+      const tab = tabs.querySelector('[role="tab"]')?.getBoundingClientRect();
+      if (!tab) return;
+      element.style.height = `${tab.height}px`;
+      element.style.marginTop = "0px";
+      const off = tab.top - element.getBoundingClientRect().top;
+      element.style.marginTop = `${off}px`;
     };
     place();
     // The host adds tabs at the end: stay after them.
     const changed = new MutationObserver(place);
     changed.observe(tabs, { childList: true });
+    const resized = new ResizeObserver(place);
+    resized.observe(tabs);
     return () => {
       changed.disconnect();
+      resized.disconnect();
+      element.removeAttribute("style");
       home.prepend(element);
     };
   }, [shown]);

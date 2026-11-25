@@ -67,10 +67,12 @@ function NativeView({ url }) {
 // plugin asks to open, with every tab but the chosen one covered as the host
 // covers them.
 const TabName = React.createContext(undefined);
+const solo = new URLSearchParams(location.search).has("solo");
 function host(viewer) {
   const seat = { tools: [], effects: [], open: () => false };
   const session = {
     viewer,
+    channels: { list: () => ({ channels: [{ id: CHANNEL, channelType: solo ? "solo" : "stream" }] }) },
     lifetimeSignal: new AbortController().signal,
     names: { subscribe: () => () => {}, snapshot: () => 0, resolve: (pubkey) => people[pubkey] },
     snapshotRead: read,
@@ -122,7 +124,11 @@ function Seat({ seat, label }) {
   };
   return (
     <section aria-label={label} style={{ flex: 1, minWidth: 0, border: "1px solid #ddd", display: "flex", flexDirection: "column" }}>
-      <div role="tablist" style={{ display: "flex", gap: 8, padding: 4, borderBottom: "1px solid #ddd" }}>
+      {seat.panel.channelLauncher && (
+        <seat.panel.channelLauncher context={{ channelId: CHANNEL }} pressed={chosen === "buzz-canvas:"} toggle={(target) => seat.open(target)} />
+      )}
+      {/* Like the host's strip: tabs start at the top, under some padding. */}
+      <div role="tablist" style={{ display: "flex", alignItems: "flex-start", gap: 8, height: 44, padding: "7px 4px 0", boxSizing: "border-box", borderBottom: "1px solid #ddd" }}>
         {tabs.map((target) => (
           <button key={target} type="button" role="tab" aria-selected={target === chosen} style={{ fontWeight: target === chosen ? 700 : 400 }} onClick={() => setChosen(target)}>
             {names[target] ?? "Canvas"}

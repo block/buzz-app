@@ -39,6 +39,8 @@ export type FakeGoose = {
   /** Turns, in the order they began. */
   turns: FakeTurn[];
   closed: string[];
+  /** Each extension removed, as `sessionId key`. */
+  removed: string[];
   /** Sessions `session/load` resumed. */
   loaded: string[];
   /** Every `session/load` is answered with this error. */
@@ -107,6 +109,8 @@ export function fakeSpawn(
   options: Readonly<{
     /** Whether goose says it can reach HTTP MCP servers. */
     http?: boolean;
+    /** Extension keys goose's own config lists. */
+    extensions?: readonly string[];
     /** Whether goose says it can resume a saved session. */
     load?: boolean;
     home?: string;
@@ -222,6 +226,7 @@ export function fakeSpawn(
       prompts: new Map(),
       turns: [],
       closed: [],
+      removed: [],
       loaded: [],
       holdExit: false,
       cancelled: [],
@@ -518,8 +523,15 @@ export function fakeSpawn(
           fake.closed.push(sessionId);
           return reply(id, {});
         case "_goose/unstable/config/extensions/list":
-          return reply(id, { extensions: [] });
+          return reply(id, {
+            extensions: (options.extensions ?? []).map((configKey) => ({
+              extension: { type: "stdio", name: configKey },
+              configKey,
+              enabled: true,
+            })),
+          });
         case "_goose/unstable/session/extensions/remove":
+          fake.removed.push(`${sessionId} ${params.extensionKey}`);
           return reply(id, {});
         case "session/load":
           if (fake.loadError)

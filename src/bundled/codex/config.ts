@@ -82,6 +82,8 @@ export function config(raw: unknown): Config {
       ? { compactAt: value.compactAt as string }
       : {}),
     ...(value.preset === PRESET ? { preset: PRESET } : {}),
+    // The owner-signed list, as signed: a launch checks it.
+    ...(value.mcpServers !== undefined ? { mcpServers: value.mcpServers } : {}),
   };
 }
 export const effortName = (effort: string) =>

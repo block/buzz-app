@@ -240,12 +240,14 @@ export function launchList(
 }
 
 /** The list an agent starts with from its config's `mcpServers`, as
- * `launchList` gives it. Throws, so the launch shows why, when the owner
+ * `launchList` gives it; without `inherited`, its enabled servers and every
+ * off name, for a harness that matches them against its own config at
+ * launch. Throws, so the launch shows why, when the owner
  * didn't approve it. */
 export function startList(
   config: unknown,
   agent: Readonly<{ pubkey: string; owner: string }>,
-  inherited: readonly string[] = [],
+  inherited?: readonly string[],
 ): McpList {
   const check = approved(
     (config as { mcpServers?: unknown } | undefined)?.mcpServers,
@@ -253,7 +255,11 @@ export function startList(
     agent.pubkey,
   );
   if (!check.ok) throw new Error(check.reason);
-  return launchList(check.list, inherited);
+  if (inherited) return launchList(check.list, inherited);
+  return {
+    servers: check.list.servers.filter((s) => s.enabled),
+    disabledInherited: check.list.disabledInherited,
+  };
 }
 
 const names = (s: McpServer) => (s.transport === "stdio" ? s.env : s.headers);

@@ -1984,6 +1984,8 @@ export class GooseRuntime {
     const handle = entry.handle;
     if (entry.protected || handle?.protection || !handle)
       return { servers: [], disabledInherited: [], strict: true };
+    // goose's own extensions are known only once it runs: the session
+    // matches these off names against them and removes those.
     const list = startList(entry.config, handle);
     const values = list.servers.length ? await mcpValues(handle.pubkey) : {};
     return { ...list, servers: acpServers(list, values) };

@@ -61,6 +61,7 @@ import {
   standalonePrompt,
 } from "./runtime";
 import { explainTurn } from "./setup";
+import { approvalTemplate } from "../../features/agents/mcp-servers";
 
 describe("sessionTitle", () => {
   it("names the agent, the channel and a thread's root", () => {
@@ -78,7 +79,8 @@ describe("sessionTitle", () => {
 });
 
 const self = "c".repeat(64);
-const alice = "a".repeat(64);
+const aliceKey = keypair();
+const alice = aliceKey.pubkey;
 const bob = "b".repeat(64);
 const channel = "chan-1";
 const message = (
@@ -136,9 +138,14 @@ function setup(
     defaultProvider?: () => Promise<string | undefined>;
     /** What agents on Recommended run on. */
     recommended?: RecommendedRun;
+    /** Extension keys goose's own config lists. */
+    extensions?: readonly string[];
+    /** The agent config's signed `mcpServers`. */
+    mcpServers?: unknown;
   }> = {},
 ) {
   const fake = fakeSpawn({
+    ...(options.extensions && { extensions: options.extensions }),
     hold: options.hold ?? false,
     load: true,
     // As goose lists it: a resumed session is put back on its default.
@@ -305,6 +312,9 @@ function setup(
         ...DEFAULT_CONFIG,
         scope: options.scope ?? "thread",
         ...(options.provider ? { provider: options.provider } : {}),
+        ...(options.mcpServers !== undefined && {
+          mcpServers: options.mcpServers,
+        }),
       },
       signal: new AbortController().signal,
       workingUntil: () => undefined,
@@ -1323,6 +1333,23 @@ describe("GooseRuntime", () => {
       stop.abort();
       await done;
     }
+  });
+
+  it("removes an inherited extension the owner turned off, and only one goose has", async () => {
+    const mcpServers = signed(
+      aliceKey,
+      approvalTemplate(self, 1, {
+        servers: [],
+        disabledInherited: ["nativeprobe", "elsewhere"],
+      }),
+    );
+    const { deliver, goose } = setup({
+      mcpServers,
+      extensions: ["nativeprobe", "kept"],
+    });
+    await deliver(message("1", "@Gander hi"));
+    await flush(100);
+    expect(goose()?.removed).toEqual(["session-1 nativeprobe"]);
   });
 
   it("posts nothing goose wrote without `send`", async () => {

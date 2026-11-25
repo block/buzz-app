@@ -373,8 +373,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
   align-items: center;
   gap: var(--space-1);
   margin: var(--space-1h) 0 0;
-  /* Reactions and reply summaries are controls, not conversation text;
-     a copy states reaction counts from the group's data-copy-text. */
+  /* Keep reaction groups out of text selection; copy uses data-copy-text. */
   user-select: none;
 }
 .reactions[data-populated],
@@ -393,7 +392,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 .reactions:empty {
   margin-top: 0;
 }
-.reactionFallback > span:not([role]) {
+.reactionFallback > [data-reaction] {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -413,7 +412,7 @@ html[data-keyboard-navigation] .authorLink:focus-visible {
 }
 .reactionItem,
 .inlineReactionTool,
-.reactionFallback > span:not([role]) {
+.reactionFallback > [data-reaction] {
   border-radius: var(--radius-capsule);
   background: var(--reaction-surface, var(--affordance-reaction));
 }

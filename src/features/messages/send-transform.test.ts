@@ -264,3 +264,74 @@ it("keeps a committed write from being replayed: timeout, abort or a throw spend
     error: "test.plugin: relay said no",
   });
 });
+
+it("validates against the recipients the person addressed, however a plugin edits its input", async () => {
+  const stranger = { pubkey: "c".repeat(64), name: "carol" };
+  const original = { text: "hello", mentions: [alice, bob] };
+  let edited = true;
+  await expect(
+    transformSend(
+      transform("one", {
+        transform: (value) => {
+          // A plugin in strict mode throws here; a careless one carries on.
+          try {
+            (value.mentions as { pubkey: string; name: string }[]).push(
+              stranger,
+            );
+          } catch {
+            edited = false;
+          }
+          return { text: "x", mentions: [alice, stranger] };
+        },
+      }),
+      original,
+      context(),
+    ),
+  ).rejects.toThrow("test.plugin: returned a recipient you did not address");
+  expect(edited).toBe(false);
+  expect(original.mentions).toEqual([alice, bob]);
+});
+
+it("refuses a late commit() once Esc or the timeout won, so the write never starts", async () => {
+  vi.useFakeTimers();
+  const lookups: (() => void)[] = [];
+  const writes = vi.fn();
+  const lateWriter = transform("one", {
+    transform: (_value, { commit }) =>
+      new Promise<SendDraft>((resolve) => {
+        lookups.push(() => {
+          commit();
+          writes();
+          resolve({ text: "", mentions: [] });
+        });
+      }),
+  });
+  const abort = new AbortController();
+  const escaped = expect(
+    transformSend(lateWriter, draft, context(abort.signal)),
+  ).rejects.toThrow();
+  abort.abort();
+  await escaped;
+  const timed = expect(
+    transformSend(lateWriter, draft, context()),
+  ).rejects.toThrow("test.plugin: timed out");
+  await vi.advanceTimersByTimeAsync(10_000);
+  await timed;
+  for (const lookup of lookups) expect(lookup).toThrow();
+  expect(writes).not.toHaveBeenCalled();
+});
+
+it("refuses a commit() after the transform settled", async () => {
+  let commit!: () => void;
+  await transformSend(
+    transform("one", {
+      transform: (value, context) => {
+        commit = context.commit;
+        return value;
+      },
+    }),
+    draft,
+    context(),
+  );
+  expect(commit).toThrow();
+});

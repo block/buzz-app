@@ -236,8 +236,11 @@ the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the rea
 
 A plugin can take over a new message when you press Send, for example to format
 it, edit your previous message or react instead of posting. It never adds
-recipients. While it works, Esc cancels and keeps your draft; if it fails or
-takes longer than 10 seconds, nothing is sent and the draft stays with the error.
+recipients. While it works, a Cancel button appears beside Send, and Esc does
+the same: your draft stays. If it fails or takes longer than 10 seconds,
+nothing is sent and the draft stays with the error. If it had already started a
+write (an edit or a reaction), cancelling clears the draft instead, so the write
+is not repeated, and the plugin's name shows "still finishing".
 
 ## Docs
 

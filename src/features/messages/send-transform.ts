@@ -20,13 +20,25 @@ export type Transformed = Readonly<{
   error?: string;
 }>;
 
+/** What plugins are handed: a frozen copy, so nothing they do to it changes
+ * the recipients the host validates their result against. */
+export function frozenDraft(draft: SendDraft): SendDraft {
+  return Object.freeze({
+    text: draft.text,
+    mentions: Object.freeze(
+      draft.mentions.map(({ pubkey, name }) => Object.freeze({ pubkey, name })),
+    ),
+  });
+}
+
 /** The message `winner` sends instead, or `null` when it consumed the draft.
  * Its mentions are the draft's own entries, in the order it returned them: a
  * plugin can keep or drop the recipients the person addressed, never add one.
  * Before the plugin commits, it throws, naming the plugin, to block the send,
  * and settles when the send is aborted or the plugin takes longer than 10
- * seconds, even if it ignores `signal`; a late result is discarded. After it
- * commits, none of that throws: see `Transformed`. */
+ * seconds, even if it ignores `signal`; a late result is discarded. A late
+ * `commit()` throws, so a write never starts after that. After it commits,
+ * none of that throws: see `Transformed`. */
 export async function transformSend(
   winner: Contribution<SendTransform>,
   draft: SendDraft,
@@ -34,10 +46,16 @@ export async function transformSend(
 ): Promise<Transformed> {
   const { signal } = context;
   signal.throwIfAborted();
+  // The recipients the person addressed, fixed before any plugin code runs.
+  const original = frozenDraft(draft);
   // The plugin's signal also aborts when it times out.
   const attempt = new AbortController();
-  const state = { committed: false };
+  const state = { committed: false, settled: false };
   const commit = () => {
+    if (state.committed) return;
+    // An aborted or finished attempt must not start a write.
+    attempt.signal.throwIfAborted();
+    if (state.settled) throw new Error("The send already finished.");
     state.committed = true;
   };
   const timedOut = new Error("timed out");
@@ -57,7 +75,7 @@ export async function transformSend(
   try {
     const result: unknown = await Promise.race([
       (async () =>
-        winner.transform(draft, {
+        winner.transform(original, {
           ...context,
           signal: attempt.signal,
           commit,
@@ -67,7 +85,7 @@ export async function transformSend(
     signal.throwIfAborted();
     const sent = sendDraft(result);
     if (!sent) throw new Error(`${winner.title} returned an invalid message.`);
-    const typed = new Map(draft.mentions.map((item) => [item.pubkey, item]));
+    const typed = new Map(original.mentions.map((item) => [item.pubkey, item]));
     if (sent.keys.some((key) => !typed.has(key)))
       throw new Error(
         "returned a recipient you did not address. A transform can keep or drop the people you tagged, not add anyone.",
@@ -104,6 +122,7 @@ export async function transformSend(
     if (signal.aborted) throw reason;
     throw new Error(failure(winner, reason));
   } finally {
+    state.settled = true;
     clearTimeout(timer);
     signal.removeEventListener("abort", stop);
   }

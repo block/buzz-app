@@ -206,7 +206,7 @@ import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
 import { resolveMatch } from "../../plugins/contributions";
-import { transformSend, type Transformed } from "./send-transform";
+import { frozenDraft, transformSend, type Transformed } from "./send-transform";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -644,6 +644,8 @@ function Composer({
   const sendAttempt = useRef<AbortController | null>(null);
   // A plugin is rewriting the send: its wait ends if the composer is hidden.
   const transforming = useRef(false);
+  // The pending transform's title, so Cancel can be offered by name.
+  const [transformTitle, setTransformTitle] = useState<string>();
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
     if (disabled || !active) sendAttempt.current?.abort();
@@ -656,6 +658,7 @@ function Composer({
     () => () => sendAttempt.current?.abort(),
     [replyParentId, mediaTargetUrl],
   );
+  const cancelTransform = () => sendAttempt.current?.abort();
   const inputId = useId();
   const forwardDisclosureId = useId();
   const threadKey = threadRootId
@@ -3432,13 +3435,11 @@ function Composer({
       let transformed: SendDraft | undefined;
       if (host && transforms.length) {
         const markdown = composerMarkdown(captured);
-        const draft = {
+        // A frozen copy, so no plugin callback can edit the recipients.
+        const draft = frozenDraft({
           text: markdown,
-          mentions: capturedRecipients.map(({ pubkey, name }) => ({
-            pubkey,
-            name,
-          })),
-        };
+          mentions: capturedRecipients,
+        });
         // Only a claimed send leaves the ordinary path.
         const winner = resolveMatch<SendTransform, SendDraft>(
           transforms,
@@ -3447,22 +3448,39 @@ function Composer({
         if (winner) {
           setSending(true);
           transforming.current = true;
+          setTransformTitle(winner.title);
+          // A plugin turned off or reloaded meanwhile no longer speaks for the
+          // send: its signal aborts at once, not when it settles.
+          const turnedOff = new Error(
+            `${winner.pluginId}: was turned off before it finished. Send again to send without it.`,
+          );
+          const withdrawn = new AbortController();
+          const watch = extensions?.sendTransforms;
+          const unwatch = watch?.subscribe(() => {
+            if (!watch.snapshot().includes(winner)) withdrawn.abort(turnedOff);
+          });
           let outcome: Transformed;
           try {
             outcome = await transformSend(winner, draft, {
               session: host,
               channelId,
               threadRootId,
-              signal: attempt.signal,
+              signal: AbortSignal.any([attempt.signal, withdrawn.signal]),
             });
           } finally {
             transforming.current = false;
+            setTransformTitle(undefined);
+            unwatch?.();
           }
           const result = outcome.draft;
-          if (outcome.committed && !result) {
+          const stale = !watch?.snapshot().includes(winner);
+          if (outcome.committed && (!result || stale)) {
             // The plugin may have written, so the draft is spent and a
             // resend is not offered, whatever interrupted it.
-            if (outcome.notice) notify(outcome.notice, "info");
+            const notice =
+              outcome.notice ??
+              (result ? `${winner.pluginId}: still finishing` : undefined);
+            if (notice) notify(notice, "info");
             if (unchanged()) {
               clear(!attempt.signal.aborted);
               if (outcome.error) setError(outcome.error);
@@ -3470,11 +3488,7 @@ function Composer({
             return;
           }
           if (!stillCurrent()) return;
-          // A plugin turned off or reloaded meanwhile no longer speaks for the send.
-          if (!extensions?.sendTransforms?.snapshot().includes(winner))
-            throw new Error(
-              `${winner.pluginId}: was turned off before it finished. Send again to send without it.`,
-            );
+          if (stale) throw turnedOff;
           if (result === null) {
             clear();
             return;
@@ -4314,7 +4328,7 @@ function Composer({
             ) {
               event.preventDefault();
               event.stopPropagation();
-              sendAttempt.current?.abort();
+              cancelTransform();
               return;
             }
             if (
@@ -4807,6 +4821,19 @@ function Composer({
                     place={sessionPlace}
                   />
                 )}
+              {transformTitle && !editing.target && (
+                <IconButton
+                  type="button"
+                  size="toolbar"
+                  aria-label={`Cancel ${transformTitle}`}
+                  title={`Cancel ${transformTitle}`}
+                  onClick={() => {
+                    cancelTransform();
+                    input.current?.focus();
+                  }}
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              )}
               <IconButton
                 variant={
                   draft.trim() ||

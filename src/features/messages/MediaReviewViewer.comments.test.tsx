@@ -1123,3 +1123,25 @@ it("clears the comment when Esc interrupts a transform that already committed", 
   expect(sign).not.toHaveBeenCalled();
   expect(screen.getByRole("dialog", { name: "Image viewer" })).toBeVisible();
 });
+
+it("cancels a slow comment transform from its Cancel button, which Esc on the toolbar would not reach", async () => {
+  const slow = await stalledTransform();
+  const { sign, user } = await setupReview({
+    kind: "image",
+    extensions: slow.extensions,
+  });
+  await typeAndSend(user, "needs a look");
+  await waitFor(() => expect(slow.signal()).toBeDefined());
+  await user.click(screen.getByRole("button", { name: "Cancel Slow" }));
+  expect(slow.signal()?.aborted).toBe(true);
+  expect(screen.getByRole("dialog", { name: "Image viewer" })).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  expect(screen.queryByRole("button", { name: "Cancel Slow" })).toBeNull();
+  await act(async () => slow.settle("late"));
+  expect(sign).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("textbox", { name: "Reply to thread" }),
+  ).toHaveTextContent("needs a look");
+});

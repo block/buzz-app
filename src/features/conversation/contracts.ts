@@ -496,7 +496,8 @@ export type ComposerCompletion = Readonly<{
 
 /** A new message as the composer would send it: Markdown and the people the
  * person addressed (`mentions`), which need not all appear in the text. A
- * transform returns both fields, `mentions: []` for none. */
+ * transform returns both fields, `mentions: []` for none. A plugin is handed
+ * a frozen copy: editing it in place throws and never changes who is notified. */
 export type SendDraft = Readonly<{
   text: string;
   mentions: readonly Readonly<{ pubkey: string; name: string }>[];
@@ -505,9 +506,10 @@ export type SendTransformContext = Readonly<{
   session: RelaySession;
   channelId: string;
   threadRootId?: string | undefined;
-  /** Aborts when the person presses Esc while the transform is pending, when
-   * the composer is disabled, hidden or retargeted to another reply or media
-   * comment, when it unmounts, and after 10 seconds, when the send fails with
+  /** Aborts when the person presses Esc or Cancel while the transform is
+   * pending, when the composer is disabled, hidden or retargeted to another
+   * reply or media comment, when it unmounts, when the plugin is turned off or
+   * reloaded, and after 10 seconds, when the send fails with
    * `<plugin id>: timed out`. A result that arrives after an abort is dropped.
    * Pass it to anything slow; a write already queued is not undone. */
   signal: AbortSignal;
@@ -516,8 +518,10 @@ export type SendTransformContext = Readonly<{
    * the message counts as consumed, the draft clears, nothing is offered for
    * resending and a late result is dropped. A timeout, Esc or hide shows
    * `<plugin id>: still finishing`; a throw shows its error, with the draft
-   * still cleared. Calling it again does nothing. Without it, a transform
-   * that returns normally behaves as before. */
+   * still cleared. Calling it again does nothing. It throws once the send was
+   * aborted or has finished, so a lookup that outlives Esc, Cancel or the
+   * timeout cannot start its write: call it right before the write, after any await.
+   * Without it, a transform that returns normally behaves as before. */
   commit(): void;
 }>;
 /**

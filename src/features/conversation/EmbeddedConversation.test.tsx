@@ -521,3 +521,52 @@ it("sends the page's composers untransformed once the plugin is disabled", async
   await waitFor(() => expect(h.publications).toHaveLength(1));
   expect(h.publications[0]?.event.content).toBe("!plain");
 });
+
+it("cancels a pending transform the moment its plugin is turned off, keeping the draft", async () => {
+  let signal: AbortSignal | undefined;
+  const h = await fixture(
+    plugin((_draft, context) => {
+      signal = context.signal;
+      return new Promise<never>(() => {});
+    }),
+  );
+  render(<h.Overview />);
+  const field = typeInto("alpha", "!slow");
+  send("alpha");
+  await waitFor(() => expect(signal).toBeDefined());
+  h.disable();
+  await waitFor(() => expect(signal?.aborted).toBe(true));
+  expect(card("alpha").getByRole("alert")).toHaveTextContent(
+    "test.send: was turned off before it finished",
+  );
+  expect(field).toHaveValue("!slow");
+  expect(
+    card("alpha").getByRole("button", { name: "Send message" }),
+  ).toBeEnabled();
+  expect(h.publications).toHaveLength(0);
+});
+
+it("spends the draft when a plugin that committed is turned off, even if it then returns", async () => {
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  let signal: AbortSignal | undefined;
+  const h = await fixture(
+    plugin((_draft, context) => {
+      signal = context.signal;
+      context.commit();
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    }),
+  );
+  render(<h.Overview />);
+  const field = typeInto("alpha", "!write");
+  send("alpha");
+  await waitFor(() => expect(signal).toBeDefined());
+  h.disable();
+  await waitFor(() => expect(field).toHaveValue(""));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish({ text: "rewritten", mentions: [] }));
+  expect(card("alpha").queryByRole("alert")).toBeNull();
+  expect(field).toHaveValue("");
+  expect(h.publications).toHaveLength(0);
+});

@@ -67,7 +67,6 @@ import {
   useChannelNavigation,
 } from "./ChannelNavigationState";
 import { readView, writeView } from "../../shared/view-state";
-import styles from "../../bundled/channels/MessagesSidebar.module.css";
 import { BestieNavigationProvider } from "../../app/shell/BestieNavigation";
 import { PageNavigation } from "../../app/shell/PageNavigation";
 import { createAgentChoices } from "../agents/choices";
@@ -1671,8 +1670,10 @@ it.each(["ready", "error"] as const)(
     expect(
       within(pages).getByRole("button", { name: "Projects" }),
     ).toBeVisible();
-    // A ready inventory lists pages itself, in their orderable section.
-    expect(!!pages.closest(`.${styles.destinations}`)).toBe(status === "error");
+    // Without an inventory, the pages keep their own Plugins card.
+    if (status === "error") {
+      expect(pages.closest("[data-sidebar-card]")).not.toBeNull();
+    }
   },
 );
 

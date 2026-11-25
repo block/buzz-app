@@ -96,6 +96,11 @@ const titles: Record<string, string> = {
   dms: "Direct messages",
 };
 
+/** A home card's title, such as Plugins for the pages card. */
+export function sidebarSectionTitle(key: string) {
+  return titles[key] ?? key;
+}
+
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
 export function sidebarSections<T extends ChannelSummary>(
   channels: readonly T[],
@@ -156,7 +161,7 @@ export function sidebarSections<T extends ChannelSummary>(
     return [
       {
         key,
-        title: group?.name ?? titles[key] ?? key,
+        title: group?.name ?? sidebarSectionTitle(key),
         icon: group?.icon,
         rows,
       },

@@ -33,33 +33,10 @@
   z-index: -1;
   pointer-events: none;
 }
-/* Give pinned pages the same trailing scrollbar budget as the list. Their
-   focus rings are drawn inside the rows. Block padding maintains the gap
-   between the pinned pages and the first scrolling section. */
-.destinations {
-  --row-ring-extent: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-  margin: calc(-1 * var(--row-ring-extent)) calc(-1 * var(--row-ring-extent))
-    calc(var(--space-2) - var(--row-ring-extent));
-  margin-inline-end: calc(-1 * var(--sidebar-padding-end));
-  padding: var(--row-ring-extent) 0 var(--row-ring-extent)
-    var(--row-ring-extent);
-  /* Bound the pinned region so the conversation scrollport keeps room at
-     short window heights and large interface sizes. */
-  max-block-size: 40dvh;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb-quiet) transparent;
-}
-.destinations > * {
+/* Without a community, its status sits in a card under the Plugins card. */
+.statusCard {
+  height: auto;
   flex-shrink: 0;
-  width: min(100%, 100cqi);
-}
-.destinations::-webkit-scrollbar {
-  width: 5px;
 }
 .connectionStatus {
   display: flex;

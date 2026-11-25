@@ -271,6 +271,52 @@ test.describe("member scrolling", () => {
     expect((await measureList(list)).scrollTop).toBe(0);
   });
 
+  test("a wheel position survives roster growth in the same native scroll event", async ({
+    page,
+  }) => {
+    const { list, before } = await openChangingRoster(page);
+    await list.hover();
+    await list.evaluate((element) => {
+      window.wheelGrowth = { events: [], delivered: false };
+      window.addEventListener(
+        "scroll",
+        (event) => {
+          if (event.target !== element) return;
+          window.wheelGrowth.events.push({
+            offset: element.scrollTop,
+            time: performance.now(),
+          });
+          if (window.wheelGrowth.events.length === 1)
+            void window.focusFixture.updateAgents(30).then(() => {
+              window.wheelGrowth.delivered = true;
+            });
+        },
+        { capture: true, passive: true },
+      );
+    });
+    await page.mouse.wheel(0, -32);
+    await page.waitForFunction(() => window.wheelGrowth.delivered);
+    // Let native smooth wheel motion finish, including WebKit's intermediate offset.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          let frames = 12;
+          function next() {
+            if (--frames === 0) resolve();
+            else requestAnimationFrame(next);
+          }
+          requestAnimationFrame(next);
+        }),
+    );
+    const after = await measureList(list);
+    const native = await page.evaluate(() => window.wheelGrowth);
+    console.log(
+      "wheel-growth geometry " + JSON.stringify({ before, after, native }),
+    );
+    expect(native.events[0].offset).toBeLessThan(before.scrollTop);
+    expect(after.scrollTop).toBeCloseTo(before.scrollTop - 32, 0);
+  });
+
   test("a pointer tab change keeps the tab under the pointer and Tab reaches the first member", async ({
     page,
     browserName,

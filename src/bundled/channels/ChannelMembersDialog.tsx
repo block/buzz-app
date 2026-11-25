@@ -596,8 +596,6 @@ function preserveMemberListOffset(list: HTMLElement, offset: number) {
   const property = "--member-scroll-reserve";
 
   let reserve = 0;
-  let maxOffset = 0;
-  let clientHeight = 0;
   let resize: ResizeObserver | undefined;
   let children: MutationObserver | undefined;
 
@@ -608,15 +606,18 @@ function preserveMemberListOffset(list: HTMLElement, offset: number) {
     list.style.removeProperty(property);
   }
   function rememberOffset() {
-    // A shrink can clamp scrollTop and fire scroll before ResizeObserver.
-    // Keep the last user offset until we have measured the new layout.
-    if (
-      list.clientHeight === clientHeight &&
-      list.scrollHeight - clientHeight === maxOffset
-    )
+    const end = list.scrollHeight - list.clientHeight;
+    // A shrink can clamp scrollTop before the new layout is measured.
+    // Only that shorter end keeps the offset from before the frame.
+    if (!(Math.abs(list.scrollTop - end) <= 1 && end < offset))
       offset = list.scrollTop;
+    update();
   }
   function update() {
+    if (!list.isConnected) {
+      stop();
+      return 0;
+    }
     const top = list.getBoundingClientRect().top + list.clientTop;
     const contentBottom = Math.max(
       0,
@@ -638,8 +639,6 @@ function preserveMemberListOffset(list: HTMLElement, offset: number) {
       list.style.setProperty(property, `${needed}px`);
     }
     if (list.scrollTop !== offset) list.scrollTop = offset;
-    clientHeight = list.clientHeight;
-    maxOffset = list.scrollHeight - clientHeight;
     return needed;
   }
   function observeContent() {
@@ -1463,7 +1462,7 @@ export function ChannelMembersDialog({
     pendingMemberTab.current = null;
     if (list && showTabs && offset !== null)
       return preserveMemberListOffset(list, offset);
-  }, [memberGroup, showTabs, pages, text, accessFilter]);
+  }, [memberGroup, showTabs, pages, text, accessFilter, shownIntent]);
   const pendingMemberPage = useRef<string | null>(null);
   useLayoutEffect(() => {
     const group = pendingMemberPage.current;

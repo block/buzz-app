@@ -207,37 +207,84 @@ it("keeps the known-agent fallback on profile failure and replaces it with relay
   }
 });
 
-it("says why Retry is offered when only an agent's owner check failed, and clears both on retry", async () => {
+it("says why Retry is offered when only an agent's owner check failed, and keeps a focused Retry while the check rereads", async () => {
   const f = fixture();
   try {
     f.known();
+    // The owner check's own views, so the test can reread one as a reconnect does.
+    const ownerChecks: ReturnType<RelaySession["observe"]>[] = [];
+    const session: RelaySession = {
+      ...f.session,
+      observe(filters) {
+        const view = f.session.observe(filters);
+        if (filters.some((filter) => filter.limit === 1))
+          ownerChecks.push(view);
+        return view;
+      },
+    };
+    const snapshot = { ...f.relay.snapshot(), session };
+    const relay: RelayData = { ...f.relay, snapshot: () => snapshot };
     // The owner check observes the agent's newest signed profile on its own;
     // the profile read itself answers with no profile.
-    f.query.mockImplementation(async (filters) => {
-      if (
-        filters.some(
-          (filter) => filter.kinds?.includes(0) && filter.limit === 1,
-        )
-      )
-        throw new Error("Owner evidence unavailable");
-      return [];
-    });
-    render(f.panel());
+    let ownerRead = (): Promise<[]> =>
+      Promise.reject(new Error("Owner evidence unavailable"));
+    f.query.mockImplementation((filters) =>
+      filters.some((filter) => filter.kinds?.includes(0) && filter.limit === 1)
+        ? ownerRead()
+        : Promise.resolve([]),
+    );
+    render(
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(f.person.pubkey) ?? ""}
+        close={() => {}}
+      />,
+    );
     const reason = await screen.findByText(
       "Could not confirm who manages this agent.",
     );
     expect(screen.getAllByRole("alert")).toEqual([reason]);
+    const retryButton = screen.getByRole("button", { name: "Retry profile" });
+    act(() => retryButton.focus());
 
-    f.query.mockImplementation(async () => []);
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "Retry profile" }));
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Retry profile" }),
-      ).not.toBeInTheDocument(),
+    /** Rereads the owner check, as a reconnect does, and holds the read. */
+    const reread = async () => {
+      const out = new Promise<{
+        resolve(events: []): void;
+        reject(error: Error): void;
+      }>((started) => {
+        ownerRead = () =>
+          new Promise((resolve, reject) => started({ resolve, reject }));
+      });
+      act(() => void ownerChecks.at(-1)?.refresh());
+      const held = await out;
+      // The focused Retry stays, busy and with no reason, while the check is out.
+      await waitFor(() =>
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+      );
+      expect(retryButton).toHaveFocus();
+      expect(retryButton).toHaveAttribute("aria-busy", "true");
+      return held;
+    };
+
+    const failing = await reread();
+    await act(async () =>
+      failing.reject(new Error("Owner evidence unavailable")),
     );
+    expect(
+      await screen.findByText("Could not confirm who manages this agent."),
+    ).toBeInTheDocument();
+    expect(retryButton).toHaveFocus();
+    expect(retryButton).not.toHaveAttribute("aria-busy", "true");
+
+    // Once the check succeeds Retry goes, and its focus moves to the region.
+    const succeeding = await reread();
+    await act(async () => succeeding.resolve([]));
+    await waitFor(() => expect(retryButton).not.toBeInTheDocument());
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Profile details" }),
+    ).toHaveFocus();
   } finally {
     f.dispose();
   }

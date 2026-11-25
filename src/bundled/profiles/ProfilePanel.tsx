@@ -35,6 +35,7 @@ import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { usePresenceStatus } from "../../features/presence/react";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -442,6 +443,7 @@ function ProfileDetails({
   // Retry stays mounted and focusable while its own read is pending.
   const [retrying, setRetrying] = useState(false);
   const retryButton = useRef<HTMLButtonElement>(null);
+  const [retryFocused, setRetryFocused] = useState(false);
   const [copyStatus, setCopyStatus] = useState("");
   const [tab, setTab] = useState<
     "info" | "activity" | "channels" | `agent:${string}`
@@ -521,9 +523,6 @@ function ProfileDetails({
     void session.profiles.ensure([pubkey]).then(
       () => {
         if (!active) return;
-        // Retry unmounts on success; hand its focus to the stable region.
-        if (document.activeElement === retryButton.current)
-          region.current?.focus();
         setStatus("ready");
         setRetrying(false);
       },
@@ -561,6 +560,21 @@ function ProfileDetails({
   // A pending retry states no reason.
   const ownerUnconfirmed =
     ownership.failed && !readPending && !readFailed && !retrying;
+  // The owner check rereads on its own, as after a reconnect, and an explicit
+  // retry rereads it too. A focused Retry stays mounted and busy until that
+  // read settles, so the reread cannot take its focus away.
+  const ownerRechecking =
+    retryFocused && !readFailed && ownership.status === "loading";
+  const offerRetry =
+    readFailed || retrying || ownerUnconfirmed || ownerRechecking;
+  // Retry unmounts once nothing is left to retry; hand its focus to the
+  // stable region rather than the document body.
+  useLayoutEffect(() => {
+    if (offerRetry || !retryFocused) return;
+    setRetryFocused(false);
+    const active = document.activeElement;
+    if (!active || active === document.body) region.current?.focus();
+  }, [offerRetry, retryFocused]);
   const selectedTab =
     requestedTab.startsWith("agent:") && !section ? "info" : requestedTab;
   useEffect(() => {
@@ -863,11 +877,13 @@ function ProfileDetails({
                         Could not confirm who manages this agent.
                       </p>
                     )}
-                    {(readFailed || retrying || ownerUnconfirmed) && (
+                    {offerRetry && (
                       <Button
                         ref={retryButton}
                         size="compact"
-                        loading={retrying}
+                        loading={retrying || ownerRechecking}
+                        onFocus={() => setRetryFocused(true)}
+                        onBlur={() => setRetryFocused(false)}
                         onClick={() => {
                           setRetrying(true);
                           retry((value) => value + 1);

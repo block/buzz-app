@@ -1735,6 +1735,7 @@ export function createUnread({
               ...(row.attachmentSeams
                 ? { attachmentSeams: row.attachmentSeams }
                 : {}),
+              ...(row.emoji?.length && !row.diff ? { emoji: row.emoji } : {}),
             },
           ]),
         );

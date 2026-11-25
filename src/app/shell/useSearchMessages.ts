@@ -15,6 +15,7 @@ import {
 import { objectBody } from "../../features/relay/body";
 import { threadReference } from "../../features/relay/thread-reference";
 import { imetaAttachmentUrls } from "../../features/relay/fold";
+import { emojiTags } from "../../features/relay/emoji";
 import { projectMarkdownAttachments } from "../../features/relay/message-content";
 import type { PreviewMentions } from "../../features/messages/PreviewText";
 import type { RelaySession } from "../../features/relay/session";
@@ -99,9 +100,9 @@ export function searchText(event: { kind: number; content: string }) {
   return plainText(eventText(event), { limit: 4000 });
 }
 
-/** An indexed event's body and signed mentions, read from its tags as a
- * message reads them: `p` recipients and two-field `mention` references. A
- * patch shows as raw text, so it binds no one. */
+/** An indexed event's body, signed mentions and custom emoji, read from its
+ * tags as a message reads them: `p` recipients, two-field `mention`
+ * references and `emoji` tags. A patch shows as raw text, so it binds no one. */
 export function eventMentions(event: IndexedEvent): PreviewMentions {
   if (event.kind === 40008) return { content: eventText(event), mentions: [] };
   const keys = (pick: (tag: readonly string[]) => boolean) => [
@@ -115,7 +116,8 @@ export function eventMentions(event: IndexedEvent): PreviewMentions {
   const mentionReferences = keys(
     (tag) => tag.length === 2 && tag[0] === "mention",
   );
-  if (!mentions.length && !mentionReferences.length)
+  const emoji = emojiTags(event);
+  if (!mentions.length && !mentionReferences.length && !emoji.length)
     return { content: eventText(event), mentions };
   const { content, seams } = eventBody(event);
   return {
@@ -123,6 +125,7 @@ export function eventMentions(event: IndexedEvent): PreviewMentions {
     mentions,
     mentionReferences,
     ...(seams.length ? { attachmentSeams: seams } : {}),
+    ...(emoji.length ? { emoji } : {}),
   };
 }
 type Result = {

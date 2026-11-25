@@ -1596,6 +1596,7 @@ it("Inbox rows carry their preview message's signed mentions and edit state", ()
     mentionReferences: [h.alice.pubkey],
   });
   expect(preview()?.edited).toBeUndefined();
+  expect(preview()?.emoji).toBeUndefined();
   // An edited body no longer binds its original recipients, as in a message.
   h.emit([
     signed(h.alice, {
@@ -1605,6 +1606,23 @@ it("Inbox rows carry their preview message's signed mentions and edit state", ()
     }),
   ]);
   expect(preview()?.edited).toBe(true);
+});
+
+it("Inbox rows carry their preview message's own custom emoji", () => {
+  const h = setup();
+  h.grant("room");
+  const party = "https://example.test/party.png";
+  const mention = message(h.alice, "room", "@viewer ship it :party:", 12, [
+    ["p", h.viewer.pubkey],
+    ["emoji", "party", party],
+  ]);
+  h.emit([mention]);
+  expect(
+    h.session.unread
+      .inbox()
+      .items.find((item) => item.previewMessageId === mention.id)
+      ?.previewMentions.emoji,
+  ).toEqual([{ shortcode: "party", url: party }]);
 });
 
 it("activity attachment labels follow edits and notify preview subscribers", () => {

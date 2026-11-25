@@ -814,8 +814,12 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
             ["e", parent, "", "reply"],
           ],
       audienceTags,
-      // Under the task message, the reply is in the task's own subthread.
-      parent === context.root ? parent : root,
+      // Under the task message, or any message below it, the reply is in
+      // the task's own subthread. Unsure is no.
+      parent === context.root ||
+        (target && (await tools.inTaskSubthread(target, channel)))
+        ? context.root
+        : root,
     );
   },
 
@@ -2169,23 +2173,35 @@ class Tools {
           throw new Error("The task thread is in a different channel.");
         return taskTags;
       }
-      if (
-        channel === taskChannel &&
-        tag(target, "h") === channel &&
-        threadReference(target)?.rootId === sourceRoot
-      ) {
-        const branch = await readSubthread(
-          [target],
-          { channel, root: sourceRoot, anchor },
-          THREAD,
-          (filters) => this.client.query(filters),
-        );
-        if (branch.events.length) return taskTags;
-        if (branch.incomplete)
-          throw new Error("Could not verify the task reply's parent thread.");
-      }
+      const inTask = await this.inTaskSubthread(target, channel);
+      if (inTask) return taskTags;
+      if (inTask === undefined)
+        throw new Error("Could not verify the task reply's parent thread.");
     }
     return [["e", target ? rootOf(target) : parent, "", "reply"]];
+  }
+
+  /** Whether `target`, in `channel`, sits in the session's task subthread:
+   * under its anchor message rather than elsewhere in the physical thread.
+   * Undefined when the relay could not show the whole branch. */
+  async inTaskSubthread(target: BuzzEvent, channel: string) {
+    const { channel: taskChannel, root: anchor, sourceRoot } = this.context;
+    if (
+      !anchor ||
+      !sourceRoot ||
+      channel !== taskChannel ||
+      tag(target, "h") !== channel ||
+      threadReference(target)?.rootId !== sourceRoot
+    )
+      return false;
+    const branch = await readSubthread(
+      [target],
+      { channel, root: sourceRoot, anchor },
+      THREAD,
+      (filters) => this.client.query(filters),
+    );
+    if (branch.events.length) return true;
+    return branch.incomplete ? undefined : false;
   }
 
   /** Visit matching events in relay order, retaining only what the caller needs.

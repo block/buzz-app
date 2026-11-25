@@ -657,6 +657,43 @@ it("stamps the context size only on the session's own conversation", async () =>
   ).toBe(true);
 });
 
+it("stamps a subthread reply anywhere in the session's task subthread", async () => {
+  const inTask = event({
+    id: "3".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "root"],
+      ["e", nested, "", "reply"],
+    ],
+  });
+  const sibling = event({
+    id: "5".repeat(64),
+    tags: [
+      ["h", "chan"],
+      ["e", root, "", "reply"],
+    ],
+  });
+  const { client, published } = fake([...community, inTask, sibling]);
+  const stamped = { ...client, contextTokens: () => 435_123 };
+  const context = { channel: "chan", root: nested, sourceRoot: root };
+  for (const parent of [nested, inTask.id, sibling.id])
+    await callTool(stamped, context, "reply_in_subthread", {
+      parent,
+      text: "x",
+      audience: "agents",
+    });
+  expect(
+    published.map((event) =>
+      event.tags.some(([name]) => name === "buzz:context"),
+    ),
+  ).toEqual([true, true, false]);
+  expect(published[1]?.tags.slice(0, 3)).toEqual([
+    ["h", "chan"],
+    ["e", root, "", "root"],
+    ["e", inTask.id, "", "reply"],
+  ]);
+});
+
 it("refuses to post a name it cannot resolve unless told who it means", async () => {
   const { client, published } = fake(community);
   const context = { channel: "chan", root };

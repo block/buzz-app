@@ -294,6 +294,7 @@ export class AcpSession {
   interruptExternalRun() {
     if (!this.externalRun || this.closed || this.stopped) return;
     this.generation++;
+    this.abortWork();
     this.stopped = { waiters: [], receipts: new Set() };
     this.acp.notify("session/cancel", { sessionId: this.id });
   }
@@ -347,6 +348,10 @@ export class AcpSession {
         // A queued tool from an earlier delegated run has no authority in
         // its successor, even when the harness skips the idle notification.
         this.generation++;
+        // Each delegated run's tools get their own cancellation, which ends
+        // with that run; typed work after it starts a fresh one.
+        this.abortWork();
+        if (runId) this.work = new AbortController();
         // Delegated results belong to voice, not the next queued text turn.
         this.acted = false;
         this.written = "";

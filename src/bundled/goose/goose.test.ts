@@ -109,6 +109,42 @@ describe("GooseProcess", () => {
     await goose.kill();
   });
 
+  it("gives each delegated run's Buzz tools a cancellation that ends with it", async () => {
+    const signals: AbortSignal[] = [];
+    const { open, process, goose } = await start(
+      async (_c, message, signal) => {
+        if (signal) signals.push(signal);
+        return { jsonrpc: "2.0", id: message.id, result: { content: [] } };
+      },
+    );
+    const session = await open();
+    session.observeExternalRuns(true);
+    session.reserveExternal();
+    const run = async (activeRunId: string | null) => {
+      process.update(session.id, {
+        sessionUpdate: "session_info_update",
+        _meta: { goose: { activeRunId } },
+      });
+      await flush();
+    };
+    await run("first");
+    await process.mcp(session.id, "tools/call", {
+      name: "read",
+      arguments: {},
+    });
+    await run("second");
+    await process.mcp(session.id, "tools/call", {
+      name: "read",
+      arguments: {},
+    });
+    const [first, second] = signals;
+    expect(first?.aborted).toBe(true);
+    expect(second?.aborted).toBe(false);
+    session.interruptExternalRun();
+    expect(second?.aborted).toBe(true);
+    await goose.kill();
+  });
+
   it.each([false, true])(
     "queues typed work for the whole live reservation (delegated=%s)",
     async (delegated) => {

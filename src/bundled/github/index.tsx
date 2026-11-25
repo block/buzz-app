@@ -450,6 +450,24 @@ function ObjectPanel({
   const loaded = isPull ? pull.loaded : other.loaded;
   const load = isPull ? pull.load : other.load;
   const link = reference.url;
+  const tabActions = useMemo(
+    () => [
+      {
+        label: "Open in browser",
+        run() {
+          if (isTauri()) {
+            setOpenFailed(false);
+            void invoke("plugin:opener|open_url", { url: link }).catch(() =>
+              setOpenFailed(true),
+            );
+          } else {
+            window.open(link, "_blank", "noopener,noreferrer");
+          }
+        },
+      },
+    ],
+    [link],
+  );
   const result = typeof loaded === "object" ? loaded.details : loaded;
   // The number leads, so tabs of several pull requests stay apart when narrow.
   usePanelTabTitle(
@@ -458,6 +476,8 @@ function ObjectPanel({
       : typeof result === "object" && result.title
         ? `${reference.label} ${result.title}`
         : reference.label,
+    undefined,
+    tabActions,
   );
   const Icon = icons[reference.kind];
   const state = typeof result === "object" ? result.state.toLowerCase() : "";

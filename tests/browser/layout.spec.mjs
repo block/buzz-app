@@ -338,10 +338,12 @@ test("joined sidebar and workspace surface, real link panel and compact communit
   const profile = await box(button(page, "Your profile"));
   near(rail.y + rail.height / 2, profile.y + profile.height / 2);
   near(before.x, (await box(mainPanel)).x + 1);
+  // The workspace sheet insets its content one panel gap below the header.
   near(
     before.y,
     (await box(page.locator(".shell-header"))).y +
       (await box(page.locator(".shell-header"))).height +
+      gap +
       1,
   );
   const background = await page

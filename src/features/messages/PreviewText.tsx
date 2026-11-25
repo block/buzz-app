@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { parseBuzzLink } from "../navigation/buzz-links";
 import { spoilerText } from "../notifications/content";
@@ -17,7 +17,6 @@ import {
   ProfileMention,
   useReferenceDirectory,
 } from "./ReferenceText";
-import styles from "../../shared/InlineReference.module.css";
 
 /** A message as its previews bind it: its body as its conversation shows
  * it, attachments already projected out, and its signed identities. */
@@ -274,11 +273,10 @@ export function PreviewText({
       return (
         <MatchedLabel key={start} label={part.text} positions={positions} />
       );
-    // A row is its own control, so a channel name is text, not a link.
+    // A row is its own control and nothing in it opens, so a channel name
+    // reads as the row's own text, not as a link.
     const chip = channel ? (
-      <span key={start} className={styles.link}>
-        {channel}
-      </span>
+      <Fragment key={start}>{channel}</Fragment>
     ) : (
       <ProfileMention
         key={start}

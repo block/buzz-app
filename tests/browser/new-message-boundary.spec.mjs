@@ -989,6 +989,37 @@ appTest.describe("a head read that outlasts the reading dwell", () => {
         .map((frame) => frame.rows.find(([id]) => id === newest)?.[1]);
       expect(tops.every((top) => top !== undefined)).toBe(true);
       expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(1);
+
+      // A reader who then leaves the end stays where they are when a row
+      // above them grows.
+      const fromEnd = () =>
+        page.evaluate(() => {
+          const scroller = document.querySelector(
+            '[aria-label="Channel message history"]',
+          );
+          return (
+            scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+          );
+        });
+      await page.locator('[aria-label="Channel message history"]').hover();
+      await page.mouse.wheel(0, -400);
+      await expect.poll(fromEnd).toBeGreaterThan(300);
+      const away = await fromEnd();
+      await page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const row = document.querySelector(
+              '[aria-label="Channel message history"] [data-message-id]',
+            );
+            row.append(
+              Object.assign(document.createElement("div"), {
+                style: "height: 150px",
+              }),
+            );
+            window.nativeFrame(() => window.nativeFrame(resolve));
+          }),
+      );
+      expect(Math.abs((await fromEnd()) - away)).toBeLessThan(1);
     },
   );
 

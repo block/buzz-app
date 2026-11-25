@@ -1491,6 +1491,8 @@ function Timeline({
       element.scrollHeight - element.scrollTop - element.clientHeight;
     let height = list.style.height;
     const pin = new MutationObserver(() => {
+      // A reader who has left the end is the reader hold's to keep.
+      if (!follow.current || !settled.current) return pin.disconnect();
       if (list.style.height === height) return;
       height = list.style.height;
       correctScrollTop(

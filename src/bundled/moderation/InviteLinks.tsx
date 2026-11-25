@@ -320,6 +320,7 @@ export function InviteLinks({
           title={`Revoke ${pending.label}?`}
           description="Nobody new can join with it. People who already joined stay in."
           pending={revoking}
+          error={revokeError}
           onClose={close}
           actions={
             <>
@@ -337,13 +338,7 @@ export function InviteLinks({
               </Button>
             </>
           }
-        >
-          {revokeError && (
-            <p role="alert" className="m-0 text-body-sm">
-              {revokeError}
-            </p>
-          )}
-        </AlertDialog>
+        />
       )}
     </div>
   );

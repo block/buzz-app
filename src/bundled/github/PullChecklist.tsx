@@ -488,6 +488,7 @@ function Actions({
                 : `${title}, into ${pull.base} at the commit shown here.`
           }
           pending={busy === "merge" || busy === "enqueue"}
+          error={error}
           onClose={() => {
             setConfirming(undefined);
             setError(undefined);
@@ -519,13 +520,7 @@ function Actions({
               </Button>
             </>
           }
-        >
-          {error && (
-            <p role="alert" className={styles.pullActionError}>
-              {error}
-            </p>
-          )}
-        </AlertDialog>
+        />
       )}
     </>
   );

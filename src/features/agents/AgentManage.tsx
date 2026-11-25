@@ -116,6 +116,7 @@ export function AgentDelete({
               : "It stops, leaves every channel and is archived so it no longer appears in member lists or mention suggestions, then its key is deleted from this device. It can't be undone."
         }
         preventClose={removing}
+        error={error}
         actions={
           <>
             <Button
@@ -135,7 +136,7 @@ export function AgentDelete({
           </>
         }
       >
-        {several || error || unreachable.length || forgot ? (
+        {several || unreachable.length || forgot ? (
           <div className="flex flex-col gap-3">
             {several && (
               <ul
@@ -168,11 +169,6 @@ export function AgentDelete({
                 ))}
               </ul>
             )}
-            {error ? (
-              <p role="alert" className="m-0 text-body-sm text-danger">
-                {error}
-              </p>
-            ) : null}
             {unreachable.length > 0 && (
               <p className="m-0 text-body-sm text-secondary">
                 Forget deletes it from this device without reaching that
@@ -249,6 +245,7 @@ export function AgentRemoveHere({
         title={`Remove ${agent.name} from ${place}?`}
         description="It stops here, leaves this community's channels and is archived here. It stays in your other communities with the same name, type and settings. Add it here again and its memory and conversations here come back, but what it paid attention to here doesn't."
         preventClose={removing}
+        error={error}
         actions={
           <>
             <Button
@@ -267,13 +264,7 @@ export function AgentRemoveHere({
             </Button>
           </>
         }
-      >
-        {error ? (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        ) : null}
-      </Dialog>
+      />
     </>
   );
 }

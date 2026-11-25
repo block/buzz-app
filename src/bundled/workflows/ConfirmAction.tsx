@@ -31,6 +31,7 @@ export function ConfirmAction({
       initialFocus={destructive ? cancelAction : confirmAction}
       description={description}
       pending={pending}
+      error={error}
       onClose={onCancel}
       actions={
         <>
@@ -47,12 +48,6 @@ export function ConfirmAction({
           </Button>
         </>
       }
-    >
-      {error && (
-        <p role="alert" className="text-danger">
-          {error}
-        </p>
-      )}
-    </AlertDialog>
+    />
   );
 }

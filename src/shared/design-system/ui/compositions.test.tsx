@@ -391,7 +391,7 @@ test("tooltip preserves existing descriptions while open and after dismissal", a
   expect(button).toHaveAccessibleName("Described action");
 });
 
-test("dialog composition keeps actions accessible and lets an inner layer consume Escape", async () => {
+test("dialog composition keeps actions and an action error accessible and lets an inner layer consume Escape", async () => {
   const user = userEvent.setup();
   const change = vi.fn();
   const interceptEscape = vi
@@ -407,6 +407,7 @@ test("dialog composition keeps actions accessible and lets an inner layer consum
       headerActions={<Button>Editor menu</Button>}
       leadingActions={<Button>Change view</Button>}
       actions={<Button>Save</Button>}
+      error="Couldn't save. Try again."
     >
       <Field label="Name">
         <Input />
@@ -415,6 +416,9 @@ test("dialog composition keeps actions accessible and lets an inner layer consum
   );
   for (const name of ["Editor menu", "Change view", "Save", "Close"])
     expect(screen.getByRole("button", { name })).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Couldn't save. Try again.",
+  );
   await user.click(screen.getByRole("textbox", { name: "Name" }));
   await user.keyboard("{Escape}");
   expect(interceptEscape).toHaveBeenCalledTimes(1);

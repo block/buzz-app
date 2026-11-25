@@ -82,6 +82,7 @@ export function AgentIdentityDialog({
       chromeSpacing="padded"
       finalFocus={finalFocus}
       preventClose={pending || avatarBusy}
+      error={error}
       dismissOnOutsideClick={false}
       onOpenChange={(open) => {
         if (!open) onClose();
@@ -122,7 +123,6 @@ export function AgentIdentityDialog({
       <form
         id={form}
         className={styles.form}
-        data-error={error ? "" : undefined}
         onSubmit={(event) => {
           event.preventDefault();
           void save();
@@ -140,11 +140,6 @@ export function AgentIdentityDialog({
           }}
           avatarRef={avatarRef}
         />
-        {error && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {error}
-          </p>
-        )}
       </form>
     </Dialog>
   );

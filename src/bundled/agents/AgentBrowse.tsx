@@ -587,6 +587,7 @@ export function SharedImportDialog({
             : "Import it as is, or edit anything below first. Changes only affect your copy."
       }
       footerGap="compact"
+      error={refused || error}
       finalFocus={finalFocus}
       preventClose={pending}
       onOpenChange={(open) => {
@@ -687,11 +688,6 @@ export function SharedImportDialog({
           disabled={pending}
           onChange={setInstructions}
         />
-        {(refused || error) && (
-          <p role="alert" className="m-0 text-body-sm text-danger">
-            {refused || error}
-          </p>
-        )}
       </div>
     </Dialog>
   );

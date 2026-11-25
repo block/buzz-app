@@ -601,6 +601,7 @@ export function ManagedPluginReview({
           </p>
         ) : undefined
       }
+      error={review.status === "error" ? review.reason : undefined}
       actions={
         <>
           {review.status === "error" && (
@@ -631,11 +632,6 @@ export function ManagedPluginReview({
             : entry && "folder" in entry
               ? "Reading the plugin folder…"
               : "Reading the plugin at the pinned commit… Git imports may take up to a minute."}
-        </p>
-      )}
-      {review.status === "error" && (
-        <p role="alert" className="error break-words">
-          {review.reason}
         </p>
       )}
       {ready && candidate && entry && (

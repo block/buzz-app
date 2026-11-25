@@ -1265,6 +1265,22 @@ export function PluginImport({
             </>
           ) : undefined
         }
+        error={
+          error && (
+            <>
+              <span>{error.message}</span>
+              {error.recoveryHint &&
+                !bound &&
+                !linkConstrained &&
+                !savedSource && (
+                  <>
+                    <br />
+                    <span>{error.recoveryHint}</span>
+                  </>
+                )}
+            </>
+          )
+        }
         onEscape={() => {
           if (!showUnchanged) return false;
           setShowUnchanged(false);
@@ -1276,20 +1292,6 @@ export function PluginImport({
           returnFocus?.() ?? trigger.current ?? checkAgain.current
         }
       >
-        {error && (
-          <p role="alert" className="error break-words">
-            <span>{error.message}</span>
-            {error.recoveryHint &&
-              !bound &&
-              !linkConstrained &&
-              !savedSource && (
-                <>
-                  <br />
-                  <span>{error.recoveryHint}</span>
-                </>
-              )}
-          </p>
-        )}
         {showUnchanged && candidate && (
           <PluginAccessReview
             manifest={candidate.manifest}

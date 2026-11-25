@@ -39,6 +39,7 @@ export function useLegacyIdentityOffer(identity: Identity, open: boolean) {
       description="Old Buzz was used on this device. Continue with the identity it saved instead of setting up a new one. Your computer may ask you to allow access."
       onClose={dismiss}
       pending={state.busy}
+      error={tried ? state.error : undefined}
       initialFocus={proceed}
       // Launch focuses nothing, so the landing's heading takes focus back.
       finalFocus={() => document.getElementById("welcome-title")}
@@ -61,8 +62,6 @@ export function useLegacyIdentityOffer(identity: Identity, open: boolean) {
           </Button>
         </>
       }
-    >
-      {tried && state.error && <p role="alert">{state.error}</p>}
-    </AlertDialog>
+    />
   );
 }

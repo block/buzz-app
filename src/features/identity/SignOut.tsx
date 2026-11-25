@@ -79,6 +79,7 @@ export function SignOutDialog({
       description="Your private key is how you sign in to Buzz. This removes it from this device’s secure storage and signs you out of your organization, Builderlab and hosted communities. Account backups and copies saved elsewhere stay. Save a copy so you can sign back in."
       onClose={onClose}
       pending={pending}
+      error={error}
       actions={
         <>
           <Button type="button" disabled={pending} onClick={onClose}>
@@ -153,7 +154,6 @@ export function SignOutDialog({
           </p>
         )}
       </div>
-      {error && <p role="alert">{error}</p>}
     </AlertDialog>
   );
 }

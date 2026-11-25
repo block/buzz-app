@@ -225,6 +225,7 @@ export function SecuritySettings({
             heading.current
           }
           onClose={dismiss}
+          error={revokeError}
           actions={
             <>
               <Button ref={cancel} disabled={revoking} onClick={dismiss}>
@@ -239,9 +240,7 @@ export function SecuritySettings({
               </Button>
             </>
           }
-        >
-          {alert(revokeError)}
-        </AlertDialog>
+        />
       )}
       {viewer && <ExternalIdentityAuthorization key={viewer} viewer={viewer} />}
       <WebInspectorSettings />

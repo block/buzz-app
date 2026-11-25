@@ -33,6 +33,8 @@ export type DialogProps = {
   /** Position within a host; sectioned modals stay bounded. Null waits for its ref. */
   container?: HTMLElement | null;
   actions?: ReactNode;
+  /** A failure of the dialog's own action, shown above the actions and announced. */
+  error?: ReactNode;
   /** Both values use the shared 12px heading-to-body gap. Compact is a legacy alias. */
   headerGap?: "default" | "compact";
   /** Keep spacing beside scrolling content on the fixed header and footer. */
@@ -77,6 +79,7 @@ export function Dialog({
   navigation,
   container,
   actions,
+  error,
   headerGap = "default",
   chromeSpacing = "default",
   footerGap = "default",
@@ -102,6 +105,7 @@ export function Dialog({
   const focus = useFinalFocusUnlessMoved(finalFocus, undefined);
   const transition =
     motion === "none" || (!open && instantClose) ? "none" : "default";
+  const hasError = error != null && error !== false && error !== "";
   const contents = (
     <>
       {presentation === "search" ? (
@@ -206,7 +210,7 @@ export function Dialog({
           )}
         </div>
       )}
-      {(actions || leadingActions) && (
+      {(actions || leadingActions || hasError) && (
         <footer
           className="buzz-dialog-actions"
           data-chrome-spacing={chromeSpacing}
@@ -215,6 +219,7 @@ export function Dialog({
             edge="bottom"
             className="buzz-dialog-bar-material"
           />
+          {hasError && <DialogError>{error}</DialogError>}
           <div className="buzz-dialog-action-row">
             {leadingActions && (
               <div className="buzz-dialog-leading-actions">
@@ -351,5 +356,14 @@ function DialogStep({
     >
       {children}
     </motion.div>
+  );
+}
+
+/** One place and treatment for a dialog's failed action, next to its actions. */
+export function DialogError({ children }: { children: ReactNode }) {
+  return (
+    <p role="alert" className="buzz-dialog-error">
+      {children}
+    </p>
   );
 }

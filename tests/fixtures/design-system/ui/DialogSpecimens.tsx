@@ -32,6 +32,7 @@ function Example({
   bodyLayout,
   chromeSpacing,
   size,
+  error,
   children,
 }: {
   label: string;
@@ -46,6 +47,7 @@ function Example({
   chromeSpacing?: "default" | "padded";
   bodyLayout?: "flow" | "flex";
   size?: "compact" | "default" | "wide" | "expanded";
+  error?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -69,7 +71,7 @@ const id = useId();
 <Dialog
   open={open}
   onOpenChange={setOpen}
-  title=${JSON.stringify(title)}${artwork ? '\n  artwork={<Avatar size="large" alt="" fallback="A" />}' : ""}${size ? `\n  size="${size}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${chromeSpacing ? `\n  chromeSpacing="${chromeSpacing}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}
+  title=${JSON.stringify(title)}${artwork ? '\n  artwork={<Avatar size="large" alt="" fallback="A" />}' : ""}${size ? `\n  size="${size}"` : ""}${height ? `\n  height="${height}"` : ""}${bodyLayout ? `\n  bodyLayout="${bodyLayout}"` : ""}${chromeSpacing ? `\n  chromeSpacing="${chromeSpacing}"` : ""}${intro ? `\n  description=${JSON.stringify(intro)}` : ""}${error ? `\n  error=${JSON.stringify(error)}` : ""}
   actions={${
     informational
       ? '<Button variant="prominent" onClick={() => setOpen(false)}>Done</Button>'
@@ -96,6 +98,7 @@ ${informational ? "" : `  <form id={id} className="space-y-section-gap" onSubmit
         {...(bodyLayout ? { bodyLayout } : {})}
         {...(chromeSpacing ? { chromeSpacing } : {})}
         {...(intro ? { description: intro } : {})}
+        {...(error ? { error } : {})}
         actions={
           informational ? (
             <Button variant="prominent" onClick={() => setOpen(false)}>
@@ -244,6 +247,20 @@ export function DialogSpecimens() {
         code=""
       >
         {null}
+      </Example>
+      <Example
+        label="Action error"
+        description="When the dialog's action fails, say what happened and what to do next above the actions. Problems with one field stay on that Field."
+        title="Rename channel"
+        size="compact"
+        error="Couldn't save the name. Check your connection and try again."
+        code={
+          '<Field label="Name"><Input defaultValue="design-review" /></Field>'
+        }
+      >
+        <Field label="Name">
+          <Input defaultValue="design-review" />
+        </Field>
       </Example>
       <ScrollToEdgeExample />
       <NavigationExample />

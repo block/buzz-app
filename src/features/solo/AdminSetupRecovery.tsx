@@ -40,6 +40,7 @@ export function AbandonAdminSetupDialog({
       initialFocus={cancel}
       finalFocus={finalFocus}
       pending={pending}
+      error={error}
       onClose={onClose}
       actions={
         <>
@@ -66,9 +67,7 @@ export function AbandonAdminSetupDialog({
           </Button>
         </>
       }
-    >
-      {error && <p role="alert">{error}</p>}
-    </AlertDialog>
+    />
   );
 }
 

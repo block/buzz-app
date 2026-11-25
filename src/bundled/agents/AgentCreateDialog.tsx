@@ -657,16 +657,6 @@ export function AgentCreateDialog({
       }
     />
   );
-  const errorMessage = error && (
-    <p
-      key={error}
-      ref={reveal}
-      role="alert"
-      className="m-0 text-body-sm text-danger"
-    >
-      {error}
-    </p>
-  );
   // Harness, Model and Thinking: main's rows, and Manual's under AI settings.
   const localRows = (
     <>
@@ -742,6 +732,7 @@ export function AgentCreateDialog({
         return dirty || pending;
       }}
       preventClose={pending || avatarBusy}
+      error={error}
       actions={
         showRemoteIntro ? (
           <>
@@ -793,7 +784,6 @@ export function AgentCreateDialog({
         hidden={showRemoteIntro}
         id={reviewingSettings ? undefined : form}
         className={styles.form}
-        data-error={error ? "" : undefined}
         aria-label={
           reviewingSettings
             ? undefined
@@ -1056,7 +1046,6 @@ export function AgentCreateDialog({
             />
           )}
         </div>
-        {!showRemoteIntro && errorMessage}
       </Form>
       {showRemoteIntro && (
         <div className="grid gap-3">
@@ -1066,7 +1055,6 @@ export function AgentCreateDialog({
             community={community}
             builderlab={type?.key === "block.builderlab/builderlab"}
           />
-          {errorMessage}
         </div>
       )}
       {settingUp && (

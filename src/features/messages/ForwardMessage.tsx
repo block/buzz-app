@@ -592,6 +592,7 @@ function ForwardMessageDialog({
         title="Forward message"
         description="Send a copy to people or a channel, with an optional note."
         footerGap="compact"
+        error={error}
         preventClose={pending}
         dismissOnOutsideClick={false}
         onOpenChange={(next) => {
@@ -747,11 +748,6 @@ function ForwardMessageDialog({
                   : destinationName || "The recipients"
               }
             />
-          )}
-          {error && (
-            <p role="alert" className="text-body-sm text-subtle">
-              {error}
-            </p>
           )}
         </div>
       </Dialog>

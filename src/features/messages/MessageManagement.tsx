@@ -849,6 +849,13 @@ function DeleteMessageDialog({
             : "This requests removal of this message from Buzz’s relay. People may still have copies. This cannot be undone."
       }
       pending={pending}
+      error={
+        error || retryable
+          ? (error ??
+            operation?.error ??
+            "Delivery could not be confirmed. Retry sends the same operation.")
+          : undefined
+      }
       finalFocus={() =>
         operationId || discarding ? (selection.focus?.() ?? true) : true
       }
@@ -871,15 +878,7 @@ function DeleteMessageDialog({
           </Button>
         </>
       }
-    >
-      {(error || retryable) && (
-        <p role="alert">
-          {error ??
-            operation?.error ??
-            "Delivery could not be confirmed. Retry sends the same operation."}
-        </p>
-      )}
-    </AlertDialog>
+    />
   );
 }
 

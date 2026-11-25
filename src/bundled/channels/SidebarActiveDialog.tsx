@@ -54,6 +54,7 @@ export function SidebarActiveDialog({
       footerGap="compact"
       onOpenChange={(open) => !open && close()}
       preventClose={pending}
+      error={error}
       finalFocus={finalFocus}
       initialFocus={() =>
         form.current?.querySelector<HTMLElement>(
@@ -95,11 +96,6 @@ export function SidebarActiveDialog({
             </div>
           </RadioGroup>
         </Field>
-        {error && (
-          <p role="alert" className="text-body-sm text-danger">
-            {error}
-          </p>
-        )}
         {pending && (
           <p role="status" className="sr-only">
             Saving filter and waiting for confirmation…

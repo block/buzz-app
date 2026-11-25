@@ -230,7 +230,7 @@ function BestieReplacement({
       initialFocus={proceed}
       pending={pending}
       onClose={onClose}
-      {...(error && { children: <p role="alert">{error}</p> })}
+      error={error}
       actions={
         <>
           <Button disabled={pending} onClick={onClose}>
@@ -273,7 +273,7 @@ export function RemoteBestieConfirm({
       initialFocus={cancel}
       pending={pending}
       onClose={onClose}
-      {...(error && { children: <p role="alert">{error}</p> })}
+      error={error}
       actions={
         <>
           <Button ref={cancel} disabled={pending} onClick={onClose}>
@@ -312,7 +312,7 @@ function RemoveBestie({
       initialFocus={keep}
       pending={pending}
       onClose={onClose}
-      {...(error && { children: <p role="alert">{error}</p> })}
+      error={error}
       actions={
         <>
           <Button ref={keep} disabled={pending} onClick={onClose}>

@@ -531,7 +531,7 @@ fn cancel_or_stop(
         Err(Error::Absent) => true,
         Ok(bytes) => match &before {
             Own::Intent(record) if witness(&bytes)? == record.installation => {
-                store.delete(ACCOUNT).is_ok() && matches!(store.read(ACCOUNT), Err(Error::Absent))
+                store.delete(ACCOUNT).is_ok() && deleted(store, &bytes)?
             }
             _ => return Err(Stop::Other),
         },
@@ -557,6 +557,17 @@ fn cancel_or_stop(
         peer,
         _writer: writer,
     })
+}
+
+/// Confirms this build's own delete of `witness`. A failed read, or the same
+/// witness still there, leaves only its own unfinished setup; any other
+/// content was positively observed and is not this build's to retry.
+fn deleted(store: &dyn SecretStore, witness: &[u8]) -> std::result::Result<bool, Stop> {
+    match store.read(ACCOUNT) {
+        Err(Error::Absent) => Ok(true),
+        Ok(bytes) if *bytes != *witness => Err(Stop::Other),
+        _ => Ok(false),
+    }
 }
 
 /// This build's inventory and its OS witness, both positively absent, with the

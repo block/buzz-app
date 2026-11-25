@@ -1108,6 +1108,98 @@ fn own_setup_beside_an_independent_boot_unknown_never_becomes_removable() {
     assert!(paths.marker.exists());
 }
 
+/// Deletes for real, then shows its one `confirm` outcome to the next read:
+/// the delete's confirmation. Later calls pass through.
+struct Confirming {
+    store: Arc<Fake>,
+    confirm: Mutex<Option<Result<Vec<u8>, StoreError>>>,
+    fail_read: Mutex<Option<StoreError>>,
+}
+impl SecretStore for Confirming {
+    fn read(&self, account: &str) -> Result<zeroize::Zeroizing<Vec<u8>>, StoreError> {
+        match self.fail_read.lock().unwrap().take() {
+            Some(error) => Err(error),
+            None => self.store.read(account),
+        }
+    }
+    fn add(&self, account: &str, value: &[u8]) -> Result<(), StoreError> {
+        self.store.add(account, value)
+    }
+    fn delete(&self, account: &str) -> Result<(), StoreError> {
+        self.store.delete(account)?;
+        match self.confirm.lock().unwrap().take() {
+            Some(Ok(bytes)) => {
+                let mut items = self.store.items.lock().unwrap();
+                items.insert(account.into(), bytes);
+            }
+            Some(Err(error)) => *self.fail_read.lock().unwrap() = Some(error),
+            None => {}
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn contradictory_witness_after_own_delete_stays_unknown_once_it_resolves() {
+    for case in ["different", "malformed", "unchanged", "unreadable"] {
+        let (_dir, paths) = fixture();
+        let vault = Vault::new(paths.plugin_inventory().unwrap());
+        let other = Arc::<Fake>::default();
+        failed_setup(&paths, &vault, &other);
+        // The interrupted add had landed: this build's exact witness.
+        let exact = serde_json::to_vec(&installation(&vault)["installation"]).unwrap();
+        vault
+            .store
+            .items
+            .lock()
+            .unwrap()
+            .insert(WITNESS.into(), exact.clone());
+        let confirm = match case {
+            "different" => {
+                let mut value: serde_json::Value = serde_json::from_slice(&exact).unwrap();
+                value["id"] = "00000000-0000-4000-8000-000000000000".into();
+                Ok(serde_json::to_vec(&value).unwrap())
+            }
+            "malformed" => Ok(b"broken".to_vec()),
+            // A delete reported done that removed nothing.
+            "unchanged" => Ok(exact.clone()),
+            _ => Err(StoreError::Denied),
+        };
+        let store = Arc::new(Confirming {
+            store: vault.store.clone(),
+            confirm: Mutex::new(Some(confirm)),
+            fail_read: Mutex::default(),
+        });
+        let slots = paths
+            .plugin_slots_with_peer(&vault.root, store, other.clone(), peer_scope(&paths))
+            .unwrap();
+        let instance = boot(&paths, Some(slots), |_| Ok(()), || Ok(())).unwrap();
+        assert!(instance.h1_unknown(), "{case}");
+        assert_eq!(installation(&vault)["committed"], false, "{case}");
+        if case == "unchanged" || case == "unreadable" {
+            // Only this build's own delete is unconfirmed: Remove retries it.
+            assert!(instance.partial, "{case}");
+            remove(&instance, &paths, PLAIN).unwrap();
+            assert!(paths.marker.exists(), "{case}");
+            assert!(!vault.store.items.lock().unwrap().contains_key(WITNESS));
+            continue;
+        }
+        assert!(!instance.partial, "{case}");
+        // The contradictory item going away doesn't requalify this launch.
+        vault.store.items.lock().unwrap().remove(WITNESS);
+        let before = fs::read(vault.root.join("state.json")).unwrap();
+        vault.calls();
+        assert_eq!(
+            remove(&instance, &paths, PLAIN),
+            Err(refuse(H1_UNKNOWN)),
+            "{case}"
+        );
+        assert!(!paths.marker.exists(), "{case}");
+        assert_eq!(fs::read(vault.root.join("state.json")).unwrap(), before);
+        assert!(vault.calls().is_empty(), "{case}: nothing cancelled");
+    }
+}
+
 /// Boot with a pending plain removal, asserting no witness add precedes it.
 fn boot_removing<'a>(
     paths: &Paths,

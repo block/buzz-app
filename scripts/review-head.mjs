@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url)).replace(/\/$/, "");
 
-export const LANES = ["static", "tests", "rust", "browser"];
+export const LANES = ["static", "tests", "rust", "browser", "agent"];
 const BUNDLE = ["receipt.json", "summary.md", "logs", "browser"];
 // Write whole files only: a run killed mid-write keeps the previous version.
 const writeAtomic = (file, text) => {
@@ -38,6 +38,10 @@ export const HOST_HINTS = [
   [
     "Host system is missing dependencies",
     "this host lacks browser system libraries; run `sudo bin/pnpm exec playwright install-deps chromium webkit` once",
+  ],
+  [
+    "Host is missing agent-e2e dependencies",
+    "this host lacks the PostgreSQL server or redis-server the agent lane starts privately; install postgresql and redis-server once (apt on Linux, brew on macOS)",
   ],
   [
     "pkg-config exited with status code",
@@ -91,6 +95,17 @@ export const touchesRust = (files) =>
     ),
   );
 
+// Paths that can stop a managed agent from answering: the ACP client and
+// harness, the Buzz tools it calls, the bundled runtimes and their pins, and
+// the lane itself. Only these start the agent lane under `auto`, because it
+// builds a relay and starts PostgreSQL and Redis.
+export const touchesAgentRuntime = (files) =>
+  files.some((file) =>
+    /^(?:src\/bundled\/(?:goose|claude-code|codex)\/|src\/features\/agent-harness\/|src\/buzz-mcp\/|crates\/agent-(?:command|controller)\/|runtime\/goose-acp\.json$|src-tauri\/Cargo\.toml$|scripts\/agent-e2e[\w.-]*$)/.test(
+      file,
+    ),
+  );
+
 // Setup and test selection run from the reviewed worktree, so a change to them
 // decides what this run checks.
 export const touchesReviewTooling = (files) =>
@@ -119,7 +134,8 @@ export function chooseLanes(lanes, { files, browser }) {
   return LANES.filter(
     (lane) =>
       (lane !== "rust" || touchesRust(files)) &&
-      (lane !== "browser" || browser.length > 0),
+      (lane !== "browser" || browser.length > 0) &&
+      (lane !== "agent" || touchesAgentRuntime(files)),
   );
 }
 
@@ -156,6 +172,14 @@ export function notProven(
   if (!lanes.includes("browser") && !lanes.includes("full"))
     gaps.push(
       "No browser journey ran. Name journeys with --browser=<spec[:line]> to exercise UI behavior.",
+    );
+  if (!lanes.includes("agent") && !lanes.includes("full"))
+    gaps.push(
+      "No managed agent was started: nothing here proves an agent still replies to a mention. Name --lanes=agent to run that check.",
+    );
+  else if (lanes.includes("agent"))
+    gaps.push(
+      "The agent lane drives the real Goose runtime, goose-acp and a local relay with a scripted model. It does not launch the desktop app, so the relay subscription that wakes an agent, native key custody, the Tauri process host and a real model are not proven.",
     );
   if (!lanes.includes("rust") && !lanes.includes("full"))
     gaps.push(
@@ -434,6 +458,9 @@ function main() {
         ],
         ["bin/cargo", "test", "--workspace", "--locked"],
       ],
+      // Starts a private relay, PostgreSQL and Redis, and a goose-acp that a
+      // scripted model drives; see the script's header.
+      agent: [["bin/node", "scripts/agent-e2e.mjs"]],
       // An empty selection would run the whole suite; that is `full`.
       browser:
         selection.browser.length === 0

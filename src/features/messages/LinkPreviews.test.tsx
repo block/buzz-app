@@ -257,7 +257,9 @@ it("draws a setup card that opens the plugin's Settings card while a renderer ne
   const onOpenLink = vi.fn(() => true);
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1", "https://tracker.example/2"]}
+      links={["https://tracker.example/1", "https://tracker.example/2"].map(
+        (url) => ({ url }),
+      )}
       messageId="m"
       registry={reader([
         withStatus(
@@ -286,7 +288,9 @@ it("swaps every card from a renderer once it reports ready, and draws none while
   const state = provider("checking");
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1", "https://tracker.example/2"]}
+      links={["https://tracker.example/1", "https://tracker.example/2"].map(
+        (url) => ({ url }),
+      )}
       messageId="m"
       registry={reader([
         withStatus(
@@ -313,7 +317,7 @@ it("draws no setup card where the host cannot open Settings", () => {
   const state = provider("needs-setup");
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -338,7 +342,7 @@ it("ignores a retired registration's updates and stops listening when its cards 
   ];
   const { unmount } = render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader(live)}
       onOpenLink={() => true}
@@ -368,7 +372,7 @@ it("treats a status that throws as ready", () => {
   } as unknown as Contribution<LinkPreviewRenderer>;
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([throwing])}
       onOpenLink={() => true}
@@ -383,7 +387,7 @@ it("folds only the links that draw, and keeps folded links' status live", () => 
   const urls = [1, 2, 3, 4].map((n) => `https://tracker.example/${n}`);
   render(
     <LinkPreviews
-      urls={[...urls, "https://web.example/"]}
+      links={[...urls, "https://web.example/"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -417,7 +421,7 @@ it("draws the setup card again after a ready preview failed to render", () => {
   };
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -446,7 +450,7 @@ it("mounts no preview on a status read before its subscription", () => {
   const Card = vi.fn(card("tracker"));
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -479,7 +483,7 @@ it("does not subscribe to a registration that left before its cards mounted", ()
   };
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={registry}
       onOpenLink={() => true}
@@ -502,7 +506,7 @@ it("draws previews when a provider's subscribe throws, and tries again on the ne
   ]);
   const view = (
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={registry}
       onOpenLink={() => true}
@@ -524,7 +528,7 @@ it("offers setup only once the plugin's Settings card is registered", () => {
   const settings = settingsWith(() => {}, []);
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -549,7 +553,7 @@ it("keeps keyboard focus in the message when a focused setup card goes away", ()
   const state = provider("needs-setup");
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -586,7 +590,9 @@ it("moves focus to another setup card when the focused one's renderer is ready",
   } as Contribution<LinkPreviewRenderer>;
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1", "https://other.example/1"]}
+      links={["https://tracker.example/1", "https://other.example/1"].map(
+        (url) => ({ url }),
+      )}
       messageId="m"
       registry={reader([
         otherEntry,
@@ -611,7 +617,7 @@ it("focuses the labelled previews group when a ready preview has nothing to focu
   const Plain = ({ url }: LinkPreviewProps) => <p>Preview {url}</p>;
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -655,7 +661,7 @@ it("skips hidden, inert and aria-hidden controls when a focused setup card becom
   );
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(
@@ -686,7 +692,7 @@ it("focuses the labelled previews group when a ready preview's only control is h
   );
   render(
     <LinkPreviews
-      urls={["https://tracker.example/1"]}
+      links={["https://tracker.example/1"].map((url) => ({ url }))}
       messageId="m"
       registry={reader([
         withStatus(

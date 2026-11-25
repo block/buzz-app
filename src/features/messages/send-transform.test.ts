@@ -46,6 +46,7 @@ it("hands the winner the draft and context, awaiting an async result", async () 
   ).resolves.toEqual({
     draft: { text: "later", mentions: [bob] },
     committed: false,
+    dropped: "Title one didn't notify alice",
   });
   expect(run).toHaveBeenCalledWith(
     draft,
@@ -87,6 +88,55 @@ it("keeps only drafted recipients, under the host's names, deduped, in the order
   });
 });
 
+const carol = { pubkey: "c".repeat(64), name: "carol" };
+const dave = { pubkey: "d".repeat(64), name: "dave" };
+
+it.each([
+  [[alice, bob, carol], [carol], "Title one didn't notify alice and bob"],
+  [
+    [alice, bob, carol, dave],
+    [dave],
+    "Title one didn't notify alice and 2 others",
+  ],
+])(
+  "names the people it dropped, by the draft's own names: %#",
+  async (typed, kept, notice) => {
+    const { dropped } = await transformSend(
+      transform("one", {
+        transform: () => ({
+          text: "x",
+          // The plugin's own names for the people it kept never reach the notice.
+          mentions: kept.map((item) => ({ ...item, name: "Mallory" })),
+        }),
+      }),
+      { text: "hello", mentions: typed },
+      context(),
+    );
+    expect(dropped).toBe(notice);
+  },
+);
+
+it("says nothing when the plugin keeps everyone, or when it consumes the message", async () => {
+  await expect(
+    transformSend(
+      transform("one", {
+        transform: () => ({ text: "rewritten", mentions: [bob, alice] }),
+      }),
+      draft,
+      context(),
+    ),
+  ).resolves.toEqual({
+    draft: { text: "rewritten", mentions: [bob, alice] },
+    committed: false,
+  });
+  const consumed = await transformSend(
+    transform("one", { transform: () => ({ text: "", mentions: [] }) }),
+    draft,
+    context(),
+  );
+  expect(consumed.dropped).toBeUndefined();
+});
+
 it("fails the send, naming the plugin, for a recipient the person did not address", async () => {
   const stranger = { pubkey: "c".repeat(64), name: "carol" };
   await expect(
@@ -119,6 +169,7 @@ it("reads each recipient once, so a getter cannot swap in someone else", async (
   ).resolves.toEqual({
     draft: { text: "x", mentions: [alice] },
     committed: false,
+    dropped: "Title one didn't notify bob",
   });
 });
 

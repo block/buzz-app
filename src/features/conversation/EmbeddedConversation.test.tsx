@@ -13,6 +13,7 @@ import {
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../messages/composer-testing";
 import type { ComposerInputElement } from "../messages/composer-dom";
+import { writeView } from "../../shared/view-state";
 import { PublishRejected } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import { useChannelWindow } from "../relay/react";
@@ -81,6 +82,8 @@ async function fixture(...transforms: SendTransform[]) {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const relay = keypair(),
     viewer = keypair();
+  // Channel members a draft can address.
+  const people = [keypair(), keypair(), keypair()];
   const posts = {
     alpha: message(viewer, "alpha", "Alpha note", 1700000000),
     beta: message(viewer, "beta", "Beta note", 1700000001),
@@ -100,7 +103,10 @@ async function fixture(...transforms: SendTransform[]) {
         if (filter.kinds?.includes(39000) || filter.kinds?.includes(39002))
           return (["alpha", "beta"] as const).flatMap((id) => [
             metadata(relay, id, id === "alpha" ? "Alpha" : "Beta"),
-            roster(relay, id, [viewer.pubkey]),
+            roster(relay, id, [
+              viewer.pubkey,
+              ...(id === "alpha" ? people.map((person) => person.pubkey) : []),
+            ]),
           ]);
         if (filter.kinds?.includes(9))
           return (["alpha", "beta"] as const)
@@ -264,6 +270,11 @@ async function fixture(...transforms: SendTransform[]) {
   }
   return {
     session,
+    scope,
+    people: people.map(({ pubkey }, index) => ({
+      pubkey,
+      name: ["Alex", "Sam", "Kim"][index] ?? pubkey,
+    })),
     service,
     posts,
     reads: { ...reads, reserve },
@@ -569,4 +580,68 @@ it("spends the draft when a plugin that committed is turned off, even if it then
   expect(card("alpha").queryByRole("alert")).toBeNull();
   expect(field).toHaveValue("");
   expect(h.publications).toHaveLength(0);
+});
+
+/** Alpha's draft addresses the first `typed` of Alex, Sam and Kim; the plugin
+ * keeps the first `kept` of them, under names of its own. */
+async function sendKeeping(typed: number, kept: number, text = "rewritten") {
+  const h = await fixture(
+    plugin(
+      (draft) => ({
+        text,
+        mentions: draft.mentions
+          .slice(0, kept)
+          .map(({ pubkey }) => ({ pubkey, name: "Mallory" })),
+      }),
+      () => true,
+    ),
+  );
+  const people = h.people.slice(0, typed);
+  const tags = people.map((person) => `@${person.name}`).join(" ");
+  writeView(h.scope, "draft:alpha", {
+    text: `${tags} hello`,
+    recipients: people.map((person) => {
+      const start = tags.indexOf(`@${person.name}`);
+      return { ...person, start, end: start + person.name.length + 1 };
+    }),
+  });
+  render(<h.Overview />);
+  send("alpha");
+  return h;
+}
+
+it("tells the person which recipient a transform left out, by the name they typed", async () => {
+  await sendKeeping(1, 0);
+  expect(
+    await card("alpha").findByText("Fixture didn't notify Alex"),
+  ).toBeVisible();
+});
+
+it("counts the rest when a transform leaves out several recipients", async () => {
+  await sendKeeping(3, 0);
+  expect(
+    await card("alpha").findByText("Fixture didn't notify Alex and 2 others"),
+  ).toBeVisible();
+});
+
+it("says nothing when a transform rewrites the text but keeps everyone", async () => {
+  await sendKeeping(2, 2);
+  await card("alpha").findByText("rewritten");
+  expect(card("alpha").queryByText(/didn't notify/)).toBeNull();
+});
+
+it("says nothing when a transform consumes the message", async () => {
+  const h = await sendKeeping(2, 0, "");
+  await waitFor(() =>
+    expect(card("alpha").getByRole("textbox")).toHaveValue(""),
+  );
+  expect(h.publications).toHaveLength(0);
+  expect(card("alpha").queryByText(/didn't notify/)).toBeNull();
+});
+
+it("clears the notice when the person types again", async () => {
+  await sendKeeping(1, 0);
+  await card("alpha").findByText("Fixture didn't notify Alex");
+  typeInto("alpha", "next");
+  expect(card("alpha").queryByText(/didn't notify/)).toBeNull();
 });

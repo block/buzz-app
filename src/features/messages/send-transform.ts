@@ -12,13 +12,28 @@ const SEND_TRANSFORM_TIMEOUT_MS = 10_000;
  * when it consumed the draft. `committed`: the plugin called `commit()`, so it
  * may have written; then a timeout, an abort or a failure no longer fails the
  * send. The draft is spent, with `notice` (still finishing) or `error` (it
- * threw) to tell the person. */
+ * threw) to tell the person. `dropped`: the plugin left out people the person
+ * addressed; the notice to show once the message is sent. */
 export type Transformed = Readonly<{
   draft: SendDraft | null;
   committed: boolean;
   notice?: string;
   error?: string;
+  dropped?: string;
 }>;
+
+/** "<plugin> didn't notify Alex", "... Alex and Sam" or "... Alex and 2
+ * others". `names` are the person's own mention names, never the plugin's. */
+export function droppedNotice(title: string, names: readonly string[]) {
+  const [first, second] = names;
+  const who =
+    names.length === 1
+      ? first
+      : names.length === 2
+        ? `${first} and ${second}`
+        : `${first} and ${names.length - 1} others`;
+  return `${title} didn't notify ${who}`;
+}
 
 /** What plugins are handed: a frozen copy, so nothing they do to it changes
  * the recipients the host validates their result against. */
@@ -100,9 +115,19 @@ export async function transformSend(
         throw new Error(`${winner.title} returned an invalid message.`);
       return { draft: null, committed: state.committed };
     }
+    const kept = new Set(mentions);
+    const dropped = [...typed.values()].filter((item) => !kept.has(item));
     return {
       draft: { text: sent.text, mentions },
       committed: state.committed,
+      ...(dropped.length
+        ? {
+            dropped: droppedNotice(
+              winner.title,
+              dropped.map((item) => item.name),
+            ),
+          }
+        : {}),
     };
   } catch (reason) {
     if (state.committed) {

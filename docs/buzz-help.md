@@ -240,7 +240,9 @@ recipients. While it works, a Cancel button appears beside Send, and Esc does
 the same: your draft stays. If it fails or takes longer than 10 seconds,
 nothing is sent and the draft stays with the error. If it had already started a
 write (an edit or a reaction), cancelling clears the draft instead, so the write
-is not repeated, and the plugin's name shows "still finishing".
+is not repeated, and the plugin's name shows "still finishing". If it leaves
+out someone you tagged, a note under the composer says the plugin didn't notify
+them after the message sends.
 
 ## Docs
 

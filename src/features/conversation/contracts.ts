@@ -536,7 +536,9 @@ export type SendTransformContext = Readonly<{
  * returned pubkey outside the draft fails the send with `<plugin id>: ...`.
  * Those people are then tagged as typed mentions are: someone outside the
  * channel is a reference or asks to be invited, and a 1:1 DM tags its agent
- * partner whatever is returned.
+ * partner whatever is returned. When a sent message drops any of them, the
+ * person sees "`title` didn't notify Alex" under the composer, naming them as
+ * they typed them; a rewrite that keeps everyone shows nothing.
  *
  * If it throws, returns something invalid, times out or is cancelled before it
  * calls `commit()`, nothing is sent and the typed draft stays. If it returns and the outbox accepts the

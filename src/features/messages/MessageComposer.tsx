@@ -646,6 +646,8 @@ function Composer({
   const transforming = useRef(false);
   // The pending transform's title, so Cancel can be offered by name.
   const [transformTitle, setTransformTitle] = useState<string>();
+  // Who the last send's transform left out, until the next typing or send.
+  const [droppedNotice, setDroppedNotice] = useState<string>();
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
     if (disabled || !active) sendAttempt.current?.abort();
@@ -3339,6 +3341,8 @@ function Composer({
     let retiredByOwner = false;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
+    setDroppedNotice(undefined);
+    let dropped: string | undefined;
     const captured = valueRef.current;
     const explicit =
       human && ownerProvenance
@@ -3496,6 +3500,7 @@ function Composer({
           // Only people the draft addressed remain, under the names they had.
           capturedRecipients = result.mentions;
           transformed = result;
+          dropped = outcome.dropped;
           // Signed chips belong to the text they were typed in.
           if (result.text !== markdown) tokens = [];
         }
@@ -4081,6 +4086,8 @@ function Composer({
           followUp.text.length,
         );
       setError(undefined);
+      // Said once the message is accepted; a failed send says nothing here.
+      setDroppedNotice(dropped);
       autoTagged.current = draftKey;
       automaticTag.current = followUp.recipients.length
         ? JSON.stringify(followUp)
@@ -4567,6 +4574,7 @@ function Composer({
                   )
                     return;
                   setPasteTooLong(false);
+                  setDroppedNotice(undefined);
                   const textChanged = next.text !== valueRef.current.text;
                   // The default tag's prefill shows without being saved.
                   if (seeding.current) {
@@ -4915,6 +4923,11 @@ function Composer({
           )}
           {(error || editing.error) && (
             <p role="alert">{error ?? editing.error}</p>
+          )}
+          {droppedNotice && !editing.target && (
+            <p className={styles.composerStatus} role="status">
+              {droppedNotice}
+            </p>
           )}
           {stickyPicks && (pickReadPending || pickReadFailed) && (
             <div className={pickReadFailed ? undefined : "sr-only"}>

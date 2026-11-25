@@ -25,6 +25,16 @@ export type Providers = Readonly<{
 /** A model, with the thinking levels it supports, lowest first. */
 export type PiModel = ModelChoice & Readonly<{ thinking: readonly string[] }>;
 
+/** A provider's models sorted by label, so each family reads in order. */
+export function shownModels(models: readonly PiModel[]): PiModel[] {
+  return [...models].sort((a, b) =>
+    a.label.localeCompare(b.label, undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
+}
+
 export type Tested = Readonly<{ ok: boolean; message: string }>;
 
 /** Pi's own thinking level when its settings name none. */
@@ -71,11 +81,13 @@ export class PiSetup {
         provider: id,
       })
       .then((models) =>
-        models.map((model) => ({
-          id: model.id,
-          label: model.name || model.id,
-          thinking: model.thinking,
-        })),
+        shownModels(
+          models.map((model) => ({
+            id: model.id,
+            label: model.name || model.id,
+            thinking: model.thinking,
+          })),
+        ),
       );
     this.listed.set(id, listing);
     listing.catch(() => {

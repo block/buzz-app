@@ -179,10 +179,13 @@
 /* Faces at a compact row's end, centered on the row like its leading icon. */
 .compactTrailing {
   display: flex;
+  flex: none;
   align-items: center;
 }
+/* Never squeezed by a long name or message beside it. */
 .compactAvatar {
   display: grid;
+  flex: none;
   width: 1.125rem;
   height: 1.125rem;
 }
@@ -235,7 +238,11 @@
   color: var(--text-subtle);
 }
 .compactPreview[data-unread] {
-  color: var(--text-standard);
+  color: var(--text-navigation-unread);
+  font-weight: var(--type-weight-semibold);
+}
+[data-selected] .compactPreview[data-unread] {
+  color: var(--text-row-selected);
 }
 .compactPreviewText {
   min-width: 0;

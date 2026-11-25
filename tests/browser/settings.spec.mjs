@@ -689,6 +689,7 @@ confirmedPresence(
         "Shortcuts",
         "Agent setup",
         "Decisions API",
+        "Speech to text",
         "Channel templates",
         "Software updates",
         "Manage plugins",

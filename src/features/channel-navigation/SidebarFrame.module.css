@@ -197,31 +197,31 @@
   --text-standard: var(--text-row-selected);
 }
 /* The New button and list share a leading edge. Reserve its size and a gap. */
-.sidebar:has([data-sidebar-floating-action]) {
+.sidebar[data-has-floating-action] {
   --sidebar-floating-action-clearance: calc(
     var(--size-control) +
     var(--space-2)
   );
 }
 /* Let the pinned header scroll when it would squeeze the floating row. */
-.sidebar:has([data-sidebar-floating-action]) .sidebarFilter {
+.sidebar[data-has-floating-action] .sidebarFilter {
   display: flex;
   flex-direction: column;
   flex-shrink: 1;
   min-block-size: 0;
 }
-.sidebar:has([data-sidebar-floating-action]) .sidebarBody {
+.sidebar[data-has-floating-action] .sidebarBody {
   min-block-size: var(--sidebar-floating-action-clearance);
 }
-.sidebar:has([data-share-action-row="stacked"]) .sidebarBody {
+.sidebar[data-stacked-cues] .sidebarBody {
   --sidebar-stacked-cue-height: max(24px, var(--space-5));
   min-block-size: calc(2 * var(--sidebar-stacked-cue-height) + var(--space-2));
 }
-.sidebar:has([data-sidebar-floating-action]) .channelListFrame {
+.sidebar[data-has-floating-action] .channelListFrame {
   min-height: 0;
 }
 /* Put the clearance on the rows so the scrollport can shrink in a short drawer. */
-.sidebar:has([data-sidebar-floating-action]) .channelListContent {
+.sidebar[data-has-floating-action] .channelListContent {
   padding-block-end: calc(
     var(--sidebar-floating-action-clearance) +
     var(--space-3)

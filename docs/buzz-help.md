@@ -82,8 +82,9 @@ if that desktop app is up and running.
   - **Community admin**: **Membership** for owners and admins.
   - **Buzz**: **Identity**, **Security** (desktop only), **Appearance**,
     **Notifications**, **Shortcuts**, **Agent setup**, **Decisions API**,
-    **External apps** and **Software updates**. In the Mac app, **Buzz →
-    Check for Updates…** opens **Software updates** and checks.
+    **Speech to text**, **External apps** and **Software updates**. In the
+    Mac app, **Buzz → Check for Updates…** opens **Software updates** and
+    checks.
   - **Plugins**: **Manage plugins**, plus each plugin's own page (Builderlab,
     Attention, Claude, GitHub, Focus and so on).
 
@@ -247,6 +248,8 @@ plugins. Existing notes remain available to agents through `notes_get`,
 For a Git-installed plugin, an agent's update request or a pinned install link
 can switch the tracked branch even when the code is unchanged. Review and
 confirm the update to save the new source; no reinstall is needed.
+
+Manage plugins shows **Update** as soon as the background check finds a newer version. Buzz checks saved folders and eligible Git sources at startup and hourly while the app is visible. Saved folders are checked offline too. Opening Settings or returning to the window does not start a separate check. Automatic Git checks require update support and a network connection. To check a saved folder or Git source yourself, open the plugin’s details and choose **Check for updates**. Choosing **Update** opens a review before installing anything.
 
 A plugin runs with the same reach as Buzz itself, with no sandbox. Install
 one only if you trust its author with your account and your computer. An optional

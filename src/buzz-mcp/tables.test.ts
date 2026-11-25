@@ -26,6 +26,9 @@ const owner = keypair();
 const agent = keypair();
 const stranger = keypair();
 let relay: Stored[];
+/** Replaces storing and answering an accepted write; a test's hold. */
+let ingest: ((event: Stored) => Promise<Response>) | undefined;
+let queryFails = false;
 
 const one = (event: Stored, name: string) =>
   event.tags.filter((tag) => tag[0] === name).map((tag) => tag[1]);
@@ -35,6 +38,8 @@ const hex64 = (value: string | undefined) => /^[0-9a-f]{64}$/.test(value ?? "");
 // read must name the caller as every author or every `p`.
 beforeEach(() => {
   relay = [];
+  ingest = undefined;
+  queryFails = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
@@ -54,9 +59,11 @@ beforeEach(() => {
           return reply({ accepted: false, message: "auth" });
         if (d.length !== 1 || p.length !== 1 || !hex64(d[0]) || !hex64(p[0]))
           return reply({ accepted: false, message: "invalid" });
+        if (ingest) return ingest(event);
         relay.push(event);
         return reply({ accepted: true });
       }
+      if (queryFails) return new Response("unavailable", { status: 503 });
       const [filter] = body as [
         { authors: string[]; "#p": string[]; "#d"?: string[] },
       ];
@@ -177,7 +184,7 @@ it("an agent adopts its owner's Goals proposal and only its own entries are cano
     table: "goals",
     row: "g1",
     values: { status: "active", target: "2027-03-31" },
-    expected: String(created).split("version ")[1],
+    expected: /version ([0-9a-f]{16})/.exec(String(created))?.[1],
   });
   await expect(
     callTool(session(agent), {}, "table_read", { table: "goals" }),
@@ -220,4 +227,107 @@ it("an agent adopts its owner's Goals proposal and only its own entries are cano
   const wrongKey = getConversationKey(stranger.secret, agent.pubkey);
   for (const event of relay.filter((event) => event.pubkey !== stranger.pubkey))
     expect(() => decrypt(event.content, wrongKey)).toThrow();
+});
+
+it("reports only what a fresh read confirms after competing writes and a lost receipt", async () => {
+  await publish(
+    proposeSchema(owner.secret, agent.pubkey, "goals", goals, 1_800_000_000),
+    owner,
+  );
+  const [a, b] = [session(agent), session(agent)];
+  await callTool(a, {}, "table_adopt", { table: "goals" });
+  const created = String(
+    await callTool(a, {}, "table_row_set", {
+      table: "goals",
+      row: "g1",
+      values: { title: "Draft" },
+    }),
+  );
+  const expected = /version ([0-9a-f]{16})/.exec(created)?.[1];
+
+  // Both writers read the same version; the relay takes both writes at once.
+  const held: Stored[] = [];
+  let release = () => {};
+  const both = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  ingest = async (event) => {
+    held.push(event);
+    if (held.length === 2) {
+      relay.push(...held);
+      release();
+    }
+    await both;
+    return reply({ accepted: true });
+  };
+  const results = await Promise.allSettled([
+    callTool(a, {}, "table_row_set", {
+      table: "goals",
+      row: "g1",
+      values: { status: "active" },
+      expected,
+    }),
+    callTool(b, {}, "table_row_set", {
+      table: "goals",
+      row: "g1",
+      values: { title: "Renamed" },
+      expected,
+    }),
+  ]);
+  ingest = undefined;
+  const head = String(
+    await callTool(session(agent), {}, "table_read", {
+      table: "goals",
+      row: "g1",
+    }),
+  );
+  const saved = results.flatMap((result) =>
+    result.status === "fulfilled" ? [String(result.value)] : [],
+  );
+  const refused = results.flatMap((result) =>
+    result.status === "rejected" ? [String(result.reason)] : [],
+  );
+  expect(saved).toHaveLength(1);
+  expect(saved[0]).toMatch(/confirmed by a read just now/);
+  expect(head).toContain(/version ([0-9a-f]{16})/.exec(saved[0] ?? "")?.[1]);
+  expect(refused).toEqual([expect.stringMatching(/another write won/)]);
+
+  // The relay keeps a write whose receipt is lost: one event, reported saved.
+  const version = /^version: ([0-9a-f]{16})/.exec(head)?.[1];
+  ingest = async (event) => {
+    relay.push(event);
+    throw new Error("connection reset");
+  };
+  const count = relay.length;
+  await expect(
+    callTool(a, {}, "table_row_set", {
+      table: "goals",
+      row: "g1",
+      values: { target: "2027-04-30" },
+      expected: version,
+    }),
+  ).resolves.toMatch(/^saved row g1; version [0-9a-f]{16}, confirmed/);
+  expect(relay.length).toBe(count + 1);
+
+  // A write that cannot be read back is neither saved nor retried.
+  ingest = undefined;
+  const after = /^version: ([0-9a-f]{16})/.exec(
+    String(await callTool(a, {}, "table_read", { table: "goals", row: "g1" })),
+  )?.[1];
+  const writes = relay.length;
+  queryFails = false;
+  ingest = async (event) => {
+    relay.push(event);
+    queryFails = true;
+    return reply({ accepted: true });
+  };
+  await expect(
+    callTool(a, {}, "table_row_set", {
+      table: "goals",
+      row: "g1",
+      values: { status: "done" },
+      expected: after,
+    }),
+  ).rejects.toThrow(/unconfirmed/);
+  expect(relay.length).toBe(writes + 1);
 });

@@ -161,12 +161,14 @@ export const TABLE_HANDLERS: Readonly<
     if (!current && partial)
       throw new Error(`${id} could not be read; try again.`);
     await expect(id, current, text(args.expected));
-    await client.remember(
+    const version = await publish(
+      client,
+      id,
       slug,
       body,
       current?.createdAt ?? deleted?.[0]?.createdAt ?? 0,
     );
-    return `adopted ${id}; version ${await memoryVersion(body)}`;
+    return `adopted ${id}; version ${version}, confirmed by a read just now`;
   },
 
   async table_row_set(client, args) {
@@ -193,14 +195,46 @@ export const TABLE_HANDLERS: Readonly<
       version: 1,
       values: rowValues(schema, merged),
     } satisfies TableRow);
-    await client.remember(
+    const version = await publish(
+      client,
+      `row ${key}`,
       slug,
       body,
       current?.createdAt ?? deleted?.[0]?.createdAt ?? 0,
     );
-    return `saved row ${key}; version ${await memoryVersion(body)}`;
+    return `saved row ${key}; version ${version}, confirmed by a read just now`;
   },
 };
+
+/** Writes `body` to `slug`, then reads that entry back: a concurrent write
+ * may have won, and a lost receipt says nothing about whether this one
+ * landed. Nothing is published twice; a later write can still replace it. */
+async function publish(
+  client: BuzzClient,
+  what: string,
+  slug: string,
+  body: string,
+  after: number,
+) {
+  const sent = await client.remember(slug, body, after).then(
+    () => true,
+    () => false,
+  );
+  const unconfirmed = `${what} is unconfirmed: the write may or may not have been saved. Read it with table_read before you retry.`;
+  let head: Memory | undefined;
+  try {
+    const read = await client.memories(slug);
+    head = read.entries.find((entry) => entry.slug === slug);
+    if (!head && read.partial) throw new Error(unconfirmed);
+  } catch {
+    throw new Error(unconfirmed);
+  }
+  if (head?.body === body) return memoryVersion(body);
+  if (!sent) throw new Error(unconfirmed);
+  throw new Error(
+    `${what} was not saved: another write won${head ? ` (version ${await memoryVersion(head.body)})` : ""}. Read it again with table_read, merge your change and retry with its version as expected.`,
+  );
+}
 
 async function adopted(
   client: BuzzClient,

@@ -3298,3 +3298,197 @@ it("channel groups share a 3,000-record roster and retain the complete native me
     "Channel actions unavailable on this connection",
   ]);
 });
+
+it("renders native workspace controls for an independent source without consuming ordinary chats", async () => {
+  const h = fixture();
+  let saved = {
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "other", name: "Other", order: 1 },
+    ],
+    assignments: {},
+    starred: [] as string[],
+    muted: [] as string[],
+    sectionOrder: [
+      "pages",
+      "starred",
+      "solo",
+      "group:work",
+      "channels",
+      "group:other",
+      "dms",
+    ],
+  };
+  let snap = { status: "ready" as const, data: saved };
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    snap = { status: "ready" as const, data: saved };
+    for (const listener of listeners) listener();
+  };
+  const reorderSections = vi.fn(
+    async (_sectionId: string, sectionIds: readonly string[]) => {
+      saved = { ...saved, sectionOrder: [...sectionIds] };
+      notify();
+      return saved;
+    },
+  );
+  const removeSection = vi
+    .fn(async (id: string) => {
+      saved = {
+        ...saved,
+        sections: saved.sections.filter((section) => section.id !== id),
+        sectionOrder: saved.sectionOrder.filter((key) => key !== `group:${id}`),
+      };
+      notify();
+      return saved;
+    })
+    .mockRejectedValueOnce(new Error("Delete refused"));
+  h.session.sidebarPreferences = {
+    ...h.session.sidebarPreferences,
+    sectionOrderWritable: true,
+    sectionRemovalWritable: true,
+    snapshot: () => snap,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    reorderSections,
+    removeSection,
+  };
+  const select = vi.fn();
+  const create = vi.fn();
+  const custom = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("Action failed"));
+  const leadingActivate = vi.fn();
+  await h.register({
+    component: ({ ui }) => {
+      const [selected, setSelected] = useState<string>();
+      const Workspace = ui.Workspace;
+      assert(Workspace);
+      expect(ui.Chats).toBeUndefined();
+      expect(ui.ChatList).toBeUndefined();
+      return (
+        <>
+          <Workspace
+            id="work"
+            selected={selected === "work"}
+            onSelect={() => {
+              select("work");
+              setSelected("work");
+            }}
+            onNewTask={() => create("work")}
+            headerLeading={{
+              icon: <span>Lead</span>,
+              label: "Open Work summary",
+              onActivate: leadingActivate,
+            }}
+            headerAccessory={<button type="button">Accessory</button>}
+            headerMenuActions={
+              ui.headerMenuActions === true
+                ? [{ id: "pin", label: "Pin", onSelect: custom }]
+                : undefined
+            }
+          >
+            <button type="button">Work item</button>
+          </Workspace>
+          <Workspace id="other" onNewTask={() => create("other")}>
+            <button type="button">Other item</button>
+          </Workspace>
+        </>
+      );
+    },
+  });
+  mount(h);
+  const user = userEvent.setup();
+  const workTitle = screen.getByRole("button", { name: "Work" });
+  await user.click(workTitle);
+  expect(select).toHaveBeenCalledExactlyOnceWith("work");
+  expect(workTitle).toHaveAttribute("aria-current", "page");
+
+  await user.click(screen.getByRole("button", { name: "Hide tasks in Work" }));
+  expect(screen.queryByRole("button", { name: "Work item" })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Show tasks in Work" }));
+  expect(screen.getByRole("button", { name: "Work item" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "New task in Work" }));
+  expect(create).toHaveBeenCalledExactlyOnceWith("work");
+
+  await user.click(screen.getByRole("button", { name: "Open Work summary" }));
+  expect(leadingActivate).toHaveBeenCalledTimes(1);
+
+  // Context menu stays suppressed on the independent accessory control.
+  const accessory = screen.getByRole("button", { name: "Accessory" });
+  accessory.focus();
+  await user.keyboard("{Shift>}{F10}{/Shift}");
+  expect(screen.queryByRole("menu", { name: "Actions for Work" })).toBeNull();
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  const workMenu = await screen.findByRole("menu", {
+    name: "Actions for Work",
+  });
+  expect(
+    within(workMenu).getByRole("menuitem", { name: "Move up" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  await user.click(within(workMenu).getByRole("menuitem", { name: "Pin" }));
+  expect(custom).toHaveBeenCalledTimes(1);
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Workspace settings",
+    }),
+  );
+  const settings = await screen.findByRole("dialog", {
+    name: "Workspace settings",
+  });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(settings).not.toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Work" })).toHaveFocus();
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Pin",
+    }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The action could not run.",
+  );
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Move down",
+    }),
+  );
+  expect(reorderSections).toHaveBeenCalledExactlyOnceWith("group:work", [
+    "pages",
+    "starred",
+    "solo",
+    "group:other",
+    "channels",
+    "group:work",
+    "dms",
+  ]);
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Delete workspace",
+    }),
+  );
+  expect(await screen.findByText("Delete refused")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Actions for Work" }));
+  await user.click(
+    within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Delete workspace",
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Work" })).toBeNull(),
+  );
+  expect(removeSection).toHaveBeenCalledTimes(2);
+});

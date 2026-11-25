@@ -652,6 +652,37 @@ it("skips a disabled source when opening a newly created workspace", async () =>
   );
 });
 
+it("exposes independentWorkspaces and routes new workspaces to an active non-composing source", async () => {
+  const h = fixture();
+  expect(h.service.independentWorkspaces).toBe(true);
+  const openWorkspace = vi.fn(async () => {});
+  await h.register({ order: -1, id: "plain" }, "plain");
+  const source = await h.register({ order: 0, openWorkspace });
+
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(true);
+  expect(openWorkspace).toHaveBeenCalledExactlyOnceWith(
+    source.binding(),
+    "created-workspace",
+  );
+
+  source.update({ status: "loading", binding: source.binding(), revision: 2 });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).rejects.toThrow("Workspace selection is not ready");
+
+  source.update({
+    status: "ready",
+    binding: source.binding(),
+    revision: 3,
+    hidden: true,
+  });
+  await expect(
+    h.service.openCreatedWorkspace("created-workspace"),
+  ).resolves.toBe(false);
+});
+
 it.each(["starting", "failed", "paused", "stale"] as const)(
   "uses the installed plugin's current activation for recovery (%s)",
   (state) => {

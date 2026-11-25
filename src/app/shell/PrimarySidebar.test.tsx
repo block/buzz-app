@@ -1448,9 +1448,12 @@ it("shows a disabled region's chat in Solo while leaving its saved filing dorman
   }
 });
 
-it.each(["New options"])(
-  "selects the created workspace through its source from %s and retains selection failures for retry",
-  async (triggerName) => {
+it.each([
+  { mode: "composing", composeWorkspaces: true as const },
+  { mode: "independent", composeWorkspaces: undefined },
+])(
+  "selects the created workspace through its $mode source from New options and retains selection failures for retry",
+  async ({ composeWorkspaces }) => {
     const h = createSoloRegionFixture(viewer);
     let saved: SidebarPreferences = {
       sections: [],
@@ -1486,7 +1489,7 @@ it.each(["New options"])(
       throw new Error("The workspace could not be opened. Try again.");
     });
     const source = await h.register({
-      composeWorkspaces: true,
+      ...(composeWorkspaces ? { composeWorkspaces } : {}),
       openWorkspace: select,
       component: ({ ui }) => (ui.Chats ? <ui.Chats /> : null),
     });
@@ -1506,7 +1509,7 @@ it.each(["New options"])(
     );
     const user = userEvent.setup();
     try {
-      await user.click(screen.getByRole("button", { name: triggerName }));
+      await user.click(screen.getByRole("button", { name: "New options" }));
       await user.click(
         await screen.findByRole("menuitem", { name: "New workspace" }),
       );
@@ -1543,6 +1546,191 @@ it.each(["New options"])(
     }
   },
 );
+
+it("gives an independent source native workspace controls while preserving Solo, mixed workspaces and create actions", async () => {
+  const h = createSoloRegionFixture(viewer);
+  const preferences = createSidebarPreferencesStore({
+    available: true,
+    writeStar: async () => [],
+    read: async () => ({
+      sections: [
+        { id: "work", name: "Work", order: 0 },
+        { id: "mixed", name: "Mixed", order: 1 },
+      ],
+      assignments: {
+        filed: "work",
+        "mixed-chat": "mixed",
+        public: "mixed",
+      },
+      starred: [],
+      muted: [],
+    }),
+  });
+  await preferences.queries.ensure();
+  Object.assign(h.session, { sidebarPreferences: preferences.queries });
+  h.roster(
+    [
+      ...h.session.channels
+        .list()
+        .channels.map((channel) =>
+          channel.id === "chat"
+            ? { ...channel, cached: true as const }
+            : channel,
+        ),
+      { id: "filed", name: "Filed chat", channelType: "solo", creator: viewer },
+      {
+        id: "mixed-chat",
+        name: "Mixed chat",
+        channelType: "solo",
+        creator: viewer,
+      },
+      { id: "public", name: "Public channel", channelType: "stream" },
+    ],
+    "ready",
+  );
+  const open = vi.fn(async () => ({ status: "opened" as const }));
+  const navigator = { ...h.navigator, open };
+  const newItem = vi.fn();
+  const newWorkspaceTask = vi.fn();
+  await h.register({
+    title: "Items",
+    actions: () => [
+      { id: "new-item", label: "New item", icon: "plus", onSelect: newItem },
+    ],
+    component: ({ ui }) => {
+      const Workspace = ui.Workspace;
+      if (!Workspace) throw new Error("Missing independent ui.Workspace");
+      if (ui.Chats || ui.ChatList)
+        throw new Error("Independent source must not receive chat composition");
+      return (
+        <>
+          <Workspace id="work" onNewTask={() => newWorkspaceTask("work")}>
+            <button type="button">Work item</button>
+          </Workspace>
+          <Workspace id="mixed" onNewTask={() => newWorkspaceTask("mixed")}>
+            <button type="button">Mixed item</button>
+          </Workspace>
+          <ui.Conversation channelId="owned">
+            {(c) => <c.Link label={c.name} />}
+          </ui.Conversation>
+        </>
+      );
+    },
+  });
+  const view = render(
+    <ToastProvider>
+      <PrimarySidebar
+        relay={h.relay}
+        navigator={navigator}
+        target={conversationTarget(h.scope, "chat")}
+      >
+        {null}
+      </PrimarySidebar>
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  try {
+    await screen.findByRole("button", { name: "New chat in Work" });
+    await screen.findByRole("button", { name: "Work item" });
+    const solo = view.container.querySelector<HTMLElement>(
+      '[data-sidebar-section="solo"]',
+    );
+    const items = view.container.querySelector<HTMLElement>(
+      '[data-sidebar-section="solo-region:example/work"]',
+    );
+    const workGroup = view.container.querySelector<HTMLElement>(
+      '[data-sidebar-section="group:work"]',
+    );
+    const mixedGroup = view.container.querySelector<HTMLElement>(
+      '[data-sidebar-section="group:mixed"]',
+    );
+    if (!solo || !items || !workGroup || !mixedGroup)
+      throw new Error("Missing expected sidebar sections");
+
+    // Ordinary Solo, Solo workspaces and mixed workspaces stay in place once.
+    expect(within(solo).getByRole("button", { name: /^Chat$/ })).toBeVisible();
+    expect(
+      within(solo).getByRole("button", { name: "New Solo chat" }),
+    ).toBeVisible();
+    expect(
+      within(workGroup).getByRole("button", { name: "New chat in Work" }),
+    ).toBeVisible();
+    expect(
+      within(workGroup).getByRole("button", { name: /^Filed chat$/ }),
+    ).toBeVisible();
+    expect(
+      within(mixedGroup).getByRole("button", { name: /^Mixed chat$/ }),
+    ).toBeVisible();
+    expect(
+      within(mixedGroup).getByRole("button", { name: /^Public channel$/ }),
+    ).toBeVisible();
+    for (const id of ["chat", "filed", "mixed-chat", "owned"]) {
+      expect(
+        view.container.querySelectorAll(
+          `[data-solo-channel-id="${id}"], [data-solo-destination-id="${id}"]`,
+        ),
+      ).toHaveLength(1);
+    }
+
+    // Independent section shows native workspace controls for both Solo and mixed workspaces.
+    expect(
+      items.querySelector('[data-solo-workspace="work"]'),
+    ).toBeInTheDocument();
+    expect(
+      items.querySelector('[data-solo-workspace="mixed"]'),
+    ).toBeInTheDocument();
+    expect(items.querySelector("[data-solo-project]")).toBeNull();
+    expect(
+      items.querySelector('[data-solo-menu-id="project-work"]'),
+    ).toBeNull();
+    expect(
+      within(items).getByRole("button", { name: "Work item" }),
+    ).toBeVisible();
+    expect(
+      within(items).getByRole("button", { name: "Mixed item" }),
+    ).toBeVisible();
+
+    // Workspace disclosure inside Items stays independent of the unified Work section.
+    await user.click(
+      within(items).getByRole("button", { name: "Hide tasks in Work" }),
+    );
+    expect(
+      within(items).queryByRole("button", { name: "Work item" }),
+    ).toBeNull();
+    expect(
+      within(workGroup).getByRole("button", { name: /^Filed chat$/ }),
+    ).toBeVisible();
+
+    // Close Items; Solo navigation and host New chat remain usable.
+    await user.click(
+      within(items).getByLabelText("Items", { selector: "summary" }),
+    );
+    expect(within(items).queryByRole("button", { name: "Owned" })).toBeNull();
+    await user.click(
+      within(solo).getByRole("button", { name: "New Solo chat" }),
+    );
+    expect(open).toHaveBeenLastCalledWith(soloDraftTarget(h.scope));
+
+    // Reopen Items, close Solo; Items navigation and source New action remain usable.
+    await user.click(
+      within(items).getByLabelText("Items", { selector: "summary" }),
+    );
+    await user.click(
+      within(solo).getByLabelText("Solo", { selector: "summary" }),
+    );
+    expect(within(solo).queryByRole("button", { name: /^Chat$/ })).toBeNull();
+    await user.click(within(items).getByRole("button", { name: "New item" }));
+    expect(newItem).toHaveBeenCalledOnce();
+    await user.click(
+      within(items).getByRole("button", { name: "New task in Mixed" }),
+    );
+    expect(newWorkspaceTask).toHaveBeenCalledExactlyOnceWith("mixed");
+  } finally {
+    view.unmount();
+    preferences.dispose();
+    await h.dispose();
+  }
+});
 
 it.each(["neighbor", "heading", "moved"])(
   "recovers plain-list focus after the last chat in a workspace disappears (%s)",

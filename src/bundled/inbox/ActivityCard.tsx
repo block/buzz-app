@@ -35,7 +35,8 @@ export function ActivityCard({
       navigator={navigator}
       isOpen={isOpen}
       unreadFirst
-      compact={layout === "compact"}
+      compact={layout !== "default"}
+      previews={layout === "default2"}
       showTime={false}
       // Past the card's 50 rows, the rest are on the Activity page, which
       // stays open to links even when its sidebar entry is hidden.

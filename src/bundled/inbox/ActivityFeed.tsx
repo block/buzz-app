@@ -27,6 +27,8 @@ import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { shortRelativeTimestamp } from "../../shared/relative-timestamp";
 import {
   CompactActivityRow,
+  conversationPreview,
+  ReactionPreview,
   hasUnread,
   InboxRowButton,
   ownIdentity,
@@ -83,6 +85,7 @@ export function ActivityFeed({
   unreadFirst = false,
   showTime = true,
   compact = false,
+  previews = false,
   onSeeAll,
 }: {
   session: RelaySession;
@@ -106,6 +109,8 @@ export function ActivityFeed({
   showTime?: boolean;
   /** One line per conversation, without the message. */
   compact?: boolean;
+  /** With `compact`, each row adds a line with who wrote and their message. */
+  previews?: boolean;
 }) {
   const list = useChannelList(session.channels);
   const muted = useActivityMutes(session);
@@ -451,7 +456,9 @@ export function ActivityFeed({
           className={styles.list}
           aria-label="Recent activity"
           data-unread-emphasis="weight"
-          data-layout={compact ? "compact" : undefined}
+          data-layout={
+            compact ? (previews ? "compact-previews" : "compact") : undefined
+          }
         >
           {rows.map((row) => {
             const selected = isOpen?.(destination(row)) ?? false;
@@ -514,6 +521,18 @@ export function ActivityFeed({
                         : own
                           ? [scope.viewer]
                           : [row.item.workflowOwnerId ?? row.item.authorId]
+                    }
+                    preview={
+                      !previews ? undefined : row.kind === "reaction" ? (
+                        <ReactionPreview item={row.item} session={session} />
+                      ) : (
+                        conversationPreview({
+                          item: row.kind === "own" ? undefined : row.item,
+                          own: row.own,
+                          feed,
+                          session,
+                        })
+                      )
                     }
                     unread={unread}
                     session={session}

@@ -239,28 +239,7 @@ export function InboxRowButton({
       }
       unread={unread}
       previewId={previewId}
-      preview={
-        own ? (
-          <PreviewText
-            text={rowPreview(own.preview.content)}
-            mentions={own.preview}
-            session={session}
-            channelId={own.channelId}
-          />
-        ) : item ? (
-          (incompletePreview(feed, [
-            item.previewMessageId,
-            ...item.messageIds,
-          ]) ?? (
-            <PreviewText
-              text={rowPreview(item.preview)}
-              mentions={item.previewMentions}
-              session={session}
-              channelId={item.channelId}
-            />
-          ))
-        ) : null
-      }
+      preview={conversationPreview({ item, own, feed, session })}
     />
   );
 }
@@ -313,6 +292,7 @@ export function CompactActivityRow({
   thread,
   sender,
   senders,
+  preview,
   unread,
   session,
   profiles,
@@ -327,6 +307,9 @@ export function CompactActivityRow({
   sender?: string | undefined;
   /** Whose faces end the row. A DM already leads with its face, so it shows none. */
   senders?: readonly string[] | undefined;
+  /** With a message, the row takes a second line: who wrote, by face, then
+   * the start of what they wrote. */
+  preview?: ReactNode;
   unread: boolean;
   session: RelaySession;
   profiles: ReadonlyMap<string, Profile>;
@@ -359,6 +342,23 @@ export function CompactActivityRow({
       shape: author?.isAgent ? ("squircle" as const) : ("circle" as const),
     };
   });
+  const faceArt =
+    faces.length === 1 && faces[0] ? (
+      // One face matches the row's leading avatar in size.
+      <span className={styles.compactAvatar}>
+        <Avatar
+          src={faces[0].src}
+          alt=""
+          fallback={faces[0].name}
+          size="fill"
+          shape={faces[0].shape}
+        />
+      </span>
+    ) : faces.length ? (
+      <span className={styles.compactTrailing}>
+        <AvatarStack items={faces} />
+      </span>
+    ) : undefined;
   return (
     <NavigationItem
       {...props}
@@ -385,29 +385,34 @@ export function CompactActivityRow({
           )}
         </span>
       }
+      multiline={preview !== undefined}
       label={
-        <span className={styles.compactLabel} data-unread={unread || undefined}>
-          <span className={styles.compactPlace}>{place}</span>
-        </span>
-      }
-      trailing={
-        !dm && faces.length === 1 && faces[0] ? (
-          // One face matches the row's leading avatar in size.
-          <span className={styles.compactAvatar}>
-            <Avatar
-              src={faces[0].src}
-              alt=""
-              fallback={faces[0].name}
-              size="fill"
-              shape={faces[0].shape}
-            />
+        preview === undefined ? (
+          <span
+            className={styles.compactLabel}
+            data-unread={unread || undefined}
+          >
+            <span className={styles.compactPlace}>{place}</span>
           </span>
-        ) : !dm && faces.length ? (
-          <span className={styles.compactTrailing}>
-            <AvatarStack items={faces} />
+        ) : (
+          <span className={styles.compactLines}>
+            <span
+              className={styles.compactLabel}
+              data-unread={unread || undefined}
+            >
+              <span className={styles.compactPlace}>{place}</span>
+            </span>
+            <span
+              className={`text-body-sm ${styles.compactPreview}`}
+              data-unread={unread || undefined}
+            >
+              {!dm && faceArt}
+              <span className={styles.compactPreviewText}>{preview}</span>
+            </span>
           </span>
-        ) : undefined
+        )
       }
+      trailing={preview === undefined && !dm ? faceArt : undefined}
     />
   );
 }
@@ -442,7 +447,6 @@ export function ReactionRowButton({
     name,
   );
   const reactions = groupReactions(item.events);
-  const preview = rowPreview(item.message.content);
   const emojiNames = reactions
     .map((reaction) =>
       reaction.emoji
@@ -489,29 +493,75 @@ export function ReactionRowButton({
         )
       }
       previewId={previewId}
-      preview={
-        <>
-          {/* The hidden label already names the reaction. */}
-          <span aria-hidden>
-            reacted{" "}
-            {reactions.map((reaction) => (
-              <ActivityReactionGlyph
-                key={JSON.stringify([reaction.content, reaction.emoji?.url])}
-                reaction={reaction}
-                session={session}
-              />
-            ))}{" "}
-            to{" "}
-          </span>
-          <PreviewText
-            text={preview}
-            mentions={item.message}
-            session={session}
-            channelId={item.message.channelId}
-          />
-        </>
-      }
+      preview={<ReactionPreview item={item} session={session} />}
     />
+  );
+}
+
+/** A conversation row's latest message: yours when `own` is newer, else the
+ * row's preview, or a notice while its edits are still settling. */
+export function conversationPreview({
+  item,
+  own,
+  feed,
+  session,
+}: {
+  item?: InboxItem | undefined;
+  own?: OwnActivity | undefined;
+  feed: InboxFeedSnapshot;
+  session: RelaySession;
+}): ReactNode {
+  if (own)
+    return (
+      <PreviewText
+        text={rowPreview(own.preview.content)}
+        mentions={own.preview}
+        session={session}
+        channelId={own.channelId}
+      />
+    );
+  if (!item) return null;
+  return (
+    incompletePreview(feed, [item.previewMessageId, ...item.messageIds]) ?? (
+      <PreviewText
+        text={rowPreview(item.preview)}
+        mentions={item.previewMentions}
+        session={session}
+        channelId={item.channelId}
+      />
+    )
+  );
+}
+
+/** What a reaction row says: the reaction, then the message it was on. */
+export function ReactionPreview({
+  item,
+  session,
+}: {
+  item: InboxReaction;
+  session: RelaySession;
+}) {
+  return (
+    <>
+      {/* The row's hidden label already names the reaction. */}
+      <span aria-hidden>
+        reacted{" "}
+        {groupReactions(item.events).map((reaction) => (
+          <ActivityReactionGlyph
+            key={JSON.stringify([reaction.content, reaction.emoji?.url])}
+            reaction={reaction}
+            session={session}
+          />
+        ))}{" "}
+        to{" "}
+      </span>
+      <PreviewText
+        text={rowPreview(item.message.content)}
+        mentions={item.message}
+        session={session}
+        channelId={item.message.channelId}
+      />
+    </>
   );
 }
 

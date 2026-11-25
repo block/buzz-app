@@ -171,6 +171,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* A line's height, so on a two-line row it centers on the first line. */
+  min-height: var(--space-5);
   width: 1.25rem;
   flex: 0 0 1.25rem;
 }
@@ -215,4 +217,29 @@
 }
 [data-selected] .compactLabel[data-unread] .compactPlace {
   color: var(--text-row-selected);
+}
+
+/* Default 2: the compact row's line, then who wrote by face and the start of
+   their message. */
+.compactLines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  min-width: 0;
+}
+.compactPreview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1h);
+  min-width: 0;
+  color: var(--text-subtle);
+}
+.compactPreview[data-unread] {
+  color: var(--text-standard);
+}
+.compactPreviewText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

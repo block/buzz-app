@@ -89,6 +89,40 @@ write tests for implementation details or for how the UI looks.
 - **CI** runs everything on every PR, so you don't need to run the full suite
   yourself.
 
+### Review a pull request at its exact head
+
+`bin/node scripts/review-head.mjs <pr-number|commit>` runs a repeatable evidence
+pass without touching your checkout. It fetches the head into a detached sibling
+worktree, bootstraps it, and runs the lanes the diff reaches (the capped
+selection of CI's advisory flake check, not CI's full suites):
+
+- **static:** `pnpm check` and `vite build`.
+- **tests:** the Node integration tests and the selected Vitest files.
+- **rust:** `cargo fmt --check`, Clippy and workspace tests, only when Rust
+  inputs changed.
+- **browser:** the selected journeys plus any `--browser=<spec[:line]>`, in
+  Chromium and WebKit.
+- **full:** `--lanes=full` runs `just scan` instead.
+
+Choose lanes with `--lanes=auto|all|full|static,tests,...`, compare against
+another base with `--base=<ref>`, and add `--tag=<name>` when several reviewers
+share a machine. A Linux host outside CI's runners needs CI's system packages
+once: the browser libraries
+(`sudo bin/pnpm exec playwright install-deps chromium webkit`) and, for the Rust
+lane, the apt packages in `.github/workflows/ci.yml`.
+
+The run writes `test-results/review/<label>/receipt.json` (exact head, base,
+tool versions, every command and exit code) and a `summary.md` that names what
+the run did not prove. Both are rewritten as each lane starts and finishes, so a
+run that is killed partway keeps the finished lanes, shows
+`result: "incomplete"`, and makes no exact-head claim. It fails if the worktree
+moved or the pull request head moved on the remote. Exit codes: 0 passed, 1 a
+lane or final check failed, 2 the run could not start.
+
+The reviewed code runs as you, with a short environment allowlist (no tokens, no
+`CI`). This is not a sandbox: review untrusted authors on a disposable machine.
+It is review evidence, not acceptance, and does not replace CI.
+
 ## Get it reviewed
 
 Try the change in the app yourself before you ask for review. When CI is green

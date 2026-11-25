@@ -320,11 +320,14 @@ import type { createServices } from "@buzz/author";
       join(dir, "document-consumer.ts"),
       `
 import type { ComponentProps } from "react";
-import type { Agents, Context, ImageViewerProps, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
+import type { Agents, Context, Delivery, ImageViewerProps, MarkdownProps, PanelWorkspaceItem, PanelWorkspaceProps, PanelSplit } from "@buzz/author";
 export const inject = ["react", "agents", "conversation", "panels"];
 export function apply(ctx: Context) {
   const React = ctx.react;
   type TranscriptProps = ComponentProps<NonNullable<Agents["ui"]>["Transcript"]>;
+  type SaveButtonProps = ComponentProps<NonNullable<NonNullable<Agents["ui"]>["SaveButton"]>>;
+  type SubviewProps = ComponentProps<NonNullable<NonNullable<Agents["ui"]>["Subview"]>>;
+  type OpenTranscriptHook = NonNullable<NonNullable<Agents["ui"]>["useOpenTranscript"]>;
   type Agent = TranscriptProps["agent"];
   function Activity(agent: Agent) {
     const Transcript = ctx.agents.ui?.Transcript;
@@ -339,6 +342,12 @@ export function apply(ctx: Context) {
           outcome: "ended", partial: false,
           items: [
             { id: "m-1", at: 1_700_000_000_500, type: "message", text: "Done", posted: true, messageId: "b".repeat(64) },
+            {
+              id: "t-1", at: 1_700_000_000_600, type: "tool", toolCallId: "t-1",
+              title: "delegate", kind: "other", status: "completed",
+              input: "", output: "", diffs: [], paths: [], truncated: false,
+              childrenLabel: "Subagent activity", children: [],
+            },
           ],
         }],
       }),
@@ -350,9 +359,54 @@ export function apply(ctx: Context) {
     };
     return React.createElement(Transcript, props);
   }
-  void Activity;
+  function SaveControl() {
+    const SaveButton = ctx.agents.ui?.SaveButton;
+    if (!SaveButton) return null;
+    const props: SaveButtonProps = { form: "settings", saving: false, disabled: true, dirty: false };
+    return React.createElement(SaveButton, props);
+  }
+  function TranscriptSubview() {
+    const Subview = ctx.agents.ui?.Subview;
+    const useOpenTranscript: OpenTranscriptHook | undefined =
+      ctx.agents.ui?.useOpenTranscript;
+    if (!Subview || !useOpenTranscript) return null;
+    const { open, show, back } = useOpenTranscript(
+      { channelId: "chan-1", rootId: "root-1" },
+      (row: { key: string; title: string }) => row.title,
+      {
+        initial: { key: "k1", title: "general" },
+        searching: false,
+        opening: 1,
+        done() {},
+      },
+      () => {},
+    );
+    void show;
+    if (!open) return null;
+    const props: SubviewProps = {
+      title: open.title,
+      backLabel: "Back to activity",
+      onBack: back,
+      children: React.createElement("p", null, open.key),
+    };
+    return React.createElement(Subview, props);
+  }
+  async function HarnessCheck(delivery: Delivery) {
+    await ctx.agents.harness.systemPrompt(delivery, {
+      scope: "thread", cwd: "/repo", workspace: "/ws", instructions: "",
+    });
+  }
+  void [Activity, SaveControl, TranscriptSubview, HarnessCheck];
   // @ts-expect-error Agents.ui is optional on older hosts and must be checked.
   void ctx.agents.ui.Transcript;
+  if (ctx.agents.ui) {
+    // @ts-expect-error Agents.ui.SaveButton is optional on older hosts and must be checked.
+    React.createElement(ctx.agents.ui.SaveButton, { form: "settings", saving: false, disabled: false });
+    // @ts-expect-error Agents.ui.Subview is optional on older hosts and must be checked.
+    React.createElement(ctx.agents.ui.Subview, { title: "general", backLabel: "Back", onBack() {}, children: null });
+    // @ts-expect-error Agents.ui.useOpenTranscript is optional on older hosts and must be checked.
+    ctx.agents.ui.useOpenTranscript(undefined, () => "");
+  }
   const document: MarkdownProps = { content: "**Hello**", scale: "document", openLink: () => false };
   function Reader() {
     ctx.panels.useTabTitle?.("A page", React.createElement("span", null, "A"));

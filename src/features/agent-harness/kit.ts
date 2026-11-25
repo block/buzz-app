@@ -89,6 +89,9 @@ export type HarnessKit = Readonly<{
     options: Readonly<{
       scope: HarnessScope;
       cwd: string;
+      /** The agent's workspace, absolute, when `cwd` is a folder of the
+       * conversation's own instead. */
+      workspace?: string;
       instructions: string;
       tools?: boolean;
       conversation?: HarnessConversation;
@@ -289,12 +292,14 @@ export function harnessKit(sources: Sources): HarnessKit {
 
     async systemPrompt(
       { agent, team }: Delivery,
-      { scope, cwd, instructions, tools = true, conversation },
+      { scope, cwd, workspace, instructions, tools = true, conversation },
     ) {
       const memory = await sources.core(agent.key);
+      const ownFolder = workspace && workspace !== cwd ? workspace : undefined;
       const text = systemPrompt({
         scope,
         cwd,
+        ...(ownFolder ? { workspace: ownFolder } : {}),
         repositories: sources.repositories(
           sources.relay(agent.key)?.snapshot().scope,
         ),

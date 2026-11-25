@@ -517,6 +517,34 @@ describe("harnessKit.systemPrompt", () => {
       /<buzz-tools-unavailable>[\s\S]*final message is posted as your reply/,
     );
   });
+
+  it("points a conversation in its own folder to workspace only when distinct from cwd", async () => {
+    const { kit, delivery } = setup();
+    const d = delivery({ type: "mention", event: message("1", "x") });
+    const distinct = await kit.systemPrompt(d, {
+      scope: "thread",
+      cwd: "/repo",
+      workspace: "/ws",
+      instructions: "",
+    });
+    expect(distinct).toContain(
+      "<workspace>\nCurrent working directory: /repo\n</workspace>",
+    );
+    expect(distinct).toContain(
+      "Your persistent workspace is at `/ws`, not in your working directory, which is this conversation's own folder:",
+    );
+
+    const same = await kit.systemPrompt(d, {
+      scope: "thread",
+      cwd: "/ws",
+      workspace: "/ws",
+      instructions: "",
+    });
+    expect(same).toContain(
+      "Your persistent workspace is in your working directory:",
+    );
+    expect(same).not.toContain("this conversation's own folder");
+  });
 });
 
 describe("harnessKit.reply", () => {

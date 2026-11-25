@@ -15,6 +15,9 @@ import { AgentsContext } from "./react";
 import { AgentsService, type Agents } from "./service";
 import { fakeCommunities, fakeNative, fakeRelay } from "./service-testing";
 import { memoryStorage } from "./test-fakes";
+import { PanelSubview } from "../panels/PanelSubview";
+import { AgentSaveButton } from "./AgentSaveButton";
+import { useOpenTranscript } from "./OpenedConversation";
 import {
   LIVE_READ_MS,
   STEP_READ_MS,
@@ -792,6 +795,9 @@ it("exposes TranscriptPanel stably on Agents.ui across renders", async () => {
   });
   try {
     expect(plugin.agents.ui?.Transcript).toBe(TranscriptPanel);
+    expect(plugin.agents.ui?.SaveButton).toBe(AgentSaveButton);
+    expect(plugin.agents.ui?.Subview).toBe(PanelSubview);
+    expect(plugin.agents.ui?.useOpenTranscript).toBe(useOpenTranscript);
     let reads = 0;
     const read = async () => {
       reads++;

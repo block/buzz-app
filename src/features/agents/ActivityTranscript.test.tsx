@@ -1194,3 +1194,78 @@ it("resolves author avatars by identity and falls back when that identity is abs
   });
   expect(container.querySelector("img")).toBeNull();
 });
+
+it("labels nested tool children with childrenLabel or the default script heading", async () => {
+  const user = userEvent.setup();
+  const child = (id: string, title: string) => ({
+    id,
+    toolCallId: id,
+    at: 2,
+    type: "tool" as const,
+    title,
+    kind: "read",
+    status: "completed",
+    input: "",
+    output: "",
+    diffs: [],
+    paths: [],
+    truncated: false,
+  });
+  const turn: TranscriptTurn = {
+    turnId: "nested",
+    channelId: "channel",
+    threadRootId: null,
+    triggeringEventIds: [],
+    newSession: false,
+    config: [],
+    startedAt: 1,
+    endedAt: 3,
+    partial: false,
+    items: [
+      {
+        id: "script",
+        toolCallId: "script",
+        at: 1,
+        type: "tool",
+        title: "exec",
+        kind: "execute",
+        status: "completed",
+        input: "",
+        output: "",
+        diffs: [],
+        paths: [],
+        truncated: false,
+        children: [child("c1", "Read a.ts")],
+      },
+      {
+        id: "subagent",
+        toolCallId: "subagent",
+        at: 2,
+        type: "tool",
+        title: "delegate",
+        kind: "other",
+        status: "completed",
+        input: "",
+        output: "",
+        diffs: [],
+        paths: [],
+        truncated: false,
+        childrenLabel: "Subagent activity",
+        children: [child("c2", "Read b.ts")],
+      },
+    ],
+  };
+  render(
+    <ActivityTranscript
+      transcript={{ turns: [turn] }}
+      agentName="Agent"
+      state={() => "ended"}
+    />,
+  );
+  await user.click(screen.getByText("exec", { exact: true }));
+  expect(
+    screen.getByText("Calls recorded during this script", { exact: true }),
+  ).toBeVisible();
+  await user.click(screen.getByText("delegate", { exact: true }));
+  expect(screen.getByText("Subagent activity", { exact: true })).toBeVisible();
+});

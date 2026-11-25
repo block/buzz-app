@@ -440,20 +440,35 @@ pub(crate) fn effective_path() -> OsString {
             .find(|(name, _)| name == "PATH")
             .map(|(_, value)| value.as_os_str())
             .filter(|value| !value.is_empty());
-        compose_path(std::env::var_os("HOME").as_deref(), login_shell, &path)
+        compose_path(
+            std::env::var_os("HOME").as_deref(),
+            login_shell,
+            &path,
+            &["/opt/homebrew/bin", "/usr/local/bin"],
+        )
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        compose_path(std::env::var_os("HOME").as_deref(), None, &path, &[])
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         path
     }
 }
 
-#[cfg(target_os = "macos")]
-fn compose_path(home: Option<&OsStr>, login_shell: Option<&OsStr>, inherited: &OsStr) -> OsString {
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn compose_path(
+    home: Option<&OsStr>,
+    login_shell: Option<&OsStr>,
+    inherited: &OsStr,
+    extras: &[&str],
+) -> OsString {
     // Per-user installs, such as Claude's official installer, come first:
     // an older system-wide copy in /usr/local/bin would otherwise run instead,
     // and installing again could not replace it.
     let mut directories = home
+        .filter(|home| !home.is_empty())
         .map(|home| Path::new(home).join(".local/bin"))
         .into_iter()
         .collect::<Vec<_>>();
@@ -461,7 +476,7 @@ fn compose_path(home: Option<&OsStr>, login_shell: Option<&OsStr>, inherited: &O
         .into_iter()
         .chain([inherited])
         .flat_map(std::env::split_paths)
-        .chain(["/opt/homebrew/bin".into(), "/usr/local/bin".into()]);
+        .chain(extras.iter().map(PathBuf::from));
     for directory in candidates {
         if !directory.as_os_str().is_empty() && !directories.contains(&directory) {
             directories.push(directory);
@@ -471,7 +486,7 @@ fn compose_path(home: Option<&OsStr>, login_shell: Option<&OsStr>, inherited: &O
 }
 
 pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         use std::os::unix::fs::PermissionsExt;
 
@@ -486,7 +501,7 @@ pub(crate) fn resolve_program(program: &str, effective_path: &OsStr) -> PathBuf 
             return executable;
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = effective_path;
     PathBuf::from(program)
 }
@@ -698,7 +713,7 @@ mod tests {
         (directory, path)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn per_user_installs_come_before_system_wide_ones() {
         let home = std::env::var_os("HOME").unwrap();
@@ -706,7 +721,39 @@ mod tests {
         let directories = std::env::split_paths(&path).collect::<Vec<_>>();
         let first = |directory: &Path| directories.iter().position(|item| item == directory);
         assert_eq!(first(&Path::new(&home).join(".local/bin")), Some(0));
+        #[cfg(target_os = "macos")]
         assert!(first(Path::new("/usr/local/bin")) > Some(0));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn linux_path_prepends_local_bin_without_duplicating_or_empty_home() {
+        assert_eq!(
+            super::compose_path(
+                Some("/home/me".as_ref()),
+                None,
+                "/usr/local/bin:/usr/bin:/bin".as_ref(),
+                &[],
+            ),
+            "/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin"
+        );
+        assert_eq!(
+            super::compose_path(
+                Some("/home/me".as_ref()),
+                None,
+                "/usr/local/bin:/home/me/.local/bin:/usr/bin".as_ref(),
+                &[],
+            ),
+            "/home/me/.local/bin:/usr/local/bin:/usr/bin"
+        );
+        assert_eq!(
+            super::compose_path(None, None, "/usr/bin:/bin".as_ref(), &[]),
+            "/usr/bin:/bin"
+        );
+        assert_eq!(
+            super::compose_path(Some("".as_ref()), None, "/usr/bin:/bin".as_ref(), &[]),
+            "/usr/bin:/bin"
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -716,6 +763,7 @@ mod tests {
             Some("/Users/me".as_ref()),
             Some("/opt/homebrew/bin:/usr/bin:/bin".as_ref()),
             "/usr/bin:/bin:/usr/sbin:/sbin".as_ref(),
+            &["/opt/homebrew/bin", "/usr/local/bin"],
         );
         assert_eq!(
             path,
@@ -1086,7 +1134,7 @@ mod tests {
             std::env::join_paths([Path::new("/usr/bin"), Path::new("/bin"), directory.path()])
                 .unwrap();
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert_eq!(super::resolve_program("tool", &path), tool);
         assert_eq!(
             run_with_path(

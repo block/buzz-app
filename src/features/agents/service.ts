@@ -74,6 +74,9 @@ import type { TeamResult, TeamSent } from "./team-ops";
 import type { Expected, SnapshotRead } from "./agent-config-artifacts";
 import type { revertTemplate, SettingsCheck } from "./agent-config-history";
 import type { RevertOutcome } from "./AgentConfigHistory";
+import { PanelSubview } from "../panels/PanelSubview";
+import { AgentSaveButton } from "./AgentSaveButton";
+import { useOpenTranscript } from "./OpenedConversation";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { isBundledOwner } from "../../plugins/provenance";
 import {
@@ -1926,6 +1929,18 @@ export type Agents = {
      * updates while working, View-activity focus, Markdown, file diffs and
      * prompt sections. Feature-detect on older hosts. */
     Transcript: typeof TranscriptPanel;
+    /** Renders the settings Save button in the agent panel's sticky footer
+     * and participates in its unsaved-changes guard. Feature-detect on older
+     * hosts. */
+    SaveButton?: typeof AgentSaveButton;
+    /** Opens a detail view in a local tab when hosted in a tabbed panel
+     * workspace, or an inline subview with back navigation otherwise.
+     * Feature-detect on older hosts. */
+    Subview?: typeof PanelSubview;
+    /** Coordinates opening and closing a conversation transcript inside
+     * `Subview`, including tabbed-host activation and `initialTranscript`
+     * close semantics. Feature-detect on older hosts. */
+    useOpenTranscript?: typeof useOpenTranscript;
   }>;
   /** Wakes an agent this copy of the app runs in one of its conversations,
    * as a mention there would, but with no message: the agent is told `text`
@@ -4982,6 +4997,9 @@ export class AgentsService extends Service implements Agents {
   });
   readonly ui: NonNullable<Agents["ui"]> = Object.freeze({
     Transcript: TranscriptPanel,
+    SaveButton: AgentSaveButton,
+    Subview: PanelSubview,
+    useOpenTranscript,
   });
   readonly supportsGuardedWake = true as const;
   wake(key: AgentKey, wake: AgentWake): void;

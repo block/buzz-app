@@ -1011,7 +1011,7 @@ function Tool({ item, agentName }: { item: ToolItem; agentName: string }) {
       {item.children?.length ? (
         <div className={styles.section}>
           <p className="text-body text-secondary">
-            Calls recorded during this script
+            {item.childrenLabel || "Calls recorded during this script"}
           </p>
           {item.children.map((child) => (
             <Entry key={child.id} item={child} agentName={agentName} />

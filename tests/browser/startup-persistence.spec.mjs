@@ -473,6 +473,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         await peer.writeStartup(startup([active, retried]));
         channels = openChannels(createHeadPersistence(viewer, origin));
         await channels.restore();
+        channels.acceptDiscovery([active, retried]);
       },
       omitRetried: () => channels.acceptDiscovery([], new Set(["active"])),
       replace: () => peer.writeStartup(startup([replacement])),

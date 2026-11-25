@@ -629,12 +629,14 @@ export function createChannelWrites(
     const work = (async () => {
       // An expired create can no longer land, so a relay roster listing its
       // creator shows the chat exists without the create lookup.
-      const exists =
-        soloAdminSetupExpired(pending.event) &&
-        (await listsMember(id, pending.event.pubkey, signal).catch(
-          () => false,
-        ));
-      if (!exists) await created(pending.event.id);
+      await created(
+        pending.event.id,
+        async () =>
+          soloAdminSetupExpired(pending.event) &&
+          (await listsMember(id, pending.event.pubkey, signal).catch(
+            () => false,
+          )),
+      );
       // Checked first, so no other failure can block the chat past expiry.
       if (soloAdminSetupExpired(pending.event))
         return outbox?.dismiss(pending.event.id, opening);
@@ -682,9 +684,10 @@ export function createChannelWrites(
   /** Settles once the relay has the create, or rejects with ChatNotStarted
    * once it is known to have none. A lost acknowledgment resends the same
    * create, which the relay confirms; when the attempts run out, the relay is
-   * asked for the create until it answers. */
-  async function created(create: string) {
+   * asked for the create until it answers or `exists` shows the chat. */
+  async function created(create: string, exists?: () => Promise<boolean>) {
     for (let tries = 1; tries <= 3; tries++) {
+      if (await exists?.()) return;
       try {
         return await delivered(create);
       } catch (error) {
@@ -706,6 +709,7 @@ export function createChannelWrites(
     }
     for (let wait = 1_000; ; wait = Math.min(wait * 2, 30_000)) {
       if (signal.aborted) throw new Error("The community connection changed.");
+      if (await exists?.()) return;
       try {
         const events = await reader.read(
           [{ ids: [create], limit: 1, consistency: "strong" }],

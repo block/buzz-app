@@ -31,6 +31,7 @@ function setup() {
   let failProfiles = false;
   let failGrantReads = false;
   let failCreateReads = false;
+  let blockedCreateReads = 0;
   let finished = false;
   let journal: readonly OutgoingEvent[] = [];
   const unfinished = (items: readonly OutgoingEvent[]) =>
@@ -75,8 +76,10 @@ function setup() {
         filters.some((filter) =>
           filter.ids?.some((id) => events.get(id)?.kind === 9007),
         )
-      )
+      ) {
+        blockedCreateReads++;
         throw new Error("Create read unavailable");
+      }
       const roster = signed(relay, {
         kind: 39002,
         content: "",
@@ -206,6 +209,7 @@ function setup() {
     failCreateReads: () => {
       failCreateReads = true;
     },
+    blockedCreateReads: () => blockedCreateReads,
     finishElsewhere: () => {
       finished = true;
       journal = unfinished(journal);
@@ -381,6 +385,43 @@ it.each([
     }
   },
 );
+
+it("finishes setup that expires while a send waits on an unreadable create", async () => {
+  const h = setup();
+  h.failCreateReads();
+  const first = await h.open();
+  h.adminPublish.mockRejectedValue(new Error("offline"));
+  const { message } = h.start(first);
+  await vi.waitFor(() =>
+    expect(
+      first.session.outbox?.snapshot().find((item) => item.event.id === message)
+        ?.delivery,
+    ).toBe("failed"),
+  );
+  first.dispose();
+  const resumed = await h.open();
+  const blocked = h.blockedCreateReads();
+  const next = resumed.session.messages.send(
+    h.channel,
+    "Continue with current roles",
+    h.agents,
+  );
+  await vi.waitFor(() =>
+    expect(h.blockedCreateReads()).toBeGreaterThan(blocked),
+  );
+  expect(h.events.has(next)).toBe(false);
+  const clock = vi
+    .spyOn(Date, "now")
+    .mockReturnValue(Date.now() + 16 * 60 * 1000);
+  try {
+    await vi.waitFor(() => expect(h.events.has(next)).toBe(true), {
+      timeout: 10_000,
+    });
+    expect(h.adminPublish).toHaveBeenCalledOnce();
+  } finally {
+    clock.mockRestore();
+  }
+}, 15_000);
 
 it("skips an opening grant whose relay profile was transferred and still sends the message", async () => {
   const h = setup();

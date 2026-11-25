@@ -174,6 +174,7 @@ fn native_command_permissions_isolate_webviews() {
         "plugin_reload",
         "plugin_module",
         "plugin_recover",
+        "plugin_credential_cleanup_retry",
         "plugin_host_run_command",
         "plugin_host_request",
         "plugin_host_upload",

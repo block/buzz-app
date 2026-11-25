@@ -681,6 +681,8 @@ export function policyRelay({
           });
         return Response.json(result);
       } catch (error) {
+        // A held part rejecting with its caller's own cancellation is no fault.
+        if (init?.signal?.aborted && error === init.signal.reason) throw error;
         return fault(error);
       }
     },

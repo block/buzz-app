@@ -198,6 +198,7 @@ fn main() {
             "plugin_reload",
             "plugin_module",
             "plugin_recover",
+            "plugin_credential_cleanup_retry",
             "plugin_host_run_command",
             "plugin_host_call_context",
             "plugin_host_request",

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 import { policyRelay } from "../browser/policy-relay.mjs";
 
 test("outbound ephemeral fanout drops without subscribers while inbound injection stays strict", () => {
@@ -64,4 +66,93 @@ test("a publication accepted after its page closed skips only the delivery check
     () => relay.publish("primary", event),
     /explicit production channel REQ/,
   );
+});
+
+// A channel head read: its top-level rows plus the relay's membership notices.
+const headFilters = [
+  { kinds: [9, 40002], "#h": ["alpha"], limit: 20, top_level: true },
+  { kinds: [40099], "#h": ["alpha"], authors: ["relay"], limit: 500 },
+];
+function headRelay(answer = () => []) {
+  const key = generateSecretKey();
+  const report = { unexpected: [], queries: [] };
+  const relay = policyRelay({ viewer: getPublicKey(key), answer, report });
+  const read = (signal, filters = headFilters) => {
+    const url = "https://primary.test/query";
+    const body = JSON.stringify(filters);
+    const auth = finalizeEvent(
+      {
+        kind: 27235,
+        created_at: Math.floor(Date.now() / 1000),
+        content: "",
+        tags: [
+          ["u", url],
+          ["method", "POST"],
+          ["payload", createHash("sha256").update(body).digest("hex")],
+        ],
+      },
+      key,
+    );
+    const token = Buffer.from(JSON.stringify(auth)).toString("base64");
+    const headers = { Authorization: `Nostr ${token}` };
+    return relay.fetch(url, { method: "POST", body, headers, signal });
+  };
+  return { relay, report, read };
+}
+
+test("a cancelled held head read rejects with its reason and is no fault", async () => {
+  const { relay, report, read } = headRelay();
+  relay.holdContent();
+  const controller = new AbortController();
+  const reason = new DOMException("left the channel", "AbortError");
+  const result = read(controller.signal).then(
+    () => assert.fail("a held read cannot resolve"),
+    (error) => error,
+  );
+  // Both parts were dispatched before the caller cancels.
+  await new Promise(setImmediate);
+  assert.deepEqual(
+    report.queries.map((query) => query.filter),
+    headFilters,
+  );
+  controller.abort(reason);
+  assert.equal(await result, reason);
+  assert.deepEqual(report.unexpected, []);
+
+  const aborted = AbortSignal.abort(reason);
+  await assert.rejects(read(aborted), (error) => error === reason);
+  assert.deepEqual(report.unexpected, []);
+});
+
+test("a head read still faults on errors that are not its own cancellation", async () => {
+  const abortError = new DOMException("upstream", "AbortError");
+  for (const error of [abortError, new Error("answer failed")]) {
+    const { report, read } = headRelay((_community, filter) => {
+      if (filter.kinds[0] === 40099) throw error;
+      return [];
+    });
+    await assert.rejects(
+      read(new AbortController().signal),
+      (e) => e === error,
+    );
+    assert.ok(report.unexpected.includes(String(error)));
+  }
+  // An unrelated failure is recorded even when the caller has also cancelled.
+  const { report, read } = headRelay();
+  const mismatched = [headFilters[0], { ...headFilters[1], "#h": ["beta"] }];
+  const signal = AbortSignal.abort(new Error("cancelled"));
+  await assert.rejects(
+    read(signal, mismatched),
+    (error) => error !== signal.reason && /toEqual/.test(error.message),
+  );
+  assert.equal(report.unexpected.length, 1);
+});
+
+test("a head read answers each filter as its own read and flattens them", async () => {
+  const { report, read } = headRelay((_community, filter) => [
+    { kind: filter.kinds[0] },
+  ]);
+  const response = await read(new AbortController().signal);
+  assert.deepEqual(await response.json(), [{ kind: 9 }, { kind: 40099 }]);
+  assert.deepEqual(report.unexpected, []);
 });

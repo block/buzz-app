@@ -9,6 +9,7 @@ import { createPluginRequests } from "./requests";
 import { providePluginManagement } from "./review-access";
 import type {
   StorageResult,
+  ManagementResult,
   ConfigurationState,
   ManagementAction,
   PluginInfo,
@@ -92,6 +93,9 @@ export function createPluginManager(
       (configuration.status === "recovery" && !configuration.canReset),
   );
   let busy = false;
+  let uncertain = false;
+  let cleanupBusy = false;
+  let cleanupError: string | null = null;
   let catalogPending = false;
   let error: string | null = null;
   let refreshError: string | null = null;
@@ -99,12 +103,24 @@ export function createPluginManager(
   let changes = 0;
   let timer: ReturnType<typeof setTimeout>;
   const listeners = new Set<() => void>();
-  const read = () => ({
+  const read = (): {
+    configuration: ConfigurationState;
+    hostOwned: readonly PluginManifest[];
+    activation: ReturnType<PluginRuntime["snapshot"]>;
+    busy: boolean;
+    error: string | null;
+    refreshError: string | null;
+    /** Additive for existing snapshot consumers; always supplied by this owner. */
+    cleanupBusy?: boolean;
+    cleanupError?: string | null;
+  } => ({
     configuration,
     /** Manifests of the host-owned features, which have no catalog entry. */
     hostOwned,
     activation: runtime.snapshot(),
     busy,
+    cleanupBusy,
+    cleanupError,
     error,
     refreshError,
   });
@@ -148,10 +164,11 @@ export function createPluginManager(
       catalogPending = false;
     }
   }
-  async function refresh() {
+  async function refresh(reschedule = true) {
+    if (closed) return;
     const before = changes;
     try {
-      if (busy || catalogPending) return;
+      if ((busy && !uncertain) || catalogPending) return;
       const next = await withTimeout(
         getCatalog(),
         "Plugin storage did not respond within 10 seconds",
@@ -170,11 +187,11 @@ export function createPluginManager(
           });
       }
     } finally {
-      if (!closed) timer = setTimeout(() => void refresh(), 1000);
+      if (!closed && reschedule) timer = setTimeout(() => void refresh(), 1000);
     }
   }
   async function update(
-    operation: () => Promise<StorageResult>,
+    operation: () => Promise<ManagementResult>,
     timeoutMs = 10_000,
     waitForSettlement = false,
   ) {
@@ -195,10 +212,11 @@ export function createPluginManager(
     const finish = () => {
       changes++;
       busy = false;
+      uncertain = false;
       publish();
     };
     try {
-      let next: StorageResult;
+      let next: ManagementResult;
       try {
         next = await withTimeout(
           pending,
@@ -214,14 +232,61 @@ export function createPluginManager(
         // Import reviews own a confirmed operation until native actually settles.
         next = await pending;
       }
-      if (!closed) {
-        error = null;
-        accept(next);
-      }
-      return !closed;
+      if (closed) return false;
+      const { committed, problem, ...state } = next;
+      if (committed === false)
+        throw new Error(problem ?? "Plugin change outcome is unknown");
+      error = problem ?? null;
+      accept(state);
+      return true;
     } catch (reason) {
       if (!closed) {
         error = String(reason);
+        publish();
+      }
+      return false;
+    } finally {
+      if (settled) finish();
+      else {
+        // Only the caller wait ended. Keep edits serialized, but allow reads
+        // to discover a commit whose reply was lost while cleanup continues.
+        uncertain = true;
+        void pending.then(finish, finish);
+      }
+    }
+  }
+  // True means native admission, not completion; authoritative polling owns
+  // cleanup state even if this follow-up read is busy or unavailable.
+  async function retryCredentialCleanup() {
+    if (closed || cleanupBusy) return false;
+    cleanupBusy = true;
+    cleanupError = null;
+    publish();
+    let settled = false;
+    const pending = (async () => {
+      try {
+        return await storage.retryCredentialCleanup();
+      } finally {
+        settled = true;
+      }
+    })();
+    const finish = () => {
+      cleanupBusy = false;
+      publish();
+    };
+    try {
+      // The returned pre-start summary is not evidence of completion. Only a
+      // catalog read may replace pending/unknown, even after an accepted retry.
+      await withTimeout(
+        pending,
+        "Credential cleanup did not respond within 10 seconds",
+      );
+      if (closed) return false;
+      await refresh(false);
+      return !closed;
+    } catch (reason) {
+      if (!closed) {
+        cleanupError = String(reason);
         publish();
       }
       return false;
@@ -276,12 +341,14 @@ export function createPluginManager(
       runtime.reconcile(desired, id);
       return true;
     },
+    retryCredentialCleanup,
     retry: () => update(getCatalog),
     // The native fetch gives up after 30 seconds.
     refreshManaged: () => update(storage.refreshManaged ?? getCatalog, 45_000),
     recover: () => update(storage.recoverSettings),
     dismissError: () => {
       error = null;
+      cleanupError = null;
       publish();
     },
     async dispose() {

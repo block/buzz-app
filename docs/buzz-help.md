@@ -321,6 +321,22 @@ mentions still work.
 - **Refused by a community**: the notice says what to do, such as sign in,
   switch accounts, or ask an admin for access.
 
+### Sign out stopped (desktop)
+
+- If Buzz can't check its saved plugin credentials, **Remove from device**
+  stops instead of guessing, and a pending sign-out can make Buzz exit before
+  its window opens. That cleanup is unknown, not done.
+- An interrupted credential setup with nothing saved in it doesn't stop
+  sign-out: **Remove from device** cancels it and signs out as usual. Buzz then
+  tries one fresh setup. If that fails, sign-out has still finished and saved
+  credentials stay unavailable until a later launch sets them up.
+- The installed and development builds keep separate saved plugin credentials.
+  Each signs out only its own, and erasing is refused while the other build
+  still keeps credentials in data it would erase. Keychain may ask to let one
+  build check the other's setup.
+- An older Buzz keeps those credentials unavailable and can refuse a pending
+  sign-out until you reopen the newer Buzz.
+
 ### A conversation change didn't send
 
 - Retry a failed reaction with **Retry reaction** on its message.

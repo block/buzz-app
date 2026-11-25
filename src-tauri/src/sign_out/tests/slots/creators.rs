@@ -1,7 +1,173 @@
 //! Concrete native adapters with injected fake stores and temporary roots.
-use super::super::creators::exclusive;
+use super::super::creators::{exclusive, released_lock};
 use super::*;
 use crate::identity::IdentityHost;
+
+fn ready(vault: &Vault, home: &Path) -> (Manager, String) {
+    vault.enroll(home, "default", &[]);
+    let manager = Manager::open(Some(home.to_owned()), "default", false)
+        .unwrap()
+        .with_secret_storage(vault.root.clone(), vault.store.clone());
+    let revision = manager
+        .catalog()
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|p| p.manifest.id == PLUGIN)
+        .unwrap()
+        .revision;
+    (manager, revision)
+}
+fn set(
+    instance: &Instance,
+    manager: Manager,
+    identity: IdentityHost,
+    revision: String,
+    wait: Duration,
+) -> Result<(), String> {
+    let snapshot = identity.current_viewer().unwrap().unwrap();
+    instance.set_secret(
+        manager,
+        identity,
+        snapshot,
+        PLUGIN.into(),
+        revision,
+        "api-key".into(),
+        zeroize::Zeroizing::new("sk-fixture".into()),
+        Arc::new(|| true),
+        wait,
+    )
+}
+fn creators_done(instance: &Instance) {
+    let start = Instant::now();
+    while instance.shared.gate.lock().unwrap().active != 0 {
+        assert!(start.elapsed() < LIMIT, "creator did not complete");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn concrete_set_timeout_keeps_both_key_modes_through_add_and_own_cleanup() {
+    for service in ["identity", OTHER_KEY] {
+        for choices in [PLAIN, WIPE] {
+            for failed_add in [false, true] {
+                let (dir, _) = fixture();
+                let paths = paths_for(dir.path(), service);
+                let vault = Vault::new(dir.path().join("inventory"));
+                let (manager, revision) = ready(&vault, &dir.path().join("plugins"));
+                let identity = IdentityHost::fixture();
+                let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+                let (started, at_add) = mpsc::channel();
+                let (release, released) = mpsc::channel();
+                *vault.store.add_stall.lock().unwrap() = Some((started, released));
+                *vault.store.add_denied.lock().unwrap() = failed_add;
+                let (cleanup, at_cleanup) = mpsc::channel();
+                let (finish, finished) = mpsc::channel();
+                *vault.store.stall.lock().unwrap() = Some((cleanup, finished));
+                assert_eq!(
+                    set(
+                        &instance,
+                        manager.clone(),
+                        identity.clone(),
+                        revision,
+                        BRIEFLY
+                    ),
+                    Err(SAVING.into())
+                );
+                assert_eq!(at_add.recv_timeout(LIMIT).unwrap(), Step::Stalled);
+                assert!(vault.root.exists(), "intent established before fake add");
+                assert_eq!(
+                    instance.begin(choices, Admission::Scanner),
+                    Err(refuse(SAVING))
+                );
+                assert!(!exclusive(&paths.key_lock));
+                assert!(!exclusive(&paths.other_key_lock));
+                assert!(!exclusive(&paths.lock));
+                // Ineligible completion must clean up its own account, still admitted.
+                identity.close();
+                release.send(()).unwrap();
+                assert_eq!(at_cleanup.recv_timeout(LIMIT).unwrap(), Step::Stalled);
+                assert_eq!(
+                    instance.begin(choices, Admission::Scanner),
+                    Err(refuse(SAVING))
+                );
+                assert!(!exclusive(&paths.other_key_lock));
+                finish.send(()).unwrap();
+                creators_done(&instance);
+                assert_eq!(instance.begin(choices, Admission::Scanner), Ok(()));
+                assert_eq!(
+                    vault
+                        .calls()
+                        .iter()
+                        .filter(|call| call.starts_with("add "))
+                        .count(),
+                    1
+                );
+                assert!(vault.saved().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn set_worker_outlives_dropped_caller_and_instance_and_finishes_successfully() {
+    let (dir, paths) = fixture();
+    let vault = Vault::new(dir.path().join("inventory"));
+    let (manager, revision) = ready(&vault, &dir.path().join("plugins"));
+    let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+    let (started, at_add) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    *vault.store.add_stall.lock().unwrap() = Some((started, released));
+    let shared = instance.shared.clone();
+    assert_eq!(
+        set(
+            &instance,
+            manager,
+            IdentityHost::fixture(),
+            revision,
+            BRIEFLY
+        ),
+        Err(SAVING.into())
+    );
+    at_add.recv_timeout(LIMIT).unwrap();
+    drop(instance);
+    assert!(!exclusive(&paths.key_lock));
+    assert!(!exclusive(&paths.lock));
+    assert!(!exclusive(&paths.other_key_lock));
+    release.send(()).unwrap();
+    let start = Instant::now();
+    while shared.gate.lock().unwrap().active != 0 {
+        assert!(start.elapsed() < LIMIT);
+        std::thread::yield_now();
+    }
+    drop(shared);
+    assert_eq!(vault.saved().len(), 1);
+    released_lock(&paths.key_lock);
+    released_lock(&paths.lock);
+}
+
+#[test]
+fn native_set_refuses_other_key_before_inventory_establishment() {
+    let (dir, paths) = fixture();
+    let vault = Vault::new(dir.path().join("inventory"));
+    let (manager, revision) = ready(&vault, &dir.path().join("plugins"));
+    let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+    let other = boot(&paths_for(dir.path(), OTHER_KEY), None, no_agents, || {
+        panic!("no marker")
+    })
+    .unwrap();
+    other.begin(PLAIN, Admission::Scanner).unwrap();
+    assert!(set(
+        &instance,
+        manager,
+        IdentityHost::fixture(),
+        revision,
+        BRIEFLY
+    )
+    .is_err());
+    assert!(!vault.root.exists());
+    assert!(vault.calls().is_empty());
+}
 
 #[test]
 fn native_journal_adapter_borrows_modes_and_preserves_cancelled_commit() {
@@ -223,7 +389,7 @@ fn observe_blocked_on_manager_global_holds_creator_lease_until_save_returns() {
 }
 
 #[test]
-fn unknown_boot_cannot_establish_via_finished_count_observation() {
+fn unknown_boot_cannot_establish_via_set_or_finished_count_observation() {
     for error in [false, true] {
         let (dir, paths) = fixture();
         let profiles = paths.app_data.join("profiles");
@@ -241,12 +407,18 @@ fn unknown_boot_cannot_establish_via_finished_count_observation() {
             "later clean scan cannot clear sticky unknown"
         );
         let vault = Vault::new(dir.path().join("inventory"));
+        let (manager, revision) = ready(&vault, &dir.path().join("plugins"));
         assert!(!vault.root.exists());
+        assert!(set(
+            &instance,
+            manager,
+            IdentityHost::fixture(),
+            revision,
+            BUDGET
+        )
+        .is_err());
         assert!(instance.observe_sign_outs(Some(&vault.root)).is_err());
-        assert!(
-            !vault.root.exists(),
-            "count observation may not first-establish"
-        );
+        assert!(!vault.root.exists(), "neither creator may first-establish");
         assert!(vault.saved().is_empty(), "zero fake OS adds");
     }
 }
@@ -280,9 +452,10 @@ fn unknown_boot_refuses_native_journal_before_first_inventory_establishment() {
 #[test]
 fn reviewer_prepare_only_unknown_must_block_all_native_creators() {
     let mut escaped = Vec::new();
-    for operation in ["count", "journal"] {
+    for operation in ["set", "count", "journal"] {
         let (dir, paths) = fixture();
         let vault = Vault::new(dir.path().join("inventory"));
+        let (manager, revision) = ready(&vault, &dir.path().join("plugins"));
         let identity = IdentityHost::fixture();
         let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
         super::super::preflight::INJECT_ERROR.set(true);
@@ -301,6 +474,7 @@ fn reviewer_prepare_only_unknown_must_block_all_native_creators() {
         assert!(paths.preflight().is_ok());
         assert!(!vault.root.exists());
         let accepted = match operation {
+            "set" => set(&instance, manager, identity, revision, BUDGET).is_ok(),
             "count" => instance.observe_sign_outs(Some(&vault.root)).is_ok(),
             "journal" => run(attempt_native(
                 &instance,
@@ -658,4 +832,58 @@ fn h1_2di_owned_journal_only_settles_current_not_foreign_inventory() {
     assert_eq!(foreign.saved().len(), 1);
     unavailable(&instance, &paths, &current.root);
     assert!(!paths.marker.exists());
+}
+
+#[test]
+fn native_set_cancelled_attempt_cannot_promote_with_the_same_viewer() {
+    use std::sync::atomic::AtomicBool;
+    for deny_cleanup in [false, true] {
+        let (dir, paths) = fixture();
+        let vault = Vault::new(dir.path().join("inventory"));
+        let (manager, revision) = ready(&vault, &dir.path().join("plugins"));
+        let identity = IdentityHost::fixture();
+        let snapshot = identity.current_viewer().unwrap().unwrap();
+        let instance = boot(&paths, None, no_agents, || panic!("no marker")).unwrap();
+        let (started, at_add) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        *vault.store.add_stall.lock().unwrap() = Some((started, released));
+        if deny_cleanup {
+            *vault.store.deny.lock().unwrap() = Some(StoreError::Denied);
+        }
+        let current = Arc::new(AtomicBool::new(true));
+        let attempt = current.clone();
+        assert_eq!(
+            instance.set_secret(
+                manager.clone(),
+                identity.clone(),
+                snapshot.clone(),
+                PLUGIN.into(),
+                revision.clone(),
+                "api-key".into(),
+                zeroize::Zeroizing::new("sk-fixture".into()),
+                Arc::new(move || attempt.load(Ordering::SeqCst)),
+                BRIEFLY,
+            ),
+            Err(SAVING.into())
+        );
+        at_add.recv_timeout(LIMIT).unwrap();
+        current.store(false, Ordering::SeqCst);
+        release.send(()).unwrap();
+        creators_done(&instance);
+        assert_eq!(
+            identity.current_viewer().unwrap().as_deref(),
+            Some(snapshot.as_str())
+        );
+        assert_eq!(
+            manager
+                .secret_status(PLUGIN, &revision, "api-key", &snapshot)
+                .unwrap(),
+            buzzodz_plugins::SecretStatus::Missing
+        );
+        assert_eq!(vault.saved().len(), usize::from(deny_cleanup));
+        assert_eq!(
+            manager.credential_cleanup_status().unwrap().pending,
+            usize::from(deny_cleanup)
+        );
+    }
 }

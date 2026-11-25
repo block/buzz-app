@@ -331,3 +331,171 @@ it.each([
     ).toBeVisible();
   },
 );
+
+type Slot = NonNullable<NonNullable<PluginManifest["host"]>["secrets"]>[number];
+const ORIGINS = ["https://a.example.com", "https://b.example.com"];
+const slot = (overrides: Partial<Slot> = {}): Slot => ({
+  id: "key",
+  label: "Example key",
+  origins: [ORIGINS[0] ?? ""],
+  header: "Authorization",
+  scheme: "Bearer",
+  ...overrides,
+});
+const slots = (...secrets: Slot[]): PluginManifest => ({
+  id: "example.slots",
+  name: "Slots",
+  apiVersion: 1,
+  host: { networkOrigins: ORIGINS, secrets },
+});
+const both = { origins: ORIGINS };
+
+it("discloses each credential slot's label, ID and exact request scope", async () => {
+  render(
+    <PluginAccessReview
+      manifest={slots(
+        slot({ origins: [...ORIGINS].reverse() }),
+        slot({ id: "raw", label: "Raw key", header: "X-API-Key", scheme: "" }),
+      )}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: /Save a credential for Example key/ }),
+  );
+  const bearer = await screen.findByRole("region", {
+    name: "Saved credential key details",
+  });
+  await waitFor(() => expect(bearer).toBeVisible());
+  expect(bearer).toHaveTextContent("Label: Example key");
+  expect(within(bearer).getByText("key")).toBeVisible();
+  expect(
+    within(bearer)
+      .getAllByRole("listitem")
+      .map((item) => item.textContent),
+  ).toEqual(ORIGINS);
+  expect(within(bearer).getByText("Authorization")).toBeVisible();
+  expect(within(bearer).getByText("Bearer <credential>")).toBeVisible();
+  fireEvent.click(
+    screen.getByRole("button", { name: /Save a credential for Raw key/ }),
+  );
+  const raw = await screen.findByRole("region", {
+    name: "Saved credential raw details",
+  });
+  await waitFor(() => expect(raw).toBeVisible());
+  expect(within(raw).getByText("X-API-Key")).toBeVisible();
+  expect(raw).toHaveTextContent("Value: the credential itself, with no scheme");
+});
+
+it.each([
+  [
+    "a new slot, even on an origin another slot uses",
+    [slot()],
+    [slot(), slot({ id: "other" })],
+    true,
+    "Added",
+  ],
+  ["an added origin", [slot()], [slot(both)], true, "Changed"],
+  [
+    "a header change, even with an origin removed",
+    [slot(both)],
+    [slot({ header: "X-API-Key" })],
+    true,
+    "Changed",
+  ],
+  ["a scheme change", [slot()], [slot({ scheme: "" })], true, "Changed"],
+  ["a strict origin subset", [slot(both)], [slot()], false, "Changed"],
+  [
+    "a removed slot",
+    [slot(), slot({ id: "other" })],
+    [slot()],
+    false,
+    "Removed",
+  ],
+  [
+    "reordered origins",
+    [slot(both)],
+    [slot({ origins: [...ORIGINS].reverse() })],
+    false,
+    undefined,
+  ],
+  [
+    "header case alone",
+    [slot()],
+    [slot({ header: "authorization" })],
+    false,
+    undefined,
+  ],
+  [
+    "a label change alone",
+    [slot()],
+    [slot({ label: "Renamed key" })],
+    false,
+    undefined,
+  ],
+] as const)(
+  "compares credential authority per origin: %s",
+  (_, before, after, increases, change) => {
+    const previous = slots(...before);
+    const next = slots(...after);
+    expect(pluginAccessIncreases(next, previous)).toBe(increases);
+    render(<PluginAccessReview manifest={next} previousManifest={previous} />);
+    if (!change) {
+      expect(screen.getByText("No declared access changes")).toBeVisible();
+      return;
+    }
+    const name =
+      change === "Added" ? /credential for Example key/ : /credential for/;
+    expect(
+      within(
+        screen.getByRole("region", { name: `${change} declarations` }),
+      ).getAllByRole("button", { name }).length,
+    ).toBeGreaterThan(0);
+  },
+);
+
+it("shows a changed slot's previous and new scope side by side", async () => {
+  render(
+    <PluginAccessReview
+      manifest={slots(slot({ header: "X-API-Key", scheme: "" }))}
+      previousManifest={slots(slot(both))}
+    />,
+  );
+  const changed = within(
+    screen.getByRole("region", { name: "Changed declarations" }),
+  );
+  fireEvent.click(
+    changed.getByRole("button", {
+      name: /Save a credential for Example key \(changed\)/,
+    }),
+  );
+  const details = await screen.findByRole("region", {
+    name: "Saved credential key details",
+  });
+  await waitFor(() => expect(details).toBeVisible());
+  expect(details).toHaveTextContent(
+    /Previously.*https:\/\/b\.example\.com.*Bearer <credential>.*After this update.*X-API-Key.*the credential itself/,
+  );
+});
+
+it("keeps an unchanged credential slot in the unchanged view", () => {
+  const { rerender } = render(
+    <PluginAccessReview
+      manifest={slots(slot())}
+      previousManifest={slots(slot({ header: "authorization" }))}
+    />,
+  );
+  expect(screen.getByText("No declared access changes")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: /Save a credential for/ }),
+  ).toBeNull();
+  rerender(
+    <PluginAccessReview
+      manifest={slots(slot())}
+      previousManifest={slots(slot({ header: "authorization" }))}
+      unchangedOnly
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: /Save a credential for Example key/ }),
+  ).toBeVisible();
+});

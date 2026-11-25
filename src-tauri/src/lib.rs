@@ -51,11 +51,13 @@ mod host_process;
 mod host_request;
 mod mesh_compute;
 use mesh_compute::MeshHost;
+mod host_secrets;
 mod identity;
 mod native_mcp;
 mod nsec_backup;
 mod nsec_backup_choice;
 mod nsec_backup_config;
+mod reviewed_invocation;
 use nsec_backup::{
     nsec_backup_available, nsec_backup_confirmed, nsec_backup_retry, nsec_backup_session,
     nsec_backup_state, nsec_backup_watch, nsec_restore_begin, nsec_restore_cancel,
@@ -737,10 +739,12 @@ async fn plugin_managed_refresh(
 async fn plugin_change(
     manager: tauri::State<'_, PluginManager>,
     registrations: tauri::State<'_, federated_identity::access::Registrations>,
+    reviewed: tauri::State<'_, reviewed_invocation::Invocations>,
     action: String,
     id: String,
 ) -> Result<ManagementReply, String> {
     registrations.retire(&id);
+    reviewed.retire(&id);
     let plugin = id.clone();
     let result = with_manager(manager, move |m| {
         m.change_managed(&action, &plugin)
@@ -748,15 +752,18 @@ async fn plugin_change(
     })
     .await;
     registrations.retire(&id);
+    reviewed.retire(&id);
     result
 }
 #[tauri::command]
 async fn plugin_reload(
     manager: tauri::State<'_, PluginManager>,
     registrations: tauri::State<'_, federated_identity::access::Registrations>,
+    reviewed: tauri::State<'_, reviewed_invocation::Invocations>,
     id: String,
 ) -> Result<ManagementReply, String> {
     registrations.retire(&id);
+    reviewed.retire(&id);
     let plugin = id.clone();
     let result = with_manager(manager, move |m| {
         m.reload_managed(&plugin)
@@ -764,6 +771,7 @@ async fn plugin_reload(
     })
     .await;
     registrations.retire(&id);
+    reviewed.retire(&id);
     result
 }
 #[tauri::command]
@@ -784,14 +792,17 @@ async fn plugin_module(
 async fn plugin_recover(
     manager: tauri::State<'_, PluginManager>,
     registrations: tauri::State<'_, federated_identity::access::Registrations>,
+    reviewed: tauri::State<'_, reviewed_invocation::Invocations>,
 ) -> Result<ManagementReply, String> {
     registrations.clear();
+    reviewed.clear();
     let result = with_manager(manager, |m| {
         m.recover_managed()
             .and_then(|outcome| management_reply(&m, outcome))
     })
     .await;
     registrations.clear();
+    reviewed.clear();
     result
 }
 #[tauri::command]
@@ -842,6 +853,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         federated_identity::federated_identity_cancel_sign_in,
         federated_identity::federated_identity_sign_in_link,
         federated_identity::federated_identity_sign_out,
+        reviewed_invocation::plugin_host_reviewed_retire,
         federated_identity::access::federated_identity_register,
         federated_identity::access::federated_identity_unregister,
         federated_identity::access::federated_identity_request,
@@ -925,6 +937,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_credential_cleanup_retry,
         plugin_host_run_command,
         plugin_host_call_context,
+        host_secrets::plugin_host_secret_status,
+        host_secrets::plugin_host_secret_set,
+        host_secrets::plugin_host_secret_enroll,
+        host_secrets::plugin_host_secret_clear,
         plugin_host_request,
         plugin_host_request_bytes,
         plugin_host_read_page,
@@ -1383,6 +1399,7 @@ pub fn run() {
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(HostCalls::default())
+        .manage(reviewed_invocation::Invocations::default())
         .manage(HostProcesses::default())
         .manage(host_files::ManagedFiles::default())
         .manage(HostMcpServers::default())
@@ -1427,6 +1444,7 @@ pub fn run() {
             }
             if webview.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 webview.state::<HostCalls>().page_load();
+                webview.state::<reviewed_invocation::Invocations>().clear();
                 webview.state::<pairing::Pairing>().cancel_all();
                 webview.state::<NsecBackupHost>().document_load();
                 webview.state::<relay::Spools>().cancel_all(&webview.state::<relay::Uploads>());
@@ -1446,6 +1464,7 @@ pub fn run() {
             browser::page_load(webview, payload);
         })
         .on_window_event(|window, event| {
+            if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<reviewed_invocation::Invocations>().clear(); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. }) { window.state::<pairing::Pairing>().cancel_all(); }
             if window.label() == "main" && matches!(event, tauri::WindowEvent::Destroyed) { window.state::<relay::Spools>().cancel_all(&window.state::<relay::Uploads>()); }
             #[cfg(target_os = "macos")]
@@ -1521,6 +1540,7 @@ pub(crate) fn shut_down<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     #[cfg(target_os = "macos")]
     media_context_menu::discard_pending();
     app.state::<clipboard::Clipboard>().release();
+    app.state::<reviewed_invocation::Invocations>().clear();
     app.state::<HostProcesses>().shutdown();
     host_command::stop_login_shell_probe();
     app.state::<HostMcpServers>().stop_all();

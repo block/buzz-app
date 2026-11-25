@@ -3087,6 +3087,57 @@ it("prefills a requested source, reads nothing until Find, and installs only aft
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
+it("shows a requested plugin's credential slot scope before it can be installed", async () => {
+  const preview = requestedPreview(pinned);
+  const origin = "https://api.example.com";
+  const manifest = {
+    ...requestedManifest,
+    host: {
+      networkOrigins: [origin],
+      secrets: [
+        {
+          id: "token",
+          label: "API token",
+          origins: [origin],
+          header: "X-API-Key",
+          scheme: "",
+        },
+      ],
+    },
+  };
+  const { installImport, element } = requestedHarness({
+    ...preview,
+    candidates: preview.candidates.map((candidate) => ({
+      ...candidate,
+      manifest,
+    })),
+  });
+  render(element);
+  const add = await screen.findByRole("dialog", { name: "Add a plugin" });
+  fireEvent.click(within(add).getByRole("button", { name: "Find plugins" }));
+  const review = await screen.findByRole("dialog", {
+    name: /^Review .+ access$/,
+  });
+  fireEvent.click(
+    within(review).getByRole("button", {
+      name: /Save a credential for API token/,
+    }),
+  );
+  const scope = await within(review).findByRole("region", {
+    name: "Saved credential token details",
+  });
+  await waitFor(() => expect(scope).toBeVisible());
+  expect(scope).toHaveTextContent("Label: API token");
+  expect(within(scope).getByText(origin)).toBeVisible();
+  expect(within(scope).getByText("X-API-Key")).toBeVisible();
+  expect(scope).toHaveTextContent("the credential itself, with no scheme");
+  expect(installImport).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Install plugin" }));
+  await waitFor(() =>
+    expect(installImport).toHaveBeenCalledWith("requested-token", "."),
+  );
+});
+
 it("shows the native refusal when the reference no longer resolves to the pinned commit", async () => {
   const { git, discard, installImport, settled, element } = requestedHarness(
     requestedPreview(pinned),

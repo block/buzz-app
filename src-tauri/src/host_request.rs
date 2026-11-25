@@ -52,7 +52,30 @@ fn fingerprint<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> [u8; 32] {
     }
     hash.finalize().into()
 }
+impl Once {
+    pub(crate) fn call_id(&self) -> &str {
+        &self.call_id
+    }
+}
 impl HostCalls {
+    pub(crate) fn current(&self, label: &str, once: &Once) -> bool {
+        self.with_current(label, once, || Ok(())).is_ok()
+    }
+    pub(crate) fn with_current<T>(
+        &self,
+        label: &str,
+        once: &Once,
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let state = self
+            .claims
+            .lock()
+            .map_err(|_| "Host admission is unavailable")?;
+        if label != "main" || self.boot != once.boot || state.page != Some(once.page) {
+            return Err("Stale protected host authority".into());
+        }
+        operation()
+    }
     pub(crate) fn page_load(&self) {
         // Poisoned admission remains permanently unavailable.
         if let Ok(mut state) = self.claims.lock() {
@@ -77,7 +100,7 @@ impl HostCalls {
             page: state.page.ok_or("Host page generation exhausted")?,
         })
     }
-    fn consume(
+    pub(crate) fn consume(
         &self,
         label: &str,
         kind: &str,

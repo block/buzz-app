@@ -1876,6 +1876,59 @@ it.each(["discovered", "fresh", "publisher"] as const)(
   },
 );
 
+it("asks to review a credential slot that widens, showing its scope before installing", async () => {
+  const f = fixture();
+  const networkOrigins = ["https://a.example.com", "https://b.example.com"];
+  const key = {
+    id: "key",
+    label: "Notes key",
+    origins: ["https://a.example.com"],
+    header: "Authorization",
+    scheme: "Bearer",
+  };
+  f.plugin.manifest = {
+    ...f.plugin.manifest,
+    host: { networkOrigins, secrets: [key] },
+  };
+  const widened = {
+    ...f.plugin.manifest,
+    host: { networkOrigins, secrets: [{ ...key, origins: networkOrigins }] },
+  };
+  f.candidate.manifest = widened;
+  f.freshCandidate.manifest = widened;
+  f.mount();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Review permissions" }),
+  );
+  const dialog = await screen.findByRole("dialog", { name: "Update Notes" });
+  const confirm = await within(dialog).findByRole("button", {
+    name: "Update",
+  });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(
+    within(
+      within(dialog).getByRole("region", { name: "Changed declarations" }),
+    ).getByRole("button", {
+      name: /Save a credential for Notes key \(changed\)/,
+    }),
+  );
+  const scope = await within(dialog).findByRole("region", {
+    name: "Saved credential key details",
+  });
+  await waitFor(() => expect(scope).toBeVisible());
+  expect(scope).toHaveTextContent(
+    /Previously.*https:\/\/a\.example\.com.*After this update.*https:\/\/a\.example\.com.*https:\/\/b\.example\.com.*Bearer <credential>/,
+  );
+  expect(f.installImport).not.toHaveBeenCalled();
+  fireEvent.click(confirm);
+  await waitFor(() =>
+    expect(f.installImport).toHaveBeenCalledExactlyOnceWith(
+      "immutable-preview",
+      ".",
+    ),
+  );
+});
+
 it("keeps Later updates in the Plugins menu and cancellation leaves the plugin running", async () => {
   const f = fixture();
   f.freshCandidate.manifest = {

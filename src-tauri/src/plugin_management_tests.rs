@@ -104,6 +104,7 @@ impl Fixture {
         let app = mock_builder()
             .manage(PluginManager(Ok(manager.clone())))
             .manage(federated_identity::access::Registrations::default())
+            .manage(reviewed_invocation::Invocations::default())
             .invoke_handler(commands())
             .build(app_context())
             .unwrap();

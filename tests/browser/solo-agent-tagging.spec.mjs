@@ -33,7 +33,7 @@ const isInventory = (filters) =>
 test("a Solo chat alone with an agent tags it while a background read-state snapshot is still loading", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   // Startup's snapshot is a foreground read. After a connection gap, read
   // state has no capacity basis and takes a fresh snapshot in the background,
   // the read that outlasts other reads' deadlines on large accounts. Hold
@@ -89,6 +89,31 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
     name: "Retry agent list",
     exact: true,
   });
+  // Diagnostic: where Retry's pointer events land and which inventory reads
+  // follow. Synthetic fields only; attached before the snapshot is released.
+  const inventoryReads = [];
+  let inventoryDropped = 0;
+  const observeInventory = (request) => {
+    if (!query(request) || !isInventory(request.postDataJSON())) return;
+    if (inventoryReads.length >= 32) {
+      inventoryDropped++;
+      return;
+    }
+    const read = {
+      relay: request.url().includes("/api/relay/primary/")
+        ? "primary"
+        : "other",
+      priority: request.headers()["x-buzz-read-priority"] ?? null,
+      at: Date.now(),
+      status: null,
+    };
+    inventoryReads.push(read);
+    request
+      .response()
+      .then((response) => (read.status = response?.status() ?? null))
+      .catch(() => (read.status = "failed"));
+  };
+  let retryBox = null;
   try {
     // Startup takes two snapshots: read state's foreground read and own
     // follow state's background recovery. Let both finish before the gap, so
@@ -131,12 +156,84 @@ test("a Solo chat alone with an agent tags it while a background read-state snap
       page.getByText("Searching community…", { exact: true }),
     ).toHaveCount(0);
     inventoryAnswered = true;
+    page.on("request", observeInventory);
+    await page.evaluate(() => {
+      const events = [];
+      let dropped = 0;
+      const types = ["pointerdown", "pointerup", "click"];
+      const record = (event) => {
+        if (events.length >= 64) {
+          dropped++;
+          return;
+        }
+        const retry = [...document.querySelectorAll("button")].find(
+          (button) => button.textContent === "Retry agent list",
+        );
+        const rect = retry?.getBoundingClientRect();
+        const status = [...document.querySelectorAll('[role="status"]')].some(
+          (node) => node.textContent === "Searching community…",
+        );
+        events.push({
+          type: event.type,
+          at: Date.now(),
+          x: event.clientX,
+          y: event.clientY,
+          target: event.target?.tagName ?? null,
+          button: (event.target?.closest?.("button")?.textContent ?? "").slice(
+            0,
+            40,
+          ),
+          retry: rect
+            ? {
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+                connected: retry.isConnected,
+              }
+            : null,
+          searching: status,
+        });
+      };
+      for (const type of types)
+        document.addEventListener(type, record, { capture: true });
+      window.__retryDiagnostic = () => {
+        for (const type of types)
+          document.removeEventListener(type, record, { capture: true });
+        delete window.__retryDiagnostic;
+        return { events, dropped };
+      };
+    });
+    retryBox = await retry.boundingBox();
     await retry.click();
     // Alone with one agent, the composer addresses it without a mention.
     await expect(pill).toBeVisible();
     await expect(retry).toHaveCount(0);
   } finally {
-    gate.resolve();
+    // Evidence is best effort: it must never replace the test's own failure,
+    // and the snapshot is released whatever happens to it.
+    try {
+      page.off("request", observeInventory);
+      // Detaching the listeners also returns what they recorded.
+      const pointer = await page
+        .evaluate(() => window.__retryDiagnostic?.() ?? null)
+        .catch((error) => ({ unavailable: String(error).slice(0, 120) }));
+      await testInfo.attach("retry-diagnostic", {
+        body: JSON.stringify(
+          { inventoryReads, inventoryDropped, retryBox, pointer, refused },
+          null,
+          2,
+        ),
+        contentType: "application/json",
+      });
+    } catch (error) {
+      console.warn(
+        "retry diagnostic not attached",
+        String(error).slice(0, 120),
+      );
+    } finally {
+      gate.resolve();
+    }
   }
   // The snapshot completing changes nothing about the addressed agent.
   await expect(pill).toBeVisible();

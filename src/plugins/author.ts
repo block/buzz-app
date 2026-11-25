@@ -8,6 +8,8 @@ export type { Context } from "@deepseek-ai/cordis";
 export type {
   Host,
   HostRequest,
+  HostSecrets,
+  HostSecretStatus,
   HostByteUpload,
   HostRequestOnceOptions,
   HostResponse,

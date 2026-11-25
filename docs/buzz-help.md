@@ -237,6 +237,16 @@ one only if you trust its author with your account and your computer. An optiona
 publishers and can include plugins you sign with your own Buzz identity. Manage
 the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the reason.
 
+On macOS, an experimental plugin can ask you for a credential in a native Buzz
+dialog. Buzz saves it in this build's secure storage, not in chat or the
+plugin's JavaScript. Continuing past the confirmation removes the saved
+credential first, so cancelling the entry leaves it empty; cancelling the
+confirmation keeps it. Install and update reviews list each credential with the
+addresses, header and format it's sent with. **Clear** removes a provider's
+credential, and sign-out also tries to remove tracked credentials. If storage
+history is missing or inconsistent, Buzz can turn saving off rather than
+reconnect silently. A saved credential doesn't mean a plugin can use it yet.
+
 ## Docs
 
 Docs is a bundled plugin for live Markdown documents shared with people and

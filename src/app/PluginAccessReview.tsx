@@ -9,6 +9,7 @@ import { Button } from "../shared/design-system/ui/Button";
 import {
   GlobeIcon,
   FolderOpenIcon,
+  LockIcon,
   PlugIcon,
   TerminalWindowIcon,
   MonitorIcon,
@@ -130,6 +131,52 @@ function hostDeclarations(
       icon: GlobeIcon,
       details: <code className={styles.sourcePath}>{origin}</code>,
     })),
+    ...(manifest.host?.secrets ?? []).map((slot) => {
+      // Native authority: sorted exact origins, header case ignored, exact scheme.
+      const origins = [...slot.origins].sort();
+      const header = slot.header.toLowerCase();
+      return {
+        key: `secret:${slot.id}`,
+        signature: `Saved credential ${slot.id}: ${JSON.stringify({ origins, header, scheme: slot.scheme })}`,
+        authority: origins.map((origin) =>
+          JSON.stringify([slot.id, origin, header, slot.scheme]),
+        ),
+        title: `Saved credential ${slot.id}:`,
+        name: `Saved credential ${slot.id}`,
+        label: `Save a credential for ${slot.label}`,
+        hint: "Buzz keeps a credential you enter and adds it to the plugin’s requests to these addresses.",
+        icon: LockIcon,
+        details: (
+          <>
+            <p className="m-0">Label: {slot.label}</p>
+            <p className="m-0">
+              ID: <code className={styles.sourcePath}>{slot.id}</code>
+            </p>
+            <p className="mb-1 mt-2">Sent only to:</p>
+            <ul className="m-0 list-disc pl-6">
+              {origins.map((origin) => (
+                <li key={origin}>
+                  <code className={styles.sourcePath}>{origin}</code>
+                </li>
+              ))}
+            </ul>
+            <p className="mb-0 mt-2">
+              Header: <code className={styles.sourcePath}>{slot.header}</code>
+            </p>
+            <p className="m-0">
+              Value:{" "}
+              {slot.scheme ? (
+                <code
+                  className={styles.sourcePath}
+                >{`${slot.scheme} <credential>`}</code>
+              ) : (
+                "the credential itself, with no scheme"
+              )}
+            </p>
+          </>
+        ),
+      };
+    }),
     ...(manifest.host?.publicImages
       ? [
           {
@@ -291,12 +338,14 @@ export function pluginAccessIncreases(
   manifest: PluginManifest,
   previous: PluginManifest,
 ) {
-  const granted = new Set(
-    hostDeclarations(previous, []).map((item) => item.signature),
-  );
-  return hostDeclarations(manifest, []).some(
-    (item) => !granted.has(item.signature),
-  );
+  // A row's authority, when narrower than its whole signature: narrowing a
+  // slot changes the row without adding access.
+  const authority = (manifest: PluginManifest) =>
+    hostDeclarations(manifest, []).flatMap((item) =>
+      "authority" in item ? item.authority : [item.signature],
+    );
+  const granted = new Set(authority(previous));
+  return authority(manifest).some((item) => !granted.has(item));
 }
 
 export function PluginAccessReview({

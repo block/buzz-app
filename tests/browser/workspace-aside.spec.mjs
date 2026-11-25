@@ -312,8 +312,11 @@ test("a narrow reader floats the aside over the history while the page opens it"
   expect(
     await page.evaluate(
       ({ x, y }) => {
-        const hit = document.elementFromPoint(x, y);
-        return !!hit?.closest("[data-fixture-aside-scroll]");
+        const [hit, ...under] = document.elementsFromPoint(x, y);
+        return {
+          card: !!hit?.closest("[data-fixture-aside-scroll]"),
+          composer: under.some((node) => node.matches("form")),
+        };
       },
       {
         x: Math.min(end.aside.right, end.composer.right) - 24,
@@ -323,7 +326,7 @@ test("a narrow reader floats the aside over the history while the page opens it"
           2,
       },
     ),
-  ).toBe(true);
+  ).toEqual({ card: true, composer: true });
 
   // Escape closes only the overlay and returns focus to the page's control.
   await page.keyboard.press("Escape");
@@ -333,6 +336,14 @@ test("a narrow reader floats the aside over the history while the page opens it"
   await show.click();
   await expect(plan(page)).toBeVisible();
   await region.click({ position: { x: 40, y: 40 } });
+  await expect(plan(page)).toBeHidden();
+  // So does a press on the composer's start, which it doesn't cover.
+  await show.click();
+  await expect(plan(page)).toBeVisible();
+  await region
+    .locator("xpath=..")
+    .locator("form")
+    .click({ position: { x: 40, y: 20 } });
   await expect(plan(page)).toBeHidden();
 
   // Widening docks it again, restoring the docked state.

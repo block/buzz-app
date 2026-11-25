@@ -1,6 +1,7 @@
 // A workspace's aside sits over the history's end edge, left of its scrollbar.
 // Docked, the history's content and the composer keep to the width beside it;
-// when the reader is narrow, it floats over the history while open.
+// when the reader is narrow, it floats over the history and the composer's end
+// while open.
 import { test, expect } from "./fixture.mjs";
 import { open, settle } from "./timeline.mjs";
 
@@ -273,9 +274,9 @@ test("a narrow reader floats the aside over the history while the page opens it"
   ).toBeLessThanOrEqual(1);
   const full = await region.evaluate((element) => element.clientWidth);
 
-  // Opened, it floats over the history's end edge, not the composer, takes
-  // no width, holds focus, and scrolls its own content. WebKit doesn't focus
-  // a clicked button, so the control opens it from the keyboard.
+  // Opened, it floats over the history's end edge down to the reader's
+  // bottom, takes no width, holds focus, and scrolls its own content. WebKit
+  // doesn't focus a clicked button, so the control opens it from the keyboard.
   await show.focus();
   await page.keyboard.press("Enter");
   await expect(plan(page)).toBeVisible();
@@ -283,8 +284,8 @@ test("a narrow reader floats the aside over the history while the page opens it"
   await settle(page, region);
   const at = await layout(page);
   expect(at.aside.top).toBeGreaterThanOrEqual(at.history.top);
-  expect(at.aside.bottom).toBeLessThanOrEqual(at.history.bottom);
-  expect(at.aside.bottom).toBeLessThanOrEqual(at.composer.top);
+  expect(Math.abs(at.aside.bottom - at.reader.bottom)).toBeLessThanOrEqual(1);
+  expect(at.aside.bottom).toBeGreaterThan(at.composer.bottom);
   expect(at.aside.right).toBeLessThanOrEqual(at.history.right - at.scrollbar);
   expect(await region.evaluate((element) => element.clientWidth)).toBe(full);
   const offset = await region.evaluate((element) => element.scrollTop);
@@ -304,8 +305,25 @@ test("a narrow reader floats the aside over the history while the page opens it"
     end.region.scrollHeight - end.region.clientHeight - 1,
   );
   expect(end.region.bottom).toBeLessThan(end.aside.bottom);
+  expect(end.region.bottom).toBeGreaterThan(end.composer.top);
   expect(end.aside.bottom).toBeLessThanOrEqual(page.viewportSize().height);
   await expect(plan(page).getByText("End of plan")).toBeInViewport();
+  // The card's end paints over the composer's end.
+  expect(
+    await page.evaluate(
+      ({ x, y }) => {
+        const hit = document.elementFromPoint(x, y);
+        return !!hit?.closest("[data-fixture-aside-scroll]");
+      },
+      {
+        x: Math.min(end.aside.right, end.composer.right) - 24,
+        y:
+          (end.composer.top +
+            Math.min(end.composer.bottom, end.region.bottom)) /
+          2,
+      },
+    ),
+  ).toBe(true);
 
   // Escape closes only the overlay and returns focus to the page's control.
   await page.keyboard.press("Escape");

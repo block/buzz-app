@@ -275,13 +275,20 @@ export class GooseRuntime {
   private readonly agents = new Map<string, Entry>();
   readonly voiceSettings: GooseVoiceSettings;
   private readonly voiceSeats = new Set<AbortController>();
-  private readonly refreshVoice = new Set<Entry>();
+  /** Agents whose process still has the previous voice switch, each with
+   * what settles once it is retired. */
+  private readonly refreshVoice = new Map<
+    Entry,
+    { done: Promise<void>; resolve: () => void }
+  >();
 
   private refreshVoiceProcess(entry: Entry) {
-    if (!this.refreshVoice.has(entry) || !entry.sessions.quiescent) return;
+    const pending = this.refreshVoice.get(entry);
+    if (!pending || !entry.sessions.quiescent) return;
     this.refreshVoice.delete(entry);
     entry.goose.refresh();
     entry.sessions.reconfigure(true);
+    pending.resolve();
   }
   private readonly memoryReads = new MemoryReads();
   private readonly listeners = new Set<() => void>();
@@ -332,7 +339,11 @@ export class GooseRuntime {
     this.voiceSettings = new GooseVoiceSettings(desktop, storage, (enabled) => {
       if (!enabled) for (const seat of this.voiceSeats) seat.abort();
       for (const entry of this.agents.values()) {
-        this.refreshVoice.add(entry);
+        if (!this.refreshVoice.has(entry)) {
+          let resolve!: () => void;
+          const done = new Promise<void>((settle) => (resolve = settle));
+          this.refreshVoice.set(entry, { done, resolve });
+        }
         this.refreshVoiceProcess(entry);
       }
     });
@@ -356,6 +367,13 @@ export class GooseRuntime {
       entry.lifetime.signal,
       abort.signal,
     ]);
+    // A process started before the switch changed cannot start voice, and
+    // holding its session would keep it from being replaced.
+    for (;;) {
+      const pending = this.refreshVoice.get(entry);
+      if (!pending) break;
+      await abortable(pending.done, signal);
+    }
     const held = await entry.sessions.retain(
       channelId,
       signal,
@@ -397,7 +415,7 @@ export class GooseRuntime {
         } finally {
           held.release();
           this.voiceSeats.delete(abort);
-          for (const pending of this.refreshVoice)
+          for (const pending of this.refreshVoice.keys())
             this.refreshVoiceProcess(pending);
         }
       })();

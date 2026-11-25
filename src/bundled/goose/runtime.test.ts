@@ -3650,6 +3650,47 @@ it("refreshes the process after a voice switch change only once typed model work
   }
 });
 
+it("opens voice in a voice-enabled process after the switch changes during typed work", async () => {
+  const f = setup({ hold: true, scope: "channel" });
+  let enabledAtStart: unknown;
+  vi.mocked(openVoice).mockImplementation(async () => {
+    enabledAtStart = f.fake.geese.at(-1)?.env.GOOSE_LIVE_VOICE_ENABLED;
+    return { input: vi.fn(), close: vi.fn(async () => {}) };
+  });
+  let seat: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.deliver(message("1", "ongoing typed turn"));
+    await vi.waitFor(() => expect(f.goose()?.turns).toHaveLength(1));
+    const old = f.goose();
+    if (!old) throw new Error("Expected the typed turn's process");
+    expect(old.env.GOOSE_LIVE_VOICE_ENABLED).toBe("false");
+    await f.runtime.voiceSettings.setEnabled(true);
+    const opening = f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    await flush(30);
+    expect(openVoice).not.toHaveBeenCalled();
+    old.turns[0]?.finish();
+    seat = await opening;
+    expect(f.fake.geese).toHaveLength(2);
+    expect(old.killed).toBe(true);
+    expect(enabledAtStart).toBe("true");
+  } finally {
+    await seat?.close();
+    vi.mocked(openVoice).mockReset();
+    f.runtime.dispose();
+  }
+});
+
 it("holds typed admission until a voice-settings process refresh has exited", async () => {
   let release!: () => void;
   let stopping!: () => void;

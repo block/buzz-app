@@ -688,6 +688,9 @@ async function regionFixture(page, app, ids = [alpha, beta]) {
     for (const id of ids) await window.fixtureSoloRegion.classify(id);
   }, ids);
   await expect(regionRow(page, ids[0])).toBeVisible();
+  // Classified rows slide into their region; a click during the slide can
+  // press on one spot and release on another, so wait for them to settle.
+  await expect(sidebar(page).locator("[data-moving]")).toHaveCount(0);
 }
 
 test("composable rows retain narrow rename and immediate keyboard/touch activation", async ({

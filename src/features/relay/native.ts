@@ -506,9 +506,17 @@ export async function connectNativeTransport(
     Array.isArray(info.supported_extensions) &&
     info.supported_extensions.includes("buzz-search-sort");
   const artifacts = info.artifacts as
-    | { sync?: { version?: unknown } }
+    | { sync?: { version?: unknown; max_events?: unknown } }
     | undefined;
   const artifactSync = artifacts?.sync?.version === 1;
+  const maxEvents = artifacts?.sync?.max_events;
+  const artifactSyncMaxEvents =
+    artifactSync &&
+    typeof maxEvents === "number" &&
+    Number.isSafeInteger(maxEvents) &&
+    maxEvents > 0
+      ? maxEvents
+      : undefined;
   const transport = await connectSignedTransport(
     nativeRelaySigner(origin),
     origin,
@@ -1068,6 +1076,7 @@ export async function connectNativeTransport(
     ...(channelIdentity ? { channelIdentity: true as const } : {}),
     ...(searchSort ? { searchSort: true as const } : {}),
     ...(artifactSync ? { artifactSync: true as const } : {}),
+    ...(artifactSyncMaxEvents ? { artifactSyncMaxEvents } : {}),
     verifiedProfiles: verifiedProfileAuthority(info),
     async readVerifiedProfileAuthority(signal) {
       return verifiedProfileDiscovery(await nativeRelayInfo(origin, signal));

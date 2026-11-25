@@ -270,6 +270,25 @@ export function createConfigChannels(
         role ? undefined : { expectedRole: "none", role: "member" },
       );
     },
+    /** Removes `pubkey` when a fresh roster read shows it can write there:
+     * any role but `guest`. A guest, or a key not there, stays as it is.
+     * `removed` is the role it had when it was removed. */
+    async removeWriter(
+      channel: string,
+      pubkey: string,
+      signal?: AbortSignal,
+    ): Promise<MemberResult & { removed?: MemberRole }> {
+      signal?.throwIfAborted();
+      let removed: MemberRole | undefined;
+      const result = await administer(channel, pubkey, (role) => {
+        if (!role || role === "guest") return undefined;
+        removed = role;
+        return { expectedRole: role, role: "remove" };
+      });
+      return result.status === "confirmed" && removed
+        ? { ...result, removed }
+        : result;
+    },
     /** Removes `pubkey` with whatever role a fresh roster read verifies. */
     removeMember: (channel: string, pubkey: string) =>
       administer(channel, pubkey, (role) =>

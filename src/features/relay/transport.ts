@@ -178,6 +178,8 @@ export interface ReadTransport {
   /** The relay advertises NIP-AR sync (`artifacts.sync.version` 1 in NIP-11):
    * a REQ with `"artifact": "current"` streams a complete set, then live heads. */
   readonly artifactSync?: true;
+  /** The largest set one NIP-AR sync serves (`artifacts.sync.max_events`). */
+  readonly artifactSyncMaxEvents?: number;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -571,6 +573,7 @@ export async function connectBrokerTransport(
     soloMemberRoleUpdates?: boolean;
     searchSort?: boolean;
     artifactSync?: boolean;
+    artifactSyncMaxEvents?: number;
     sidebarPreferenceWrites?: boolean;
     sidebarSectionRemoval?: boolean;
     sidebarSectionOrder?: boolean;
@@ -940,6 +943,10 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.searchSort === true ? { searchSort: true as const } : {}),
     ...(session.artifactSync === true ? { artifactSync: true as const } : {}),
+    ...(session.artifactSync === true &&
+    typeof session.artifactSyncMaxEvents === "number"
+      ? { artifactSyncMaxEvents: session.artifactSyncMaxEvents }
+      : {}),
     ...(session.channelKit
       ? {
           channelKit: {

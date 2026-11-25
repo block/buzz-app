@@ -833,3 +833,11 @@ it("saves a model route beside the config, so older readers run their default", 
     JSON.parse(storage.getItem(recordKey(pubkey)) as string),
   ).not.toHaveProperty("modelRoute");
 });
+
+it("keeps where attention is stored", async () => {
+  const storage = memoryStorage();
+  await writeRecord(storage, { ...record, attentionStorage: "relay" });
+  expect(readRecords(storage)[pubkey]?.attentionStorage).toBe("relay");
+  await writeRecord(storage, record);
+  expect(readRecords(storage)[pubkey]).not.toHaveProperty("attentionStorage");
+});

@@ -576,6 +576,233 @@ export async function publishChange(
   throw new AttentionError("conflict", `${slug} already exists; show it again`);
 }
 
+/** How a relay set differs from `attention`: objects missing or different
+ * there, objects only there, and records it skipped. */
+export function compared(
+  attention: AgentRecord["attention"],
+  set: AttentionSet,
+): AttentionMigration {
+  const sorted = (slugs: Iterable<string>) => [...slugs].sort();
+  const different = sorted(
+    Object.values(attention)
+      .filter(
+        ({ slug, value }) =>
+          !set.attention[slug] || !sameValue(set.attention[slug].value, value),
+      )
+      .map(({ slug }) => slug),
+  );
+  const extra = sorted(
+    Object.keys(set.attention).filter((slug) => !attention[slug]),
+  );
+  const named = namedInterests(attention);
+  return {
+    migrated: false,
+    different,
+    extra,
+    kept: extra.filter((slug) => named.has(slug)),
+    skipped: sorted(Object.keys(set.skipped)),
+    heads: Object.fromEntries(
+      [...different, ...extra, ...Object.keys(set.skipped)].flatMap((slug) => {
+        const id = set.heads[slug]?.id;
+        return id ? [[slug, id]] : [];
+      }),
+    ),
+    names: Object.fromEntries(
+      [...different, ...extra].flatMap((slug) => {
+        const object = attention[slug] ?? set.attention[slug];
+        return object ? [[slug, nameOf(slug, object.value)]] : [];
+      }),
+    ),
+  };
+}
+
+/** What the owner calls an object: an Interest's title or first heading, a
+ * watch's name, else its id. */
+function nameOf(slug: string, value: AttentionValue) {
+  const id = slug.slice(slug.indexOf("/") + 1);
+  if (value.type !== "interest") return ("name" in value && value.name) || id;
+  const first = value.instructions.split("\n").find((line) => line.trim());
+  const heading = first && /^#+\s+(.+)$/.exec(first.trim())?.[1]?.trim();
+  return value.title || heading || id;
+}
+
+/** What moving an agent's attention to the relay found. It moved only when
+ * the relay set came back the same as the record. */
+export type AttentionMigration = Readonly<{
+  migrated: boolean;
+  /** Objects the relay is missing or holds another value of. */
+  different: readonly string[];
+  /** Objects only the relay holds. They stay, unless the move prunes them. */
+  extra: readonly string[];
+  /** The Interests in `extra` that a watch here names: pruning keeps them. */
+  kept: readonly string[];
+  /** Records skipped, here or on the relay; they are not moved. */
+  skipped: readonly string[];
+  /** The relay head of each object in `extra` and `skipped`, by slug: what
+   * the owner confirms deleting when a move prunes. */
+  heads: Readonly<Record<string, string>>;
+  /** What the owner calls each object in `different` and `extra`, by slug:
+   * its title or name, else its id. */
+  names: Readonly<Record<string, string>>;
+}>;
+
+/** What the owner saw of a refused move: the relay head of each object it
+ * found different, extra or skipped, and this device's value of each. A
+ * choice applies only while both are still the same. */
+export type MoveSnapshot = Readonly<{
+  heads: Readonly<Record<string, string>>;
+  device: Readonly<Record<string, string>>;
+}>;
+
+/** The owner's choice after a refused move, and what it was made on. */
+export type MoveChoice = Readonly<{
+  use: "device" | "community";
+  snapshot: MoveSnapshot;
+}>;
+
+export const sameRecord = (
+  a: Readonly<Record<string, string>>,
+  b: Readonly<Record<string, string>>,
+) => {
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => b[key] === a[key])
+  );
+};
+
+/** `found`'s snapshot over `attention`. */
+export function moveSnapshot(
+  attention: AgentRecord["attention"],
+  found: AttentionMigration,
+): MoveSnapshot {
+  const device: Record<string, string> = {};
+  for (const slug of [...found.different, ...found.extra, ...found.skipped]) {
+    const object = attention[slug];
+    if (object) device[slug] = JSON.stringify(object.value);
+  }
+  return { heads: found.heads, device };
+}
+
+export const sameSnapshot = (a: MoveSnapshot, b: MoveSnapshot) =>
+  sameRecord(a.heads, b.heads) && sameRecord(a.device, b.device);
+
+/** What a move did: whether it may switch, what it found last, and, when
+ * the owner must choose, the snapshot that choice is made on. */
+export type MoveOutcome = Readonly<{
+  moved: boolean;
+  set: AttentionSet;
+  found: AttentionMigration;
+  snapshot: MoveSnapshot;
+}>;
+
+/** Moves `attention` to the relay (Turning relay storage on, steps 2 and 3).
+ *
+ * Without a choice it writes only when the relay holds nothing that differs:
+ * each object it lacks is added, then the set is read back. Anything else
+ * is refused with nothing written, so the owner can choose with both sides
+ * intact.
+ *
+ * A choice applies only while the relay heads and this device's values it
+ * was made on are unchanged; otherwise it is refused again, with nothing
+ * written. "device" writes this device's version over each object that
+ * differs, and removes what only the relay holds, each at the head the owner
+ * saw. "community" adds only what the relay lacks, and keeps the relay's
+ * version of the rest. Removed watches go first, then Interests, then
+ * watches, then removed Interests, so no watch is left without its
+ * Interest; an Interest that a watch here still names is kept. */
+export async function moveAttention(
+  io: Readonly<{ send: RevisionSender; read: SnapshotRead }>,
+  read: () => Promise<AttentionSet>,
+  attention: AgentRecord["attention"],
+  choice?: MoveChoice,
+): Promise<MoveOutcome> {
+  let before = await read();
+  const first = compared(attention, before);
+  const snapshot = moveSnapshot(attention, first);
+  const refused = { moved: false, set: before, found: first, snapshot };
+  // An Interest that only the relay holds and a watch here names is no
+  // difference: either choice keeps it, and the switch takes it here too.
+  const kept = new Set(first.kept);
+  const differs =
+    first.extra.some((slug) => !kept.has(slug)) ||
+    first.skipped.length ||
+    first.different.some((slug) => before.attention[slug]);
+  if (choice ? !sameSnapshot(choice.snapshot, snapshot) : differs)
+    return refused;
+  if (choice?.use === "community" && first.skipped.length) return refused;
+  if (choice?.use === "device") {
+    // A record it can't read under a slug this device holds: delete that
+    // head first, so the add below restores this device's value over it.
+    // Each at the head the owner saw, as every write below: the set is
+    // not read again in between.
+    const replaced = Object.keys(attention)
+      .filter((slug) => before.skipped[slug])
+      .map((slug) => ({ slug, value: null }))
+      .sort((a, b) => rank(a) - rank(b) || (a.slug < b.slug ? -1 : 1));
+    if (replaced.length) {
+      await publishChanges(io, before, replaced);
+      const gone = new Set(replaced.map(({ slug }) => slug));
+      const keep = <T>(record: Readonly<Record<string, T>>) =>
+        Object.fromEntries(
+          Object.entries(record).filter(([slug]) => !gone.has(slug)),
+        );
+      before = {
+        ...before,
+        skipped: keep(before.skipped),
+        heads: keep(before.heads),
+      };
+    }
+  }
+  // Interests a watch here names stay, even when only the relay holds them.
+  const named = namedInterests(attention);
+  const changes: AttentionEdit[] = [
+    ...Object.values(attention)
+      .filter(({ slug, value }) => {
+        const there = before.attention[slug];
+        if (before.skipped[slug]) return false;
+        if (choice?.use !== "device") return !there;
+        return !there || !sameValue(there.value, value);
+      })
+      .map(({ slug, value }) => ({ slug, value })),
+    ...(choice?.use === "device"
+      ? [...Object.keys(before.attention), ...Object.keys(before.skipped)]
+          .filter((slug) => !attention[slug] && !named.has(slug))
+          .map((slug) => ({ slug, value: null }))
+      : []),
+  ];
+  changes.sort((a, b) =>
+    rank(a) !== rank(b) ? rank(a) - rank(b) : a.slug < b.slug ? -1 : 1,
+  );
+  await publishChanges(io, before, changes);
+  const set = await read();
+  const found = compared(attention, set);
+  // The community's versions may differ; each object here must be there.
+  // Interests a watch here names may stay extra: they are kept.
+  const moved =
+    choice?.use === "community"
+      ? !found.skipped.length &&
+        Object.keys(attention).every((slug) => set.attention[slug])
+      : !found.different.length &&
+        !found.skipped.length &&
+        found.extra.every((slug) => named.has(slug));
+  return { moved, set, found, snapshot: moveSnapshot(attention, found) };
+}
+
+/** The slug of each Interest a watch in `attention` names. */
+const namedInterests = (attention: AgentRecord["attention"]) =>
+  new Set(
+    Object.values(attention).flatMap(({ value }) =>
+      value.type === "interest" ? [] : [`interest/${value.interest_id}`],
+    ),
+  );
+
+/** Publish order: removed watches, Interests, watches, removed Interests. */
+const rank = ({ slug, value }: AttentionEdit) => {
+  const interest = slug.startsWith("interest/");
+  return value === null ? (interest ? 3 : 0) : interest ? 1 : 2;
+};
+
 /** The sync filter for one attention channel (Writing attention, step 1). */
 export const syncFilter = (channel: string) => ({
   artifact: "current" as const,
@@ -660,9 +887,12 @@ export function relayAttention(input: {
   reported(): void;
   signal: AbortSignal;
   retryMs?: number;
+  /** A complete set already read from the channel, which runs until the
+   * first sync here replaces it (Reader step 5: a kept complete set). */
+  initial?: AttentionSet;
 }): RelayAttention {
   const { signal, retryMs = 30_000 } = input;
-  let set: AttentionSet | undefined;
+  let set: AttentionSet | undefined = input.initial;
   const unsupported = input.artifactSync
     ? undefined
     : "This community can't store attention";
@@ -772,6 +1002,11 @@ export function relayAttention(input: {
     }
     if (run !== generation || signal.aborted) return;
     close();
+    // A kept set from another channel is not this one's.
+    if (set && set.channel !== id) {
+      set = undefined;
+      input.reported();
+    }
     let opened: ArtifactSyncView;
     try {
       opened = input.sync(syncFilter(id));

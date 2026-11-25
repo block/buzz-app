@@ -1,8 +1,13 @@
 import type { PluginModule } from "../../plugins/api";
 import { createTab } from "./Tab";
 
-export const inject = ["agents", "relay", "navigation"];
-export const apply: PluginModule["apply"] = ({ agents, relay, navigation }) => {
+export const inject = ["agents", "relay", "navigation", "communityReader"];
+export const apply: PluginModule["apply"] = ({
+  agents,
+  relay,
+  navigation,
+  communityReader,
+}) => {
   // Attention runs only while this plugin is on to show and control it.
   agents.controlAttention();
   agents.registerTab({
@@ -10,6 +15,6 @@ export const apply: PluginModule["apply"] = ({ agents, relay, navigation }) => {
     title: "Attention",
     // Hosted agents have no attention on this device.
     when: (agent) => agent.place === "here",
-    component: createTab({ agents, relay, navigation }),
+    component: createTab({ agents, relay, navigation, communityReader }),
   });
 };

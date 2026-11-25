@@ -354,6 +354,12 @@ async function relayAuthority(fetch, relay) {
       nip11.supported_extensions.includes("buzz-solo-member-role"),
     // NIP-AR sync: REQ with `"artifact": "current"` keeps a set current.
     artifactSync: nip11.artifacts?.sync?.version === 1,
+    // The largest set one sync serves (`artifacts.sync.max_events`).
+    ...(nip11.artifacts?.sync?.version === 1 &&
+    Number.isSafeInteger(nip11.artifacts.sync.max_events) &&
+    nip11.artifacts.sync.max_events > 0
+      ? { artifactSyncMaxEvents: nip11.artifacts.sync.max_events }
+      : {}),
     artifactSupport:
       Array.isArray(nip11.supported_extensions) &&
       nip11.supported_extensions.includes("nip-ar"),

@@ -202,12 +202,14 @@ if that desktop app is up and running.
   a section, or put the default text back in the editor for you to save.
 - **Tools.** Local Claude Code, Codex, Goose and Pi agents have a per-device
   **Tools** tab with four roles. **Orchestrator** works like an assistant: it
-  can take every Buzz action its identity can, including creating channels,
-  canvases and notes, delegate, and track work in Tasks. **Reviewer** reads
+  can take every built-in Buzz action its identity can, including creating
+  channels, canvases and notes, delegate, and track work in Tasks. Plugin tools
+  that change things, such as app deploys, stay off unless Custom allows them. **Reviewer** reads
   files, diffs and the web and reports findings in Buzz, but can't create or
   change Buzz deliverables. Neither can change local files, run Shell or use
-  connected tools. Every role can use the harness's skills; each action a
-  skill takes still follows the role. **Builder** has every tool the
+  connected tools. Where the harness has a native Skill tool, such as
+  Claude Code, every role can load skills; each action a skill takes still
+  follows the role, and a connected server's tool named Skill doesn't count. **Builder** has every tool the
   harness allows, and is what existing agents use. **Custom** starts from a role
   and lets you switch individual groups, plugin tools, connected MCP servers or
   tools, and named native tools on or off. Saving applies to the agent's next tool call, even in a running

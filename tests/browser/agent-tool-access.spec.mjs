@@ -69,7 +69,7 @@ test("starts Custom from a role, adjusts tools and a connected server, then save
         instructions: "Keep these",
         toolPreset: "custom",
         toolAllow:
-          "buzz:coordinate,buzz:deliverable,buzz:message,buzz:read,connected:github,native:meta,native:read,native:web",
+          "buzz:builtin-deliverable,buzz:coordinate,buzz:message,buzz:read,connected:github,native:meta,native:read,native:web",
       },
     });
   expect(errors).toEqual([]);

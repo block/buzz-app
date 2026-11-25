@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { sessionTools } from "../../buzz-mcp/session-tools";
+import { callSessionTool, sessionTools } from "../../buzz-mcp/session-tools";
 import {
   buzzToolAllowed,
   isCodexBuzzTool,
@@ -10,6 +10,7 @@ import {
   nativeToolAllowed,
   nativeToolDenial,
   pickToolConfig,
+  presetSelection,
   toolPolicy,
   toolPolicyKey,
 } from "./tool-access";
@@ -72,7 +73,7 @@ it.each([
   ["repo", true, false, true],
   ["canvas_set", true, false, true],
   ["channel_delete", true, false, true],
-  ["apps_deploy", true, false, true],
+  ["apps_deploy", false, false, true],
   ["a_future_buzz_tool", true, false, true],
 ] as const)(
   "Buzz %s: Super-agent %s, Reviewer %s, Coder %s",
@@ -129,6 +130,15 @@ it("allows one named native tool without the catch-all, and Skill in every role"
   const none = { toolPreset: "custom", toolAllow: "" };
   expect(nativeToolAllowed("AskUserQuestion", none)).toBe(false);
   expect(nativeToolAllowed("Skill", none)).toBe(true);
+  for (const config of [REVIEWER, SUPER, none])
+    expect(nativeToolAllowed("mcp__linear__Skill", config)).toBe(false);
+  expect(nativeToolAllowed("developer__skill", none)).toBe(false);
+  expect(
+    nativeToolAllowed("mcp__linear__Skill", {
+      toolPreset: "custom",
+      toolAllow: "connected:linear/Skill",
+    }),
+  ).toBe(true);
   expect(nativeToolAllowed("Bash", none)).toBe(false);
   expect(
     nativeToolAllowed("NotebookRead", {
@@ -136,6 +146,49 @@ it("allows one named native tool without the catch-all, and Skill in every role"
       toolAllow: "native:other",
     }),
   ).toBe(true);
+});
+
+it("gives Orchestrator Buzz's own deliverables but leaves plugin ones opt-in, when listed and called", async () => {
+  const listed = sessionTools(UNDECLARED as never, SUPER).map(
+    (tool) => tool.name,
+  );
+  expect(listed).toContain("canvas_set");
+  expect(listed).not.toContain("apps_deploy");
+  await expect(
+    callSessionTool(
+      {} as never,
+      {} as never,
+      "apps_deploy",
+      {},
+      UNDECLARED as never,
+      SUPER,
+    ),
+  ).rejects.toThrow("disabled by this agent's Tools setting");
+});
+
+it("keeps Orchestrator's access when it becomes Custom, and a saved legacy deliverable grant's", () => {
+  const custom = {
+    toolPreset: "custom",
+    toolAllow: presetSelection("super-agent").join(","),
+  };
+  const added = [...TASKS, ...UNDECLARED];
+  for (const name of [
+    "canvas_set",
+    "channel_delete",
+    "tasks_update",
+    "apps_deploy",
+    "mem_set",
+  ])
+    expect(buzzToolAllowed(name, custom, added)).toBe(
+      buzzToolAllowed(name, SUPER, added),
+    );
+  for (const name of ["Read", "Edit", "Bash", "Task", "mcp__github__x"])
+    expect(nativeToolAllowed(name, custom)).toBe(
+      nativeToolAllowed(name, SUPER),
+    );
+  const legacy = { toolPreset: "custom", toolAllow: "buzz:deliverable" };
+  expect(buzzToolAllowed("canvas_set", legacy)).toBe(true);
+  expect(buzzToolAllowed("apps_deploy", legacy, UNDECLARED)).toBe(true);
 });
 
 it("classifies every built-in Buzz tool explicitly", () => {

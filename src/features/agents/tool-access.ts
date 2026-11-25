@@ -37,7 +37,10 @@ export type BuzzCapability =
   | "buzz:read"
   | "buzz:message"
   | "buzz:coordinate"
-  | "buzz:deliverable";
+  | "buzz:builtin-deliverable"
+  | "plugins:deliverable";
+/** Saved by earlier drafts for both Buzz's and plugins' deliverable tools. */
+const LEGACY_DELIVERABLE = "buzz:deliverable";
 /** Every tool from another MCP server the harness connects to; a server's
  * own tools are `connected:<server>`, and one of them `connected:<server>/<tool>`. */
 export const CONNECTED = "connected";
@@ -98,8 +101,9 @@ const ALWAYS_NATIVE = new Set(["skill"]);
 export const NAMED_NATIVE = "native-tool";
 export const namedNativeTool = (name: string) =>
   `${NAMED_NATIVE}:${canonical(name)}`;
+/** Matches the harness's own spelling only, never another server's tool. */
 export const alwaysNativeTool = (name: string) =>
-  ALWAYS_NATIVE.has(canonical(name.replace(/^native-tool:/, "")));
+  ALWAYS_NATIVE.has(name.replace(/^native-tool:/, "").toLowerCase());
 
 export const BUZZ_TOOL_GROUPS: readonly Described<BuzzCapability>[] = [
   {
@@ -119,10 +123,16 @@ export const BUZZ_TOOL_GROUPS: readonly Described<BuzzCapability>[] = [
       "Memory, attention, handoffs, solo workers, agent drafts and plugin tools that manage work, such as Tasks.",
   },
   {
-    id: "buzz:deliverable",
+    id: "buzz:builtin-deliverable",
     label: "Buzz: deliverables",
     description:
-      "Repositories, canvases, notes, channels, members, settings and plugin tools that create or change work.",
+      "Create and change repositories, canvases, notes, channels, members and settings.",
+  },
+  {
+    id: "plugins:deliverable",
+    label: "Plugin tools that change things",
+    description:
+      "Plugin tools that create or change something, possibly outside Buzz, such as app deploys, and plugin tools that don't say what they do.",
   },
 ];
 
@@ -242,7 +252,7 @@ const ROLES: Readonly<
     "buzz:read",
     "buzz:message",
     "buzz:coordinate",
-    "buzz:deliverable",
+    "buzz:builtin-deliverable",
   ],
   reviewer: [
     "native:read",
@@ -282,9 +292,9 @@ export const PRESET_INFO: readonly (Described<ToolPreset> &
     label: "Orchestrator",
     description:
       "Runs work like an assistant: plans, delegates and follows up in Buzz.",
-    can: "Take every Buzz action its identity can, such as messaging, creating channels, canvases and notes, and managing Tasks, memory and attention. Read files and the web, track steps and delegate to subagents.",
+    can: "Take every built-in Buzz action its identity can, such as messaging, creating channels, canvases and notes, and managing memory and attention, plus plugin tools that coordinate work, such as Tasks. Read files and the web, track steps and delegate to subagents.",
     cannot:
-      "Edit local files, run commands or use connected services such as GitHub.",
+      "Edit local files, run commands, use connected MCP tools such as GitHub, or use plugin tools that change things, such as app deploys, unless Custom allows them.",
   },
   {
     id: "reviewer",
@@ -321,6 +331,19 @@ export const joinToolSelection = (names: readonly string[]) =>
     .sort()
     .join(",");
 
+const expandLegacy = (allow: readonly string[]) =>
+  allow.includes(LEGACY_DELIVERABLE)
+    ? [
+        ...new Set(
+          allow.flatMap((id) =>
+            id === LEGACY_DELIVERABLE
+              ? ["buzz:builtin-deliverable", "plugins:deliverable"]
+              : [id],
+          ),
+        ),
+      ]
+    : allow;
+
 const presetOf = (value: unknown): ToolPreset | undefined =>
   TOOL_PRESETS.includes(value as ToolPreset)
     ? (value as ToolPreset)
@@ -345,7 +368,7 @@ export function toolPolicy(
         ? []
         : Array.isArray(value?.allow)
           ? value.allow
-          : list(value?.toolAllow),
+          : expandLegacy(list(value?.toolAllow)),
   };
 }
 
@@ -535,10 +558,15 @@ export function buzzToolAllowed(
   added: readonly Readonly<{ name: string; effect?: ToolEffect }>[] = [],
 ) {
   const policy = toolPolicy(config);
-  const own = added.some((tool) => tool.name === name)
-    ? `plugin:${name}`
-    : `buzz:${name}`;
-  return allows(policy, [own, `buzz:${buzzToolEffect(name, added)}`]);
+  const plugin = added.some((tool) => tool.name === name);
+  const effect = buzzToolEffect(name, added);
+  const group =
+    effect !== "deliverable"
+      ? `buzz:${effect}`
+      : plugin
+        ? "plugins:deliverable"
+        : "buzz:builtin-deliverable";
+  return allows(policy, [plugin ? `plugin:${name}` : `buzz:${name}`, group]);
 }
 
 const nativeDenial = (

@@ -24,7 +24,7 @@ const agent = {
     instructions: "Keep these",
     ...(params.has("custom") && {
       toolPreset: "custom",
-      toolAllow: `buzz:message,buzz:read,connected:github/get_pull_request,native-tool:askuserquestion,native:meta,native:read${params.has("legacy") ? ",native:other" : ""}`,
+      toolAllow: `buzz:builtin-deliverable,buzz:coordinate,buzz:message,buzz:read,connected:github/get_pull_request,native-tool:askuserquestion,native:meta,native:read${params.has("legacy") ? ",native:other" : ""}`,
     }),
   },
   attention: {},
@@ -34,6 +34,7 @@ const agent = {
 } satisfies Agent;
 const added = [
   { name: "tasks_update", description: "Update a Task.", effect: "coordinate" },
+  { name: "apps_deploy", description: "Deploy an app." },
 ];
 const agents = {
   save: async (_key: string, update: unknown) => {

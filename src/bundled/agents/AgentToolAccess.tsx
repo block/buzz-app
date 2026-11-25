@@ -176,10 +176,10 @@ export function AgentToolAccess({
         </RadioGroup>
       </Field>
       <p className="m-0 text-body-sm text-subtle">
-        Every role can use the harness's skills, and each action a skill takes
-        still follows the role. Subagents inherit this access. It is not a
-        sandbox: with Shell on, commands can use any credentials the agent's
-        process has.
+        Where the harness has a native Skill tool, such as Claude Code, every
+        role can load skills; each action a skill takes still follows the role.
+        Subagents inherit this access. It is not a sandbox: with Shell on,
+        commands can use any credentials the agent's process has.
       </p>
       <Section title="Buzz">
         {BUZZ_TOOL_GROUPS.map((group) =>

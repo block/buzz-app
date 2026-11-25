@@ -23,6 +23,8 @@ export type Config = {
   compactAt?: string;
   /** On Recommended, whose model and thinking level runs replace these. */
   preset?: typeof PRESET;
+  /** The owner-signed MCP server list, as signed; a launch checks it. */
+  mcpServers?: unknown;
 };
 export type Model = {
   model: string;

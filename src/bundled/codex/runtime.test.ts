@@ -61,6 +61,7 @@ import { wake } from "../../features/agent-harness/wakes";
 import { composeBase } from "../../features/agent-harness/sections/compose";
 import { workspaceCanvas } from "../../features/solo/workspace";
 import type { Wire } from "./rpc";
+import { approvalTemplate } from "../../features/agents/mcp-servers";
 import { ELSEWHERE, REMOTE_UNATTRIBUTED, type ProviderConfig } from "./gateway";
 import {
   unattributedNotice,
@@ -78,6 +79,12 @@ vi.mock("./voice", () => ({
 
 // The plugin registers only in the Mac/Linux desktop app.
 vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => true }));
+vi.mock("../../features/agents/mcp-servers", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../../features/agents/mcp-servers")
+  >()),
+  mcpValues: async () => ({ BUZZMCP_DOCS_TOKEN: "t0ken" }),
+}));
 /** What the gateway's own route module reports, where a test sets it. */
 const liveRoutes = vi.hoisted(() => ({
   route: undefined as unknown,
@@ -113,7 +120,8 @@ vi.mock("../agents/agent-env", () => ({
   },
 }));
 
-const owner = "a".repeat(64);
+const ownerKey = keypair();
+const owner = ownerKey.pubkey;
 const pubkey = "b".repeat(64);
 /** A 1x1 two-colour GIF without metadata, so attaching it uploads it unchanged. */
 const GIF =
@@ -3109,6 +3117,53 @@ it.each([
     expect(params?.summary).toBe(expected);
   },
 );
+it("starts and resumes a thread with the owner's signed MCP servers through the saved settings", async () => {
+  const f = fixture();
+  const mcpServers = signed(
+    ownerKey,
+    approvalTemplate(pubkey, 1, {
+      servers: [
+        {
+          name: "docs",
+          enabled: true,
+          transport: "http",
+          url: "https://docs.test/mcp",
+          headers: ["TOKEN"],
+        },
+        {
+          name: "idle",
+          enabled: false,
+          transport: "stdio",
+          command: "idle",
+          args: [],
+          env: [],
+        },
+      ],
+      disabledInherited: ["company.tools"],
+    }),
+  );
+  const turn = (text: string) => {
+    const d = f.delivery(text);
+    return { ...d, config: { ...d.config, mcpServers } };
+  };
+  const expected = {
+    "company.tools": { command: "secret-tool", enabled: false },
+    docs: { url: "https://docs.test/mcp", http_headers: { TOKEN: "t0ken" } },
+  };
+  await f.runtime.run(turn("@Codex first"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(1));
+  const start = f.sent.find((wire) => wire.method === "thread/start")
+    ?.params as { config: { mcp_servers: unknown } };
+  expect(start.config.mcp_servers).toMatchObject(expected);
+  expect(start.config.mcp_servers).not.toHaveProperty("idle");
+  await f.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(turn("@Codex second"));
+  await vi.waitFor(() => expect(f.starts()).toHaveLength(2));
+  const resume = f.sent.find((wire) => wire.method === "thread/resume")
+    ?.params as { config: { mcp_servers: unknown } };
+  expect(resume.config.mcp_servers).toMatchObject(expected);
+});
 it("asks for reasoning summaries on a resumed turn", async () => {
   const f = fixture();
   await f.runtime.run(f.delivery("@Codex first"));

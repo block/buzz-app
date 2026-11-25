@@ -205,6 +205,7 @@ export function useFinderAll({
   }>(undefined);
   if (
     !search.loading &&
+    !search.error &&
     (first.current?.session !== session || first.current.query !== query)
   )
     first.current = { session, query, ids: new Set(docs.map((d) => d.id)) };

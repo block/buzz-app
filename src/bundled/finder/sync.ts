@@ -425,6 +425,7 @@ export function startFinderSync({
           { signal, priority: "background" },
         );
       } catch (error) {
+        lastRead = Date.now();
         // A refusal won't change by asking again; the caller decides. The
         // session cancels reads when access changes; those are asked again.
         const kind = readErrorKind(error);
@@ -485,14 +486,19 @@ export function startFinderSync({
         await readAll(`dms:${ids.join()}`, { kinds: KINDS, "#h": ids });
       } catch (error) {
         if (signal.aborted || channelId) throw error;
-        // One refused DM refuses its whole group: read the others alone. A
-        // refused one is tried again at the next reconnect.
-        for (const id of ids)
+        // One refused DM refuses its whole group: read the others alone,
+        // from where the group got to. A refused one is tried again at the
+        // next reconnect.
+        const group = fills.get(`dms:${ids.join()}`);
+        for (const id of ids) {
+          if (group?.complete && !fills.has(`dms:${id}`))
+            fills.set(`dms:${id}`, { ...group, channelIds: [id] });
           await readAll(`dms:${id}`, { kinds: KINDS, "#h": [id] }).catch(
             (error) => {
               if (signal.aborted) throw error;
             },
           );
+        }
       }
     }
     // Replies in threads you replied in, and the roots themselves.

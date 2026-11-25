@@ -441,8 +441,9 @@ test("losing a channel removes its rows from an open Finder at once", async () =
 });
 
 test("All of Buzz shows five device rows, then the relay's, then the rest of the device's; This channel shows them all", async () => {
-  const { Finder, click, corpus, events, viewer } = await fixture();
+  const { Finder, click, control, corpus, events, viewer } = await fixture();
   events.push(message(viewer, "crew", "zebra from the relay", 1_700_000_050));
+  control.fail = true;
   corpus.add(
     Array.from({ length: 8 }, (_, n) => ({
       ...local(`z${n}`, `zebra note ${n}`),
@@ -451,6 +452,10 @@ test("All of Buzz shows five device rows, then the relay's, then the rest of the
   );
   render(<Finder />);
   type("zebra");
+  await tick(SEARCH_DEBOUNCE_MS);
+  // The relay's first page still leads after a failure and Retry.
+  control.fail = false;
+  await click(screen.getByRole("button", { name: "Retry" }));
   await tick(SEARCH_DEBOUNCE_MS);
   expect(options("Matches")).toHaveLength(5);
   expect(options("More from all of Buzz")).toEqual([

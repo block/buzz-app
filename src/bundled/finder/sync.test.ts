@@ -723,6 +723,8 @@ test("losing one direct message of a 50-message chunk resets that chunk's fill; 
   const left = rooms(false);
   const reads: { "#h"?: readonly string[]; since?: number }[] = [];
   const refused = message(author, "dm08", "Neighbor quartz", now - 86_400);
+  // Posted while away, beside the refused DM: only a read of its own finds it.
+  const away = message(author, "dm09", "Away quartz", now - 60);
   const connect = async (member: boolean, refuse: boolean) => {
     const owner = createRelaySession({
       viewer: viewer.pubkey,
@@ -738,6 +740,7 @@ test("losing one direct message of a 50-message chunk resets that chunk's fill; 
           ...discovery,
           ...(member ? [...joined, said] : left),
           refused,
+          ...(refuse ? [away] : []),
         ];
         return queryEvents(events, filters);
       },
@@ -776,9 +779,9 @@ test("losing one direct message of a 50-message chunk resets that chunk's fill; 
   expect(found()).toEqual(["Neighbor quartz"]);
   // Rejoined, but the relay refuses that DM for now.
   await run(true, true);
-  expect(found()).toEqual(["Neighbor quartz"]);
+  expect(found()).toEqual(["Away quartz", "Neighbor quartz"]);
   await run(true);
-  expect(found()).toEqual(["Direct quartz", "Neighbor quartz"]);
+  expect(found()).toEqual(["Away quartz", "Direct quartz", "Neighbor quartz"]);
   const chunk = reads.filter((filter) => filter["#h"]?.includes("dm07"));
   // Read from the horizon again, not only resumed from its last read.
   expect(Math.min(...chunk.map((filter) => filter.since ?? 0))).toBeLessThan(

@@ -31,6 +31,7 @@ import {
 import styles from "./Messages.module.css";
 import { useModalBoundary } from "./useModalBoundary";
 import { useMediaElementSource } from "./use-media-element-source";
+import { isNativeMediaSource } from "./attachment-source";
 import { MediaContextMenu } from "./MediaContextMenu";
 import { MediaActionAnnouncements } from "./MediaActionAnnouncements";
 
@@ -258,6 +259,12 @@ export function MediaAttachment({
     <video
       ref={video}
       className={styles.mediaVideo}
+      // The native listener is another origin; without CORS its frames taint
+      // the canvas, so no opening frame is captured and every remount starts
+      // blank until the video loads again.
+      crossOrigin={
+        source && isNativeMediaSource(source) ? "anonymous" : undefined
+      }
       src={videoSource}
       poster={visiblePreview}
       preload={compact ? "metadata" : preload}
@@ -437,6 +444,9 @@ export function MediaAttachment({
               <img
                 className={styles.mediaPoster}
                 src={visiblePreview}
+                // WebKit paints an async-decoded image empty for a frame even
+                // when it is ready; a captured frame is small and in memory.
+                decoding={preview ? undefined : "sync"}
                 alt=""
                 aria-hidden="true"
               />

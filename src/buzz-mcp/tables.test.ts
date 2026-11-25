@@ -29,6 +29,8 @@ let relay: Stored[];
 /** Replaces storing and answering an accepted write; a test's hold. */
 let ingest: ((event: Stored) => Promise<Response>) | undefined;
 let queryFails = false;
+/** Pads each answer to the 1,000 events one read takes, so it is partial. */
+let capped = false;
 
 const one = (event: Stored, name: string) =>
   event.tags.filter((tag) => tag[0] === name).map((tag) => tag[1]);
@@ -40,6 +42,7 @@ beforeEach(() => {
   relay = [];
   ingest = undefined;
   queryFails = false;
+  capped = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
@@ -71,14 +74,17 @@ beforeEach(() => {
         !!keys?.length && keys.every((key) => key === caller);
       if (!own(filter.authors) && !own(filter["#p"]))
         return new Response("restricted", { status: 403 });
+      const found = relay.filter(
+        (event) =>
+          filter.authors.includes(event.pubkey) &&
+          filter["#p"].includes(one(event, "p")[0] as string) &&
+          (!filter["#d"] ||
+            filter["#d"].includes(one(event, "d")[0] as string)),
+      );
       return reply(
-        relay.filter(
-          (event) =>
-            filter.authors.includes(event.pubkey) &&
-            filter["#p"].includes(one(event, "p")[0] as string) &&
-            (!filter["#d"] ||
-              filter["#d"].includes(one(event, "d")[0] as string)),
-        ),
+        capped && found.length
+          ? Array.from({ length: 1000 }, (_, at) => found[at % found.length])
+          : found,
       );
     }),
   );
@@ -330,4 +336,23 @@ it("reports only what a fresh read confirms after competing writes and a lost re
     }),
   ).rejects.toThrow(/unconfirmed/);
   expect(relay.length).toBe(writes + 1);
+
+  // An incomplete read that holds this write proves nothing about the head.
+  queryFails = false;
+  const current = /^version: ([0-9a-f]{16})/.exec(
+    String(await callTool(a, {}, "table_read", { table: "goals", row: "g1" })),
+  )?.[1];
+  ingest = async (event) => {
+    relay.push(event);
+    capped = true;
+    return reply({ accepted: true });
+  };
+  await expect(
+    callTool(a, {}, "table_row_set", {
+      table: "goals",
+      row: "g1",
+      values: { status: "planned" },
+      expected: current,
+    }),
+  ).rejects.toThrow(/unconfirmed/);
 });

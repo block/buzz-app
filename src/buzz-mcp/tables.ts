@@ -225,7 +225,7 @@ async function publish(
   try {
     const read = await client.memories(slug);
     head = read.entries.find((entry) => entry.slug === slug);
-    if (!head && read.partial) throw new Error(unconfirmed);
+    if (read.partial) throw new Error(unconfirmed);
   } catch {
     throw new Error(unconfirmed);
   }

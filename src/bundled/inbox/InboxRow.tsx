@@ -403,7 +403,9 @@ export function CompactActivityRow({
             />
           </span>
         ) : !dm && faces.length ? (
-          <AvatarStack items={faces} />
+          <span className={styles.compactTrailing}>
+            <AvatarStack items={faces} />
+          </span>
         ) : undefined
       }
     />

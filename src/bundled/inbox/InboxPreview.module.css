@@ -82,13 +82,22 @@
   display: none;
 }
 
-/* A row keeps its hover fill while the pointer is on its Mark as read. */
+/* A row keeps its hover fill while its right-click menu is open, as the
+   sidebar's other cards do. */
 @media (hover: hover) and (pointer: fine) {
   .list > li:hover > [class~="navigation-item"]:not([data-selected]) {
     --text-subtle: var(--interaction-row-text);
     --text-metadata: var(--interaction-row-metadata);
     background: var(--interaction-row-hover);
   }
+}
+
+.list
+  > li[data-context-menu-present]
+  > [class~="navigation-item"]:not([data-selected]) {
+  --text-subtle: var(--interaction-row-text);
+  --text-metadata: var(--interaction-row-metadata);
+  background: var(--interaction-row-hover);
 }
 
 .notice {

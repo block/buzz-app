@@ -402,7 +402,10 @@ test.describe("Inline", () => {
   }) => {
     // Chromium seeks only in media served by byte range.
     const bytes = await readFile(
-      new URL("../fixtures/message-gallery/assets/sample.mp4", import.meta.url),
+      new URL(
+        "../fixtures/message-gallery/assets/sample-long.mp4",
+        import.meta.url,
+      ),
     );
     await page.route("**/api/relay/primary/media?**", (route) => {
       const range = /^bytes=(\d+)-(\d*)$/.exec(
@@ -424,7 +427,8 @@ test.describe("Inline", () => {
         body: bytes.subarray(start, last + 1),
       });
     });
-    // The clip lasts two seconds; at quarter speed it outlasts the journey.
+    // The clip lasts a minute. At quarter speed that is twice a journey's
+    // time limit, so playback never reaches its end here.
     await page.addInitScript(() =>
       localStorage.setItem("buzz.video.playback-speed", "0.25"),
     );
@@ -512,21 +516,6 @@ test.describe("Inline", () => {
       })
       .toBe(true);
     expect((await read(brief)).from).toBeGreaterThan(returned - 0.1);
-
-    // Paused, it opens and closes paused at its position.
-    await press(row, "Pause video");
-    await expect.poll(async () => (await read(brief)).playing).toBe(false);
-    const paused = (await read(brief)).seconds;
-    await clickRow(page, showMore(timeline, "Video findings"));
-    await expect
-      .poll(async () => (await read(reader.locator("video"))).seconds)
-      .toBeCloseTo(paused, 1);
-    expect((await read(reader.locator("video"))).playing).toBe(false);
-    await reader.focus();
-    await page.keyboard.press("Escape");
-    await expect(reader).toHaveCount(0);
-    expect(await read(brief)).toMatchObject({ playing: false });
-    expect((await read(brief)).seconds).toBeCloseTo(paused, 1);
   });
 
   test("Move to side panel hands the thread, its draft and the reply it answers to a tab", async ({

@@ -59,6 +59,9 @@ type MediaAttachmentProps = {
   label?: string;
   /** Shares a video's playback between a message's brief and its reader. */
   handoff?: PlaybackHandoff | undefined;
+  /** Whether a reader holds the playback it took from this brief, and will
+   * hand it back. Must be stable. */
+  onLent?: ((lent: boolean) => void) | undefined;
 };
 
 function useVideoPosition(
@@ -105,6 +108,7 @@ export function MediaAttachment({
   overlayCount = 0,
   label = "Open video fullscreen",
   handoff,
+  onLent,
 }: MediaAttachmentProps) {
   const active = useConversationPresentation();
   const corners = useMediaCorners();
@@ -154,9 +158,7 @@ export function MediaAttachment({
       !element.unavailable
       ? `${handoff.messageId}\n${attachment.url}`
       : undefined,
-    !!handoff?.reader,
-    started,
-    setStarted,
+    { reader: !!handoff?.reader, active, started, setStarted, onLent },
   );
   const viewMedia = (seconds: number) => {
     video.current?.pause();

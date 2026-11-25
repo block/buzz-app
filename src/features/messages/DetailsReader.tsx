@@ -8,7 +8,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import { useChannelWindow, useRowProfiles } from "../relay/react";
 import type { RelaySession } from "../relay/session";
 import { useComposerScope } from "./composer-overlay";
-import { DetailsVideos } from "./DetailsVideos";
+import { DetailsVideos, useRowVideos } from "./DetailsVideos";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { useReferenceDirectory } from "./ReferenceText";
 import styles from "./Messages.module.css";
@@ -59,6 +59,20 @@ export function useReaderMessage(
   return loaded ?? (read?.id === messageId ? read.message : undefined);
 }
 
+/** The videos the message's row draws as players. */
+function ReaderVideos({ message }: { message: ChannelMessage }) {
+  const { session, extensions, onOpenMediaReview } = useConversation();
+  const videos = useRowVideos(message, extensions, !!onOpenMediaReview);
+  return (
+    <DetailsVideos
+      row={message}
+      videos={videos}
+      media={(url) => session.media(url, undefined, message.channelId)}
+      onOpenMediaReview={onOpenMediaReview}
+    />
+  );
+}
+
 export type DetailsParts = Readonly<{
   title: ReactNode;
   avatar: ReactNode;
@@ -81,14 +95,8 @@ export function DetailsReader({
   messageId: string;
   children(parts: DetailsParts): ReactNode;
 }) {
-  const {
-    session,
-    scope,
-    extensions,
-    onOpenLink,
-    canOpenLink,
-    onOpenMediaReview,
-  } = useConversation();
+  const { session, scope, extensions, onOpenLink, canOpenLink } =
+    useConversation();
   const message = useReaderMessage(session, channelId, messageId);
   const resolveName = useChannelIdentityNames(session, channelId);
   const rows = message ? [message] : [];
@@ -137,11 +145,7 @@ export function DetailsReader({
           canOpenLink={canOpenLink}
           participantProfiles={profiles}
         />
-        <DetailsVideos
-          row={message}
-          media={(url) => session.media(url, undefined, message.channelId)}
-          onOpenMediaReview={onOpenMediaReview}
-        />
+        <ReaderVideos message={message} />
       </div>
     ),
   });

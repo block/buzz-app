@@ -1,4 +1,3 @@
-import { snapshotAttachments } from "../relay/forwarded-message";
 import { ForwardedMessage } from "./ForwardedMessage";
 import { requestWork, isSettledWork } from "../agents/request-work";
 import { ActivityDisclosure } from "./ActivityDisclosure";
@@ -107,6 +106,10 @@ import { withoutRelayNotice } from "../relay/relayed-from";
 import { EditedMarker, MessageMarkdown } from "./MessageMarkdown";
 import { DetailsMessage } from "./DetailsMessage";
 import { DetailsVideos } from "./DetailsVideos";
+import {
+  attachmentGroups as groupAttachments,
+  playerVideos,
+} from "./attachment-groups";
 import { useComposerScope } from "./composer-overlay";
 import {
   safeMessageUrl,
@@ -634,9 +637,19 @@ function MessageRowContent({
       setMediaPlaying([...attachmentLists.current].some(playingIn));
     };
   }, []);
-  const keepAlive = reporting !== undefined || !!opened || mediaPlaying;
-  // The dialog, pending submit, notice and playing media live in this row;
-  // eviction loses them.
+  // A reader that took a video's playback from this row hands it back here
+  // when it closes. The row's own player is paused meanwhile.
+  const [lent, setLent] = useState(0);
+  const trackLent = useCallback((held: boolean) => {
+    setLent((count) => count + (held ? 1 : -1));
+    // Handed back, the player plays before its play event says so; reading it
+    // now leaves no moment unpinned between the two.
+    setMediaPlaying([...attachmentLists.current].some(playingIn));
+  }, []);
+  const keepAlive =
+    reporting !== undefined || !!opened || mediaPlaying || lent > 0;
+  // The dialog, pending submit, notice, playing media and the playback a
+  // reader will hand back live in this row; eviction loses them.
   useEffect(() => {
     const release = keepAlive ? keepMounted?.(row.id) : undefined;
     // Dialog focus restoration runs in a microtask after unmount; releasing a
@@ -777,27 +790,11 @@ function MessageRowContent({
       }
     });
   // Gallery-backed images and videos share a group, preserving sender order.
-  const copiedUrls = new Set(
-    row.forward ? snapshotAttachments(row).map(({ url }) => url) : [],
-  );
-  const attachmentGroups: ChannelMessage["attachments"][number][][] = [];
-  for (const attachment of row.attachments) {
-    if (!safeMessageUrl(attachment.url) || claimed(attachment)) continue;
-    const previous = attachmentGroups.at(-1);
-    if (
-      previous?.[0] &&
-      copiedUrls.has(previous[0].url) === copiedUrls.has(attachment.url) &&
-      !drawn(attachment) &&
-      !drawn(previous[0]) &&
-      (((attachment.kind === "image" || attachment.kind === "file") &&
-        previous[0].kind === attachment.kind) ||
-        (onOpenMediaReview &&
-          (attachment.kind === "image" || attachment.kind === "video") &&
-          (previous[0].kind === "image" || previous[0].kind === "video")))
-    )
-      previous.push(attachment);
-    else attachmentGroups.push([attachment]);
-  }
+  const { groups: attachmentGroups, copiedUrls } = groupAttachments(row, {
+    claimed,
+    drawn,
+    gallery: !!onOpenMediaReview,
+  });
   // A message's images are saved with its channel, so losing the channel
   // forgets them.
   const attachmentMedia = (url: string, size?: "small") =>
@@ -974,7 +971,7 @@ function MessageRowContent({
                   mode={mediaMode}
                   // A details message's reader takes its video's playback over.
                   {...(row.audience === "details"
-                    ? { handoff: { messageId: row.id } }
+                    ? { handoff: { messageId: row.id }, onLent: trackLent }
                     : {})}
                   {...(attachment.kind === "video" && mediaSeekTo !== undefined
                     ? {
@@ -1147,6 +1144,7 @@ function MessageRowContent({
         />
         <DetailsVideos
           row={row}
+          videos={playerVideos(attachmentGroups)}
           media={attachmentMedia}
           onOpenMediaReview={onOpenMediaReview}
         />

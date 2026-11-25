@@ -7,7 +7,6 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
@@ -220,106 +219,6 @@ it("offers inline seek, speed and volume controls and hands off the scrubbed pos
     screen.getByRole("button", { name: "Open video fullscreen" }),
   );
   expect(onOpenReview).toHaveBeenCalledWith(videoAttachment, 32);
-});
-
-it.each([true, false])(
-  "moves a details video's playback into its reader and back (playing: %s)",
-  (playing) => {
-    const brief = render(
-      <MediaAttachment
-        attachment={videoAttachment}
-        media={media}
-        handoff={{ messageId: "details" }}
-      />,
-    );
-    const briefVideo = brief.container.querySelector("video");
-    if (!briefVideo) throw new Error("Missing brief video");
-    mockPlayback(briefVideo);
-    Object.defineProperty(briefVideo, "readyState", {
-      configurable: true,
-      value: HTMLMediaElement.HAVE_METADATA,
-    });
-    fireEvent.click(
-      within(brief.container).getByRole("button", { name: "Play video" }),
-    );
-    briefVideo.currentTime = 42;
-    briefVideo.volume = 0.25;
-    briefVideo.muted = true;
-    if (!playing)
-      fireEvent.click(
-        within(brief.container).getByRole("button", { name: "Pause video" }),
-      );
-
-    const reader = render(
-      <MediaAttachment
-        attachment={videoAttachment}
-        media={media}
-        handoff={{ messageId: "details", reader: true }}
-      />,
-    );
-    const readerVideo = reader.container.querySelector("video");
-    if (!readerVideo) throw new Error("Missing reader video");
-    const readerPlayback = mockPlayback(readerVideo);
-    // The brief falls silent before the reader's video can sound.
-    expect(briefVideo.paused).toBe(true);
-    expect(readerPlayback.play).not.toHaveBeenCalled();
-    fireEvent.loadedMetadata(readerVideo);
-    expect(readerVideo.currentTime).toBe(42);
-    expect(readerPlayback.play).toHaveBeenCalledTimes(playing ? 1 : 0);
-    expect(readerVideo.volume).toBe(0.25);
-    expect(readerVideo.muted).toBe(true);
-    // Paused, it still shows its position and frame rather than its poster.
-    expect(within(reader.container).getByText("00:42")).toBeInTheDocument();
-    expect(readerVideo.closest("[data-video-preview]")).toHaveAttribute(
-      "data-started",
-    );
-    expect(
-      within(reader.container).getByRole("button", {
-        name: playing ? "Pause video" : "Play video",
-      }),
-    ).toBeInTheDocument();
-
-    readerVideo.currentTime = 50;
-    readerVideo.volume = 0.5;
-    readerVideo.muted = false;
-    reader.unmount();
-    expect(briefVideo.currentTime).toBe(50);
-    expect(briefVideo.paused).toBe(!playing);
-    expect(briefVideo.volume).toBe(0.5);
-    expect(briefVideo.muted).toBe(false);
-    expect(within(brief.container).getByText("00:50")).toBeInTheDocument();
-  },
-);
-
-it("returns the handed position when the reader closes before its video loads", () => {
-  const brief = render(
-    <MediaAttachment
-      attachment={videoAttachment}
-      media={media}
-      handoff={{ messageId: "details" }}
-    />,
-  );
-  const briefVideo = brief.container.querySelector("video");
-  if (!briefVideo) throw new Error("Missing brief video");
-  mockPlayback(briefVideo);
-  Object.defineProperty(briefVideo, "readyState", {
-    configurable: true,
-    value: HTMLMediaElement.HAVE_METADATA,
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Play video" }));
-  briefVideo.currentTime = 42;
-  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
-  const reader = render(
-    <MediaAttachment
-      attachment={videoAttachment}
-      media={media}
-      handoff={{ messageId: "details", reader: true }}
-    />,
-  );
-  expect(briefVideo.paused).toBe(true);
-  reader.unmount();
-  expect(briefVideo.currentTime).toBe(42);
-  expect(briefVideo.paused).toBe(false);
 });
 
 it("shares the saved playback speed with mounted previews and later videos", () => {

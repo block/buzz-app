@@ -4,6 +4,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { afterEach, expect, it, vi } from "vitest";
 import { eventMentions, searchText } from "../../app/shell/useSearchMessages";
+import { LinkContentContext } from "../conversation/LinkLabelContext";
 import { messagePreview, plainText } from "../notifications/content";
 import { profileTarget } from "../profiles/target";
 import type { Profile } from "../relay/contracts";
@@ -366,6 +367,56 @@ it("names joined channels a link reads as, as the conversation does", () => {
   ).container;
   expect(view).toHaveTextContent("#Beta:x, #Beta. and #Betatomb");
   expect(chips(view)).toEqual(["tomb"]);
+});
+
+it("leads a joined channel's name with the icon its conversation link shows", () => {
+  const joined = {
+    ...session,
+    channels: {
+      list: () => ({
+        channels: [
+          { id: "beta", name: "Beta", channelType: "stream" },
+          { id: "vault", name: "Vault", channelType: "stream", private: true },
+          { id: "plan", name: "Plan", channelType: "solo" },
+          { id: "pat", name: "Pat", channelType: "dm", private: true },
+        ],
+      }),
+      subscribeList: () => () => {},
+    },
+  } as unknown as RelaySession;
+  const body = `buzz://channel/beta buzz://channel/vault buzz://channel/plan buzz://channel/pat buzz://channel/beta/${tomb} buzz://channel/gone`;
+  // Inside a link's hover card, whose link has a label of its own.
+  const view = render(
+    <LinkContentContext value="the hovered link">
+      <PreviewText
+        text={messagePreview(body)}
+        mentions={{ content: body, mentions: [] }}
+        session={joined}
+        channelId="room"
+      />
+    </LinkContentContext>,
+  ).container;
+  expect(
+    [...view.querySelectorAll("[data-link-kind]")].map((name) => [
+      name
+        .querySelector("svg")
+        ?.getAttribute("class")
+        ?.match(/icon-([\w-]+)/)?.[1],
+      name.textContent,
+    ]),
+  ).toEqual([
+    ["hash", "Beta"],
+    ["lock", "Vault"],
+    ["message-circle", "Plan"],
+    ["lock", "Pat"],
+    ["message-2", "Beta"],
+  ]);
+  // Readers hear each "#" once: no icon is read out.
+  expect(view).toHaveTextContent(
+    "#Beta #Vault Plan Pat Beta buzz://channel/gone",
+  );
+  expect(view.querySelector("svg:not([aria-hidden=true])")).toBeNull();
+  expect(view.querySelector("a, button")).toBeNull();
 });
 
 it("reads named identities before the optional mentioned ones, within budget", () => {

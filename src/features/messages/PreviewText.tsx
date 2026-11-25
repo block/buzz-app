@@ -5,8 +5,14 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { LinkLabel } from "../../bundled/links/InlineLink";
+import {
+  LinkAccessibleNameContext,
+  LinkChannelKindContext,
+  LinkContentContext,
+} from "../conversation/LinkLabelContext";
 import { useChannelIdentityNames } from "../identity-names/react";
-import { parseBuzzLink } from "../navigation/buzz-links";
+import { buzzLinkKind, parseBuzzLink } from "../navigation/buzz-links";
 import { spoilerText } from "../notifications/content";
 import { profileKey } from "../profiles/target";
 import { PROFILE_CACHE_BASE } from "../relay/budget";
@@ -20,8 +26,10 @@ import { placeholder } from "./placeholder-characters";
 import type { AgentLibrary } from "../agents/library";
 import { profileMentionNames } from "./profile-mentions";
 import {
+  channelForLink,
   channelLinkLabel,
   ProfileMention,
+  type ReferenceChannel,
   useReferenceDirectory,
 } from "./ReferenceText";
 
@@ -89,16 +97,18 @@ const channelLink = (url: string) => parseBuzzLink(url)?.format === "legacy";
 
 const unsubscribed = () => () => {};
 
-/** A joined channel's name for a preview's link to it. A link to a Solo chat
- * itself reads by the chat's title, with no channel `#`, once the relay has
- * confirmed the chat, as the conversation's link does. */
+/** A joined channel's name for a preview's link to it, behind the icon the
+ * conversation's link shows: the conversation's own label, told the channel's
+ * kind as its link is. A link to a Solo chat itself reads by the chat's
+ * title, with no channel `#`, once the relay has confirmed the chat, as the
+ * conversation's link does. */
 function ChannelName({
   url,
-  label,
+  channel,
   session,
 }: {
   url: string;
-  label: string;
+  channel: ReferenceChannel;
   session: RelaySession | undefined;
 }) {
   const channels = session?.channels;
@@ -113,7 +123,29 @@ function ChannelName({
     },
     () => "",
   );
-  return chat || label;
+  const label = chat || channelLinkLabel(url, [channel]) || channel.name;
+  const kind =
+    chat || channel.channelType === "solo"
+      ? "chat"
+      : channel.private
+        ? "private"
+        : "channel";
+  // A preview in a link's hover card sits inside that link's own label and
+  // name, which are not this channel's.
+  return (
+    <LinkAccessibleNameContext value={undefined}>
+      <LinkContentContext value={undefined}>
+        <LinkChannelKindContext value={kind}>
+          {/* The label shows a channel's "#" as its icon, which is hidden
+            from readers, so they still hear the "#" once. */}
+          {kind !== "chat" &&
+            buzzLinkKind(url) === "channel" &&
+            label.startsWith("#") && <span className="sr-only">#</span>}
+          <LinkLabel href={url} label={label} />
+        </LinkChannelKindContext>
+      </LinkContentContext>
+    </LinkAccessibleNameContext>
+  );
 }
 
 /** Whether `text` can show a chip for `labels`: one reads as its name, or
@@ -303,19 +335,19 @@ export function PreviewText({
       .map((at) => at - start);
     const channel =
       part.target && !profileKey(part.target)
-        ? channelLinkLabel(part.target, directory.channels)
+        ? channelForLink(part.target, directory.channels)
         : undefined;
     if (!part.target || (!profileKey(part.target) && !channel))
       return (
         <MatchedLabel key={start} label={part.text} positions={positions} />
       );
     // A row is its own control and nothing in it opens, so a channel name
-    // reads as the row's own text, not as a link.
+    // reads as the row's own text behind its icon, not as a link.
     const chip = channel ? (
       <ChannelName
         key={start}
         url={part.target}
-        label={channel}
+        channel={channel}
         session={session}
       />
     ) : (

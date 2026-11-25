@@ -607,6 +607,7 @@ function preserveMemberListOffset(list: HTMLElement, offset: number) {
   }
   function rememberOffset() {
     const end = list.scrollHeight - list.clientHeight;
+    if (list.scrollTop < 0 || list.scrollTop > end + 1) return;
     // A shrink can clamp scrollTop before the new layout is measured.
     // Only that shorter end keeps the offset from before the frame.
     if (!(Math.abs(list.scrollTop - end) <= 1 && end < offset))
@@ -1455,7 +1456,7 @@ export function ChannelMembersDialog({
   const pendingMemberTab = useRef<number | null>(null);
   // Clear the previous tab's reserve before measuring the new content. Its
   // bottom can be above the viewport bottom, which scrollHeight alone hides.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: pages, text and accessFilter end the reserve even when the selected group stays the same.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pages, text and accessFilter end the reserve even when the selected group stays the same; shownIntent ends it because the confirmation step replaces the list.
   useLayoutEffect(() => {
     const list = scrollport.current;
     const offset = pendingMemberTab.current;

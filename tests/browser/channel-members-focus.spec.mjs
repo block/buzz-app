@@ -317,6 +317,40 @@ test.describe("member scrolling", () => {
     expect(after.scrollTop).toBeCloseTo(before.scrollTop - 32, 0);
   });
 
+  test("an out-of-range scroll does not change the preserved member position", async ({
+    page,
+  }) => {
+    const { list, before, update } = await openChangingRoster(page);
+    expect(before.scrollTop).toBe(48);
+    const direct = await list.evaluate((element) => {
+      const original = Object.getOwnPropertyDescriptor(element, "scrollTop");
+      const padding = getComputedStyle(element).paddingBottom;
+      try {
+        Object.defineProperty(element, "scrollTop", {
+          configurable: true,
+          get: () => 60,
+        });
+        element.dispatchEvent(new Event("scroll"));
+      } finally {
+        if (original) Object.defineProperty(element, "scrollTop", original);
+        else delete element.scrollTop;
+      }
+      return {
+        beforePadding: padding,
+        padding: getComputedStyle(element).paddingBottom,
+        nativeOffset: element.scrollTop,
+      };
+    });
+    console.log("out-of-range direct " + JSON.stringify({ before, direct }));
+    expect(direct.padding).toBe(direct.beforePadding);
+    expect(direct.nativeOffset).toBe(48);
+    // A later real roster delivery reveals any position saved by the event.
+    await update(30);
+    const later = await measureList(list);
+    console.log("out-of-range later " + JSON.stringify(later));
+    expect(later.scrollTop).toBe(48);
+  });
+
   test("a pointer tab change keeps the tab under the pointer and Tab reaches the first member", async ({
     page,
     browserName,

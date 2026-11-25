@@ -2198,6 +2198,48 @@ function protectedPreview(
   };
 }
 
+it("gives a protected agent none of the user's servers and none of its own, on start and resume", async () => {
+  const f = protectedPreview();
+  const handle = f.handle;
+  if (!handle) throw new Error("Missing protected handle");
+  const mcpServers = signed(
+    ownerKey,
+    approvalTemplate(pubkey, 1, {
+      servers: [
+        {
+          name: "docs",
+          enabled: true,
+          transport: "http",
+          url: "https://docs.test/mcp",
+          headers: [],
+        },
+      ],
+      disabledInherited: [],
+    }),
+  );
+  const turn = (text: string) => ({
+    ...f.delivery(text),
+    agent: handle,
+    config: { ...f.agent.config, mcpServers },
+  });
+  const only = { "company.tools": { command: "secret-tool", enabled: false } };
+  const servers = (method: string) =>
+    (
+      f.worker.sent.filter((wire) => wire.method === method).at(-1)?.params as {
+        config: { mcp_servers: Record<string, unknown> };
+      }
+    ).config.mcp_servers;
+  await f.runtime.run(turn("@Codex first"));
+  await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(1));
+  expect(servers("thread/start")).toMatchObject(only);
+  expect(servers("thread/start")).not.toHaveProperty("docs");
+  await f.worker.complete(0, "FIRST");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledTimes(1));
+  await f.runtime.run(turn("@Codex second"));
+  await vi.waitFor(() => expect(f.worker.starts()).toHaveLength(2));
+  expect(servers("thread/resume")).toMatchObject(only);
+  expect(servers("thread/resume")).not.toHaveProperty("docs");
+});
 it("contains Codex file-tool reads with its captured policy and reviews the captured text", async () => {
   const f = protectedPreview();
   const handle = f.handle;

@@ -39,6 +39,7 @@ it("keeps mutable markers and generic Huddle names ordinary until creator proof 
   expect(owner.accept(receipt())).toBe(true);
   expect(owner.get(room)).toMatchObject({
     huddle: true,
+    unlisted: true,
     parentChannelId: parent,
   });
   owner.accept(info(30, "An admin changed the description"));
@@ -140,4 +141,17 @@ it("restores signed proof with cached membership, without granting write access"
   });
   restored.clearCached();
   expect(restored.get(room)).toBeUndefined();
+});
+it("lists a channel labelled unlisted nowhere, without making it a Huddle", () => {
+  const owner = state();
+  expect(owner.get(room)?.unlisted).toBeUndefined();
+  owner.accept(
+    metadata(relay, room, "Temporary chat", 30, [
+      ["private"],
+      ["t", "stream"],
+      ["t", "buzz.unlisted"],
+    ]),
+  );
+  expect(owner.get(room)).toMatchObject({ unlisted: true });
+  expect(owner.get(room)?.huddle).toBeUndefined();
 });

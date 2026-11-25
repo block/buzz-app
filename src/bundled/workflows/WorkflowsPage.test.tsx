@@ -1301,7 +1301,7 @@ it("does not add a channel-loading banner above retained workflow cards", async 
   expect(screen.queryByText("Reading channels…")).toBeNull();
 });
 
-it.each([{ huddle: true as const }, { metadataPending: true as const }])(
+it.each([{ unlisted: true as const }, { metadataPending: true as const }])(
   "retires an excluded workflow destination even in a partial list: %j",
   async (excluded) => {
     const fixture = mount();

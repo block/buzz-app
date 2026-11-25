@@ -84,7 +84,13 @@ function harness() {
         members: [viewer, scout],
       },
       { id: "dm", name: "DM", channelType: "dm", participants: [friend] },
-      { id: "room", name: "Huddle", channelType: "stream", huddle: true },
+      {
+        id: "room",
+        name: "Huddle",
+        channelType: "stream",
+        huddle: true,
+        unlisted: true,
+      },
     ],
   };
   const profiles = new Map<
@@ -207,7 +213,7 @@ function harness() {
       list = {
         ...list,
         channels: list.channels.map((channel, index) =>
-          index === 0 ? { ...channel, huddle: true } : channel,
+          index === 0 ? { ...channel, huddle: true, unlisted: true } : channel,
         ),
       };
       for (const listener of channelListeners) listener();

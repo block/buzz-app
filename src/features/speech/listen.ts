@@ -232,8 +232,11 @@ export function listenOnDevice(options: ListenOptions): Listening {
 
 const DELTA = "conversation.item.input_audio_transcription.delta";
 const COMPLETED = "conversation.item.input_audio_transcription.completed";
+const FAILED = "conversation.item.input_audio_transcription.failed";
 const COMMIT = JSON.stringify({ type: "input_audio_buffer.commit" });
-/** A commit with nothing new to transcribe; harmless. */
+/** The provider's answer to a commit that had audio: its item. */
+const COMMITTED = "input_audio_buffer.committed";
+/** The answer to a commit with nothing new to transcribe; harmless. */
 const COMMIT_EMPTY = "input_audio_buffer_commit_empty";
 
 type RealtimeEvent = {
@@ -245,7 +248,8 @@ type RealtimeEvent = {
 };
 
 /** The transcript as Realtime items, in the order they started. Deltas add to
- * their item; `completed` replaces it with the final text, which can differ. */
+ * their item; `completed` replaces it with the final text, which can differ.
+ * A committed item counts before its first word. */
 export function transcriptItems() {
   const items: { id: string; text: string; done: boolean }[] = [];
   const item = (id = "") => {
@@ -258,6 +262,10 @@ export function transcriptItems() {
   return {
     /** Applies one event; true when it changed an item. */
     apply(event: RealtimeEvent) {
+      if (event.type === COMMITTED) {
+        item(event.item_id);
+        return false;
+      }
       if (event.type === DELTA) {
         const target = item(event.item_id);
         if (target.done || !event.delta) return false;
@@ -277,8 +285,8 @@ export function transcriptItems() {
         .map((each) => each.text.trim())
         .filter(Boolean)
         .join(" "),
-    /** Every item that has text is final. */
-    settled: () => items.every((each) => each.done || !each.text.trim()),
+    /** Every item is final. */
+    settled: () => items.every((each) => each.done),
   };
 }
 
@@ -292,8 +300,10 @@ export type Connect = (
 
 /** A hosted provider: OpenAI Realtime transcription over WebRTC, with the
  * offer answered by `connect`. Turn detection is the caller's: each pause
- * and the end commit the audio heard since the last commit, which finalizes
- * its words and lets the provider meter what was transcribed. */
+ * and the end commit the audio sent since the last commit, which finalizes
+ * its words and lets the provider meter what was transcribed. The provider
+ * answers every commit, with its item or as empty, so the end waits for
+ * those answers and the items' final words. */
 export function listenHosted(
   options: ListenOptions,
   connect: Connect,
@@ -304,48 +314,73 @@ export function listenHosted(
   let stream: MediaStream | undefined;
   let peer: RTCPeerConnection | undefined;
   let channel: RTCDataChannel | undefined;
-  /** Text arrived since the last commit. */
+  /** Words arrived since the last commit. */
   let uncommitted = false;
-  const commit = () => {
-    if (!uncommitted || channel?.readyState !== "open") return false;
+  /** Commits the provider has not answered yet. */
+  let unanswered = 0;
+  /** Commits the audio sent since the last commit: only once words arrived,
+   * so silence isn't metered, unless `always`. */
+  const commit = (always = false) => {
+    if (channel?.readyState !== "open" || !(always || uncommitted)) return;
     uncommitted = false;
+    unanswered += 1;
     channel.send(COMMIT);
-    return true;
+  };
+  const stopMicrophone = () => {
+    for (const track of stream?.getTracks() ?? []) track.stop();
   };
   const release = () => {
     abort.abort();
     channel?.close();
     peer?.close();
-    for (const track of stream?.getTracks() ?? []) track.stop();
+    stopMicrophone();
   };
   const close = (report: boolean) => run.close(report, run.text(), release);
-  const finish = () => {
+  /** Ending, and every word is in: report them. */
+  const settle = () => {
+    if (run.ending && unanswered <= 0 && items.settled()) close(true);
+  };
+  /** Ends listening once the last commit's words are in. Stop commits
+   * even before the first word, so speech cut short still counts. */
+  const end = (stopped: boolean) => {
     if (run.ended || run.ending) return;
     run.ending = true;
-    // Wait for the words of the last commit, then report them.
-    commit();
-    if (items.settled()) return close(true);
+    stopMicrophone();
+    commit(stopped);
     run.wait(FINAL_MS, () => close(true));
+    settle();
   };
+  const finish = () => end(false);
   const cancel = () => close(false);
   const fail = (failure: SpeechFailure, message?: string) => {
     if (run.fail(failure, message)) close(false);
   };
-  run.onPaused = () => void commit();
+  run.onPaused = () => commit();
   const heard = (event: RealtimeEvent) => {
-    if (!items.apply(event)) return;
-    if (event.type === DELTA) uncommitted = true;
-    run.heard(items.text(), finish, event.type === COMPLETED);
-    if (run.ending && items.settled()) close(true);
+    if (event.type === COMMITTED) unanswered -= 1;
+    if (items.apply(event)) {
+      if (event.type === DELTA) uncommitted = true;
+      run.heard(items.text(), finish, event.type === COMPLETED);
+    }
+    settle();
   };
   run.state("starting");
   void (async () => {
     try {
       // The offer needs no microphone: asking for it and connecting run
       // side by side.
-      peer = new RTCPeerConnection();
+      const connection = new RTCPeerConnection();
+      peer = connection;
+      connection.onconnectionstatechange = () => {
+        if (connection.connectionState === "failed") fail("service_error");
+      };
       const sender = peer.addTransceiver("audio").sender;
       channel = peer.createDataChannel("oai-events");
+      // Transcripts arrive here, so listening starts once it opens.
+      channel.addEventListener("open", () => {
+        run.state("listening");
+        if (!run.ending && !run.text()) run.wait(SILENCE_MS, finish);
+      });
       channel.addEventListener("message", (message) => {
         if (run.ended) return;
         let event: RealtimeEvent;
@@ -355,8 +390,11 @@ export function listenHosted(
           return;
         }
         if (!event || typeof event !== "object") return;
-        if (event.type === "error") {
-          if (event.error?.code === COMMIT_EMPTY) return;
+        if (event.type === "error" && event.error?.code === COMMIT_EMPTY) {
+          unanswered -= 1;
+          return settle();
+        }
+        if (event.type === "error" || event.type === FAILED) {
           return fail(
             "service_error",
             event.error?.message ?? MESSAGES.service_error,
@@ -383,7 +421,8 @@ export function listenHosted(
         .then((media) => {
           stream = media;
           // Stopped meanwhile: release the microphone at once.
-          if (run.ended) for (const track of media.getTracks()) track.stop();
+          if (run.ended || run.ending)
+            for (const track of media.getTracks()) track.stop();
           return media;
         });
       const [media, answer] = await Promise.all([
@@ -397,14 +436,11 @@ export function listenHosted(
       await sender.replaceTrack(media.getAudioTracks()[0] ?? null);
       if (run.ended) return;
       await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
-      if (run.ended) return;
-      run.state("listening");
-      if (!run.ending && !run.text()) run.wait(SILENCE_MS, finish);
     } catch (error) {
       const exception = error instanceof Error || error instanceof DOMException;
       if (exception && error.name === "NotAllowedError") fail("denied");
       else fail("service_error", exception ? error.message : undefined);
     }
   })();
-  return { stop: finish, cancel };
+  return { stop: () => end(true), cancel };
 }

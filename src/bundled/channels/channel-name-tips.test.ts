@@ -43,13 +43,18 @@ describe("channelNameTips", () => {
 describe("normalization and wording", () => {
   const check = (name: string) =>
     channelNameTips({ name, temporary: false, description: "x" }).blockers;
-  it("ignores case and treats _ and spaces as separators", () => {
-    expect(check("Payments-Team")).toEqual([]);
-    expect(check("payments_team")).toEqual([]);
-    expect(check("Proj-Foo")).toEqual([]);
-    expect(check("foo-Proj-x")).toEqual([
+  it("requires lowercase kebab-case", () => {
+    const fix = (name: string) => [
+      `Use lowercase letters and hyphens, like ${name}.`,
+    ];
+    expect(check("Payments-Team")).toEqual(fix("payments-team"));
+    expect(check("payments_team")).toEqual(fix("payments-team"));
+    expect(check("Payments Team")).toEqual(fix("payments-team"));
+    expect(check("Proj-Foo")).toEqual(fix("proj-foo"));
+    expect(check("payments-team")).toEqual([]);
+    expect(check("foo-Proj-x")).toContain(
       "Move proj- to the start, like proj-checkout.",
-    ]);
+    );
   });
   it("requires a topic alongside the type word", () => {
     expect(check("alerts")).not.toEqual([]);

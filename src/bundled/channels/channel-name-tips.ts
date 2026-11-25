@@ -80,6 +80,11 @@ export function channelNameTips(input: NameTipInput): NameTips {
     tips.push("Project channels sort together when proj- comes first.");
     blockers.push("Move proj- to the start, like proj-checkout.");
   }
+  if (name !== name.toLowerCase() || /[\s_]/.test(name)) {
+    const hint = `Use lowercase letters and hyphens, like ${parts.join("-")}.`;
+    tips.push(hint);
+    blockers.push(hint);
+  }
   const wantsTtl = first === "tmp" || first === "proj";
   if (wantsTtl && !input.temporary) {
     tips.push(

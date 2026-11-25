@@ -1749,7 +1749,7 @@ function ChannelWorkspace({
     addressed: !!navigator && addressed?.channelId === currentId,
     channelId: currentId,
     composes: !!composes && current?.channelType !== "solo",
-    threadsInPane: !!threadPane,
+    threadsInPane: false,
   };
   // Read as a visit is applied, so tab changes don't reapply it.
   const routingTabs = useRef(tabState.tabs);

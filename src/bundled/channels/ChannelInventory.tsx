@@ -15,7 +15,6 @@ import { useChatConversions } from "../../features/solo/conversion";
 import { canEditLifetime } from "../../features/solo/Lifetime";
 import { TeamSidebarSections, TeamSidebarSection } from "./TeamSidebarSource";
 import type { WorkspaceSidebarComposition } from "./sidebar-environment";
-import { revealCreatedChannel } from "../../features/channel-navigation/created-channel";
 import {
   newMessage,
   openEmptyChannels,
@@ -58,7 +57,6 @@ import {
   type SidebarFilterMode,
 } from "../../features/relay/sidebar-preferences";
 import type { RelayData } from "../../features/relay/service";
-import type { Agents } from "../../features/agents/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelRoster } from "../../features/relay/react";
 import { useMentionArchives } from "../../features/messages/use-mention-archives";
@@ -148,10 +146,6 @@ import {
   ContributionBoundary,
   contributionKey,
 } from "../../features/conversation/ContributionBoundary";
-import {
-  CreateChannelDialog,
-  type CreateChannelInput,
-} from "./CreateChannelDialog";
 import { writeView } from "../../shared/view-state";
 import { useChannelReadAction } from "./useChannelReadAction";
 import {
@@ -233,7 +227,6 @@ const emptySidebarSections: SidebarSections = {
 export function ChannelInventory({
   relay,
   navigator,
-  agents,
   target,
   queries,
   cached,
@@ -253,7 +246,6 @@ export function ChannelInventory({
 }: {
   relay: RelayData;
   navigator: Navigation;
-  agents?: Agents | undefined;
   target: OpenTarget;
   queries: RelaySession;
   cached: boolean;
@@ -724,8 +716,6 @@ export function ChannelInventory({
         setChatTool({ channel, kind, visit });
     });
   };
-  const [createChannelOpen, setCreateChannelOpen] = useState(false);
-  const createChannelTrigger = useRef<HTMLButtonElement>(null);
   const removedRowFocus = useRef<
     { channelId: string; target: HTMLElement } | undefined
   >(undefined);
@@ -758,8 +748,6 @@ export function ChannelInventory({
     return () => createOrigin.removeEventListener("abort", retire);
   }, [createOrigin]);
 
-  const [initialGroup, setInitialGroup] = useState("");
-  const [initialStarred, setInitialStarred] = useState(false);
   const [workspaceSettings, setWorkspaceSettings] = useState<{
     id: string;
     name: string;
@@ -969,13 +957,6 @@ export function ChannelInventory({
     },
     [viewer, relay, queries, activityAgent, sidebar.list, navigator, scope],
   );
-  const createChannel = async (input: CreateChannelInput) => {
-    const id = await queries.channelCreation.create(input);
-    if (mounted.current)
-      revealCreatedChannel(relay, queries, navigator, input, id, (key) =>
-        sidebar.toggle(key, true),
-      );
-  };
   const rowUnread = useSidebarRowUnread(
     queries.unread,
     JSON.stringify(
@@ -2110,19 +2091,6 @@ export function ChannelInventory({
                             '[data-sidebar-section="solo"] button',
                           )
                         }
-                        createChannel={
-                          section.key === "channels"
-                            ? {
-                                available: queries.channelCreation.available,
-                                open: (trigger) => {
-                                  createChannelTrigger.current = trigger;
-                                  setInitialStarred(false);
-                                  setInitialGroup("");
-                                  setCreateChannelOpen(true);
-                                },
-                              }
-                            : undefined
-                        }
                         createSection={
                           section.key === "solo"
                             ? {
@@ -2745,18 +2713,6 @@ export function ChannelInventory({
             }}
           />
         )}
-        <CreateChannelDialog
-          open={createChannelOpen}
-          onOpenChange={setCreateChannelOpen}
-          onCreate={createChannel}
-          finalFocus={createChannelTrigger}
-          session={queries}
-          agents={agents}
-          destinations={preferences.data?.sections ?? []}
-          initialGroup={initialGroup}
-          initialStarred={initialStarred}
-          groupsReady={preferences.writable}
-        />
       </>
     ),
   });

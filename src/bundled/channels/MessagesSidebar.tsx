@@ -186,7 +186,6 @@ function ScopedSidebar({
           pages={props.children}
           relay={props.relay}
           navigator={props.navigator}
-          agents={props.agents}
           target={props.target}
           queries={connection.session}
           scope={scope}

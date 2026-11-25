@@ -19,7 +19,14 @@ const agent = {
   type: "buzz.claude-code/claude-code",
   place: "here",
   relay: "wss://relay.example",
-  config: { model: "sonnet", instructions: "Keep these" },
+  config: {
+    model: "sonnet",
+    instructions: "Keep these",
+    ...(params.has("custom") && {
+      toolPreset: "custom",
+      toolAllow: `buzz:message,buzz:read,connected:github/get_pull_request,native-tool:skill,native:meta,native:read${params.has("legacy") ? ",native:other" : ""}`,
+    }),
+  },
   attention: {},
   skipped: {},
   timers: {},

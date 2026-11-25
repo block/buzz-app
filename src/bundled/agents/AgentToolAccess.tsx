@@ -6,7 +6,10 @@ import {
   CONNECTED,
   CONNECTED_TOOLS,
   joinToolSelection,
+  NAMED_NATIVE,
+  namedNativeTool,
   NATIVE_TOOLS,
+  OTHER_NATIVE,
   nativeToolAllowed,
   PRESET_INFO,
   presetSelection,
@@ -17,15 +20,17 @@ import {
 import { AgentSaveButton } from "../../features/agents/AgentSaveButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { InlineHeader } from "../../shared/design-system/ui/Header";
+import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PreferenceRow } from "../../shared/design-system/ui/PreferenceRow";
-import { Select } from "../../shared/design-system/ui/Select";
+import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { SwitchPreferenceRow } from "../../shared/design-system/ui/SwitchPreferenceRow";
 
 const same = (left: ToolPolicy, right: ToolPolicy) =>
   JSON.stringify(left) === JSON.stringify(right);
 const SERVER_PREFIX = `${CONNECTED}:`;
+const NAMED_PREFIX = `${NAMED_NATIVE}:`;
 
 /** The shared Tools tab for bundled local harnesses. Tool policy is config on
  * this device, so older app versions' strict synced-settings schema stays valid. */
@@ -39,6 +44,7 @@ export function AgentToolAccess({
   const saved = useMemo(() => toolPolicy(agent.config), [agent.config]);
   const [draft, setDraft] = useState(saved);
   const [server, setServer] = useState("");
+  const [native, setNative] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const form = useId();
@@ -49,6 +55,8 @@ export function AgentToolAccess({
   }, [saved, dirty]);
   const custom = draft.preset === "custom";
   const servers = draft.allow.filter((id) => id.startsWith(SERVER_PREFIX));
+  const named = draft.allow.filter((id) => id.startsWith(NAMED_PREFIX));
+  const catchAll = draft.allow.includes(OTHER_NATIVE.id);
   const choose = (preset: ToolPreset) => {
     setDraft({
       preset,
@@ -69,6 +77,13 @@ export function AgentToolAccess({
     if (!servers.includes(SERVER_PREFIX + name))
       toggle(SERVER_PREFIX + name, true);
     setServer("");
+  };
+  const addNative = () => {
+    const name = native.trim();
+    if (!/^[\w.-]+$/.test(name)) return;
+    const id = namedNativeTool(name);
+    if (!named.includes(id)) toggle(id, true);
+    setNative("");
   };
   const save = async () => {
     if (!dirty || saving) return;
@@ -122,34 +137,41 @@ export function AgentToolAccess({
         title="Tool access"
         subtitle="Choose what this agent can do on this device. Changes apply to its next tool call, including in a turn that is already running."
       />
-      <SettingsGroup>
-        <PreferenceRow
-          title="Role"
-          subtitle={
-            PRESET_INFO.find((preset) => preset.id === draft.preset)
-              ?.description
-          }
-          trailing={
-            <Select
-              label="Tool access role"
-              value={draft.preset}
-              groups={[
-                {
-                  label: "Role",
-                  options: PRESET_INFO.map((preset) => ({
-                    value: preset.id,
-                    label: preset.label,
-                    description: preset.description,
-                  })),
-                },
-              ]}
-              onValueChange={(preset) => choose(preset as ToolPreset)}
-              variant="compact"
-              disabled={saving}
+      <Field
+        label="Tool access role"
+        labelVisibility="hidden"
+        nativeLabel={false}
+      >
+        <RadioGroup
+          aria-label="Tool access role"
+          value={draft.preset}
+          onValueChange={(preset) => choose(preset as ToolPreset)}
+          disabled={saving}
+        >
+          {PRESET_INFO.map((preset) => (
+            <Radio
+              key={preset.id}
+              value={preset.id}
+              variant="card"
+              label={preset.label}
+              description={
+                <span className="grid gap-1">
+                  <span>{preset.description}</span>
+                  <span>
+                    <strong className="text-primary">Can:</strong> {preset.can}
+                  </span>
+                  {preset.cannot && (
+                    <span>
+                      <strong className="text-primary">Can't:</strong>{" "}
+                      {preset.cannot}
+                    </span>
+                  )}
+                </span>
+              }
             />
-          }
-        />
-      </SettingsGroup>
+          ))}
+        </RadioGroup>
+      </Field>
       <p className="m-0 text-body-sm text-subtle">
         Subagents inherit this access. It is not a sandbox: with Shell on,
         commands can use any credentials the agent's process has.
@@ -162,6 +184,31 @@ export function AgentToolAccess({
       <Section title="Native">
         {NATIVE_TOOLS.map((tool) =>
           row(tool, nativeToolAllowed(tool.id, draft)),
+        )}
+        {(draft.preset === "coder" ||
+          catchAll ||
+          saved.allow.includes(OTHER_NATIVE.id)) &&
+          row(OTHER_NATIVE, draft.preset === "coder" || catchAll)}
+        {named.map((id) =>
+          row(
+            {
+              id,
+              label: id.slice(NAMED_PREFIX.length),
+              description: "This one native tool.",
+            },
+            true,
+          ),
+        )}
+        {custom && (
+          <AddRow
+            title="Allow another native tool"
+            subtitle="By the name the harness gives it, such as Skill."
+            label="Native tool name"
+            value={native}
+            onChange={setNative}
+            onAdd={addNative}
+            disabled={saving}
+          />
         )}
       </Section>
       <Section title="Connected">
@@ -182,28 +229,14 @@ export function AgentToolAccess({
           ),
         )}
         {custom && (
-          <PreferenceRow
+          <AddRow
             title="Allow a server or one of its tools"
             subtitle="As the harness names it: github for every mcp__github__ tool, or github/create_issue for one."
-            trailing={
-              <div className="flex items-center gap-2">
-                <Input
-                  aria-label="Connected server or tool"
-                  value={server}
-                  onChange={(event) => setServer(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    addServer();
-                  }}
-                  controlSize="sm"
-                  disabled={saving}
-                />
-                <Button size="sm" onClick={addServer} disabled={saving}>
-                  Add
-                </Button>
-              </div>
-            }
+            label="Connected server or tool"
+            value={server}
+            onChange={setServer}
+            onAdd={addServer}
+            disabled={saving}
           />
         )}
       </Section>
@@ -247,5 +280,54 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <InlineHeader title={title} />
       <SettingsGroup>{children}</SettingsGroup>
     </section>
+  );
+}
+
+function AddRow({
+  title,
+  subtitle,
+  label,
+  value,
+  onChange,
+  onAdd,
+  disabled,
+}: {
+  title: string;
+  subtitle: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onAdd: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <PreferenceRow
+      title={title}
+      subtitle={subtitle}
+      trailing={
+        <div className="flex items-center gap-2">
+          <Input
+            aria-label={label}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              onAdd();
+            }}
+            controlSize="sm"
+            disabled={disabled}
+          />
+          <Button
+            size="sm"
+            aria-label={`Add ${label.toLowerCase()}`}
+            onClick={onAdd}
+            disabled={disabled}
+          >
+            Add
+          </Button>
+        </div>
+      }
+    />
   );
 }

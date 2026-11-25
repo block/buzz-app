@@ -78,15 +78,23 @@ export const NATIVE_TOOLS: readonly Described<NativeCapability>[] = [
   },
   {
     id: "native:meta",
-    label: "Planning and tool search",
-    description: "Discover deferred tools and keep task plans.",
-  },
-  {
-    id: "native:other",
-    label: "Other native tools",
-    description: "Native tools outside the groups above.",
+    label: "Plans and tool search",
+    description:
+      "Keep a checklist of the steps it's working through, and look up tools that load only when needed.",
   },
 ];
+/** Allows every native tool outside the groups above, including ones a harness
+ * adds later. Kept for roles saved with it; new selections name the tool. */
+export const OTHER_NATIVE: Described<"native:other"> = {
+  id: "native:other",
+  label: "Every other native tool",
+  description:
+    "Also allows any native tool not covered above, including tools a harness update adds.",
+};
+/** One native tool outside the groups above, as `native-tool:<name>`. */
+export const NAMED_NATIVE = "native-tool";
+export const namedNativeTool = (name: string) =>
+  `${NAMED_NATIVE}:${canonical(name)}`;
 
 export const BUZZ_TOOL_GROUPS: readonly Described<BuzzCapability>[] = [
   {
@@ -260,29 +268,36 @@ export function hookedToolName(input: unknown): string | undefined {
   return typeof name === "string" ? name : undefined;
 }
 
-export const PRESET_INFO: readonly Described<ToolPreset>[] = [
+/** Saved ids stay as earlier drafts wrote them; only the labels changed. */
+export const PRESET_INFO: readonly (Described<ToolPreset> &
+  Readonly<{ can: string; cannot?: string }>)[] = [
   {
     id: "super-agent",
-    label: "Super-agent",
-    description:
-      "Reads, coordinates, delegates and manages Tasks. Can't change files, run commands or change deliverables.",
+    label: "Orchestrator",
+    description: "Plans and delegates work, and tracks it in Tasks.",
+    can: "Read files and the web, keep plans, find tools, delegate to subagents, message, and manage memory, attention, handoffs and Tasks.",
+    cannot:
+      "Edit files, run commands, use connected tools, or create repositories, canvases, notes or channels.",
   },
   {
     id: "reviewer",
     label: "Reviewer",
-    description:
-      "Inspects files, diffs and the web, and reports findings in Buzz. Can't change files, run commands or delegate.",
+    description: "Inspects work and reports findings.",
+    can: "Read files and the web, keep plans, find tools, read Buzz and send messages.",
+    cannot:
+      "Edit files, run commands, delegate, use connected tools, manage Tasks or memory, or change deliverables.",
   },
   {
     id: "coder",
-    label: "Coder",
-    description:
-      "Edits, tests and prepares PRs with every tool the agent's harness allows.",
+    label: "Builder",
+    description: "Edits, tests and ships changes.",
+    can: "Use every tool the agent's harness allows, including Shell, connected tools and every Buzz tool.",
   },
   {
     id: "custom",
     label: "Custom",
     description: "Only the tools you select below.",
+    can: "Start from a role, then turn individual groups, connected tools and plugin tools on or off.",
   },
 ];
 
@@ -339,6 +354,7 @@ export function presetSelection(preset: ToolPreset): readonly string[] {
   if (preset === "coder")
     return [
       ...NATIVE_TOOLS.map((tool) => tool.id),
+      OTHER_NATIVE.id,
       ...BUZZ_TOOL_GROUPS.map((group) => group.id),
       CONNECTED,
     ];
@@ -467,7 +483,7 @@ export function connectedTool(name: string) {
 }
 
 export function nativeCapability(name: string): NativeCapability {
-  if (NATIVE_TOOLS.some((tool) => tool.id === name))
+  if ([...NATIVE_TOOLS, OTHER_NATIVE].some((tool) => tool.id === name))
     return name as NativeCapability;
   if (/^mcp__/i.test(name)) return "native:other";
   const normalized = canonical(name);
@@ -491,7 +507,7 @@ export function nativeToolAllowed(
         `${CONNECTED}:${connected.server}`,
         CONNECTED,
       ])
-    : allows(policy, [nativeCapability(name)]);
+    : allows(policy, [namedNativeTool(name), nativeCapability(name)]);
 }
 
 /** The group a Buzz or plugin tool belongs to. */

@@ -118,6 +118,24 @@ it("allows one connected tool while another on the same server stays off", () =>
   expect(nativeToolAllowed("mcp__linear__get_issue", custom)).toBe(false);
 });
 
+it("allows one named native tool without the catch-all", () => {
+  const named = { toolPreset: "custom", toolAllow: "native-tool:skill" };
+  expect(nativeToolAllowed("Skill", named)).toBe(true);
+  expect(nativeToolAllowed("SlashCommand", named)).toBe(false);
+  expect(
+    nativeToolAllowed("Skill", {
+      toolPreset: "custom",
+      toolAllow: "native:read",
+    }),
+  ).toBe(false);
+  expect(
+    nativeToolAllowed("SlashCommand", {
+      toolPreset: "custom",
+      toolAllow: "native:other",
+    }),
+  ).toBe(true);
+});
+
 it("classifies every built-in Buzz tool explicitly", () => {
   expect(
     sessionTools()

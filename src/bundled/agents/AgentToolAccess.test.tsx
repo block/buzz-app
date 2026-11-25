@@ -45,12 +45,9 @@ it("saves a Custom selection that starts from the chosen role", async () => {
   } as unknown as Agents;
   render(<AgentToolAccess agents={agents} agent={agent} />);
 
-  const role = screen.getByRole("combobox", { name: "Tool access role" });
-  await user.click(role);
-  await user.click(await screen.findByRole("option", { name: /^Reviewer/ }));
+  await user.click(screen.getByRole("radio", { name: "Reviewer" }));
   expect(screen.getByRole("switch", { name: "Shell" })).not.toBeChecked();
-  await user.click(role);
-  await user.click(await screen.findByRole("option", { name: /^Custom/ }));
+  await user.click(screen.getByRole("radio", { name: "Custom" }));
   expect(screen.getByRole("switch", { name: "Files: read" })).toBeChecked();
   await user.click(screen.getByRole("switch", { name: "tasks_update" }));
   await user.type(

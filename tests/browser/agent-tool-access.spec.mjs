@@ -48,18 +48,17 @@ test("starts Custom from a role, adjusts tools and a connected server, then save
 }) => {
   const { errors } = watchPageErrors(page);
   await page.goto(url);
-  const role = page.getByRole("combobox", { name: "Tool access role" });
-  await role.click();
-  await page.getByRole("option", { name: /^Super-agent/ }).click();
+  await page.getByRole("radio", { name: "Orchestrator" }).click();
   await expect(page.getByRole("switch", { name: "Shell" })).not.toBeChecked();
   await expect(page.getByRole("switch", { name: "Subagents" })).toBeChecked();
-  await role.click();
-  await page.getByRole("option", { name: /^Custom/ }).click();
+  await page.getByRole("radio", { name: "Custom" }).click();
   await page.getByRole("switch", { name: "Subagents" }).click();
   await page
     .getByRole("textbox", { name: "Connected server or tool" })
     .fill("github");
-  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Add connected server or tool" })
+    .click();
   await expect(page.getByRole("switch", { name: "github" })).toBeChecked();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect
@@ -74,6 +73,22 @@ test("starts Custom from a role, adjusts tools and a connected server, then save
       },
     });
   expect(errors).toEqual([]);
+});
+
+test("keeps a saved catch-all grant visible beside named native tools", async ({
+  page,
+}) => {
+  await page.goto(`${url}?custom&legacy`);
+  await expect(
+    page.getByRole("switch", { name: "Every other native tool" }),
+  ).toBeChecked();
+  await page.getByRole("textbox", { name: "Native tool name" }).fill("Skill");
+  await page.getByRole("button", { name: "Add native tool name" }).click();
+  await expect(page.getByRole("switch", { name: "skill" })).toBeChecked();
+  await page.getByRole("switch", { name: "Every other native tool" }).click();
+  await expect(
+    page.getByRole("switch", { name: "Every other native tool" }),
+  ).not.toBeChecked();
 });
 
 for (const { name, width, height, query } of [
@@ -94,7 +109,7 @@ for (const { name, width, height, query } of [
     await page.setViewportSize({ width, height });
     await page.goto(`${url}${query}`);
     await expect(
-      page.getByRole("combobox", { name: "Tool access role" }),
+      page.getByRole("radiogroup", { name: "Tool access role" }),
     ).toBeVisible();
     await expect(
       page.getByRole("switch", { name: "Files: read", exact: true }),

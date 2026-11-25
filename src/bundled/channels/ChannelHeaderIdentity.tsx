@@ -1,6 +1,7 @@
 import type { ComponentProps } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
+import { LockIcon } from "../../shared/design-system/icons";
 import { SurfaceButton } from "../../shared/design-system/ui/SurfaceButton";
 import { SoloChatTitle } from "../../features/solo/SoloChatTitle";
 import { ChannelMemberAvatars } from "./ChannelMemberAvatars";
@@ -49,6 +50,7 @@ export function ChannelHeaderIdentity({
   name,
   detail,
   access,
+  private: isPrivate,
   ...props
 }: Omit<
   ComponentProps<typeof SurfaceButton>,
@@ -61,6 +63,8 @@ export function ChannelHeaderIdentity({
   detail?: string | undefined;
   /** From `memberAccess`, so the name matches the dialog it opens. */
   access: ReturnType<typeof memberAccess>;
+  /** Shows the lock the sidebar shows for a private channel. */
+  private?: boolean | undefined;
 }) {
   return (
     <SurfaceButton
@@ -78,6 +82,7 @@ export function ChannelHeaderIdentity({
         />
       </span>
       <span className={styles.label}>
+        {isPrivate && <LockIcon size="1rem" aria-hidden="true" />}
         <span className={`${styles.name} text-body-sm`}>
           {access === soloAccess || access === soloReadOnlyAccess ? (
             <SoloChatTitle

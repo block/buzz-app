@@ -36,7 +36,10 @@ export class StartupCacheOverBudget extends Error {
   }
 }
 
-type RosterRemovalLookup = (channel: string) => RosterRemoval | undefined;
+type RosterChanges = {
+  removalFor: ((channel: string) => RosterRemoval | undefined) | undefined;
+  includesGrant: ((channel: string) => boolean) | undefined;
+};
 
 export interface HeadPersistence {
   read(): Promise<SavedHead[]>;
@@ -47,7 +50,7 @@ export interface HeadPersistence {
     patch: SavedStartup,
     revoked?: boolean,
     ifUnchanged?: boolean,
-    removalFor?: RosterRemovalLookup,
+    changes?: RosterChanges,
   ): Promise<void>;
   /** Signed kind 0 and verified-profile (30382) events mirrored from the profile directory. */
   readProfiles?(): Promise<unknown[]>;
@@ -118,20 +121,20 @@ function discoveryVersion(discovery: SavedStartup["discovery"]): string | null {
   ]);
 }
 
+function channelOf(event: Partial<EventData> | null | undefined) {
+  if (!Array.isArray(event?.tags)) return undefined;
+  if (event.kind !== 39000 && event.kind !== 39002 && event.kind !== 9007)
+    return undefined;
+  const name = event.kind === 9007 ? "h" : "d";
+  return event.tags.find(
+    (entry) => Array.isArray(entry) && entry[0] === name,
+  )?.[1];
+}
+
 function pruneRevokedRosters(
   discovery: NonNullable<SavedStartup["discovery"]>,
-  removalFor: RosterRemovalLookup,
+  removalFor: NonNullable<RosterChanges["removalFor"]>,
 ) {
-  if (!Array.isArray(discovery.events)) return;
-  const channelOf = (event: Partial<EventData> | null | undefined) => {
-    if (!Array.isArray(event?.tags)) return undefined;
-    if (event.kind !== 39000 && event.kind !== 39002 && event.kind !== 9007)
-      return undefined;
-    const name = event.kind === 9007 ? "h" : "d";
-    return event.tags.find(
-      (entry) => Array.isArray(entry) && entry[0] === name,
-    )?.[1];
-  };
   const peerVersions = new Map<string, Pick<EventData, "id" | "created_at">>();
   for (const value of discovery.events) {
     const event = value as Partial<EventData> | null;
@@ -164,6 +167,49 @@ function pruneRevokedRosters(
     const channel = channelOf(value as Partial<EventData> | null);
     return !channel || !removed.has(channel);
   });
+}
+
+function mergeGrantedRosters(
+  peer: unknown[],
+  local: unknown[],
+  includesGrant: NonNullable<RosterChanges["includesGrant"]>,
+) {
+  const grants = new Map<string, EventData>();
+  for (const value of local) {
+    const event = value as EventData;
+    const channel = channelOf(event);
+    if (channel && includesGrant(channel))
+      grants.set(`${event.kind}:${channel}`, event);
+  }
+  if (!grants.size) return;
+  for (const value of peer) {
+    const event = value as Partial<EventData> | null;
+    const channel = channelOf(event);
+    if (
+      !channel ||
+      typeof event?.id !== "string" ||
+      typeof event.created_at !== "number"
+    )
+      continue;
+    const key = `${event.kind}:${channel}`;
+    const grant = grants.get(key);
+    if (
+      grant &&
+      (event.id === grant.id ||
+        newer<Pick<EventData, "id" | "created_at">>(grant, {
+          id: event.id,
+          created_at: event.created_at,
+        }) !== grant)
+    )
+      grants.delete(key);
+  }
+  if (!grants.size) return;
+  const events = peer.filter((value) => {
+    const event = value as Partial<EventData> | null;
+    const channel = channelOf(event);
+    return !channel || !grants.has(`${event?.kind}:${channel}`);
+  });
+  return [...events, ...grants.values()];
 }
 
 export function createHeadPersistence(
@@ -242,6 +288,10 @@ export function createHeadPersistence(
         const known = new Map(budget?.rows.map((row) => [row.key, row]));
         if (updated) known.set(updated.key, updated);
         then(store.getAllKeys(), (keys) => {
+          if (updated && !keys.includes(updated.key)) {
+            keys.push(updated.key);
+            keys.sort(indexedDB.cmp.bind(indexedDB));
+          }
           const rows: RowBudget[] = [];
           const missing: string[] = [];
           for (const key of keys) {
@@ -354,12 +404,8 @@ export function createHeadPersistence(
           }),
         STARTUP,
       ),
-    async writeStartup(
-      patch,
-      revoked = false,
-      ifUnchanged = false,
-      removalFor,
-    ) {
+    async writeStartup(patch, revoked = false, ifUnchanged = false, changes) {
+      const removalFor = changes?.removalFor;
       let version: string | null | undefined;
       const saved = await transact<boolean | "oversized" | undefined>(
         "readwrite",
@@ -367,6 +413,8 @@ export function createHeadPersistence(
           then(store.get(scope), (row) => {
             const stored = row?.data as SavedStartup | undefined;
             let data: SavedStartup = { ...stored, ...patch };
+            let withRemovals: SavedStartup | undefined;
+            let mergedGrants = false;
             let superseded = false;
             if (
               patch.discovery &&
@@ -386,36 +434,64 @@ export function createHeadPersistence(
                 if (
                   !peer ||
                   peer.relayAuthor !== patch.discovery.relayAuthor ||
-                  !removalFor
+                  !changes ||
+                  !Array.isArray(peer.events)
                 )
                   return done(undefined);
-                const events = pruneRevokedRosters(peer, removalFor);
+                const pruned =
+                  removalFor && pruneRevokedRosters(peer, removalFor);
+                const granted =
+                  changes.includesGrant &&
+                  mergeGrantedRosters(
+                    pruned ?? peer.events,
+                    patch.discovery.events,
+                    changes.includesGrant,
+                  );
+                const events = granted ?? pruned;
                 if (!events) return done(undefined);
-                // Carry the revocation into the peer's row. The local snapshot
-                // lost the compare and cannot replace the peer's other entries.
+                // The local snapshot lost the compare. Apply only new evidence
+                // to the peer's row, which may contain other channels.
                 superseded = true;
                 data = { ...stored, discovery: { ...peer, events } };
+                if (granted && pruned)
+                  withRemovals = {
+                    ...stored,
+                    discovery: { ...peer, events: pruned },
+                  };
+                mergedGrants = !!granted;
               }
               if (observedDiscovery === undefined) observedDiscovery = current;
             }
-            let bytes = byteSize(data);
-            if (bytes > MAX_BYTES && revoked) {
-              // An oversized replacement must still remove the revoked roster.
-              delete data.discovery;
-              bytes = byteSize(data);
-            }
-            if (bytes > MAX_BYTES) return done("oversized");
-            if (patch.discovery) version = discoveryVersion(data.discovery);
             const meta = {
               key: scope,
-              bytes,
+              bytes: byteSize(data),
               savedAt: superseded ? row.savedAt : Date.now(),
             };
-            store.put({ ...meta, data });
             readStartupBudget(
               store,
               then,
               (rows) => {
+                if (mergedGrants) {
+                  const room = rows.reduce(
+                    (room, row) =>
+                      row === meta || isMirror(row) ? room : room - row.bytes,
+                    MAX_BYTES,
+                  );
+                  // A grant cannot displace another roster or block a removal.
+                  if (meta.bytes > room) {
+                    if (!withRemovals) return done(undefined);
+                    data = withRemovals;
+                    meta.bytes = byteSize(data);
+                  }
+                }
+                if (meta.bytes > MAX_BYTES && revoked) {
+                  // An oversized replacement must still remove the revoked roster.
+                  delete data.discovery;
+                  meta.bytes = byteSize(data);
+                }
+                if (meta.bytes > MAX_BYTES) return done("oversized");
+                if (patch.discovery) version = discoveryVersion(data.discovery);
+                store.put({ ...meta, data });
                 const kept = pruneStartupBudget(store, rows).includes(meta);
                 if (superseded && !kept) version = null;
                 done(superseded ? undefined : kept);

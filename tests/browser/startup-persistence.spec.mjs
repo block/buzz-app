@@ -412,6 +412,8 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     const pendingOmission = roster(relay, "pending-omission", [viewer]);
     const replacement = roster(relay, "peer-only", [viewer]);
     const newerGrant = roster(relay, "retried", [viewer], 1_700_000_002);
+    const freshGrant = roster(relay, "fresh", [viewer]);
+    const freshMetadata = metadata(relay, "fresh", "New channel");
     const staleMetadata = metadata(relay, "first", "Revoked channel");
     const startup = (events) => ({
       discovery: { savedAt: Date.now(), relayAuthor: relay.pubkey, events },
@@ -476,6 +478,11 @@ test("startup retries honor the roster read before an abort and preserve peer wr
         channels.acceptDiscovery([active, retried]);
       },
       omitRetried: () => channels.acceptDiscovery([], new Set(["active"])),
+      grantAndOmit: () =>
+        channels.acceptDiscovery(
+          [freshGrant, freshMetadata],
+          new Set(["active", "fresh"]),
+        ),
       replace: () => peer.writeStartup(startup([replacement])),
       replaceWithStaleMembership: () =>
         peer.writeStartup(
@@ -577,6 +584,7 @@ test("startup retries honor the roster read before an abort and preserve peer wr
       originalIds: events.map((event) => event.id),
       replacementId: replacement.id,
       newerGrantId: newerGrant.id,
+      freshIds: [freshGrant.id, freshMetadata.id],
       omittedIds: [omitted.id, omittedMetadata.id],
       pendingOmissionId: pendingOmission.id,
       updatedId: updated.id,
@@ -599,6 +607,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   let afterNewerRemoval;
   let afterOlderRemoval;
   let afterUnrelatedRemoval;
+  let afterSettledRemoval;
+  let afterGrantAndOmit;
+  let afterGrantAndClear;
   let repeatReads;
   let aborts;
   try {
@@ -788,6 +799,27 @@ test("startup retries honor the roster read before an abort and preserve peer wr
     afterUnrelatedRemoval = await page.evaluate(() =>
       window.startupRetry.cachedIds(),
     );
+    await page.evaluate(() =>
+      window.startupRetry.acceptRemoval("retried", 1_700_000_003),
+    );
+    afterSettledRemoval = await page.evaluate(() =>
+      window.startupRetry.cachedIds(),
+    );
+
+    afterGrantAndOmit = await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.seedRemovalOrder();
+      await startup.replaceWithNewerGrant();
+      startup.grantAndOmit();
+      return startup.cachedIds();
+    });
+    afterGrantAndClear = await page.evaluate(async () => {
+      const startup = window.startupRetry;
+      await startup.seedRemovalOrder();
+      await startup.clear();
+      startup.grantAndOmit();
+      return startup.cachedIds();
+    });
   } finally {
     aborts = await page.evaluate(() => window.startupRetry.cleanup());
   }
@@ -824,4 +856,9 @@ test("startup retries honor the roster read before an abort and preserve peer wr
   const newerPeerIds = [firstRetry.replacementId, firstRetry.newerGrantId];
   expect.soft(afterOlderRemoval).toEqual(newerPeerIds);
   expect.soft(afterUnrelatedRemoval).toEqual(newerPeerIds);
+  expect.soft(afterSettledRemoval).toEqual([firstRetry.replacementId]);
+  expect
+    .soft(afterGrantAndOmit)
+    .toEqual([...newerPeerIds, ...firstRetry.freshIds]);
+  expect.soft(afterGrantAndClear).toBeUndefined();
 });

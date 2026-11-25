@@ -2027,8 +2027,9 @@ export function createChannelStore(
     discoverySave = undefined;
     if (!persistence?.writeStartup || !discovery || !transport || disposed)
       return;
-    const removals = discovery.beginRosterSave();
-    const urgent = revoked || discoveryRevocationPending || !!removals;
+    const changes = discovery.beginRosterSave();
+    const urgent =
+      revoked || discoveryRevocationPending || !!changes?.removalFor;
     discoveryRevocationPending = urgent;
     const events = discovery.savedEvents();
     const key = [transport.relayAuthor, ...events.map(({ id }) => id)].join();
@@ -2056,15 +2057,15 @@ export function createChannelStore(
           },
         },
         urgent,
-        guardedRepeat || !!removals,
-        removals?.removalFor,
+        guardedRepeat || !!changes?.removalFor,
+        changes,
       )
       .then(() => {
-        removals?.settle();
+        changes?.settle();
         if (savedDiscovery === saving) discoveryRevocationPending = false;
       })
       .catch((error) => {
-        if (error instanceof StartupRosterSuperseded) removals?.settle();
+        if (error instanceof StartupRosterSuperseded) changes?.settle();
         if (savedDiscovery !== saving) return;
         // Unchanged oversized snapshots follow the normal refresh interval.
         if (!urgent && error instanceof StartupCacheOverBudget) return;

@@ -423,15 +423,18 @@ export function ReactionRowButton({
       previewId={previewId}
       preview={
         <>
-          reacted{" "}
-          {reactions.map((reaction) => (
-            <ActivityReactionGlyph
-              key={JSON.stringify([reaction.content, reaction.emoji?.url])}
-              reaction={reaction}
-              session={session}
-            />
-          ))}{" "}
-          to{" "}
+          {/* The hidden label already names the reaction. */}
+          <span aria-hidden>
+            reacted{" "}
+            {reactions.map((reaction) => (
+              <ActivityReactionGlyph
+                key={JSON.stringify([reaction.content, reaction.emoji?.url])}
+                reaction={reaction}
+                session={session}
+              />
+            ))}{" "}
+            to{" "}
+          </span>
           <PreviewText
             text={preview}
             mentions={item.message}

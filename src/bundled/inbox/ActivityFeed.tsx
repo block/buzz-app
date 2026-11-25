@@ -22,6 +22,7 @@ import { ChecksIcon, EnvelopeOpenIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
 import { EmptyState } from "../../shared/design-system/ui/EmptyState";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { useToastNotification } from "../../shared/design-system/ui/Toast";
 import { shortRelativeTimestamp } from "../../shared/relative-timestamp";
 import {
@@ -82,6 +83,7 @@ export function ActivityFeed({
   unreadFirst = false,
   showTime = true,
   compact = false,
+  onSeeAll,
 }: {
   session: RelaySession;
   scope: NavigationScope;
@@ -97,6 +99,9 @@ export function ActivityFeed({
   onOpen?: () => void;
   /** Unread conversations lead, each part newest first. */
   unreadFirst?: boolean;
+  /** Opens the rest when there are more rows than the feed shows; its row
+   * ends the list. */
+  onSeeAll?: () => void;
   /** Whether rows show when their latest message was sent. */
   showTime?: boolean;
   /** One line per conversation, without the message. */
@@ -242,7 +247,7 @@ export function ActivityFeed({
     if (heldOpen && !held.seen) setHeld({ key: held.key, seen: true });
     else if (!heldOpen && held.seen) setHeld(undefined);
   }, [held, heldOpen]);
-  const rows = [...groups.entries()]
+  const sorted = [...groups.entries()]
     .map(([key, { row, unread }]) => ({ ...row, key, unread }))
     .sort(
       (a, b) =>
@@ -252,8 +257,9 @@ export function ActivityFeed({
           : 0) ||
         b.createdAt - a.createdAt ||
         a.id.localeCompare(b.id),
-    )
-    .slice(0, maxRows);
+    );
+  const rows = sorted.slice(0, maxRows);
+  const more = sorted.length > rows.length;
   const profileKey = withMentionedIds(
     [
       scope.viewer,
@@ -590,6 +596,11 @@ export function ActivityFeed({
               </li>
             );
           })}
+          {more && onSeeAll && (
+            <li>
+              <NavigationItem label="See all activity" onClick={onSeeAll} />
+            </li>
+          )}
         </ul>
       ) : loading ? (
         [0, 1, 2].map((row) => (

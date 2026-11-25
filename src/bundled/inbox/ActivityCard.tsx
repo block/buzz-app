@@ -4,6 +4,7 @@ import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import { ActivityFeed, type FeedDestination } from "./ActivityFeed";
 import { useActivityLayout } from "./activity-layout";
+import { inboxRouteTarget } from "./route";
 
 /** Activity in a sidebar card: one list, unread first, then newest first. */
 export function ActivityCard({
@@ -36,6 +37,9 @@ export function ActivityCard({
       unreadFirst
       compact={layout === "compact"}
       showTime={false}
+      // Past the card's 50 rows, the rest are on the Activity page, which
+      // stays open to links even when its sidebar entry is hidden.
+      onSeeAll={() => void navigator.open(inboxRouteTarget({}))}
     />
   );
 }

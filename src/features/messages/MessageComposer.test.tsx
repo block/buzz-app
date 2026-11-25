@@ -64,6 +64,7 @@ import type {
   ComposerAnnotator,
   ComposerAnnotatorProps,
   InlineRenderer,
+  SendTransform,
 } from "../conversation/contracts";
 import { MENTION_RESOLVE_TIMEOUT_MS } from "../conversation/completion";
 import { bundledContribution } from "../../plugins/provenance";
@@ -150,6 +151,7 @@ vi.mock(
 composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
+let sendTransforms: readonly Contribution<SendTransform>[] = [];
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const noArchives = Object.freeze({ status: "ready" as const, archived: [] });
@@ -208,6 +210,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  sendTransforms = [];
   for (const owner of owners.splice(0)) owner.dispose();
   Reflect.deleteProperty(navigator, "locks");
   vi.unstubAllGlobals();
@@ -476,6 +479,10 @@ function mount(
       extensions: {
         tools: { snapshot: () => tools, subscribe: () => () => {} },
         inline: { snapshot: () => inline, subscribe: () => () => {} },
+        sendTransforms: {
+          snapshot: () => sendTransforms,
+          subscribe: () => () => {},
+        },
         completions: {
           snapshot: () => completions,
           subscribe(listener) {
@@ -737,6 +744,413 @@ it("keeps a slash command draft when its handler refuses", async () => {
   );
   expect(h.input()).toHaveValue("/leave");
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+function sendTransform(
+  transform: SendTransform["transform"],
+  options: Partial<SendTransform> = {},
+): Contribution<SendTransform> {
+  const id = options.id ?? "fixture";
+  return {
+    id,
+    key: `test/${id}`,
+    pluginId: "test",
+    revision: "1",
+    title: "Fixture transform",
+    matches: (draft) => draft.text.startsWith("/md "),
+    transform,
+    ...options,
+  };
+}
+
+it("sends a plugin's rewrite to the typed recipients it keeps, and no one else", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(async () => ({
+    text: "HELLO",
+    mentions: [second],
+  }));
+  sendTransforms = [
+    sendTransform(transform, { matches: (draft) => draft.mentions.length > 1 }),
+  ];
+  const h = mount();
+  act(() => {
+    expect(h.commands().insertMention(first)).toBe(true);
+    expect(h.commands().insertMention(second)).toBe(true);
+  });
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.slice(1, 3)).toEqual([
+    "HELLO",
+    [second.pubkey],
+  ]);
+  expect(transform.mock.calls[0]?.[0].mentions).toEqual([first, second]);
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+});
+
+it("fails a send whose transform adds a recipient the person did not address", async () => {
+  sendTransforms = [
+    sendTransform(({ text }) => ({ text, mentions: [first, second] }), {
+      matches: () => true,
+    }),
+  ];
+  const h = mount();
+  act(() => {
+    h.commands().insertMention(second);
+  });
+  const typed = h.input().value;
+  h.submit();
+  expect(
+    await screen.findByText(/test: returned a recipient you did not address/),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue(typed);
+});
+
+it("consumes a message a plugin transforms to nothing", async () => {
+  const react = vi.fn();
+  sendTransforms = [
+    sendTransform(
+      async (_, { session }) => {
+        react(session);
+        return { text: "  ", mentions: [] };
+      },
+      { matches: (draft) => draft.text === "+:tada:" },
+    ),
+  ];
+  const h = mount();
+  h.fill("+:tada:");
+  h.submit();
+  await waitFor(() => expect(h.input()).toHaveValue(""));
+  expect(react).toHaveBeenCalledExactlyOnceWith(h.session);
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("keeps the draft and shows why when a plugin blocks a send", async () => {
+  sendTransforms = [
+    sendTransform(async () => {
+      throw new Error("Markdown needs a body.");
+    }),
+  ];
+  const h = mount();
+  h.fill("/md x");
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Markdown needs a body.",
+  );
+  expect(h.input()).toHaveValue("/md x");
+
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("runs only the lowest-ordered matching transform", async () => {
+  sendTransforms = [
+    sendTransform(() => ({ text: "default", mentions: [] }), { id: "a" }),
+    sendTransform(() => ({ text: "specific", mentions: [] }), {
+      id: "b",
+      order: -10,
+    }),
+    sendTransform(() => ({ text: "unmatched", mentions: [] }), {
+      id: "c",
+      order: -20,
+      matches: () => false,
+    }),
+  ];
+  const h = mount();
+  h.fill("/md hi");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "specific", [], []);
+});
+
+it("does not send a transform's result after the draft changes", async () => {
+  let release!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(release).toBeTypeOf("function"));
+  h.fill("/md slow, edited");
+  await act(async () => release({ text: "late", mentions: [] }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/md slow, edited");
+});
+
+it("transforms a thread reply and replies with the result", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(({ text }) => ({
+    text: text.slice(4).toUpperCase(),
+    mentions: [],
+  }));
+  sendTransforms = [sendTransform(transform)];
+  const h = mount({ threadRootId: "root" });
+  h.fill("/md thread");
+  h.submit();
+  await waitFor(() => expect(h.messages.reply).toHaveBeenCalledOnce());
+  expect(h.messages.reply).toHaveBeenCalledWith(
+    "channel",
+    "root",
+    "THREAD",
+    [],
+    [],
+  );
+  expect(transform.mock.calls[0]?.[1]).toMatchObject({
+    channelId: "channel",
+    threadRootId: "root",
+  });
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("frees the composer when a send is cancelled under a transform that ignores its signal", async () => {
+  let started = false;
+  sendTransforms = [
+    sendTransform(
+      () =>
+        new Promise<never>(() => {
+          started = true;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md stuck");
+  h.submit();
+  await waitFor(() => expect(started).toBe(true));
+  h.retarget({ disabled: true });
+  h.retarget({ disabled: false });
+  await act(async () => {});
+  h.fill("plain");
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "plain", [], []);
+});
+
+it("cancels a pending transform on Esc and nothing else, keeping the draft and freeing Send", async () => {
+  let signal: AbortSignal | undefined;
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      (_draft, context) =>
+        new Promise((resolve) => {
+          signal = context.signal;
+          finish = resolve;
+        }),
+    ),
+  ];
+  const outside = vi.fn();
+  const h = mount();
+  document.addEventListener("keydown", outside);
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(signal).toBeDefined());
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeDisabled();
+  fireEvent.keyDown(h.input(), { key: "Escape" });
+  await waitFor(() => expect(send).toBeEnabled());
+  document.removeEventListener("keydown", outside);
+  expect(outside).not.toHaveBeenCalled();
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish({ text: "late", mentions: [] }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(h.input()).toHaveValue("/md slow");
+});
+
+it("cancels a pending transform when the composer is hidden, and drops its late result", async () => {
+  let signal: AbortSignal | undefined;
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      (_draft, context) =>
+        new Promise((resolve) => {
+          signal = context.signal;
+          finish = resolve;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(signal).toBeDefined());
+  h.retarget({ shown: false });
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish({ text: "late", mentions: [] }));
+  expect(h.messages.send).not.toHaveBeenCalled();
+  h.retarget({ shown: true });
+  expect(h.input()).toHaveValue("/md slow");
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+});
+
+it("drops a late result once its plugin is no longer registered", async () => {
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  sendTransforms = [
+    sendTransform(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  ];
+  const h = mount();
+  h.fill("/md slow");
+  h.submit();
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  sendTransforms = [];
+  await act(async () => finish({ text: "late", mentions: [] }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "test: was turned off before it finished",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("/md slow");
+});
+
+it("spends the draft when a plugin that committed is interrupted, and does not offer a resend", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const run = vi.fn<SendTransform["transform"]>((_draft, { commit }) => {
+      commit();
+      return new Promise<never>(() => {});
+    });
+    sendTransforms = [sendTransform(run)];
+    const h = mount();
+    h.fill("/md react");
+    h.submit();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(h.input()).toHaveValue("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    h.fill("/md react");
+    h.submit();
+    expect(run).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("restores the typed draft, not the rewrite, when a rewritten send fails to publish", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(async () => ({
+    text: "REWRITTEN",
+    mentions: [],
+  }));
+  sendTransforms = [sendTransform(transform)];
+  const h = mount();
+  h.fill("/md typed");
+  h.messages.send.mockImplementationOnce(() => {
+    throw new Error("outbox full");
+  });
+  h.submit();
+  expect(await screen.findByRole("alert")).toHaveTextContent("outbox full");
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "REWRITTEN", [], []);
+  expect(h.input()).toHaveValue("/md typed");
+  expect(transform).toHaveBeenCalledOnce();
+});
+
+it("retries a queued rewritten send with the rewrite and without running the transform again", async () => {
+  localStorage.setItem("buzz-follow-up-behavior.v1", "queue");
+  const transform = vi.fn<SendTransform["transform"]>(async ({ mentions }) => ({
+    text: "REWRITTEN",
+    mentions,
+  }));
+  sendTransforms = [sendTransform(transform, { matches: () => true })];
+  const h = mount();
+  h.setLibrary([{ pubkey: first.pubkey, name: "Honey" }]);
+  const listeners = new Set<() => void>();
+  let activity = {
+    status: "unavailable",
+    records: [],
+    turns: [],
+    typing: [],
+    local: [
+      {
+        agent: first.pubkey,
+        channelId: "channel",
+        messageId: "previous",
+        state: "working",
+        scope: "scope",
+        threadRootId: "",
+        startedAt: 1,
+      },
+    ],
+  };
+  const channelList = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "solo",
+        creator: "viewer",
+        members: ["viewer", first.pubkey],
+      },
+    ],
+  };
+  h.retarget({
+    ownSoloConversation: true,
+    requireMention: true,
+    session: {
+      ...h.session,
+      viewer: "viewer",
+      channels: { ...h.session.channels, list: () => channelList },
+      channelWrites: {
+        refreshMembership: async () => channelList.channels[0],
+        addAgents: vi.fn(),
+      },
+      agentActivity: {
+        activate: () => () => {},
+        snapshot: () => activity,
+        subscribe: (listener: () => void) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    } as unknown as RelaySession,
+  });
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertText("typed");
+  });
+  await choicesLoaded();
+  h.submit();
+  await screen.findByRole("region", { name: "Queued follow-ups" });
+  expect(h.messages.send).not.toHaveBeenCalled();
+  h.messages.send.mockImplementationOnce(() => {
+    throw new Error("outbox full");
+  });
+  activity = {
+    ...activity,
+    local: activity.local.map((row) => ({ ...row, state: "done" })),
+  };
+  act(() => {
+    for (const listener of listeners) listener();
+  });
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(await screen.findByText("outbox full")).toBeVisible();
+  await h.user.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(2));
+  for (const call of h.messages.send.mock.calls)
+    expect(call.slice(0, 3)).toEqual(["channel", "REWRITTEN", [first.pubkey]]);
+  expect(transform).toHaveBeenCalledOnce();
+});
+
+it("sends an unclaimed message synchronously, as without any transform", () => {
+  sendTransforms = [
+    sendTransform(() => ({ text: "x", mentions: [] }), {
+      matches: () => false,
+    }),
+  ];
+  const h = mount();
+  h.fill("hello");
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "hello",
+    [],
+    [],
+  );
 });
 
 it("publishes typing for text edits but not caret-driven token expansion", () => {
@@ -9882,6 +10296,27 @@ it("seeds a Berd draft's pill with the default agent once, never its text", asyn
   );
 });
 
+it("leaves a new chat's first message to its submission, untransformed", async () => {
+  const transform = vi.fn<SendTransform["transform"]>(() => ({
+    text: "rewritten",
+    mentions: [],
+  }));
+  sendTransforms = [sendTransform(transform, { matches: () => true })];
+  const { h, submit } = mountBerdDraft({
+    pubkey: second.pubkey,
+    name: "Selected",
+  });
+  await screen.findByRole("status", {
+    name: "Sending to Selected. Change agents",
+  });
+  h.fill("/md hello");
+  await choicesLoaded();
+  h.submit();
+  await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  expect(submit.mock.calls[0]?.[0]).toMatchObject({ text: "/md hello" });
+  expect(transform).not.toHaveBeenCalled();
+});
+
 it("a Berd draft with nobody addressed needs a tag to send", async () => {
   const { h, submit } = mountBerdDraft();
   const send = screen.getByRole("button", { name: "Send message" });
@@ -14788,6 +15223,7 @@ function mountSoloAgents(
 ) {
   if (options.main) setDefaultAgent("scope", options.main);
   const members = options.members ?? [first.pubkey, second.pubkey];
+  const addAgents = vi.fn();
   const list = {
     ...soloList,
     channels: [{ ...soloList.channels[0], members }],
@@ -14824,7 +15260,7 @@ function mountSoloAgents(
           channelType: "solo",
           members: options.refreshed ?? members,
         }),
-        addAgents: vi.fn(),
+        addAgents,
       },
     } as unknown as RelaySession,
   });
@@ -14833,7 +15269,7 @@ function mountSoloAgents(
   if (!options.unpicked) act(() => h.commands().audience?.only([ada]));
   const sendingTo = (names: string) =>
     screen.getByRole("status", { name: `Sending to ${names}. Change agents` });
-  return { h, ada, bea, sendingTo };
+  return { h, ada, bea, sendingTo, addAgents };
 }
 
 it("a draft that opens with a tag is for that agent alone, and deleting the tag brings the pill's agents back", async () => {
@@ -15299,6 +15735,38 @@ it("a person who joined since the pill was shown stops its untagged send", async
     await screen.findByText("Someone joined this chat. Tag an agent to send."),
   ).toBeVisible();
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it("lets a plugin drop a Solo toolbar agent but not add another", async () => {
+  let tagged: readonly { pubkey: string; name: string }[] = [];
+  sendTransforms = [
+    sendTransform(() => ({ text: "hi", mentions: tagged }), {
+      matches: () => true,
+    }),
+  ];
+  const { h, sendingTo, addAgents } = mountSoloAgents();
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Ada", isAgent: true }],
+      [second.pubkey, { name: "Bea", isAgent: true }],
+    ]),
+  );
+  h.fill("hello");
+  tagged = [{ pubkey: "c".repeat(64), name: "Cy" }];
+  h.submit();
+  expect(
+    await screen.findByText(/test: returned a recipient you did not address/),
+  ).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(addAgents).not.toHaveBeenCalled();
+  expect(h.input()).toHaveValue("hello");
+  expect(sendingTo("Ada")).toBeInTheDocument();
+
+  tagged = [{ pubkey: first.pubkey, name: "Whoever the plugin says" }];
+  h.submit();
+  await waitFor(() => expect(h.messages.send).toHaveBeenCalledOnce());
+  expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
+  await waitFor(() => expect(h.input()).toHaveValue(""));
 });
 
 it("a member who joined with no loaded profile also stops the untagged send", async () => {
@@ -17104,6 +17572,71 @@ it("inserts a bundled provider's chip as one atom and signs it into the sent mes
   // Nothing is left for a later, unrelated send.
   expect(signedMessageTokenTags()).toEqual([]);
 });
+
+it.each([
+  ["leaves the text as typed", "Use /notes ", [true]],
+  ["rewrites the text", "Rewritten", []],
+])(
+  "signs a chip into a send only when a transform %s",
+  async (_name, text, signedChips) => {
+    const publishes: ComposerCompletionProps["publish"][] = [];
+    function Completion({ publish }: ComposerCompletionProps) {
+      useLayoutEffect(() => {
+        publishes.push(publish);
+      }, [publish]);
+      return null;
+    }
+    const provider: Contribution<ComposerCompletion> = {
+      id: "folders",
+      key: "buzz.mentions/folders",
+      pluginId: "buzz.mentions",
+      revision: "bundled",
+      title: "Folder",
+      match: ({ text: typed, start }) => mentionQuery(typed, start),
+      component: Completion,
+    };
+    bundledContribution(provider);
+    sendTransforms = [
+      sendTransform(() => ({ text, mentions: [] }), { matches: () => true }),
+    ];
+    const providers = [provider];
+    const empty: [] = [];
+    const none = { snapshot: () => empty, subscribe: () => () => {} };
+    const h = mount();
+    h.retarget({
+      extensions: {
+        tools: none,
+        inline: none,
+        completions: { snapshot: () => providers, subscribe: () => () => {} },
+        sendTransforms: {
+          snapshot: () => sendTransforms,
+          subscribe: () => () => {},
+        },
+      },
+    });
+    h.fill("Use @no");
+    const folder = { kind: "folder", id: "/notes", label: "@notes" };
+    act(() => {
+      publishes.at(-1)?.({
+        items: [{ id: "notes", label: "notes", edit: { token: folder } }],
+      } as unknown as CompletionResult);
+    });
+    fireEvent.keyDown(h.input(), { key: "Enter" });
+    let signed: string[][] = [];
+    h.messages.send.mockImplementation(() => {
+      signed = signedMessageTokenTags();
+      return "channel-id";
+    });
+    h.submit();
+    await waitFor(() => expect(h.messages.send).toHaveBeenCalledTimes(1));
+    expect(h.messages.send.mock.calls[0]?.[1]).toBe(text);
+    expect(signed).toEqual(
+      signedChips.length
+        ? [[MESSAGE_TOKENS_TAG, JSON.stringify([folder])]]
+        : [],
+    );
+  },
+);
 
 /** A mention provider the test publishes for, over the real `@` syntax. */
 function mountPendingMention(

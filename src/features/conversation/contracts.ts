@@ -306,6 +306,7 @@ export type ConversationExtensions = Readonly<{
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
+  sendTransforms?: ContributionReader<SendTransform>;
   links?: ContributionReader<LinkRenderer>;
   linkPreviews?: ContributionReader<LinkPreviewRenderer>;
   codeBlocks?: ContributionReader<CodeBlockRenderer>;
@@ -491,6 +492,76 @@ export type ComposerCompletion = Readonly<{
     context: CompletionContext,
   ): CompletionQuery | null;
   component: ComponentType<ComposerCompletionProps>;
+}>;
+
+/** A new message as the composer would send it: Markdown and the people the
+ * person addressed (`mentions`), which need not all appear in the text. A
+ * transform returns both fields, `mentions: []` for none. A plugin is handed
+ * a frozen copy: editing it in place throws and never changes who is notified. */
+export type SendDraft = Readonly<{
+  text: string;
+  mentions: readonly Readonly<{ pubkey: string; name: string }>[];
+}>;
+export type SendTransformContext = Readonly<{
+  session: RelaySession;
+  channelId: string;
+  threadRootId?: string | undefined;
+  /** Aborts when the person presses Esc or Cancel while the transform is
+   * pending, when the composer is disabled, hidden or retargeted to another
+   * reply or media comment, when it unmounts, when the plugin is turned off or
+   * reloaded, and after 10 seconds, when the send fails with
+   * `<plugin id>: timed out`. A result that arrives after an abort is dropped.
+   * Pass it to anything slow; a write already queued is not undone. */
+  signal: AbortSignal;
+  /** Call right before the first write (react, edit, publish). From then on,
+   * a timeout, Esc, hiding or a throw no longer fails the send as retryable:
+   * the message counts as consumed, the draft clears, nothing is offered for
+   * resending and a late result is dropped. A timeout, Esc or hide shows
+   * `<plugin id>: still finishing`; a throw shows its error, with the draft
+   * still cleared. Calling it again does nothing. It throws once the send was
+   * aborted or has finished, so a lookup that outlives Esc, Cancel or the
+   * timeout cannot start its write: call it right before the write, after any await.
+   * Without it, a transform that returns normally behaves as before. */
+  commit(): void;
+}>;
+/**
+ * Rewrites, consumes or blocks a new message typed in a composer, once, before
+ * it is published. One transform runs per send; see `MatchOrder`. Edits,
+ * attachments, GIFs, forwards, chat cards, unresolved chips, agent sends,
+ * huddle windows and the composers that start a conversation (New Message,
+ * a new Solo chat) never reach it.
+ *
+ * Returned `mentions` must be a subset, by pubkey, of `draft.mentions`: a
+ * transform can drop people the person addressed but never add one, and a
+ * returned pubkey outside the draft fails the send with `<plugin id>: ...`.
+ * Those people are then tagged as typed mentions are: someone outside the
+ * channel is a reference or asks to be invited, and a 1:1 DM tags its agent
+ * partner whatever is returned. When a sent message drops any of them, the
+ * person sees "`title` didn't notify Alex" under the composer, naming them as
+ * they typed them; a rewrite that keeps everyone shows nothing.
+ *
+ * If it throws, returns something invalid, times out or is cancelled before it
+ * calls `commit()`, nothing is sent and the typed draft stays. If it returns and the outbox accepts the
+ * message but the relay refuses it, the rewritten message stays in the thread
+ * with Retry, and Retry does not run the transform again.
+ */
+export type SendTransform = Readonly<{
+  id: string;
+  title: string;
+  order?: MatchOrder<SendDraft> | undefined;
+  /** Pure and synchronous; a throwing matcher is skipped. */
+  matches(draft: SendDraft): boolean;
+  /** Resolve the message to send instead; empty text with no mentions sends
+   * nothing and clears the draft. Throw to keep the draft and show the error.
+   * A transform that writes (edits, reacts) should consume the message and
+   * call `commit()` right before the write, so a timeout cannot leave the
+   * draft to be sent again after the write already happened. A rewrite should
+   * not write, since a prompt or refusal after it can leave the draft unsent
+   * and a second Send runs it again. */
+  transform(
+    draft: SendDraft,
+    context: SendTransformContext,
+  ): SendDraft | Promise<SendDraft>;
 }>;
 
 /** A conversation a page opens in a tab beside its own. `messageId` opens at

@@ -1,0 +1,175 @@
+import type { Contribution } from "../../plugins/contributions";
+import type {
+  SendDraft,
+  SendTransform,
+  SendTransformContext,
+} from "../conversation/contracts";
+
+/** How long a plugin may take to transform a send before it fails. */
+const SEND_TRANSFORM_TIMEOUT_MS = 10_000;
+
+/** What a transform decided. `draft` is the message to send instead, or `null`
+ * when it consumed the draft. `committed`: the plugin called `commit()`, so it
+ * may have written; then a timeout, an abort or a failure no longer fails the
+ * send. The draft is spent, with `notice` (still finishing) or `error` (it
+ * threw) to tell the person. `dropped`: the plugin left out people the person
+ * addressed; the notice to show once the message is sent. */
+export type Transformed = Readonly<{
+  draft: SendDraft | null;
+  committed: boolean;
+  notice?: string;
+  error?: string;
+  dropped?: string;
+}>;
+
+/** "<plugin> didn't notify Alex", "... Alex and Sam" or "... Alex and 2
+ * others". `names` are the person's own mention names, never the plugin's. */
+export function droppedNotice(title: string, names: readonly string[]) {
+  const [first, second] = names;
+  const who =
+    names.length === 1
+      ? first
+      : names.length === 2
+        ? `${first} and ${second}`
+        : `${first} and ${names.length - 1} others`;
+  return `${title} didn't notify ${who}`;
+}
+
+/** What plugins are handed: a frozen copy, so nothing they do to it changes
+ * the recipients the host validates their result against. */
+export function frozenDraft(draft: SendDraft): SendDraft {
+  return Object.freeze({
+    text: draft.text,
+    mentions: Object.freeze(
+      draft.mentions.map(({ pubkey, name }) => Object.freeze({ pubkey, name })),
+    ),
+  });
+}
+
+/** The message `winner` sends instead, or `null` when it consumed the draft.
+ * Its mentions are the draft's own entries, in the order it returned them: a
+ * plugin can keep or drop the recipients the person addressed, never add one.
+ * Before the plugin commits, it throws, naming the plugin, to block the send,
+ * and settles when the send is aborted or the plugin takes longer than 10
+ * seconds, even if it ignores `signal`; a late result is discarded. A late
+ * `commit()` throws, so a write never starts after that. After it commits,
+ * none of that throws: see `Transformed`. */
+export async function transformSend(
+  winner: Contribution<SendTransform>,
+  draft: SendDraft,
+  context: Omit<SendTransformContext, "commit">,
+): Promise<Transformed> {
+  const { signal } = context;
+  signal.throwIfAborted();
+  // The recipients the person addressed, fixed before any plugin code runs.
+  const original = frozenDraft(draft);
+  // The plugin's signal also aborts when it times out.
+  const attempt = new AbortController();
+  const state = { committed: false, settled: false };
+  const commit = () => {
+    if (state.committed) return;
+    // An aborted or finished attempt must not start a write.
+    attempt.signal.throwIfAborted();
+    if (state.settled) throw new Error("The send already finished.");
+    state.committed = true;
+  };
+  const timedOut = new Error("timed out");
+  let stop = () => {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    stop = () => {
+      attempt.abort(signal.reason);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", stop, { once: true });
+    timer = setTimeout(() => {
+      attempt.abort(timedOut);
+      reject(timedOut);
+    }, SEND_TRANSFORM_TIMEOUT_MS);
+  });
+  try {
+    const result: unknown = await Promise.race([
+      (async () =>
+        winner.transform(original, {
+          ...context,
+          signal: attempt.signal,
+          commit,
+        }))(),
+      aborted,
+    ]);
+    signal.throwIfAborted();
+    const sent = sendDraft(result);
+    if (!sent) throw new Error(`${winner.title} returned an invalid message.`);
+    const typed = new Map(original.mentions.map((item) => [item.pubkey, item]));
+    if (sent.keys.some((key) => !typed.has(key)))
+      throw new Error(
+        "returned a recipient you did not address. A transform can keep or drop the people you tagged, not add anyone.",
+      );
+    const mentions = [...new Set(sent.keys)].flatMap((key) => {
+      const item = typed.get(key);
+      return item ? [item] : [];
+    });
+    // Recipients need a message: Buzz never publishes one without text.
+    if (!sent.text.trim()) {
+      if (mentions.length)
+        throw new Error(`${winner.title} returned an invalid message.`);
+      return { draft: null, committed: state.committed };
+    }
+    const kept = new Set(mentions);
+    const dropped = [...typed.values()].filter((item) => !kept.has(item));
+    return {
+      draft: { text: sent.text, mentions },
+      committed: state.committed,
+      ...(dropped.length
+        ? {
+            dropped: droppedNotice(
+              winner.title,
+              dropped.map((item) => item.name),
+            ),
+          }
+        : {}),
+    };
+  } catch (reason) {
+    if (state.committed) {
+      // It may have written already, so the message counts as sent.
+      if (reason === timedOut || signal.aborted)
+        return {
+          draft: null,
+          committed: true,
+          notice: `${winner.pluginId}: still finishing`,
+        };
+      return {
+        draft: null,
+        committed: true,
+        error: failure(winner, reason),
+      };
+    }
+    if (signal.aborted) throw reason;
+    throw new Error(failure(winner, reason));
+  } finally {
+    state.settled = true;
+    clearTimeout(timer);
+    signal.removeEventListener("abort", stop);
+  }
+}
+
+const failure = (
+  winner: Pick<Contribution<SendTransform>, "pluginId">,
+  reason: unknown,
+) =>
+  `${winner.pluginId}: ${reason instanceof Error ? reason.message : String(reason)}`;
+
+function sendDraft(
+  value: unknown,
+): { text: string; keys: readonly string[] } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { text, mentions } = value as Record<string, unknown>;
+  if (typeof text !== "string" || !Array.isArray(mentions)) return undefined;
+  // Read each key once: a getter or Proxy must not change after validation.
+  const keys = mentions.map(
+    (item: unknown) => ((item ?? {}) as Record<string, unknown>).pubkey,
+  );
+  return keys.every((key): key is string => typeof key === "string")
+    ? { text, keys }
+    : undefined;
+}

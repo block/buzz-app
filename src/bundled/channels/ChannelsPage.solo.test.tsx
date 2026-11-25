@@ -42,6 +42,11 @@ import {
   type ReadShortcut,
 } from "./ChannelsPage";
 import { SoloWorkspaces } from "./SoloWorkspaces";
+import type {
+  ConversationExtensions,
+  SendTransform,
+} from "../../features/conversation/contracts";
+import { sendTransformPlugin } from "../../features/conversation/send-transform-testing";
 import type { RelaySession } from "../../features/relay/session";
 import type { RegisteredSidebarRows } from "../../features/channel-navigation/sidebar-rows-service";
 import type { ReadTarget } from "../../features/relay/read-state-model";
@@ -61,8 +66,10 @@ vi.mock("../../features/relay/solo-admins", async (original) => ({
   >(async (_profiles, _viewer, keys) => new Set(keys)),
 }));
 const owners: ReturnType<typeof createRelaySession>[] = [];
-afterEach(() => {
+const transformPlugins: { dispose(): Promise<void> }[] = [];
+afterEach(async () => {
   cleanup();
+  for (const plugin of transformPlugins.splice(0)) await plugin.dispose();
   localStorage.clear();
   for (const owner of owners.splice(0)) owner.dispose();
   vi.unstubAllGlobals();
@@ -94,7 +101,10 @@ function fixture({
   emptyHistory = false,
   restored = false,
   muted,
+  conversation,
 }: {
+  /** The conversation extensions the page's composers read, in place of none. */
+  conversation?: ConversationExtensions;
   /** Channels the viewer muted; enables sidebar mute writes when given. */
   muted?: readonly string[];
   sidebarRows?: readonly RegisteredSidebarRows[];
@@ -504,7 +514,7 @@ function fixture({
           requestOpen: () => false,
           handleOpenRequests: () => () => {},
         }}
-        extensions={extensions}
+        extensions={conversation ?? extensions}
         navigation={navigation}
         navigator={navigator}
         archive={archive}
@@ -2774,4 +2784,68 @@ it("claims no lost membership of a Solo chat", async () => {
   act(() => f.remove("private"));
   await f.accessSettled();
   expect(screen.queryByText(noLongerMember)).toBeNull();
+});
+
+async function installed(...args: SendTransform[]) {
+  const plugin = await sendTransformPlugin(...args);
+  transformPlugins.push(plugin);
+  return plugin;
+}
+
+it("sends a plugin's rewrite from a channel, and lets /leave and /mute run before any transform", async () => {
+  const run = vi.fn(({ text }: { text: string }) => ({
+    text: text.toUpperCase(),
+    mentions: [],
+  }));
+  const { service } = await installed({
+    id: "shout",
+    title: "Shout",
+    matches: () => true,
+    transform: run,
+  });
+  const f = fixture({
+    type: "stream",
+    canLeave: true,
+    muted: [],
+    conversation: service,
+  });
+  f.mountWithToasts();
+  const editor = await screen.findByRole("textbox", {
+    name: "Message Planning",
+  });
+  const user = userEvent.setup();
+  await user.type(editor, "/leave{Enter}");
+  const dialog = await screen.findByRole("dialog", {
+    name: "Leave channel: Planning",
+  });
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.type(editor, "/mute{Enter}");
+  expect(await screen.findByText("Muted Planning")).toBeInTheDocument();
+  expect(run).not.toHaveBeenCalled();
+  expect(f.send).not.toHaveBeenCalled();
+
+  await user.type(editor, "hello{Enter}");
+  await waitFor(() => expect(f.send).toHaveBeenCalledOnce());
+  expect(f.send.mock.calls[0]?.slice(0, 3)).toEqual([id, "HELLO", []]);
+  expect(run).toHaveBeenCalledOnce();
+});
+
+it("lets a plugin consume a message in a Solo chat without posting or starting a turn", async () => {
+  const { service } = await installed({
+    id: "react",
+    title: "React",
+    matches: ({ text }) => text === "+:tada:",
+    transform: (_draft, { commit }) => {
+      commit();
+      return { text: "", mentions: [] };
+    },
+  });
+  const f = fixture({ conversation: service });
+  f.mount();
+  const editor = await screen.findByRole("textbox", {
+    name: "Message your agents",
+  });
+  await userEvent.setup().type(editor, "+:tada:{Enter}");
+  await waitFor(() => expect(editor).toHaveValue(""));
+  expect(f.send).not.toHaveBeenCalled();
 });

@@ -13,6 +13,7 @@ import {
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { composerDOMFixture } from "../messages/composer-testing";
 import type { ComposerInputElement } from "../messages/composer-dom";
+import { writeView } from "../../shared/view-state";
 import { PublishRejected } from "../relay/outbox";
 import type { RelayEvent } from "../relay/events";
 import { useChannelWindow } from "../relay/react";
@@ -30,6 +31,8 @@ import { ConversationPresentation } from "./ConversationPresentation";
 import { EmbeddedConversation } from "./EmbeddedThread";
 import { PluginRuntime } from "../../plugins/runtime";
 import { ConversationService } from "./service";
+import type { SendTransform } from "./contracts";
+import { sendTransformPlugin } from "./send-transform-testing";
 
 // The host's review viewer has its own suites; this proves which card's review opens.
 vi.mock("../messages/MediaReviewViewer", () => ({
@@ -50,9 +53,12 @@ vi.mock("../messages/MediaReviewViewer", () => ({
 composerDOMFixture();
 const owners: ReturnType<typeof createRelaySession>[] = [];
 const runtimes: Context[] = [];
+const plugins: { dispose(): Promise<void> }[] = [];
 afterEach(async () => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
+  for (const plugin of plugins.splice(0)) await plugin.dispose();
   for (const owner of owners.splice(0)) owner.dispose();
   for (const root of runtimes.splice(0)) await root.fiber.dispose();
 });
@@ -65,7 +71,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function fixture() {
+async function fixture(...transforms: SendTransform[]) {
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -76,6 +82,8 @@ async function fixture() {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   const relay = keypair(),
     viewer = keypair();
+  // Channel members a draft can address.
+  const people = [keypair(), keypair(), keypair()];
   const posts = {
     alpha: message(viewer, "alpha", "Alpha note", 1700000000),
     beta: message(viewer, "beta", "Beta note", 1700000001),
@@ -95,7 +103,10 @@ async function fixture() {
         if (filter.kinds?.includes(39000) || filter.kinds?.includes(39002))
           return (["alpha", "beta"] as const).flatMap((id) => [
             metadata(relay, id, id === "alpha" ? "Alpha" : "Beta"),
-            roster(relay, id, [viewer.pubkey]),
+            roster(relay, id, [
+              viewer.pubkey,
+              ...(id === "alpha" ? people.map((person) => person.pubkey) : []),
+            ]),
           ]);
         if (filter.kinds?.includes(9))
           return (["alpha", "beta"] as const)
@@ -151,7 +162,12 @@ async function fixture() {
   const root = new Context();
   new PluginRuntime(root, async () => ({ apply() {} }));
   runtimes.push(root);
-  const service = new ConversationService(root);
+  // A plugin that registers transforms owns the service the composers read.
+  const installed = transforms.length
+    ? await sendTransformPlugin(...transforms)
+    : undefined;
+  if (installed) plugins.push(installed);
+  const service = installed?.service ?? new ConversationService(root);
   const scope = `wss://fixture.test:${viewer.pubkey}`;
   let connection: { status: string; session: RelaySession; scope: string } = {
     status: "ready",
@@ -254,10 +270,16 @@ async function fixture() {
   }
   return {
     session,
+    scope,
+    people: people.map(({ pubkey }, index) => ({
+      pubkey,
+      name: ["Alex", "Sam", "Kim"][index] ?? pubkey,
+    })),
     service,
     posts,
     reads: { ...reads, reserve },
     publications,
+    disable: () => installed?.disable(),
     Overview,
     loseAccess() {
       connection = { ...connection, status: "connecting" };
@@ -406,4 +428,220 @@ it("opens one card's media review over the page and ignores reviews after access
   fireEvent.click(card("beta").getByRole("button", { name: "Review media" }));
   expect(screen.queryByRole("region", { name: "Media review" })).toBeNull();
   for (const spy of Object.values(h.reads)) expect(spy).not.toHaveBeenCalled();
+});
+
+function typeInto(id: string, text: string) {
+  const field = card(id).getByRole<ComposerInputElement>("textbox");
+  act(() => {
+    field.focus();
+    field.value = text;
+    field.setSelectionRange(text.length, text.length);
+  });
+  fireEvent.input(field);
+  return field;
+}
+const send = (id: string) =>
+  fireEvent.submit(
+    card(id).getByRole("textbox").closest("form") as HTMLFormElement,
+  );
+const plugin = (
+  transform: SendTransform["transform"],
+  matches: SendTransform["matches"] = ({ text }) => text.startsWith("!"),
+): SendTransform => ({ id: "fixture", title: "Fixture", matches, transform });
+
+it("sends a plugin's rewrite through the page's composer to that card's channel", async () => {
+  const h = await fixture(
+    plugin(({ text }) => ({ text: text.slice(1).toUpperCase(), mentions: [] })),
+  );
+  render(<h.Overview />);
+  const field = typeInto("beta", "!shout");
+  send("beta");
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  const post = h.publications[0];
+  assert.exists(post);
+  expect(post.event.kind).toBe(9);
+  expect(post.event.content).toBe("SHOUT");
+  expect(post.event.tags).toContainEqual(["h", "beta"]);
+  await act(async () => post.result.resolve());
+  await waitFor(() => expect(field).toHaveValue(""));
+});
+
+it("lets a plugin that edited and committed consume the message, even when it stalls", async () => {
+  let runs = 0;
+  const h = await fixture(
+    plugin(
+      async (_draft, { session, commit }) => {
+        runs++;
+        const row = session.channels.window("alpha").rows[0];
+        assert.exists(row);
+        commit();
+        session.messages.edit(row.id, "Alpha corrected", row.id);
+        return new Promise<never>(() => {});
+      },
+      ({ text }) => text.startsWith("s/"),
+    ),
+  );
+  render(<h.Overview />);
+  const field = typeInto("alpha", "s/note/corrected/");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  send("alpha");
+  await act(async () => {});
+  expect(h.publications).toHaveLength(1);
+  expect(h.publications[0]?.event.kind).toBe(40003);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  vi.useRealTimers();
+  // Spent, not retryable: the command is gone and no second edit goes out.
+  expect(field).toHaveValue("");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(runs).toBe(1);
+  expect(h.publications).toHaveLength(1);
+});
+
+it("keeps the draft and names the plugin when a transform that never committed times out", async () => {
+  const h = await fixture(plugin(() => new Promise<never>(() => {})));
+  render(<h.Overview />);
+  const field = typeInto("alpha", "!slow");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  send("alpha");
+  await act(async () => {});
+  expect(
+    card("alpha").getByRole("button", { name: "Send message" }),
+  ).toBeDisabled();
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  vi.useRealTimers();
+  expect(card("alpha").getByRole("alert")).toHaveTextContent(
+    "test.send: timed out",
+  );
+  expect(field).toHaveValue("!slow");
+  expect(h.publications).toHaveLength(0);
+});
+
+it("sends the page's composers untransformed once the plugin is disabled", async () => {
+  const h = await fixture(plugin(() => ({ text: "REWRITTEN", mentions: [] })));
+  render(<h.Overview />);
+  h.disable();
+  await waitFor(() =>
+    expect(h.service.sendTransforms.snapshot()).toHaveLength(0),
+  );
+  typeInto("alpha", "!plain");
+  send("alpha");
+  await waitFor(() => expect(h.publications).toHaveLength(1));
+  expect(h.publications[0]?.event.content).toBe("!plain");
+});
+
+it("cancels a pending transform the moment its plugin is turned off, keeping the draft", async () => {
+  let signal: AbortSignal | undefined;
+  const h = await fixture(
+    plugin((_draft, context) => {
+      signal = context.signal;
+      return new Promise<never>(() => {});
+    }),
+  );
+  render(<h.Overview />);
+  const field = typeInto("alpha", "!slow");
+  send("alpha");
+  await waitFor(() => expect(signal).toBeDefined());
+  h.disable();
+  await waitFor(() => expect(signal?.aborted).toBe(true));
+  expect(card("alpha").getByRole("alert")).toHaveTextContent(
+    "test.send: was turned off before it finished",
+  );
+  expect(field).toHaveValue("!slow");
+  expect(
+    card("alpha").getByRole("button", { name: "Send message" }),
+  ).toBeEnabled();
+  expect(h.publications).toHaveLength(0);
+});
+
+it("spends the draft when a plugin that committed is turned off, even if it then returns", async () => {
+  let finish!: (draft: { text: string; mentions: [] }) => void;
+  let signal: AbortSignal | undefined;
+  const h = await fixture(
+    plugin((_draft, context) => {
+      signal = context.signal;
+      context.commit();
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    }),
+  );
+  render(<h.Overview />);
+  const field = typeInto("alpha", "!write");
+  send("alpha");
+  await waitFor(() => expect(signal).toBeDefined());
+  h.disable();
+  await waitFor(() => expect(field).toHaveValue(""));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => finish({ text: "rewritten", mentions: [] }));
+  expect(card("alpha").queryByRole("alert")).toBeNull();
+  expect(field).toHaveValue("");
+  expect(h.publications).toHaveLength(0);
+});
+
+/** Alpha's draft addresses the first `typed` of Alex, Sam and Kim; the plugin
+ * keeps the first `kept` of them, under names of its own. */
+async function sendKeeping(typed: number, kept: number, text = "rewritten") {
+  const h = await fixture(
+    plugin(
+      (draft) => ({
+        text,
+        mentions: draft.mentions
+          .slice(0, kept)
+          .map(({ pubkey }) => ({ pubkey, name: "Mallory" })),
+      }),
+      () => true,
+    ),
+  );
+  const people = h.people.slice(0, typed);
+  const tags = people.map((person) => `@${person.name}`).join(" ");
+  writeView(h.scope, "draft:alpha", {
+    text: `${tags} hello`,
+    recipients: people.map((person) => {
+      const start = tags.indexOf(`@${person.name}`);
+      return { ...person, start, end: start + person.name.length + 1 };
+    }),
+  });
+  render(<h.Overview />);
+  send("alpha");
+  return h;
+}
+
+it("tells the person which recipient a transform left out, by the name they typed", async () => {
+  await sendKeeping(1, 0);
+  expect(
+    await card("alpha").findByText("Fixture didn't notify Alex"),
+  ).toBeVisible();
+});
+
+it("counts the rest when a transform leaves out several recipients", async () => {
+  await sendKeeping(3, 0);
+  expect(
+    await card("alpha").findByText("Fixture didn't notify Alex and 2 others"),
+  ).toBeVisible();
+});
+
+it("says nothing when a transform rewrites the text but keeps everyone", async () => {
+  await sendKeeping(2, 2);
+  await card("alpha").findByText("rewritten");
+  expect(card("alpha").queryByText(/didn't notify/)).toBeNull();
+});
+
+it("says nothing when a transform consumes the message", async () => {
+  const h = await sendKeeping(2, 0, "");
+  await waitFor(() =>
+    expect(card("alpha").getByRole("textbox")).toHaveValue(""),
+  );
+  expect(h.publications).toHaveLength(0);
+  expect(card("alpha").queryByText(/didn't notify/)).toBeNull();
+});
+
+it("clears the notice when the person types again", async () => {
+  await sendKeeping(1, 0);
+  await card("alpha").findByText("Fixture didn't notify Alex");
+  typeInto("alpha", "next");
+  expect(card("alpha").queryByText(/didn't notify/)).toBeNull();
 });

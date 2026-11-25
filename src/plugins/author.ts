@@ -125,7 +125,10 @@ export type {
   MessageAction,
   IdentityMark,
   OutgoingMessage,
+  SendDraft,
   SendGate,
+  SendTransform,
+  SendTransformContext,
   TargetOpener,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";

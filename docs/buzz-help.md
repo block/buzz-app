@@ -252,6 +252,16 @@ one only if you trust its author with your account and your computer. An optiona
 publishers and can include plugins you sign with your own Buzz identity. Manage
 the policy with `buzzodz plugin trust`. Blocked plugins stay listed with the reason.
 
+A plugin can take over a new message when you press Send, for example to format
+it, edit your previous message or react instead of posting. It never adds
+recipients. While it works, a Cancel button appears beside Send, and Esc does
+the same: your draft stays. If it fails or takes longer than 10 seconds,
+nothing is sent and the draft stays with the error. If it had already started a
+write (an edit or a reaction), cancelling clears the draft instead, so the write
+is not repeated, and the plugin's name shows "still finishing". If it leaves
+out someone you tagged, a note under the composer says the plugin didn't notify
+them after the message sends.
+
 ## Docs
 
 Docs is a bundled plugin for live Markdown documents shared with people and

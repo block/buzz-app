@@ -185,6 +185,8 @@ import type {
   CompletionResolution,
   ComposerObservation,
   ComposerResource,
+  SendDraft,
+  SendTransform,
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import {
@@ -204,6 +206,8 @@ import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { MessageLinkOrigin } from "./MessageRow";
 import { composerMarkdown } from "./composer-markdown";
+import { resolveMatch } from "../../plugins/contributions";
+import { frozenDraft, transformSend, type Transformed } from "./send-transform";
 import type {
   ComposerInputElement,
   ComposerLinkEdit,
@@ -639,15 +643,25 @@ function Composer({
   const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
+  // A plugin is rewriting the send: its wait ends if the composer is hidden.
+  const transforming = useRef(false);
+  // The pending transform's title, so Cancel can be offered by name.
+  const [transformTitle, setTransformTitle] = useState<string>();
+  // Who the last send's transform left out, until the next typing or send.
+  const [droppedNotice, setDroppedNotice] = useState<string>();
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
   useLayoutEffect(() => {
     if (disabled || !active) sendAttempt.current?.abort();
   }, [disabled, active]);
+  useLayoutEffect(() => {
+    if (!shown && transforming.current) sendAttempt.current?.abort();
+  }, [shown]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: Retargeting invalidates an in-flight send, not the root-keyed draft.
   useLayoutEffect(
     () => () => sendAttempt.current?.abort(),
     [replyParentId, mediaTargetUrl],
   );
+  const cancelTransform = () => sendAttempt.current?.abort();
   const inputId = useId();
   const forwardDisclosureId = useId();
   const threadKey = threadRootId
@@ -3329,6 +3343,8 @@ function Composer({
     let retiredByOwner = false;
     const attempt = new AbortController();
     sendAttempt.current = attempt;
+    setDroppedNotice(undefined);
+    let dropped: string | undefined;
     const captured = valueRef.current;
     const explicit =
       human && ownerProvenance
@@ -3336,7 +3352,9 @@ function Composer({
             .filter((person) => person.explicit)
             .map((person) => person.pubkey)
         : undefined;
-    const capturedRecipients = routing ? recipientsNow : captured.recipients;
+    let capturedRecipients: readonly MentionRecipient[] = routing
+      ? recipientsNow
+      : captured.recipients;
     const capturedAttachments = attachments.store.snapshot();
     // Mention resolution can update recipients before their picker commits.
     // Capture only a snapshot validated for the saved choices being sent.
@@ -3368,33 +3386,125 @@ function Composer({
       ownSoloConversation &&
       !threadRootId &&
       followUpBehaviorPreference() === "queue";
+    // A command or transform that took the whole message clears the draft.
+    const unchanged = () => {
+      if (valueRef.current !== captured) return false;
+      const current = viewRevision(scope, draftKey);
+      if (current !== savedRevision) {
+        diagnose("send-upload-conflict", savedRevision, current);
+        reportConflict();
+        return false;
+      }
+      return true;
+    };
+    const stillCurrent = () => {
+      attempt.signal.throwIfAborted();
+      return unchanged();
+    };
+    const clear = (refocus = true) => {
+      const next = mentionDraft("");
+      saveDraft(next);
+      completion.invalidate();
+      caret.current = undefined;
+      input.current?.reset(next);
+      if (refocus) input.current?.focus();
+      setError(undefined);
+      automaticTag.current = undefined;
+      seedClosed.current = false;
+    };
     try {
-      const tokens = draftTokens(captured);
+      let tokens = draftTokens(captured);
       messageTokenTags(tokens);
       if (command && onCommand) {
         const handled = onCommand(command, attempt.signal);
         if (handled !== false) {
           setSending(true);
           if (await handled) {
-            attempt.signal.throwIfAborted();
-            if (valueRef.current !== captured) return;
-            const current = viewRevision(scope, draftKey);
-            if (current !== savedRevision) {
-              diagnose("send-upload-conflict", savedRevision, current);
-              reportConflict();
-              return;
-            }
-            const next = mentionDraft("");
-            saveDraft(next);
-            completion.invalidate();
-            caret.current = undefined;
-            input.current?.reset(next);
-            input.current?.focus();
-            setError(undefined);
-            automaticTag.current = undefined;
-            seedClosed.current = false;
+            if (stillCurrent()) clear();
             return;
           }
+        }
+      }
+      // Plugins see what would be sent. Huddle windows have no session to lend,
+      // and a `submission` composer (New Message, a new Solo chat) starts its
+      // conversation elsewhere, so it is not transformed.
+      const transforms =
+        host &&
+        !submission &&
+        !captured.pending?.length &&
+        !captured.forward &&
+        !captured.chatCards?.length &&
+        !captured.gifs?.length &&
+        !capturedAttachments.length
+          ? (extensions?.sendTransforms?.snapshot() ?? [])
+          : [];
+      let transformed: SendDraft | undefined;
+      if (host && transforms.length) {
+        const markdown = composerMarkdown(captured);
+        // A frozen copy, so no plugin callback can edit the recipients.
+        const draft = frozenDraft({
+          text: markdown,
+          mentions: capturedRecipients,
+        });
+        // Only a claimed send leaves the ordinary path.
+        const winner = resolveMatch<SendTransform, SendDraft>(
+          transforms,
+          draft,
+        );
+        if (winner) {
+          setSending(true);
+          transforming.current = true;
+          setTransformTitle(winner.title);
+          // A plugin turned off or reloaded meanwhile no longer speaks for the
+          // send: its signal aborts at once, not when it settles.
+          const turnedOff = new Error(
+            `${winner.pluginId}: was turned off before it finished. Send again to send without it.`,
+          );
+          const withdrawn = new AbortController();
+          const watch = extensions?.sendTransforms;
+          const unwatch = watch?.subscribe(() => {
+            if (!watch.snapshot().includes(winner)) withdrawn.abort(turnedOff);
+          });
+          let outcome: Transformed;
+          try {
+            outcome = await transformSend(winner, draft, {
+              session: host,
+              channelId,
+              threadRootId,
+              signal: AbortSignal.any([attempt.signal, withdrawn.signal]),
+            });
+          } finally {
+            transforming.current = false;
+            setTransformTitle(undefined);
+            unwatch?.();
+          }
+          const result = outcome.draft;
+          const stale = !watch?.snapshot().includes(winner);
+          if (outcome.committed && (!result || stale)) {
+            // The plugin may have written, so the draft is spent and a
+            // resend is not offered, whatever interrupted it.
+            const notice =
+              outcome.notice ??
+              (result ? `${winner.pluginId}: still finishing` : undefined);
+            if (notice) notify(notice, "info");
+            if (unchanged()) {
+              clear(!attempt.signal.aborted);
+              if (outcome.error) setError(outcome.error);
+            }
+            return;
+          }
+          if (!stillCurrent()) return;
+          if (stale) throw turnedOff;
+          if (result === null) {
+            clear();
+            return;
+          }
+          // Only people the draft addressed remain, under the names they had.
+          capturedRecipients = result.mentions;
+          transformed = result;
+          dropped = outcome.dropped;
+          // Signed chips belong to the text they were typed in.
+          if (result.text !== markdown) tokens = [];
         }
       }
       const bringable = new Set(
@@ -3451,7 +3561,7 @@ function Composer({
         ));
       } else if (recipients.length) {
         // An agent only an earlier Buzz runs would not answer; offer it here first.
-        const lookup = oldAgents.find(captured.recipients);
+        const lookup = oldAgents.find(capturedRecipients);
         const old = lookup instanceof Promise ? await lookup : lookup;
         if (old.length) {
           setSending(true);
@@ -3486,7 +3596,7 @@ function Composer({
           const elsewhere = new Map(
             (agents?.joinable() ?? []).map((agent) => [agent.pubkey, agent]),
           );
-          const bring = captured.recipients.flatMap((person) => {
+          const bring = capturedRecipients.flatMap((person) => {
             const agent = elsewhere.get(person.pubkey);
             return agent && !channel.members?.includes(person.pubkey)
               ? [agent]
@@ -3503,7 +3613,7 @@ function Composer({
             if (brought === null) return;
             added = brought;
           }
-          const missing = captured.recipients.filter(
+          const missing = capturedRecipients.filter(
             (person) =>
               !channel.members?.includes(person.pubkey) &&
               !added.includes(person.pubkey),
@@ -3544,10 +3654,11 @@ function Composer({
         reportConflict();
         return;
       }
+      const body = transformed?.text ?? composerMarkdown(captured);
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
-          : composerMarkdown(captured);
+          ? mediaTimeReply(mediaTimeSeconds, body)
+          : body;
       const explicitRecipientIds = explicit?.filter((id) =>
         recipients.includes(id),
       );
@@ -3977,6 +4088,8 @@ function Composer({
           followUp.text.length,
         );
       setError(undefined);
+      // Said once the message is accepted; a failed send says nothing here.
+      setDroppedNotice(dropped);
       autoTagged.current = draftKey;
       automaticTag.current = followUp.recipients.length
         ? JSON.stringify(followUp)
@@ -4212,6 +4325,21 @@ function Composer({
             undefined
           }
           onKeyDown={(event) => {
+            // Esc cancels a pending plugin transform and nothing else: the
+            // draft stays, and a reply, editor or viewer around it stays open.
+            if (
+              transforming.current &&
+              event.key === "Escape" &&
+              !event.defaultPrevented &&
+              !event.nativeEvent.isComposing &&
+              event.nativeEvent.keyCode !== 229 &&
+              !completion.composing.current
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              cancelTransform();
+              return;
+            }
             if (
               editing.target &&
               event.key === "Escape" &&
@@ -4448,6 +4576,7 @@ function Composer({
                   )
                     return;
                   setPasteTooLong(false);
+                  setDroppedNotice(undefined);
                   const textChanged = next.text !== valueRef.current.text;
                   // The default tag's prefill shows without being saved.
                   if (seeding.current) {
@@ -4703,6 +4832,19 @@ function Composer({
                     place={sessionPlace}
                   />
                 )}
+              {transformTitle && !editing.target && (
+                <IconButton
+                  type="button"
+                  size="toolbar"
+                  aria-label={`Cancel ${transformTitle}`}
+                  title={`Cancel ${transformTitle}`}
+                  onClick={() => {
+                    cancelTransform();
+                    input.current?.focus();
+                  }}
+                  icon={<XIcon size={16} aria-hidden="true" />}
+                />
+              )}
               <IconButton
                 variant={
                   draft.trim() ||
@@ -4784,6 +4926,11 @@ function Composer({
           )}
           {(error || editing.error) && (
             <p role="alert">{error ?? editing.error}</p>
+          )}
+          {droppedNotice && !editing.target && (
+            <p className={styles.composerStatus} role="status">
+              {droppedNotice}
+            </p>
           )}
           {stickyPicks && (pickReadPending || pickReadFailed) && (
             <div className={pickReadFailed ? undefined : "sr-only"}>

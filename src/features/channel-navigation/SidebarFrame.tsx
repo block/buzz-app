@@ -29,7 +29,11 @@ export function SidebarFrame({
       aria-busy={busy}
       data-buzz-launch-pending={launchPending}
     >
-      <div className={styles.sidebar}>
+      <div
+        className={styles.sidebar}
+        data-sidebar-frame=""
+        data-has-floating-action={footer ? "" : undefined}
+      >
         <SidebarNavigation>
           {header && <div className={styles.sidebarFilter}>{header}</div>}
           <div

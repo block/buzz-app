@@ -1318,7 +1318,7 @@ it("switches sending to Ctrl+Enter and shows the editor keys that follow", async
       );
     const toggle = screen.getByRole("switch", { name: "Send with Ctrl+Enter" });
     expect(toggle).not.toBeChecked();
-    expect(chords("Send message")).toEqual(["Enter"]);
+    expect(chords("Send message")).toEqual(["Enter", "Ctrl+Enter"]);
     expect(chords("New line")).toEqual(["Shift+Enter"]);
     await userEvent.setup().click(toggle);
     expect(toggle).toBeChecked();

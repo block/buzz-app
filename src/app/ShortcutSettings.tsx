@@ -87,9 +87,9 @@ const editorRows = (sendWithModEnter: boolean): readonly Row[] =>
     },
     {
       title: "Send message",
-      bindings: [
-        sendWithModEnter ? { key: "Enter", mod: true } : { key: "Enter" },
-      ],
+      bindings: sendWithModEnter
+        ? [{ key: "Enter", mod: true }]
+        : [{ key: "Enter" }, { key: "Enter", mod: true }],
     },
     {
       title: "New line",

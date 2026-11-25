@@ -4565,9 +4565,10 @@ function Composer({
                     }
                     return;
                   }
-                  // With ⌘/Ctrl+Enter chosen, plain Enter falls through to the editor's line break.
+                  // ⌘/Ctrl+Enter sends in either mode, even inside a list where
+                  // Enter adds an item. With it chosen, plain Enter falls through
+                  // to the editor's line break.
                   if (
-                    sendWithModEnter &&
                     matches(
                       [{ key: "Enter", mod: true }],
                       event.nativeEvent,

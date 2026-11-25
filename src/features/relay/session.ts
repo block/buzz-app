@@ -87,7 +87,7 @@ import type {
   LiveListener,
 } from "./incoming";
 import { objectBody } from "./body";
-import { agentAudience } from "./audience";
+import { agentAudience, detailsBrief, messageAudience } from "./audience";
 import type {
   ChannelList,
   ChannelReadOptions,
@@ -534,6 +534,22 @@ export function createRelaySession(
   ) {
     return isProfileRead(filters) && cleared === cacheClearEpoch;
   }
+  // Signed archive snapshots and role consent are relay-wide. Channel changes
+  // and live-socket outages cannot retire their independent HTTP/IPC reads.
+  const isArchiveFilter = (filter: ReadFilter) =>
+    !!transport?.archiveAuthority &&
+    filter.kinds?.length === 1 &&
+    (filter.kinds[0] === 13535 || filter.kinds[0] === 13534) &&
+    filter.authors?.length === 1 &&
+    filter.authors[0] === transport.archiveAuthority &&
+    Object.keys(filter).every((key) =>
+      ["kinds", "authors", "limit"].includes(key),
+    );
+  const isArchiveRead = (filters: readonly ReadFilter[]) =>
+    filters.some(isArchiveFilter) &&
+    filters.every(
+      (filter) => isArchiveFilter(filter) || isProfileFilter(filter),
+    );
   function revokeAccess(commit: () => void, ids?: readonly string[]) {
     revoking++;
     try {
@@ -554,7 +570,8 @@ export function createRelaySession(
           (filter) =>
             !isOwnerInventoryFilter(filter, transport?.viewer) &&
             !isOwnReadStateFilter(filter, transport?.viewer) &&
-            !isProfileFilter(filter),
+            !isProfileFilter(filter) &&
+            !isArchiveFilter(filter),
         );
       requests.invalidate(retired);
       retireBackoffs(retired);
@@ -578,7 +595,6 @@ export function createRelaySession(
       presence.clear();
       channelActivity.retain(canReadRemote);
       activityRosterKey = undefined;
-      archives.clear();
       workflows.clear();
       for (const purge of views.values()) purge();
       // The relay reapplies access to a new sync; nothing held survives.
@@ -2422,7 +2438,11 @@ export function createRelaySession(
               input.description,
               input.ttlSeconds,
               active,
-              { labels: input.labels, system: input.system },
+              {
+                labels: input.labels,
+                system: input.system,
+                migration: input.migration,
+              },
             ),
           delivered: (id, active) =>
             channelWrites.delivered(
@@ -2632,6 +2652,7 @@ export function createRelaySession(
           ? { labels: Object.freeze([...new Set(input.labels)]) }
           : {}),
         ...(input.system ? { system: true as const } : {}),
+        migration: input.migration,
       };
       const signature = JSON.stringify(normalized);
       if (unconfirmed?.signature !== signature) {
@@ -2649,7 +2670,11 @@ export function createRelaySession(
             normalized.description,
             normalized.ttlSeconds,
             undefined,
-            { labels: normalized.labels, system: normalized.system },
+            {
+              labels: normalized.labels,
+              system: normalized.system,
+              migration: normalized.migration,
+            },
           ),
         };
       }
@@ -2734,6 +2759,19 @@ export function createRelaySession(
     ? createRecovery([
         liveRecovery,
         recoverable(
+          archives.queries.subscribe,
+          () => loadState(archives.queries.snapshot()),
+          () => {
+            const state = archives.queries.snapshot();
+            if (
+              state.status !== "idle" &&
+              state.status !== "unavailable" &&
+              Date.now() >= (state.retryAt ?? 0)
+            )
+              void archives.retry(liveSnapshot.status === "connected");
+          },
+        ),
+        recoverable(
           channelKit.capability.subscribe,
           () => loadState(channelKit.capability.snapshot()),
           () => void channelKit.capability.refresh(),
@@ -2787,7 +2825,9 @@ export function createRelaySession(
     return messages === session.messages;
   }
   const session = Object.freeze({
+    lifetimeSignal: lifetime.signal,
     artifactIncremental: transport?.artifactIncremental,
+    supportsMigrationWrites: true as const,
     memberAdditions,
     presence,
     viewer: transport?.viewer,
@@ -2796,11 +2836,12 @@ export function createRelaySession(
      * with live or local outgoing events or fed to any projection, and a
      * kind-45010 writer when the host has one. Each read starts fresh. */
     snapshotRead: transport
-      ? (((filters, { signal }) =>
-          relayRead(
-            filters,
-            signal ? { signal, fresh: true } : { fresh: true },
-          )) satisfies SnapshotRead)
+      ? (((filters, { signal, priority }) =>
+          relayRead(filters, {
+            ...(signal ? { signal } : {}),
+            ...(priority ? { priority } : {}),
+            fresh: true,
+          })) satisfies SnapshotRead)
       : undefined,
     configArtifactWriter: transport?.configArtifacts,
     workflowAuthority: transport?.archiveAuthority,
@@ -2993,6 +3034,7 @@ export function createRelaySession(
       searchProfiles,
       () => profiles.queries.verifiedAuthority?.(),
       profiles.queries,
+      identityNames,
     ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
@@ -4195,7 +4237,11 @@ export function createRelaySession(
               createdAt: event.created_at,
               authorId: event.pubkey,
               workflowOwnerId: workflowOwner(event, transport.archiveAuthority),
-              previewContent: content.slice(0, 4096),
+              // A notification shows no more of details than the chat does.
+              previewContent: (messageAudience(event) === "details"
+                ? detailsBrief(content)
+                : content
+              ).slice(0, 4096),
               ...(agentAudience(event) ? { audience: "agents" as const } : {}),
             }),
           ];
@@ -4217,6 +4263,14 @@ export function createRelaySession(
         typing.clear();
         memories.clear();
       }
+      // Resume once per reconnect. A first connection can reuse a startup
+      // read already in flight or ready; only its failure needs restarting.
+      if (
+        snapshot.status === "connected" &&
+        liveSnapshot.status !== "connected" &&
+        (liveGeneration > 0 || archives.queries.snapshot().status === "error")
+      )
+        archives.stale();
       if (
         snapshot.status !== "connected" &&
         liveSnapshot.status === "connected"
@@ -4230,10 +4284,9 @@ export function createRelaySession(
         catchups.clear();
         catchupQueue.clear();
         dropHintConfirmations();
-        requests.invalidate();
+        requests.invalidate((filters) => !isArchiveRead(filters));
         repositories.clearHomes();
         agentLibrary.clear();
-        archives.stale();
         workflows.interrupt();
         streamDropped = true;
         channels.staleHeads();

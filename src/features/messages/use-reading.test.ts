@@ -32,6 +32,7 @@ function setup({
   enabled = true,
   concealed = false,
   focus = "element" as "element" | "composer" | "parent" | "outside" | "header",
+  trailing = undefined as (() => number | undefined) | undefined,
 } = {}) {
   vi.useFakeTimers();
   vi.spyOn(document, "hasFocus").mockReturnValue(focused);
@@ -130,6 +131,7 @@ function setup({
       catchUpMessageId,
       rootId,
       enabled,
+      trailing,
     },
     reactStrictMode: strict,
     wrapper: ({ children }: { children: ReactNode }) =>
@@ -205,6 +207,7 @@ function setup({
         catchUpMessageId,
         rootId,
         enabled,
+        trailing,
       }),
     setLatest: (id: string) =>
       view.rerender({
@@ -216,6 +219,7 @@ function setup({
         catchUpMessageId,
         rootId,
         enabled,
+        trailing,
       }),
     unmount: view.unmount,
   };
@@ -753,6 +757,34 @@ it("a historical viewport or a bottom reached only at dwell end cannot catch up"
     undefined,
   );
 });
+
+it("rows under trailing content are covered, not read", () => {
+  const h = setup({ trailing: () => 300 });
+  h.setRows([row("visible", 100, 200), row("covered", 250, 350)]);
+  h.mutation();
+  vi.advanceTimersToNextFrame();
+  vi.advanceTimersByTime(300);
+  expect(h.dwelled()?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+});
+it.each([
+  [300, true],
+  [250, false],
+])(
+  "the latest row catches up only above trailing content's top (top=%i)",
+  async (top, caught) => {
+    const h = setup({ latestMessageId: "latest", trailing: () => top });
+    h.setRows([row("latest", 200, 290)]);
+    h.mutation();
+    vi.advanceTimersToNextFrame();
+    await vi.advanceTimersByTimeAsync(300);
+    if (caught)
+      expect(h.dwelled()?.catchUp).toHaveBeenCalledExactlyOnceWith(
+        "latest",
+        undefined,
+      );
+    else expect(h.dwelled()?.catchUp).not.toHaveBeenCalled();
+  },
+);
 
 it("settled notification starts dwell without changed rows, focus or geometry", () => {
   const h = setup({ focus: "header", settled: false });

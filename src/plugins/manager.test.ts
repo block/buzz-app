@@ -110,8 +110,12 @@ it("runs host contributions while optional storage is pending and in recovery", 
       },
     ],
   );
+  const hostOwned = [
+    { id: "host.feature", name: "Host feature", apiVersion: 1 },
+  ];
   await vi.advanceTimersByTimeAsync(0);
   expect(plugins.startup()).toBe("loading");
+  expect(plugins.snapshot().hostOwned).toEqual(hostOwned);
   expect(pages.snapshot().map(({ key }) => key)).toEqual(["host.feature/main"]);
   pending.resolve({
     status: "recovery",
@@ -120,6 +124,7 @@ it("runs host contributions while optional storage is pending and in recovery", 
   });
   await vi.advanceTimersByTimeAsync(0);
   expect(plugins.startup()).toBe("recovery");
+  expect(plugins.snapshot().hostOwned).toEqual(hostOwned);
   expect(pages.snapshot().map(({ key }) => key)).toEqual(["host.feature/main"]);
   await plugins.dispose();
   expect(pages.snapshot()).toEqual([]);

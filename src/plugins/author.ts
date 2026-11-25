@@ -32,12 +32,15 @@ export type {
 } from "../features/pages/service";
 export type { Seen } from "../features/seen/service";
 export type { Backdrop, Backdrops } from "../features/backdrops/service";
+export type { Notices } from "../features/notices/service";
 export type { SubjectLift } from "../features/messages/subject-lift";
 export type {
   PluginButtonProps,
   PluginDialogProps,
   PluginFieldProps,
   PluginInputProps,
+  PluginMenuItem,
+  PluginMenuProps,
   PluginSwitchProps,
   PluginUi,
 } from "../features/plugin-ui/contract";
@@ -74,6 +77,7 @@ export type {
 } from "../features/panels/service";
 export type { PanelSplit } from "../features/panels/usePanelSplit";
 export type { MarkdownProps } from "../features/messages/PluginMarkdown";
+export type { ImageViewerProps } from "../features/messages/ImageViewer";
 export type { Conversation } from "../features/conversation/service";
 export type { ChannelMembersDialogProps } from "../bundled/channels/ChannelMembersDialog";
 export type {
@@ -88,6 +92,7 @@ export type {
 } from "../features/messages/DocumentEditor";
 export type {
   ConversationWorkspaceProps,
+  WorkspaceSlots,
   PageTabTarget,
   PageTabOptions,
   PageTabsProps,
@@ -240,6 +245,7 @@ export type {
   SoloWorkspaceSnapshot,
   SoloWorkspaceProps,
   SoloChannelGroupProps,
+  SoloHeaderMenuAction,
   SoloRegionBinding,
   SoloRegionSnapshot,
   SoloRegionAction,

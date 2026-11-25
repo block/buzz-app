@@ -27,6 +27,7 @@ import {
   SPRING_LOAD_DELAY_MS,
   SPRING_LOAD_GRACE_MS,
 } from "./spring-loaded-drag";
+import { serializeSelection } from "./selection-copy";
 import { useShowingDraft } from "./draft-places";
 import { clearView, writeView } from "../../shared/view-state";
 import {
@@ -1192,6 +1193,50 @@ it("lets a plugin draw an image it claims, apart from the gallery", () => {
   ]);
 });
 
+it("copies each file card in a message on its own line", () => {
+  const external = "https://example.org/two.pdf";
+  try {
+    renderMessage({
+      row: {
+        ...row,
+        attachments: [
+          {
+            url: "https://relay.test/one",
+            kind: "file",
+            name: "one.zip",
+            size: 2516582,
+          },
+          { url: external, kind: "file", name: "two.pdf", size: 1024 },
+        ],
+      },
+      // Community media is proxied; other hosts map to themselves.
+      media: (url) =>
+        url === external
+          ? url
+          : `/api/relay/media?url=${encodeURIComponent(url)}`,
+    });
+    const selection = document.getSelection();
+    if (!selection) throw new Error("jsdom selection missing");
+    // A drag from the caption's start to the end of the last card.
+    const range = document.createRange();
+    range.setStart(screen.getByText("Root"), 0);
+    range.setEndAfter(screen.getByText("1 KB"));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(
+      (["text", "markdown", "html"] as const).map((format) =>
+        serializeSelection(selection, format),
+      ),
+    ).toEqual([
+      `Root\none.zip\ntwo.pdf (${external})`,
+      `Root\none.zip\n[two.pdf](${external})`,
+      `<p>Root</p><p>one.zip</p><p><a href="${external}">two.pdf</a></p>`,
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
 it("lets a plugin open a file from the host file card, keeping Download", () => {
   const placements: unknown[] = [];
   const messages: unknown[] = [];
@@ -1577,6 +1622,12 @@ it.each(["peer", "own"] as const)(
       },
       messages: { report: vi.fn(async () => {}) },
       profiles: { subscribe: () => () => {}, event: () => undefined },
+      read: async () => [],
+      subscribeLive: () => () => {},
+      live: {
+        snapshot: () => ({ status: "connected", heads: [] }),
+        subscribe: () => () => {},
+      },
       outbox: {
         supports: () => true,
         subscribe: () => () => {},
@@ -1620,6 +1671,7 @@ it.each(["peer", "own"] as const)(
               "Copy message",
               "Send to channel",
               "Copy link",
+              "Pin to channel",
               "Delete message",
               "Follow thread",
               "Report",
@@ -1628,6 +1680,7 @@ it.each(["peer", "own"] as const)(
               "Mark as unread",
               "Copy message",
               "Copy link",
+              "Pin to channel",
               "Follow thread",
               "Report",
             ],
@@ -2599,6 +2652,12 @@ it.each(["own", "other", "root", "pending", "archived", "read-only"])(
       channels: { list: () => snapshot, subscribeList: () => () => {} },
       messages: { sendToChannel: send },
       outbox: { supports: () => true },
+      read: async () => [],
+      subscribeLive: () => () => {},
+      live: {
+        snapshot: () => ({ status: "connected", heads: [] }),
+        subscribe: () => () => {},
+      },
       unread: {
         subscribe: () => () => {},
         subscribeSync: () => () => {},

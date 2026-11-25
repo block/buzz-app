@@ -1200,6 +1200,79 @@ fn contradictory_witness_after_own_delete_stays_unknown_once_it_resolves() {
     }
 }
 
+#[test]
+fn failed_agent_environment_removal_keeps_removal_pending_before_fresh_setup() {
+    use crate::agent_env::tests::{agent_row, FakeStore, Stores, ADA, BO};
+    let (_dir, paths) = fixture();
+    let vault = Vault::new(paths.plugin_inventory().unwrap());
+    let other = Arc::<Fake>::default();
+    failed_setup(&paths, &vault, &other);
+    *vault.store.add_denied.lock().unwrap() = true;
+    let instance = boot_fixed(&paths, &vault, &other);
+    *vault.store.add_denied.lock().unwrap() = false;
+    assert!(instance.partial);
+    let intent = installation(&vault);
+    remove(&instance, &paths, choices(true)).unwrap();
+    assert!(paths.marker.exists());
+    drop(instance);
+    fs::remove_dir_all(paths.app_data.join(OLD_AGENTS)).unwrap();
+    let index = paths.app_data.join(AGENTS).join("identities.json");
+    let rows = serde_json::to_vec(&[agent_row(ADA), agent_row(BO)]).unwrap();
+    fs::write(&index, &rows).unwrap();
+    let stores: Stores = Default::default();
+    for pubkey in [ADA, BO] {
+        let store = Arc::new(FakeStore::default());
+        *store.text.lock().unwrap() = Some("{}".into());
+        stores.lock().unwrap().insert(pubkey.into(), store);
+    }
+    let open = |pubkey: &str| -> Box<dyn crate::claude_key::KeyStore> {
+        Box::new(stores.lock().unwrap()[pubkey].clone())
+    };
+    let saved = |pubkey: &str| {
+        stores.lock().unwrap()[pubkey]
+            .text
+            .lock()
+            .unwrap()
+            .is_some()
+    };
+    let removed = std::cell::Cell::new(0);
+    let restart = || {
+        vault.calls();
+        boot(
+            &paths,
+            Some(fixed_slots(&paths, &vault, &other)),
+            |app_data| remove_local_agents(app_data, &super::super::NoKeys, &open),
+            || {
+                let calls = vault.store.log.lock().unwrap().clone();
+                assert!(!calls.iter().any(|c| c.starts_with("add ")), "{calls:?}");
+                removed.set(removed.get() + 1);
+                Ok(())
+            },
+        )
+    };
+    *stores.lock().unwrap()[BO].unwritable.lock().unwrap() = true;
+    assert_eq!(restart().err(), Some(FAILED.into()));
+    // The registry still names the agent and the removal stays pending:
+    // no key removal, and no fresh setup ahead of it.
+    assert!(saved(BO));
+    assert_eq!(fs::read(&index).unwrap(), rows);
+    assert!(paths.marker.exists());
+    assert_eq!(removed.get(), 0);
+    assert_eq!(installation(&vault), serde_json::Value::Null);
+    assert_eq!(adds(&vault), 0);
+    *stores.lock().unwrap()[BO].unwritable.lock().unwrap() = false;
+    let instance = restart().unwrap();
+    assert!(!saved(ADA) && !saved(BO));
+    assert_eq!(removed.get(), 1);
+    assert!(!paths.marker.exists());
+    // Only now one fresh setup, with a new installation.
+    assert!(!instance.h1_unknown() && !instance.partial);
+    let fresh = installation(&vault);
+    assert_eq!(fresh["committed"], true);
+    assert_ne!(fresh["installation"], intent["installation"]);
+    assert_eq!(adds(&vault), 1);
+}
+
 /// Boot with a pending plain removal, asserting no witness add precedes it.
 fn boot_removing<'a>(
     paths: &Paths,

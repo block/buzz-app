@@ -1,7 +1,9 @@
 import { useSyncExternalStore, type ReactNode } from "react";
 import { MessageLoading } from "../messages/MessageLoading";
+import { useSheetReady } from "../messages/sheet-reveal";
 import styles from "../messages/Messages.module.css";
 import type { ChannelSummary } from "../relay/contracts";
+import { viewerMember } from "../relay/membership";
 import { rosterRecovering } from "../relay/live-recovery";
 import { useRecoveryOwns } from "../relay/RecoveryNotice";
 import type { RelaySession } from "../relay/session";
@@ -34,8 +36,7 @@ export function confirmedChannel(
   if (view === "thread") return channel;
   return !channel.readOnly &&
     !channel.archived &&
-    (channel.channelType !== "solo" ||
-      !!channel.members?.includes(viewer ?? ""))
+    (channel.channelType !== "solo" || viewerMember(channel, viewer))
     ? channel
     : undefined;
 }
@@ -141,6 +142,9 @@ function Unavailable({
     return roster === "verified" ? DID_NOT_LOAD : undefined;
   };
   const text = reason();
+  // A settled notice is all a quick-opening sheet will show; a loading one is
+  // not settled.
+  useSheetReady(!!text);
   return text ? (
     <p role="status" className={styles.empty}>
       {text}

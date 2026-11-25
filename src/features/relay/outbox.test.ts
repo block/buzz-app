@@ -80,11 +80,8 @@ function setup(storage = memoryStorage(), timeoutMs = 10000) {
         bounds(relay, "c", "head", { has_more: false, next_cursor: null }),
       ]);
     await flush();
-    // Resolve the author directory and status once so tests control only
-    // history and delivery reads.
-    const names = owner.session.profiles.ensure([viewer.pubkey], undefined, {
-      withStatuses: true,
-    });
+    // Resolve the author directory once so tests control only history and delivery reads.
+    const names = owner.session.profiles.ensure([viewer.pubkey]);
     wire.next().respond([
       signed(viewer, {
         kind: 0,
@@ -221,6 +218,101 @@ it("failed sends remain retryable, and retry republishes exactly the same signed
   h.next().respond([event]);
   await flush();
   expect(h.outbox.snapshot()).toHaveLength(0);
+});
+it.each([
+  [
+    "a relay receipt",
+    new PublishRejected("duplicate: reaction already exists"),
+  ],
+  [
+    "an HTTP refusal",
+    new PublishRejected(
+      "Reaction already exists",
+      "duplicate: reaction already exists",
+    ),
+  ],
+])(
+  "a reaction refused as a duplicate in %s retires the send instead of leaving it to retry",
+  async (_, refusal) => {
+    const storage = memoryStorage();
+    const h = setup(storage);
+    await h.open();
+    const id = h.outbox.send({
+      kind: 7,
+      content: "❌",
+      tags: [["h", "c"]],
+    });
+    await h.signNext();
+    const publication = h.publications.shift();
+    assert.exists(publication);
+    publication.reject(refusal);
+    await flush();
+    expect(h.outbox.snapshot()).toHaveLength(0);
+    expect((await storage.load()).some((item) => item.event.id === id)).toBe(
+      false,
+    );
+    h.outbox.retry(id);
+    await flush();
+    expect(h.publications).toHaveLength(0);
+  },
+);
+it("a duplicate refusal of anything but a reaction stays failed for its caller to verify", async () => {
+  const h = setup();
+  await h.open();
+  const id = h.send();
+  await h.signNext();
+  const publication = h.publications.shift();
+  assert.exists(publication);
+  publication.reject(new PublishRejected("duplicate: channel already exists"));
+  await flush();
+  expect(h.outbox.snapshot()).toMatchObject([
+    { event: { id }, delivery: "failed", refused: true },
+  ]);
+});
+it("drops duplicate reaction refusals that an earlier version saved, and keeps other kinds' duplicate refusals", async () => {
+  const savedRefusals: readonly Pick<OutgoingEvent, "delivery" | "error">[] = [
+    { delivery: "failed", error: "duplicate: reaction already exists" },
+    {
+      delivery: "unknown",
+      error: "Retry blocked: duplicate: reaction already exists",
+    },
+    { delivery: "failed", error: "Reaction already exists" },
+    { delivery: "unknown", error: "Retry blocked: Reaction already exists" },
+  ];
+  const savedReactions = savedRefusals.map((refusal, index) => {
+    const reaction = signed(viewer, {
+      kind: 7,
+      content: `❌${index}`,
+      tags: [["h", "c"]],
+    });
+    return { event: reaction, signed: reaction, ...refusal };
+  });
+  const message = signed(viewer, {
+    kind: 9,
+    content: "taken channel",
+    tags: [["h", "c"]],
+  });
+  let records: readonly OutgoingEvent[] = [
+    ...savedReactions,
+    {
+      event: message,
+      signed: message,
+      delivery: "failed",
+      error: "duplicate: channel already exists",
+    },
+  ];
+  const h = setup({
+    load: () => structuredClone(records),
+    save: (next) => {
+      records = structuredClone(next);
+    },
+  });
+  await h.outbox.ready();
+  await flush();
+  expect(h.outbox.snapshot().map((item) => item.event.id)).toEqual([
+    message.id,
+  ]);
+  expect(records.map((item) => item.event.id)).toEqual([message.id]);
 });
 it("persists before publish, restores uncertain writes without auto-sending, and retries using the same event ID", async () => {
   const storage = memoryStorage();

@@ -176,6 +176,10 @@
   width: 1.25rem;
   flex: 0 0 1.25rem;
 }
+/* On a two-line row the icon sits on the first line, past the row padding. */
+.compactIcon[data-lines="two"] {
+  margin-block-start: var(--space-row-gap);
+}
 /* Faces at a compact row's end, centered on the row like its leading icon. */
 .compactTrailing {
   display: flex;
@@ -227,8 +231,10 @@
 .compactLines {
   display: flex;
   flex-direction: column;
-  gap: var(--space-half);
+  /* The same line gap and row padding as Default's rows. */
+  gap: var(--space-1);
   min-width: 0;
+  padding-block: var(--space-row-gap);
 }
 .compactPreview {
   display: flex;

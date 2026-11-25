@@ -365,7 +365,10 @@ export function CompactActivityRow({
       variant="row"
       aria-label={sender ? `Open ${place}, from ${sender}` : `Open ${place}`}
       icon={
-        <span className={styles.compactIcon}>
+        <span
+          className={styles.compactIcon}
+          data-lines={preview === undefined ? undefined : "two"}
+        >
           {peer ? (
             <span className={styles.compactAvatar}>
               <Avatar

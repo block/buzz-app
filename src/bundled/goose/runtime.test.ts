@@ -3691,6 +3691,126 @@ it("opens voice in a voice-enabled process after the switch changes during typed
   }
 });
 
+it("opens voice after a typed session that was opening when voice switched on fails", async () => {
+  let start!: () => void;
+  let rejectSpawn!: (error: Error) => void;
+  const entered = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const spawn = new Promise<never>((_resolve, reject) => {
+    rejectSpawn = reject;
+  });
+  let spawns = 0;
+  const f = setup({
+    scope: "channel",
+    wrap: (real) => async (id, options) => {
+      if (++spawns === 1) {
+        start();
+        return spawn;
+      }
+      return real(id, options);
+    },
+  });
+  const abort = new AbortController();
+  vi.mocked(openVoice).mockResolvedValue({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  });
+  let opened: ReturnType<GooseRuntime["voice"]> | undefined;
+  try {
+    const delivery = f.deliver(message("1", "try opening the typed session"));
+    await entered;
+    await f.runtime.voiceSettings.setEnabled(true);
+    opened = f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: abort.signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+    void opened.catch(() => {});
+    rejectSpawn(new Error("synthetic startup failure"));
+    await delivery;
+    await opened;
+    expect(spawns).toBe(2);
+    expect(openVoice).toHaveBeenCalledOnce();
+    expect(f.fake.geese.at(-1)?.env.GOOSE_LIVE_VOICE_ENABLED).toBe("true");
+  } finally {
+    abort.abort();
+    await opened?.then(
+      (seat) => seat.close(),
+      () => {},
+    );
+    vi.mocked(openVoice).mockReset();
+    f.runtime.dispose();
+  }
+});
+
+it("opens a later seat after a voice seat's own opening fails across a switch change", async () => {
+  let start!: () => void;
+  let rejectSpawn!: (error: Error) => void;
+  const entered = new Promise<void>((resolve) => {
+    start = resolve;
+  });
+  const spawn = new Promise<never>((_resolve, reject) => {
+    rejectSpawn = reject;
+  });
+  let spawns = 0;
+  const f = setup({
+    scope: "channel",
+    wrap: (real) => async (id, options) => {
+      if (++spawns === 1) {
+        start();
+        return spawn;
+      }
+      return real(id, options);
+    },
+  });
+  vi.mocked(openVoice).mockResolvedValue({
+    input: vi.fn(),
+    close: vi.fn(async () => {}),
+  });
+  const seat = () =>
+    f.runtime.voice(
+      {
+        agent: f.agent,
+        config: { ...DEFAULT_CONFIG, scope: "channel" },
+        conversation: { channelId: channel },
+        signal: new AbortController().signal,
+        ended: vi.fn(),
+        output: vi.fn(),
+        transcript: vi.fn(),
+      } as never,
+      f.agent as never,
+    );
+  let second: Awaited<ReturnType<GooseRuntime["voice"]>> | undefined;
+  try {
+    await f.runtime.voiceSettings.setEnabled(true);
+    const first = seat().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await entered;
+    // Changed while the first seat's session opens: a refresh waits for it.
+    await f.runtime.voiceSettings.setEnabled(false);
+    await f.runtime.voiceSettings.setEnabled(true);
+    rejectSpawn(new Error("synthetic startup failure"));
+    expect(await first).toBeInstanceOf(Error);
+    second = await seat();
+    expect(openVoice).toHaveBeenCalledOnce();
+    expect(f.fake.geese.at(-1)?.env.GOOSE_LIVE_VOICE_ENABLED).toBe("true");
+  } finally {
+    await second?.close();
+    vi.mocked(openVoice).mockReset();
+    f.runtime.dispose();
+  }
+});
+
 it("holds typed admission until a voice-settings process refresh has exited", async () => {
   let release!: () => void;
   let stopping!: () => void;

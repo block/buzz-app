@@ -379,11 +379,17 @@ export class AgentSessions {
           (opened) => this.disposed || this.adopt(key, opened),
         );
         const reserved = opening.then(() => ({}));
+        // Its failure is this caller's; one waiting behind it only retries.
+        reserved.catch(noop);
         this.opening.set(key, reserved);
         try {
           await opening;
         } finally {
-          if (this.opening.get(key) === reserved) this.opening.delete(key);
+          if (this.opening.get(key) === reserved) {
+            this.opening.delete(key);
+            // A failed opening leaves no session to say it is quiescent.
+            this.options.onChange?.();
+          }
         }
         continue;
       }
@@ -632,7 +638,10 @@ export class AgentSessions {
     })();
     this.opening.set(key, starting);
     const opened = () => {
-      if (this.opening.get(key) === starting) this.opening.delete(key);
+      if (this.opening.get(key) !== starting) return;
+      this.opening.delete(key);
+      // A failed opening leaves no turn to say it is quiescent.
+      this.options.onChange?.();
     };
     starting.then(opened, opened);
     // Every failure here comes before a turn takes the message in.

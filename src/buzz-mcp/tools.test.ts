@@ -4527,6 +4527,38 @@ it("refuses a new DM with an archived identity, but opens an existing one", asyn
   expect(await callTool(existing, {}, "dm", { to: [bob] })).toBe("dm-bob");
 });
 
+it("always includes the agent's owner in a DM it opens", async () => {
+  const dm = (id: string, ...people: string[]) =>
+    event({
+      kind: 39000,
+      tags: [["d", id], ["t", "dm"], ...[me, ...people].map((p) => ["p", p])],
+    });
+  // The DM with Bob alone is never reused: the owner would not see it.
+  const events = [...community, dm("dm-bob", bob)];
+  const { client: base, published } = fake(events);
+  const client = {
+    ...base,
+    owner: alice,
+    publish: vi.fn(async (template: Template) => {
+      events.push(dm("dm-bob-alice", bob, alice));
+      return base.publish(template);
+    }),
+  };
+  expect(await callTool(client, {}, "dm", { to: [bob] })).toMatch(
+    /^dm-bob-alice/,
+  );
+  expect(published[0]?.kind).toBe(41010);
+  expect(published[0]?.tags.filter((t) => t[0] === "p")).toEqual([
+    ["p", bob],
+    ["p", alice],
+  ]);
+  // Naming the owner too opens the same DM, and creates nothing.
+  expect(await callTool(client, {}, "dm", { to: [bob, alice] })).toMatch(
+    /^dm-bob-alice/,
+  );
+  expect(published).toHaveLength(1);
+});
+
 it("opens an existing DM with an archived identity past the first page", async () => {
   const dm = (id: string, created_at: number, other: string) =>
     event({

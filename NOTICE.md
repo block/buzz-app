@@ -38,18 +38,6 @@ explicit dictionary cleanup, and lazy loading for the session-owned catalog.
 The chart grammar, option sanitizer and data-row tables in `src/bundled/charts`
 are adapted from a Charts plugin by Alessandro Joabar (GitHub `sandro-sq`).
 
-The file viewer in `src/bundled/file-viewer` is adapted from a Media viewer
-plugin by Krish Ray (GitHub `LordMelkor`), and its PDF view from a PDF viewer
-plugin by Eric Morgan (GitHub `ericm-square`). PDF pages are drawn with PDF.js
-(`pdfjs-dist`), Copyright Mozilla Foundation, under the Apache License 2.0.
-Code is highlighted with highlight.js (`highlight.js` 11.11.2), Copyright Ivan
-Sagalaev, under the BSD 3-Clause License, through lowlight (`lowlight` 3.3.0),
-Copyright Titus Wormer, under the MIT License. Heading IDs come from
-github-slugger (`github-slugger` 2.0.0), Copyright Dan Flettre, under the ISC
-License. Markdown parts are parsed with `unified` 11.0.5, `remark-parse` 11.0.0
-and `micromark-util-decode-string` 2.0.1, Copyright Titus Wormer and
-contributors, under the MIT License.
-
 OneDrive is a trademark of Microsoft.
 
 ## Harness brand marks
@@ -273,3 +261,30 @@ INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
 DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
+
+The fuzzy matching and scoring in `src/bundled/finder/match.ts` are ported from
+[fzf](https://github.com/junegunn/fzf)'s `src/algo/algo.go` (`FuzzyMatchV1` and
+`calculateScore`, including its scoring constants and character classes).
+fzf is used under the MIT License:
+
+> The MIT License (MIT)
+>
+> Copyright (c) 2013-2026 Junegunn Choi
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in
+> all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+> THE SOFTWARE.

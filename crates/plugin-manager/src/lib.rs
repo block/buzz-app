@@ -1,5 +1,6 @@
 //! Installation and settings never execute plugin code. Both desktop and CLI use this crate.
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use cap_fs_ext::DirExt as _;
 use nostr::{
     event::{Event, EventBuilder, FinalizeEvent, Kind, Tag},
     key::{Keys, SecretKey},
@@ -19,6 +20,7 @@ pub mod gateway;
 pub mod imports;
 pub mod managed;
 mod migrate_agent_flag;
+pub mod trust;
 
 pub type Result<T> = std::result::Result<T, String>;
 pub const LIMIT: u64 = 8 * 1024 * 1024;
@@ -60,6 +62,20 @@ pub struct Discovery {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 }
+/// The sections of an agent's base instructions that a plugin can replace:
+/// those marked `plugin` in `src/features/agent-harness/sections/index.ts`,
+/// which a test checks against this list. An ID never leaves this list: a
+/// section's earlier IDs stay when it is renamed, and its ID stays when the
+/// section goes or a plugin can no longer replace it. Every installed manifest is checked each time the installed
+/// plugins are read, so a removed ID would stop them all from loading.
+pub const AGENT_PROMPT_SECTIONS: &[&str] = &[
+    "callbacks",
+    "routing",
+    "publishing",
+    "progress",
+    "working-location",
+    "autonomy",
+];
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HostGrants {
@@ -71,6 +87,10 @@ pub struct HostGrants {
     /// Execution targets may run these native agent types.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agent_execution: Vec<String>,
+    /// The plugin may give these sections of an agent's base instructions its
+    /// own text, in the conversations it manages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_prompt_sections: Vec<String>,
     #[serde(default)]
     pub commands: Vec<HostCommand>,
     #[serde(default)]
@@ -147,6 +167,14 @@ pub struct HostProcess {
     pub bundled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<ProcessArtifact>,
+    /// The process runs a local agent, so it may ask for the environment
+    /// variables local agents start with. Honored only in a bundled plugin.
+    #[serde(
+        default,
+        rename = "agentEnv",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub agent_env: bool,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -249,6 +277,7 @@ impl Manifest {
         if let Some(host) = &self.host {
             if host.agent_hooks.len() > 16
                 || host.agent_execution.len() > 16
+                || host.agent_prompt_sections.len() > 16
                 || host.commands.len() > 16
                 || host.network_origins.len() > 16
                 || host.processes.len() > 16
@@ -271,6 +300,17 @@ impl Manifest {
                 valid_id(kind)?;
                 if !execution_types.insert(key) {
                     return Err("Duplicate agent execution type".into());
+                }
+            }
+            let mut prompt_sections = std::collections::HashSet::new();
+            for id in &host.agent_prompt_sections {
+                if !AGENT_PROMPT_SECTIONS.contains(&id.as_str()) {
+                    return Err(format!(
+                        "A plugin cannot replace the agent prompt section \"{id}\""
+                    ));
+                }
+                if !prompt_sections.insert(id) {
+                    return Err("Duplicate agent prompt section".into());
                 }
             }
             if let Some(grant) = &host.federated_identity {
@@ -510,10 +550,6 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
         serde_json::from_str(include_str!("../../../src/bundled/charts/manifest.json"))
             .expect("bundled charts manifest"),
         serde_json::from_str(include_str!(
-            "../../../src/bundled/file-viewer/manifest.json"
-        ))
-        .expect("bundled file viewer manifest"),
-        serde_json::from_str(include_str!(
             "../../../src/bundled/identity-naming/manifest.json"
         ))
         .expect("identity naming manifest"),
@@ -575,10 +611,8 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
             "../../../src/bundled/relay-staff/manifest.json"
         ))
         .expect("relay staff manifest"),
-        serde_json::from_str(include_str!(
-            "../../../src/bundled/relay-notes/manifest.json"
-        ))
-        .expect("relay notes manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/docs/manifest.json"))
+            .expect("docs manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/typesafe/manifest.json"))
             .expect("typesafe manifest"),
         serde_json::from_str(include_str!(
@@ -591,6 +625,8 @@ fn bundled_manifests_for(gateway: Option<&gateway::Native>) -> Vec<Manifest> {
         .expect("performance diagnostics manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/focus/manifest.json"))
             .expect("focus manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/finder/manifest.json"))
+            .expect("finder manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/changesets/manifest.json"
         ))
@@ -684,6 +720,15 @@ impl ReloadSource {
         }
         validate_candidate_path(&path)?;
         Ok(Self { root, path })
+    }
+
+    fn read_error(&self, reason: String) -> String {
+        let label = if self.path == "." {
+            "Selected folder"
+        } else {
+            &self.path
+        };
+        format!("{label}: {reason}")
     }
 }
 // Untagged keeps existing {root, path} folder metadata readable without migration.
@@ -895,7 +940,6 @@ fn sign_release_from_store<K: AsRef<[u8]>>(
     directory: &Path,
     read: impl FnOnce() -> std::result::Result<K, buzz_credential_store::Error>,
 ) -> Result<String> {
-    use bech32::{primitives::decode::CheckedHrpstring, Bech32};
     use buzz_credential_store::Error;
     let bytes = read().map_err(|error| match error {
         Error::Absent => "Set up your Buzz human identity in the desktop app before signing",
@@ -906,7 +950,38 @@ fn sign_release_from_store<K: AsRef<[u8]>>(
         }
         _ => "Saved Buzz human identity could not be read from secure storage",
     })?;
-    let text = std::str::from_utf8(bytes.as_ref())
+    sign_release(directory, saved_human_secret(bytes.as_ref())?)
+}
+
+/// The public key of the saved desktop human identity, without creating or exporting it.
+/// The flag is false for failures worth retrying: no identity yet, or busy storage.
+fn saved_human_publisher() -> (Result<String>, bool) {
+    use buzz_credential_store::Error;
+    let bytes = match buzz_credential_store::find_human() {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let (reason, lasting) = match error {
+                Error::Absent => ("No Buzz human identity is set up", false),
+                Error::Busy => ("Secure storage is busy", false),
+                Error::Denied => ("Secure storage access was denied", true),
+                Error::Corrupt => ("Saved Buzz human identity is malformed", true),
+                _ => (
+                    "Saved Buzz human identity could not be read from secure storage",
+                    true,
+                ),
+            };
+            return (Err(reason.into()), lasting);
+        }
+    };
+    let publisher = saved_human_secret(bytes.as_ref())
+        .and_then(|text| SecretKey::parse(text).map_err(err))
+        .map(|secret| Keys::new(secret).public_key().to_hex());
+    (publisher, true)
+}
+
+fn saved_human_secret(bytes: &[u8]) -> Result<&str> {
+    use bech32::{primitives::decode::CheckedHrpstring, Bech32};
+    let text = std::str::from_utf8(bytes)
         .map_err(|_| "Saved Buzz human identity is malformed; nothing was changed")?
         .trim();
     if text.len() != 63
@@ -916,7 +991,7 @@ fn sign_release_from_store<K: AsRef<[u8]>>(
     {
         return Err("Saved Buzz human identity is malformed; nothing was changed".into());
     }
-    sign_release(directory, text)
+    Ok(text)
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1130,6 +1205,10 @@ impl Manager {
             };
         }
     }
+    /// The plugin trust policy beside the profile folders, or `BUZZ_PLUGIN_TRUST`.
+    pub fn trust(&self) -> trust::Trust {
+        trust::load(&self.home, std::env::var_os(trust::PATH_ENV))
+    }
     fn lock(&self) -> Result<File> {
         fs::create_dir_all(&self.root).map_err(err)?;
         let file = OpenOptions::new()
@@ -1208,7 +1287,9 @@ impl Manager {
                 "Installed artifact failed its integrity check; reinstall or roll back".into(),
             );
         }
-        verified_publisher(revision, signature)?;
+        let publisher = verified_publisher(revision, signature)?;
+        self.trust()
+            .check(publisher.as_deref(), trust::own_publisher)?;
         let a: Artifact = serde_json::from_str(&text).map_err(err)?;
         a.manifest.validate()?;
         if a.manifest.id != id {
@@ -1250,19 +1331,25 @@ impl Manager {
                 }
             })
             .collect();
+        let trust = self.trust();
         for (id, p) in registry.installed {
             // Catalog polling stays cheap; verify content hashes before enabling/loading.
             let has_signature = p.current_signature.is_some();
-            let rollback_blocked_reason = ((signatures_required() || has_signature)
-                && p.previous.is_some()
-                && p.previous_signature.is_none())
-            .then_some(SIGNED_ROLLBACK_ERROR);
+            let rollback_blocked_reason =
+                ((signatures_required() || has_signature || trust.is_restricted())
+                    && p.previous.is_some()
+                    && p.previous_signature.is_none())
+                .then_some(SIGNED_ROLLBACK_ERROR);
             let mut error = fs::metadata(self.artifact_path(&id, &p.current))
                 .map_err(err)
                 .err();
             let publisher = if error.is_none() {
                 match verified_publisher(&p.current, p.current_signature.as_ref()) {
-                    Ok(key) => key,
+                    Ok(key) => {
+                        // An untrusted publisher stays listed: it is the key to register.
+                        error = trust.check(key.as_deref(), trust::own_publisher).err();
+                        key
+                    }
                     Err(reason) => {
                         error = Some(reason);
                         None
@@ -1323,6 +1410,8 @@ impl Manager {
     ) -> Result<bool> {
         let bytes = &release.bytes;
         let artifact = release.artifact()?;
+        self.trust()
+            .check(release.publisher().as_deref(), trust::own_publisher)?;
         let manifest = artifact.manifest.clone();
         let readme_revision = artifact.readme_revision();
         let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
@@ -1425,7 +1514,9 @@ impl Manager {
                     }
                     "rollback" => {
                         let previous = p.previous.clone().ok_or("No previous revision")?;
-                        if (signatures_required() || p.current_signature.is_some())
+                        if (signatures_required()
+                            || p.current_signature.is_some()
+                            || self.trust().is_restricted())
                             && p.previous_signature.is_none()
                         {
                             return Err(SIGNED_ROLLBACK_ERROR.into());
@@ -1503,6 +1594,8 @@ impl Manager {
         };
         let release = prepare_reload_artifact(&snapshot.1)?;
         let artifact = release.artifact()?;
+        self.trust()
+            .check(release.publisher().as_deref(), trust::own_publisher)?;
         let manifest = artifact.manifest.clone();
         let readme_revision = artifact.readme_revision();
         let icon_png_revision = icon_revision(artifact.icon_png.as_deref());
@@ -1692,17 +1785,24 @@ fn prepare_reload_artifact(source: &InstallSource) -> Result<Release> {
     let InstallSource::Folder(source) = source else {
         return Err("Plugin was not installed from a reloadable folder".into());
     };
-    let relative = validate_candidate_path(&source.path)?;
-    if !fs::symlink_metadata(&source.root)
-        .map_err(err)?
-        .file_type()
-        .is_dir()
-    {
-        return Err("Reload source root must be a regular folder".into());
-    }
-    let directory = cap_std::fs::Dir::open_ambient_dir(&source.root, cap_std::ambient_authority())
-        .map_err(err)?;
-    imports::read_package(&directory, &relative)
+    let read = || {
+        let relative = validate_candidate_path(&source.path)?;
+        if !fs::symlink_metadata(&source.root)
+            .map_err(err)?
+            .file_type()
+            .is_dir()
+        {
+            return Err("Reload source root must be a regular folder".into());
+        }
+        let mut directory =
+            cap_std::fs::Dir::open_ambient_dir(&source.root, cap_std::ambient_authority())
+                .map_err(err)?;
+        for part in relative.iter() {
+            directory = directory.open_dir_nofollow(part).map_err(err)?;
+        }
+        imports::read_package(&directory, Path::new("."))
+    };
+    read().map_err(|reason| source.read_error(reason))
 }
 fn validate_candidate_path(path: &str) -> Result<PathBuf> {
     // Recorded paths are lossless folder identities; spaces are part of valid names.
@@ -3404,6 +3504,36 @@ mod tests {
         assert!(plugin.enabled);
         assert_eq!(plugin.revision, first);
         assert_eq!(plugin.previous, None);
+    }
+    #[test]
+    fn validates_agent_prompt_sections() {
+        for (ids, valid) in [
+            (vec!["working-location"], true),
+            (vec!["working-location", "progress"], true),
+            (super::AGENT_PROMPT_SECTIONS.to_vec(), true),
+            // Locked, owner-only, host-variant and unknown sections.
+            (vec!["trust"], false),
+            (vec!["etiquette"], false),
+            (vec!["session-model"], false),
+            (vec!["no-such-section"], false),
+            (vec!["progress", "progress"], false),
+            (vec!["Progress"], false),
+        ] {
+            let manifest: super::Manifest = serde_json::from_value(serde_json::json!({
+                "id": "policy", "name": "Policy", "apiVersion": 1,
+                "host": { "agentPromptSections": ids },
+            }))
+            .unwrap();
+            assert_eq!(manifest.validate().is_ok(), valid, "{ids:?}");
+        }
+        // A manifest that declares none is saved as it was.
+        let manifest: super::Manifest = serde_json::from_value(serde_json::json!({
+            "id": "policy", "name": "Policy", "apiVersion": 1, "host": { "files": true },
+        }))
+        .unwrap();
+        assert!(!serde_json::to_string(&manifest)
+            .unwrap()
+            .contains("agentPromptSections"));
     }
     #[test]
     fn validates_agent_type_grants() {

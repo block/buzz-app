@@ -17,6 +17,11 @@ import type {
   RegisteredProvider,
 } from "../features/decisions/service";
 import { DecisionsSettings } from "./DecisionsSettings";
+import type {
+  RegisteredSpeechProvider,
+  SpeechService,
+} from "../features/speech/service";
+import { SpeechSettings } from "./SpeechSettings";
 import { Header, InlineHeader } from "../shared/design-system/ui/Header";
 import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
@@ -37,6 +42,7 @@ import {
   type ReactNode,
   forwardRef,
   type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -52,6 +58,11 @@ import {
   SquaresFourIcon,
   SidebarRightIcon,
 } from "../shared/design-system/icons/index";
+import {
+  sharedPluginUpdateChecks,
+  pluginUpdateAvailable,
+  type PluginUpdateChecks,
+} from "../plugins/update-checks";
 import { canRetryPlugin, type PluginManager } from "../plugins/manager";
 import type { Catalog, PluginInfo } from "../plugins/types";
 import type { Communities, Membership } from "../features/communities/service";
@@ -91,6 +102,7 @@ import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
 import { AgentSettings } from "./AgentSettings";
+import { pluginSection as replaceableSection } from "../features/agent-harness/sections";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 import type { Updates } from "../features/updates/updates";
@@ -152,6 +164,25 @@ function isEssentialPlugin(plugin: PluginInfo) {
       false)
   );
 }
+
+/** The names of the plugins that are on and can replace `section` of the
+ * agents' base instructions in the chats they manage. Safe mode pauses the
+ * external ones. */
+export const sectionPlugins = (
+  plugins: readonly PluginInfo[],
+  section: string,
+  externalPaused = false,
+) =>
+  plugins
+    .filter(
+      (plugin) =>
+        plugin.enabled &&
+        !(externalPaused && plugin.source === "external") &&
+        plugin.manifest.host?.agentPromptSections?.some(
+          (id) => replaceableSection(id)?.id === section,
+        ),
+    )
+    .map((plugin) => plugin.manifest.name);
 
 function comparePlugins(a: PluginInfo, b: PluginInfo) {
   return (
@@ -257,6 +288,8 @@ const noAccessSubscription = () => () => {};
 const noInstallRequest = () => undefined;
 const noProviders: readonly RegisteredProvider[] = [];
 const noDecisionProviders = () => noProviders;
+const noSpeechChoices: readonly RegisteredSpeechProvider[] = [];
+const noSpeechProviders = () => noSpeechChoices;
 /** The plugin whose details a Manage plugins visit shows, for Back/Forward. */
 const PLUGIN_DETAILS = "settings.pluginDetails";
 
@@ -332,10 +365,10 @@ function PluginDetails({
   onCheckAccess,
   catalog,
   authorizeGit,
-  onUpdateAvailableChange,
   reviewRequested,
   onReviewHandled,
   initialUpdateAvailable,
+  updateChecks,
   holdReview,
   openUpdateSettings = false,
   sections,
@@ -354,10 +387,10 @@ function PluginDetails({
   catalog: Catalog;
   authorizeGit: Parameters<typeof PluginImport>[0]["authorizeGit"];
   onCheckAccess(): void;
-  onUpdateAvailableChange(available: boolean): void;
   reviewRequested: boolean;
   onReviewHandled(): void;
   initialUpdateAvailable: boolean;
+  updateChecks: PluginUpdateChecks;
   holdReview: (() => () => void) | undefined;
   openUpdateSettings?: boolean;
   sections: readonly SettingsSection[];
@@ -548,7 +581,7 @@ function PluginDetails({
             key={`${plugin.revision}:${JSON.stringify(plugin.updateSource)}`}
             initialUpdateAvailable={initialUpdateAvailable}
             actionTarget={actionTarget}
-            onUpdateAvailableChange={onUpdateAvailableChange}
+            updateChecks={updateChecks}
             reviewRequested={reviewRequested}
             onReviewHandled={onReviewHandled}
             holdReview={holdReview}
@@ -669,6 +702,7 @@ function PluginDetails({
 export function Settings({
   agents,
   decisions,
+  speech,
   cards,
   plugins,
   adminAccess,
@@ -693,6 +727,7 @@ export function Settings({
 }: {
   agents?: Agents | undefined;
   decisions?: DecisionsService | undefined;
+  speech?: SpeechService | undefined;
   cards: SettingsCards;
   plugins: PluginManager;
   adminAccess?: AdminAccessReader;
@@ -757,6 +792,10 @@ export function Settings({
   const decisionProviders = useSyncExternalStore(
     decisions?.subscribe ?? noAccessSubscription,
     decisions?.providers ?? noDecisionProviders,
+  );
+  const speechProviders = useSyncExternalStore(
+    speech?.subscribe ?? noAccessSubscription,
+    speech?.providers ?? noSpeechProviders,
   );
   const identityCards = contributed.filter((card) => card.identityRow);
   const client = useSyncExternalStore(
@@ -1028,9 +1067,15 @@ export function Settings({
     currentNavigation.current?.savePosition(PLUGIN_DETAILS, id ?? null);
   };
   const [reviewPluginId, setReviewPluginId] = useState<string>();
-  const [updateChecks, setUpdateChecks] = useState<
-    Record<string, { revision: string; available: boolean }>
-  >({});
+  const imports = plugins.imports;
+  const updateChecks = useMemo(
+    () => sharedPluginUpdateChecks(imports),
+    [imports],
+  );
+  const updateSnapshot = useSyncExternalStore(
+    updateChecks.subscribe,
+    updateChecks.snapshot,
+  );
   const [pluginImportActions, setPluginImportActions] =
     useState<HTMLSpanElement | null>(null);
   const pluginTrigger = useRef<HTMLButtonElement>(null);
@@ -1161,11 +1206,15 @@ export function Settings({
           ? decisionProviders.some(
               (provider) => provider.pluginId === selectedPlugin.manifest.id,
             )
-          : contributed.some(
-              (card) =>
-                card.key === section.id &&
-                card.pluginId === selectedPlugin.manifest.id,
-            ),
+          : section.id === "speech"
+            ? speechProviders.some(
+                (provider) => provider.pluginId === selectedPlugin.manifest.id,
+              )
+            : contributed.some(
+                (card) =>
+                  card.key === section.id &&
+                  card.pluginId === selectedPlugin.manifest.id,
+              ),
       )
     : [];
   const renderPluginGroup = (
@@ -1215,8 +1264,7 @@ export function Settings({
               const updateAvailable =
                 !!plugins.imports &&
                 !managedBy(managed, id) &&
-                updateChecks[id]?.revision === plugin.revision &&
-                !!updateChecks[id]?.available;
+                pluginUpdateAvailable(updateSnapshot, plugin);
               const name = (
                 <span className={styles.pluginName}>
                   <span>{plugin.manifest.name}</span>
@@ -1335,20 +1383,26 @@ export function Settings({
                         </span>
                       )}
                       {updateAvailable ? (
-                        <Button
-                          size="sm"
-                          variant="prominent"
-                          disabled={busy}
-                          aria-label={`Update ${plugin.manifest.name}`}
-                          onClick={(event) => {
-                            holdPluginRow(event.currentTarget);
-                            setActivationAttempt(undefined);
-                            showPluginDetails(id);
-                            setReviewPluginId(id);
-                          }}
+                        <Tooltip
+                          content={null}
+                          open={false}
+                          disableHoverablePopup
                         >
-                          Update
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="prominent"
+                            disabled={busy}
+                            aria-label={`Update ${plugin.manifest.name}`}
+                            onClick={(event) => {
+                              holdPluginRow(event.currentTarget);
+                              setActivationAttempt(undefined);
+                              showPluginDetails(id);
+                              setReviewPluginId(id);
+                            }}
+                          >
+                            Update
+                          </Button>
+                        </Tooltip>
                       ) : isRequiredPlugin(plugin) ? (
                         <Button variant="outline" size="sm" disabled>
                           Required
@@ -1447,12 +1501,15 @@ export function Settings({
     communities.relay.subscribe,
     communities.relay.snapshot,
   );
-  const authorizePluginGit = async (repository: string) => {
-    const connection = communities.relay.snapshot();
-    return connection.status === "ready"
-      ? ((await connection.session.authorizeGit?.(repository)) ?? null)
-      : null;
-  };
+  const authorizePluginGit = useCallback(
+    async (repository: string) => {
+      const connection = communities.relay.snapshot();
+      return connection.status === "ready"
+        ? ((await connection.session.authorizeGit?.(repository)) ?? null)
+        : null;
+    },
+    [communities.relay],
+  );
   // Keep announcements outside filtered rows and the covered narrow catalog.
   const announcement = (
     <div
@@ -1499,6 +1556,13 @@ export function Settings({
           <AgentSettings
             agents={agents}
             active={selected === "agents"}
+            sectionPlugins={(section) =>
+              sectionPlugins(
+                catalog?.plugins ?? [],
+                section,
+                externalPluginsPaused,
+              )
+            }
             navigation={navigation}
             onProvider={onProvider}
           />
@@ -1508,6 +1572,16 @@ export function Settings({
             <DecisionsSettings
               decisions={decisions}
               active={() => selected === "decisions"}
+              onSection={openSection}
+            />
+          </div>
+        )}
+        {speech && (
+          <div hidden={selected !== "speech"}>
+            <SpeechSettings
+              speech={speech}
+              community={relay.status === "ready" ? relay.origin : undefined}
+              active={() => selected === "speech"}
               onSection={openSection}
             />
           </div>
@@ -1620,7 +1694,7 @@ export function Settings({
         )}
         {developerMode && (
           <div hidden={selected !== "developer"}>
-            <DeveloperSettings relay={communities.relay} />
+            <DeveloperSettings />
           </div>
         )}
         <div hidden={selected !== "plugins"}>
@@ -1856,28 +1930,13 @@ export function Settings({
           catalog={catalog}
           initialUpdateAvailable={
             !managedBy(managed, selectedPlugin.manifest.id) &&
-            updateChecks[selectedPlugin.manifest.id]?.revision ===
-              selectedPlugin.revision &&
-            updateChecks[selectedPlugin.manifest.id]?.available === true
+            pluginUpdateAvailable(updateSnapshot, selectedPlugin)
           }
+          updateChecks={updateChecks}
           authorizeGit={authorizePluginGit}
           reviewRequested={reviewPluginId === selectedPlugin.manifest.id}
           onReviewHandled={() => setReviewPluginId(undefined)}
           holdReview={installRequests?.holdReview}
-          onUpdateAvailableChange={(available) =>
-            setUpdateChecks((current) => {
-              const id = selectedPlugin.manifest.id;
-              if (
-                current[id]?.revision === selectedPlugin.revision &&
-                current[id]?.available === available
-              )
-                return current;
-              return {
-                ...current,
-                [id]: { revision: selectedPlugin.revision, available },
-              };
-            })
-          }
           failure={selectedFailure}
           retryable={canRetryPlugin(
             selectedPlugin,

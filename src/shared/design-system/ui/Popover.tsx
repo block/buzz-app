@@ -1,5 +1,6 @@
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import type { ComponentProps } from "react";
+import { useOverlayPortalContainer } from "../overlayLayer";
 import { useFinalFocusUnlessMoved } from "./finalFocus";
 import { hoverOpenTiming, type HoverOpen } from "./hoverIntent";
 
@@ -73,8 +74,9 @@ export function PopoverPopup({
   ...props
 }: PopoverPopupProps) {
   const focus = useFinalFocusUnlessMoved(finalFocus, ref);
+  const portalContainer = useOverlayPortalContainer();
   return (
-    <BasePopover.Portal>
+    <BasePopover.Portal container={portalContainer}>
       <BasePopover.Positioner
         className="buzz-popover-positioner"
         side={side}

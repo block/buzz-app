@@ -256,7 +256,8 @@ html[data-keyboard-navigation] :is(.scrim, .content) {
 /* So does a layer over another sheet; details keep the composer's space at
    the bottom of the height they fill. */
 .sheet[data-reader-only] > .content,
-.sheet .sheet > .content {
+.sheet .sheet > .content,
+.sheet .sheet > .content > .body {
   flex: 1;
 }
 .sheet[data-reader-only] > .content > .body {

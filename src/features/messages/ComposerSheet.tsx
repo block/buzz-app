@@ -13,7 +13,10 @@ import {
   SidebarRightIcon,
   XIcon,
 } from "../../shared/design-system/icons";
-import { activeModal } from "../../shared/design-system/overlayLayer";
+import {
+  activeModal,
+  OverlayPortalProvider,
+} from "../../shared/design-system/overlayLayer";
 import { DialogBarMaterial } from "../../shared/design-system/ui/DialogBarMaterial";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { TypingDots } from "../../shared/design-system/ui/TypingDots";
@@ -602,6 +605,9 @@ const pressedScrim = (
   !!popup &&
   !!target.parentElement?.contains(popup);
 
+const sheetPopupContainer = () =>
+  typeof document === "undefined" ? null : document.body;
+
 function SheetRoot({
   open,
   onOpenChange,
@@ -805,30 +811,32 @@ export function ComposerSheet({
             }
           >
             <div className={styles.content}>
-              <SheetHeader
-                title={title}
-                description={description}
-                leading={leading}
-                closeLabel={closeLabel}
-                material={containsComposer || readerOnly}
-                onMoveToTab={onMoveToTab}
-                onOpenAsTab={onOpenAsTab}
-                spotlight={spotlight}
-                onSpotlightAnchor={onSpotlightAnchor}
-                covered={tall}
-              />
-              <div
-                className={`buzz-dialog-body ${styles.body}`}
-                data-sheet-body=""
-              >
-                <div className={styles.reader}>
-                  <SheetRevealContext.Provider
-                    value={quick ? handoff.reveal : undefined}
-                  >
-                    {children}
-                  </SheetRevealContext.Provider>
+              <OverlayPortalProvider value={sheetPopupContainer}>
+                <SheetHeader
+                  title={title}
+                  description={description}
+                  leading={leading}
+                  closeLabel={closeLabel}
+                  material={containsComposer || readerOnly}
+                  onMoveToTab={onMoveToTab}
+                  onOpenAsTab={onOpenAsTab}
+                  spotlight={spotlight}
+                  onSpotlightAnchor={onSpotlightAnchor}
+                  covered={tall}
+                />
+                <div
+                  className={`buzz-dialog-body ${styles.body}`}
+                  data-sheet-body=""
+                >
+                  <div className={styles.reader}>
+                    <SheetRevealContext.Provider
+                      value={quick ? handoff.reveal : undefined}
+                    >
+                      {children}
+                    </SheetRevealContext.Provider>
+                  </div>
                 </div>
-              </div>
+              </OverlayPortalProvider>
             </div>
             {quick && (
               <div className={styles.quickLoader} aria-hidden="true">

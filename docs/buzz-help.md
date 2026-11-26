@@ -211,8 +211,7 @@ if that desktop app is up and running.
   **Read Only** inspects files and the web and answers in chat; it can't edit
   files, run Shell or delegate. An agent saved with Orchestrator or an
   individual tool selection by an earlier version keeps it, shown as **Earlier
-  selection**, until you choose a role. On Windows, a Goose agent with a restricted role
-  pauses its messages, and the Tools tab warns before you save. Where the harness has a native Skill tool,
+  selection**, until you choose a role. Where the harness has a native Skill tool,
   such as Claude Code, every role can load skills; each action a skill takes
   still follows the role, and a connected server's tool named Skill doesn't
   count.

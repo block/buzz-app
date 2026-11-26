@@ -16,7 +16,6 @@ import { InlineHeader } from "../../shared/design-system/ui/Header";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../../shared/design-system/ui/RadioGroup";
 
-const GOOSE = /^buzz\.goose\/goose$/;
 const same = (left: ToolPolicy, right: ToolPolicy) =>
   JSON.stringify(left) === JSON.stringify(right);
 
@@ -25,11 +24,9 @@ const same = (left: ToolPolicy, right: ToolPolicy) =>
 export function AgentToolAccess({
   agents,
   agent,
-  windows = navigator.platform.startsWith("Win"),
 }: {
   agents: Agents;
   agent: Agent;
-  windows?: boolean;
 }) {
   const saved = useMemo(() => toolPolicy(agent.config), [agent.config]);
   const [draft, setDraft] = useState(saved);
@@ -160,13 +157,6 @@ export function AgentToolAccess({
         Subagents inherit this access. It is not a sandbox: with Shell on,
         commands can use any credentials the agent's process has.
       </p>
-      {windows && GOOSE.test(agent.type) && draft.preset !== "coder" && (
-        <p role="status" className="m-0 text-body-sm text-warning">
-          On Windows, Buzz can't yet keep Goose's saved tool permissions from
-          overriding a restricted role, so this agent's messages pause until you
-          choose All.
-        </p>
-      )}
       {error && (
         <p role="alert" className="m-0 text-body-sm text-danger">
           {error}

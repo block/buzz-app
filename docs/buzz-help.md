@@ -46,10 +46,6 @@ if that desktop app is up and running.
 - **Teams**: saved groups of agents that can be mentioned together and carry instructions.
 - **Canvas**: shared Markdown notes for a channel.
 - **Memory**: an agent's own notes, readable in its **Memory** tab.
-- **Tables**: structured records an agent keeps, such as Goals. You define a
-  table's fields in the agent's **Tables** tab; the agent adopts them, keeps
-  the rows and signs them. Rows are encrypted to you, and only the agent can
-  change them.
 - **Attention**: lets agents follow things with Interests, watches and timers.
 - **Huddles**: voice calls in a channel or DM, which your own agents can join.
 - **Workflows**: automations that run in a channel on a message, reaction,
@@ -65,7 +61,10 @@ if that desktop app is up and running.
   sheet over the conversation's message box; Back or **X** closes it. **Move to
   side panel** on the sheet moves that thread into a tab. To open them as tabs
   instead, set **Settings → Appearance → Open threads in** to **Side pane** or
-  **Main pane**. Calls, canvases and apps always open as tabs on the right.
+  **Main pane**. A thread opened from the side pane, as from a link in a thread
+  or canvas there or from **Pinned messages**, opens as a tab in its channel's
+  side pane, not as a sheet, and a sheet already open stays. Calls, canvases
+  and apps always open as tabs on the right.
 - **Left Sidebar**: **Activity** and other pinned pages at the top, then workspaces
   which organize groups of channels/chats/dms. It includes "new" buttons for creating
   more of the same.
@@ -169,7 +168,7 @@ if that desktop app is up and running.
   on this computer. Local harnesses need their sign-in or API key in
   **Settings → Agent setup → Harness defaults**.
 - **An agent's page** has its identity and instructions, settings, **Memory**,
-  **Tables**, **Activity** (its past sessions) and plugin tabs such as **Attention**.
+  **Activity** (its past sessions) and plugin tabs such as **Attention**.
   Local Claude and Codex transcripts can open on recent activity. Choose
   **Load earlier activity** to see more history.
 - **Settings → Agent details → Environment variables** sets variables one local

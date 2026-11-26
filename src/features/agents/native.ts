@@ -228,6 +228,14 @@ export type AgentsNative = {
     body: string | null,
     after: number,
   ): Promise<RelayEvent>;
+  /** A table key, 64 lowercase hex, sealed by the agent to `peer`. */
+  tableKeyWrap(member: Membership, peer: string, key: string): Promise<string>;
+  /** The table key sealed between the agent and `peer`; nothing else opens. */
+  tableKeyUnwrap(
+    member: Membership,
+    peer: string,
+    wrapped: string,
+  ): Promise<string>;
   /** Publishes its name and picture as its profile in one community unless
    * that community already has it. */
   /** `force` republishes it even when unchanged. */
@@ -360,6 +368,15 @@ export const nativeAgents = (): AgentsNative | undefined =>
           invoke("app_agent_git_auth", { pubkey, relay, owner, repo }),
         remember: ({ pubkey, relay }, slug, body, after) =>
           invoke("app_agent_remember", { pubkey, relay, slug, body, after }),
+        tableKeyWrap: ({ pubkey, relay }, member, key) =>
+          invoke("app_agent_table_key_wrap", { pubkey, relay, member, key }),
+        tableKeyUnwrap: ({ pubkey, relay }, peer, wrapped) =>
+          invoke("app_agent_table_key_unwrap", {
+            pubkey,
+            relay,
+            peer,
+            wrapped,
+          }),
         publishProfile: ({ pubkey, relay }, force) =>
           invoke("app_agent_publish_profile", { pubkey, relay, force }),
         claim: (pubkey, revision) =>

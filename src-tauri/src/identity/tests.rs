@@ -979,3 +979,72 @@ async fn managed_consent_commit_is_fenced_by_identity_close_and_never_restores()
             .is_err());
     }
 }
+
+#[tokio::test]
+async fn table_key_reseal_seals_only_a_key_that_opens_the_table() {
+    use nostr::event::{EventBuilder, FinalizeEvent, Kind, Tag};
+    use nostr::key::Keys;
+    let host = IdentityHost::fixture();
+    let owner = nostr::key::PublicKey::from_hex(&host.viewer().await.unwrap()).unwrap();
+    let agent = Keys::generate();
+    let member = Keys::generate();
+    let tag = |parts: &[&str]| Tag::parse(parts.iter().copied()).unwrap();
+    let key = [7u8; 32];
+    let file = STANDARD.encode(
+        nip44::v2::encrypt_to_bytes_with_nonce(
+            &nip44::v2::ConversationKey::new(key),
+            b"table",
+            [3; 32],
+        )
+        .unwrap(),
+    );
+    let head = EventBuilder::new(Kind::Custom(45010), file)
+        .tags([tag(&["d", "t1"]), tag(&["type", "buzz.table"])])
+        .finalize(&agent)
+        .unwrap();
+    let grant = |for_: &str, plaintext: &str| {
+        let content =
+            nip44::encrypt(agent.secret_key(), &owner, plaintext, nip44::Version::V2).unwrap();
+        EventBuilder::new(Kind::Custom(45010), content)
+            .tags([
+                tag(&["type", "buzz.table-key"]),
+                tag(&["for", for_]),
+                tag(&["table", "t1"]),
+            ])
+            .finalize(&agent)
+            .unwrap()
+    };
+    let owner_hex = owner.to_hex();
+    let other_key = hex::encode([9u8; 32]);
+    let grants = vec![
+        grant(&owner_hex, &other_key),
+        grant(&owner_hex, "not a key"),
+        grant(&owner_hex, &hex::encode(key)),
+    ];
+    let sealed = host
+        .table_key_reseal(head.clone(), grants, member.public_key().to_hex())
+        .await
+        .unwrap();
+    assert_eq!(
+        nip44::decrypt(member.secret_key(), &owner, &sealed).unwrap(),
+        hex::encode(key)
+    );
+
+    let refused = |grants: Vec<Event>| {
+        let host = host.clone();
+        let head = head.clone();
+        let member = member.public_key().to_hex();
+        async move { host.table_key_reseal(head, grants, member).await.is_err() }
+    };
+    assert!(refused(vec![grant(&owner_hex, &other_key)]).await);
+    assert!(
+        refused(vec![grant(
+            &member.public_key().to_hex(),
+            &hex::encode(key)
+        )])
+        .await
+    );
+    let mut tampered = grant(&owner_hex, &hex::encode(key));
+    tampered.content.push('x');
+    assert!(refused(vec![tampered]).await);
+}

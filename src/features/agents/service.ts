@@ -118,6 +118,7 @@ import {
   settingsProposalProblem,
 } from "./settings-proposal";
 import { nativeRelayInfo } from "../relay/native";
+import type { RelayInfo } from "../relay/relay-info";
 import { AgentRunners, type Connection, TIMEOUT_LIMIT_MS } from "./runner";
 import { CoreMemoryCache } from "./core-memory-cache";
 import {
@@ -769,6 +770,14 @@ export type AgentHandle = Readonly<{
     body: string | null,
     after: number,
   ): Promise<RelayEvent>;
+  /** Table keys sealed to and opened from another identity with the
+   * agent's key, which stays in the app. */
+  tableKeys?: Readonly<{
+    wrap(member: string, key: Uint8Array): Promise<string>;
+    unwrap(peer: string, wrapped: string): Promise<Uint8Array>;
+  }>;
+  /** Its community's advertised extensions and message size limit. */
+  relayInfo?(): Promise<RelayInfo>;
   /** The owner's channel templates on this device, each with the agents it
    * adds that are the owner's agents in this agent's community. */
   templates(): readonly Readonly<{

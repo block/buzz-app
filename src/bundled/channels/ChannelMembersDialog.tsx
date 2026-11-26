@@ -26,6 +26,7 @@ import {
   type RefObject,
 } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import { useTableAccess } from "../../features/tables/use-table-access";
 import type { Navigation } from "../../features/navigation/controller";
 import type { Agents, Team } from "../../features/agents/service";
 import { useAgentChoices } from "../../features/agents/use-choices";
@@ -1037,6 +1038,21 @@ export function ChannelMembersDialog({
     [channel?.members],
   );
   const largeRoster = (channel?.members?.length ?? 0) > MEMBER_PAGE_SIZE;
+  const tableAccess = useTableAccess(
+    session,
+    channelId,
+    channel?.members,
+    !!channel?.private && channel.viewerRole === "owner",
+  );
+  const latest = useRef({ members: channel?.members, tableAccess });
+  latest.current = { members: channel?.members, tableAccess };
+  // A table's key follows a confirmed addition, so the person can open it.
+  const giveTableAccess = useCallback((key: string, confirmed = false) => {
+    const { members, tableAccess } = latest.current;
+    if (tableAccess && (confirmed || members?.includes(key)))
+      void tableAccess.grant(key);
+  }, []);
+
   const administration = useMemberAdministration(
     session,
     channelId,
@@ -1810,6 +1826,7 @@ export function ChannelMembersDialog({
           setSelectedIdentity("All");
           setSelectedAccess("All");
           setNotice(`${name} added.`);
+          giveTableAccess(key, true);
         }
         return;
       }
@@ -1852,6 +1869,7 @@ export function ChannelMembersDialog({
           );
         else if (!dm) await session.memberAdditions.add(channelId, key);
         if (!signal.aborted) {
+          giveTableAccess(key);
           recordChoice(session.scope, typed, personKey(key));
           if (direct) {
             setDirectAdditions((old) => ({
@@ -1916,6 +1934,7 @@ export function ChannelMembersDialog({
       memberActions,
       memberPending,
       changeMember,
+      giveTableAccess,
     ],
   );
 
@@ -2404,7 +2423,11 @@ export function ChannelMembersDialog({
                 setIntent(undefined);
                 const signal = lifetime.current?.signal;
                 if (!signal) return;
-                void changeMember(selection, signal);
+                void changeMember(selection, signal).then((changed) => {
+                  // The relay confirmed this addition before it resolved.
+                  if (changed && selection.expectedRole === "absent")
+                    giveTableAccess(selection.pubkey, true);
+                });
               }}
             >
               {selection.role === "remove"
@@ -2472,6 +2495,8 @@ export function ChannelMembersDialog({
             </p>
           )}
           {(refusals.size > 0 ||
+            !!tableAccess?.missing.length ||
+            !!tableAccess?.unchecked ||
             openingMessage ||
             messageError ||
             copyFailure) && (
@@ -2499,6 +2524,40 @@ export function ChannelMembersDialog({
                       }}
                     >
                       Retry
+                    </Button>
+                  </p>
+                );
+              })}
+              {tableAccess?.unchecked && (
+                <p role="alert" className="text-body-sm text-danger">
+                  Buzz couldn't finish checking table access.{" "}
+                  <Button
+                    variant="outline"
+                    aria-label="Check table access again"
+                    onClick={tableAccess.recheck}
+                  >
+                    Retry
+                  </Button>
+                </p>
+              )}
+              {tableAccess?.missing.map((key) => {
+                const name = label(key);
+                const failure = tableAccess.failures.get(key);
+                return (
+                  <p
+                    key={`table-${key}`}
+                    role={failure ? "alert" : "status"}
+                    className={`text-body-sm ${failure ? "text-danger" : "text-subtle"}`}
+                  >
+                    {name} needs table access
+                    {failure ? `: ${failure}` : "."}{" "}
+                    <Button
+                      variant="outline"
+                      aria-label={`Grant ${name} table access`}
+                      disabled={tableAccess.pending.has(key)}
+                      onClick={() => void tableAccess.grant(key)}
+                    >
+                      Grant access
                     </Button>
                   </p>
                 );

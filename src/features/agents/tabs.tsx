@@ -24,7 +24,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { SettingsGroup } from "../../shared/design-system/ui/SettingsGroup";
 import { incompatibleSettings } from "./agent-config-history";
 import { AgentExecutionNote } from "./AgentExecutionNote";
-import { TablesPanel } from "../tables/TablesPanel";
 import { agentExecution } from "./execution-location";
 
 export type AgentSection = Readonly<{
@@ -204,11 +203,6 @@ export function agentSections({
           communities={communities}
         />
       ),
-    },
-    {
-      value: "agent:tables",
-      label: "Tables",
-      render: () => <TablesPanel agent={agent} memories={memories} />,
     },
   ];
 }

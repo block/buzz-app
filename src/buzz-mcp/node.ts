@@ -10,10 +10,12 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { decode } from "nostr-tools/nip19";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
+import { relayInfoOf } from "../features/relay/relay-info";
 import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { CANVAS_MAX_EVENT_BYTES } from "../features/channel-templates/canvas-limits.ts";
 import { eventsDto } from "../features/relay/events";
+import { unwrapKey, wrapKey } from "../features/tables/file";
 import {
   effectiveEditDto,
   effectiveEditFilter,
@@ -23,7 +25,6 @@ import type {
   BuzzEvent,
   Media,
   Memory,
-  Proposal,
   Template,
   Upload,
 } from "./client";
@@ -168,70 +169,10 @@ export function nodeClient(
     return getConversationKey(secret, owner);
   };
 
-  /** NIP-AE heads `author` wrote for this pair; only entry `slug` when given. */
-  async function entries(
-    author: string,
-    slug?: string,
-    purpose: "memory" | "proposal" = "memory",
-  ) {
-    const key = conversation();
-    const events = eventsDto(
-      await request(
-        "/query",
-        JSON.stringify([
-          {
-            kinds: [30174],
-            authors: [author],
-            "#p": [author === pubkey ? (owner as string) : pubkey],
-            ...(slug ? { "#d": [memoryAddress(key, slug)] } : {}),
-            limit: MEMORY_LIMIT,
-          },
-        ]),
-      ),
-    );
-    const heads = new Map<string, BuzzEvent>();
-    for (const event of events) {
-      const d = event.tags.find((tag) => tag[0] === "d")?.[1];
-      if (!d || event.pubkey !== author) continue;
-      const head = heads.get(d);
-      if (
-        !head ||
-        head.created_at < event.created_at ||
-        (head.created_at === event.created_at && event.id < head.id)
-      )
-        heads.set(d, event);
-    }
-    const found: (Memory | Proposal)[] = [];
-    const deleted: { slug: string; createdAt: number }[] = [];
-    for (const [d, event] of heads) {
-      try {
-        const entry = JSON.parse(decrypt(event.content, key));
-        if (typeof entry.slug !== "string") continue;
-        if (purpose === "proposal" && memoryAddress(key, entry.slug) !== d)
-          continue;
-        const body = entry.slug === "core" ? entry.profile : entry.value;
-        if (typeof body === "string")
-          found.push({
-            slug: entry.slug,
-            body,
-            createdAt: event.created_at,
-            ...(purpose === "proposal" ? { author, eventId: event.id } : {}),
-          });
-        // A write that recreates a deleted slug must follow its tombstone.
-        else if (body === null && entry.slug !== "core")
-          deleted.push({ slug: entry.slug, createdAt: event.created_at });
-      } catch {}
-    }
-    return {
-      entries: found.sort((a, b) => a.slug.localeCompare(b.slug)),
-      ...(deleted.length ? { deleted } : {}),
-      partial: events.length >= MEMORY_LIMIT,
-    };
-  }
-
   return {
     pubkey,
     key: pubkey,
+    owner,
     query: async (filters) =>
       eventsDto(await request("/query", JSON.stringify(filters))),
     async effectiveEdit(id, channel) {
@@ -252,6 +193,22 @@ export function nodeClient(
       // A community without profile name search.
       if (response.status === 404 || response.status === 405) return undefined;
       return eventsDto(await json(response));
+    },
+    async relayInfo() {
+      const response = await fetch(base, {
+        headers: { Accept: "application/nostr+json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok)
+        throw new Error(
+          `The relay answered ${response.status} for its features.`,
+        );
+      return relayInfoOf(await response.json());
+    },
+    tableKeys: {
+      wrap: async (member, key) => wrapKey(secret, member, key),
+      unwrap: async (granter, wrapped) => unwrapKey(secret, granter, wrapped),
     },
     publish(event) {
       const tags = event.tags.filter(
@@ -395,11 +352,58 @@ export function nodeClient(
         throw new Error(`${path} is outside ${options.root}`);
       return new Uint8Array(await readFile(full));
     },
-    memories: (slug) => entries(pubkey, slug),
-    // Owner-signed proposals addressed to this agent, under the same
-    // conversation key; only the registered owner's are read or kept.
-    proposals: async (slug) =>
-      (await entries(owner as string, slug, "proposal")).entries as Proposal[],
+    async memories(slug) {
+      const key = conversation();
+      const events = eventsDto(
+        await request(
+          "/query",
+          JSON.stringify([
+            {
+              kinds: [30174],
+              authors: [pubkey],
+              "#p": [owner],
+              ...(slug ? { "#d": [memoryAddress(key, slug)] } : {}),
+              limit: MEMORY_LIMIT,
+            },
+          ]),
+        ),
+      );
+      const heads = new Map<string, BuzzEvent>();
+      for (const event of events) {
+        const d = event.tags.find((tag) => tag[0] === "d")?.[1];
+        if (!d) continue;
+        const head = heads.get(d);
+        if (
+          !head ||
+          head.created_at < event.created_at ||
+          (head.created_at === event.created_at && event.id < head.id)
+        )
+          heads.set(d, event);
+      }
+      const entries: Memory[] = [];
+      const deleted: { slug: string; createdAt: number }[] = [];
+      for (const event of heads.values()) {
+        try {
+          const entry = JSON.parse(decrypt(event.content, key));
+          const body = entry.slug === "core" ? entry.profile : entry.value;
+          if (typeof entry.slug !== "string") continue;
+          if (typeof body === "string")
+            entries.push({
+              slug: entry.slug,
+              body,
+              createdAt: event.created_at,
+            });
+          // A write that recreates a deleted slug must follow its tombstone.
+          else if (body === null && entry.slug !== "core")
+            deleted.push({ slug: entry.slug, createdAt: event.created_at });
+        } catch {}
+      }
+      return {
+        entries: entries.sort((a, b) => a.slug.localeCompare(b.slug)),
+        ...(deleted.length ? { deleted } : {}),
+        partial: events.length >= MEMORY_LIMIT,
+      };
+    },
     async remember(slug, body, after) {
       const key = conversation();
       const d = memoryAddress(key, slug);

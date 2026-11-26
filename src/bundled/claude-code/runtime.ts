@@ -86,7 +86,6 @@ import type { ClaudeModel, Settled, Spawn, ToolServer } from "./claude";
 import { appClient, readFile, relayKeyOf } from "../../buzz-mcp/app-client";
 import {
   MemoryReads,
-  ownerProposals,
   READ_TIMEOUT_MS,
   recentNotesSection,
 } from "../../features/agent-harness/core-memory";
@@ -2318,7 +2317,6 @@ export class ClaudeRuntime {
                     handle.protection?.processProtection,
                   ),
             memories: (slug) => this.memories(agent, slug),
-            proposals: (slug) => ownerProposals(this.reads(agent), slug),
             remembered: () => this.forget(agent),
             signal,
             callSignal: signal,

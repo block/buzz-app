@@ -16,11 +16,7 @@ import { filterSummary, httpLabel } from "../src/features/developer/traffic.ts";
 import { isWorkflowDefinitionBatch } from "../src/features/workflows/queries.ts";
 import { validStatusTemplate } from "./user-status.mjs";
 import { validTypingTemplate } from "../src/features/relay/typing-protocol.ts";
-import {
-  memoryFilter,
-  decodeAgentMemory,
-  tableProposal,
-} from "./agent-memory.mjs";
+import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
 import { prepareMedia } from "./media-preparation.mjs";
 import {
@@ -2542,7 +2538,6 @@ export function relayBrokerPlugin({
             ![
               "/api/relay/query",
               "/api/relay/agent-memories",
-              "/api/relay/table-propose",
               "/api/relay/presence-snapshot",
               "/api/relay/channel-activity",
               "/api/relay/sign",
@@ -2627,14 +2622,13 @@ export function relayBrokerPlugin({
             )
           )
             return json(res, 413, { error: "Filter body too large" });
-          let memoryAgent, memoryProposals;
+          let memoryAgent;
           if (memory) {
             try {
               if (!scoped)
                 throw new Error("Memory reads need an explicit community");
               const query = memoryFilter(filters, viewer);
               memoryAgent = filters.agent;
-              memoryProposals = filters.proposals === true;
               filters = query;
             } catch {
               return json(res, 400, { error: "Invalid memory target" });
@@ -2868,19 +2862,6 @@ export function relayBrokerPlugin({
           const channelActivity = route === "/api/relay/channel-activity";
           if (channelActivity && !validChannelActivityFilters(filters))
             return json(res, 400, { error: "Activity filter rejected" });
-          const proposal = route === "/api/relay/table-propose";
-          if (proposal) {
-            try {
-              if (!scoped)
-                throw new Error("Proposals need an explicit community");
-              filters = tableProposal(filters, key, viewer);
-            } catch {
-              return json(res, 400, {
-                error: "Invalid table proposal",
-                sent: false,
-              });
-            }
-          }
           const profile = route === "/api/relay/profile";
           const directMessage = route === "/api/relay/direct-message";
           if (directMessage) {
@@ -3297,7 +3278,6 @@ export function relayBrokerPlugin({
               return json(res, 400, { error: "Invalid outgoing signature" });
           } else if (
             !profile &&
-            !proposal &&
             !directMessage &&
             !claim &&
             !policy &&
@@ -3395,7 +3375,7 @@ export function relayBrokerPlugin({
               ? gifSearchPath
               : profileSearch
                 ? "/profiles/search"
-                : profile || proposal || directMessage || member || leave
+                : profile || directMessage || member || leave
                   ? "/events"
                   : claim
                     ? "/api/invites/claim"
@@ -3553,7 +3533,6 @@ export function relayBrokerPlugin({
                   viewer,
                   memoryAgent,
                   requestSignal,
-                  memoryProposals,
                 );
                 requestSignal.throwIfAborted();
                 return json(res, 200, listing);
@@ -3562,17 +3541,6 @@ export function relayBrokerPlugin({
                   error: "Memory listing could not be validated",
                 });
               }
-            }
-            if (proposal) {
-              const receipt = JSON.parse(text);
-              if (receipt.event_id !== filters.id || receipt.accepted !== true)
-                return json(res, 502, {
-                  error: "The table proposal could not be confirmed",
-                });
-              return json(res, 200, {
-                eventId: filters.id,
-                createdAt: filters.created_at,
-              });
             }
             if (profile || member || leave) {
               const receipt = JSON.parse(text);

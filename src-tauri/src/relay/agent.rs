@@ -399,89 +399,6 @@ fn memory_address(conversation: &ConversationKey, name: &str) -> Result<String> 
     Ok(hex_digest(&mac.finalize().into_bytes()))
 }
 
-/// Where a person's proposed table schemas live, as NIP-AE slugs.
-const PROPOSAL_PREFIX: &str = "mem/proposals/tables/";
-/// A proposal's serialized schema, as NIP-AE bounds a memory body.
-const PROPOSAL_BYTES: usize = 60_000;
-
-/// Signs and publishes the viewer's proposed schema for `table` to `agent`:
-/// a NIP-AE envelope the viewer signs, with the agent as `p`, encrypted under
-/// their conversation key. The agent adopts it into its own memory; this
-/// record is never canonical by itself.
-#[tauri::command]
-pub(crate) async fn relay_table_propose(
-    host: tauri::State<'_, IdentityHost>,
-    fi: tauri::State<'_, FederatedIdentity>,
-    community: String,
-    agent: String,
-    table: String,
-    schema: String,
-    after: u64,
-) -> Result<Value> {
-    let invalid = || "Invalid table proposal".to_owned();
-    let url = origin(&community)?
-        .join("/events")
-        .map_err(|_| "Invalid community")?;
-    let name = format!("{PROPOSAL_PREFIX}{table}");
-    if !key(&agent) || table.contains('/') || !slug(&name) || schema.len() > PROPOSAL_BYTES {
-        return Err(invalid());
-    }
-    let parsed: Value = serde_json::from_str(&schema).map_err(|_| invalid())?;
-    if parsed["version"] != 1 || !parsed["fields"].as_array().is_some_and(|f| !f.is_empty()) {
-        return Err(invalid());
-    }
-    let plaintext = json!({"slug": name, "value": schema}).to_string();
-    let target = agent.clone();
-    let (content, address) = host
-        .with_key(move |secret, viewer| {
-            if viewer == target {
-                return Err("Invalid table proposal".into());
-            }
-            let secret = NostrSecretKey::from_slice(secret).map_err(|_| "Invalid identity")?;
-            let peer = NostrPublicKey::from_hex(&target).map_err(|_| "Invalid table proposal")?;
-            let conversation =
-                ConversationKey::derive(&secret, &peer).map_err(|_| "Invalid table proposal")?;
-            let mut nonce = [0u8; 32];
-            getrandom::fill(&mut nonce).map_err(|_| "Could not encrypt table proposal")?;
-            let payload =
-                nip44::v2::encrypt_to_bytes_with_nonce(&conversation, plaintext.as_bytes(), nonce)
-                    .map_err(|_| "Could not encrypt table proposal")?;
-            Ok((
-                STANDARD.encode(payload),
-                memory_address(&conversation, &name)?,
-            ))
-        })
-        .await?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "System clock is unavailable")?
-        .as_secs();
-    let created_at = now.max(after.saturating_add(1));
-    let event = host
-        .sign(crate::identity::EventTemplate {
-            kind: 30174,
-            created_at,
-            content,
-            tags: vec![vec!["d".into(), address], vec!["p".into(), agent]],
-        })
-        .await?;
-    let response = send(
-        &host,
-        Some(&fi),
-        url,
-        "POST",
-        Some(event.to_string()),
-        true,
-        64 * 1024,
-    )
-    .await?;
-    let reply: Value = serde_json::from_str(&response.body).unwrap_or(Value::Null);
-    if response.status != 200 || reply["accepted"] != true {
-        return Err("The community refused the table proposal".into());
-    }
-    Ok(json!({"eventId": event["id"], "createdAt": created_at}))
-}
-
 /// The agent's memory as its owner reads it: every entry, or only entry `slug`
 /// when given, which is read by its address instead of from the listing.
 // Tauri injects the webview and states; the rest are the IPC arguments.
@@ -496,12 +413,10 @@ pub(crate) async fn relay_agent_memories_read<R: tauri::Runtime>(
     slug: Option<String>,
     id: Option<String>,
     on_page: Option<tauri::ipc::JavaScriptChannelId>,
-    proposals: Option<bool>,
 ) -> Result<Value> {
-    let own = proposals == Some(true);
     let on_page = on_page.map(|channel| channel.channel_on(webview));
     let Some(id) = id else {
-        return read_agent_memories(&host, &fi, community, agent, slug, None, own).await;
+        return read_agent_memories(&host, &fi, community, agent, slug, None).await;
     };
     let id = super::upload_id(Some(&id)).map_err(|_| "Invalid memory read")?;
     let Some(cancelled) = super::read_cancels()
@@ -515,7 +430,7 @@ pub(crate) async fn relay_agent_memories_read<R: tauri::Runtime>(
     let result = tokio::select! {
         biased;
         _ = cancelled => Err("Memory read cancelled".into()),
-        result = read_agent_memories(&host, &fi, community, agent, slug, on_page, own) => result,
+        result = read_agent_memories(&host, &fi, community, agent, slug, on_page) => result,
     };
     super::read_cancels().finish(id);
     result
@@ -532,7 +447,6 @@ async fn read_agent_memories(
     agent: String,
     slug: Option<String>,
     on_page: Option<tauri::ipc::Channel<Value>>,
-    own: bool,
 ) -> Result<Value> {
     let url = origin(&community)?
         .join("/query")
@@ -555,13 +469,8 @@ async fn read_agent_memories(
     if viewer == agent {
         return Err("Invalid memory target".into());
     }
-    let (author, counterparty) = if own {
-        (&viewer, &agent)
-    } else {
-        (&agent, &viewer)
-    };
     let mut filter =
-        json!({"kinds":[30174], "authors":[author], "#p":[counterparty], "limit":MEMORY_PAGE});
+        json!({"kinds":[30174], "authors":[agent], "#p":[viewer], "limit":MEMORY_PAGE});
     if let Some(name) = slug.clone() {
         let target = agent.clone();
         let address = host.with_key(move |secret, _| {
@@ -581,16 +490,7 @@ async fn read_agent_memories(
     // blocking worker stops at its next record and releases the identity.
     let ended = ReadEnd::default();
     let decode = |records, decoder, stop| {
-        decode_page(
-            host,
-            &viewer,
-            &agent,
-            records,
-            decoder,
-            stop,
-            ended.flag(),
-            own,
-        )
+        decode_page(host, &viewer, &agent, records, decoder, stop, ended.flag())
     };
     let mut listing = read_memories(
         budget,
@@ -638,7 +538,6 @@ impl Drop for ReadEnd {
 
 /// Decodes `records` into `decoder` under the identity, stopping at `stop`
 /// or once `ended` is set.
-#[allow(clippy::too_many_arguments)]
 fn decode_page<'a>(
     host: &'a IdentityHost,
     viewer: &str,
@@ -647,16 +546,12 @@ fn decode_page<'a>(
     decoder: MemoryDecoding,
     stop: std::time::Instant,
     ended: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    own: bool,
 ) -> impl std::future::Future<Output = Result<()>> + 'a {
     let (viewer, agent) = (viewer.to_owned(), agent.to_owned());
     host.with_key(move |secret, now| {
-        let expired = || {
+        decode_memory_events(&decoder, secret, now, &viewer, &agent, &records, || {
             ended.load(std::sync::atomic::Ordering::Relaxed) || std::time::Instant::now() >= stop
-        };
-        decode_entries(
-            &decoder, secret, now, &viewer, &agent, &records, expired, own,
-        )
+        })
     })
 }
 
@@ -930,7 +825,6 @@ fn decode_memories_with_key(
     Ok(listing)
 }
 
-#[cfg(test)]
 /// Verifies and decrypts `events` newest first into `decoder`, which it locks
 /// only to take each entry. It stops, marking the listing partial, once
 /// `expired` says the read's time is up or the kept entries reach
@@ -944,36 +838,6 @@ fn decode_memory_events(
     events: &[Option<Value>],
     expired: impl Fn() -> bool,
 ) -> Result<()> {
-    decode_entries(
-        decoder,
-        secret,
-        viewer,
-        captured_viewer,
-        agent,
-        events,
-        expired,
-        false,
-    )
-}
-
-/// As `decode_memory_events`; with `own`, the viewer's own table proposals
-/// to `agent` instead: the viewer signed them and the agent is `p`.
-#[allow(clippy::too_many_arguments)]
-fn decode_entries(
-    decoder: &std::sync::Mutex<MemoryDecoder>,
-    secret: &[u8; 32],
-    viewer: &str,
-    captured_viewer: &str,
-    agent: &str,
-    events: &[Option<Value>],
-    expired: impl Fn() -> bool,
-    own: bool,
-) -> Result<()> {
-    let (author, counterparty) = if own {
-        (viewer, agent)
-    } else {
-        (agent, viewer)
-    };
     if !key(agent) || agent == viewer || viewer != captured_viewer || events.len() > MEMORY_EVENTS {
         return Err("Invalid memory target".into());
     }
@@ -1001,10 +865,10 @@ fn decode_entries(
                 .filter(|tag| tag.first().map(String::as_str) == Some("d"))
                 .collect::<Vec<_>>();
             if event.kind != 30174
-                || event.pubkey != author
+                || event.pubkey != agent
                 || d.len() != 1
                 || d[0].len() < 2
-                || !single_memory_tag(&event, "p", counterparty)
+                || !single_memory_tag(&event, "p", viewer)
                 || !key(&d[0][1])
             {
                 return Err("Invalid memory envelope".into());
@@ -1040,7 +904,7 @@ fn decode_entries(
                 .get("slug")
                 .and_then(Value::as_str)
                 .ok_or("Invalid memory slug")?;
-            if !slug(name) || (own && !name.starts_with(PROPOSAL_PREFIX)) {
+            if !slug(name) {
                 return Err("Invalid memory slug".into());
             }
             if memory_address(&conversation, name)? != d[0][1] {
@@ -1374,70 +1238,6 @@ mod tests {
         let listing = read(&events);
         assert_eq!(listing["entries"][0]["body"], "again");
         assert!(listing.get("deleted").is_none());
-    }
-
-    #[test]
-    fn owner_reads_only_its_own_table_proposals_to_the_agent() {
-        let (viewer_secret, viewer) = fixture();
-        let agent_secret = [2; 32];
-        let agent = signed_event(&agent_secret, 1, vec![], String::new()).pubkey;
-        let conversation = ConversationKey::derive(
-            &NostrSecretKey::from_slice(&viewer_secret).unwrap(),
-            &NostrPublicKey::from_hex(&agent).unwrap(),
-        )
-        .unwrap();
-        let entry = |secret: &[u8; 32], p: &str, name: &str| {
-            let content = json!({"slug": name, "value": "{}"}).to_string();
-            let event = signed_event(
-                secret,
-                30174,
-                vec![
-                    vec!["d".into(), memory_address(&conversation, name).unwrap()],
-                    vec!["p".into(), p.to_owned()],
-                ],
-                STANDARD.encode(
-                    nip44::v2::encrypt_to_bytes_with_nonce(
-                        &conversation,
-                        content.as_bytes(),
-                        [7; 32],
-                    )
-                    .unwrap(),
-                ),
-            );
-            Some(serde_json::to_value(event).unwrap())
-        };
-        let proposal = entry(&viewer_secret, &agent, "mem/proposals/tables/goals");
-        let read = |events: &[Option<Value>], own: bool| {
-            let decoder = std::sync::Mutex::new(MemoryDecoder::default());
-            decode_entries(
-                &decoder,
-                &viewer_secret,
-                &viewer,
-                &viewer,
-                &agent,
-                events,
-                || false,
-                own,
-            )
-            .unwrap();
-            let listing = decoder.lock().unwrap().listing();
-            listing
-        };
-
-        let own = read(
-            &[
-                proposal.clone(),
-                entry(&viewer_secret, &agent, "mem/notes"),
-                entry(&agent_secret, &viewer, "mem/proposals/tables/spoof"),
-            ],
-            true,
-        );
-        assert_eq!(own["entries"].as_array().unwrap().len(), 1);
-        assert_eq!(own["entries"][0]["slug"], "mem/proposals/tables/goals");
-        assert_eq!(own["partial"], true);
-        // The agent's memory, as its owner reads it, never includes the proposal.
-        let agents = read(&[proposal], false);
-        assert_eq!(agents["entries"].as_array().unwrap().len(), 0);
     }
 
     #[test]
@@ -2233,7 +2033,7 @@ mod tests {
         let (worker, kept, flag) = (host.clone(), decoder.clone(), ended.flag());
         let records = events.into_iter().map(Some).collect();
         let decoding = tokio::spawn(async move {
-            decode_page(&worker, &viewer, &agent, records, kept, far, flag, false).await
+            decode_page(&worker, &viewer, &agent, records, kept, far, flag).await
         });
         // Wait until the blocking worker is decoding, then cancel the read.
         while decoder.lock().unwrap().heads.is_empty() {

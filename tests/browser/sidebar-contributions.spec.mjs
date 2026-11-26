@@ -561,6 +561,33 @@ appTest.describe("Solo header accessories", () => {
         await expect(draft).toBeVisible();
       },
     );
+
+    appTest("use the selected row's ink on its fill", async ({ page, app }) => {
+      await admitNewTask(page);
+      await page.goto(
+        `${app.origin}/?solo-region-fixture&team-row-channel-group`,
+      );
+      await openPage(page, "Messages");
+      const group = page.locator('[data-team-row-channel-group="alpha"]');
+      const channel = group.getByRole("button", { name: title, exact: true });
+      await channel.click();
+      await expect(group.locator("[data-selected]").first()).toBeAttached();
+      await channel.hover();
+      const colors = await group.evaluate((element) => {
+        const color = (selector) => {
+          const target = element.querySelector(selector);
+          return target ? getComputedStyle(target).color : null;
+        };
+        return {
+          actions: color("[data-channel-row-action]"),
+          disclosure: color("[data-solo-disclosure]"),
+          newTask: color("[data-solo-channel-new-task]"),
+        };
+      });
+      expect(colors.actions).not.toBeNull();
+      expect(colors.disclosure).toBe(colors.actions);
+      expect(colors.newTask).toBe(colors.actions);
+    });
   });
 
   // Real hit testing catches an accessory covered by the workspace selection

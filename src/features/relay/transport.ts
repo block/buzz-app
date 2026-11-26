@@ -1,4 +1,5 @@
 import { isAdminAddition } from "../channel-members/administration-protocol.ts";
+import type { TableKeyHost } from "../tables/host";
 import type { ArtifactIncrementalReader } from "./artifact-incremental-reader.ts";
 import type { VerifiedProfileAuthority } from "./verified-profile";
 import type { ReminderHost } from "./reminders";
@@ -6,7 +7,6 @@ import {
   memoryResponseText,
   type MemoryReader,
   type MemoryListing,
-  type ProposalSource,
 } from "../agents/memory";
 import { publicationRefusal } from "../developer/traffic";
 import { migrationSource } from "./migration";
@@ -124,7 +124,6 @@ export interface ReadTransport {
   readonly artifactIncremental?: ArtifactIncrementalReader;
   readonly projectGit?: RepoGit;
   readonly readAgentMemories?: MemoryReader;
-  readonly tableProposals?: ProposalSource;
   /** Session-scoped owner proof, not an arbitrary signing capability. */
   readonly authorizeAgentLog?: (
     target: { id: string; pubkey: string; relayUrl: string },
@@ -171,6 +170,8 @@ export interface ReadTransport {
   /** Purpose-bound NIP-ER codec; never a general NIP-44 or signing primitive. */
   readonly reminders?: ReminderHost;
   readonly channelKit?: ChannelKitHost;
+  /** Seals the owner's table keys to current channel members only. */
+  readonly tableKeys?: TableKeyHost;
   /** The relay advertises NIP-CL (`nip-cl` in NIP-11 `supported_extensions`):
    * it keeps channel labels and answers label lookups. */
   readonly channelIdentity?: true;
@@ -861,9 +862,9 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.agentMemories === true && community
-      ? (() => {
-          const listing = async (
-            body: Readonly<{ agent: string; proposals?: true }>,
+      ? {
+          readAgentMemories: async (
+            agent: string,
             signal: AbortSignal,
           ): Promise<MemoryListing> => {
             // Bounds the request and its body, so a stalled read ends in error.
@@ -875,7 +876,7 @@ export async function connectBrokerTransport(
               method: "POST",
               credentials: "same-origin",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
+              body: JSON.stringify({ agent }),
               signal: bounded,
             });
             if (!response.ok) {
@@ -885,49 +886,13 @@ export async function connectBrokerTransport(
                 error.name = "MemoryDenied";
               throw error;
             }
-            const read = JSON.parse(
+            const listing = JSON.parse(
               await memoryResponseText(response),
             ) as MemoryListing;
             bounded.throwIfAborted();
-            return read;
-          };
-          return {
-            readAgentMemories: (agent: string, signal: AbortSignal) =>
-              listing({ agent }, signal),
-            tableProposals: {
-              read: (agent: string, signal: AbortSignal) =>
-                listing({ agent, proposals: true }, signal),
-              async propose(
-                agent: string,
-                table: string,
-                schema: string,
-                after: number,
-              ) {
-                const response = await fetch(`${endpoint}/table-propose`, {
-                  method: "POST",
-                  credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ agent, table, schema, after }),
-                });
-                if (!response.ok) throw new Error("Table proposal failed");
-                const result = (await response.json()) as {
-                  eventId?: unknown;
-                  createdAt?: unknown;
-                };
-                if (
-                  typeof result.eventId !== "string" ||
-                  !/^[0-9a-f]{64}$/.test(result.eventId) ||
-                  !Number.isSafeInteger(result.createdAt)
-                )
-                  throw new Error("Invalid table proposal");
-                return {
-                  eventId: result.eventId,
-                  createdAt: result.createdAt as number,
-                };
-              },
-            } satisfies ProposalSource,
-          };
-        })()
+            return listing;
+          },
+        }
       : {}),
     ...(session.agentLibrary
       ? {

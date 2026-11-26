@@ -11,7 +11,10 @@ import { onAutomatic } from "./recommended";
 // of the device, community and storage comes through its RunnerHost, so the
 // desktop app and a standalone host run agents with the same code.
 import type { PublishOptions } from "../../buzz-mcp/client";
-import { bytesToHex } from "nostr-tools/utils";
+import { bytesToHex, hexToBytes } from "nostr-tools/utils";
+import { relayOrigin } from "../communities/destination";
+import { nativeRelayInfo } from "../relay/native";
+import { relayInfoOf } from "../relay/relay-info";
 import type { ProtectionAction } from "../agent-protection/service";
 import type {
   Agent,
@@ -808,6 +811,8 @@ export type RunnerHost = {
         | "media"
         | "gitAuth"
         | "remember"
+        | "tableKeyWrap"
+        | "tableKeyUnwrap"
       >
     | undefined;
   /** This device's view of each agent's work. */
@@ -4179,6 +4184,24 @@ export class AgentRunners {
         gitAuth: async (owner: string, repo: string) => {
           lifetime.throwIfAborted();
           return this.require().gitAuth(agent, owner, repo);
+        },
+        tableKeys: {
+          wrap: async (member: string, key: Uint8Array) => {
+            lifetime.throwIfAborted();
+            return this.require().tableKeyWrap(agent, member, bytesToHex(key));
+          },
+          unwrap: async (peer: string, wrapped: string) => {
+            lifetime.throwIfAborted();
+            return hexToBytes(
+              await this.require().tableKeyUnwrap(agent, peer, wrapped),
+            );
+          },
+        },
+        relayInfo: async () => {
+          lifetime.throwIfAborted();
+          return relayInfoOf(
+            await nativeRelayInfo(relayOrigin(agent.relay), lifetime),
+          );
         },
         remember: async (slug: string, body: string | null, after: number) => {
           lifetime.throwIfAborted();

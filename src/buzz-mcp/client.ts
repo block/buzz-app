@@ -43,6 +43,8 @@ export type ManagedAttachment = Readonly<{
 export type PublishOptions = Readonly<{
   managedAttachments?: readonly ManagedAttachment[];
 }>;
+export type { RelayInfo } from "../features/relay/relay-info";
+import type { RelayInfo } from "../features/relay/relay-info";
 export type Filter = Readonly<Record<string, unknown>>;
 /** The community's description of an uploaded blob. */
 export type Upload = Readonly<{
@@ -101,15 +103,6 @@ export type Memory = Readonly<{
   createdAt: number;
 }>;
 
-/** An entry the agent's owner signed and encrypted to it: a proposal the
- * agent may adopt into its own memory, never canonical by itself. */
-export type Proposal = Memory &
-  Readonly<{
-    /** The verified signer: always the agent's registered owner. */
-    author: string;
-    eventId: string;
-  }>;
-
 export interface BuzzClient {
   /** Cancellation for this call, or its owning turn or connection when the
    * host only supplies a lifetime signal. Keep it across waits. */
@@ -162,6 +155,15 @@ export interface BuzzClient {
   threadsApart?(channel: string): boolean | undefined;
   /** An exact, saved task anchor for this agent. */
   isTaskThread?(channel: string, root: string): boolean;
+  /** The relay's NIP-11 `supported_extensions` and `max_message_length`;
+   * only where the host can read them. */
+  relayInfo?(): Promise<RelayInfo>;
+  /** Table keys sealed to and opened from another identity with the
+   * agent's key, which stays in the host. */
+  readonly tableKeys?: Readonly<{
+    wrap(member: string, key: Uint8Array): Promise<string>;
+    unwrap(granter: string, wrapped: string): Promise<Uint8Array>;
+  }>;
   /** The agent's owner, as its host records it. */
   readonly owner?: string | undefined;
   /** Trusted connection authorities, never inferred from query results. */
@@ -205,9 +207,6 @@ export interface BuzzClient {
   /** Writes entry `slug`, newer than the one it replaces (`after`, or 0);
    * a `null` body deletes it. */
   remember(slug: string, body: string | null, after: number): Promise<void>;
-  /** Entries the agent's owner proposed to it; only `slug` when given. Only
-   * where the host can verify the agent's owner. */
-  proposals?(slug?: string): Promise<readonly Proposal[]>;
   /** The owner's sidebar workspaces, in a local run: their list, defaults,
    * one-use placement of a newly published conversation, and moves. */
   workspaces?: Readonly<{

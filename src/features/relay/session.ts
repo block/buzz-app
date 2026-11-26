@@ -1159,7 +1159,6 @@ export function createRelaySession(
     transport?.viewer ?? "",
     () => !closed && !revoking && !cacheClearing && memoryConnected,
     notify,
-    transport?.tableProposals,
   );
   const agentLibrary = createAgentLibrary(
     transport
@@ -3009,6 +3008,7 @@ export function createRelaySession(
     },
     channelCreation,
     channelKit: channelKit.capability,
+    tableKeys: transport?.tableKeys,
     canvas: channelKit.canvas,
     channelWrites,
     directMessages: createDirectMessages(

@@ -25,7 +25,6 @@ import {
 import type { Context } from "../../buzz-mcp/client";
 import {
   MemoryReads,
-  ownerProposals,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { RESUMED_PROMPT } from "../../buzz-mcp/prompt";
@@ -1800,7 +1799,6 @@ export class GooseRuntime {
               : this.desktop.readFile(path, { cwd });
           },
           memories: (slug) => this.memories(agent, slug),
-          proposals: (slug) => ownerProposals(this.reads(agent), slug),
           remembered: () => this.forget(agent),
         });
       const context = (conversation && entry.contexts.get(conversation)) || {};

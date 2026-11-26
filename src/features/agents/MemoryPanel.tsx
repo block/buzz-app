@@ -119,7 +119,7 @@ const MARKDOWN: Components = {
  * invalidation can revoke the React copy as well as the service snapshot.
  * Retry and Refresh read again through the same view, so a failed read's
  * entries stay on screen until a newer read replaces or clears them. */
-export function useMemory(memories: AgentMemories | undefined, pubkey: string) {
+function useMemory(memories: AgentMemories | undefined, pubkey: string) {
   const reread = useRef<(() => void) | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [snapshot, setSnapshot] = useState<MemorySnapshot>({

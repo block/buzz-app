@@ -123,7 +123,8 @@ export function useConversationTabs({
   continuingVisit: boolean;
   navigationSignal?: AbortSignal | undefined;
   isLive(): boolean;
-  openLink(url: string): boolean;
+  /** `pane` is the pane of the tab the link was chosen in. */
+  openLink(url: string, pane?: TabPane): boolean;
   /** Opens a panel as a dialog on the view its link was in, when its
    * placement says so; false when it opens as a tab instead. */
   openInView?:
@@ -515,9 +516,9 @@ export function useConversationTabs({
     {
       canOpen: canOpenLink,
       // Called only after render, once the link handler below exists.
-      open: (target) =>
+      open: (target, pane) =>
         !!drawerContext &&
-        openConversationLink(drawerContext.channelId, target),
+        openConversationLink(drawerContext.channelId, target, undefined, pane),
     },
     openMembers,
     {
@@ -693,6 +694,8 @@ export function useConversationTabs({
     channelId: string,
     url: string,
     origin?: MessageLinkOrigin,
+    /** The pane of the tab the link is in. */
+    pane?: TabPane,
   ) => {
     const connection = relay.snapshot();
     if (
@@ -727,7 +730,7 @@ export function useConversationTabs({
       open(next, true);
       return true;
     }
-    return openLink(url);
+    return openLink(url, pane);
   };
 
   const nodes = useTabNodes(
@@ -893,7 +896,7 @@ export function useConversationTabs({
                 scope={scope}
                 extensions={extensions}
                 openLink={(url, origin) =>
-                  openConversationLink(channel.id, url, origin)
+                  openConversationLink(channel.id, url, origin, tabPane(tab))
                 }
                 canOpenLink={canOpenLink}
                 openThread={(id, root, intent) =>
@@ -950,6 +953,7 @@ export function useConversationTabs({
             isActive={() =>
               panelActive(entry) && (inMain(entry) || tabState.paneOpen)
             }
+            pane={main ? "main" : "side"}
             panel={entry.panel}
             contentKey={panelContentTarget(entry)}
             target={entry.target}
@@ -1138,7 +1142,7 @@ export function useConversationTabs({
                 tabState.divertThread(tab.id, requested, kept)
               }
               openLink={(url, origin) =>
-                openConversationLink(target.id, url, origin)
+                openConversationLink(target.id, url, origin, tabPane(tab))
               }
               canOpenLink={canOpenLink}
               openThread={(id, root, intent) =>

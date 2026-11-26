@@ -2,7 +2,8 @@ import { hostComposerProvenance } from "../../features/messages/mention-draft";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import { clearAttachmentDraft } from "../../features/messages/attachment-draft";
 import { MessageComposer } from "../../features/messages/MessageComposer";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useState } from "react";
+import { PanelPane } from "../../features/panels/opening-pane";
 import type { PanelProps } from "../../features/panels/service";
 import type { RelayData } from "../../features/relay/service";
 import { useRelayConnection } from "../../features/relay/react";
@@ -22,10 +23,14 @@ export function HuddlePanel({
   extensions,
 }: PanelProps & {
   relay: RelayData;
-  openLink?: ((url: string) => boolean) | undefined;
+  /** Opens a link the host's opener left, from the pane this panel is in. */
+  openLink?:
+    | ((url: string, pane: "main" | "side" | undefined) => boolean)
+    | undefined;
   extensions?: ConversationExtensions | undefined;
 }) {
   const connection = useRelayConnection(relay);
+  const pane = useContext(PanelPane);
   const parsed = parseHuddleTarget(target);
   const room = parsed?.room;
   const parent = parsed?.parent;
@@ -58,7 +63,7 @@ export function HuddlePanel({
   return valid && room && owner && discussion ? (
     <HuddleDiscussionView
       discussion={discussion}
-      openLink={(url) => context?.open(url) || openLink?.(url) || false}
+      openLink={(url) => context?.open(url) || openLink?.(url, pane) || false}
       composer={
         <MessageComposer
           evidenceOwner={hostComposerProvenance}

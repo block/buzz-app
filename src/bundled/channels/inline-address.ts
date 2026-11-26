@@ -1,5 +1,6 @@
 import type { OpenLayer } from "../../features/messages/view-layer";
 import type { OpenTarget, ViewLayer } from "../../features/navigation/targets";
+import { sheetVisits } from "../../features/panels/opening-pane";
 
 /** The inline thread and the layer over a view live in the conversation's
  * address. These are the transforms its openings and closings make to it:
@@ -20,24 +21,45 @@ export const sameScope = (visit: OpenTarget, target: ConversationTarget) =>
   visit.scope.viewer === target.scope.viewer &&
   visit.scope.communityOrigin === target.scope.communityOrigin;
 
+/** Whether `visit` is the address a thread tab's visit has: `rootId`'s
+ * thread in `channelId`, for `target`'s viewer, with no detail beside it. */
+export const threadTabVisit = (
+  visit: OpenTarget,
+  target: ConversationTarget,
+  channelId: string,
+  rootId: string,
+) =>
+  sameScope(visit, { ...target, channelId }) &&
+  visit.kind === "conversation" &&
+  visit.threadRootId === rootId &&
+  !visit.detail;
+
 const conversation = (target: OpenTarget | undefined) =>
   target?.kind === "conversation" ? target : undefined;
 
 /** ✕, Escape and the scrim on the inline thread with `rootId`: its visits
  * retire, with a layer read over it and the reply it was opened at, which an
- * address names only with its thread. Back then leaves the conversation. */
+ * address names only with its thread. Back then leaves the conversation.
+ * The visits of tabs opened beside the sheet stay. When `current` is one,
+ * `besideTab`, the fallback is the conversation alone: the side pane keeps
+ * the tab it shows, or the one chosen since, shown or hidden as it is. */
 export function inlineDismissal(
   current: OpenTarget | undefined,
   rootId: string,
+  besideTab = false,
 ): Dismissal | undefined {
   const target = conversation(current);
   if (target?.inline !== rootId) return;
-  const { inline: _inline, inlineMessage: _message, layer, ...rest } = target;
+  const { inline: _inline, inlineMessage: _message, layer, ...named } = target;
+  const {
+    messageId: _tab,
+    threadRootId: _root,
+    context: _context,
+    ...alone
+  } = named;
+  const rest = besideTab ? alone : named;
   return {
-    visits: (visit) =>
-      sameScope(visit, target) &&
-      visit.kind === "conversation" &&
-      visit.inline === rootId,
+    visits: sheetVisits(target, rootId),
     fallback: !layer || layer.rootId === rootId ? rest : { ...rest, layer },
   };
 }

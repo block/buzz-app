@@ -260,6 +260,24 @@ impl Secret {
             .map(Zeroizing::new)
             .map_err(|_| "Invalid encrypted payload".into())
     }
+    /// A table key sealed to `peer`. Only a 32-byte key in lowercase hex is
+    /// sealed, so this cannot encrypt arbitrary text as the agent.
+    pub fn table_key_wrap(&self, peer: &str, key: &str) -> Result<String> {
+        if !table_key(key) {
+            return Err("Invalid table key".into());
+        }
+        self.nip44_encrypt(peer, key)
+    }
+    /// The table key `peer` sealed to this key, or between this key and
+    /// `peer`. Anything other than a table key is refused, so this cannot
+    /// decrypt the agent's other messages.
+    pub fn table_key_unwrap(&self, peer: &str, wrapped: &str) -> Result<Zeroizing<String>> {
+        let key = self.nip44_decrypt(peer, wrapped)?;
+        if !table_key(&key) {
+            return Err("Invalid table key".into());
+        }
+        Ok(key)
+    }
     fn conversation(&self, peer: &str) -> Result<nostr::nips::nip44::v2::ConversationKey> {
         use nostr::key::{PublicKey as NostrPublicKey, SecretKey as NostrSecretKey};
         let private =
@@ -407,6 +425,10 @@ pub(crate) fn validate_attestation(raw: &str, agent: &str) -> Result<()> {
     }
     Ok(())
 }
+fn table_key(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 #[cfg(test)]
 pub(crate) fn test_attestation(agent: &str) -> String {
     use secp256k1::Keypair;
@@ -436,6 +458,25 @@ mod memory_tests {
         nips::nip44::v2::{self, ConversationKey},
     };
     use sha2::Sha256;
+    #[test]
+    fn table_keys_only_cross_as_table_keys() {
+        let agent = Secret::generate().unwrap();
+        let member = Secret::generate().unwrap();
+        let key = "ab".repeat(32);
+        let wrapped = agent.table_key_wrap(member.pubkey(), &key).unwrap();
+        assert_eq!(
+            *member.table_key_unwrap(agent.pubkey(), &wrapped).unwrap(),
+            key
+        );
+        assert_eq!(
+            *agent.table_key_unwrap(member.pubkey(), &wrapped).unwrap(),
+            key
+        );
+        assert!(agent.table_key_wrap(member.pubkey(), "a secret").is_err());
+        let message = member.nip44_encrypt(agent.pubkey(), "a message").unwrap();
+        assert!(agent.table_key_unwrap(member.pubkey(), &message).is_err());
+    }
+
     #[test]
     fn owner_can_decrypt_new_agent_memory_without_exposing_a_key() {
         let agent = Secret::generate().unwrap();

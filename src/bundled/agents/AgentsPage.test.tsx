@@ -640,7 +640,6 @@ it("opens the side panel with the type's tabs and the app's Settings and Memory 
     "AAda",
     "Reply",
     "Memory",
-    "Tables",
     "Settings",
   ]);
   expect(

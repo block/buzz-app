@@ -37,7 +37,6 @@ import { SessionControls } from "../../features/agent-harness/session-control";
 import {
   coreMemorySection,
   MemoryReads,
-  ownerProposals,
   READ_TIMEOUT_MS,
 } from "../../features/agent-harness/core-memory";
 import { readAuthorNames } from "../../features/agent-harness/author-names";
@@ -1343,7 +1342,6 @@ export class PiRuntime {
             : this.readFile(path, { cwd });
         },
         memories: (slug) => this.memories(call.agent, slug),
-        proposals: (slug) => ownerProposals(this.reads(call.agent), slug),
         remembered: () => this.forgetMemory(call.agent),
         ...(signal ? { signal } : {}),
       });

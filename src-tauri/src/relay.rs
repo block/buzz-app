@@ -8,7 +8,7 @@ use crate::federated_identity::{
 use crate::identity::{EventTemplate, IdentityHost};
 pub(crate) use agent::{
     relay_agent_library, relay_agent_log_proof, relay_agent_memories_read, relay_agent_observer,
-    relay_agent_resolve, relay_table_propose,
+    relay_agent_resolve,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 pub(crate) use huddle::{huddle_close, huddle_open, huddle_pcm, huddle_touch, Huddles};
@@ -30,6 +30,8 @@ pub(crate) use channel_writes::{
     relay_kit_prepare,
 };
 pub(crate) use kit::relay_kit_sign;
+mod tables;
+pub(crate) use tables::relay_table_key_reseal;
 mod media_blocks;
 mod media_cache;
 pub(crate) use media_cache::MediaCache;

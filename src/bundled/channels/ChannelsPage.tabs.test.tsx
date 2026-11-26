@@ -550,6 +550,53 @@ it.each([
   },
 );
 
+it("X on a thread tab retires its visits from before a reload", async () => {
+  setThreadPlacementPreference("side");
+  const host = createNavigationController(createMemoryHistory());
+  const h = await page("stream", host.navigation, true);
+  if (!h.navigation || !h.root) throw new Error("Thread visit unavailable");
+  const initial = h.navigation;
+  const target = (channelId: string, messageId?: string): OpenTarget => ({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: h.viewer, communityOrigin: "https://relay.test" },
+    channelId,
+    ...(messageId && { messageId, threadRootId: messageId }),
+  });
+  // History restores visits this page never entered, as after a reload: the
+  // thread, Beta and Alpha. The page enters only the thread's latest visit.
+  for (const visit of [
+    target("alpha", h.root),
+    target("beta"),
+    target("alpha"),
+    target("alpha", h.root),
+  ])
+    act(() => void host.navigation.open(visit));
+  const { attempt } = host.navigation.snapshot();
+  h.present({
+    ...initial,
+    entryId: attempt.entry.id,
+    target: attempt.entry.target,
+    signal: attempt.signal,
+    complete: (result) => host.complete(attempt, result),
+    resolve: (target) => host.resolve(attempt, target),
+  });
+  await h.user.click(
+    await screen.findByRole("button", { name: "Close Initiating thread tab" }),
+  );
+  const walk = [host.navigation.snapshot().entry.target];
+  while (host.navigation.snapshot().canGoBack) {
+    act(() => host.navigation.back());
+    walk.push(host.navigation.snapshot().entry.target);
+  }
+  expect(walk).toEqual([
+    target("alpha"),
+    target("beta"),
+    { version: 1, kind: "home" },
+  ]);
+  host.dispose();
+});
+
 it.each(["side", "main"] as const)(
   "agent-opened apps preserve their routed %s thread",
   async (pane) => {

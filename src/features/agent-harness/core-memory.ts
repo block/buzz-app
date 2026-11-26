@@ -147,13 +147,3 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal) {
       .finally(() => signal.removeEventListener("abort", abort));
   });
 }
-
-/** The schemas the owner proposed to the agent, as its tools see them. */
-export async function ownerProposals(
-  reads: Pick<AgentReads, "proposals"> | undefined,
-  slug?: string,
-) {
-  if (!reads?.proposals) throw new Error("Proposals unavailable");
-  const entries = await reads.proposals(AbortSignal.timeout(READ_TIMEOUT_MS));
-  return entries.filter((entry) => slug === undefined || entry.slug === slug);
-}

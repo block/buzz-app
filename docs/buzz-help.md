@@ -225,8 +225,7 @@ speech appears in the main timeline. The Huddle's **Messages** panel shows
 that same conversation. Use the Huddle card to join, and the reply summary
 below it to open its replies. The Huddle ends when the last person leaves.
 
-On macOS, Buzz uses Apple on-device speech recognition to post a transcript
-message after each microphone utterance.
+Buzz uses the provider in **Settings → Speech to text** to transcribe your microphone during a Huddle. On macOS, if the provider is unavailable, Apple on-device recognition posts a finished message after each utterance.
 
 Your running Codex agents in a Solo chat can join when you start the Huddle.
 Use the Huddle member controls to add people or agents already in the
@@ -234,8 +233,7 @@ conversation. Each agent's **Huddle voice** setting picks its voice.
 In **Audio settings**, **Direct audio with local agents** lets your microphone
 and speakers bypass the relay for agents running on the same device.
 **Let agents hear each other** controls audio between those agents independently.
-**Live agent transcripts** shows the agent’s speech in the conversation as it
-arrives. Turn it off to receive only finished agent transcripts.
+**Live transcripts** updates each transcript message as you or an agent speaks. Turn it off to receive only finished transcripts.
 Work continuing in the Huddle uses the same Codex session. The voice model sees
 the current participants, recent chat messages, and new messages typed in that
 conversation. Codex Realtime provides agent audio, and replies from ordinary text turns appear in the chat. When you leave,

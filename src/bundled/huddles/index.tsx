@@ -27,6 +27,7 @@ export const inject = [
   "conversation",
   "navigation",
   "agents",
+  "speech",
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   if (!nativeHuddles.available) return;
@@ -53,6 +54,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         )
         .map((agent) => agent.pubkey);
     },
+    ctx.speech,
   );
   const remoteVoices = remoteDmVoiceCalls(ctx.relay, ctx.agents);
   const stopVoices = createHuddleVoices(

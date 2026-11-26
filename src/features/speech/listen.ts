@@ -53,6 +53,12 @@ export type ListenOptions = Readonly<{
   /** The cap the provider granted this call, in seconds, once it
    * answers. It hangs up then, and listening ends with what was heard. */
   onCallLimit?(maxSeconds: number): void;
+  /** Borrow an existing microphone track for a continuing call. The caller
+   * keeps ownership of the track and commits individual utterances. */
+  continuous?: Readonly<{
+    track: MediaStreamTrack;
+    onItem(id: string, update: { delta: string } | { final: string }): void;
+  }>;
   /** The transcript so far, each time it changes. */
   onText(text: string): void;
   /** The transcript so far, once speech pauses briefly; listening goes on.
@@ -71,6 +77,8 @@ export type Listening = Readonly<{
   stop(): void;
   /** Ends listening without reporting it. */
   cancel(): void;
+  /** Commits an utterance while a continuing call is listening. */
+  commit?(): void;
 }>;
 
 /** Speech that stops producing text this long has paused: reported, and
@@ -175,7 +183,9 @@ export function listenHosted(
   options: ListenOptions,
   connect: Connect,
 ): Listening {
+  const continuous = options.continuous;
   const items = transcriptItems();
+  const pending = new Set<string>();
   const abort = new AbortController();
   let stream: MediaStream | undefined;
   let peer: RTCPeerConnection | undefined;
@@ -225,7 +235,12 @@ export function listenHosted(
   };
   /** Ending, and every word is in: report them. */
   const settle = () => {
-    if (ending && unanswered <= 0 && items.settled()) close(true);
+    if (
+      ending &&
+      unanswered <= 0 &&
+      (continuous ? !pending.size : items.settled())
+    )
+      close(true);
   };
   /** Ends listening once the last commit's words are in. Stop commits
    * even before the first word, so speech cut short still counts. */
@@ -271,6 +286,19 @@ export function listenHosted(
     if (event.type === "error" || event.type === FAILED)
       return fail("service_error", event.error?.message);
     if (event.type === COMMITTED) unanswered -= 1;
+    if (continuous) {
+      const id = event.item_id;
+      if (id && event.type === COMMITTED) pending.add(id);
+      if (id && event.type === DELTA && event.delta) {
+        pending.add(id);
+        continuous.onItem(id, { delta: event.delta });
+      }
+      if (id && event.type === COMPLETED) {
+        pending.delete(id);
+        continuous.onItem(id, { final: event.transcript ?? "" });
+      }
+      return settle();
+    }
     if (items.apply(event)) {
       if (event.type === DELTA) uncommitted = true;
       heard(event.type === COMPLETED);
@@ -292,7 +320,7 @@ export function listenHosted(
       // Transcripts arrive here, so listening starts once it opens.
       channel.addEventListener("open", () => {
         state("listening");
-        if (!ending && !text) wait(SILENCE_MS, finish);
+        if (!continuous && !ending && !text) wait(SILENCE_MS, finish);
       });
       channel.addEventListener("message", (message) => {
         if (ended) return;
@@ -310,21 +338,23 @@ export function listenHosted(
       if (ended) return;
       await peer.setLocalDescription(offer);
       if (ended) return;
-      const microphone = navigator.mediaDevices
-        .getUserMedia({
-          audio: {
-            autoGainControl: true,
-            echoCancellation: true,
-            noiseSuppression: true,
-          },
-        })
-        .then((media) => {
-          stream = media;
-          // Stopped meanwhile: release the microphone at once.
-          if (ended || ending)
-            for (const track of media.getTracks()) track.stop();
-          return media;
-        });
+      const microphone = continuous
+        ? undefined
+        : navigator.mediaDevices
+            .getUserMedia({
+              audio: {
+                autoGainControl: true,
+                echoCancellation: true,
+                noiseSuppression: true,
+              },
+            })
+            .then((media) => {
+              stream = media;
+              // Stopped meanwhile: release the microphone at once.
+              if (ended || ending)
+                for (const track of media.getTracks()) track.stop();
+              return media;
+            });
       const [media, answer] = await Promise.all([
         microphone,
         connect(offer.sdp ?? "", abort.signal),
@@ -333,7 +363,9 @@ export function listenHosted(
       if (answer.outcome === "failed") return fail(answer.reason);
       if (answer.maxSeconds !== undefined)
         options.onCallLimit?.(answer.maxSeconds);
-      await sender.replaceTrack(media.getAudioTracks()[0] ?? null);
+      await sender.replaceTrack(
+        continuous?.track ?? media?.getAudioTracks()[0] ?? null,
+      );
       if (ended) return;
       await peer.setRemoteDescription({ type: "answer", sdp: answer.sdp });
     } catch (error) {
@@ -342,5 +374,13 @@ export function listenHosted(
       else fail("service_error", exception ? error.message : undefined);
     }
   })();
-  return { stop: () => end(true), cancel };
+  return {
+    stop: () => end(true),
+    cancel,
+    ...(continuous && {
+      commit: () => {
+        if (!ending && !ended) commit(true);
+      },
+    }),
+  };
 }

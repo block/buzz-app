@@ -108,8 +108,8 @@ function hosted(
         new MessageEvent("message", { data: JSON.stringify(event) }),
       );
     },
-    async start() {
-      const listening = listenHosted(c.options, connect);
+    async start(options = c.options) {
+      const listening = listenHosted(options, connect);
       await vi.advanceTimersByTimeAsync(0);
       channel.dispatchEvent(new Event("open"));
       return listening;
@@ -316,4 +316,36 @@ it("maps a denied microphone to denied", async () => {
   );
   await r.start();
   expect(r.onError).toHaveBeenCalledWith("denied", expect.any(String));
+});
+
+it("streams microphone updates before committing and leaves the borrowed track open", async () => {
+  const r = hosted();
+  const onItem = vi.fn();
+  const track = r.track as unknown as MediaStreamTrack;
+  const listening = await r.start({
+    ...r.options,
+    continuous: { track, onItem },
+  });
+  expect(r.replaceTrack).toHaveBeenCalledWith(track);
+  expect(r.getUserMedia).not.toHaveBeenCalled();
+
+  r.receive({ type: DELTA, item_id: "a", delta: "Open" });
+  r.receive({ type: DELTA, item_id: "a", delta: " desing" });
+  vi.advanceTimersByTime(10_000);
+  expect(onItem.mock.calls).toEqual([
+    ["a", { delta: "Open" }],
+    ["a", { delta: " desing" }],
+  ]);
+  expect(r.commits()).toBe(0);
+  expect(r.close).not.toHaveBeenCalled();
+
+  listening.commit?.();
+  expect(r.commits()).toBe(1);
+  r.receive({ type: COMMITTED, item_id: "a" });
+  r.receive({ type: COMPLETED, item_id: "a", transcript: "Open design." });
+  expect(onItem).toHaveBeenLastCalledWith("a", { final: "Open design." });
+
+  listening.cancel();
+  expect(r.close).toHaveBeenCalledOnce();
+  expect(r.stopTrack).not.toHaveBeenCalled();
 });

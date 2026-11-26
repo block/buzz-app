@@ -1,6 +1,8 @@
 import { addChannelMember } from "../channel-members/members";
 import { endLastHumanHuddle } from "./ending";
 import { createMicrophoneTranscript } from "./transcript";
+import { startHostedHuddleTranscript } from "./hosted-transcript";
+import type { Speech } from "../speech/service";
 import { createPcmSender } from "./sender";
 import { viewerMember } from "../relay/membership";
 import type { ChannelSummary } from "../relay/contracts";
@@ -42,6 +44,7 @@ type Attempt = {
   abort: AbortController;
   audio?: HuddleAudio;
   transcript?: ReturnType<typeof createMicrophoneTranscript>;
+  hostedTranscript?: ReturnType<typeof startHostedHuddleTranscript>;
   opening?: Promise<void>;
   admissions?: readonly string[];
   heartbeat?: ReturnType<typeof setInterval>;
@@ -64,6 +67,7 @@ export function createHuddles(
     connection: RelaySnapshot,
     destination: HuddleDestination,
   ) => string | readonly string[] | undefined,
+  speech?: Speech,
 ) {
   const routing: HuddleRouting = {
     directAudio: true,
@@ -477,12 +481,31 @@ export function createHuddles(
               },
               transcriptDestination,
             });
+            const canTranscribe = () =>
+              valid(attempt) && accessible() === "allowed";
+            const transcriptError = (error: unknown) => {
+              if (valid(attempt))
+                update({ ...snapshot, transcriptError: message(error) });
+            };
+            const track = attempt.audio?.transcriptionTrack;
+            if (parentAdmission && speech && track)
+              attempt.hostedTranscript = startHostedHuddleTranscript(
+                speech,
+                track,
+                connection.session,
+                destination.relayUrl,
+                transcriptDestination,
+                attempt.abort.signal,
+                canTranscribe,
+                () => routing.liveTranscript,
+                transcriptError,
+              );
             const recognize = bridge.recognize;
             if (parentAdmission && recognize)
               attempt.transcript = createMicrophoneTranscript(
                 attempt.abort.signal,
                 (text) => {
-                  if (valid(attempt) && accessible() === "allowed")
+                  if (canTranscribe())
                     connection.session.messages.transcribe(
                       transcriptDestination.channelId,
                       transcriptDestination.root,
@@ -492,10 +515,7 @@ export function createHuddles(
                         : []),
                     );
                 },
-                (error) => {
-                  if (valid(attempt))
-                    update({ ...snapshot, transcriptError: message(error) });
-                },
+                transcriptError,
                 (samples) => recognize(attempt.id, samples),
               );
           }
@@ -528,7 +548,9 @@ export function createHuddles(
           )
             return;
           activity(destination.viewer, samples);
-          attempt.transcript?.input(samples);
+          if (attempt.hostedTranscript?.healthy)
+            attempt.hostedTranscript.input(samples);
+          else attempt.transcript?.input(samples);
           void attempt.sender.send(samples);
           if (routing.directAudio)
             for (const listener of attempt.microphoneListeners)
@@ -710,7 +732,8 @@ export function createHuddles(
       const muted = !snapshot.muted;
       if (muted) {
         current.sender.clear();
-        current.transcript?.flush();
+        if (current.hostedTranscript?.healthy) current.hostedTranscript.flush();
+        else current.transcript?.flush();
       }
       current.audio?.mute(muted);
       if (muted && snapshot.destination)

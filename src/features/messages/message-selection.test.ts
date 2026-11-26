@@ -200,6 +200,8 @@ it("gives plugins the lists, selection, kept rows and threads through the messag
   expect(handle?.keepMounted("two")).toBe(release);
   expect(keep).toHaveBeenCalledWith("two");
   expect(handle?.composer()).toBe(composer);
+  // One handle per list, so a plugin can tell whether its owner changed.
+  expect(messages.listOf(list)).toBe(handle);
 
   messages.select(row);
   expect(document.activeElement).toBe(box("two"));

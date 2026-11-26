@@ -60,7 +60,8 @@ export type MessageBox = Readonly<{
 export type Messages = Readonly<{
   /** Every message list on screen. */
   lists(): readonly HTMLElement[];
-  /** The innermost list holding `node`. */
+  /** The innermost list holding `node`. The same list gives the same handle
+   * until it re-registers, as when its conversation changes. */
   listOf(node: Node): MessageListHandle | undefined;
   /** The focused pane's list, else the first visible one. */
   active(): HTMLElement | undefined;
@@ -102,6 +103,7 @@ function editorOf(element: Element | null) {
 }
 
 const boxes = new WeakMap<ComposerInputElement, MessageBox>();
+const handles = new WeakMap<object, MessageListHandle>();
 function messageBox(editor: ComposerInputElement): MessageBox {
   const known = boxes.get(editor);
   if (known) return known;
@@ -142,13 +144,17 @@ export const messages: Messages = Object.freeze({
     const owner = messageListOf(node);
     if (!owner) return undefined;
     const { element, list } = owner;
-    return Object.freeze({
+    const known = handles.get(list);
+    if (known?.element === element) return known;
+    const handle: MessageListHandle = Object.freeze({
       element,
       newest: () => list.newest(),
       has: (id: string) => !!list.row(id),
       keepMounted: (id: string) => list.keepMounted?.(id) ?? (() => {}),
       composer: () => list.composer() ?? undefined,
     });
+    handles.set(list, handle);
+    return handle;
   },
   active: activeMessageList,
   focusTarget,
